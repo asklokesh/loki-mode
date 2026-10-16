@@ -17,6 +17,7 @@ import { commandExists, run } from "../util/shell.ts";
 import { findPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
+import { budgetNext, lastBudgetStop } from "../e10ext/budget_cap.ts";
 
 // ---------------------------------------------------------------------------
 // context_gauge / format_tokens port (autonomy/tui.sh:176-216).
@@ -656,6 +657,8 @@ async function runStatusText(): Promise<number> {
       process.stdout.write(`${CYAN}Cost:${NC} \$${budgetUsed} (no limit)\n`);
     }
   }
+  const stop = lastBudgetStop(resolve(dir, ".."));
+  if (stop) process.stdout.write(`${YELLOW}Budget stop:${NC} run ${stop.runId} spent \$${stop.spent_usd.toFixed(2)} of \$${stop.cap_usd.toFixed(2)} (${stop.source}); ${budgetNext(stop.spent_usd, stop.cap_usd)}\n`);
 
   // Context window. Bash (autonomy/loki:2930-2938) renders the visual gauge
   // because context_gauge is ALWAYS defined (tui.sh is sourced at startup), so

@@ -48,6 +48,7 @@ rmdir "$MOCK_DIR/lock.$id"
 if [ "$id" = "${MOCK_FAIL:-}" ]; then echo "Outcome:    FAILED"; echo "Reason:     boom"; echo "end $id fail" >> "$MOCK_DIR/events"; exit 1; fi
 echo "end $id ok" >> "$MOCK_DIR/events"
 echo "Outcome:    VERIFIED"; echo "PR:         none"
+[ -n "${MOCK_COST:-}" ] && echo "Cost:       \$$MOCK_COST (claude, 10k tokens)"
 exit 0
 LEOF
 chmod +x "$TMP/launcher.sh"
@@ -195,6 +196,19 @@ for bad in nosuchref -x; do
     out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagx.json" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && echo "$out" | grep -q "base '$bad' is not a commit SHA" && [ ! -s "$TMP/events" ] && pass "bad base '$bad' fails loudly, nothing launched" || fail "bad base $bad" "rc=$rc $out"
 done
+
+echo ""
+echo "== group budget: LOKI_BUDGET_LIMIT bounds the sum of units"
+cat > "$TMP/dagc.json" <<'DEOF'
+{"group":"gc","units":[{"id":"x","items":["do x"]},{"id":"y","items":["do y"]},{"id":"z","items":["do z"]}],"edges":[]}
+DEOF
+reset_mock
+out="$(MOCK_COST=0.80 LOKI_BUDGET_LIMIT=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagc.json" --concurrency 1 2>&1)"; rc=$?
+[ "$(grep -c '^start ' "$TMP/events")" = "2" ] && pass "third unit not launched once group total >= cap" || fail "group cap launches" "$(cat "$TMP/events") $out"
+echo "$out" | grep -q 'BUDGET_STOP: group budget' && [ "$rc" -ne 0 ] && pass "pending unit reports group BUDGET_STOP" || fail "group stop line" "rc=$rc $out"
+reset_mock
+out="$(MOCK_COST=0.80 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagc.json" --concurrency 1 2>&1)"
+[ "$(grep -c '^start ' "$TMP/events")" = "3" ] && pass "no cap set: all units run" || fail "no cap" "$out"
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"

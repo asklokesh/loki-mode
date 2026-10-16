@@ -14,7 +14,7 @@ import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/rou
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
-import { checkBudgetLimit } from "../runner/budget.ts";
+import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
@@ -28,7 +28,7 @@ export interface SessionRunnerConfig {
   emit?: EmitFn; // ENGINE.md section 5: heartbeat, session.started, session.ended
   heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
-  lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
+  lokiRoot?: string; remaining?: () => number | null; // lokiRoot: where efficiency records and result-cost files live (the repo's .loki); remaining: dollars left under the run cap, null or absent = no cap
   /** ROUTER-1 R1-09: advisor availability for this run (R1-06 probe). Only read under LOKI_ROUTER=1. */
   advisor?: { available: boolean; reason?: string };
 }
@@ -43,7 +43,7 @@ export function resolveModel(provider: string): string {
   if (provider !== "claude") return `${provider} (model not recorded)`;
   return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
 }
-function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
+export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
@@ -66,7 +66,7 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
   const effort = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy
-  if (effort) env["LOKI_E10_EFFORT"] = effort;
+  const lim = childBudgetLimit(cfg.remaining?.() ?? null); if (lim !== null) env["LOKI_BUDGET_LIMIT"] = lim; if (effort) env["LOKI_E10_EFFORT"] = effort; // lim: the SDK maxBudgetUsd (claude_flags.ts) then caps this one call at what is left
   if (routerEnabled() && !ADVISOR_MARKED_STAGES.has(opts.stage)) env["LOKI_ADVISOR_SCOPE"] = "off"; else delete env["LOKI_ADVISOR_SCOPE"]; // CH-02: only with the router on, so router-off envs stay byte-identical
   const pin = routerSessionPin(env, cfg.provider, cfg.advisor, opts); // ROUTER-1 (runner/router/session_route.ts): identical to opts.model with the router off or a user override set
   if (pin && pin !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
@@ -192,7 +192,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
       const onAbort = () => kill("aborted");
       const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
-      const stopBudgetWatch = isGuarded(cfg.provider) && process.env["BUDGET_LIMIT"] ? watchBudget(() => checkBudgetLimit({ efficiencyDir: cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : undefined }).exceeded, () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE
+      const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
       const heartbeatTimer = setInterval(() => {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);

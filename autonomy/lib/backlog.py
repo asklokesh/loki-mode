@@ -308,9 +308,17 @@ def main(argv):
         child_env["LOKI_PROVIDER"] = a.provider
     elif cfg.get("provider"):
         child_env["LOKI_PROVIDER"] = cfg["provider"]
-    # ponytail: per-run cap is forwarded only; the v10 engine itself caps on time
-    if cfg.get("budgets", {}).get("per_run_usd"):
-        child_env["LOKI_BUDGET_LIMIT"] = str(cfg["budgets"]["per_run_usd"])
+    # per-run cap forwarded to each child (budgets.per_run is the TS-side alias); an exported LOKI_BUDGET_LIMIT wins over loki.yaml
+    bud = cfg.get("budgets", {})
+    per_run = bud.get("per_run_usd") or bud.get("per_run")
+    if per_run and not env.get("LOKI_BUDGET_LIMIT"):
+        child_env["LOKI_BUDGET_LIMIT"] = str(per_run)
+    group_cap = None  # a DAG group shares one total: the run cap bounds the sum of its units, not each unit
+    if dag_units:
+        try:
+            group_cap = float(env.get("LOKI_BUDGET_LIMIT") or 0) or None
+        except ValueError:
+            group_cap = None
     day_cap = cfg.get("budgets", {}).get("per_day_usd")
 
     # One job table for issues and units: they share one slot pool.
@@ -444,6 +452,13 @@ def main(argv):
         for k in [k for k, (p, _l, _w) in running.items() if p.poll() is not None]:
             finish(k)
         while pending and len(running) < conc:
+            group_spent = sum(st["cost"] or 0 for st in state.values())
+            if group_cap and group_spent >= group_cap:
+                for k in pending:
+                    state[k].update(status="BUDGET_STOP: group budget $%.2f reached ($%.2f spent)" % (group_cap, group_spent), ok=False)
+                    say("backlog: %s %s" % (spec[k]["label"], state[k]["status"]))
+                pending = []
+                break
             spent = spent_today() if day_cap else 0.0
             if day_cap and (spent is None or spent >= day_cap):
                 for k in pending:

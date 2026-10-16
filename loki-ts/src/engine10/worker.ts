@@ -46,12 +46,12 @@ export async function main(args: string[]): Promise<number> {
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
-    const { emit, over } = capMeter(rawEmit, process.env);
-    const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot });
+    const { emit, over, remaining } = capMeter(rawEmit, process.env);
+    const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining });
     const failovers: FailoverRecord[] = [];
     const sessions = withFailover({
       provider, base,
-      makeRunner: (p) => createSessionRunner({ provider: p, model: resolveModel(p), emit: emit as EmitFn, lokiRoot }),
+      makeRunner: (p) => createSessionRunner({ provider: p, model: resolveModel(p), emit: emit as EmitFn, lokiRoot, remaining }),
       onFailover: (rec) => { failovers.push(rec); emit("provider.failover", rec.stage as StageName, { ...rec }); },
     });
     const ctx: RunContext = {

@@ -17,7 +17,7 @@ export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; /
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { writeRunPid } from "../util/run_pid.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { disclosureLine } from "../providers/provider_guard.ts";
-import { capNote, parseCapUsd, resolveCap, SUBSCRIPTION_NOTE } from "../e10ext/budget_cap.ts";
+import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUBSCRIPTION_NOTE, unenforceableNote, writeBudgetStop } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
@@ -259,12 +259,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (u && !u.ok) { process.stderr.write(`engine10: ${u.note}\n`); return 2; }
     if (u) { Object.assign(env, u.env); cap.usd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? cap.usd; }
   }
-  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const [rt, sl, vc] = await Promise.all([import("../features/speed/route.ts"), import("./stages/seal.ts"), import("./verify_cmd.ts")]); const g = await rt.maybeRunGroup(task, repoDir, process.env, { provider, seal: { receiptSha256: sl.receiptSha256, verifyReceipt: vc.verifyReceipt } }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
+  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const [rt, sl, vc] = await Promise.all([import("../features/speed/route.ts"), import("./stages/seal.ts"), import("./verify_cmd.ts")]); const g = await rt.maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd), { provider, seal: { receiptSha256: sl.receiptSha256, verifyReceipt: vc.verifyReceipt } }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
   if (spec) { // the worker reads the snapshot of exactly the bytes hashed here, never the live file
     mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
     for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
   }
-  env.LOKI_E10_MAX_COST_USD = String(cap.usd); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
+  env.LOKI_E10_MAX_COST_USD = String(cap.usd); const seed = cap.usd > 0 ? priorSpend(repoDir, task) : 0; if (seed > 0) env.LOKI_E10_SPENT_USD = String(seed); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { if (trackerRef) await fetchTrackerIssueToFile(trackerRef, join(runDir, "issue.json")); else fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
@@ -278,7 +278,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
   if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
-  const capLine = !json ? disclosureLine(provider) : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
+  const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {
@@ -368,8 +368,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof baseSha === "string" ? baseSha : null, ds = diffStat(repoDir, hbs);
   let handoffRef = ""; if (!json) { handoffRef = writeHandoff({ requirements: rmap?.requirements ?? null, sinceMs: t0, repoDir, runId, events, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), prUrl: res.prUrl, draft: res.verdict !== "VERIFIED", usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), notProven: res.notProven, task, baseSha: hbs, stats: ds }) ? "review: .loki/review/HANDOFF.md" : ""; } // HANDOFF: written on every outcome; the pointer folds into the last line (D48 cap)
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
-  const rr = resultOf(res.outcome);
-  const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null), uncovered }; 
+  const rr = resultOf(res.outcome); if (res.outcome === "BUDGET_STOP" && cap.usd > 0) writeBudgetStop(repoDir, runId, { task: task.trim(), cap_usd: cap.usd, spent_usd: seed + (usd ?? 0), source: cap.source });
+  const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: res.outcome === "BUDGET_STOP" && cap.usd > 0 ? budgetNext(seed + (usd ?? 0), cap.usd) : nextOf(rr, ds?.files ?? null), uncovered }; 
   const riskLine = readRiskSummary(repoDir, t0); // RISKTIER: this run's recorded tier, deferred checks stated as not run
   process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withRiskLine(handoffRef ? withNextLine(out, ui).replace(/\n$/, `; ${handoffRef}\n`) : withNextLine(out, ui), riskLine, 7, capLine ? 1 : 0)); // D48: default output stays within 8 lines, so the summary collapses to one line
   return res.outcome === "CANCELLED" && res.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : EXIT[res.outcome]; // a SIGTERM cancel keeps the conventional 128+15

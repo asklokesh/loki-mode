@@ -313,19 +313,23 @@ export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.Proce
   return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[2]!.toUpperCase(), LOKI_WRITEBACK_KIND: m[1]! } : env;
 }
 
+/** The engine10 argv for one start (pure; the cap flag reaches the plan route too). */
+export function engineArgv(o: ParsedStartOpts, task: string, forceNoPr: boolean): string[] {
+  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
+  if (o.specPath) argv.push("--spec", o.specPath);
+  if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); return argv; }
+  if (forceNoPr || o.noPr) argv.push("--no-pr");
+  if (o.provider) argv.push("--provider", o.provider);
+  if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); // FC-37: per-run cap, never dropped
+  return argv;
+}
 /** One engine10 run (FC-38: the only engine `start --attempts` may reach; it seals a receipt). */
 async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
   const { existsSync, readFileSync, statSync } = await import("node:fs");
   const spec = o.prdPath;
   const task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
   env = writebackEnv(task, env);
-  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
-  if (o.specPath) argv.push("--spec", o.specPath);
-  if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); return await spawnEngine(cwd, argv, env); }
-  if (forceNoPr || o.noPr) argv.push("--no-pr");
-  if (o.provider) argv.push("--provider", o.provider);
-  if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); // FC-37: per-run cap, never dropped
-  return await spawnEngine(cwd, argv, env);
+  return await spawnEngine(cwd, engineArgv(o, task, forceNoPr), env);
 }
 
 async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
@@ -372,6 +376,12 @@ export async function runStart(args: readonly string[]): Promise<number> {
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
   const { attempts, ...runnerOpts } = parsed;
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
+  const { perAttemptCap, resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
+  // One total for N attempts: each child run gets total/N, so --attempts 3 cannot triple the spend.
+  const total = resolveCap(runnerOpts.budgetLimit !== undefined ? String(runnerOpts.budgetLimit) : null, process.cwd(), process.env);
+  const share = "error" in total ? undefined : perAttemptCap(total.usd, attempts ?? 1);
+  const attemptOpts = share !== undefined && (attempts ?? 1) > 1 ? { ...runnerOpts, budgetLimit: share } : runnerOpts;
+  if (share !== undefined && "usd" in total && (attempts ?? 1) > 1) process.stdout.write(`${capNote(total.usd, total.source)} shared by ${attempts} attempts: $${share.toFixed(2)} each\n`);
   const deps = productionDeps(
     process.cwd(),
     () => runEngine10(process.cwd(), runnerOpts, process.env, false),
@@ -381,7 +391,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
       // Token-free: attempts never push (forced --no-pr; only push-pr after all attempts has credentials), so no attempt process needs GH_TOKEN or SSH_AUTH_SOCK.
       const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki` });
       delete env["LOKI_RUN_TMP"];
-      return runEngine10(wt, runnerOpts, env, true);
+      return runEngine10(wt, attemptOpts, env, true);
     },
     { noPr: runnerOpts.noPr === true },
   );

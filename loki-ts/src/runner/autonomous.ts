@@ -36,6 +36,7 @@ import {
   providerUnavailableFromThrow,
   rollbackLatestCheckpoint,
 } from "./recovery_runtime.ts";
+import { runnerBudget } from "../e10ext/budget_cap.ts";
 import { routeTaskClass, type TaskClass } from "./capability_router.ts";
 // Type-only: erased at build, so the runtime module stays behind the existing
 // graceful dynamic import below.
@@ -1155,6 +1156,7 @@ function makeContext(opts: RunnerOpts): RunnerContext {
       console.log(line);
     }
   };
+  const rb = runnerBudget(opts.budgetLimit, cwd); if (rb.note) log(`[runner] ${rb.note}`); // the runner honors the same default cap as engine10
   return {
     cwd,
     lokiDir,
@@ -1173,7 +1175,7 @@ function makeContext(opts: RunnerOpts): RunnerContext {
     maxWaitSeconds: opts.maxWaitSeconds ?? 3600,
     autonomyMode: opts.autonomyMode ?? "checkpoint",
     sessionModel: opts.sessionModel ?? "sonnet",
-    budgetLimit: opts.budgetLimit,
+    budgetLimit: rb.usd,
     completionPromise: opts.completionPromise,
     iterationCount: 0,
     retryCount: 0,

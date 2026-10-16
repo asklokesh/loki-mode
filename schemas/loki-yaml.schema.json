@@ -63,6 +63,11 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
+        "per_run": {
+          "description": "Alias of per_run_usd (the key the TypeScript run cap reads).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "per_day_usd": {
           "description": "USD per calendar day; backlog stops launching new runs once reached (BUDGET_STOP). Env override: LOKI_BUDGET_PER_DAY_USD.",
           "type": "number",

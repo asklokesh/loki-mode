@@ -4,11 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { capNote, costMeter, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { budgetNext, lastBudgetStop, priorSpend, unenforceableNote, writeBudgetStop, capMeter, capNote, perAttemptCap, runnerBudget, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { childEnv } from "../../src/engine10/session.ts";
+import { watchBudget } from "../../src/providers/provider_guard.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { USAGE } from "../../src/engine10/cli.ts";
-import { START_USAGE } from "../../src/commands/start.ts";
+import { engineArgv, START_USAGE, type ParsedStartOpts } from "../../src/commands/start.ts";
 import { buildProviderCost } from "../../src/providers/provider_cost.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
 
@@ -155,5 +157,121 @@ describe("a model with no known price is unmeasured, never priced by a guess or 
     const rec = buildProviderCost("aider", "totally-unknown-model-x", "p", "Tokens: 1.2k sent, 340 received. Cost: $0.01 message, $0.02 session.");
     expect(rec!.total_cost_usd).toBe(0.02);
     expect(rec!.cost_basis).toBe("provider-dollars");
+  });
+});
+
+describe("group env carries the resolved cap to unit children", () => {
+  test("a positive cap is exported as LOKI_BUDGET_LIMIT without mutating the input", () => {
+    const base = { PATH: "/bin" } as NodeJS.ProcessEnv;
+    const g = groupEnv(base, 5);
+    expect(g.LOKI_BUDGET_LIMIT).toBe("5");
+    expect(g.PATH).toBe("/bin");
+    expect(base.LOKI_BUDGET_LIMIT).toBeUndefined();
+  });
+  test("a subscription run (cap 0) leaves the env untouched", () => {
+    expect(groupEnv({ LOKI_BUDGET_LIMIT: "9" } as NodeJS.ProcessEnv, 0).LOKI_BUDGET_LIMIT).toBe("9");
+    expect(groupEnv({} as NodeJS.ProcessEnv, 0).LOKI_BUDGET_LIMIT).toBeUndefined();
+  });
+  test("supervisor hands the group the capped env, not process.env", () => {
+    expect(readFileSync(resolve(ROOT, "loki-ts/src/engine10/supervisor.ts"), "utf8")).toContain("maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd)");
+  });
+});
+
+describe("live in-session cap", () => {
+  test("meter reports what is left and null without a cap", () => {
+    const m = costMeter(5); m.add(1.5); m.add(null);
+    expect(m.remaining()).toBe(3.5);
+    m.add(10);
+    expect(m.remaining()).toBe(0);
+    expect(costMeter(0).remaining()).toBeNull();
+  });
+  test("capMeter exposes remaining from LOKI_E10_MAX_COST_USD", () => {
+    const { emit, remaining } = capMeter((() => {}) as (t: never, s: never, d: Record<string, unknown>) => void, { LOKI_E10_MAX_COST_USD: "2" } as NodeJS.ProcessEnv);
+    (emit as unknown as (t: string, s: null, d: Record<string, unknown>) => void)("cost", null, { usd: 0.5 });
+    expect(remaining()).toBe(1.5);
+  });
+  test("childBudgetLimit floors a spent cap at 0.01 and passes null through", () => {
+    expect(childBudgetLimit(1.5)).toBe("1.5");
+    expect(childBudgetLimit(0)).toBe("0.01");
+    expect(childBudgetLimit(null)).toBeNull();
+  });
+  test("a session child env carries LOKI_BUDGET_LIMIT <= the cap", () => {
+    const opts = { stage: "implement", brief: "b", tier: "dev", iterationId: "i", limitS: 1, signal: new AbortController().signal } as never;
+    const saved = process.env.LOKI_BUDGET_LIMIT; delete process.env.LOKI_BUDGET_LIMIT;
+    try {
+      const m = costMeter(2); m.add(0.5);
+      expect(Number(childEnv(opts, { provider: "codex", remaining: m.remaining }).LOKI_BUDGET_LIMIT)).toBeLessThanOrEqual(2);
+      expect(childEnv(opts, { provider: "codex", remaining: m.remaining }).LOKI_BUDGET_LIMIT).toBe("1.5");
+      expect(childEnv(opts, { provider: "codex" }).LOKI_BUDGET_LIMIT).toBeUndefined();
+    } finally { if (saved !== undefined) process.env.LOKI_BUDGET_LIMIT = saved; }
+  });
+  test("watchBudget kills once a fake exceeded() turns true", async () => {
+    let hit = false, killed = "";
+    const stop = watchBudget(() => hit, (c) => { killed = c; }, 5);
+    await new Promise((r) => setTimeout(r, 20)); expect(killed).toBe("");
+    hit = true; await new Promise((r) => setTimeout(r, 30));
+    stop(); expect(killed).toBe("budget");
+  });
+});
+
+describe("every start mode honors the one cap", () => {
+  const base = { prdPath: "spec.md" } as ParsedStartOpts;
+  test("spec-first argv carries --max-cost", () => {
+    const a = engineArgv({ ...base, specFirst: true, budgetLimit: 3 }, "do it", false);
+    expect(a.slice(a.indexOf("--max-cost"))).toEqual(["--max-cost", "3"]);
+    expect(a).toContain("plan");
+  });
+  test("plain engine argv still carries --max-cost", () => {
+    expect(engineArgv({ ...base, budgetLimit: 2 }, "t", true)).toEqual([expect.anything(), "engine10", "t", "--no-pr", "--max-cost", "2"]);
+  });
+  test("runner default: explicit wins; API key gives the default; subscription gives none", () => {
+    expect(runnerBudget(4, "/nonexistent", {}).usd).toBe(4);
+    expect(runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x" } as NodeJS.ProcessEnv)).toEqual({ usd: DEFAULT_MAX_COST_USD, note: capNote(DEFAULT_MAX_COST_USD, "default") });
+    expect(runnerBudget(undefined, "/nonexistent", {} as NodeJS.ProcessEnv)).toEqual({ usd: undefined, note: null });
+  });
+  test("attempts split the total: 3 attempts on a $3 cap get $1 each", () => {
+    expect(perAttemptCap(3, 3)).toBe(1);
+    expect(perAttemptCap(1, 3)).toBe(0.33);
+    expect(perAttemptCap(0.01, 5)).toBe(0.01);
+    expect(perAttemptCap(5, 1)).toBe(5);
+    expect(perAttemptCap(undefined, 3)).toBeUndefined();
+    const a = engineArgv({ ...base, budgetLimit: perAttemptCap(3, 3) }, "t", true);
+    expect(a.slice(a.indexOf("--max-cost"))).toEqual(["--max-cost", "1"]);
+  });
+});
+
+describe("budget stop survives a kill-and-rerun", () => {
+  const withRepo = (fn: (repo: string) => void): void => { const d = mkdtempSync(join(tmpdir(), "bcap-")); try { fn(d); } finally { rmSync(d, { recursive: true, force: true }); } };
+  test("a meter seeded with 4 of 5 trips after one more dollar", () => {
+    const emitted: unknown[] = [];
+    const m = capMeter(((t: string, _s: never, d: Record<string, unknown>) => { emitted.push([t, d]); }) as never, { LOKI_E10_MAX_COST_USD: "5", LOKI_E10_SPENT_USD: "4" });
+    expect(m.over()).toBe(false); expect(m.remaining()).toBe(1);
+    (m.emit as unknown as (t: string, s: string, d: Record<string, unknown>) => void)("cost", "implement", { usd: 1 });
+    expect(m.over()).toBe(true);
+  });
+  test("a bad or missing seed is ignored", () => {
+    for (const v of [undefined, "", "abc", "-3"]) expect(capMeter((() => {}) as never, { LOKI_E10_MAX_COST_USD: "5", ...(v === undefined ? {} : { LOKI_E10_SPENT_USD: v }) }).remaining()).toBe(5);
+  });
+  test("budget.json records cap, spent, source and outcome; the same task finds it", () => withRepo((repo) => {
+    writeBudgetStop(repo, "e10-20260101T000000Z-aaaa", { task: "fix the thing", cap_usd: 5, spent_usd: 4.2, source: "--max-cost" });
+    const raw = JSON.parse(readFileSync(join(repo, ".loki", "runs", "e10-20260101T000000Z-aaaa", "budget.json"), "utf8"));
+    expect(raw).toEqual({ task: "fix the thing", cap_usd: 5, spent_usd: 4.2, source: "--max-cost", outcome: "budget_stopped" });
+    expect(priorSpend(repo, " fix the thing ")).toBe(4.2);
+    expect(priorSpend(repo, "another task")).toBe(0);
+    expect(lastBudgetStop(repo)?.runId).toBe("e10-20260101T000000Z-aaaa");
+  }));
+  test("the newest stop for the task wins (its spent is cumulative)", () => withRepo((repo) => {
+    writeBudgetStop(repo, "e10-20260101T000000Z-aaaa", { task: "t", cap_usd: 5, spent_usd: 3, source: "default" });
+    writeBudgetStop(repo, "e10-20260102T000000Z-bbbb", { task: "t", cap_usd: 8, spent_usd: 7, source: "--max-cost" });
+    expect(priorSpend(repo, "t")).toBe(7);
+  }));
+  test("next step names --max-cost; unpriced provider is warned about", () => {
+    expect(budgetNext(4.2, 5)).toContain("raise with --max-cost");
+    expect(unenforceableNote("claude", 5)).toBeNull();
+    expect(unenforceableNote("claude", 0)).toBeNull();
+  });
+  test("supervisor seeds the worker env and writes budget.json on BUDGET_STOP", () => {
+    const src = readFileSync(resolve(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
+    expect(src).toContain("LOKI_E10_SPENT_USD"); expect(src).toContain("writeBudgetStop(");
   });
 });
