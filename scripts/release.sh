@@ -423,11 +423,33 @@ run_release_guard_rows() {
         log_error "RELEASE_GUARD_RED: cannot resolve the temp root"
         exit 3
     }
+    # Sweep guard worktrees an interrupted release (SIGTERM) left registered. Only
+    # entries at <temp root>/loki-guard.*/guard-wt qualify; the parent is removed
+    # only if it is a real (non-symlink) loki-guard.* dir under the temp root.
+    local line stale_wt stale_dir
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree ${tmp_root}"/loki-guard.*/guard-wt) ;;
+            *) continue ;;
+        esac
+        stale_wt="${line#worktree }"
+        stale_dir="$(dirname -- "$stale_wt")"
+        git -C "$ROOT_DIR" worktree remove --force "$stale_wt" >/dev/null 2>&1 || true
+        case "$stale_dir" in
+            "${tmp_root}"/loki-guard.*)
+                if [ -d "$stale_dir" ] && [ ! -L "$stale_dir" ]; then rm -rf -- "$stale_dir"; fi ;;
+        esac
+    done < <(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null)
+    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
     dir="$(mktemp -d "${tmp_root}/loki-guard.XXXXXXXX")" || {
         log_error "RELEASE_GUARD_RED: cannot create the guard temp dir"
         exit 3
     }
-    chmod 700 "$dir" || { rmdir "$dir" 2>/dev/null || true; exit 3; }
+    chmod 700 "$dir" || {
+        log_error "RELEASE_GUARD_RED: cannot chmod 700 the guard temp dir"
+        rmdir "$dir" 2>/dev/null || true
+        exit 3
+    }
     wt="$dir/guard-wt"
     if ! git -C "$ROOT_DIR" worktree add --detach "$wt" HEAD >/dev/null 2>&1; then
         git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
@@ -445,10 +467,10 @@ run_release_guard_rows() {
     out="$(cd "$wt" && env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-300}" \
         bash "$wt/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
     git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
-    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
     case "$dir" in
         "${tmp_root}"/loki-guard.*) if [ ! -L "$dir" ]; then rm -rf -- "$dir"; fi ;;
     esac
+    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
     printf '%s\n' "$out"
     log_info "Guard rows took $(( $(date +%s) - started ))s"
     if [ "$rc" -ne 0 ]; then

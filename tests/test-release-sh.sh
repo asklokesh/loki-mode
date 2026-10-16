@@ -434,6 +434,36 @@ grep -q 'LOKI_RELEASE_GUARD_TIMEOUT:-300' "$REPO_ROOT/scripts/release.sh" && ok 
 grep -q ':-170' "$REPO_ROOT/scripts/release.sh" && bad "170 default still present" || ok "no 170 default"
 
 echo
+echo "T16 -- stale loki-guard.*/guard-wt registrations are reclaimed; unrelated worktrees untouched (REL-GUARD-c)"
+reset_repo2
+T16_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+T16_STALE="$(mktemp -d "${T16_ROOT}/loki-guard.XXXXXXXX")"
+chmod 700 "$T16_STALE"
+git -C "$REPO2" worktree add --detach "$T16_STALE/guard-wt" HEAD >/dev/null 2>&1
+T16_OTHER="$WORK2/unrelated-wt"
+git -C "$REPO2" worktree add --detach "$T16_OTHER" HEAD >/dev/null 2>&1
+git -C "$REPO2" worktree list | grep -q "$T16_STALE/guard-wt" && ok "fixture: stale registration present" || bad "fixture: stale registration missing"
+if run_gate_case tests_red "LOKI_RELEASE_ALLOW_RED=1 GUARD_STUB_RC=0"; then
+    ok "guard run stays green with a stale registration present"
+else
+    bad "guard run failed with stale registration ($(tail -5 "$WORK2/case.log"))"
+fi
+if git -C "$REPO2" worktree list | grep -q "loki-guard\."; then
+    bad "stale guard worktree still registered: $(git -C "$REPO2" worktree list)"
+else
+    ok "stale guard registration removed"
+fi
+[ ! -e "$T16_STALE" ] && ok "stale loki-guard parent dir removed" || bad "stale parent dir remains: $T16_STALE"
+if git -C "$REPO2" worktree list | grep -q "/unrelated-wt " && [ -d "$T16_OTHER" ]; then
+    ok "unrelated worktree untouched"
+else
+    bad "unrelated worktree was removed"
+fi
+git -C "$REPO2" worktree remove --force "$T16_OTHER" >/dev/null 2>&1 || true
+rm -rf -- "$T16_STALE"
+git -C "$REPO2" worktree prune >/dev/null 2>&1 || true
+
+echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]
