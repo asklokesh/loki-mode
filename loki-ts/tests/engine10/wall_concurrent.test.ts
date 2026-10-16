@@ -107,6 +107,24 @@ describe("WC-01b wall concurrent", () => {
     await run(f, s);
     expect(stale).toEqual([1]);
   });
+  it("P12-07d: the sequential Wall path also records start_ms", async () => {
+    const f = fixture(), s = stages(f);
+    s.wall = { name: "wall", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { readOnlyFiles: [] } }) };
+    await run(f, s);
+    expect(typeof f.events.find((e) => e.type === "stage.started" && e.stage === "wall")?.data.start_ms).toBe("number");
+  });
+  it("P12-07d: the machine emits the applied revisions and the wall start so a resume can restore them", async () => {
+    process.env.LOKI_E10_WALL_CONCURRENT = "1";
+    const f = fixture(), s = stages(f, { authorMs: 80 });
+    f.ctx.sessions = { run: async () => ({ exit: 0, durationMs: 1, text: "", stderrTail: "" }) as never };
+    s.implement = { name: "implement", targetS: 1, limitS: 5, run: async (c: RunContext) => {
+      mkdirSync(join(f.repoDir, ".loki"), { recursive: true }); writeFileSync(join(f.repoDir, ".loki", "HUMAN_INPUT.md"), "## Operator directive rev 1 (t) actor=a source=chat\nchange it\n");
+      await sleep(5); await c.sessions.run({ stage: "implement", brief: "b" } as never); return { status: "completed", data: {} };
+    } };
+    await run(f, s);
+    expect((f.events.find((e) => e.type === "intent.revised")?.data.revisions as { rev: number }[]).map((r) => r.rev)).toEqual([1]);
+    expect(typeof f.events.find((e) => e.type === "stage.started" && e.stage === "wall")?.data.start_ms).toBe("number");
+  });
   describe("P12-02b: following the Seal refusal remedy produces a run that seals", () => {
     const HDR = "## Operator directive rev 1 (t) actor=a source=chat\n";
     // Plan consumes a steer present at run start (plan||wall start together), Seal applies the real staleness check.

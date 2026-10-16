@@ -180,7 +180,7 @@ export function firstIncompleteStage(events: readonly EventEnvelope[], completed
   return STAGE_ORDER.find((s) => !(completedOnly ? events.some((e) => e.stage === s && e.type === "stage.completed") : settled(events, s))) ?? null;
 }
 
-export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[] } | { ok: false; reason: string };
+export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[]; intentRevisions: IntentRevision[]; timeline: { stage: "wall"; startMs: number; endMs: number }[] } | { ok: false; reason: string };
 
 /** The stage a resumed run re-enters at. Fail closed: a torn or unreadable log, a seq gap, a finished run, a mixed run id or a stage
  *  recorded as done while an earlier one never settled all refuse. rawLog (the file text) lets a corrupt line be detected. */
@@ -204,7 +204,11 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
   const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
   if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
-  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events) };
+  // P12-07d: durable late-steer state. Nothing seeds ctx from these yet (re-entry is P12-07h); they are parsed here so a future re-entry can restore them.
+  const seen = new Set<number>(), intentRevisions: IntentRevision[] = []; // union of every intent.revised, so a later (forged or empty) event cannot clear an honest one
+  for (const e of events) if (e.type === "intent.revised" && Array.isArray(e.data["revisions"])) for (const r of e.data["revisions"] as IntentRevision[]) if (typeof r === "object" && r !== null && Number.isInteger(r.rev) && Number.isFinite(r.at) && !seen.has(r.rev)) { seen.add(r.rev); intentRevisions.push(r); }
+  const timeline = events.filter((e) => e.type === "stage.started" && e.stage === "wall").map((e) => { const m = e.data["start_ms"], startMs = typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : 0; return { stage: "wall" as const, startMs, endMs: startMs }; }); // unknown start = 0: every revision is stale (fail closed)
+  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events), intentRevisions, timeline };
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
