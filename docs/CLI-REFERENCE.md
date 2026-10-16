@@ -70,6 +70,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki issues run` | Triage and run open issues; split too-large ones into stacked PRs |
 | `loki undo` | Plan or apply an undo of a run |
 | `loki verify-pr` | Verify a PR against its linked issue in a sandbox |
+| `loki verify-pr respond` | Fix open review comments on the PR branch, one commit each, reply with the sha |
 | `loki answer` | Start a follow-up run from a BLOCKED run with your answer |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |

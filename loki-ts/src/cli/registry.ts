@@ -162,7 +162,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { subcommands: [sub("detail", "Trust metrics detail")] }),
   cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing"),
   cmd("contract", "KEEP-MODERN", "bun", "Print the spec delivery contract", "v10 delivery contract", { positionals: [{ name: "spec", type: "path" }] }),
-  cmd("start", "UPDATE", "both", "Run the autonomous build", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
+  cmd("start", "UPDATE", "both", "Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md)", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),
   cmd("queue", "KEEP-MODERN", "bun", "Overnight issue queue with a morning digest", "Governor-aware batch of issue-mode runs", { subcommands: [sub("add", "Queue issue refs", { positionals: [{ name: "issue", type: "string" }] }), sub("list", "Show the queue"), sub("run", "Process the queue", { flags: [bool("--no-pr", "Do not open pull requests")] })] }),
   cmd("issues", "KEEP-MODERN", "bun", "Run every open issue in a repo and open PRs", "Mass issue pickup on the T7 queue", {
@@ -173,7 +173,7 @@ export const REGISTRY: readonly CmdSpec[] = [
     })],
   }),
   cmd("undo", "KEEP-MODERN", "bun", "Plan or apply an undo of a run", "UNDO-1/2: --plan is read-only, apply behind LOKI_UNDO=1", { flags: [bool("--plan", "Read-only plan"), bool("--json", "JSON plan (with --plan)"), bool("--allow-unsigned", "Accept an unsigned receipt (with --plan)"), bool("--yes", "Skip the confirm prompt"), bool("--close-pr", "Also close the PR")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
-  cmd("verify-pr", "KEEP-MODERN", "bun", "Verify a PR against its linked issue in a sandbox", "VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1", { flags: [{ name: "--out", type: "path", desc: "Result directory" }], positionals: [{ name: "pr", type: "string" }] }),
+  cmd("verify-pr", "KEEP-MODERN", "bun", "Verify a PR against its linked issue in a sandbox", "VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1", { flags: [{ name: "--out", type: "path", desc: "Result directory" }], positionals: [{ name: "pr", type: "string" }], subcommands: [sub("respond", "Fix open review comments on the PR branch, one commit each, reply with the sha", { positionals: [{ name: "pr", type: "string" }] })] }),
   cmd("answer", "KEEP-MODERN", "bun", "Start a follow-up run from a BLOCKED run with your answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {
     subcommands: [sub("run", "Run the v10 engine"), sub("status", "v10 status"), sub("verify", "v10 verify"), sub("keys", "v10 keys"), sub("dashboard", "v10 dashboard"), sub("modernize", "v10 modernize")],
@@ -273,7 +273,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   legacy("trigger", "Event triggers", "Legacy engine"),
   legacy("failover", "Provider failover", "Legacy engine"),
   legacy("reset", "Reset legacy state", "Legacy engine"),
-  legacy("merge", "Merge parallel worktrees", "Legacy parallel mode"),
+  legacy("merge", "Gated PR merge queue (pr, watch, run); also merges parallel worktrees", "Bash PR merge gate"),
   legacy("heal", "Legacy healing", "Legacy engine"),
   legacy("migrate", "Legacy migration", "Superseded by modernize"),
   legacy("dogfood", "Dogfood run", "Legacy engine"),
