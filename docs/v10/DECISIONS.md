@@ -814,3 +814,11 @@ Standing: from this grant on, the CoS decides founder-queue items without waitin
 10. M-27 Legacy-Bench pilot: use the public set named in MODERNIZE.md; calibrate the cap from the first 3 pilot runs inside the C-F1 cap.
 11. M-27E defaults: D1 (multi-file units NOT_PROVEN), D2 (a wave with no detected integration tests verifies with a warning; build and original suite still block) and D3 (overflow goes to util/, the modernize/ cap stays 4,000) are adopted as built.
 12. P12-13b journeys: the U1-U8 list is confirmed as the journey set; add the gh pr edit and comment stubs.
+
+## D100 (2026-10-16, CTO call under D99, CoS records): features cap raised from 3,000 to 3,300 lines
+- FC-09u round 1 HIGH review reproduced 7 bypasses of a hand-rolled YAML key reader in runner_config.ts. The builder had folded that code onto a single line of about 600 characters to stay under the D66 features cap, and the folded code hid the bypasses.
+- The parser-based round 2 fix, unfolded, takes src/features to 3,012 lines.
+- Rejected: folding again, which hurts review. Also rejected: moving the helper into src/util only to dodge the cap, which games the gate.
+- Rule: never fold code to fit a cap. When a correct, readable change crosses a cap, the cap owner raises it in the same slice and records why.
+- Unchanged: the engine10 core cap (D29, D33), the e10ext cap (D42) and the contrib cap.
+- Reverse: lower the cap back once A-150 or a features split frees lines.
