@@ -7,10 +7,10 @@ import { basename, join, relative } from "node:path";
 
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 
-/** LOKI_WALL_HOLDOUT_RATIO: default 0.2, 0 disables, an unparseable value falls back to the default, capped at 0.9. */
+/** LOKI_WALL_HOLDOUT_RATIO: default 0 (off, opt-in; founder decision C-C4 pending), e.g. 0.2 holds out ~20%, an unparseable value is off, capped at 0.9. */
 export function wallHoldoutRatio(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return 0.2;
-  const r = Number(raw); return Number.isFinite(r) && r >= 0 ? Math.min(r, 0.9) : 0.2;
+  const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return 0;
+  const r = Number(raw); return Number.isFinite(r) && r >= 0 ? Math.min(r, 0.9) : 0;
 }
 
 /** Deterministic split ranked by sha256(seed:id). Count is max(1, round(ratio*N)) for N >= min, else none; ids keep input order. */
@@ -20,6 +20,11 @@ export function holdoutSplit(seed: string, ids: string[], opts: { ratio: number;
   const held = new Set(ranked.slice(0, Math.max(1, Math.round(opts.ratio * ids.length))).map((r) => r.id));
   return ids.filter((id) => held.has(id));
 }
+
+/** The one exact store path for a run (never a glob). */
+export const holdoutDirFor = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-holdout-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
+/** Run-end cleanup: removes only this run's store. */
+export function removeHoldout(runId: string, repoDir: string): void { rmSync(holdoutDirFor(runId, repoDir), { recursive: true, force: true }); }
 
 interface HoldoutManifest { targetDir: string; files: { name: string; runner: string; sha256: string }[]; }
 const MANIFEST = "manifest.json";
@@ -32,7 +37,7 @@ export function stashHoldout(o: { runId: string; repoDir: string; srcDir: string
   const eligible = o.names.filter((n) => o.runnerOf(n) !== null);
   const held = holdoutSplit(o.runId, eligible, { ratio: wallHoldoutRatio(), min: WALL_HOLDOUT_MIN });
   if (held.length === 0) return null;
-  const dir = join(tmpdir(), `loki-e10-holdout-${sha(`${o.runId}:${o.repoDir}`).slice(0, 16)}`);
+  const dir = holdoutDirFor(o.runId, o.repoDir);
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files = held.map((name) => {
     copyFileSync(join(o.srcDir, name), join(dir, name)); rmSync(join(o.srcDir, name), { force: true });

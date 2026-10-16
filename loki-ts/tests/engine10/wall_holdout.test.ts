@@ -1,18 +1,20 @@
 // P12-05: Wall holdout. A deterministic subset of the Wall tests never reaches the repo, runDir or the implementer;
 // verify copies them in under neutral names, runs them as blocking holdout:N checks, and removes them.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { holdoutSplit, wallHoldoutRatio } from "../../src/util/holdout.ts";
+import { runMachine } from "../../src/engine10/machine.ts";
+import { holdoutDirFor, holdoutSplit, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunOptions, StageName, TestRef } from "../../src/engine10/types.ts";
 
 const dirs: string[] = [];
-const saved = undefined as string | undefined; delete process.env["LOKI_WALL_HOLDOUT_RATIO"];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); if (saved === undefined) delete process.env["LOKI_WALL_HOLDOUT_RATIO"]; else process.env["LOKI_WALL_HOLDOUT_RATIO"] = saved; });
+const saved = process.env["LOKI_WALL_HOLDOUT_RATIO"]; process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0.2"; // holdout is opt-in; this suite turns it on explicitly
+afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0.2"; });
+afterAll(() => { if (saved === undefined) delete process.env["LOKI_WALL_HOLDOUT_RATIO"]; else process.env["LOKI_WALL_HOLDOUT_RATIO"] = saved; });
 const git = (cwd: string, args: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const RUN = "e10-holdout";
 const names = (n: number): string[] => Array.from({ length: n }, (_, i) => `loki_wall_f${i + 1}.test.ts`);
@@ -50,11 +52,12 @@ describe("holdout selector", () => {
     expect(holdoutSplit("r1", ids, { ratio: 0, min: 3 })).toEqual([]);
     expect(new Set(Array.from({ length: 20 }, (_, i) => holdoutSplit(`run${i}`, ids, { ratio: 0.2, min: 3 })[0])).size).toBeGreaterThan(1); // seed matters
   });
-  test("ratio env: default 0.2, 0 disables, garbage falls back", () => {
-    expect(wallHoldoutRatio({})).toBe(0.2);
+  test("ratio env: default 0 (off), explicit value opts in, garbage is off", () => {
+    expect(wallHoldoutRatio({})).toBe(0);
+    expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "0.2" })).toBe(0.2);
     expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "0" })).toBe(0);
     expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "0.4" })).toBe(0.4);
-    expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "abc" })).toBe(0.2);
+    expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "abc" })).toBe(0);
   });
 });
 
@@ -107,4 +110,25 @@ describe("Wall holdout end to end", () => {
     const v = await verifyStage.run(mkCtx(repoDir, base, [], r.data), new AbortController().signal);
     expect((v.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout:store")?.result).toBe("fail");
   }, 60_000);
+});
+
+describe("holdout store cleanup", () => {
+  const stash = (): { repoDir: string; dir: string } => {
+    const { repoDir } = mkRepo(), src = join(repoDir, "wallsrc"); mkdirSync(src);
+    for (const n of names(5)) writeFileSync(join(src, n), testSrc(1));
+    const h = stashHoldout({ runId: RUN, repoDir, srcDir: src, targetDir: join(repoDir, "tests"), names: names(5), runnerOf: () => "bun" });
+    expect(h).not.toBeNull(); expect(h!.dir).toBe(holdoutDirFor(RUN, repoDir)); expect(existsSync(h!.dir)).toBe(true);
+    return { repoDir, dir: h!.dir };
+  };
+  const stub = (status: "completed" | "failed") => ({ load: async (n: StageName) => ({ name: n, targetS: 5, limitS: 30, run: async () => ({ status, data: {} }) }) as never, flow: ["intake"] as never });
+  test("removed after a sealed (completed) run", async () => {
+    const { repoDir, dir } = stash(); const ctx = mkCtx(repoDir, "x", []);
+    const r = await runMachine(ctx, stub("completed")); expect(r.stopped).toBeNull();
+    expect(existsSync(dir)).toBe(false);
+  });
+  test("removed after a failed terminal run", async () => {
+    const { repoDir, dir } = stash(); const ctx = mkCtx(repoDir, "x", []);
+    const r = await runMachine(ctx, stub("failed")); expect(r.stopped).toBe("intake failed");
+    expect(existsSync(dir)).toBe(false);
+  });
 });
