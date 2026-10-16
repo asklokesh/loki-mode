@@ -380,6 +380,26 @@ LOKI_FIRSTPASS_EOF
     fi
 }
 
+# P12-26: LOKI_PERMISSION_POLICY=compiled swaps --dangerously-skip-permissions for
+# --permission-mode / --allowedTools / --disallowedTools compiled from the task policy
+# by src/policies/claude_permissions.js (shared with the TS route). Unset = unchanged.
+# Result lands in _LOKI_PERM_ARGV. A compile failure fails closed to plan mode.
+_loki_claude_permission_argv() {
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    local _helper _out _a
+    _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/policies/claude_permissions.js"
+    _LOKI_PERM_ARGV=(--permission-mode plan)
+    if ! command -v node >/dev/null 2>&1 || [ ! -f "$_helper" ]; then
+        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: compiler unavailable; using most restrictive mode (plan)" >&2
+        return 0
+    fi
+    _out="$(node "$_helper" "${LOKI_PROJECT_DIR:-$PWD}")" || return 0
+    [ -n "$_out" ] || return 0
+    _LOKI_PERM_ARGV=()
+    while IFS= read -r _a; do _LOKI_PERM_ARGV+=("$_a"); done <<< "$_out"
+}
+
 # Invocation function (basic, no tier).
 # Auto-flags use development tier defaults.
 provider_invoke() {
@@ -391,7 +411,8 @@ provider_invoke() {
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
     # nothing when unset/empty and preserves spaced elements otherwise.
     loki_model_route_prefix
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    _loki_claude_permission_argv
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -434,9 +455,10 @@ provider_invoke_argv() {
     # is base -> route -> clamp -> alt-provider in one call; keep both paths on it.
     model="$(resolve_model_for_tier "$tier" 2>/dev/null || provider_get_tier_param "$tier")"
     loki_model_route_prefix
+    _loki_claude_permission_argv
     _LOKI_INVOKE_ARGV=(
         "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}"
-        claude --dangerously-skip-permissions
+        claude "${_LOKI_PERM_ARGV[@]}"
         "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
     )
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
@@ -670,5 +692,6 @@ provider_invoke_with_tier() {
     # "${arr[@]}" on an empty array aborts with "unbound variable". ${arr[@]+...}
     # expands to nothing when empty and preserves spaced elements otherwise.
     loki_model_route_prefix
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    _loki_claude_permission_argv
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }

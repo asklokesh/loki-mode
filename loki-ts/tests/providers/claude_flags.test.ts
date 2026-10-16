@@ -18,6 +18,7 @@ import {
   fallbackForPrimary,
   claudeFlagSupported,
   buildAutoFlags,
+  permissionArgv,
   claudeSessionUuid,
   claudeIterationSessionUuid,
   sessionStampArgv,
@@ -718,5 +719,90 @@ describe("claude_flags Phase 2 resume (#165)", () => {
     seed("not-a-uuid");
     process.env[RESUME] = "1";
     expect(sessionResumeArgv(dir)).toEqual([]);
+  });
+});
+
+// P12-26: LOKI_PERMISSION_POLICY=compiled. Both routes share
+// src/policies/claude_permissions.js; the bash route is exercised for parity.
+describe("claude_flags.permissionArgv (P12-26)", () => {
+  let repo: string;
+  const SKIP = ["--dangerously-skip-permissions"];
+  const noManaged = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
+    PATH: process.env["PATH"],
+    HOME: repo,
+    LOKI_MANAGED_SETTINGS: join(repo, "no-such-managed.json"),
+    LOKI_PERMISSION_POLICY: "compiled",
+    ...extra,
+  });
+  const writePolicy = (p: unknown): void => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.json"), typeof p === "string" ? p : JSON.stringify(p));
+  };
+  const bashArgv = (env: NodeJS.ProcessEnv): string[] => {
+    const root = join(import.meta.dir, "../../..");
+    const r = Bun.spawnSync(
+      ["bash", "-c", `source "${root}/providers/claude.sh" 2>/dev/null; _loki_claude_permission_argv; printf '%s\\n' "\${_LOKI_PERM_ARGV[@]}"`],
+      { env: { ...env, LOKI_PROJECT_DIR: repo }, cwd: repo },
+    );
+    return r.stdout.toString().split("\n").filter((l) => l.length > 0);
+  };
+  beforeEach(() => { repo = mkdtempSync(join(tmpdir(), "perm-pol-")); });
+  afterEach(() => { rmSync(repo, { recursive: true, force: true }); });
+
+  it("default (flag unset) keeps skip-permissions on both routes", () => {
+    const env = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    expect(permissionArgv(repo, env)).toEqual(SKIP);
+    expect(bashArgv(env)).toEqual(SKIP);
+  });
+
+  it("compiled: mode + allow/deny lists, identical on both routes", () => {
+    writePolicy({ policies: { claude_permissions: { mode: "acceptEdits", allow: ["Read", "Bash(git diff:*)"], deny: ["Bash(rm:*)"] } } });
+    const want = ["--permission-mode", "acceptEdits", "--allowedTools", "Read,Bash(git diff:*)", "--disallowedTools", "Bash(rm:*)"];
+    expect(permissionArgv(repo, noManaged())).toEqual(want);
+    expect(bashArgv(noManaged())).toEqual(want);
+  });
+
+  it("deny always wins over allow", () => {
+    writePolicy({ claude_permissions: { mode: "default", allow: ["Read", "Bash(rm:*)"], deny: ["Bash(rm:*)"] } });
+    const a = permissionArgv(repo, noManaged());
+    expect(a).toEqual(["--permission-mode", "default", "--allowedTools", "Read", "--disallowedTools", "Bash(rm:*)"]);
+    expect(bashArgv(noManaged())).toEqual(a);
+  });
+
+  it("managed settings cap the mode; never more permissive", () => {
+    writePolicy({ claude_permissions: { mode: "bypassPermissions" } });
+    const managed = join(repo, "managed.json");
+    writeFileSync(managed, JSON.stringify({ permissions: { defaultMode: "default", deny: ["Bash(curl:*)"] } }));
+    const env = noManaged({ LOKI_MANAGED_SETTINGS: managed });
+    const want = ["--permission-mode", "default", "--disallowedTools", "Bash(curl:*)"];
+    expect(permissionArgv(repo, env)).toEqual(want);
+    expect(bashArgv(env)).toEqual(want);
+    // a more restrictive policy is left alone
+    writePolicy({ claude_permissions: { mode: "plan" } });
+    expect(permissionArgv(repo, env).slice(0, 2)).toEqual(["--permission-mode", "plan"]);
+  });
+
+  it("managed disableBypassPermissionsMode caps bypass at acceptEdits", () => {
+    writePolicy({ claude_permissions: { mode: "bypassPermissions" } });
+    const managed = join(repo, "managed.json");
+    writeFileSync(managed, JSON.stringify({ permissions: { disableBypassPermissionsMode: "disable" } }));
+    expect(permissionArgv(repo, noManaged({ LOKI_MANAGED_SETTINGS: managed })).slice(0, 2)).toEqual(["--permission-mode", "acceptEdits"]);
+  });
+
+  it("invalid policy fails closed to plan with a warning, never skip-permissions", () => {
+    for (const bad of ["{not json", { claude_permissions: { mode: "yolo" } }, { claude_permissions: { allow: "Read" } }]) {
+      writePolicy(bad);
+      const warns: string[] = [];
+      const a = permissionArgv(repo, noManaged(), (m) => warns.push(m));
+      expect(a).toEqual(["--permission-mode", "plan"]);
+      expect(warns.length).toBe(1);
+      expect(bashArgv(noManaged())).toEqual(["--permission-mode", "plan"]);
+    }
+  });
+
+  it("unreadable managed settings fail closed to plan", () => {
+    const managed = join(repo, "managed.json");
+    writeFileSync(managed, "{broken");
+    expect(permissionArgv(repo, noManaged({ LOKI_MANAGED_SETTINGS: managed }), () => {})).toEqual(["--permission-mode", "plan"]);
   });
 });
