@@ -564,6 +564,10 @@ describe("respondToReview", () => {
     sh(clone, "remote", "set-url", "origin", "https://github.com/o/r.git");
     defaultRespondPush(clone, "feat", fake);
     expect(readFileSync(envOut, "utf8").trim()).toBe("1|https://github.com/o/r.git");
+    // an explicitly passed origin (the value read before the fix) is pinned even when the checkout now says otherwise
+    sh(clone, "remote", "set-url", "origin", "https://github.com/evil/r.git");
+    defaultRespondPush(clone, "feat", fake, "https://github.com/o/r.git");
+    expect(readFileSync(envOut, "utf8").trim()).toBe("1|https://github.com/o/r.git");
   });
 
   it("a fix that edits nothing gets no commit and no reply; max bounds the work", async () => {
