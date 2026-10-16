@@ -1607,5 +1607,17 @@ assert tok is None, "a real session with no cost record must still be unknown"
 PY
 then pass "D62-VIS-F1 F2: visual-evidence pgid announcements are ignored when matching sessions to cost records"
 else fail "D62-VIS-F1 F2: group announcement counted as a provider session"; fi
+# ---- 22. (P12-30, M5) predeclared task families: one authored fam- manifest per
+# family, all valid, each seeded by setup so the hidden test grades behavior.
+fam_want="api-migration ci-failure flaky incident review-response staging ui"
+fam_have=""
+for d in "$HERE"/tasks/fam-*; do [ -d "$d" ] && fam_have="${fam_have:+$fam_have }${d##*/fam-}"; done
+[ "$fam_have" = "$fam_want" ] && pass "P12-30: the 7 predeclared families have a fam- manifest" \
+    || fail "P12-30: fam- families '$fam_have' want '$fam_want'"
+fam_dirs=("$HERE"/tasks/fam-*)
+fam_out="$(H validate "${fam_dirs[@]}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "${#fam_dirs[@]}" = 7 ] && pass "P12-30: every fam- task passes the validator" \
+    || fail "P12-30: fam- validate rc=$rc: $fam_out"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -1,0 +1,18 @@
+{
+  "id": "fam-api-migration",
+  "kind": "quickstart",
+  "prompt": "api.py was upgraded: get_user(uid) was removed and replaced by fetch_user(user_id), which returns {'data': {'name': ...}} instead of a bare dict. Migrate client.py to the new API so display_name(1) still returns 'Ada'. Do not edit api.py.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "python3 -c \"import base64;open('api.py','wb').write(base64.b64decode('VVNFUlMgPSB7MTogJ0FkYSd9CgpkZWYgZmV0Y2hfdXNlcih1c2VyX2lkKToKICAgIHJldHVybiB7J2RhdGEnOiB7J25hbWUnOiBVU0VSU1t1c2VyX2lkXX19Cg=='))\"; python3 -c \"import base64;open('client.py','wb').write(base64.b64decode('aW1wb3J0IGFwaQoKZGVmIGRpc3BsYXlfbmFtZSh1aWQpOgogICAgcmV0dXJuIGFwaS5nZXRfdXNlcih1aWQpWyduYW1lJ10K'))\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_fam.py"
+    ],
+    "run": "python3 tests_hidden/test_fam.py"
+  },
+  "timeout_s": 900
+}
