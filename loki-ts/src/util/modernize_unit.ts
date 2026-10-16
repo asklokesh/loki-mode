@@ -1,7 +1,8 @@
 // M-23: the worker side of `loki modernize unit` (remote unit job). Lives in util/ because modernize/ is at its
 // D33 line cap; modernize/cli.ts only routes here. One unit runs through the existing runUnit (M-15) inside a
 // run-owned temp checkout of repo@ref, fetched with safe_git (hooks, fsmonitor, ext:: off). Exit 0 only on PROVEN.
-import { existsSync, lstatSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog } from "../engine10/modernize/log.ts";
@@ -14,7 +15,10 @@ import type { CollectRunner } from "./python.ts";
 import type { Implementer, UnitCard, UnitRunResult } from "../engine10/modernize/unit.ts";
 import type { BaseConformanceRunner } from "../engine10/modernize/presealed_wall.ts";
 import type { NewCaseRunner } from "../engine10/modernize/equiv.ts";
-import { safeGit } from "./safe_git.ts";
+import { safeGit, tokenFreeEnv } from "./safe_git.ts";
+import { childEnv } from "../engine10/session.ts";
+import { REPO_ROOT } from "./paths.ts";
+import type { CaseRecord, NewCaseOutcome } from "../engine10/modernize/equiv.ts";
 
 export const UNIT_USAGE = "loki modernize unit --repo <owner/name> --ref <ref> --unit <id> [--mid <mid>] [--target <target>]";
 const FETCH_TIMEOUT_MS = 300_000;
@@ -57,7 +61,7 @@ export function fetchRepoRef(repo: string, ref: string, dest: string, urlFor: (r
   }
 }
 
-/** Runners for one unit. Implementer and new-tree runner have no production wiring yet: absence is a nonzero exit, never a fake pass. */
+/** Runners for one unit. makeUnitRunners below is the default for implement and runNew; the fields stay injectable for tests. */
 export interface UnitDeps {
   runUnit?: typeof runUnit; runConformance?: BaseConformanceRunner; implement?: Implementer;
   runNew?: NewCaseRunner; runStub?: NewCaseRunner; collect?: CollectRunner;
@@ -67,17 +71,83 @@ export interface UnitDeps {
   tmpRoot?: string;
 }
 
+export interface UnitRunnerOpts {
+  target: ModernizeTarget;
+  /** Provider for the implement session; default LOKI_E10_PROVIDER, else claude (same resolution as the engine10 session child). */
+  provider?: string;
+  /** Source file of a unit inside the new tree (absolute). Default: the unit id read as a repo-relative .py path. */
+  unitFile?: (unitId: string, newTreeDir: string) => string | null;
+  /** Injectable for tests; default spawns the engine10 session child synchronously. */
+  session?: (brief: string, cwd: string, env: NodeJS.ProcessEnv) => { status: number | null };
+  pythonBin?: string;
+  sessionLimitS?: number;
+}
+
+const SESSION_LIMIT_S = 1800;
+const CASE_TIMEOUT_MS = 60_000;
+
+function unitBrief(card: UnitCard): string {
+  return [
+    `Modernize unit ${card.unit} to ${card.target} in this checkout, preserving behavior exactly.`,
+    card.files?.length ? `Change only these paths: ${card.files.join(", ")}.` : "Change only the files that make up this unit.",
+    "The sealed oracle and every test file are read-only: never edit them.",
+    "Finish when the unit runs under the target runtime and its existing tests pass.",
+  ].join("\n");
+}
+
+/** One factory for the per-unit implementer and new-tree case runner, shared by the local coordinator and `loki modernize unit`.
+ *  implement runs the same engine10 session child the implement stage uses (provider resolution included). runNew replays one
+ *  oracle case against the new tree; a target with no runner throws, so every case is NOT_PROVEN and nothing is faked. */
+export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; runNew: NewCaseRunner } {
+  const provider = o.provider ?? process.env["LOKI_E10_PROVIDER"] ?? "claude";
+  const limitS = o.sessionLimitS ?? SESSION_LIMIT_S;
+  const cli = import.meta.path.endsWith("modernize_unit.ts") ? join(import.meta.dir, "..", "cli.ts") : import.meta.path;
+  const session = o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
+  const implement: Implementer = (card) => {
+    const cwd = card.newTreeDir ?? card.repoDir;
+    const brief = unitBrief(card);
+    const env = tokenFreeEnv(childEnv({ stage: "implement", brief, tier: "development", iterationId: `modernize-${card.mid}-${card.unit}`, limitS, signal: new AbortController().signal, cwd }, { provider })); // the implement agent never holds a GitHub credential
+    const r = session(brief, cwd, env);
+    if (r.status !== 0) throw new Error(`implement session for unit ${card.unit} exited ${r.status === null ? "without a status (killed or timed out)" : r.status}`);
+  };
+  const runNew: NewCaseRunner = (unitId, newTreeDir, rec) => {
+    if (o.target !== "python3") throw new Error(`no new-tree runner for target ${o.target}`);
+    return runPythonCase(o, unitId, newTreeDir, rec);
+  };
+  return { implement, runNew };
+}
+
+/** Replays one oracle case against the new tree with the same tracer that captured it (py_capture.py), so old and new are tagged identically. */
+function runPythonCase(o: UnitRunnerOpts, unitId: string, newTreeDir: string, rec: CaseRecord): NewCaseOutcome {
+  const src = o.unitFile ? o.unitFile(unitId, newTreeDir) : join(newTreeDir, unitId);
+  if (!src || !src.endsWith(".py") || !existsSync(src)) throw new Error(`cannot locate the source of unit ${unitId} in the new tree`);
+  const dir = mkdtempSync(join(tmpdir(), "loki-newcase-"));
+  try {
+    const cases = join(dir, "in.jsonl"), out = join(dir, "out.jsonl");
+    writeFileSync(cases, JSON.stringify({ entry: rec.entry, args: rec.args, kwargs: rec.kwargs }) + "\n", "utf8");
+    const r = spawnSync(o.pythonBin ?? "python3", [join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py"), "--unit", src, "--cases", cases, "--out", out],
+      { cwd: newTreeDir, encoding: "utf8", timeout: CASE_TIMEOUT_MS, env: { ...tokenFreeEnv(), PYTHONDONTWRITEBYTECODE: "1" } });
+    if (r.status !== 0 || !existsSync(out)) throw new Error(`new-tree case runner failed (${r.status ?? r.signal ?? "no status"}): ${String(r.stderr ?? "").trim().split("\n").pop() ?? ""}`);
+    const line = readFileSync(out, "utf8").split("\n").find((l) => l.trim() !== "");
+    if (!line) throw new Error("new-tree case runner produced no record");
+    const got = JSON.parse(line) as CaseRecord;
+    if (got.not_proven.length > 0) throw new Error(`new-tree case not provable: ${got.not_proven.join("; ")}`);
+    return { return: got.return, exc: got.exc, stdout: got.stdout, files: got.files };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const isRealDir = (p: string): boolean => { try { return !lstatSync(p).isSymbolicLink() && statSync(p).isDirectory(); } catch { return false; } };
 
-/** `loki modernize unit`: exit 0 only on PROVEN; bad args or unwired runners exit 2; checkout or runner failure and any other verdict exit 1, reason on stderr. */
+/** `loki modernize unit`: exit 0 only on PROVEN; bad args exit 2; checkout or runner failure and any other verdict exit 1, reason on stderr. */
 export async function unitMain(args: readonly string[], deps: { makeId?: () => string; now?: () => string; unit?: UnitDeps } = {}): Promise<number> {
   const parsed = parseUnitArgs(args);
   if (!parsed.ok) { process.stderr.write(`modernize unit: ${parsed.error}\nUsage: ${UNIT_USAGE}\n`); return 2; }
   const o = parsed.opts;
   const u = deps.unit ?? {};
-  if (!u.implement || !u.runNew) {
-    process.stderr.write(`modernize unit: the implementer and new-tree case runners are not wired yet; cannot run unit ${o.unit}\n`); return 2;
-  }
+  const runners = u.implement && u.runNew ? null : makeUnitRunners({ target: o.target });
+  const implement = u.implement ?? runners!.implement, runNew = u.runNew ?? runners!.runNew;
   const runTmp = process.env["LOKI_RUN_TMP"] ?? "";
   const root = u.tmpRoot ?? (runTmp !== "" && isRealDir(runTmp) ? runTmp : tmpdir());
   let repoDir: string;
@@ -94,7 +164,7 @@ export async function unitMain(args: readonly string[], deps: { makeId?: () => s
     const card: UnitCard = { unit: o.unit, repoDir, mid, target: o.target, normalizers: DEFAULT_NORMALIZERS };
     let result: UnitRunResult;
     try {
-      result = (u.runUnit ?? runUnit)(card, log, u.runConformance ?? makePytestBaseRunner(), u.implement, u.runNew, u.runStub, u.collect ?? makePytestCollector());
+      result = (u.runUnit ?? runUnit)(card, log, u.runConformance ?? makePytestBaseRunner(), implement, runNew, u.runStub, u.collect ?? makePytestCollector());
     } catch (e) {
       process.stderr.write(`modernize unit: ${o.unit} failed: ${e instanceof Error ? e.message : String(e)}\n`); return 1;
     }

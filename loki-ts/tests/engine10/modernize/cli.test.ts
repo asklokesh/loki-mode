@@ -199,14 +199,15 @@ describe("main", () => {
     expect(types).toEqual(["modernize.started", "inventory.completed", "estimate.printed"]);
   });
 
-  it("python3 without --dry-run prints the estimate then stops before oracle capture (not built yet)", async () => {
+  it("python3 without --dry-run prints the estimate then fails closed naming each unbuilt dependency", async () => {
     const mid = "mod-20260928T000000Z-000003";
     const cap = captureStd();
     const code = await main([PY_FIXTURE, "--to", "python3"], { makeId: () => mid });
     cap.restore();
     expect(code).toBe(2);
     expect(cap.out).toContain("units:"); // the estimate is real work already done, not withheld
-    expect(cap.err).toContain("not built yet");
+    expect(cap.err).toMatch(/not built|remote\.origin\.url|base commit/);
+    if (/not built/.test(cap.err)) for (const name of ["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]) expect(cap.err).toContain(name);
   });
 
   it("--resume reuses the given modernization id instead of minting a new one", async () => {
@@ -314,7 +315,7 @@ describe("modernize unit subcommand (M-23)", () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it("exits nonzero with the reason on NOT_PROVEN, a throw, and unwired runners", async () => {
+  it("exits nonzero with the reason on NOT_PROVEN, and a throw", async () => {
     const root = mkdtempSync(join(tmpdir(), "m23-"));
     try {
       const base = { ...wired, tmpRoot: root, checkout: () => {} };
@@ -328,20 +329,30 @@ describe("modernize unit subcommand (M-23)", () => {
       cap.restore();
       expect(code).toBe(1);
       expect(cap.err).toContain("boom");
-      cap = captureStd();
-      code = await unitMain(ARGS, { unit: { tmpRoot: root } });
-      cap.restore();
-      expect(code).toBe(2);
-      expect(cap.err).toContain("not wired");
+      // No runners injected: unitMain builds the real ones from makeUnitRunners and hands them to runUnit.
+      type Got = { implement: unknown; runNew: (u: string, d: string, r: never) => unknown };
+      const reach = async (args: string[]): Promise<Got> => {
+        let got: Got | undefined;
+        const c2 = captureStd();
+        await unitMain(args, { unit: { tmpRoot: root, checkout: () => {}, runUnit: ((_c: unknown, _l: unknown, _r: unknown, implement: unknown, runNew: Got["runNew"]) => { got = { implement, runNew }; return result("PROVEN"); }) as never } });
+        c2.restore();
+        return got!;
+      };
+      const py = await reach(ARGS);
+      expect(typeof py.implement).toBe("function");
+      expect(() => py.runNew("missing.py", root, { entry: "f", args: [], kwargs: {} } as never)).toThrow("cannot locate the source of unit missing.py");
+      const java = await reach(ARGS.map((a) => (a === "python3" ? "java21" : a)));
+      expect(() => java.runNew("U", root, {} as never)).toThrow("no new-tree runner for target java21");
       expect(readdirSync(root)).toEqual([]);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it("the shipped bin/loki routes `modernize unit` to the Bun CLI and reaches unitMain (not wired, rc 2)", () => {
+  it("the shipped bin/loki routes `modernize unit` to the Bun CLI and reaches the real runner path (fails at checkout, rc 1, never \"not wired\")", () => {
     const loki = join(import.meta.dir, "..", "..", "..", "..", "bin", "loki");
     const r = Bun.spawnSync(["bash", loki, "modernize", "unit", "--repo", "a/b", "--ref", "main", "--unit", "u1"], { env: { ...process.env, LOKI_NO_BROWSER: "1" } });
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr.toString()).toContain("not wired yet; cannot run unit u1");
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain("cannot check out a/b@main");
+    expect(r.stderr.toString()).not.toContain("not wired");
     const bad = Bun.spawnSync(["bash", loki, "modernize", "unit", "--repo", "a/b"], { env: { ...process.env, LOKI_NO_BROWSER: "1" } });
     expect(bad.exitCode).toBe(2);
     expect(bad.stderr.toString()).toContain("missing --ref");
