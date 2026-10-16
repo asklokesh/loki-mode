@@ -502,6 +502,22 @@ describe("composite receipt", () => {
     rmSync(join(dir, "integration.log"));
     expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/integration\.log/);
   });
+  test("seal and verify print every repo head SHA and the integration result", async () => {
+    const dir = writeWs("show", KIDS, {}, "ok\n");
+    let out = "";
+    const w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((s: string) => { out += s; return true; }) as typeof process.stdout.write;
+    try {
+      await verifyMain(["--seal-composite", dir]);
+      const sealOut = out; out = "";
+      await verifyMain([join(dir, "composite.json")]);
+      for (const o of [sealOut, out]) {
+        expect(o).toContain("integration: passed (exit 0, log_sha256 " + sha256("ok\n"));
+        expect(o).toContain("api head_sha: " + "a".repeat(40));
+        expect(o).toContain("web head_sha: " + "w".repeat(40));
+      }
+    } finally { process.stdout.write = w; }
+  });
   test("sealing refuses a run dir whose name is not a valid run id", async () => {
     const dir = writeWs("badid", KIDS);
     const bad = join(root, "bad id");

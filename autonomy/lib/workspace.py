@@ -222,8 +222,7 @@ def run_integration(ws, run_dir, worktrees, heads):
     """Run the integration command once; return the evidence dict."""
     integ = ws.get("integration") or {}
     cmd = integ.get("command")
-    ev = {"heads": heads, "exit_code": None, "log_sha256": None, "status": "not_configured",
-          "seal": False, "note": "integration evidence is bound by composite.json only when the run seals one"}
+    ev = {"heads": heads, "exit_code": None, "log_sha256": None, "status": "not_configured"}
     if not cmd:
         return ev
     timeout = integ.get("timeout_s", 900)
@@ -245,7 +244,7 @@ def run_integration(ws, run_dir, worktrees, heads):
             p.wait()
             rc = 124
             ev["status"] = "failed"
-            ev["note"] += "; timeout after %ss" % timeout
+            ev["note"] = "timeout after %ss" % timeout
     ev["exit_code"] = rc
     with open(log_path, "rb") as f:
         ev["log_sha256"] = hashlib.sha256(f.read()).hexdigest()

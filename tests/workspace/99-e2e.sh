@@ -52,7 +52,7 @@ for _ws99_entry in "$REPO_ROOT/autonomy/loki" "$REPO_ROOT/bin/loki"; do
     _ws99_rc=$?
     _ws99_json="$(find "$_ws99_tmp/proj/.loki/workspaces/e2e" -name integration.json 2>/dev/null | head -1)"
     if [ "$_ws99_rc" -eq 0 ] && [ -n "$_ws99_json" ] &&
-        python3 -c "import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get('status')=='passed' else 1)" "$_ws99_json"; then
+        python3 -c "import json,sys;d=json.load(open(sys.argv[1]));sys.exit(0 if d.get('status')=='passed' and d.get('exit_code') is not None and d.get('heads') and 'seal' not in d and 'note' not in d else 1)" "$_ws99_json"; then
         ok "workspace e2e ($_ws99_name): run exits 0 and integration status is passed"
     else
         bad "workspace e2e ($_ws99_name): run rc=$_ws99_rc json=${_ws99_json:-none}: $_ws99_out"

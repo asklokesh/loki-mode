@@ -125,3 +125,10 @@ export function compositeHash(r: Record<string, unknown>): string {
   const { composite_sha256: _c, verification: _v, ...body } = r;
   return sha(canonicalJson(body));
 }
+/** Human lines for `loki verify`: the integration result and the head SHA each child attests, so nobody opens the JSON. */
+export function compositeLines(c: Record<string, unknown>): string[] {
+  const i = isObj(c["integration"]) ? c["integration"] : null, kids = Array.isArray(c["children"]) ? c["children"] : [];
+  const out = i ? [`integration: ${text(i["status"], 40)} (exit ${String(i["exit_code"] ?? "n/a")}, log_sha256 ${String(i["log_sha256"] ?? "none")})`] : ["integration: not stated (legacy composite)"];
+  for (const k of kids) if (isObj(k)) out.push(`  ${text(k["repo"], 80)} head_sha: ${text(k["head_sha"], 64)} (${text(k["verdict"], 20)})`);
+  return out;
+}
