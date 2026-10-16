@@ -29,7 +29,8 @@ describe("cli HELP covers dispatch routes", () => {
   test("every user-facing case label appears in HELP", () => {
     const help = helpText();
     const missing = dispatchLabels().filter(
-      (l) => !new RegExp(`^\\s+${l}(\\s|$)`, "m").test(help),
+      // A label may lead its HELP line or follow "|" in an alias row such as "pause | resume | cancel".
+      (l) => !new RegExp(`(^\\s+|\\|\\s*)${l}(\\s|$)`, "m").test(help),
     );
     expect(missing).toEqual([]);
   });
