@@ -106,7 +106,7 @@ export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; ru
   const implement: Implementer = (card) => {
     const cwd = card.newTreeDir ?? card.repoDir;
     const brief = unitBrief(card);
-    const env = childEnv({ stage: "implement", brief, tier: "development", iterationId: `modernize-${card.mid}-${card.unit}`, limitS, signal: new AbortController().signal, cwd }, { provider });
+    const env = tokenFreeEnv(childEnv({ stage: "implement", brief, tier: "development", iterationId: `modernize-${card.mid}-${card.unit}`, limitS, signal: new AbortController().signal, cwd }, { provider })); // the implement agent never holds a GitHub credential
     const r = session(brief, cwd, env);
     if (r.status !== 0) throw new Error(`implement session for unit ${card.unit} exited ${r.status === null ? "without a status (killed or timed out)" : r.status}`);
   };

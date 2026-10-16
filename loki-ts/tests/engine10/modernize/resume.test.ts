@@ -10,8 +10,8 @@ import type { MergeOps } from "../../../src/engine10/modernize/resume.ts";
 import { schedule } from "../../../src/engine10/modernize/scheduler.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
-import { runWaves } from "../../../src/engine10/modernize/coordinator.ts";
-import type { WaveDeps } from "../../../src/engine10/modernize/coordinator.ts";
+import { runWaves } from "../../../src/util/modernize_coordinator.ts";
+import type { WaveDeps } from "../../../src/util/modernize_coordinator.ts";
 import type { StepRunner } from "../../../src/engine10/modernize/wave.ts";
 import { makeUnitRunners } from "../../../src/util/modernize_unit.ts";
 import { modernizeEventsPath, planPath } from "../../../src/engine10/modernize/types.ts";
@@ -375,6 +375,53 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
       const done = readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed").map((e) => e.data["unit"]);
       expect(done.sort()).toEqual(["a", "b", "c"]);
     } finally { f.done(); }
+  });
+
+  it("resume: a logged NOT_PROVEN unit is never shipped PROVEN and blocks the next wave", async () => {
+    const f = fx();
+    try {
+      f.log.append("unit.started", { unit: "a", model: "sonnet", variant: 0 });
+      f.log.append("unit.not_proven", { unit: "a" });
+      const ran: string[] = [];
+      const pushes: Array<{ draft: boolean; body?: string }> = [];
+      const push = ((a: { draft: boolean }) => { pushes.push(a); return { ok: true, url: "u", existing: false }; }) as never;
+      const restarted = new ModernizeLog(f.dir, MID);
+      const r = await runWaves(planOf([[u("a")], [u("b")]]), mk(f, { log: restarted, ran, resume: true, push }));
+      expect(r.ok).toBe(false);
+      expect(r.blocked).toContain("unit a NOT_PROVEN");
+      expect(ran).not.toContain("b");
+      expect(r.waves.length).toBe(1);
+      expect(pushes.map((p) => p.draft)).toEqual([true]);
+      expect(JSON.stringify(pushes)).not.toContain("| a | PROVEN |");
+    } finally { f.done(); }
+  });
+
+  it("a non-PROVEN unit blocks the wave: the next wave never runs", async () => {
+    const f = fx();
+    try {
+      const ran: string[] = [];
+      const run = (ctx: AttemptCtx): AttemptOutcome => { ran.push(ctx.unit.id); return { result: { ...proven(ctx.unit.id), verdict: "NOT_PROVEN" }, costUsd: 0 }; };
+      const r = await runWaves(planOf([[u("a")], [u("b")]]), mk(f, { run, ship: false }));
+      expect(r.ok).toBe(false);
+      expect(r.blocked).toContain("unit a");
+      expect(ran).not.toContain("b");
+    } finally { f.done(); }
+  });
+
+  it("makeUnitRunners: the implement env carries no GitHub token", () => {
+    const saved = { g: process.env["GH_TOKEN"], h: process.env["GITHUB_TOKEN"] };
+    process.env["GH_TOKEN"] = "ghp_secret_one"; process.env["GITHUB_TOKEN"] = "ghp_secret_two";
+    try {
+      let seen: NodeJS.ProcessEnv = {};
+      const r = makeUnitRunners({ target: "python3", session: (_b, _c, env) => { seen = env; return { status: 0 }; } });
+      r.implement({ unit: "u", repoDir: tmpdir(), mid: MID, target: "python3", normalizers: { float_tolerance: 0, unordered_fields: [], skip_fields: [] } });
+      expect(JSON.stringify(seen)).not.toContain("ghp_secret");
+      expect(seen["GH_TOKEN"]).not.toBe("ghp_secret_one");
+      expect(seen["GITHUB_TOKEN"]).not.toBe("ghp_secret_two");
+    } finally {
+      if (saved.g === undefined) delete process.env["GH_TOKEN"]; else process.env["GH_TOKEN"] = saved.g;
+      if (saved.h === undefined) delete process.env["GITHUB_TOKEN"]; else process.env["GITHUB_TOKEN"] = saved.h;
+    }
   });
 
   it("makeUnitRunners: implement runs the session and a nonzero exit throws; an unknown target fails closed", () => {

@@ -16,8 +16,8 @@ import type { CostPrior } from "./estimate.ts";
 import { ModernizeLog } from "./log.ts";
 import { isModernizeId, makeModernizeId } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
-import { productionWaveDeps, runWaves } from "./coordinator.ts";
-import type { WaveDeps } from "./coordinator.ts";
+import { productionWaveDeps, runWaves } from "../../util/modernize_coordinator.ts";
+import type { WaveDeps } from "../../util/modernize_coordinator.ts";
 import { unitMain } from "../../util/modernize_unit.ts";
 
 const TARGETS: readonly ModernizeTarget[] = ["python3", "java21"];
@@ -183,7 +183,7 @@ const NO_PRIOR: CostPrior = { usdPerUnit: null, p50UnitTimeS: null };
 
 /** `loki modernize` entry point (TABLE route in ../cli.ts). Section 2/3.1: parses and validates flags, opens the modernize
  *  log, runs Inventory and the up-front estimate, and for --dry-run prints it and stops at zero model spend. Otherwise it
- *  hands the plan to runWaves (coordinator.ts); when a dependency of that is not built, productionWaveDeps names it and exits 2. */
+ *  hands the plan to runWaves (util/modernize_coordinator.ts); when a dependency of that is not built, productionWaveDeps names it and exits 2. */
 export async function main(args: readonly string[], deps: ModernizeCliDeps = {}): Promise<number> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(USAGE);

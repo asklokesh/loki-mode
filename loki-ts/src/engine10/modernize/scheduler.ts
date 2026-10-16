@@ -210,8 +210,8 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
           costUsd: NaN,
         };
       }
-      // A runner cannot hide spend: a missing, negative or non-finite cost is charged at the estimate.
-      const c = Number.isFinite(outcome.costUsd) && outcome.costUsd >= 0 ? outcome.costUsd : (est ?? 0);
+      // A runner cannot hide spend: a missing, negative or non-finite cost is charged at the estimate; with no estimate and a budget set it exceeds the budget (fail closed, never free).
+      const c = Number.isFinite(outcome.costUsd) && outcome.costUsd >= 0 ? outcome.costUsd : (est ?? (opts.budgetUsd != null ? opts.budgetUsd + 1 : 0));
       unitCost += c;
       spent += c;
       last = outcome.result;

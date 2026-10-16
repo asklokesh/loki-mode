@@ -1,28 +1,28 @@
-// loki-ts/src/engine10/modernize/coordinator.ts -- wave orchestration for `loki modernize` (docs/v10/MODERNIZE.md 3.4-3.7).
-// New file because no existing file owns wave orchestration: cli.ts parses args; ship.ts, resume.ts, scheduler.ts and wave.ts each own one step.
+// loki-ts/src/util/modernize_coordinator.ts -- wave orchestration for `loki modernize` (docs/v10/MODERNIZE.md 3.4-3.7).
+// Lives in util/ because engine10/modernize/ is at its D33 line cap (like modernize_unit.ts). No existing file owns wave orchestration: cli.ts parses args; ship.ts, resume.ts, scheduler.ts and wave.ts each own one step.
 // Per wave: schedule (or resumeSchedule after a crash), verifyWave (M-20), nextWaveGate, shipWave (M-21). Every dependency is injected.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ClusterResult } from "./cluster.ts";
-import { DEFAULT_NORMALIZERS } from "./oracle/seal.ts";
-import { resumeSchedule } from "./resume.ts";
-import { schedule } from "./scheduler.ts";
-import type { AttemptRunner, MergeOps, SchedulerOpts, UnitOutcome, WorktreeOps } from "./scheduler.ts";
-import { shipWave } from "./ship.ts";
-import type { PushRunner, ShipUnit } from "./ship.ts";
-import type { ModernizeLog } from "./log.ts";
-import { readModernizeEvents } from "./log.ts";
-import { modernizeRoot } from "./types.ts";
-import type { ModernizeTarget } from "./types.ts";
-import { runUnit } from "./unit.ts";
-import { nextWaveGate, verifyWave } from "./wave.ts";
-import type { StepCommand, StepRunner, WaveStep, WaveVerdict } from "./wave.ts";
-import { makeUnitRunners } from "../../util/modernize_unit.ts";
-import { makePytestBaseRunner, makePytestCollector } from "../../util/python.ts";
-import { safeGit } from "../../util/safe_git.ts";
-import type { NewCaseRunner } from "./equiv.ts";
-import type { Implementer } from "./unit.ts";
+import type { ClusterResult } from "../engine10/modernize/cluster.ts";
+import { DEFAULT_NORMALIZERS } from "../engine10/modernize/oracle/seal.ts";
+import { loadResumeState, resumeSchedule } from "../engine10/modernize/resume.ts";
+import { schedule } from "../engine10/modernize/scheduler.ts";
+import type { AttemptRunner, MergeOps, SchedulerOpts, UnitOutcome, WorktreeOps } from "../engine10/modernize/scheduler.ts";
+import { shipWave } from "../engine10/modernize/ship.ts";
+import type { PushRunner, ShipUnit } from "../engine10/modernize/ship.ts";
+import type { ModernizeLog } from "../engine10/modernize/log.ts";
+import { readModernizeEvents } from "../engine10/modernize/log.ts";
+import { modernizeRoot } from "../engine10/modernize/types.ts";
+import type { ModernizeTarget } from "../engine10/modernize/types.ts";
+import { runUnit } from "../engine10/modernize/unit.ts";
+import { nextWaveGate, verifyWave } from "../engine10/modernize/wave.ts";
+import type { StepCommand, StepRunner, WaveStep, WaveVerdict } from "../engine10/modernize/wave.ts";
+import { makeUnitRunners } from "./modernize_unit.ts";
+import { makePytestBaseRunner, makePytestCollector } from "./python.ts";
+import { safeGit } from "./safe_git.ts";
+import type { NewCaseRunner } from "../engine10/modernize/equiv.ts";
+import type { Implementer } from "../engine10/modernize/unit.ts";
 
 export interface WaveDeps {
   repoDir: string;
@@ -50,12 +50,12 @@ export type WavesResult = { ok: boolean; waves: WaveReport[]; blocked: string | 
 
 const sha256 = (p: string): string => (existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex") : "n/a");
 
-/** The sealed oracle is the unit's evidence file; it is named in the PR body with its hash. A unit finished before a crash has no outcome and is PROVEN by its log record. */
+/** The sealed oracle is the unit's evidence file; it is named in the PR body with its hash. A unit with no outcome is NOT_PROVEN; resume fills in logged outcomes explicitly (runWaves). */
 function shipUnitOf(d: WaveDeps, unit: string, o: UnitOutcome | undefined): ShipUnit {
   const sealed = join(modernizeRoot(d.repoDir, d.mid), "oracle", unit, "sealed.json");
   const eq = o?.result?.equiv;
   return {
-    unit, verdict: o ? (o.status === "PROVEN" ? "PROVEN" : o.status === "NOT_EQUAL" ? "NOT_EQUAL" : "NOT_PROVEN") : "PROVEN",
+    unit, verdict: o?.status === "PROVEN" ? "PROVEN" : o?.status === "NOT_EQUAL" ? "NOT_EQUAL" : "NOT_PROVEN",
     not_proven: o?.result?.not_proven ?? (o && o.reason ? [o.reason] : []),
     receiptPath: sealed, receiptSha256: sha256(sealed), runId: d.mid,
     rate: eq ? eq.rate : null, branchPct: eq ? eq.branch_pct : null,
@@ -82,6 +82,13 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
       const r = await resumeSchedule(sub, opts);
       if (!r.ok) return { ok: false, waves, blocked: `resume refused: ${r.reason}`, spentUsd: spent };
       outcomes = r.report.outcomes; spent += r.report.spentUsd;
+      // Units skipped on resume have no outcome: carry them from the log. Logged unit.not_proven stays NOT_PROVEN; only a logged unit.completed is PROVEN.
+      const st = loadResumeState(d.repoDir, d.mid);
+      for (const id of ids) {
+        if (outcomes.some((o) => o.unit === id)) continue;
+        const done = st.ok && st.state.completed.has(id) && !st.state.notProven.has(id);
+        outcomes.push({ unit: id, status: done ? "PROVEN" : "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, ...(done ? {} : { reason: "logged not proven, or no outcome" }) });
+      }
     } else {
       const r = await schedule(sub, opts);
       outcomes = r.outcomes; spent += r.spentUsd;
@@ -112,7 +119,7 @@ export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log
   return (ctx) => ({
     result: runUnit({ unit: ctx.unit.id, repoDir: ctx.worktree, mid: o.mid, target: o.target, normalizers: DEFAULT_NORMALIZERS, baseSha: ctx.baseSha },
       o.log, makePytestBaseRunner(), runners.implement, runners.runNew, undefined, makePytestCollector()),
-    costUsd: NaN, // unmetered here: the scheduler charges an unreported cost at the estimate, never as free
+    costUsd: NaN, // unmetered here: the scheduler treats a non-finite cost as budget-unknown (charged at the estimate, or stops under --budget)
   });
 }
 

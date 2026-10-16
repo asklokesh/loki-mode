@@ -125,6 +125,17 @@ describe("scheduler", () => {
     f.done();
   });
 
+  it("budget with no estimate: an unreported (NaN) cost fails closed and stops dispatch", async () => {
+    const f = fixture();
+    try {
+      const ran: string[] = [];
+      const run = (ctx: AttemptCtx): AttemptOutcome => { ran.push(ctx.unit.id); return { result: res(ctx.unit.id, "PROVEN"), costUsd: NaN }; };
+      const r = await schedule(planOf([[u("a"), u("b"), u("c")]]), { ...f.base, run, workers: 1, budgetUsd: 1.5, unitEstimateUsd: null });
+      expect(ran).toEqual(["a"]);
+      expect(r.budgetHit).toBe(true);
+    } finally { f.done(); }
+  });
+
   it("budget with no estimate: stops dispatch once spent exceeds it, budget.hit once", async () => {
     const f = fixture();
     const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, "PROVEN"), costUsd: 1 });

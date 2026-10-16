@@ -206,6 +206,7 @@ describe("main", () => {
     expect(code).toBe(2);
     expect(cap.out).toContain("units:"); // the estimate is real work already done, not withheld
     expect(cap.err).toMatch(/not built|remote\.origin\.url|base commit/);
+    if (/not built/.test(cap.err)) for (const name of ["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]) expect(cap.err).toContain(name);
   });
 
   it("--resume reuses the given modernization id instead of minting a new one", async () => {
