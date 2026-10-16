@@ -406,7 +406,7 @@ sys.exit(1)
 # so a release cannot cut on a tree a guard already rejects. Same runner as the
 # impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
 # LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning. LOKI_RELEASE_GUARD_TIMEOUT
-# (default 300s) is the per-row limit. A dirty tracked tree is refused (exit 3).
+# (default 300s) is the per-row limit. Guards run in a clean worktree of HEAD; a worktree failure exits 3.
 run_release_guard_rows() {
     local out rc=0 started
     if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then
@@ -416,16 +416,39 @@ run_release_guard_rows() {
         log_warn "=============================================================="
         return 0
     fi
-    # The guards read the working tree, not the commit: a dirty tree proves nothing.
-    if [ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)" ]; then
-        log_error "RELEASE_GUARD_DIRTY: tracked files are modified; the guard rows read the working tree, not HEAD. Commit or discard, or set LOKI_RELEASE_SKIP_GUARDS=1."
+    # The guards read the working tree, so run them in a clean detached worktree of
+    # HEAD: the main checkout is dirty by design (usage-governor appends to tracked files).
+    local tmp_root dir wt
+    tmp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || {
+        log_error "RELEASE_GUARD_RED: cannot resolve the temp root"
+        exit 3
+    }
+    dir="$(mktemp -d "${tmp_root}/loki-guard.XXXXXXXX")" || {
+        log_error "RELEASE_GUARD_RED: cannot create the guard temp dir"
+        exit 3
+    }
+    chmod 700 "$dir" || { rmdir "$dir" 2>/dev/null || true; exit 3; }
+    wt="$dir/guard-wt"
+    if ! git -C "$ROOT_DIR" worktree add --detach "$wt" HEAD >/dev/null 2>&1; then
+        git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
+        rm -rf -- "$dir"
+        log_error "RELEASE_GUARD_RED: could not create a clean worktree of HEAD for the guard rows"
         exit 3
     fi
-    log_step "Running global guard rows (scripts/impacted-gate.sh --guards-only)..."
+    # bun rows need deps; node_modules is untracked so the clean worktree lacks it.
+    if [ -d "$ROOT_DIR/loki-ts/node_modules" ] && [ ! -e "$wt/loki-ts/node_modules" ] && [ -d "$wt/loki-ts" ]; then
+        ln -s "$ROOT_DIR/loki-ts/node_modules" "$wt/loki-ts/node_modules" || true
+    fi
+    log_step "Running global guard rows against a clean worktree of HEAD (scripts/impacted-gate.sh --guards-only)..."
     started="$(date +%s)"
     # env -u: a caller-exported LOKI_RUN_TMP would make the gate's loki_run_tmp_create refuse.
-    out="$(env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-300}" \
-        bash "$ROOT_DIR/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
+    out="$(cd "$wt" && env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-300}" \
+        bash "$wt/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
+    git -C "$ROOT_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    git -C "$ROOT_DIR" worktree prune >/dev/null 2>&1 || true
+    case "$dir" in
+        "${tmp_root}"/loki-guard.*) if [ ! -L "$dir" ]; then rm -rf -- "$dir"; fi ;;
+    esac
     printf '%s\n' "$out"
     log_info "Guard rows took $(( $(date +%s) - started ))s"
     if [ "$rc" -ne 0 ]; then

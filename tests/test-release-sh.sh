@@ -393,20 +393,32 @@ grep -q "SKIPPING the global guard rows" "$WORK2/case.log" \
     && ok "SKIP_GUARDS prints a loud warning" || bad "no skip warning"
 
 echo
-echo "T13 -- guard rows refuse a dirty tracked tree (REL-GUARD-b)"
+echo "T13 -- guard rows run against a clean worktree of HEAD, not the dirty tree (REL-GUARD-b)"
+# (a) dirty tracked file would make the row red; HEAD is green, so the guard stays green.
 reset_repo2
-printf 'dirty\n' >> "$REPO2/tests/stub-guard.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$REPO2/tests/stub-guard.sh"
 ( cd "$REPO2" && env PATH="$STUBBIN:$PATH" GH_MODE=tests_red STUB_SHA="$STUB_SHA" GH_CALL_LOG="$WORK2/gh-calls.log" \
     LOKI_RELEASE_ALLOW_RED=1 bash ./scripts/release.sh patch --bump-only >"$WORK2/case.log" 2>&1 </dev/null )
 rc13=$?
-[ "$rc13" -eq 3 ] && ok "dirty tree aborts the release (exit 3)" || bad "expected exit 3, got $rc13 ($(tail -4 "$WORK2/case.log"))"
-grep -q "RELEASE_GUARD_DIRTY" "$WORK2/case.log" && ok "dirty-tree message printed" || bad "no dirty message"
-grep -q "1.2.3" "$REPO2/VERSION" && ok "dirty tree: VERSION untouched" || bad "dirty tree: VERSION changed"
-if run_gate_case tests_red "LOKI_RELEASE_ALLOW_RED=1 LOKI_RELEASE_SKIP_GUARDS=1"; then
-    ok "SKIP_GUARDS=1 remains the escape"
-else
-    bad "SKIP_GUARDS escape failed"
-fi
+[ "$rc13" -eq 0 ] && ok "dirty-but-red working edit does not turn the guard red (reads HEAD)" || bad "expected exit 0, got $rc13 ($(tail -4 "$WORK2/case.log"))"
+grep -q "RELEASE_GUARD_DIRTY" "$WORK2/case.log" && bad "dirty refusal still present" || ok "no dirty-tree refusal"
+[ -z "$(git -C "$REPO2" worktree list | grep guard-wt)" ] && ok "no leftover guard worktree (a)" || bad "leftover guard worktree: $(git -C "$REPO2" worktree list)"
+# (b) committed red row with a green-looking working edit: guard is red, exit 3.
+reset_repo2
+printf '#!/usr/bin/env bash\nexit 1\n' > "$REPO2/tests/stub-guard.sh"
+git -C "$REPO2" -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+    commit -q -am "red guard" >/dev/null
+B_SHA="$(git -C "$REPO2" rev-parse HEAD)"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$REPO2/tests/stub-guard.sh"
+( cd "$REPO2" && env PATH="$STUBBIN:$PATH" GH_MODE=tests_red STUB_SHA="$B_SHA" GH_CALL_LOG="$WORK2/gh-calls.log" \
+    LOKI_RELEASE_ALLOW_RED=1 bash ./scripts/release.sh patch --bump-only >"$WORK2/case.log" 2>&1 </dev/null )
+rc13b=$?
+[ "$rc13b" -eq 3 ] && ok "committed red row stays red despite a green working edit (exit 3)" || bad "expected exit 3, got $rc13b ($(tail -4 "$WORK2/case.log"))"
+grep -q "RELEASE_GUARD_RED" "$WORK2/case.log" && ok "RELEASE_GUARD_RED printed" || bad "no RED message"
+[ -z "$(git -C "$REPO2" worktree list | grep guard-wt)" ] && ok "no leftover guard worktree (b)" || bad "leftover guard worktree: $(git -C "$REPO2" worktree list)"
+# restore the fixture to the baseline commit for later cases
+git -C "$REPO2" reset -q --hard "$STUB_SHA" >/dev/null 2>&1
+reset_repo2
 
 echo
 echo "T14 -- caller-exported LOKI_RUN_TMP does not turn the guard red (REL-GUARD-b)"

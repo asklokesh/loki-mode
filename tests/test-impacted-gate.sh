@@ -89,6 +89,7 @@ GFIX="$FIX/gfix"
 mkdir -p "$GFIX/scripts" "$GFIX/eval/loki10"
 cp "$REPO_ROOT/scripts/impacted-gate.sh" "$REPO_ROOT/scripts/select-tests.sh" "$GFIX/scripts/"
 cp "$REPO_ROOT/eval/loki10/lib-tmp.sh" "$GFIX/eval/loki10/"
+git init -q "$GFIX" >/dev/null 2>&1
 out="$(cd "$GFIX" && timeout -k 5 60 /bin/bash scripts/impacted-gate.sh --guards-only 2>&1)"
 rc=$?
 [ "$rc" -ne 0 ] && ok "--guards-only with global-guards.tsv missing exits non-zero (rc=$rc)" || bad "--guards-only passed with missing guard list: $out"
