@@ -59,7 +59,7 @@ const f: Record<string, unknown> = {
   base_sha: "b".repeat(40), head_sha: "c".repeat(40), tree: "d".repeat(40), diff_sha256: "e".repeat(64),
   wall: { files: [], passed: true }, checks: [{ name: "unit", cmd: "bun test", result: "pass", duration_s: 1 }],
   not_proven: ["full suite"], verdict: "VERIFIED", cost: { usd: 0.1, input_tokens: 1, output_tokens: 1 },
-  time: { wall_s: 1, stages: { intake: 1 } }, provider: "claude", model: "m", resumed: false,
+  time: { wall_s: 0, stages: {} }, provider: "claude", model: "m", resumed: false,
   events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 };
 const k = generateKeyPairSync("ed25519");

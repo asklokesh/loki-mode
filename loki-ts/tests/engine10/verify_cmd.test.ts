@@ -60,7 +60,7 @@ function baseReceiptFields(): Record<string, unknown> {
     not_proven: ["full suite", "app boot", "council", "security scan"],
     verdict: "VERIFIED",
     cost: { usd: 0.1, input_tokens: 100, output_tokens: 20 },
-    time: { wall_s: 240, stages: { intake: 10 } },
+    time: { wall_s: 0, stages: {} }, // zero stages: a receipt that records no events may carry the empty-log hash
     provider: "claude",
     model: "claude-x",
     resumed: false,
@@ -599,6 +599,32 @@ describe("main() UNSIGNED policy (D47)", () => {
       });
       expect(existsSync(join(home, ".loki", "keys"))).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test("P12-01b: --allow-unsigned never waives the log check: empty-hash receipt that claims stages is TAMPERED", async () => {
+    const dir = tmpDir();
+    try {
+      const mk = (id: string, stages: Record<string, number>): void => {
+        const f = baseReceiptFields(); f["run_id"] = id; f["time"] = { wall_s: 10, stages };
+        const rd = join(dir, "runs", id); mkdirSync(rd, { recursive: true });
+        writeFileSync(join(rd, "receipt.json"), JSON.stringify({ ...f, receipt_sha256: computeReceiptHash(f), verification: { jwt: null, kid: null } }));
+      };
+      mk("forged1", { intake: 10 });
+      const r = await runMain(["forged1", "--allow-unsigned"], join(dir, "runs"));
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("verdict: TAMPERED");
+      expect(r.out).toContain("records stages but binds the empty-log hash");
+      expect(r.out).toContain("Re-run the task");
+      writeFileSync(join(dir, "runs", "forged1", "events.jsonl"), "");
+      expect((await runMain(["forged1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(1);
+      writeFileSync(join(dir, "runs", "forged1", "events.jsonl"), JSON.stringify({ seq: 0, type: "run.started", data: {} }) + "\n");
+      const r2 = await runMain(["forged1", "--allow-unsigned"], join(dir, "runs")); // empty hash + stages + non-empty log: still forged
+      expect(r2.code).toBe(1);
+      expect(r2.out).toContain("records stages but binds the empty-log hash");
+      expect(r2.out).toContain("Re-run the task");
+      writeUnsignedReceipt(dir, "zero1"); // truly zero events and stages: still accepted
+      expect((await runMain(["zero1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   test("--allow-unsigned and LOKI_VERIFY_ALLOW_UNSIGNED=1 exit 0 with the explicit line", async () => {

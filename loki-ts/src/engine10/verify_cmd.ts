@@ -51,7 +51,12 @@ function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject):
  *  Deleting the post-seal tail is closed by checkLogSeal (signed receipts); an unsigned receipt carries no key, so it stays exposed to that. */
 function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const bound = receipt["events_sha256"];
-  if (typeof bound !== "string" || bound === createHash("sha256").digest("hex")) return null; // no log bound at seal time (a real run writes run.started first; the receipt hash covers this field)
+  if (typeof bound !== "string") return null;
+  if (bound === createHash("sha256").digest("hex")) { // P12-01b: the empty-log hash is honest only for a receipt that records zero events and stages (a real run writes run.started first); --allow-unsigned never waives this
+    const st = (receipt["time"] as { stages?: unknown } | null | undefined)?.stages;
+    const claims = st !== null && typeof st === "object" && Object.keys(st as object).length > 0;
+    return claims ? "the receipt records stages but binds the empty-log hash, so no events.jsonl can back it (missing, empty or non-empty); the receipt is forged or was sealed without a log. Re-run the task to produce a fresh receipt" : null;
+  }
   const path = join(dirname(receiptPath), "events.jsonl");
   if (!existsSync(path)) return "events.jsonl is missing";
   const raw = readFileSync(path, "utf8"), events = readEvents(path), lines = raw.split("\n").filter((l) => l.trim() !== "");
