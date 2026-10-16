@@ -24,6 +24,7 @@ import {
 } from "../../src/runner/router/history.ts";
 import { repoCacheDir, repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
+import { ranModel, recordRun } from "../../src/runner/router/cost_preview.ts";
 import { routeRecord } from "../../src/runner/router/unit_model.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
@@ -401,6 +402,30 @@ describe("P12-32b live cost routing", () => {
     const floor = repoHistoryFloor(dir, root, SHAPE);
     expect(floor).toBe("haiku");
     expect(routeRecord("sonnet", plan, () => floor)).toEqual(routeRecord("sonnet", plan));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("seal-side writer: a haiku-routed run is recorded as a haiku row and the reader sees it", () => {
+    const dir = mkRepo();
+    writeFileSync(join(dir, "package.json"), "{}");
+    const cited = ["package.json"];
+    const m: ProjectModel = { ...model("single", ["vitest"]), workspaceCite: cited, fingerprintFiles: cited, packages: [{ ...model("single", ["vitest"]).packages[0]!, cite: cited, ui: { present: false, boot: null, cite: cited } }] };
+    mkdirSync(join(dir, ".loki"), { recursive: true });
+    writeFileSync(join(dir, ".loki", "project.json"), JSON.stringify({ ...m, key: computeKey(dir, cited, shallowDirs(dir)) }));
+    const shape = shapeKeyForRepo(dir)!;
+    const env = {} as Record<string, string | undefined>;
+    // ctx.model is sonnet, the routed implement model is haiku
+    const haiku = ranModel({ route_model: "claude-haiku-4-5", model: "claude-haiku-4-5" }, "sonnet");
+    expect(haiku).toContain("haiku");
+    expect(ranModel(undefined, "sonnet")).toBe("sonnet");
+    expect(ranModel({ model: "sonnet" }, "x")).toBe("sonnet");
+    expect(recordRun(env, dir, haiku, "VERIFIED", 0.1, false, 5, root)).toBe(true);
+    expect(recordRun(env, dir, haiku, "FAILED", 0.1, false, 5, root)).toBe(true);
+    expect(recordRun(env, dir, haiku, "FAILED", 0.1, false, 5, root)).toBe(true);
+    for (let i = 0; i < 3; i++) recordRun(env, dir, ranModel(undefined, "sonnet"), "VERIFIED", 0.3, false, 5, root);
+    const rows = readRunHistory(repoKey(readOriginUrl(dir), dir), root);
+    expect(rows.filter((r) => r.executor === "haiku" && r.shape === shape).length).toBe(3);
+    expect(repoHistoryFloor(dir, root)).toBe("sonnet");
     rmSync(dir, { recursive: true, force: true });
   });
 

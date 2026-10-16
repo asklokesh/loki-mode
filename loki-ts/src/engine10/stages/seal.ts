@@ -24,7 +24,7 @@ import { crossReview, minVerdict, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
-import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
+import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
@@ -311,7 +311,7 @@ export const sealStage: Stage = {
     writeFileSync(path, JSON.stringify(receipt, null, 2) + "\n");
     writeFileSync(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
 
-    recordRun(process.env, ctx.repoDir, ctx.model, verdict, cost.usd, cost.unmetered === true, totalS);
+    recordRun(process.env, ctx.repoDir, ranModel(o.implement, ctx.model), verdict, cost.usd, cost.unmetered === true, totalS);
     const signed = sig.jwt !== null;
     const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(mp ? { mutation_line: mp.line } : {}), ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     try { recordRunVerdict(ctx.repoDir, ctx.runId, verdict); } catch { /* memory is best-effort */ }

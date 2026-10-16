@@ -99,6 +99,12 @@ export function outcomeFor(shape: string, model: string, verdict: string, usd: n
   return null;
 }
 
+/** The model the implement stage actually ran: the routed model, else its recorded model, else the run model. History is keyed on this, not the run model (reader/writer key contract). */
+export function ranModel(implement: Record<string, unknown> | undefined, runModel: string): string {
+  const m = implement?.["route_model"] ?? implement?.["model"];
+  return typeof m === "string" && m.length > 0 ? m : runModel;
+}
+
 /** Feed the history this estimator and the router read: a VERIFIED pass or a FAILED code-owned loss, with measured cost only. */
 export function recordRun(env: Env, repoDir: string, model: string, verdict: string, usd: number | null, unmetered: boolean, wallS: number | null, cacheRoot?: string): boolean {
   if (!previewOn(env) || usd === null || unmetered || wallS === null || wallS <= 0) return false; // wallS null = the receipt time block did not reconcile: no history row
