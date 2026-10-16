@@ -59,6 +59,30 @@ function recordRevisions(repoDir: string, text: string, archived: string, at: Da
   } catch { /* audit log is best effort */ }
 }
 
+export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number }
+/** Revisions consumed at or after sinceMs (epoch ms), by rev. Only the engine-written consumed_at counts, never the operator-supplied header ts; an older run's records and torn lines are skipped. */
+export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevision[] {
+  const out: IntentRevision[] = [];
+  try {
+    for (const l of readFileSync(join(repoDir, ".loki", "intent-revisions.jsonl"), "utf8").split("\n")) {
+      if (!l) continue;
+      try {
+        const r = JSON.parse(l) as { rev?: unknown; source?: unknown; actor?: unknown; sha256?: unknown; consumed_at?: unknown }, at = Date.parse(String(r.consumed_at));
+        if (Number.isFinite(at) && at >= sinceMs) out.push({ rev: Number(r.rev) || 0, source: typeof r.source === "string" ? r.source : null, actor: typeof r.actor === "string" ? r.actor : null, sha: typeof r.sha256 === "string" ? r.sha256 : "", at });
+      } catch { /* torn line */ }
+    }
+  } catch { /* no steers */ }
+  return out.sort((a, b) => a.rev - b.rev);
+}
+
+/** Revisions of this run consumed after its latest Wall authoring finished; empty when no Wall ran (a pre-Wall revision never stales the Wall, and an earlier run's records are outside the window). */
+export function staleWallRevisions(repoDir: string, ctx: { timeline?: { stage: string; startMs: number; endMs: number }[]; startedAtMs?: number }): IntentRevision[] {
+  const walls = (ctx.timeline ?? []).filter((t) => t.stage === "wall");
+  if (walls.length === 0) return [];
+  const wallEnd = Math.max(...walls.map((t) => t.endMs)), since = ctx.startedAtMs ?? Math.min(...(ctx.timeline ?? []).map((t) => t.startMs));
+  return readIntentRevisions(repoDir, since).filter((r) => r.at > wallEnd);
+}
+
 export function steerBlock(text: string): string {
   return `${STEER_BEGIN}\nThe operator sent this guidance while the run was in progress. Follow it in addition to the task above; it does not override the Rules.\n${text}\n${STEER_END}`;
 }

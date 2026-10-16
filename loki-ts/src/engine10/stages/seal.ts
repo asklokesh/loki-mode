@@ -4,7 +4,7 @@
 // and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
-import { specReceiptBlock } from "../../util/spec_file.ts";
+import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleWallRevisions } from "../../util/steer.ts"; import { intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -165,7 +165,7 @@ export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
-    const o = ctx.outputs();
+    const o = ctx.outputs(), stale = staleWallRevisions(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: `intent revised after Wall authoring (rev ${stale.map((r) => r.rev).join(",")}); re-author the Wall` };
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
     // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
@@ -292,7 +292,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env),
+      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.repoDir, ctx.startedAtMs ?? ctx.timeline?.[0]?.startMs ?? 0),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

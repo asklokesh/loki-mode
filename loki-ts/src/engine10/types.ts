@@ -167,7 +167,7 @@ export interface Receipt {
   not_proven: string[];
   spec?: { path: string; sha256: string }; // SPEC-FIRST-INTENT: present only when a user spec file drove the run
   supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
-  route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on
+  route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on. intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02: omitted when none
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */

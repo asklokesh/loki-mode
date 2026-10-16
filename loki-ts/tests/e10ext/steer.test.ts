@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, withSteer } from "../../src/util/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, readIntentRevisions, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -78,5 +78,17 @@ describe("engine10 steer", () => {
     const rows = readFileSync(join(d, ".loki", "intent-revisions.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(rows.map((r) => r.rev)).toEqual([1, 2]);
     expect(rows[0].actor).toBeNull();
+  });
+
+  test("reader: staleness needs a Wall, a consumed_at inside this run and after the Wall; torn lines skipped", () => {
+    const d = repo();
+    const row = (rev: number, at: number): string => JSON.stringify({ rev, actor: "a", source: "cli", sha256: "f".repeat(64), consumed_at: new Date(at).toISOString() });
+    writeFileSync(join(d, ".loki", "intent-revisions.jsonl"), `${row(1, 100)}\n{torn\n${row(2, 5000)}\n${row(3, 2500)}\n`);
+    const tl = [{ stage: "wall", startMs: 1500, endMs: 2000 }];
+    expect(readIntentRevisions(d, 1000).map((r) => r.rev)).toEqual([2, 3]);
+    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: tl }).map((r) => r.rev)).toEqual([2, 3]);
+    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: [] })).toEqual([]); // no Wall yet
+    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: [...tl, { stage: "wall", startMs: 5100, endMs: 5200 }] })).toEqual([]); // re-authored
+    expect(staleWallRevisions(d, { startedAtMs: 4000, timeline: tl }).map((r) => r.rev)).toEqual([2]); // rev 3 is an earlier run's
   });
 });
