@@ -165,16 +165,64 @@ describe("engine10 steer", () => {
     const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
     expect(readFileSync(join(logs, o), "utf8")).toBe("OLD");
   });
-  test("an orphan already archived with identical bytes is removed without a new archive or record", () => {
+  test("an orphan sharing an inode with an ORPHAN archive (unlink failed after link) is removed without a new archive or record", () => {
     const d = repo();
     const logs = join(d, ".loki", "logs");
     mkdirSync(logs);
     writeFileSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), "LOST");
-    writeFileSync(join(logs, `.claim-${deadPid()}-abc123`), "LOST");
+    linkSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), join(logs, `.claim-${deadPid()}-abc123`));
     const sink: IntentRevision[] = [];
     expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
     expect(sink).toEqual([]);
     expect(archived(d)).toEqual(["human-input-ORPHAN-20200101T000000.md"]);
+  });
+  test("a new orphan repeating an old archive's text is still archived and reported", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), "SAME");
+    writeFileSync(join(logs, `.claim-${deadPid()}-abc123`), "SAME");
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(sink.map((r) => r.reason)).toEqual(["orphaned claim"]);
+    expect(archived(d).filter((n) => n.startsWith("human-input-ORPHAN-")).length).toBe(2);
+  });
+  test("a FIFO orphan does not hang the sweep", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    execFileSync("mkfifo", [join(logs, `.claim-${deadPid()}-abc123`)]);
+    const t0 = Date.now();
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(sink.length).toBe(1);
+  });
+  test("a directory orphan is archived", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(join(logs, `.claim-${deadPid()}-abc123`), { recursive: true });
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(sink.map((r) => r.reason)).toEqual(["orphaned claim"]);
+    expect(archived(d).some((n) => n.startsWith("human-input-ORPHAN-"))).toBe(true);
+    expect(archived(d).some((n) => n.startsWith(".claim-"))).toBe(false);
+  });
+  test("a steer written 20 minutes before its claim is not swept while the consumer is live", () => {
+    const d = repo("OLD STEER");
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    const old = new Date(Date.now() - 20 * 60 * 1000); utimesSync(f, old, old);
+    const other = join(d, ".loki", "logs", `.claim-${process.ppid}-ffffff`);
+    let survived = false, nestedSink: IntentRevision[] = [];
+    const out = consumeSteer(d, {}, () => new Date(), undefined, { afterClaim: (c) => {
+      // another consumer with a live pid sweeping right now must see a freshly stamped claim
+      linkSync(c, other);
+      consumeSteer(d, {}, () => new Date(), nestedSink);
+      survived = existsSync(other); rmSync(other, { force: true });
+    } });
+    expect(out).toBe("OLD STEER");
+    expect(survived).toBe(true);
+    expect(nestedSink).toEqual([]);
   });
   test("an orphan that cannot be archived is reported with its stranded path and a distinct remedy", () => {
     const d = repo();

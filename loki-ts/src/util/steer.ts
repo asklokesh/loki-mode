@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, rmSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, lutimesSync, rmSync, unlinkSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -35,18 +35,19 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
 /** A claim older than this is orphaned even if its pid answers: a dead consumer's pid can be recycled by an unrelated process, and kill(pid, 0) would then succeed forever. */
 export const STEER_CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 
-/** True when an earlier ORPHAN archive already holds exactly these bytes (a claim whose unlink failed after a good archive). */
+/** True when the claim is a regular file that an ORPHAN archive already shares an inode with (unlink failed after a good link). Never reads content: a FIFO would hang and a repeated steer text must not be dropped. */
 function orphanAlreadyArchived(logs: string, claim: string): boolean {
-  const bytes = readFileSync(claim);
+  const c = lstatSync(claim);
+  if (!c.isFile()) return false;
   for (const a of readdirSync(logs)) {
     if (!/^human-input-ORPHAN-.*\.md$/.test(a)) continue;
-    try { if (bytes.equals(readFileSync(join(logs, a)))) return true; } catch { /* unreadable archive: not a match */ }
+    try { const s = statSync(join(logs, a)); if (s.ino === c.ino && s.dev === c.dev) return true; } catch { /* unreadable archive: not a match */ }
   }
   return false;
 }
 
 /** Claims left by a consumer that died between the claim and the archive (pid dead, or claim older than STEER_CLAIM_MAX_AGE_MS): archive each and report it unapplied, so Seal refuses instead of the steer vanishing.
- *  A claim whose bytes an ORPHAN archive already holds is only removed, never re-archived or re-reported. */
+ *  A claim that shares an inode with an ORPHAN archive is only removed, never re-archived or re-reported. */
 function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync, nowMs: number = Date.now()): void {
   let names: string[];
   try { names = readdirSync(logs); } catch { return; }
@@ -83,6 +84,8 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
     // A private, unique claim name: the rename can never collide with another consumer, and the archive name is chosen later by archiveTo.
     claimed = join(logs, `.claim-${process.pid}-${randomBytes(6).toString("hex")}`);
     try { renameSync(f, claimed); } catch (e) { claimed = ""; if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+    // rename keeps the steer's original mtime; stamp the claim so its age counts from the claim, not from when the operator wrote it.
+    try { const t = now(); lutimesSync(claimed, t, t); } catch { /* best effort: an unstamped claim only risks an early orphan report */ }
     hooks?.afterClaim?.(claimed);
     const reject = (tag: string, reason: string): null => { archiveTo(logs, `human-input-REJECTED-${tag}-${stamp}`, claimed, hooks?.link); claimed = ""; unapplied(reason); return null; };
     // A directory or special file goes back in place (the remedy deletes it). linkSync fails atomically with EEXIST when a fresh steer is there; a directory (EPERM) is renamed back, which a fresh regular file refuses with ENOTDIR. Either refusal quarantines.
