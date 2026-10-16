@@ -4,7 +4,7 @@
   "prompt": "Build a single-page signup form as index.html at the repo root. It needs a <title>, a text input with id 'email' that has a matching <label for='email'>, a password input with id 'pw' with its own label, and a <button type='submit'> inside a <form>. No external assets.",
   "issue_ref": null,
   "repo": {
-    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "source": "fixtures/empty-repo/empty-repo.bundle",
     "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
   },
   "setup": "",

@@ -4,7 +4,7 @@
   "prompt": "Add a staging environment to config.py. When APP_ENV=staging, load() must return the database URL from the STAGING_DB_URL environment variable and debug False. Default (no APP_ENV) behavior must not change.",
   "issue_ref": null,
   "repo": {
-    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "source": "fixtures/empty-repo/empty-repo.bundle",
     "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
   },
   "setup": "[ -e config.py ] || python3 -c \"import base64;open('config.py','wb').write(base64.b64decode('aW1wb3J0IG9zCgpkZWYgbG9hZCgpOgogICAgcmV0dXJuIHsnZGInOiAnc3FsaXRlOi8vL2Rldi5kYicsICdkZWJ1Zyc6IFRydWV9Cg=='))\"",
