@@ -150,6 +150,8 @@ export interface HandoffInput {
   elapsedS: number | null; interventions: number | null; baseSha?: string | null;
   /** By-type counts and wall-clock waited seconds from interventions.json; absent for event-counted or unrecorded runs. */
   interventionDetail?: { by_type: Record<string, number>; waited_s: number | null } | null;
+  /** Merge state recorded in .loki/state/pr.json: "merged", "waiting" or "blocked:<gate>". Absent means not recorded. */
+  merge?: { outcome: string; gate?: string | null; checks?: string | null } | null;
 }
 const W = 110, clip = (s: string, n = W): string => { const t = redactSecrets(String(s)).replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
 /** Spend text: measured dollars, a partial figure, or "not measured". Never $0.00 for an unknown. */
@@ -164,6 +166,13 @@ function interventionsText(i: Pick<HandoffInput, "interventions" | "intervention
   const d = i.interventionDetail;
   const types = d ? Object.entries(d.by_type).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(", ") : "";
   return `${i.interventions}${types ? ` (${types})` : ""}${d && d.waited_s != null ? `; waited ${formatDuration(d.waited_s)}` : ""}`;
+}
+/** "merged", "waiting at: <gate>", or "not recorded". A blocked or waiting merge never reads as merged. */
+function mergeText(m: HandoffInput["merge"]): string {
+  if (!m) return "not recorded";
+  const c = m.checks ? ` (checks: ${clip(m.checks, 40)})` : "";
+  if (m.outcome === "merged") return `merged${c}`;
+  return `waiting at: ${clip(m.outcome.startsWith("blocked:") ? m.outcome.slice(8) : m.gate || "human review", 40)}${c}`;
 }
 /** The exact accept and reject commands for the surface this run produced. */
 export function decisionCommands(i: Pick<HandoffInput, "prUrl" | "branch" | "baseSha" | "outcome">): { accept: string; reject: string } {
@@ -198,6 +207,7 @@ export function renderHandoff(i: HandoffInput): string {
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");
   if (notChecked.length > 8) L.push(`- +${notChecked.length - 8} more`);
   L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
+  if (i.prUrl) L.push(`Merge: ${mergeText(i.merge)}`);
   return `${L.join("\n")}\n`;
 }
 const hunkSummary = (diff: string): HandoffHunk[] => {
@@ -235,6 +245,14 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
       }
     } catch { /* absent or unreadable stays not recorded */ }
   }
+  let merge: HandoffInput["merge"] = null;
+  if (f.prUrl) { // merge outcome recorded beside the "created" record; anything unrecognised stays not recorded
+    try {
+      const m = (JSON.parse(readFileSync(join(f.repoDir, ".loki", "state", "pr.json"), "utf8")) as { merge?: { outcome?: unknown; gate?: unknown; checks?: unknown } }).merge;
+      const o = m?.outcome;
+      if (typeof o === "string" && /^(merged|waiting|blocked:.+)$/.test(o)) merge = { outcome: o, gate: typeof m?.gate === "string" ? m.gate : null, checks: typeof m?.checks === "string" ? m.checks : null };
+    } catch { /* absent or unreadable stays not recorded */ }
+  }
   let hunks: HandoffHunk[] = [];
   if (f.baseSha) { try { hunks = hunkSummary(safeGit(f.repoDir, ["diff", "--unified=0", `${f.baseSha}..HEAD`, "--", ".", ":(exclude).loki"], { maxBuffer: 8 << 20 })); } catch { /* diff unavailable */ } }
   const failed = f.events.filter((e) => e.type === "stage.failed").map((e) => `${e.stage} failed: ${String(e.data.reason ?? "no reason recorded")}`);
@@ -242,7 +260,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
     task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" ? started.branch : null,
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
-    usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, baseSha: f.baseSha,
+    usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,
   };
 }
 /** Atomic write of HANDOFF.md and handoff.json; returns the markdown, or null when nothing could be written. Never throws. */
