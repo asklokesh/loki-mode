@@ -65,6 +65,18 @@ describe("loadResumeState", () => {
     f.done();
   });
 
+  it("a double crash leaves no torn line mid-log (constructor truncates the torn tail)", () => {
+    const f = fx();
+    f.log.append("unit.completed", { unit: "a" });
+    appendFileSync(modernizeEventsPath(f.dir, MID), '{"v":1,"seq":1,"ty');
+    const log2 = new ModernizeLog(f.dir, MID);
+    log2.append("unit.completed", { unit: "b" });
+    const s = loadResumeState(f.dir, MID);
+    expect(s.ok).toBe(true);
+    if (s.ok) expect([...s.state.completed].sort()).toEqual(["a", "b"]);
+    f.done();
+  });
+
   it("fails closed on a corrupt middle line", () => {
     const f = fx();
     f.log.append("unit.completed", { unit: "a" });

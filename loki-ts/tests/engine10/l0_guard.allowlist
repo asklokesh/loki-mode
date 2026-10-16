@@ -17,6 +17,8 @@ src/engine10/modernize/presealed_wall.ts	pytest
 src/engine10/modernize/presealed_wall.ts	vitest
 src/engine10/modernize/unit.ts	pyproject.toml
 src/engine10/modernize/unit.ts	pytest
+src/util/python.ts	pyproject.toml
+src/util/python.ts	pytest
 src/engine10/modernize/targets/java21.ts	build.gradle
 src/engine10/modernize/targets/java21.ts	pom.xml
 src/engine10/modernize/targets/python3.ts	pytest

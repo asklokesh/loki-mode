@@ -381,7 +381,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 | M-20 | Wave verify: full build, integration and original suite | mod/wave.ts, T/wave.test.ts | MEDIUM | Wb T/wave.test.ts | M-17, M-19 |
 | M-21 | Wave ship: one PR per wave with unit receipts, draft unless all proven | mod/ship.ts, T/ship.test.ts | HIGH | Wb T/ship.test.ts | M-20 |
 | M-22 | Unit-level resume after coordinator crash | mod/resume.ts, T/resume.test.ts | MEDIUM | Wb T/resume.test.ts | M-17, E-39 |
-| M-23 | Remote units via POST /jobs kind unit, Helm worker.engine v10, local re-verify | autonomy/trigger-server.py (unit job kind only), deploy/helm/autonomi/templates/job-worker.yaml, deploy/helm/autonomi/values.yaml, mod/remote.ts, T/remote.test.ts, tests/test-trigger-server-unit-jobs.py | HIGH | python3 tests/test-trigger-server-unit-jobs.py && Wb T/remote.test.ts | M-17 |
+| M-23 | Remote units via POST /jobs kind unit, Helm worker.engine v10, local re-verify | autonomy/trigger-server.py (unit job kind only), deploy/helm/autonomi/templates/job-worker.yaml, deploy/helm/autonomi/values.yaml, loki-ts/src/util/modernize_unit.ts, T/remote.test.ts, tests/test-trigger-server-unit-jobs.py | HIGH | python3 tests/test-trigger-server-unit-jobs.py && Wb T/remote.test.ts | M-17 |
 | M-24 | Dashboard /modernize view | loki-ts/src/engine10/dashboard/modernize.ts, loki-ts/src/engine10/dashboard/server.ts (one route), T/dashboard.test.ts | LOW | Wb T/dashboard.test.ts | M-01 |
 | M-25 | Final report and verdict (COMPLETE only if all proven), sealed | mod/report.ts, T/report.test.ts | HIGH | Wb T/report.test.ts | M-13, M-21 |
 | M-26 | End-to-end: py2 fixture repo modernized with stub provider | T/e2e.test.ts, T/fixtures/e2e_py2/ | MEDIUM | Wb T/e2e.test.ts | M-08, M-22, M-25 |
@@ -421,7 +421,7 @@ The worker runs `loki modernize unit --repo <repo> --ref <ref> --unit <unit>` (p
 | G-04 field | M-23 field | Rule |
 |---|---|---|
 | slice id (`SLICE-ID`) | `unit` | Same unit-id charset; the id is the unit of fan-out and of overlap checks. |
-| branch `cloud/<slice-id>` | `ref` | The worker works on and returns this ref; the coordinator never merges a ref it did not name. |
+| branch `cloud/<slice-id>` | `ref` | The worker works on this ref (G-04 also returns it); the coordinator never merges a ref it did not name. |
 | repository of the checkout | `repo` | Always `owner/name`; no URL, no userinfo. |
 | file set (overlap check) | the unit's own files | Resolved coordinator-side from plan.json before dispatch; never sent in the job. Overlap with in-flight work refuses the dispatch in both. |
 | tier and governor max | scheduler `--workers` | Concurrency is the governor cap, not a job field. |

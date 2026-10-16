@@ -10,7 +10,7 @@ import {
   REMOTE_UNIT_FIELDS,
   type LocalReverify,
   type RemoteTransport,
-} from "../../../src/engine10/modernize/remote.ts";
+} from "../../../src/util/modernize_unit.ts";
 
 const spec = { repo: "acme/app", ref: "loki/mod-x", unit: "billing.core" };
 const transport = (status: "passed" | "failed" | "unknown", sent: unknown[] = []): RemoteTransport => ({
