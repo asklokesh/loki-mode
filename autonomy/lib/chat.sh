@@ -117,7 +117,13 @@ _chat_run_launch() {
     log="$root/chat-run.log"
     mkdir -p "$root"
     _chat_clock_pick
-    start_ms="$(_chat_now_ms)"
+    start_ms="$(_chat_now_ms)" || start_ms=""
+    case "$start_ms" in
+        ''|*[!0-9]*)
+            echo "Run not started (clock read failed before launch). Retry /run." >&2
+            return 1
+            ;;
+    esac
     before_dir="$(_chat_run_dir)"; before_state="$(_chat_run_state "$before_dir")"
     _chat_run_start "$loki" "$input" < /dev/null > "$log" 2>&1 &
     pid=$!
