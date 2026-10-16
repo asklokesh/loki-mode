@@ -1,6 +1,7 @@
 // Per-repo flaky-test list and failure-signature log, stored in the E-18 per-repo cache dir
 // (engine10/cache.ts, ENGINE.md section 13). Moved out of engine10/cache.ts to keep the core under its
 // line cap; only e10ext/repomemory.ts consumes it. Reads never throw: missing or corrupt = empty.
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -120,6 +121,14 @@ export function recordFingerprints(dir: string, runId: string, cls: string, name
   return list;
 }
 /** P12-11b: rerun evidence for decideRecovery. Only a flaky row recorded against THIS tree id counts (verify reruns on one tree, so the row's tree is both the failing and passing tree). Rows without a tree, or from another tree, prove nothing. */
+export function cleanTreeId(cwd: string): string {
+  const git = (args: string[]) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  const st = git(["status", "--porcelain", "--untracked-files=all"]);
+  if (st.status !== 0 || typeof st.stdout !== "string") return "";
+  if (st.stdout.split("\n").some((l) => l.trim() !== "" && !/^.. "?\.loki\//.test(l))) return "";
+  const t = git(["rev-parse", "HEAD^{tree}"]);
+  return t.status === 0 ? (t.stdout ?? "").trim() : "";
+}
 export function flakyRerunSignal(dir: string, tree: string): { test: string; failTree: string; passTree: string } | undefined {
   if (tree === "") return undefined;
   const row = readFingerprints(dir).findLast((r) => r.cls === "flaky" && r.tree === tree);

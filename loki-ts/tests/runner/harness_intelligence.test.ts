@@ -39,7 +39,7 @@ import {
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
 import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
-import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, cleanTreeId, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -950,6 +950,38 @@ describe("P12-11b flaky rerun producer and summary wiring", () => {
   it("buildExitCode 1 without same-tree rerun evidence still revises", () => {
     expect(decideRecovery({ output: "x", buildExitCode: 1 }, { env: E, history: [] })).toMatchObject({ action: "revise", reason: "build_failed" });
     expect(decideRecovery({ output: "x", buildExitCode: 1, rerun: { test: "t", failTree: "a", passTree: "b" } }, { env: E, history: [] }).action).toBe("revise");
+  });
+  it("P12-11b-c cleanTreeId: tree sha only for a clean worktree; run-owned .loki paths ignored; dirty or non-repo is empty", () => {
+    const d = tmp();
+    const g = (...a: string[]) => execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+    expect(cleanTreeId(d)).toBe("");
+    g("init", "-q");
+    writeFileSync(join(d, "a.txt"), "1");
+    g("add", "a.txt");
+    g("commit", "-q", "-m", "x");
+    const tree = g("rev-parse", "HEAD^{tree}").trim();
+    expect(cleanTreeId(d)).toBe(tree);
+    mkdirSync(join(d, ".loki", "state"), { recursive: true });
+    writeFileSync(join(d, ".loki", "state", "fingerprints.jsonl"), "{}\n");
+    expect(cleanTreeId(d)).toBe(tree);
+    writeFileSync(join(d, "a.txt"), "2");
+    expect(cleanTreeId(d)).toBe("");
+    g("checkout", "--", "a.txt");
+    writeFileSync(join(d, "untracked.txt"), "u");
+    expect(cleanTreeId(d)).toBe("");
+  });
+  it("P12-11b-c: a row recorded with an empty tree (dirty at verify) never becomes evidence", () => {
+    const dir = tmp();
+    recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"], "");
+    expect(flakyRerunSignal(dir, "tree1")).toBeUndefined();
+  });
+  it("P12-11b-c: supervisor and autonomous derive the tree through cleanTreeId", () => {
+    const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
+    const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
+    expect(au).toContain("cleanTreeId(");
+    expect(sv).toContain("cleanTreeId(");
+    expect(au).not.toMatch(/flakyRerunSignal\([^)]*rev-parse/);
+    expect(sv).not.toMatch(/"flaky"[^;]*rev-parse/);
   });
   it("autonomous.ts feeds rerun into decideRecovery and supervisor passes the real flaky list", () => {
     const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
