@@ -1,4 +1,4 @@
-// MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session; default OFF, LOKI_E10_FIX_RESUME=1 opts in.
+// MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay OFF, LOKI_E10_FIX_RESUME=1 opts in.
 // Lives outside engine10/ so the core line budget is untouched. Nothing here feeds a verdict: the seal path
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
 import { readFileSync } from "node:fs";
@@ -21,7 +21,7 @@ export function readFirstTurnTokens(repoDir: string, iterationId: string): numbe
 
 /** CH-03: whether implement may resume plan's session. Same model, plan exited ok (its output carries a plan), SDK invoker, under 100K. */
 export function planChain(ctx: RunContext, implementModel: string, planModel: string): { id: string } | { why: string } {
-  if (!chainEnabled()) return { why: "LOKI_E10_FIX_RESUME is not 1" };
+  if (process.env["LOKI_E10_FIX_RESUME"] === "0") return { why: "LOKI_E10_FIX_RESUME=0" }; // COST-5: plan -> implement is default-on; fix rounds stay opt-in via chainEnabled
   if (ctx.provider !== "claude" || process.env["LOKI_E10_INVOKER"] === "cli") return { why: "provider is not the SDK" };
   const plan = ctx.outputs().plan;
   const planIter = (plan?.iteration_ids as string[] | undefined)?.at(-1);

@@ -84,13 +84,22 @@ describe("warm chain: plan -> implement (CH-03)", () => {
     expect(r.data.plan_chain).toBe("fresh (no plan session id recorded)");
   });
 
-  test("flag unset (default) never resumes", async () => {
+  test("COST-5: flag unset (default) resumes plan's session", async () => {
     delete process.env["LOKI_E10_FIX_RESUME"];
     writeId("r1-plan", "sess-plan");
     const s = new Fake(() => ok);
     const r = await runImpl(ctxFor(s, { intake: { task: "t" }, plan: planOut }));
+    expect(s.calls[0]!.resumeSessionId).toBe("sess-plan");
+    expect(r.data.plan_chain).toBe("resumed");
+  });
+
+  test("COST-5: LOKI_E10_FIX_RESUME=0 opts out of the plan chain", async () => {
+    process.env["LOKI_E10_FIX_RESUME"] = "0";
+    writeId("r1-plan", "sess-plan");
+    const s = new Fake(() => ok);
+    const r = await runImpl(ctxFor(s, { intake: { task: "t" }, plan: planOut }));
     expect("resumeSessionId" in s.calls[0]!).toBe(false);
-    expect(r.data.plan_chain).toBe("fresh (LOKI_E10_FIX_RESUME is not 1)");
+    expect(r.data.plan_chain).toBe("fresh (LOKI_E10_FIX_RESUME=0)");
   });
 
   test("first turn above 100K tokens starts fresh", async () => {
