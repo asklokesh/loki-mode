@@ -369,14 +369,17 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   if (state !== "open") throw new GhError(`${ref} is not open (state '${state || "unknown"}'); refusing to push.`);
   const origin = readOrigin(); // read ONCE before any fix: the fixer runs in this repo and must not choose the push destination
   const originRepo = githubRepoFromUrl(origin);
-  if (originRepo !== pr.repo) throw new GhError(`Checkout origin is '${originRepo ?? "not a github.com remote"}' but the PR is in '${pr.repo}' (fork or wrong checkout); refusing to push.`);
+  if (originRepo?.toLowerCase() !== pr.repo.toLowerCase()) throw new GhError(`Checkout origin is '${originRepo ?? "not a github.com remote"}' but the PR is in '${pr.repo}' (fork or wrong checkout); refusing to push.`);
   const current = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
   if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
   if (vcs(STATUS_ARGS).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");
   const { open, skipped } = await openReviewComments(gh, pr.repo, pr.num);
   const done: Array<{ c: OpenComment; sha: string }> = [];
   for (const c of open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
-    if (!(await deps.fix(c))) continue;
+    const fixed = await deps.fix(c);
+    const after = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+    if (after !== headRef) throw new GhError(`The fixer left the checkout on '${after}' but the PR branch is '${headRef}'; refusing to commit or push.`);
+    if (!fixed) continue;
     const files = vcs(STATUS_ARGS).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, "")).filter((f) => f !== ".loki" && !f.startsWith(".loki/")); // only the repo-root .loki is Loki's run state; a nested sub/.loki is the user's and stays unfiltered
     if (files.length === 0) continue;
     vcs(["add", "--", ...files]);
@@ -384,6 +387,9 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
     done.push({ c, sha: vcs(["rev-parse", "HEAD"]).trim() });
   }
   if (done.length > 0) {
+    for (const { sha } of done) {
+      try { vcs(["merge-base", "--is-ancestor", sha, `refs/heads/${headRef}`]); } catch { throw new GhError(`commit ${sha.slice(0, 12)} is not on '${headRef}'; refusing to push or reply.`); }
+    }
     if (readOrigin() !== origin) throw new GhError(`origin changed during the fix (was '${origin}'); refusing to push.`);
     push(headRef, origin!);
     for (const { c, sha } of done) {
