@@ -119,3 +119,9 @@ export function recordFingerprints(dir: string, runId: string, cls: string, name
   }
   return list;
 }
+/** P12-11b: rerun evidence for decideRecovery. The latest recorded flaky fingerprint was a same-tree fail-then-pass (verify reruns on one tree); a known tree id is required, else no signal. */
+export function flakyRerunSignal(dir: string, tree: string): { test: string; failTree: string; passTree: string } | undefined {
+  if (tree === "") return undefined;
+  const row = readFingerprints(dir).findLast((r) => r.cls === "flaky");
+  return row ? { test: row.name, failTree: tree, passTree: tree } : undefined;
+}

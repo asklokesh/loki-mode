@@ -376,7 +376,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const pc = partialCost(events, res.tampered), usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
-    verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: [],
+    verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: ((f.stages["verify"]?.data.flaky as unknown[] | undefined) ?? []).filter((n): n is string => typeof n === "string"),
     cost: {
       usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && cli && (usd === null || events.some((e) => e.type === "cost" && e.data.source === "cli-invoker-unmetered")) ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,

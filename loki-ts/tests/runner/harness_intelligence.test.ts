@@ -39,7 +39,7 @@ import {
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
 import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
-import { recordFingerprints, readFingerprints, failureFingerprint, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -921,5 +921,28 @@ describe("P12-11 recovery classes (FC-REQ)", () => {
   it("recordFingerprints tolerates junk input", () => {
     expect(recordFingerprints(tmp(), "r", "flaky", undefined)).toEqual([]);
     expect(recordFingerprints(tmp(), "r", "flaky", [1, "ok"] as unknown)).toEqual(["ok"]);
+  });
+});
+
+describe("P12-11b flaky rerun producer and summary wiring", () => {
+  const E = { LOKI_RECOVERY_POLICY: "1" } as NodeJS.ProcessEnv;
+  it("flakyRerunSignal yields rerun evidence only from a recorded flaky fingerprint on a known tree", () => {
+    const dir = tmp();
+    expect(flakyRerunSignal(dir, "tree1")).toBeUndefined();
+    recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"]);
+    expect(flakyRerunSignal(dir, "")).toBeUndefined();
+    expect(flakyRerunSignal(dir, "tree1")).toEqual({ test: "t/a.test.ts", failTree: "tree1", passTree: "tree1" });
+  });
+  it("the produced signal drives decideRecovery to retry:flaky", () => {
+    const dir = tmp();
+    recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"]);
+    const rerun = flakyRerunSignal(dir, "tree1");
+    expect(decideRecovery({ output: "blip", rerun }, { env: E, history: [] }).reason).toBe("flaky");
+  });
+  it("autonomous.ts feeds rerun into decideRecovery and supervisor passes the real flaky list", () => {
+    const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
+    expect(au).toContain("flakyRerunSignal(");
+    const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
+    expect(sv).not.toMatch(/notProven: res\.notProven, flaky: \[\]/);
   });
 });
