@@ -180,5 +180,53 @@ else
     fail "a live prdPath was dropped; the command would resume a different run"
 fi
 
+# --- P12-07b: a bare `loki start --resume` reaches the engine10 resume path ----
+# Before the fix cmd_start ignored --resume and began a new build. A stub entry
+# records the argv the delegate receives, so the route is read out, not assumed.
+if command -v bun >/dev/null 2>&1; then
+    stub="$WORK/stub-entry.js"
+    printf 'console.log("STUB-ARGV:" + process.argv.slice(2).join(" ")); process.exit(process.argv[2] === "engine10" ? Number(process.env.STUB_RC || 0) : 0);\n' > "$stub"
+    dir="$WORK/start_resume"; mkdir -p "$dir"
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --resume delegates to engine10 resume" ;;
+        *) fail "start --resume did not reach engine10 resume: $out" ;;
+    esac
+    [ "$rc" -eq 0 ] && pass "start --resume exit 0 when resume succeeds" || fail "start --resume rc=$rc, expected 0"
+    out="$(cd "$dir" && STUB_RC=4 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume e10-abc 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume e10-abc"*) pass "start --resume passes the run id through" ;;
+        *) fail "start --resume dropped the run id: $out" ;;
+    esac
+    [ "$rc" -eq 0 ] && pass "phase-reported (4) maps to exit 0, same as loki resume" || fail "rc=$rc, expected 0 for a reported phase"
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start "fix the login bug" --resume 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && pass "start <task> --resume is refused with exit 2" || fail "start <task> --resume rc=$rc, expected 2"
+    case "$out" in
+        *"takes an optional run id, not a task"*) pass "refusal names the run-id-only rule" ;;
+        *) fail "refusal message missing: $out" ;;
+    esac
+    case "$out" in *STUB-ARGV*) fail "task text reached the delegate" ;; *) pass "task text never reaches the delegate" ;; esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --provider claude --budget 5 --resume 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --provider claude --budget 5 --resume reaches engine10 resume" ;;
+        *) fail "value flags around --resume were refused: $out" ;;
+    esac
+    case "$out" in *"STUB-ARGV:engine10 resume claude"*|*"resume 5"*) fail "a flag value leaked as a run id: $out" ;; *) pass "flag values are not passed as run ids" ;; esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --provider claude e10-abc --budget 5 2>&1)"
+    case "$out" in
+        *"STUB-ARGV:engine10 resume e10-abc"*) pass "run id kept when value flags surround it" ;;
+        *) fail "run id lost around value flags: $out" ;;
+    esac
+    # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
+    out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
+    mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
+    out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"; rc_resume=$?
+    if [ "$rc_start" -eq 1 ] && [ "$rc_resume" -eq 1 ]; then pass "exit 5 maps to 1 in start --resume and resume"; else fail "exit 5 parity: start=$rc_start resume=$rc_resume, expected 1 and 1"; fi
+    out="$(cd "$dir" && STUB_RC=3 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
+    [ "$rc" -eq 3 ] && pass "nothing to resume (3) is not turned into a new build" || fail "rc=$rc, expected 3"
+else
+    fail "bun unavailable: start --resume route was NOT measured (unmeasured, not clean)"
+fi
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

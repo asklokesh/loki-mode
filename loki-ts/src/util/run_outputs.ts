@@ -16,7 +16,14 @@ import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { noteOf } from "./base_guard.ts";
 import { redactSecrets } from "./redact.ts";
+import { readIntentRevisions, type IntentRevision } from "./steer.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
+
+/** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
+export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
+  const r = (revs ?? []).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
+  return r.length ? { intent_revisions: r } : {};
+}
 
 const REVERTED = "unrelated edit reverted:";
 export type StageOutputs = Partial<Record<string, Record<string, unknown>>>;
@@ -337,8 +344,7 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
   const argvOf = (bodyFile: string): string[] => ["issue-comment", "--update", o.issueRef, bodyFile];
   const once = async (x: StatusExtra): Promise<{ argv: string[]; ok: boolean } | null> => {
     const events = readEvents(o.eventsPath), since = Date.parse(events[0]?.ts ?? "") || 0;
-    let revs = 0;
-    try { for (const l of readFileSync(join(o.repoDir, ".loki", "intent-revisions.jsonl"), "utf8").split("\n")) if (l) { try { if (Date.parse(String((JSON.parse(l) as { consumed_at?: unknown }).consumed_at)) >= since) revs++; } catch { /* torn line */ } } } catch { /* no steers */ }
+    const revs = readIntentRevisions(o.repoDir, since).length;
     const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
     if (body === last) return { argv, ok: true };
     mkdirSync(o.runDir, { recursive: true }); writeFileSync(bodyFile, body);

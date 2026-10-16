@@ -240,7 +240,16 @@ describe("resume review fixes (P12-07)", () => {
     const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"], ["stage.skipped", "verify"]]);
     const h = renderHandoff(composeHandoff({ repoDir: tmpdir(), runId: RID, events: evs, outcome: "BUDGET_STOP", usd: null, elapsedS: null, notProven: [] }));
     expect(h).toContain("Stopped before stage verify completed");
-    expect(h).toContain("start a new run: loki start");
+    expect(h).toContain("in a new run: loki start");
+  });
+  test("P12-07b: handoff states what reruns and that only a sealed publish phase resumes", () => {
+    const evs = killedAfterImplement();
+    const h = renderHandoff(composeHandoff({ repoDir: tmpdir(), runId: RID, events: evs, outcome: "BUDGET_STOP", usd: null, elapsedS: null, notProven: [] }));
+    expect(h).toContain("No stage is re-entered");
+    expect(h).toContain("stage verify and every later stage rerun only in a new run");
+    expect(h).toContain("reuses that receipt and reruns only the PR step");
+    expect(h).toContain("loki resume or loki start --resume");
+    expect(h).not.toContain("Resuming a stopped run is not available");
   });
   test("wall finishing before plan is accepted; resume re-enters at plan", () => {
     const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["stage.completed", "wall"]]);

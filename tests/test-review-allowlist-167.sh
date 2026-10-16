@@ -139,7 +139,9 @@ if grep -qx B6_OK "$TMP/secB.out"; then ok "EMBED3b degrades gracefully (no --al
 # Section C: shared call-site wiring
 # ---------------------------------------------------------------------------
 # Reviewer site: _rv_argv must append --allowedTools via the guard helper.
-rv_block="$(awk '/_rv_argv=\("--dangerously-skip-permissions"\)/,/claude "\$\{_rv_argv\[@\]\}"/' "$RUN_SH")"
+# The block starts at the argv init, which is seeded from the compiled
+# permission argv (P12-26), not a literal --dangerously-skip-permissions.
+rv_block="$(awk '/local _rv_argv=\(/,/claude "\$\{_rv_argv\[@\]\}"/' "$RUN_SH")"
 if printf '%s' "$rv_block" | grep -q 'loki_review_allowlist_enabled' \
    && printf '%s' "$rv_block" | grep -q '_rv_argv+=("--allowedTools" "$(loki_review_allowlist)")'; then
   ok "EMBED3b: reviewer council site appends --allowedTools via guard helper"

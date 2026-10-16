@@ -97,6 +97,8 @@ _PROVIDER_AUTH_COMMANDS = {
     "cline": ("cline", "auth", "status"),
 }
 _PROVIDER_READINESS_COMMANDS = {
+    # P12-26b scoped out: fixed sandboxed printf probe that must run Bash; a restrictive
+    # policy would report a false provider-auth failure. Listed in the guard test.
     "claude": (
         "claude",
         "--dangerously-skip-permissions",

@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { STEER_MAX_BYTES, withSteer } from "../../src/util/steer.ts";
 import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -1360,4 +1361,95 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     const off = await factFor("learn-off", "0");
     expect(existsSync(join(off.repo, ".loki/memory/semantic/pr-lessons.json"))).toBe(false);
   }, 60000);
+
+  // P12-02: an intent revision consumed after the Wall was authored stales it; Seal refuses until the Wall is re-authored.
+  // Revisions come from machine memory (ctx.intentRevisions), never the agent-writable repo file.
+  const rv = (rev: number, at: number) => ({ rev, source: "chat", actor: "alice", sha: `${rev}`.repeat(64).slice(0, 64), at });
+  const withRevs = (name: string, revs: ReturnType<typeof rv>[], timeline?: RunContext["timeline"]) => {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    const { ctx } = ctxFor(repo, base);
+    ctx.intentRevisions = revs; ctx.timeline = timeline ?? [{ stage: "wall", startMs: 2000, endMs: 2500 }];
+    return ctx;
+  };
+  test("revision after wall blocks seal", async () => {
+    const ctx = withRevs("rev-after-wall", [rv(1, 3000)]);
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("failed");
+    expect(s.reason).toContain("arrived after the Wall was frozen");
+    expect(s.reason).toContain("Rerun with the new intent");
+    expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false);
+    ctx.timeline = [{ stage: "wall", startMs: 2000, endMs: 2500 }, { stage: "wall", startMs: 3100, endMs: 3500 }]; // re-authored after the revision
+    expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("completed");
+  }, 30000);
+  test("agent tampering with the repo revisions file cannot suppress staleness or the receipt list", async () => {
+    for (const how of ["backdate", "truncate", "symlink"]) {
+      const ctx = withRevs(`rev-tamper-${how}`, [rv(1, 3000)]);
+      const f = join(ctx.repoDir, ".loki/intent-revisions.jsonl");
+      if (how === "backdate") writeFileSync(f, JSON.stringify({ rev: 1, consumed_at: new Date(10).toISOString() }) + "\n");
+      else if (how === "truncate") writeFileSync(f, "");
+      else symlinkSync("/dev/null", f);
+      await commitStage.run(ctx, new AbortController().signal);
+      expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("failed");
+    }
+    const ok = withRevs("rev-tamper-receipt", [rv(1, 1000)]); // pre-Wall, so seal completes; the file is /dev/null yet the receipt still lists it
+    symlinkSync("/dev/null", join(ok.repoDir, ".loki/intent-revisions.jsonl"));
+    await commitStage.run(ok, new AbortController().signal);
+    expect(receiptOf(await sealStage.run(ok, new AbortController().signal)).intent_revisions?.map((r) => r.rev)).toEqual([1]);
+  }, 60000);
+  test("pre-wall revision does not block seal; one at or after the Wall start tick is stale", async () => {
+    const ctx = withRevs("rev-before-wall", [rv(1, 1800), rv(2, 1999)]);
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("completed");
+    expect(receiptOf(s).intent_revisions?.map((r) => r.rev)).toEqual([1, 2]);
+    ctx.intentRevisions = [rv(3, 2001)]; // after the Wall STARTED (it ended later at 2500): the boundary is the start
+    expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("failed");
+    ctx.intentRevisions = [rv(4, 2000)]; // the same tick as the Wall start is late too
+    expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("failed");
+  }, 30000);
+  test("a steer still pending in HUMAN_INPUT.md at seal refuses and is recorded", async () => {
+    const ctx = withRevs("rev-pending", []);
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\nmore\n");
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("failed");
+    expect(s.reason).toContain("arrived after the Wall was frozen");
+    expect(ctx.intentRevisions?.map((r) => r.rev)).toEqual([1]);
+  }, 30000);
+  // Unconsumable steers must fail closed: an unwritable logs dir or an oversize file leaves no revision record by the old path.
+  const HDR = "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\n";
+  const refuses = async (ctx: RunContext, why: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); fix it and re-run`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
+  test("logs path is a regular file: a steer at implement refuses the seal", async () => {
+    const ctx = withRevs("rev-logs-file-impl", []);
+    writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}change\n`);
+    expect(withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions).brief).toBe("b"); // not injected, but recorded as unapplied
+    await refuses(ctx, "logs dir unwritable or file unreadable");
+  }, 30000);
+  test("logs path is a regular file: a late steer refuses the seal", async () => {
+    const ctx = withRevs("rev-logs-file-late", []);
+    writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}late\n`);
+    await refuses(ctx, "logs dir unwritable or file unreadable");
+  }, 30000);
+  test("an oversize late steer refuses the seal", async () => {
+    const ctx = withRevs("rev-oversize-late", []);
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
+    await refuses(ctx, "over 1 MiB");
+  }, 30000);
+  test("an oversize steer at implement refuses the seal", async () => {
+    const ctx = withRevs("rev-oversize-impl", []);
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
+    withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions);
+    rmSync(join(ctx.repoDir, ".loki/logs"), { recursive: true, force: true });
+    await refuses(ctx, "over 1 MiB");
+  }, 30000);
+  test("receipt lists revisions", async () => {
+    const ctx = withRevs("rev-receipt", [rv(1, 1800), rv(2, 1900)]);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.intent_revisions).toEqual([{ rev: 1, source: "chat", actor: "alice", sha: "1".repeat(64) }, { rev: 2, source: "chat", actor: "alice", sha: "2".repeat(64) }]);
+  }, 30000);
 });

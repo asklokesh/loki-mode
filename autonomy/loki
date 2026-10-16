@@ -132,6 +132,34 @@ _loki_caveman_narration_level() {
     fi
 }
 
+# P12-26b: permission flags for the migrate/doc/heal claude launches. Lazily sources
+# claude-flags.sh (like the caveman wrapper above) and fills _LOKI_PERM_ARGV; unset
+# LOKI_PERMISSION_POLICY keeps --dangerously-skip-permissions byte-identically.
+_loki_perm_argv_for() {
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    # Unset policy: return before sourcing anything (claude-flags.sh exports caveman vars).
+    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    _LOKI_PERM_ARGV=(--permission-mode plan)
+    local _pa_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" _pa_out _pa_a
+    if [ ! -f "$_pa_lib" ]; then
+        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: helper missing; using most restrictive mode (plan)" >&2
+        return 0
+    fi
+    # Subshell so the helper's top-level exports never leak into this shell.
+    _pa_out="$(
+        LOKI_PROJECT_DIR="${1:-${LOKI_PROJECT_DIR:-$PWD}}"
+        # shellcheck source=autonomy/lib/claude-flags.sh
+        . "$_pa_lib" >/dev/null 2>&1 || exit 1
+        declare -F _loki_claude_permission_argv >/dev/null 2>&1 || exit 1
+        _loki_claude_permission_argv
+        printf '%s\n' "${_LOKI_PERM_ARGV[@]}"
+    )" || return 0
+    [ -n "$_pa_out" ] || return 0
+    _LOKI_PERM_ARGV=()
+    while IFS= read -r _pa_a; do _LOKI_PERM_ARGV+=("$_pa_a"); done <<< "$_pa_out"
+    return 0
+}
+
 # loki edit: one-pass small change fast path (functions-only, self-guarded).
 if [ -f "$_LOKI_SCRIPT_DIR/edit.sh" ]; then
     # shellcheck source=edit.sh
@@ -2519,6 +2547,28 @@ _loki_start_handoff() {
 }
 
 # Start Loki Mode
+# Every value-taking cmd_start flag (its value is never brief text or a run id).
+# The one list: the --workspace brief scan and the --resume scan both use it.
+_loki_start_flag_takes_value() {
+    case "$1" in
+        --provider|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) return 0 ;;
+    esac
+    return 1
+}
+
+# One exit-code mapping for an engine10 resume, shared by cmd_resume and
+# `loki start --resume`. 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1.
+# Sets _LOKI_E10_RC and returns 0 when handled; any other code returns 1 with
+# _LOKI_E10_RC set to the raw code (cmd_resume falls through, start returns it).
+_loki_e10_resume_map() {
+    case "$1" in
+        0 | 4) _LOKI_E10_RC=0 ;;
+        5) _LOKI_E10_RC=1 ;;
+        *) _LOKI_E10_RC="$1"; return 1 ;;
+    esac
+    return 0
+}
+
 cmd_start() {
     # First-run welcome (once): open the branded welcome page on the very
     # first start. Writes ~/.loki/.welcomed and never repeats; non-blocking,
@@ -2589,8 +2639,7 @@ cmd_start() {
                 --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
                 --brief) _ps_skip=2 ;;
                 # Every value-taking cmd_start flag: its value is never brief text.
-                --provider|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) _ps_skip=1 ;;
-                -*) ;;
+                -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_skip=1; fi ;;
                 *) _ps_brief+=("$_ps_a") ;;
             esac
         done
@@ -2614,6 +2663,33 @@ cmd_start() {
         [ "$_ps_rb" = 1 ] && _ps_dargs+=(--auto-rollback)
         cmd_deploy "${_ps_dargs[@]}"
         return $?
+    fi
+    # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
+    # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
+    # new build. Exit 0 resumed, 4 phase reported, 3 nothing to resume, else failure.
+    local _ps_resume=0 _ps_resume_args=() _ps_rskip=0
+    for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
+        if [ "$_ps_rskip" = 1 ]; then _ps_rskip=0; continue; fi
+        case "$_ps_a" in
+            --resume) _ps_resume=1 ;;
+            --*=*) ;;
+            -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_rskip=1; fi ;;
+            *) _ps_resume_args+=("$_ps_a") ;;
+        esac
+    done
+    if [ "$_ps_resume" = 1 ]; then
+        local _ps_rrc=0
+        for _ps_a in ${_ps_resume_args[@]+"${_ps_resume_args[@]}"}; do
+            case "$_ps_a" in
+                e10-[A-Za-z0-9-]*) ;;
+                *)
+                    echo -e "${RED}--resume resumes a sealed run; it takes an optional run id, not a task. Run \`loki start <task>\` for a new run.${NC}" >&2
+                    return 2 ;;
+            esac
+        done
+        ( _loki_bun_delegate engine10 resume ${_ps_resume_args[@]+"${_ps_resume_args[@]}"} ) || _ps_rrc=$?
+        _loki_e10_resume_map "$_ps_rrc" || true
+        return "$_LOKI_E10_RC"
     fi
     set -- ${_ps_rest[@]+"${_ps_rest[@]}"}
 
@@ -5078,8 +5154,12 @@ cmd_pause() {
 # (default: git user.name, then $USER) and LOKI_STEER_SOURCE (cli, chat or an
 # https comment URL; default cli). Both are reduced to a safe character set.
 cmd_steer() {
-    case "${1:-}" in
-        --help|-h|help|"")
+    # "--" ends options so guidance beginning with "-" is data, not a flag
+    local _eoo=0
+    if [ "${1:-}" = "--" ]; then _eoo=1; shift; fi
+    case "$_eoo:${1:-}" in
+        1:?*) ;;
+        *:--help|*:-h|*:help|*:"")
             echo -e "${BOLD}Loki Mode -- steer the running build${NC}"
             echo ""
             echo "Usage: loki steer \"<guidance>\""
@@ -5087,6 +5167,8 @@ cmd_steer() {
             echo "Writes your guidance to .loki/HUMAN_INPUT.md as a numbered revision"
             echo "(rev N, actor, source). The Loki 10 engine applies it once, before the"
             echo "next plan or implement session, and records it in .loki/intent-revisions.jsonl."
+            echo "A steer that arrives after the Wall (the frozen acceptance tests) was authored"
+            echo "makes Seal refuse the run; rerun the task with the new intent included."
             echo ""
             echo "  loki steer \"focus on the auth flow, skip the docs for now\""
             echo ""
@@ -5127,6 +5209,7 @@ cmd_steer() {
             echo -e "${DIM}The Loki 10 engine applies it before the next plan or implement session.${NC}"
             # Same text the issue comment ack posts (trigger-server.py steer_ack_text).
             echo "Steer rev $rev received: applies at next plan/implement stage."
+            echo "If the Wall is already frozen, Seal will refuse this run: rerun with the new intent."
             ;;
     esac
     return 0
@@ -5289,10 +5372,7 @@ cmd_resume() {
     if ls "$LOKI_DIR"/runs/e10-*/events.jsonl >/dev/null 2>&1; then
         local _e10_rc=0
         ( _loki_bun_delegate engine10 resume "$@" ) || _e10_rc=$?
-        case "$_e10_rc" in
-            0 | 4) return 0 ;;
-            5) return 1 ;;
-        esac
+        if _loki_e10_resume_map "$_e10_rc"; then return "$_LOKI_E10_RC"; fi
     fi
 
     # Check if there is anything to resume before touching signal files
@@ -18014,9 +18094,10 @@ Tasks:
             # pre-caveman. No-op when caveman is absent.
             local _loki_mig_cm=""
             _loki_mig_cm="$(_loki_caveman_narration_level)"
+            _loki_perm_argv_for "$codebase_path"
             case "$provider_name" in
                 claude)
-                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                         while IFS= read -r line; do
                             # Extract text from stream-json
                             if echo "$line" | python3 -c "
@@ -18191,9 +18272,10 @@ IMPORTANT RULES:
         # branch, byte-identical to pre-caveman (empty mode is NOT inert). No-op absent.
         local _loki_doc_cm=""
         _loki_doc_cm="$(_loki_caveman_narration_level)"
+        _loki_perm_argv_for "$codebase_path"
         case "$provider_name" in
             claude)
-                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                     while IFS= read -r line; do
                         if echo "$line" | python3 -c "
 import sys, json
@@ -19256,7 +19338,8 @@ Begin healing now. Follow the RARV cycle for each action."
     _loki_heal_cm="$(_loki_caveman_narration_level)"
     case "$provider" in
         claude)
-            local run_args=(--dangerously-skip-permissions -p "$heal_prompt" --output-format stream-json --verbose)
+            _loki_perm_argv_for "$codebase_path"
+            local run_args=("${_LOKI_PERM_ARGV[@]}" -p "$heal_prompt" --output-format stream-json --verbose)
             (cd "$codebase_path" && if [ -n "$_loki_heal_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_heal_cm" claude "${run_args[@]}" 2>&1; else claude "${run_args[@]}" 2>&1; fi) | \
                 while IFS= read -r line; do
                     if echo "$line" | python3 -c "
@@ -26066,7 +26149,7 @@ _merge_pr_gated() {
         return 1
     fi
     if $need_verified; then
-        local pid="" headline="" pj="" ph="" cands=() dirty_n=0
+        local pid="" headline="" pj="" ph="" cands=() dirty_n=0 unknown_n=0
         # Resolve the proof recorded for THIS head: the run pointer first, then
         # any proof in .loki/proofs whose facts.git.head_sha equals the PR head.
         [ -f .loki/state/last-proof-id.txt ] && pid="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
@@ -26075,16 +26158,18 @@ _merge_pr_gated() {
         if command -v jq >/dev/null 2>&1; then
             # Every clean proof for this head must agree: an older VERIFIED
             # never overrides a newer NOT_PROVEN. A proof taken on a dirty tree
-            # (facts.git.dirty true; .loki/ is excluded from that flag) judged
+            # (facts.git.dirty anything but literal false, incl. missing/null; .loki/ is excluded from that flag) judged
             # bytes other than the commit and is ignored.
             local hl="" disagree=false
             for pj in "${cands[@]}"; do
                 [ -f "$pj" ] || continue
                 ph="$(jq -r '.facts.git.head_sha // empty' "$pj" 2>/dev/null)"
                 [ "$ph" = "$head" ] || continue
-                if [ "$(jq -r '.facts.git.dirty // false' "$pj" 2>/dev/null)" = "true" ]; then
-                    dirty_n=$((dirty_n + 1)); continue
-                fi
+                case "$(jq -r 'if .facts.git.dirty == false then "clean" elif .facts.git.dirty == true then "dirty" else "unknown" end' "$pj" 2>/dev/null)" in
+                    clean) ;;
+                    dirty) dirty_n=$((dirty_n + 1)); continue ;;
+                    *) unknown_n=$((unknown_n + 1)); continue ;;
+                esac
                 hl="$(jq -r '.honesty.headline // empty' "$pj" 2>/dev/null)"
                 [ -n "$hl" ] || hl="UNREADABLE"
                 if [ -z "$headline" ]; then headline="$hl"; elif [ "$headline" != "$hl" ]; then disagree=true; fi
@@ -26096,7 +26181,10 @@ _merge_pr_gated() {
             fi
         fi
         if [ -z "$headline" ]; then
-            echo "$pr: not merged, gate: head (no clean proof recorded for PR head ${head:0:12}; proof is stale, dirty ($dirty_n) or missing); PR left open" >&2
+            echo "$pr: not merged, gate: head (no clean proof recorded for PR head ${head:0:12}; proof is stale, dirty ($dirty_n), dirty-unknown ($unknown_n) or missing); PR left open" >&2
+            if [ "$unknown_n" -gt 0 ]; then
+                echo "$pr: $unknown_n proof(s) for this head have an unknown dirty state (the proof predates the dirty flag, or git could not read the tree). Commit or stash local changes, then re-run 'loki start ...' on a clean tree for this head to record a clean proof." >&2
+            fi
             _pr_record_merge "$pr" "blocked:head" "head"
             return 1
         fi

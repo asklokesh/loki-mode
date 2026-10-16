@@ -49,7 +49,7 @@ failed_check() { printf '%s\n' "$1" | grep -E "^FAIL +[0-9]+ms +$2"; }
 
 echo "T1 -- clean tree: every check passes"
 out="$(run)"; rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "all passed"; then
+if [ "$rc" -eq 0 ] && grep -q "all passed" <<<"$out"; then
     ok "clean tree exits 0"
 else
     bad "clean tree failed (rc=$rc)"; printf '%s\n' "$out" | sed 's/^/     | /'
@@ -80,7 +80,7 @@ rm -f "$S/tests/test-planted-home-path.sh"
 echo "T4 -- an over-budget file is caught"
 yes 'export const x = 1;' | head -n 1600 > "$S/loki-ts/src/e10ext/planted_over_budget.ts"
 out="$(run)"; rc=$?
-if [ "$rc" -ne 0 ] && failed_check "$out" "line budgets" >/dev/null && printf '%s' "$out" | grep -q "e10ext"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "line budgets" >/dev/null && grep -q "e10ext" <<<"$out"; then
     ok "line-budget check FAILs on e10ext over 1,500 lines"
 else
     bad "over-budget e10ext not caught (rc=$rc)"
@@ -133,7 +133,7 @@ git -C "$N" init -q -b trunk
 git -C "$N" add -A
 git -C "$N" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m base
 out="$(STRUCTURAL_ROOT="$N" bash "$N/scripts/structural-checks.sh" 2>&1 >/dev/null)"
-if printf '%s' "$out" | grep -q "structural-checks: no base ref, scanning the working tree only"; then
+if grep -q "structural-checks: no base ref, scanning the working tree only" <<<"$out"; then
     ok "warns when no base ref resolves"
 else
     bad "no warning without a base ref"
@@ -159,7 +159,7 @@ else
 fi
 printf 'a \342\200\224 b\n' > "$G/eval/loki10/refdiff/untracked.diff"
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
-if ! printf '%s' "$out" | grep -q "untracked: eval/loki10/refdiff"; then ok "untracked refdiff dash exempt"; else bad "untracked refdiff flagged"; fi
+if ! grep -q "untracked: eval/loki10/refdiff" <<<"$out"; then ok "untracked refdiff dash exempt"; else bad "untracked refdiff flagged"; fi
 
 echo "T10 -- an unmeasured multiple in a doc is caught; a cited one passes"
 git -C "$G" reset -q --hard main

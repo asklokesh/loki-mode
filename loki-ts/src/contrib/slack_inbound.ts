@@ -8,6 +8,7 @@ import { execFile, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactSecrets } from "../util/redact.ts";
 import { readEvents } from "../engine10/events.ts";
 
 export const MAX_SKEW_S = 300;
@@ -47,7 +48,7 @@ export interface InboundDeps {
   /** Re-read on every event (live allowlist); when set it replaces state.allowedUsers, so a revoked actor stops at once. */
   allowed?(): Set<string> | undefined;
   /** Delivers a steer through `loki steer` (source=slack); resolves the ack line to post, and throws when the CLI refuses. */
-  steer?(runId: string, actor: string, text: string): Promise<string>;
+  steer?(actor: string, text: string): Promise<string>;
 }
 export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string>; allowedUsers?: Set<string>; dedupFile?: string }
 /** With a dedupFile the seen event ids survive a restart (one id per line, last 1000 kept). */
@@ -87,12 +88,12 @@ export async function launchInThread(state: InboundState, deps: InboundDeps, cha
   }
   const rec: ThreadRun = { runId: h.runId, task, state: "running" };
   state.threads.set(key, rec);
-  const started = await deps.post(channel, threadTs, `Started run ${h.runId}.`);
+  const started = await deps.post(channel, threadTs, `Started run ${slackSafe(h.runId)}.`);
   if (typeof started === "string") rec.statusTs = started;
   void h.done.then(async (r) => {
-    if (r.code !== 4 && rec.statusTs && deps.update && await deps.update(channel, rec.statusTs, `Run ${h.runId} finished (exit ${r.code}).`).catch(() => false)) { rec.state = "done"; return; }
-    if (r.code === 4) { rec.state = "blocked"; rec.question = r.question; await deps.post(channel, threadTs, `Run ${h.runId} is BLOCKED: ${r.question ?? "see the receipt"}\nReply in this thread to answer.`); }
-    else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${h.runId} finished (exit ${r.code}).`); }
+    if (r.code !== 4 && rec.statusTs && deps.update && await deps.update(channel, rec.statusTs, `Run ${slackSafe(h.runId)} finished (exit ${r.code}).`).catch(() => false)) { rec.state = "done"; return; }
+    if (r.code === 4) { rec.state = "blocked"; rec.question = r.question; await deps.post(channel, threadTs, `Run ${slackSafe(h.runId)} is BLOCKED: ${r.question === undefined ? "see the receipt" : slackSafe(r.question)}\nReply in this thread to answer.`); }
+    else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${slackSafe(h.runId)} finished (exit ${r.code}).`); }
   }).catch(() => { rec.state = "done"; });
 }
 /** Handles one verified Slack Events API payload. Returns the HTTP response; work continues in the background. */
@@ -127,7 +128,7 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   if (existing?.state === "running" && text && (ev.type === "message" ? ev.thread_ts : ev.type === "app_mention")) {
     if (!deps.steer || Buffer.byteLength(text) > MAX_TASK_BYTES) { await deps.post(channel, threadTs, deps.steer ? TASK_TOO_LONG : `Run ${existing.runId} is still running in this thread.`); return { status: 200, body: deps.steer ? "rejected" : "busy" }; }
     let ack: string;
-    try { ack = await deps.steer(existing.runId, actor, text); } catch { await deps.post(channel, threadTs, START_FAILED); return { status: 200, body: "rejected" }; }
+    try { ack = await deps.steer(actor, text); } catch { await deps.post(channel, threadTs, START_FAILED); return { status: 200, body: "rejected" }; }
     await deps.post(channel, threadTs, ack);
     return { status: 200, body: "steered" };
   }
@@ -172,6 +173,9 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+/** Echoed CLI text: redact token-shaped strings, then escape Slack mrkdwn control chars. */
+export const slackSafe = (t: string): string => redactSecrets(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; stdio: "ignore" }) => ReturnType<typeof spawn>;
 /** Default run launcher: spawns REPO_ROOT/bin/loki "<task>" (never argv[1]) and discovers the run dir it creates. */
 type ExecFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }, cb: (err: Error | null, stdout: string, stderr?: string) => void) => unknown;
@@ -194,7 +198,7 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
       if (!runId) runId = `pid-${child.pid}`;
       return { runId, done: done.then((code) => ({ code, question: code === 4 ? blockedQuestion(repoDir, runId) : undefined })) };
     },
-    async steer(_runId, actor, text) {
+    async steer(actor, text) {
       const note = text.replace(/[\r\n]+/g, " ").trim();
       if (!note || note.startsWith("-") || /^(help|h)$/i.test(note)) throw new Error("invalid steer text");
       const out = await new Promise<string>((res, rej) => {
@@ -203,7 +207,7 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
       const m = /Steer rev (\d+) received/.exec(out);
       if (m) return `Steer rev ${m[1]} received: applies at next plan/implement stage.`;
       const first = out.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "no confirmation from loki steer";
-      return `Steer not confirmed: ${first.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 120)}`;
+      return `Steer not confirmed: ${slackSafe(first.replace(/[\x00-\x1f\x7f]+/g, " ")).slice(0, 120)}`;
     },
   };
 }

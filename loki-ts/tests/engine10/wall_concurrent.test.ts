@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
+import { staleWallRevisions } from "../../src/util/steer.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
 type Ev = { type: string; stage: StageName | null; data: Record<string, unknown> };
@@ -92,5 +93,18 @@ describe("WC-01b wall concurrent", () => {
     const r = await run(f, s);
     expect(f.log).toEqual(["intake", "plan", "wall:seq", "implement:start", "implement:tree:clean", "verify", "commit", "seal", "pr"]);
     expect(r.outputs.wall).toEqual({ readOnlyFiles: [], duration_s: expect.any(Number) }); // duration_s is stamped on every completed stage (RECEIPT-TRUTH)
+  });
+  it("P12-02: a steer consumed during implement is stale against the concurrent Wall (timeline gets the wall start)", async () => {
+    process.env.LOKI_E10_WALL_CONCURRENT = "1";
+    const f = fixture(), s = stages(f, { authorMs: 80 });
+    f.ctx.sessions = { run: async () => ({ exit: 0, durationMs: 1, text: "", stderrTail: "" }) as never };
+    let stale: number[] = [];
+    s.implement = { name: "implement", targetS: 1, limitS: 5, run: async (c: RunContext) => {
+      mkdirSync(join(f.repoDir, ".loki"), { recursive: true }); writeFileSync(join(f.repoDir, ".loki", "HUMAN_INPUT.md"), "## Operator directive rev 1 (t) actor=a source=chat\nchange it\n");
+      await sleep(5); await c.sessions.run({ stage: "implement", brief: "b" } as never); return { status: "completed", data: {} };
+    } };
+    s.seal = { name: "seal", targetS: 1, limitS: 5, run: async (c: RunContext) => { stale = staleWallRevisions(c.intentRevisions, c.timeline).map((r) => r.rev); return { status: "completed", data: {} }; } };
+    await run(f, s);
+    expect(stale).toEqual([1]);
   });
 });
