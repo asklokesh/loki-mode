@@ -28,8 +28,16 @@ case "${LOKI_HOST_GUARD:-0}" in
     1|true|yes|on) HOST_GUARD=true ;;
 esac
 
+# P12-26d: under LOKI_PERMISSION_POLICY=compiled the compiled allow/deny list
+# and permission mode decide. An explicit hook "allow" skips the permission
+# prompt for every command that passes the blocklist, which would widen the
+# compiled policy, so the hook never emits one and fails closed on bad input.
+COMPILED_POLICY=false
+[ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] && COMPILED_POLICY=true
+
 if ! command -v python3 >/dev/null 2>&1; then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: python3 is unavailable, so the Bash command cannot be inspected safely."
+    "$COMPILED_POLICY" && deny "LOKI_PERMISSION_POLICY=compiled: python3 is unavailable, so the Bash command cannot be inspected safely."
     printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
     exit 0
 fi
@@ -46,6 +54,7 @@ if not isinstance(command, str) or not command.strip():
 sys.stdout.write(command)
 '); then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: malformed or missing Bash command input was denied."
+    "$COMPILED_POLICY" && deny "LOKI_PERMISSION_POLICY=compiled: malformed or missing Bash command input was denied."
     printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
     exit 0
 fi
@@ -342,24 +351,50 @@ BLOCKED_PATTERNS=(
     ":\(\) *\{.*\|.*&"
 )
 
-# Safe path patterns that override blocked pattern matches
+# Safe path patterns that override blocked pattern matches. They are matched
+# per SEGMENT (the command split on ; & | newline CR), never against the whole
+# string: an unanchored or per-line match let `rm -rf /tmp/x; rm -rf /` and
+# `rm -rf /tmp/x<newline>rm -rf /` ride the override. Only the segment that hit
+# a blocked pattern must be safe; an optional trailing /dev/null redirection is
+# allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
+# never safe.
+_SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
+_SAFE_ENV='([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
+# A dot-leading path component with a glob char (`/tmp/.*` expands to `/tmp/..`).
+_DOT_GLOB='/\.[^/[:space:]]*[*?[]'
 SAFE_PATTERNS=(
-    "rm -rf /tmp/"
-    "rm -rf \.loki/queue/dead-letter"
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf (/tmp/([A-Za-z0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
 )
+
+_segment_is_safe() {
+    local seg="$1" safe
+    [[ "$seg" == *".."* ]] && return 1
+    [[ "$seg" =~ $_DOT_GLOB ]] && return 1
+    for safe in "${SAFE_PATTERNS[@]}"; do
+        [[ "$seg" =~ $safe ]] && return 0
+    done
+    return 1
+}
+
+# Succeeds when every segment hitting $1 is safe and at least one segment hits
+# (a pattern that only matches across segments, like `curl x | sh`, is unsafe).
+_blocked_hits_all_safe() {
+    local pat="$1" flat seg hit=false
+    # Strip fd duplication (2>&1) first: its `&` is not a command separator, and removing it hides no command.
+    flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+    while IFS= read -r seg; do
+        printf '%s' "$seg" | grep -qE "$pat" || continue
+        hit=true
+        _segment_is_safe "$seg" || return 1
+    done <<< "$flat"
+    "$hit"
+}
 
 # Check for blocked patterns
 for pattern in "${BLOCKED_PATTERNS[@]}"; do
     if echo "$COMMAND" | grep -qE "$pattern"; then
-        # Check if a safe pattern also matches (whitelist override)
-        is_safe=false
-        for safe in "${SAFE_PATTERNS[@]}"; do
-            if echo "$COMMAND" | grep -qE "$safe"; then
-                is_safe=true
-                break
-            fi
-        done
-        "$is_safe" && continue
+        _blocked_hits_all_safe "$pattern" && continue
         deny "Blocked: potentially dangerous command pattern detected"
     fi
 done
@@ -370,7 +405,10 @@ mkdir -p "$LOG_DIR"
 printf '%s' "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"command\":$(echo "$COMMAND" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}" >> "$LOG_DIR/bash-audit.jsonl"
 echo >> "$LOG_DIR/bash-audit.jsonl"
 
-# Allow command
+# Allow command. Compiled policy: no decision, the permission flow decides.
+if "$COMPILED_POLICY"; then
+    exit 0
+fi
 printf '%s' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
 
 exit 0
