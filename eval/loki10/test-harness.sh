@@ -1661,5 +1661,39 @@ LOKI_EVAL_CONFIGURED_CC_DIR="$T/cc-src" STUB_MODE=pass RUN --arm configured-clau
     && [ "$(row "$R/results.jsonl" completed)" = "true" ] \
     && pass "P12-29: configured-claude runs through the claude stub with a source" \
     || fail "P12-29: with-source row=$(cat "$R/results.jsonl" 2>/dev/null)"
+# ---- 22. (P12-30, M5) predeclared task families: one authored fam- manifest per
+# family, all valid, each seeded by setup so the hidden test grades behavior.
+fam_want="api-migration ci-failure flaky incident review-response staging ui"
+fam_have=""
+for d in "$HERE"/tasks/fam-*; do [ -d "$d" ] && fam_have="${fam_have:+$fam_have }${d##*/fam-}"; done
+[ "$fam_have" = "$fam_want" ] && pass "P12-30: the 7 predeclared families have a fam- manifest" \
+    || fail "P12-30: fam- families '$fam_have' want '$fam_want'"
+fam_dirs=("$HERE"/tasks/fam-*)
+fam_out="$(H validate "${fam_dirs[@]}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "${#fam_dirs[@]}" = 7 ] && pass "P12-30: every fam- task passes the validator" \
+    || fail "P12-30: fam- validate rc=$rc: $fam_out"
+# Negative leg: a malformed fam task must make validate exit 1.
+mkdir -p "$T/fam-bad"
+cp -R "$HERE/tasks/fam-ui" "$T/fam-bad/fam-ui"
+python3 -c 'import json,sys; p=sys.argv[1]; t=json.load(open(p)); del t["hidden"]["run"]; json.dump(t, open(p, "w"))' "$T/fam-bad/fam-ui/task.json"
+H validate "$T/fam-bad/fam-ui" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && pass "P12-30: a malformed fam task makes validate exit 1" || fail "P12-30: malformed fam validate rc=$rc"
+# Green leg: a stub arm applies the reference edit (fixtures/fam-ref/NAME) and
+# the harness regrades the PR branch, re-running setup first, so the row must
+# be completed with hidden_pass true. A noop arm must NOT complete (control).
+for fam in $fam_want; do
+    FR="$T/out-fam-$fam"
+    STUB_MODE=famref STUB_FAM_REF_DIR="$HERE/fixtures/fam-ref/$fam" env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" \
+        bash "$HERE/run.sh" --arm raw-claude --task "fam-$fam" --out "$FR" >"$T/fam-$fam.log" 2>&1
+    FJ="$FR/results.jsonl"
+    [ "$(row "$FJ" completed)" = true ] && [ "$(row "$FJ" hidden_pass)" = true ] \
+        && pass "P12-30: fam-$fam reference edit completes with hidden_pass" \
+        || fail "P12-30: fam-$fam reference edit: $(tail -1 "$FJ" 2>/dev/null) $(tail -3 "$T/fam-$fam.log")"
+done
+FR="$T/out-fam-noop"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" bash "$HERE/run.sh" --arm raw-claude --task fam-flaky --out "$FR" >/dev/null 2>&1
+[ "$(row "$FR/results.jsonl" completed)" != true ] && pass "P12-30: a noop arm does not complete a fam task" \
+    || fail "P12-30: noop arm completed fam-flaky"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

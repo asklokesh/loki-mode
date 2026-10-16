@@ -1,0 +1,6 @@
+seed files only (no fix)
+command: python3 tests_hidden/test_fam.py
+exit: 1
+last output line: FAIL: got '' 'okimode-anthropic/5ac34f8c-616c-4411-a780-4155b00a2390/scratchpad/rg/tmpnos8gyzx/calc.py", line 2, in avg\n    return sum(xs) / len(xs)\n           ~~~~~~~~^~~~~~~~~\nZeroDivisionError: division by zero\n'
+seconds: 0.1
+repo: empty-repo.bundle @ a49d132f67fd193a89e55363dc8c8a8933a1304e plus setup seed

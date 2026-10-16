@@ -1,0 +1,18 @@
+{
+  "id": "fam-incident",
+  "kind": "quickstart",
+  "prompt": "Incident: checkout returned HTTP 500 for customers with an empty cart (see app.log). Fix handler.py so an empty cart yields a total of 0 and per-item average of 0.0 instead of crashing, keep non-empty behavior, and add a regression test file test_handler.py that fails on the old code.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "[ -e app.log ] || python3 -c \"import base64;open('app.log','wb').write(base64.b64decode('RVJST1IgY2hlY2tvdXQgY2FydD1bXSBaZXJvRGl2aXNpb25FcnJvcjogZGl2aXNpb24gYnkgemVybwogIEZpbGUgImhhbmRsZXIucHkiLCBsaW5lIDMsIGluIHN1bW1hcml6ZQo='))\"; [ -e handler.py ] || python3 -c \"import base64;open('handler.py','wb').write(base64.b64decode('ZGVmIHN1bW1hcml6ZShjYXJ0KToKICAgIHRvdGFsID0gc3VtKGNhcnQpCiAgICByZXR1cm4geyd0b3RhbCc6IHRvdGFsLCAncGVyX2l0ZW0nOiB0b3RhbCAvIGxlbihjYXJ0KX0K'))\"",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_fam.py"
+    ],
+    "run": "python3 tests_hidden/test_fam.py"
+  },
+  "timeout_s": 900
+}

@@ -1,0 +1,6 @@
+positive control: reference edit applied after setup
+command: python3 tests_hidden/test_fam.py
+exit: 0
+last output line: PASS
+seconds: 0.0
+repo: empty-repo.bundle @ a49d132f67fd193a89e55363dc8c8a8933a1304e plus setup seed

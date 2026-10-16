@@ -28,6 +28,8 @@
 #               no_change_needed run looks like on raw-claude/legacy
 #   dirtynoop   (EV-13) fix greet.sh but never commit or push it: a source
 #               diff left in the working tree with no PR
+#   famref      (P12-30) copy every file under STUB_FAM_REF_DIR into the clone,
+#               commit on a new branch, push: the reference edit for a fam- task
 #   check       only run the hidden-file leak check
 # STUB_V10_MARKER=1|noevents|stale|oldpath|badfield writes the v10 engine
 # marker (and events): oldpath uses the superseded .loki/events/<id>.jsonl,
@@ -208,6 +210,12 @@ case "${STUB_MODE:-noop}" in
             printf '%s\n' "$sp" > "$STUB_ORPHAN_PIDFILE"
             [ -n "${STUB_ORPHAN_DECOY_PID:-}" ] && printf '%s\n-1\n' "$STUB_ORPHAN_DECOY_PID" >> "$STUB_ORPHAN_PIDFILE"
         fi
+        ;;
+    famref)
+        cp -R "$STUB_FAM_REF_DIR"/. . || exit 1
+        git checkout -q -b fam-ref || exit 1
+        (cd "$STUB_FAM_REF_DIR" && find . -type f) | while IFS= read -r f; do git add -- "${f#./}"; done
+        git commit -q -m "stub: fam-ref" && git push -q origin fam-ref || exit 1
         ;;
     alreadydone)
         echo "the requested feature already exists; no changes needed"
