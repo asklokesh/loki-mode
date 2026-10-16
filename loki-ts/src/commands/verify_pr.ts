@@ -183,7 +183,7 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   return { ...res, verdict: "VERIFIED" };
 }
 
-const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\nExit: 0 verified, 2 usage or sandbox blocked, 4 not proven.\n";
+const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\nExit: 0 verified, 2 usage or sandbox blocked, 4 not proven.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
 
 /** `loki verify-pr respond <o/r#N>`: fix open review comments on the checked-out PR branch, one commit each, push, reply with the sha. */
 async function runRespond(args: readonly string[], out: (s: string) => void, err: (s: string) => void): Promise<number> {
