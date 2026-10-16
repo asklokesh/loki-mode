@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
-import { holdoutDirFor, holdoutSplit, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
+import { holdoutDirFor, holdoutSplit, removeHoldout, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunOptions, StageName, TestRef } from "../../src/engine10/types.ts";
 
 const dirs: string[] = [];
 const saved = process.env["LOKI_WALL_HOLDOUT_RATIO"]; process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0.2"; // holdout is opt-in; this suite turns it on explicitly
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0.2"; });
+afterEach(() => { for (const d of dirs.splice(0)) { removeHoldout(RUN, d); rmSync(d, { recursive: true, force: true }); } process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0.2"; }); // removeHoldout: every repo's store lives in the OS tmp, outside the repo
 afterAll(() => { if (saved === undefined) delete process.env["LOKI_WALL_HOLDOUT_RATIO"]; else process.env["LOKI_WALL_HOLDOUT_RATIO"] = saved; });
 const git = (cwd: string, args: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const RUN = "e10-holdout";
@@ -58,6 +58,9 @@ describe("holdout selector", () => {
     expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "0" })).toBe(0);
     expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "0.4" })).toBe(0.4);
     expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "abc" })).toBe(0);
+    for (const bad of ["0x1", "1e-1", "-0.2", "+0.2", "Infinity", "0.2abc"]) expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: bad })).toBe(0);
+    expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: ".3" })).toBe(0.3);
+    expect(wallHoldoutRatio({ LOKI_WALL_HOLDOUT_RATIO: "5" })).toBe(0.9);
   });
 });
 

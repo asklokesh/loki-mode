@@ -10,7 +10,8 @@ const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 /** LOKI_WALL_HOLDOUT_RATIO: default 0 (off, opt-in; founder decision C-C4 pending), e.g. 0.2 holds out ~20%, an unparseable value is off, capped at 0.9. */
 export function wallHoldoutRatio(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return 0;
-  const r = Number(raw); return Number.isFinite(r) && r >= 0 ? Math.min(r, 0.9) : 0;
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(raw.trim())) return 0; // decimal only: hex (0x1), exponent, sign and words are garbage
+  const r = Number(raw); return Number.isFinite(r) ? Math.min(r, 0.9) : 0;
 }
 
 /** Deterministic split ranked by sha256(seed:id). Count is max(1, round(ratio*N)) for N >= min, else none; ids keep input order. */
