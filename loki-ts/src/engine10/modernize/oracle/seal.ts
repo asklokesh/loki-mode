@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { holdoutSplit } from "../../../util/holdout.ts";
 import type { ModernizeLog } from "../log.ts";
 import { readModernizeEvents } from "../log.ts";
 import { oracleDir } from "../types.ts";
@@ -82,20 +83,6 @@ export interface SealedOracle {
   normalizers_sha256?: string;
 }
 
-/** Deterministic ~20% split ranked by sha256(unit:caseId): no clock, file order or RNG seed.
- * Rank-based so the count is `max(1, round(0.2*N))` for N >= MIN_CASES_FOR_HELD_OUT, so a small
- * unit never gets an empty held-out set that passes vacuously (section 7). Below that floor,
- * sealOracle marks the unit NOT PROVEN. */
-function heldOutSplit(unit: string, caseIds: string[]): string[] {
-  if (caseIds.length < MIN_CASES_FOR_HELD_OUT) return [];
-  const ranked = caseIds
-    .map((id) => ({ id, digest: sha256(`${unit}:${id}`) }))
-    .sort((a, b) => (a.digest < b.digest ? -1 : a.digest > b.digest ? 1 : 0));
-  const n = Math.max(1, Math.round(HELD_OUT_FRACTION * caseIds.length));
-  const heldSet = new Set(ranked.slice(0, n).map((r) => r.id));
-  return caseIds.filter((id) => heldSet.has(id)); // keep case_ids order, not rank order
-}
-
 function parseCaseIds(casesJsonl: string): string[] {
   const ids: string[] = [];
   for (const line of casesJsonl.split("\n")) {
@@ -117,7 +104,7 @@ interface VerdictResult {
 /** Shared by sealOracle and verifySeal so they cannot drift (a different verdict reads as tamper).
  * Fails closed on `branchPct`: not a finite number in [0, 100] is NOT PROVEN, never coerced (a JSON
  * "95" string must not pass `>= 80`). `duplicateIds`: py_capture.py never dedupes ids and
- * heldOutSplit groups records sharing one, shrinking the held-out set below ~20%: NOT PROVEN. */
+ * holdoutSplit groups records sharing one, shrinking the held-out set below ~20%: NOT PROVEN. */
 function computeVerdict(caseCount: number, branchPct: unknown, duplicateIds: boolean): VerdictResult {
   const reasons: string[] = [];
   if (caseCount < MIN_CASES_FOR_HELD_OUT) {
@@ -144,7 +131,7 @@ function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string, 
   const coverage = JSON.parse(coverageRaw) as OracleCoverage;
   const caseIds = parseCaseIds(casesRaw);
   const duplicateIds = new Set(caseIds).size !== caseIds.length;
-  const heldOut = heldOutSplit(unit, caseIds);
+  const heldOut = holdoutSplit(unit, caseIds, { ratio: HELD_OUT_FRACTION, min: MIN_CASES_FOR_HELD_OUT }); // util/holdout.ts: max(1, round(0.2*N))
   const { verdict, not_proven } = computeVerdict(caseIds.length, coverage.branch_pct, duplicateIds);
   return {
     unit,

@@ -1,11 +1,12 @@
 // WC-01a: wallStage = wallAuthor (session + compile check, writes only runDir/wall) then installWall (copy + base run).
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { installWall, wallAuthor, wallStage, type BaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
+beforeAll(() => { process.env["LOKI_WALL_HOLDOUT_RATIO"] = "0"; }); afterAll(() => { delete process.env["LOKI_WALL_HOLDOUT_RATIO"]; }); // these tests pin the 3-file Wall layout; holdout has its own suite (wall_holdout.test.ts)
 
 const BODY = (n: string): string => `import { test, expect } from "bun:test";\ntest("${n}", () => { expect(1).toBe(1); });\n`;
 
