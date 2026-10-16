@@ -22,11 +22,48 @@ import subprocess
 from pathlib import Path
 
 
-def invoke_llm(prompt, timeout=120):
+_LEAN_FLAGS = (
+    ("--setting-sources", ["project"]),
+    ("--strict-mcp-config", []),
+    ("--mcp-config", ['{"mcpServers":{}}']),
+    ("--disable-slash-commands", []),
+    ("--tools=", []),
+)
+
+
+def lean_claude_flags():
+    """Flags for a one-shot text-only claude child (cost lever L1).
+
+    --bare only when an API key is present (OAuth-only hosts would fail auth);
+    otherwise narrowed setting sources. A flag the installed claude does not
+    list in --help is dropped, never passed. Returns [] when claude is absent.
+    """
+    claude = _which("claude")
+    if not claude:
+        return []
+    try:
+        help_txt = subprocess.run(
+            [claude, "--help"], capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if os.environ.get("ANTHROPIC_API_KEY") and "--bare" in help_txt:
+        return ["--bare", "--tools="] if "--tools" in help_txt else ["--bare"]
+    flags = []
+    for name, vals in _LEAN_FLAGS:
+        if name.rstrip("=") in help_txt:
+            flags.append(name)
+            flags.extend(vals)
+    return flags
+
+
+def invoke_llm(prompt, timeout=120, lean=False):
     """Return the LLM completion string, or None if unavailable.
 
     Honors LOKI_WIKI_LLM_STUB for CI. Otherwise shells out to the configured
-    provider, mirroring loki docs `_docs_invoke_provider`.
+    provider, mirroring loki docs `_docs_invoke_provider`. lean=True adds the
+    lean child flags for the claude provider.
     """
     stub = os.environ.get("LOKI_WIKI_LLM_STUB")
     if stub is not None:
@@ -64,6 +101,8 @@ def invoke_llm(prompt, timeout=120):
     base = cmds.get(provider)
     if base is None or not _which(base[0]):
         return None
+    if lean and provider == "claude":
+        base = ["claude", "-p"] + lean_claude_flags() + [prompt]
     cmd = ([timeout_cmd, str(timeout)] + base) if timeout_cmd else base
     try:
         out = subprocess.run(
