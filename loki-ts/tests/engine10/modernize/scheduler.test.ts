@@ -304,7 +304,7 @@ describe("scheduler", () => {
         writeFileSync(join(s.repo, "f"), "other\n");
         git(s.repo, "commit", "-aqm", "other", "--no-gpg-sign");
         const head = git(s.repo, "rev-parse", "HEAD");
-        expect(() => s.ops.merge("c", w)).toThrow("merge conflict on c");
+        expect(() => s.ops.merge("c", w)).toThrow("merge refused on c");
         expect(git(s.repo, "rev-parse", "HEAD")).toBe(head);
         expect(existsSync(join(s.repo, ".git", "CHERRY_PICK_HEAD"))).toBe(false);
         expect(() => s.ops.merge("c")).toThrow();
@@ -313,6 +313,51 @@ describe("scheduler", () => {
         git(s.repo, "checkout", "-q", "--", "f");
         git(s.repo, "checkout", "-q", "--detach");
         expect(() => s.ops.merge("c", w)).toThrow("detached");
+      } finally { s.done(); }
+    });
+
+    it("squashes earlier worktree commits and uncommitted files into one merge", () => {
+      const s = setup();
+      try {
+        const w = s.wt("s");
+        writeFileSync(join(w, "agent.py"), "1");
+        git(w, "add", "agent.py");
+        git(w, "commit", "-qm", "runner", "--no-gpg-sign");
+        writeFileSync(join(w, "late.py"), "2");
+        s.ops.merge("s", w);
+        expect(readFileSync(join(s.repo, "agent.py"), "utf8")).toBe("1");
+        expect(readFileSync(join(s.repo, "late.py"), "utf8")).toBe("2");
+        expect(s.ops.isMerged("s")).toBe(true);
+      } finally { s.done(); }
+    });
+
+    it("ignores repo trailer.separators config, and rejects unsafe unit or merge ids", () => {
+      const s = setup();
+      try {
+        const w = s.wt("t");
+        git(s.repo, "config", "trailer.separators", "#");
+        s.ops.merge("t", w);
+        expect(s.ops.isMerged("t")).toBe(true);
+        expect(() => s.ops.merge("x\\nLoki-Modernize-Unit: " + MID + "/y", w)).toThrow("unsafe");
+        expect(() => s.ops.isMerged("../x")).toThrow("unsafe");
+        expect(() => gitMergeOps(s.repo, "bad").isMerged("a")).toThrow("unsafe");
+      } finally { s.done(); }
+    });
+
+    it("excludes .loki and caches at any depth", () => {
+      const s = setup();
+      try {
+        const w = s.wt("d");
+        for (const d of ["pkg/.pytest_cache", "pkg/.loki"]) {
+          mkdirSync(join(w, d), { recursive: true });
+          writeFileSync(join(w, d, "x"), "1");
+        }
+        writeFileSync(join(w, "pkg", "ok.py"), "1");
+        s.ops.merge("d", w);
+        const files = git(s.repo, "ls-files");
+        expect(files).toContain("pkg/ok.py");
+        expect(files).not.toContain(".pytest_cache");
+        expect(files).not.toContain(".loki");
       } finally { s.done(); }
     });
 

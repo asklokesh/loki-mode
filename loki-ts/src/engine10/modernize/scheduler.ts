@@ -9,7 +9,7 @@ import type { ClusterResult, Unit } from "./cluster.ts";
 import { budgetExceeded } from "./estimate.ts";
 import type { ModernizeLog } from "./log.ts";
 import { safeGit } from "../../util/safe_git.ts";
-import { encodeUnitId, isSafeUnitId, modernizeRoot } from "./types.ts";
+import { encodeUnitId, isModernizeId, isSafeUnitId, modernizeRoot } from "./types.ts";
 import type { UnitRunResult } from "./unit.ts";
 
 export type Model = "sonnet" | "opus";
@@ -89,20 +89,28 @@ export const gitWorktrees: WorktreeOps = {
 /** Real unit merge: commit the PROVEN worktree (trailer names mid/unit), cherry-pick onto repoDir HEAD. Fails closed. */
 export function gitMergeOps(repoDir: string, mid: string): MergeOps {
   const id = ["-c", "user.name=Loki Modernize", "-c", "user.email=modernize@loki.invalid"];
+  const piped = { stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
+  const check = (unit: string) => { if (!isModernizeId(mid) || !isSafeUnitId(unit)) throw new Error(`unsafe merge ids: ${mid}/${String(unit).slice(0, 40)}`); };
+  const why = (e: unknown) => String((e as { stderr?: unknown }).stderr ?? e).trim().slice(-300);
   return {
-    isMerged: (unit) => safeGit(repoDir, ["log", "--format=%(trailers:key=Loki-Modernize-Unit,valueonly)"]).split("\n").includes(`${mid}/${unit}`),
+    isMerged(unit) {
+      check(unit);
+      return safeGit(repoDir, ["-c", "trailer.separators=:", "log", "--format=%(trailers:key=Loki-Modernize-Unit,valueonly)"]).split("\n").includes(`${mid}/${unit}`);
+    },
     merge(unit, worktree) {
+      check(unit);
       if (!worktree) throw new Error(`merge of ${unit} needs a worktree`);
       try { safeGit(repoDir, ["symbolic-ref", "-q", "HEAD"]); } catch { throw new Error("repo HEAD is detached"); }
       if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"]).trim()) throw new Error("repo not clean");
-      safeGit(worktree, ["add", "-A", "--", ".", ":!.loki", ":(exclude,glob)**/__pycache__/**", ":!.pytest_cache"]);
-      safeGit(worktree, [...id, "commit", "-q", "--allow-empty", "-m", `modernize unit ${unit}`, "-m", `Loki-Modernize-Unit: ${mid}/${unit}`]);
-      const sha = safeGit(worktree, ["rev-parse", "HEAD"]).trim();
       try {
-        safeGit(repoDir, [...id, "cherry-pick", "--allow-empty", "--keep-redundant-commits", sha]);
-      } catch {
+        safeGit(worktree, ["add", "-A", "--", ".", ":(exclude,glob)**/.loki/**", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**"], piped);
+        const base = safeGit(worktree, ["merge-base", safeGit(repoDir, ["rev-parse", "HEAD"]).trim(), "HEAD"], piped).trim();
+        safeGit(worktree, ["reset", "--soft", base], piped); // squash: earlier runner commits ride along
+        safeGit(worktree, [...id, "commit", "-q", "--allow-empty", "-m", `modernize unit ${unit}`, "-m", `Loki-Modernize-Unit: ${mid}/${unit}`], piped);
+        safeGit(repoDir, [...id, "cherry-pick", "--allow-empty", "--keep-redundant-commits", safeGit(worktree, ["rev-parse", "HEAD"]).trim()], piped);
+      } catch (e) {
         try { safeGit(repoDir, ["cherry-pick", "--abort"]); } catch { /* none in progress */ }
-        throw new Error(`merge conflict on ${unit}`);
+        throw new Error(`merge refused on ${unit}: ${why(e)}`);
       }
     },
   };
