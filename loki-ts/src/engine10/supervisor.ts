@@ -39,7 +39,7 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
@@ -96,9 +96,11 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     this.hash = createHash("sha256"); // seed AFTER construction: EventLog may terminate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
+  private implementOpen = false; // P12-07j: implement started and not yet settled; the only window a deferred already-done hit can be genuine
   append(type: string, stage: StageName | null, data: Record<string, unknown>): EventEnvelope {
     const e = this.log.append(type, stage, data);
     this.hash.update(JSON.stringify(e) + "\n");
+    if (stage === "implement") { if (type === "stage.started") this.implementOpen = true; else if (type === "stage.completed" || type === "stage.failed" || type === "stage.skipped") this.implementOpen = false; }
     return e;
   }
   ingest(line: string): EventEnvelope | null { // validates one untrusted worker stdout line; returns the appended event or null when dropped
@@ -112,6 +114,9 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     if (!dataOk(type, data as Record<string, unknown>)) return null;
     const e = this.append(type, stage as StageName | null, data as Record<string, unknown>);
     if (type === "session.ended") this.verify();
+    // P12-07j (D61-04): resume trusts only the supervisor-written already.attested. The worker's already.satisfied is attested here, and only for a well-formed deferred hit on intake while implement is in flight; anything else stays an inert note.
+    const d = data as Record<string, unknown>, ev = d["evidence"];
+    if (type === "already.satisfied" && stage === "intake" && this.implementOpen && d["deferred"] === true && d["already_satisfied"] === true && Array.isArray(ev) && ev.length > 0 && ev.every((x) => typeof x === "string" && x !== "")) this.append("already.attested", "intake", { already_satisfied: true, evidence: ev });
     return e;
   }
   sealLog(): void { // A-117: signed line after run.completed over every earlier byte, so deleting the tail or the line itself breaks `loki verify`; unsigned runs have no key and skip it

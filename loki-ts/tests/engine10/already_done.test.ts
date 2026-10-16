@@ -440,6 +440,24 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       rmSync(dir, { recursive: true, force: true });
     });
 
+    test("P12-07j: the already.satisfied event carries already_satisfied:true and the evidence, only after apply succeeded", async () => {
+      const dir = freshRepo();
+      const r = rig(CITE);
+      const { ctx, res } = await intakeWith(r, TASK, dir);
+      const seen: { t: string; d: Record<string, unknown>; applied: boolean }[] = [];
+      ctx.emit = ((t: string, _s: unknown, d: Record<string, unknown>) => { seen.push({ t, d, applied: res.data.already_satisfied === true }); }) as never;
+      const impl = runImpl(ctx);
+      await waitFor(() => r.calls.length >= 2);
+      r.release();
+      await impl;
+      const e = seen.filter((x) => x.t === "already.satisfied");
+      expect(e.length).toBe(1);
+      expect(e[0]!.d).toEqual({ already_satisfied: true, evidence: res.data.evidence as string[], deferred: true });
+      expect((e[0]!.d["evidence"] as string[])[0]).toBe(CITE);
+      expect(e[0]!.applied).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
     test("hit: intake returns without waiting for the model; confirmation lands during implement and stops it", async () => {
       const dir = freshRepo();
       const r = rig(CITE);

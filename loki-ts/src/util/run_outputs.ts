@@ -228,9 +228,10 @@ export function resumeMachineOpts<F extends string>(ctx: Parameters<typeof seedR
   seedResumeCtx(ctx, rp);
   const done = new Set<string>(STAGE_ORDER.filter((s) => (s === "intake" || s === "plan" || s === "wall" || s === "implement") && settled(events, s))), restored: StageOutputs = {};
   for (const s of done) { const e = events.findLast((x) => x.type === "stage.completed" && x.stage === s); if (e) restored[s] = e.data; }
-  // D61-04: a deferred already-done hit lands on intake AFTER its stage.completed was written, so the flag is durable only in the already.satisfied event. Absent or malformed -> not satisfied (old logs restore as before).
-  const hit = events.findLast((x) => x.type === "already.satisfied" && x.stage === "intake"), ev = hit?.data["evidence"];
-  if (restored["intake"] && hit && hit.data["already_satisfied"] === true && Array.isArray(ev) && ev.length > 0 && ev.every((x) => typeof x === "string")) restored["intake"] = { ...restored["intake"], already_satisfied: true, evidence: ev };
+  // D61-04: a deferred already-done hit lands on intake AFTER its stage.completed was written, so the flag is durable only in the supervisor-written already.attested event (SUPERVISOR_ONLY: a worker line of that type is dropped). It counts only if it precedes implement's stage.completed and no intent.revised follows it (stale evidence). Absent or malformed -> not satisfied (old logs restore as before).
+  const hitIdx = events.findLastIndex((x) => x.type === "already.attested" && x.stage === "intake"), hit = hitIdx < 0 ? undefined : events[hitIdx], ev = hit?.data["evidence"];
+  const implDone = events.findLastIndex((x) => x.type === "stage.completed" && x.stage === "implement");
+  if (restored["intake"] && hit && hit.data["already_satisfied"] === true && Array.isArray(ev) && ev.length > 0 && ev.every((x) => typeof x === "string" && x !== "") && (implDone < 0 || hitIdx < implDone) && !events.slice(hitIdx + 1).some((x) => x.type === "intent.revised")) restored["intake"] = { ...restored["intake"], already_satisfied: true, evidence: ev };
   const kept = flow.map((st) => typeof st === "string" ? (done.has(st) ? [] : st) : st.filter((n) => !done.has(n))).filter((st) => st.length > 0);
   return { ok: true, flow: kept as (F | readonly F[])[], restored };
 }

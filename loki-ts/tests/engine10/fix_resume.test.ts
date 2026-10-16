@@ -173,6 +173,7 @@ import { execFileSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
@@ -361,8 +362,9 @@ describe("resume from stage (P12-07)", () => {
     if (!r.ok) throw new Error(r.reason);
     return r.restored["intake"] as Record<string, unknown> | undefined;
   };
-  test("P12-07j (D61-04): a deferred already-done hit survives resume", () => {
-    const d = restoreIntake(satLog([["already.satisfied", "intake", { already_satisfied: true, evidence: ["src/a.ts has it"], deferred: true }]]));
+  const att = (data: Record<string, unknown> = { already_satisfied: true, evidence: ["src/a.ts has it"] }): Spec => ["already.attested", "intake", data];
+  test("P12-07j (D61-04): a supervisor-attested deferred hit survives resume", () => {
+    const d = restoreIntake(satLog([att()]));
     expect(d?.["already_satisfied"]).toBe(true);
     expect(d?.["evidence"]).toEqual(["src/a.ts has it"]);
     expect(d?.["base_sha"]).toBe("abc");
@@ -370,9 +372,43 @@ describe("resume from stage (P12-07)", () => {
   test("P12-07j: an old log without the event restores exactly as before (not satisfied)", () => {
     expect(restoreIntake(satLog([]))).toEqual({ base_sha: "abc", task: "t", already_satisfied: false });
   });
-  test("P12-07j: a malformed already.satisfied event is ignored (fail safe)", () => {
+  test("P12-07j: a worker-written already.satisfied (unattested) is never restored", () => {
+    expect(restoreIntake(satLog([["already.satisfied", "intake", { already_satisfied: true, evidence: ["x"], deferred: true }]]))?.["already_satisfied"]).toBe(false);
+  });
+  test("P12-07j: a malformed attested event is ignored (fail safe)", () => {
     for (const data of [{ evidence: ["x"] }, { already_satisfied: true }, { already_satisfied: true, evidence: [] }, { already_satisfied: true, evidence: [1] }, { already_satisfied: "true", evidence: ["x"] }])
-      expect(restoreIntake(satLog([["already.satisfied", "intake", data]]))?.["already_satisfied"]).toBe(false);
+      expect(restoreIntake(satLog([att(data)]))?.["already_satisfied"]).toBe(false);
+  });
+  test("P12-07j: an intent.revised after the hit drops the flag; one before it does not", () => {
+    const r = { revisions: [rev] };
+    expect(restoreIntake(satLog([att(), ["intent.revised", "implement", r]]))?.["already_satisfied"]).toBe(false);
+    expect(restoreIntake(satLog([["intent.revised", "plan", r], att()]))?.["already_satisfied"]).toBe(true);
+  });
+  test("P12-07j: an attested event after implement settled is not restored", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "abc" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"], att()]);
+    expect(restoreIntake(evs)?.["already_satisfied"]).toBeUndefined();
+  });
+  test("P12-07j: SupervisorLog.ingest drops a worker-written already.attested and attests only an in-flight well-formed deferred hit", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-forge-")), log = new SupervisorLog(join(dir, "events.jsonl"), RID), j = (type: string, stage: string, data: object) => JSON.stringify({ type, stage, data });
+    const hit = { already_satisfied: true, evidence: ["src/a.ts has it"], deferred: true };
+    try {
+      expect(log.ingest(j("already.attested", "intake", { already_satisfied: true, evidence: ["x"] }))).toBeNull();
+      log.ingest(j("already.satisfied", "intake", hit)); // implement not in flight
+      log.ingest(j("stage.started", "implement", {}));
+      log.ingest(j("already.satisfied", "intake", { ...hit, evidence: [] }));
+      log.ingest(j("already.satisfied", "intake", { ...hit, deferred: false }));
+      expect(readEvents(log.path).some((e) => e.type === "already.attested")).toBe(false);
+      log.ingest(j("already.satisfied", "intake", hit));
+      expect(readEvents(log.path).filter((e) => e.type === "already.attested").length).toBe(1);
+      log.ingest(j("stage.completed", "implement", {}));
+      log.ingest(j("already.satisfied", "intake", hit));
+      expect(readEvents(log.path).filter((e) => e.type === "already.attested").length).toBe(1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07j: a restored flag can never seal VERIFIED (verdictOf)", () => {
+    const o = { intake: restoreIntake(satLog([att()])), implement: { exit: "done" } } as never;
+    expect(verdictOf(o, [], false, false, false, true)).toBe("ALREADY_SATISFIED");
+    expect(verdictOf(o, [], false, false, false, false)).toBe("PARTIAL");
   });
   const noPr = FLOW.filter((s) => s !== "pr");
   const rerun = async (evs: ReturnType<typeof mk>): Promise<{ ran: string[]; sealSaw: unknown }> => {
