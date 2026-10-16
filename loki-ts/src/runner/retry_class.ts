@@ -116,14 +116,14 @@ const realSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promi
  * Bounded by `untilMs` (the run cap) and `signal`: when the next wait would pass the deadline it sleeps
  * to the deadline and returns the quota result, so the caller ends budget_stopped, never waits forever.
  */
-export async function rerunOnQuota<R>(run: () => Promise<R>, kindOf: (r: R) => string | null, clock: WaitClock, signal: AbortSignal | undefined, untilMs: number): Promise<R> {
+export async function rerunOnQuota<R>(run: () => Promise<R>, kindOf: (r: R) => string | null, clock: WaitClock, signal: AbortSignal | undefined, untilMs: number, stop?: () => boolean): Promise<R> {
   const sleep = clock.sleep ?? realSleep;
   let r = await run();
-  for (let i = 0; kindOf(r) === "quota_exhausted" && !signal?.aborted; i++) {
+  for (let i = 0; kindOf(r) === "quota_exhausted" && !signal?.aborted && !stop?.(); i++) {
     const left = untilMs - clock.now(), wait = Math.min(QUOTA_WAIT_BASE_MS * 2 ** i, QUOTA_WAIT_MAX_MS);
-    if (wait >= left) { await sleep(Math.max(0, left), signal); return r; }
+    if (wait >= left) { for (let k = 0; k < 5 && clock.now() < untilMs && !signal?.aborted; k++) await sleep(Math.max(0, untilMs - clock.now()), signal); return r; } // a timer that fires early is re-armed, so the caller sees the deadline as reached
     await sleep(wait, signal);
-    if (signal?.aborted) return r;
+    if (signal?.aborted || stop?.()) return r; // stop: the dollar cap, checked between waits
     r = await run();
   }
   return r;
