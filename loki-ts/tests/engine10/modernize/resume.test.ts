@@ -253,6 +253,21 @@ describe("scheduler merge path end to end", () => {
     f.done();
   });
 
+  it("a crash with an unmerged in-flight unit never merges or completes it outside the verify path", async () => {
+    const f = fx();
+    const plan = planOf([[u("a")]]);
+    f.log.append("unit.started", { unit: "a", run_id: "r-a", model: "sonnet", variant: 0 });
+    const mergeCalls: string[] = [];
+    const merge: MergeOps = { isMerged: () => false, merge: (x) => { mergeCalls.push(x); } };
+    const run = async (): Promise<AttemptOutcome> => ({ result: { ...proven("a"), verdict: "NOT_PROVEN" }, costUsd: 0 });
+    const log2 = new ModernizeLog(f.dir, MID);
+    const r = await resumeSchedule(plan, { repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge, run, log: log2 });
+    expect(r.ok).toBe(true);
+    expect(mergeCalls).toEqual([]);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed")).toEqual([]);
+    f.done();
+  });
+
   it("a merge that landed but whose log append failed says so", async () => {
     const f = fx();
     const merged = new Set<string>();
