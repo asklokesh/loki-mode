@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configDigest, endpointHost, modelOutcome, runIdentity } from "../../src/util/run_identity.ts";
+import { configDigest, endpointHost, modelOutcome, requestedModelForTier, runIdentity } from "../../src/util/run_identity.ts";
+import { childEnv } from "../../src/engine10/session.ts";
 import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 
 let dir: string;
@@ -66,5 +67,34 @@ describe("run identity tuple", () => {
     expect(rec.model).toBe("claude-sonnet-4-6");
     expect(rec.requested_model).toBe("opus");
     expect(rec.model_downgraded).toBe(true);
+  });
+  test("endpoint is null under Bedrock or Vertex auth with no base URL", () => {
+    expect(endpointHost({ CLAUDE_CODE_USE_BEDROCK: "1" })).toBeNull();
+    expect(endpointHost({ CLAUDE_CODE_USE_VERTEX: "1" })).toBeNull();
+    expect(endpointHost({ CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://b.example.com" })).toBe("b.example.com");
+  });
+  test("requested model is per session tier: an opus run with a fast-tier stage is not a downgrade", () => {
+    const env = { LOKI_CLAUDE_MODEL_DEVELOPMENT: "opus" };
+    expect(requestedModelForTier(env, "development")).toBe("opus");
+    expect(requestedModelForTier(env, "fast")).toBe("sonnet");
+    expect(requestedModelForTier({ ...env, LOKI_CLAUDE_MODEL_FAST: "haiku" }, "fast")).toBe("haiku");
+    expect(requestedModelForTier({ LOKI_E10_MODEL_DEFAULT: "1" }, "development")).toBe("claude (provider default)");
+    expect(modelOutcome(requestedModelForTier({ LOKI_E10_MODEL_DEFAULT: "1" }, "development"), "claude-sonnet-4-6").downgraded).toBeNull();
+  });
+  async function flagFor(tier: string, actual: string): Promise<unknown> {
+    const saved = process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"];
+    process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "opus";
+    try {
+      const opts = { stage: "plan", brief: "b", tier, iterationId: "i", limitS: 1, signal: new AbortController().signal } as never;
+      process.env["LOKI_REQUESTED_MODEL"] = childEnv(opts, { provider: "claude" }).LOKI_REQUESTED_MODEL;
+    } finally { if (saved === undefined) delete process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"]; else process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = saved; }
+    const msgs = [{ type: "system", subtype: "init", model: actual, session_id: "s" }, { type: "result", subtype: "success", total_cost_usd: 0.1, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" }];
+    async function* gen() { for (const m of msgs) yield m as never; }
+    await consumeSdkStream(gen(), { cwd: dir, iteration: "2", hookEventsEnabled: true, write: () => {} });
+    return JSON.parse(readFileSync(join(dir, ".loki", "metrics", "result-cost-2.json"), "utf8")).model_downgraded;
+  }
+  test("session child env: fast tier on an opus run is not flagged, a real substitution on the dev tier is", async () => {
+    expect(await flagFor("fast", "claude-sonnet-4-6")).toBe(false);
+    expect(await flagFor("development", "claude-sonnet-4-6")).toBe(true);
   });
 });

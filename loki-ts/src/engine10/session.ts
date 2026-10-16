@@ -6,7 +6,7 @@ import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeProviderCost } from "../providers/provider_cost.ts";
-import { modelRouteModel } from "../providers/model_routes.ts";
+import { modelRouteModel } from "../providers/model_routes.ts"; import { requestedModelForTier } from "../util/run_identity.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
@@ -75,7 +75,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
     env[`LOKI_MODEL_${t}`] = pin;
   }
-  return env;
+  return cfg.provider === "claude" ? { ...env, LOKI_REQUESTED_MODEL: requestedModelForTier(env, String(opts.tier)) } : env; // P12-23: per session, so a fast-tier stage on an opus run is not flagged
 }
 function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   try {
