@@ -290,5 +290,12 @@ else
     bad "workspace e2e: docs/WORKSPACES.md lacks the verify section"
 fi
 
+if grep -qi 'deployed-SHA binding is not implemented' "$REPO_ROOT/docs/WORKSPACES.md" &&
+    ! grep -q 'stale-head child makes it TAMPERED or UNCHECKED' "$REPO_ROOT/docs/WORKSPACES.md"; then
+    ok "workspace e2e: docs/WORKSPACES.md states what the composite Seal covers and the deploy gap"
+else
+    bad "workspace e2e: docs/WORKSPACES.md Seal coverage wording is stale"
+fi
+
 rm -rf -- "$_ws99_tmp"
 unset _ws99_tasks _ws99_l _ws99_a _ws99_comp _ws99_child _ws99_vout _ws99_tmp _ws99_entry _ws99_name _ws99_out _ws99_rc _ws99_json _ws99_status _ws99_src _ws99_met _ws99_n
