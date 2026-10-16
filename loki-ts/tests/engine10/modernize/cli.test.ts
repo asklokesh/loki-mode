@@ -161,6 +161,17 @@ describe("main", () => {
     expect(cap.out).toContain("loki modernize <repo>");
   });
 
+  it("--help or -h anywhere (unit, or after <repo> --to) prints usage and exits 0, not a parse error", async () => {
+    for (const args of [["unit", "--help"], ["unit", "-h"], [".", "--to", "python3", "--help"], [".", "-h", "--to", "python3"]]) {
+      const cap = captureStd();
+      const code = await main(args);
+      cap.restore();
+      expect(code).toBe(0);
+      expect(cap.out).toContain("loki modernize unit");
+      expect(cap.err).toBe("");
+    }
+  });
+
   it("a parse error goes to stderr with usage, exit 2", async () => {
     const cap = captureStd();
     const code = await main([repoDir]); // no --to
