@@ -237,7 +237,7 @@ describe("receipt-path read and NOT PROVEN", () => {
   const sealed = (wt: string, id: string, o: { verdict?: string; signed?: boolean; checks?: unknown[]; forge?: boolean } = {}) => {
     const dir = join(wt, ".loki", "runs", id);
     mkdirSync(dir, { recursive: true });
-    const body: Record<string, unknown> = { run_id: id, verdict: o.verdict ?? "VERIFIED", checks: o.checks ?? [{ name: "t", result: "pass" }], verification: {} };
+    const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", run_id: id, verdict: o.verdict ?? "VERIFIED", checks: o.checks ?? [{ name: "t", result: "pass" }], verification: {} };
     body["receipt_sha256"] = receiptSha256(body as never);
     if (o.signed !== false) {
       const { jwt, kid } = signReceipt(id, body["receipt_sha256"] as string);

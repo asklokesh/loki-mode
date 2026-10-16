@@ -53,7 +53,7 @@ if (a[0] === "engine10") {
   writeFileSync("sum.js", "exports.sum = (a) => a.reduce((x, y) => x + y, 0);\\n");
   mkdirSync(".loki/runs/stub", { recursive: true });
   const { receiptSha256, signReceipt } = await import(${JSON.stringify(SEAL_TS)});
-  const body: Record<string, unknown> = { run_id: "stub", verdict: "VERIFIED", checks: [{ name: "t", cmd: "t", result: "pass", duration_s: 1, n: 3 }], verification: {} };
+  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", run_id: "stub", verdict: "VERIFIED", checks: [{ name: "t", cmd: "t", result: "pass", duration_s: 1, n: 3 }], verification: {} };
   body["receipt_sha256"] = receiptSha256(body);
   const { jwt, kid } = signReceipt("stub", body["receipt_sha256"]);
   body["verification"] = { jwt, kid };

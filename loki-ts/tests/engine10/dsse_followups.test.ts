@@ -21,7 +21,7 @@ afterAll(() => {
 });
 
 const sealed = (runId: string, over: Record<string, unknown> = {}) => {
-  const body = { run_id: runId, verdict: "VERIFIED", base_sha: "c3".repeat(20), head_sha: HEAD, tree: TREE, diff_sha256: "d".repeat(64), events_sha256: createHash("sha256").digest("hex"), task: "t", ...over };
+  const body = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, run_id: runId, verdict: "VERIFIED", base_sha: "c3".repeat(20), head_sha: HEAD, tree: TREE, diff_sha256: "d".repeat(64), events_sha256: createHash("sha256").digest("hex"), task: "t", ...over };
   const hash = receiptSha256(body as never);
   return { ...body, receipt_sha256: hash, verification: signReceipt(runId, hash) } as Record<string, unknown>;
 };

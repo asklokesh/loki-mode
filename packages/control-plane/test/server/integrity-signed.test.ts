@@ -34,7 +34,7 @@ interface Built { events: any[]; receipt: Record<string, unknown> }
 function honest(run: string, verdict = "VERIFIED", opts: { startData?: object; sealKid?: string; signer?: KeyObject; kid?: string } = {}): Built {
   const signer = opts.signer ?? privateKey, KID = opts.kid ?? KID_ACTIVE;
   const start = env(run, 0, "run.started", opts.startData ?? { task_source: "text" });
-  const receipt: Record<string, unknown> = { run_id: run, verdict, events_sha256: createHash("sha256").update(lineOf(start) + "\n").digest("hex"), log_seal: true };
+  const receipt: Record<string, unknown> = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, run_id: run, verdict, events_sha256: createHash("sha256").update(lineOf(start) + "\n").digest("hex"), log_seal: true };
   const hash = computeReceiptHash(receipt);
   receipt["receipt_sha256"] = hash;
   const h = b64({ alg: "EdDSA", kid: KID }), p = b64({ receipt_sha256: hash });
