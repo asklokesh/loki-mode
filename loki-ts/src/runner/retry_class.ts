@@ -99,7 +99,7 @@ export const QUOTA_WAIT_BASE_MS = 30_000;
 export const QUOTA_WAIT_MAX_MS = 300_000;
 
 /** "auth" | "quota_exhausted" | other classifyFailure reason for a failed session; null on success. */
-export function sessionKind(r: { exit: number; stderrTail?: string }): string | null {
+export function sessionKind(r: { exit: number | null; stderrTail?: string }): string | null {
   if (r.exit === 0) return null;
   const t = r.stderrTail ?? "", sdk = SDK_ERR.exec(t);
   return sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason;
