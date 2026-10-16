@@ -139,7 +139,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | trigger | autonomy/loki | DROP-LEGACY | Legacy engine |
 | failover | autonomy/loki | DROP-LEGACY | Legacy engine |
 | reset | autonomy/loki | DROP-LEGACY | Legacy engine |
-| merge | autonomy/loki | DROP-LEGACY | Legacy parallel mode |
+| merge | autonomy/loki | DROP-LEGACY | Bash PR merge gate |
 | heal | autonomy/loki | DROP-LEGACY | Legacy engine |
 | migrate | autonomy/loki | DROP-LEGACY | Superseded by modernize |
 | dogfood | autonomy/loki | DROP-LEGACY | Legacy engine |

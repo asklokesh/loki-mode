@@ -11492,7 +11492,7 @@ fi
 # Post-completion: auto-merge if requested
 if [[ "$LOKI_AUTO_MERGE" == "true" ]]; then
     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if "$LOKI_CMD" merge pr "$branch_current" --require-verified --delete-branch; then
+    if "$LOKI_CMD" merge watch "$branch_current" --require-verified --delete-branch; then
         # A brief run carries a synthetic ref (b<epoch>), not a real issue: close only numeric refs.
         if [[ "${LOKI_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
             gh issue close "$LOKI_ISSUE_NUMBER" --comment "Resolved by Loki Mode" 2>/dev/null || true
@@ -11744,7 +11744,7 @@ ${_gh_receipt}"
                 github|brief)
                     local branch_current
                     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-                    if _merge_pr_gated "$branch_current" --require-verified --delete-branch; then
+                    if _merge_pr_watch "$branch_current" --require-verified --delete-branch; then
                         echo -e "${GREEN}PR merged and branch deleted${NC}"
                         if [[ "${number:-}" =~ ^[0-9]+$ ]]; then
                             gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
@@ -25882,6 +25882,66 @@ SHOW_EOF
     esac
 }
 
+# Poll `gh pr checks` while pending (rc=8); returns the final rc (0 = green).
+_pr_checks_wait() {
+    local pr="$1" poll="${LOKI_MERGE_POLL_S:-20}" tries="${LOKI_MERGE_MAX_POLLS:-90}" rc=8 i=0
+    while [ "$rc" = "8" ] && [ "$i" -lt "$tries" ]; do
+        rc=0; gh pr checks "$pr" >/dev/null 2>&1 || rc=$?
+        [ "$rc" = "8" ] && { sleep "$poll"; i=$((i+1)); }
+    done
+    return "$rc"
+}
+
+# CI repair loop. Waits for checks; on red, hands the failed-run log tail to one
+# bounded repair session on the PR branch (LOKI_PR_REPAIR_CMD, default: a
+# `loki start` of a generated brief; it receives the evidence file path as its last argument), pushes,
+# and re-checks, up to LOKI_PR_REPAIR_MAX attempts (default 2). Green goes through
+# _merge_pr_gated (extra args pass through). Exhausted: the PR is returned to
+# draft, nothing merges, and the last failure evidence is printed.
+# Usage: _merge_pr_watch <pr> [--require-verified] [--delete-branch]
+_merge_pr_watch() {
+    local pr="$1" max="${LOKI_PR_REPAIR_MAX:-2}" attempt=0 rc branch cur rid evid tmp
+    shift
+    case "$max" in ''|*[!0-9]*) max=2 ;; esac
+    command -v gh >/dev/null 2>&1 || { echo "$pr: not merged, gate: gh (gh CLI is required)" >&2; return 1; }
+    branch="$(gh pr view "$pr" --json headRefName -q .headRefName 2>/dev/null)" || branch=""
+    tmp="$(mktemp -d)" || return 1
+    evid="$tmp/ci-failure.md"
+    while true; do
+        rc=0; _pr_checks_wait "$pr" || rc=$?
+        if [ "$rc" = "0" ]; then
+            rm -rf "$tmp"
+            _merge_pr_gated "$pr" "$@"
+            return $?
+        fi
+        rid="$(gh run list --branch "$branch" --status failure --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null)" || rid=""
+        {
+            echo "# CI failed for PR $pr (branch ${branch:-unknown}); fix the failing checks, keep the change minimal"
+            [ -n "$rid" ] && gh run view "$rid" --log-failed 2>/dev/null | tail -n 120
+        } > "$evid"
+        if [ "$attempt" -ge "$max" ]; then
+            gh pr ready "$pr" --undo >/dev/null 2>&1 || true
+            echo "$pr: not merged, gate: checks (gh pr checks rc=$rc after $attempt repair attempts); PR left as draft" >&2
+            echo "Last failure evidence:" >&2; sed 's/^/    /' "$evid" >&2
+            rm -rf "$tmp"
+            return 1
+        fi
+        attempt=$((attempt+1))
+        cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+        if [ -z "$branch" ] || [ "$cur" != "$branch" ]; then
+            echo "$pr: not merged, gate: repair (checkout is '${cur:-none}', repair must run on PR branch '${branch:-unknown}'); PR left open" >&2
+            rm -rf "$tmp"; return 1
+        fi
+        echo "$pr: checks red, repair attempt $attempt of $max"
+        if [ -n "${LOKI_PR_REPAIR_CMD:-}" ]; then
+            bash -c "$LOKI_PR_REPAIR_CMD \"\$1\"" _ "$evid" || { echo "$pr: repair attempt $attempt failed, not pushing"; continue; }
+        else
+            "$(command -v loki || echo "$0")" start "$evid" || { echo "$pr: repair attempt $attempt failed, not pushing"; continue; }
+        fi
+        git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1 || echo "$pr: push of repair failed" >&2
+    done
+}
+
 # Shared merge gate. One PR (number or branch) merges only when it is not a
 # draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
 # --require-verified, this run's proof headline is VERIFIED (missing proof or
@@ -25889,7 +25949,7 @@ SHOW_EOF
 # blocking gate ("gate: draft|verdict|checks") and leaves the PR open.
 # Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
 _merge_pr_gated() {
-    local pr="$1" need_verified=false margs=(--squash) rc i d
+    local pr="$1" need_verified=false margs=(--squash) rc d
     shift
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -25915,12 +25975,7 @@ _merge_pr_gated() {
             return 1
         fi
     fi
-    local poll="${LOKI_MERGE_POLL_S:-20}" tries="${LOKI_MERGE_MAX_POLLS:-90}"
-    rc=8; i=0
-    while [ "$rc" = "8" ] && [ "$i" -lt "$tries" ]; do
-        rc=0; gh pr checks "$pr" >/dev/null 2>&1 || rc=$?
-        [ "$rc" = "8" ] && { sleep "$poll"; i=$((i+1)); }
-    done
+    rc=0; _pr_checks_wait "$pr" || rc=$?
     if [ "$rc" != "0" ]; then
         echo "$pr: not merged, gate: checks (gh pr checks rc=$rc); PR left open" >&2
         return 1
@@ -25998,12 +26053,18 @@ cmd_merge() {
             echo "Merged: $merged, left in queue: $blocked"
             [ "$blocked" -eq 0 ]
             ;;
+        watch)
+            [ $# -gt 0 ] || { echo "Usage: loki merge watch <pr> [--require-verified] [--delete-branch]" >&2; return 2; }
+            _merge_pr_watch "$@" && echo "$1: merged"
+            ;;
         pr)
             [ $# -gt 0 ] || { echo "Usage: loki merge pr <pr-or-branch> [--require-verified] [--delete-branch]" >&2; return 2; }
             _merge_pr_gated "$@" && echo "$1: merged"
             ;;
         help|--help|-h|*)
-            echo "Usage: loki merge <add|list|run|pr|clear>"
+            echo "Usage: loki merge <add|list|run|pr|watch|clear>"
+            echo "  watch <pr>         Wait for checks; on red run up to LOKI_PR_REPAIR_MAX (2) bounded"
+            echo "                     repair sessions on the PR branch, push, re-check, merge when green."
             echo "  pr <pr|branch>     Merge one PR through the same gate (not draft, checks green;"
             echo "                     --require-verified also needs a VERIFIED run verdict)."
             echo "  add <pr>...        Queue pull requests"

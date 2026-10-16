@@ -273,7 +273,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   legacy("trigger", "Event triggers", "Legacy engine"),
   legacy("failover", "Provider failover", "Legacy engine"),
   legacy("reset", "Reset legacy state", "Legacy engine"),
-  legacy("merge", "Merge parallel worktrees", "Legacy parallel mode"),
+  legacy("merge", "Gated PR merge queue (pr, watch, run); also merges parallel worktrees", "Bash PR merge gate"),
   legacy("heal", "Legacy healing", "Legacy engine"),
   legacy("migrate", "Legacy migration", "Superseded by modernize"),
   legacy("dogfood", "Dogfood run", "Legacy engine"),

@@ -14,13 +14,18 @@ cat > "$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
 case "$1 $2" in
-  "pr checks") [ "$3" = "12" ] && exit 1; [ "$3" = "feat-red" ] && exit 1; exit 0 ;;
-  "pr view") [ "$3" = "feat-draft" ] && echo true || echo false; exit 0 ;;
+  "pr checks") [ "$3" = "12" ] && exit 1; [ "$3" = "feat-red" ] && exit 1
+               [ "$3" = "21" ] && [ ! -f "$STUB_WORK/repaired" ] && exit 1
+               [ "$3" = "22" ] && exit 1
+               exit 0 ;;
+  "pr view") case "$*" in *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
+  "run list") echo 99; exit 0 ;;
+  "run view") echo "FAILED: boom in test_x"; exit 0 ;;
 esac
 exit 0
 STUB
 chmod +x "$WORK/bin/gh"
-export STUB_LOG="$WORK/calls.log"; : > "$STUB_LOG"
+export STUB_WORK="$WORK" STUB_LOG="$WORK/calls.log"; : > "$STUB_LOG"
 export PATH="$WORK/bin:$PATH" LOKI_MERGE_POLL_S=0
 cd "$WORK/repo" || exit 1
 
@@ -60,6 +65,30 @@ printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
 bash "$LOKI" merge pr feat-ok --require-verified --delete-branch >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && grep -q "^pr merge feat-ok --squash --delete-branch" "$STUB_LOG" && ok "ship: green VERIFIED PR merges" || bad "green ship rc=$RC: $(cat "$STUB_LOG")"
 grep -q 'gh pr merge "$branch_current"' "$LOKI" && bad "inline ungated gh pr merge still present" || ok "no inline ungated gh pr merge of the branch"
+
+# CI repair loop: loki merge watch.
+git init -q -b feat-w . && git config user.email t@t && git config user.name t
+git commit -q --allow-empty -m base
+git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git"
+git push -q origin feat-w
+cat > "$WORK/repair.sh" <<'REP'
+#!/usr/bin/env bash
+echo "$1" >> "$STUB_WORK/repair.log"
+grep -q "boom in test_x" "$1" || exit 3
+touch "$STUB_WORK/repaired"; echo fix > fix.txt; git add fix.txt; git commit -q -m fix
+REP
+export LOKI_PR_REPAIR_CMD="bash $WORK/repair.sh"
+: > "$STUB_LOG"; rm -f "$WORK/repair.log"
+OUT="$(bash "$LOKI" merge watch 21 2>&1)"; RC=$?
+[ "$(wc -l < "$WORK/repair.log" | tr -d ' ')" = "1" ] && ok "watch: repair invoked once with failed log" || bad "repair count: $OUT"
+[ "$(git rev-parse HEAD)" = "$(git --git-dir="$WORK/remote.git" rev-parse feat-w)" ] && ok "watch: repair commit pushed" || bad "not pushed"
+[ "$RC" -eq 0 ] && grep -q "^pr merge 21 --squash" "$STUB_LOG" && ok "watch: merged after green" || bad "watch merge rc=$RC: $OUT"
+: > "$STUB_LOG"; rm -f "$WORK/repair.log" "$WORK/repaired"
+OUT="$(LOKI_PR_REPAIR_MAX=2 bash "$LOKI" merge watch 22 2>&1)"; RC=$?
+[ "$(wc -l < "$WORK/repair.log" | tr -d ' ')" = "2" ] && ok "watch: bounded to LOKI_PR_REPAIR_MAX attempts" || bad "attempts: $(cat "$WORK/repair.log")"
+grep -q "^pr merge 22" "$STUB_LOG" && bad "exhausted PR merged" || ok "watch: exhausted attempts never merge"
+grep -q "^pr ready 22 --undo" "$STUB_LOG" && [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: checks" && ok "watch: left draft with evidence" || bad "exhausted: rc=$RC $OUT"
+grep -q '^  /merge ' "$SCRIPT_DIR/../autonomy/lib/chat.sh" && ok "chat: /merge verb documented" || bad "chat /merge missing"
 
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

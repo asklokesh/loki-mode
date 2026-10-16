@@ -52,6 +52,7 @@ Loki chat commands:
   /model <id>        set model for this session
   /provider <name>   switch provider (claude, codex, cline, aider, opencode)
   /cost              loki cost
+  /merge <args>      loki merge (pr <pr>, watch <pr> to repair red CI, run, list)
   /diff              git diff --stat plus diff
   /undo [args]       loki undo
   /help, /exit
@@ -355,6 +356,8 @@ Question: $line" || true
                 _chat_do "$loki" verify $rest ;;
             /receipt) _chat_do "$loki" receipt ;;
             /cost) _chat_do "$loki" cost ;;
+            /merge) # shellcheck disable=SC2086
+                _chat_do "$loki" merge $rest ;;
             /undo) # shellcheck disable=SC2086
                 _chat_do "$loki" undo $rest ;;
             /diff) _chat_do git diff --stat; _chat_do git diff ;;
