@@ -24,6 +24,9 @@ export function holdoutSplit(seed: string, ids: string[], opts: { ratio: number;
   return ids.filter((id) => held.has(id));
 }
 
+/** A verify check that runs a held-out test (holdout:N) or reports a bad store (holdout:store). Its text, name and command must never reach fix-stage input. */
+export const isHoldoutCheck = (name: string): boolean => name.startsWith("holdout:");
+
 /** The one exact store path for a run (never a glob). */
 export const holdoutDirFor = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-holdout-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
 /** Run-end cleanup: removes only this run's store. */

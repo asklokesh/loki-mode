@@ -194,7 +194,7 @@ None at this audit. No P12-NN slice is in ready state on docs/v10/BOARD.md (P12 
 | C-C1 | Gateway lane policy: non-Anthropic routes behind claude CLI and label wording | PLAN-V12 sec C; P12-27 depends on it; P12-27 no commits, no BOARD row; FOUNDER-QUEUE.md has no entry | CTO/founder decides wording; then P12-27 (also needs P12-26 merged, now true) |
 | C-C2 | Flip default from skip-permissions flag to compiled permission mode | PLAN-V12 sec C and risk 4; CHANGELOG 11.17.0 compiled policy behind LOKI_PERMISSION_POLICY, default unchanged | Founder/CTO approval, then flag-flip slice (default compiled, update E05, providers/claude.sh and runner/providers.ts) |
 | C-C3 | COST-2/COST-3 moat changes and overlap with router objective | PLAN-V12 sec C; P12-32 has no commits and no BOARD row | CTO decision; then P12-32 |
-| C-C4 | Wall holdout ratio and block-vs-warn on holdout failures | loki-ts/src/util/holdout.ts:10 default ratio 0 'founder decision C-C4 pending'; P12-05 merged 87637d1ee, released 11.17.0 | Decided in D99 item 4: ratio 0.2, active at 5+ checks, failure blocks the Seal (NOT_PROVEN naming the holdout), default on in holdout.ts |
+| C-C4 | Wall holdout ratio and block-vs-warn on holdout failures | loki-ts/src/util/holdout.ts (was default ratio 0, 'founder decision C-C4 pending'); P12-05 merged 87637d1ee, released 11.17.0 | Decided in D99 item 4: ratio 0.2, active at 5+ checks, failure blocks the Seal (NOT_PROVEN naming the holdout), default on in holdout.ts |
 | R2 | Risk: COST-HALF unproven, no valid B9 row | BOARD COST-4/COST-6 notes best 0.68x; P12-28 not started; needs C-F1 | Founder spend then P12-28 and COST-6 run |
 | R4 | Risk: main calls use the skip-permissions flag, no policy compiler | Compiled policy exists behind LOKI_PERMISSION_POLICY (CHANGELOG 11.17.0); default unchanged; needs C-C2 | C-C2 decision then flip slice |
 | P1-04 | Source epic (section 9): Enterprise pilot hardening | P12-48 retention/backup no commits; SCIM/HA/support wait on C-F6; P12-42 tenant scope no commits | C-F6 founder decision; P12-48 buildable independently |
@@ -323,7 +323,7 @@ None at this audit. No P12-NN slice is in ready state on docs/v10/BOARD.md (P12 
 - M-26: BOARD row still ready though M-26 is approved on branch m-26; update after M-26b merges.
 - S08: refresh version references in this file and the source plan (VERSION 11.17.1) once C-F8 is decided.
 - BOARD: add rows for P12-10, 11, 13, 14, 15, 20, 27, 28, 32-39, 41-48 (none exist). Product Owner writes slice cards. Unblocked now: P12-10, 11, 18, 19, 22, 33, 36, 37, 38, 39, 41-48 (P12-33 and P12-36 are unblocked, P12-34 follows 33, P12-35 follows 36).
-- FOUNDER-QUEUE.md: add C-C1..C-C4 and C-F1, C-F5, C-F6, C-F7, C-F8 as rows (none are recorded there), in particular C-C2 (permission default flip) and C-C4 (Wall holdout ratio).
+- FOUNDER-QUEUE.md: add C-C1..C-C3 and C-F1, C-F5, C-F6, C-F7, C-F8 as rows (none are recorded there), in particular C-C2 (permission default flip). C-C4 (Wall holdout ratio) is decided in D99 item 4.
 - P12-13: vertical slice e2e has no BOARD row; deps P12-02, 07, 09, 14 are all merged or released and seedResumeCtx is wired; U1-U8 fixtures as separate sub-slices.
 - P12-28: needs recorded B9 fixtures for the CI-column scorecard before the paid run (C-F1).
 - P12-34/35 order: 33 then 34; 36 then 35; the deploy block in autonomy/loki is shared with released P12-03, so serialize merges.
@@ -337,7 +337,7 @@ Known open items carried from earlier sessions:
 - Cost vs Claude Code is not yet proven (best 0.68x lean, default 1.67x); paid eval runs are needed.
 - MCP registry is stale at 10.9.1; needs a credentialed publish.
 - v11.16.0 and v11.17.0 were never published (content shipped in 11.17.1).
-- Founder decisions C-C2 and C-C4 are pending.
+- Founder decision C-C2 is pending. C-C4 is decided and shipped (D99 item 4, plus C-C4b opaque-count fix input).
 - Clean up merged-slice worktrees.
 
 ## A. Validation table
@@ -397,7 +397,7 @@ Evidence is file:line on main. "Slice" names the P12 card or the existing BOARD 
 
 | # | Item | Status | Evidence | Slice |
 |---|---|---|---|---|
-| C01 | Wall authored in isolation with holdout | PARTIAL | stages/wall.ts isolated author; implementer can read Wall tests; holdout only in modernize/equiv.ts | P12-05 |
+| C01 | Wall authored in isolation with holdout | PARTIAL | stages/wall.ts isolated author; implementer can read Wall tests; Wall holdout shipped in engine10 (util/holdout.ts, default on per D99 item 4); modernize shares the selector | P12-05 |
 | C02 | Seal binds intent; verify detects drift | PARTIAL | seal binds head_sha and task sha256; verify_cmd.ts never compares with current spec | P12-01 |
 | C03 | Visual evidence as gate | PARTIAL | features/visual_evidence.ts optional, evidence only | P12-47 |
 | C04 | Base subtraction | DONE | stages/verify.ts:155,276 subtractBase | none |
@@ -859,7 +859,7 @@ CTO:
   (P12-27 wording).
 - C-C2 Flip the default from --dangerously-skip-permissions to the compiled permission mode (P12-26 flag flip).
 - C-C3 COST-2 and COST-3 moat changes and their overlap with the router objective (P12-32).
-- C-C4 Wall holdout ratio and whether holdout failures block or warn (P12-05).
+- C-C4 (decided, D99 item 4): Wall holdout ratio 0.2, on by default at 5+ checks, a holdout failure blocks the Seal; opt out with LOKI_WALL_HOLDOUT=0.
 
 ## D. First-wave dispatch order (14 seats)
 
