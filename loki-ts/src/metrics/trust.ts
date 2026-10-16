@@ -17,6 +17,15 @@
 // and no direction is invented. Numbers only ever come from real proof.json
 // values; a missing axis is reported available:false, never a misleading 0.
 //
+// Outcome effort definitions (shared with benchmarks/bench/attribution.py, see
+// docs/EVALUATING.md "Outcome analytics"): accepted = verdict VERIFIED and not
+// later contradicted; misleading completion = false_verified / VERIFIED-claimed
+// (attribution.py false_completion); cost per accepted = total spend across ALL
+// runs / accepted, null when no run was accepted or any run's cost is
+// unmeasured (attribution.py compute_metrics). Waited seconds are wall-clock
+// blocked time, an upper bound on human attention; active minutes are NOT
+// measured.
+//
 // Public API:
 //   computeTrajectory(lokiDir) -> TrustTrajectory
 //   formatTrajectoryHuman(traj) -> string
@@ -90,8 +99,30 @@ export type TrustRun = {
   interventions: number | null;
   /** Sealed verdict recorded in proof.json, or null when the proof carries none (UNCHECKED). */
   verdict: string | null;
+  /** proof.cost.usd, or null when unmeasured. */
+  cost_usd: number | null;
+  /** Per-type intervention counts from proof.interventions_detail, or null when the proof carries none. */
+  interventions_by_type: InterventionsByType | null;
+  /** Wall-clock seconds blocked on a person (upper bound), or null when unmeasured. */
+  waited_s: number | null;
   /** true only when proof.json records a VERIFIED verdict later contradicted by a FAILED outcome; null when no verdict evidence. */
   false_verified: boolean | null;
+};
+
+export type InterventionsByType = { steer: number; input: number; authorization: number; repair: number };
+
+export type OutcomeEffort = {
+  runs: number;
+  accepted: number;
+  claimed_verified: number;
+  false_verified: number;
+  misleading_completion_rate: number | null;
+  cost_per_accepted_usd: number | null;
+  cost_note: string | null;
+  interventions_by_type: InterventionsByType | null;
+  interventions_per_accepted: number | null;
+  /** Labelled "waited, upper bound": wall-clock blocked minutes, not active minutes. */
+  waited_min_per_accepted: number | null;
 };
 
 export type TrustTrajectory = {
@@ -107,6 +138,7 @@ export type TrustTrajectory = {
   regressing_axes: AxisKey[];
   series: TrustRun[];
   notes: string[];
+  outcome_effort: OutcomeEffort;
   /** Advisory earned-autonomy verdict. Never written to the policy file. */
   graduation: GraduationAdvice;
 };
@@ -193,6 +225,30 @@ function interventionsValue(proof: Record<string, unknown>): number | null {
   return null;
 }
 
+function costValue(proof: Record<string, unknown>): number | null {
+  const usd = obj(proof["cost"])["usd"];
+  if (usd === null || usd === undefined || typeof usd === "boolean") return null;
+  const n = Number(usd);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+const IV_TYPES = ["steer", "input", "authorization", "repair"] as const;
+
+function interventionDetail(proof: Record<string, unknown>): { by_type: InterventionsByType | null; waited_s: number | null } {
+  const d = obj(proof["interventions_detail"]);
+  const bt = obj(d["by_type"]);
+  const out = {} as InterventionsByType;
+  let any = false;
+  for (const k of IV_TYPES) {
+    const n = Number(bt[k]);
+    out[k] = Number.isFinite(n) && n >= 0 ? n : 0;
+    if (out[k] > 0 || bt[k] !== undefined) any = true;
+  }
+  const w = d["waited_s"];
+  const ws = typeof w === "number" && Number.isFinite(w) && w >= 0 ? w : null;
+  return { by_type: any ? out : null, waited_s: ws };
+}
+
 function verdictEvidence(proof: Record<string, unknown>): { verdict: string | null; falseVerified: boolean | null } {
   const raw = String(proof["verdict"] ?? "").trim().toUpperCase();
   const verdict = raw ? raw : null;
@@ -231,7 +287,11 @@ function loadRuns(lokiDir: string): TrustRun[] {
     }
     if (!proof || typeof proof !== "object") continue;
     const ev = verdictEvidence(proof);
+    const det = interventionDetail(proof);
     runs.push({
+      cost_usd: costValue(proof),
+      interventions_by_type: det.by_type,
+      waited_s: det.waited_s,
       verdict: ev.verdict,
       false_verified: ev.falseVerified,
       run_id: String(proof["run_id"] ?? name),
@@ -379,6 +439,63 @@ export function graduationAdvice(
   return { ...base, eligible, missing, summary };
 }
 
+export function outcomeEffort(series: TrustRun[]): OutcomeEffort {
+  const accepted = series.filter((r) => r.verdict === "VERIFIED" && r.false_verified !== true).length;
+  const claimed = series.filter((r) => r.verdict === "VERIFIED" || r.false_verified === true).length;
+  const falseV = series.filter((r) => r.false_verified === true).length;
+  const unmeasuredCost = series.filter((r) => r.cost_usd === null).length;
+  let cost: number | null = null;
+  let costNote: string | null = null;
+  if (series.length === 0) costNote = "no runs";
+  else if (accepted === 0) costNote = "no accepted run, cost per accepted is undefined";
+  else if (unmeasuredCost > 0) costNote = `cost unmeasured for ${unmeasuredCost} of ${series.length} runs, a partial sum is not a total`;
+  else cost = Math.round((series.reduce((s, r) => s + (r.cost_usd ?? 0), 0) / accepted) * 1e6) / 1e6;
+
+  const withDetail = series.filter((r) => r.interventions_by_type !== null);
+  let byType: InterventionsByType | null = null;
+  if (withDetail.length > 0) {
+    byType = { steer: 0, input: 0, authorization: 0, repair: 0 };
+    for (const r of withDetail) for (const k of IV_TYPES) byType[k] += r.interventions_by_type![k];
+  }
+  const allIv = series.length > 0 && series.every((r) => r.interventions !== null);
+  const allWaited = series.length > 0 && series.every((r) => r.waited_s !== null);
+  return {
+    runs: series.length,
+    accepted,
+    claimed_verified: claimed,
+    false_verified: falseV,
+    misleading_completion_rate: claimed > 0 ? round4(falseV / claimed) : null,
+    cost_per_accepted_usd: cost,
+    cost_note: costNote,
+    interventions_by_type: byType,
+    interventions_per_accepted:
+      accepted > 0 && allIv ? round4(series.reduce((s, r) => s + (r.interventions ?? 0), 0) / accepted) : null,
+    waited_min_per_accepted:
+      accepted > 0 && allWaited
+        ? Math.round((series.reduce((s, r) => s + (r.waited_s ?? 0), 0) / 60 / accepted) * 10) / 10
+        : null,
+  };
+}
+
+function fmtOutcomeEffort(e: OutcomeEffort): string[] {
+  const L: string[] = ["Outcome effort"];
+  L.push(`  Accepted (VERIFIED): ${e.accepted} of ${e.runs} runs`);
+  L.push(
+    `  Misleading completion: ${e.misleading_completion_rate === null ? "n/a (no VERIFIED claims)" : `${e.false_verified} of ${e.claimed_verified} VERIFIED claims (${Math.round(e.misleading_completion_rate * 1000) / 10}%)`}`,
+  );
+  L.push(
+    `  Cost per accepted: ${e.cost_per_accepted_usd === null ? `n/a (${e.cost_note ?? "unmeasured"})` : "$" + e.cost_per_accepted_usd.toFixed(2)}`,
+  );
+  L.push(
+    `  Interventions by type: ${e.interventions_by_type === null ? "not recorded" : IV_TYPES.map((k) => `${k} ${e.interventions_by_type![k]}`).join(", ")}`,
+  );
+  L.push(`  Interventions per accepted: ${e.interventions_per_accepted === null ? "n/a" : e.interventions_per_accepted}`);
+  L.push(
+    `  Minutes per accepted: ${e.waited_min_per_accepted === null ? "n/a" : e.waited_min_per_accepted + " (waited, upper bound; active minutes are not measured)"}`,
+  );
+  return L;
+}
+
 export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel | null = null): TrustTrajectory {
   const runs = loadRuns(lokiDir);
   const series: TrustRun[] = runs.map((r) => ({
@@ -388,6 +505,9 @@ export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel |
     gate_pass_rate: r.gate_pass_rate,
     iterations: r.iterations,
     interventions: r.interventions,
+    cost_usd: r.cost_usd,
+    interventions_by_type: r.interventions_by_type,
+    waited_s: r.waited_s,
     verdict: r.verdict,
     false_verified: r.false_verified,
   }));
@@ -433,6 +553,7 @@ export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel |
     regressing_axes: regressingAxes,
     series,
     notes,
+    outcome_effort: outcomeEffort(series),
     graduation: graduationAdvice({ series, regressing_axes: regressingAxes }, currentLevel),
   };
 }
@@ -494,6 +615,10 @@ export function formatTrajectoryHuman(traj: TrustTrajectory): string {
     lines.push(`Trust trajectory needs 2+ recorded runs to show a direction.`);
     lines.push(`Each \`loki start\` run writes a proof-of-run; come back after the next run.`);
     lines.push(`Autonomy advice (advisory, never changes policy): ${traj.graduation.summary}`);
+    if (traj.runs_count > 0) {
+      lines.push(``);
+      lines.push(...fmtOutcomeEffort(traj.outcome_effort));
+    }
     if (traj.notes.length > 0) {
       lines.push(``);
       lines.push(`Notes`);
@@ -513,6 +638,8 @@ export function formatTrajectoryHuman(traj: TrustTrajectory): string {
   else if (imp || reg) lines.push(`Overall: mixed (${imp} improving / ${reg} regressing).`);
   else lines.push(`Overall: stable.`);
   lines.push(`Autonomy advice (advisory, never changes policy): ${traj.graduation.summary}`);
+  lines.push(``);
+  lines.push(...fmtOutcomeEffort(traj.outcome_effort));
   if (traj.notes.length > 0) {
     lines.push(``);
     lines.push(`Notes`);

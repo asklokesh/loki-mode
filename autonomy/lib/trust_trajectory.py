@@ -21,6 +21,14 @@ Direction (up/down/flat) is computed by a median half-split: mean of the later
 half minus mean of the earlier half. Robust to one noisy run, no float
 regression needed, and a 2-run series degrades to last-vs-first.
 
+Outcome effort definitions (shared with loki-ts/src/metrics/trust.ts and
+benchmarks/bench/attribution.py; see docs/EVALUATING.md "Outcome analytics"):
+accepted = verdict VERIFIED and not later contradicted; misleading completion =
+false_verified / VERIFIED-claimed (attribution false_completion); cost per
+accepted = total spend over ALL runs / accepted, None when nothing was accepted
+or any run's cost is unmeasured. Waited seconds are wall-clock blocked time, an
+upper bound on human attention; active minutes are NOT measured.
+
 Public API:
   compute_trajectory(loki_dir) -> dict   (schema_version 1)
   format_trajectory_human(traj) -> str
@@ -160,6 +168,50 @@ def _interventions_value(proof):
     return None
 
 
+_IV_TYPES = ("steer", "input", "authorization", "repair")
+
+
+def _cost_value(proof):
+    usd = _obj(proof.get("cost")).get("usd")
+    if usd is None or isinstance(usd, bool):
+        return None
+    try:
+        n = float(usd)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 and n == n and n != float("inf") else None
+
+
+def _intervention_detail(proof):
+    """(by_type, waited_s) from proof.interventions_detail; None when absent."""
+    d = _obj(proof.get("interventions_detail"))
+    bt = _obj(d.get("by_type"))
+    out = {}
+    any_key = False
+    for k in _IV_TYPES:
+        try:
+            n = int(bt.get(k))
+        except (TypeError, ValueError):
+            n = 0
+        out[k] = n if n >= 0 else 0
+        if bt.get(k) is not None:
+            any_key = True
+    w = d.get("waited_s")
+    ws = w if isinstance(w, (int, float)) and not isinstance(w, bool) and w >= 0 else None
+    return (out if any_key else None), ws
+
+
+def _verdict_evidence(proof):
+    raw = str(proof.get("verdict") or "").strip().upper()
+    verdict = raw or None
+    later = str(proof.get("later_verdict") or "").strip().upper()
+    if proof.get("false_verified") is True:
+        return verdict, True
+    if verdict is None:
+        return verdict, None
+    return verdict, verdict == "VERIFIED" and later == "FAILED"
+
+
 def _load_runs(loki_dir):
     """Read every .loki/proofs/<id>/proof.json into a time-ordered run list."""
     proofs_dir = os.path.join(loki_dir, "proofs")
@@ -176,7 +228,14 @@ def _load_runs(loki_dir):
         if not isinstance(proof, dict):
             # Malformed / partial proof: skip, do not fail the trajectory.
             continue
+        verdict, false_verified = _verdict_evidence(proof)
+        by_type, waited_s = _intervention_detail(proof)
         runs.append({
+            "verdict": verdict,
+            "false_verified": false_verified,
+            "cost_usd": _cost_value(proof),
+            "interventions_by_type": by_type,
+            "waited_s": waited_s,
             "run_id": str(proof.get("run_id") or name),
             "generated_at": proof.get("generated_at"),
             "council_pass_rate": _council_pass_value(proof.get("council")),
@@ -262,6 +321,65 @@ def _direction_for_axis(axis, ordered_values):
     }
 
 
+def outcome_effort(series):
+    """Effort-per-outcome block; every unmeasured input yields None, never 0."""
+    accepted = sum(1 for r in series if r["verdict"] == "VERIFIED" and r["false_verified"] is not True)
+    claimed = sum(1 for r in series if r["verdict"] == "VERIFIED" or r["false_verified"] is True)
+    false_v = sum(1 for r in series if r["false_verified"] is True)
+    unmeasured = sum(1 for r in series if r["cost_usd"] is None)
+    cost = None
+    cost_note = None
+    if not series:
+        cost_note = "no runs"
+    elif accepted == 0:
+        cost_note = "no accepted run, cost per accepted is undefined"
+    elif unmeasured:
+        cost_note = "cost unmeasured for %d of %d runs, a partial sum is not a total" % (unmeasured, len(series))
+    else:
+        cost = round(sum(r["cost_usd"] for r in series) / accepted, 6)
+    with_detail = [r for r in series if r["interventions_by_type"] is not None]
+    by_type = None
+    if with_detail:
+        by_type = {k: sum(r["interventions_by_type"][k] for r in with_detail) for k in _IV_TYPES}
+    all_iv = bool(series) and all(r["interventions"] is not None for r in series)
+    all_waited = bool(series) and all(r["waited_s"] is not None for r in series)
+    return {
+        "runs": len(series),
+        "accepted": accepted,
+        "claimed_verified": claimed,
+        "false_verified": false_v,
+        "misleading_completion_rate": round(false_v / claimed, 4) if claimed else None,
+        "cost_per_accepted_usd": cost,
+        "cost_note": cost_note,
+        "interventions_by_type": by_type,
+        "interventions_per_accepted": (
+            round(sum(r["interventions"] for r in series) / accepted, 4) if accepted and all_iv else None),
+        "waited_min_per_accepted": (
+            round(sum(r["waited_s"] for r in series) / 60.0 / accepted, 1) if accepted and all_waited else None),
+    }
+
+
+def _fmt_outcome_effort(e):
+    mc = e.get("misleading_completion_rate")
+    lines = ["Outcome effort"]
+    lines.append("  Accepted (VERIFIED): %d of %d runs" % (e["accepted"], e["runs"]))
+    lines.append("  Misleading completion: %s" % (
+        "n/a (no VERIFIED claims)" if mc is None else
+        "%d of %d VERIFIED claims (%s%%)" % (e["false_verified"], e["claimed_verified"], round(mc * 100, 1))))
+    lines.append("  Cost per accepted: %s" % (
+        "n/a (%s)" % (e.get("cost_note") or "unmeasured") if e["cost_per_accepted_usd"] is None
+        else "$%.2f" % e["cost_per_accepted_usd"]))
+    bt = e.get("interventions_by_type")
+    lines.append("  Interventions by type: %s" % (
+        "not recorded" if bt is None else ", ".join("%s %d" % (k, bt[k]) for k in _IV_TYPES)))
+    ipa = e.get("interventions_per_accepted")
+    lines.append("  Interventions per accepted: %s" % ("n/a" if ipa is None else ipa))
+    w = e.get("waited_min_per_accepted")
+    lines.append("  Minutes per accepted: %s" % (
+        "n/a" if w is None else "%s (waited, upper bound; active minutes are not measured)" % w))
+    return lines
+
+
 def compute_trajectory(loki_dir):
     """Return the R4 trust trajectory snapshot for a project's .loki dir."""
     runs = _load_runs(loki_dir)
@@ -276,6 +394,11 @@ def compute_trajectory(loki_dir):
             "gate_pass_rate": r["gate_pass_rate"],
             "iterations": r["iterations"],
             "interventions": r["interventions"],
+            "cost_usd": r["cost_usd"],
+            "interventions_by_type": r["interventions_by_type"],
+            "waited_s": r["waited_s"],
+            "verdict": r["verdict"],
+            "false_verified": r["false_verified"],
         })
 
     axes = {}
@@ -317,6 +440,7 @@ def compute_trajectory(loki_dir):
         "regressing_axes": regressing_axes,
         "series": series,
         "notes": notes,
+        "outcome_effort": outcome_effort(series),
     }
 
 
@@ -376,6 +500,9 @@ def format_trajectory_human(traj):
         lines.append("Not enough history yet.")
         lines.append("Trust trajectory needs 2+ recorded runs to show a direction.")
         lines.append("Each `loki start` run writes a proof-of-run; come back after the next run.")
+        if traj.get("runs_count") and traj.get("outcome_effort"):
+            lines.append("")
+            lines.extend(_fmt_outcome_effort(traj["outcome_effort"]))
         if traj.get("notes"):
             lines.append("")
             lines.append("Notes")
@@ -398,6 +525,9 @@ def format_trajectory_human(traj):
         lines.append("Overall: mixed (%d improving / %d regressing)." % (imp, reg))
     else:
         lines.append("Overall: stable.")
+    if traj.get("outcome_effort"):
+        lines.append("")
+        lines.extend(_fmt_outcome_effort(traj["outcome_effort"]))
     if traj.get("notes"):
         lines.append("")
         lines.append("Notes")

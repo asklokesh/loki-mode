@@ -288,7 +288,9 @@ class TestNoPII(unittest.TestCase):
             self.assertNotIn(secret, human)
             # The series carries only the whitelisted keys.
             allowed = {"run_id", "generated_at", "council_pass_rate",
-                       "gate_pass_rate", "iterations", "interventions"}
+                       "gate_pass_rate", "iterations", "interventions",
+                       "verdict", "false_verified", "cost_usd",
+                       "interventions_by_type", "waited_s"}
             for row in traj["series"]:
                 self.assertTrue(set(row.keys()).issubset(allowed),
                                 "series row leaked extra keys: %s" % set(row.keys()))
@@ -347,6 +349,64 @@ class TestCache(unittest.TestCase):
             )
             with open(path, encoding="utf-8") as fh:
                 self.assertEqual(json.load(fh)["schema_version"], 1)
+
+
+class TestOutcomeEffort(unittest.TestCase):
+    """Parity with loki-ts/tests/metrics/trust.test.ts outcome effort block."""
+
+    def _raw(self, loki, rid, n, **extra):
+        ts = "2026-06-0%dT00:00:00Z" % n
+        raw = {"run_id": rid, "generated_at": ts}
+        raw.update(extra)
+        _write_proof(loki, rid, generated_at=ts, raw=raw)
+
+    @staticmethod
+    def _detail(i, a, w):
+        return {"interventions_detail": {
+            "by_type": {"steer": 0, "input": i, "authorization": a, "repair": 0},
+            "waited_s": w}}
+
+    def test_mixed_fixture(self):
+        with tempfile.TemporaryDirectory() as td:
+            loki = os.path.join(td, ".loki")
+            self._raw(loki, "r1", 1, verdict="VERIFIED", cost={"usd": 1}, interventions=1, **self._detail(1, 0, 120))
+            self._raw(loki, "r2", 2, verdict="VERIFIED", cost={"usd": 2}, interventions=0, **self._detail(0, 0, 0))
+            self._raw(loki, "r3", 3, verdict="VERIFIED", later_verdict="FAILED", cost={"usd": 3},
+                      interventions=1, **self._detail(0, 1, 60))
+            self._raw(loki, "r4", 4, verdict="FAILED", interventions=0, **self._detail(0, 0, 0))
+            eff = tt.compute_trajectory(loki)["outcome_effort"]
+            self.assertEqual(eff["accepted"], 2)
+            self.assertEqual(eff["claimed_verified"], 3)
+            self.assertEqual(eff["false_verified"], 1)
+            self.assertAlmostEqual(eff["misleading_completion_rate"], 1 / 3, places=3)
+            self.assertIsNone(eff["cost_per_accepted_usd"])
+            self.assertIn("unmeasured", eff["cost_note"])
+            self.assertEqual(eff["interventions_by_type"],
+                             {"steer": 0, "input": 1, "authorization": 1, "repair": 0})
+            self.assertEqual(eff["interventions_per_accepted"], 1)
+            self.assertEqual(eff["waited_min_per_accepted"], 1.5)
+            self.assertIn("waited, upper bound",
+                          tt.format_trajectory_human(tt.compute_trajectory(loki)))
+
+    def test_cost_per_accepted_and_nulls(self):
+        with tempfile.TemporaryDirectory() as td:
+            loki = os.path.join(td, ".loki")
+            self._raw(loki, "r1", 1, verdict="VERIFIED", cost={"usd": 1})
+            self._raw(loki, "r2", 2, verdict="FAILED", cost={"usd": 3})
+            eff = tt.compute_trajectory(loki)["outcome_effort"]
+            self.assertEqual(eff["cost_per_accepted_usd"], 4)
+            self.assertIsNone(eff["interventions_per_accepted"])
+            self.assertIsNone(eff["waited_min_per_accepted"])
+            self.assertIsNone(eff["interventions_by_type"])
+
+    def test_no_accepted(self):
+        with tempfile.TemporaryDirectory() as td:
+            loki = os.path.join(td, ".loki")
+            self._raw(loki, "r1", 1, verdict="FAILED", cost={"usd": 1})
+            eff = tt.compute_trajectory(loki)["outcome_effort"]
+            self.assertIsNone(eff["cost_per_accepted_usd"])
+            self.assertIn("no accepted", eff["cost_note"])
+            self.assertIsNone(eff["misleading_completion_rate"])
 
 
 if __name__ == "__main__":

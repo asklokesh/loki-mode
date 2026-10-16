@@ -52,6 +52,12 @@ Shows whether the agent is earning autonomy on THIS repo over time:
   - Iterations to completion (lower is better)
   - Human interventions      (lower is better, when recorded)
 
+It also prints an "Outcome effort" block: accepted outcomes, misleading
+completion rate (false VERIFIED over VERIFIED claims), cost per accepted
+(n/a when any cost is unmeasured), interventions by type, and minutes per
+accepted (waited, upper bound; active minutes are not measured). Definitions:
+docs/EVALUATING.md "Outcome analytics".
+
 Derived read-only from proof-of-run history in .loki/proofs/. With fewer
 than 2 recorded runs it reports "not enough history yet" rather than a
 fabricated trend. Also prints advisory earned-autonomy advice (eligible for the
