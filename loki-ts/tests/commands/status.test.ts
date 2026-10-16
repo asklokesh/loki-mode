@@ -737,3 +737,41 @@ describe("status --json: phase1 artifact summary", () => {
     }
   });
 });
+
+describe("status: text mode -- last deploy", () => {
+  function deployFixture(rec: Record<string, unknown> | null): { root: string } {
+    const root = mkTmp();
+    const lokiDir = join(root, ".loki");
+    mkdirSync(join(lokiDir, "deploys"), { recursive: true });
+    if (rec) writeFileSync(join(lokiDir, "deploys", "20261016T000000Z-1.json"), JSON.stringify(rec));
+    process.env["LOKI_DIR"] = lokiDir;
+    return { root };
+  }
+
+  it("prints the newest deploy, flags FAILED_HEALTH and reports an unsigned record as UNCHECKED", async () => {
+    const { root } = deployFixture({
+      schema: "loki.deploy/1", target: "vercel", head_sha: "abcdef1234567890", health_status: "FAILED_HEALTH",
+      rollback_attempted: true, rollback_exit: 0, post_rollback_health: "healthy", receipt_sha256: "x",
+    });
+    try {
+      const r = await runWithCapture([]);
+      const out = stripAnsi(r.stdout);
+      expect(out).toContain("Last deploy: vercel at abcdef123456");
+      expect(out).toContain("health FAILED_HEALTH");
+      expect(out).toContain("rolled back (service healthy)");
+      expect(out).toContain("record UNCHECKED");
+      expect(out).toContain("UNHEALTHY");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints nothing about deploys when there are none", async () => {
+    const { root } = deployFixture(null);
+    try {
+      expect(stripAnsi((await runWithCapture([])).stdout)).not.toContain("Last deploy");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
