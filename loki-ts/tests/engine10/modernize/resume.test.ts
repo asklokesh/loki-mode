@@ -13,7 +13,7 @@ import { safeGit } from "../../../src/util/safe_git.ts";
 import type { runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
-import { makeAttemptRunner, makeUnitPrep, productionWaveDeps, runWaves } from "../../../src/util/modernize_coordinator.ts";
+import { makeAttemptRunner, makeProposeSession, makeUnitPrep, productionWaveDeps, runWaves } from "../../../src/util/modernize_coordinator.ts";
 import type { WaveDeps } from "../../../src/util/modernize_coordinator.ts";
 import type { StepRunner } from "../../../src/engine10/modernize/wave.ts";
 import { makeUnitRunners } from "../../../src/util/modernize_unit.ts";
@@ -607,5 +607,44 @@ describe("M-27E coordinator wiring", () => {
       const noRepo = productionWaveDeps({ repoDir: f.dir, mid: MID, target: "python3", workers: 2, budgetUsd: null, resume: false, noPr: true, inv: buildInventory(f.dir), plan, log: f.log });
       expect(noRepo.ok).toBe(false);
     } finally { f.done(); rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  it("scopes the python build step to the wave's changed .py files and keeps the excludes (M-27F)", async () => {
+    const f = fx();
+    try {
+      writeFileSync(join(f.dir, "a.py"), "x = 1\n"); writeFileSync(join(f.dir, "b.py"), "y = 2\n");
+      const build = { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] };
+      const seen: string[][] = [];
+      const spy: StepRunner = (step, c) => { if (step === "build") seen.push(c.argv); return { status: 0, timedOut: false, error: null, tail: "" }; };
+      const mkd = { repoDir: f.dir, mid: MID, baseSha: "base", workers: 1, budgetUsd: null, unitEstimateUsd: null, log: f.log, run: (ctx: AttemptCtx): AttemptOutcome => ({ result: proven(ctx.unit.id), costUsd: 0 }), merge: { isMerged: () => false, merge: () => {} }, worktrees: f.worktrees, resume: false, waveCommands: { build, integration: { argv: ["true"] }, original_suite: { argv: ["true"] } }, stepRunner: spy, ship: false, pinnedOrigin: "" } as WaveDeps;
+      await runWaves(planOf([[u("a.py")], [u("b.py"), u("gone.py")]]), mkd);
+      expect(seen).toEqual([
+        [...build.argv.slice(0, 6), "a.py"],
+        [...build.argv.slice(0, 6), "b.py"],
+      ]);
+    } finally { f.done(); }
+  });
+
+  it("makeProposeSession runs the injected session in a.cwd with a token-free env and throws on a nonzero exit (M-27F)", () => {
+    const calls: { brief: string; cwd: string; env: NodeJS.ProcessEnv }[] = [];
+    let status = 0;
+    const session = ((brief: string, cwd: string, env: NodeJS.ProcessEnv) => { calls.push({ brief, cwd, env }); return { status }; }) as never;
+    const prev = process.env["GITHUB_TOKEN"];
+    process.env["GITHUB_TOKEN"] = "ghp_secret";
+    try {
+      const propose = makeProposeSession({ mid: MID, provider: "claude", session });
+      const a = { cwd: "/work/dir", env: {}, unitFile: "/work/dir/u.py", missing: [{ line: 3, outcome: "true" as const }], round: 2 };
+      propose(a);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.cwd).toBe("/work/dir");
+      expect(calls[0]!.brief).toContain("/work/dir/u.py");
+      expect(calls[0]!.brief).toContain("round 2");
+      expect(calls[0]!.brief).toContain('"line":3');
+      expect(JSON.stringify(calls[0]!.env)).not.toContain("ghp_secret");
+      status = 3;
+      expect(() => propose(a)).toThrow("propose session exited 3");
+    } finally {
+      if (prev === undefined) delete process.env["GITHUB_TOKEN"]; else process.env["GITHUB_TOKEN"] = prev;
+    }
   });
 });

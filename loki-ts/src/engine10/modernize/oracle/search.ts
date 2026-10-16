@@ -10,7 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { REPO_ROOT } from "../../../util/paths.ts";
 import { tokenFreeEnv } from "../../../util/safe_git.ts";
 import { oracleDir } from "../types.ts";
@@ -159,8 +159,9 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[], 
   const py = resolveOldRuntimeSync();
   if (!py) return captureFailed("old runtime unavailable");
 
-  const dir = mkdtempSync(join(tmpdir(), "m10-search-"));
+  let dir = "";
   try {
+    dir = mkdtempSync(join(tmpdir(), "m10-search-"));
     const casesFile = join(dir, "cases.jsonl");
     const outFile = join(dir, "out.jsonl");
     const covFile = join(dir, "coverage.json");
@@ -169,7 +170,7 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[], 
 
     const r = spawnSync(py, [
       PY_CAPTURE_SCRIPT, "--unit", unitPath, "--cases", casesFile, "--out", outFile, "--coverage", covFile,
-    ], { encoding: "utf8", env: process.env });
+    ], { encoding: "utf8", env: tokenFreeEnv(), cwd: dir });
     if (r.status !== 0) {
       const firstErrLine = (r.stderr ?? "").split("\n").find((l) => l.trim().length > 0) ?? "(no stderr)";
       return captureFailed(`py_capture.py exit ${r.status}: ${firstErrLine}`);
@@ -184,7 +185,7 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[], 
   } catch (e) {
     return captureFailed(`capture error: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -193,7 +194,7 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[], 
 function resolveOldRuntimeSync(): string | null {
   const envRuntime = process.env["LOKI_MOD_OLD_RUNTIME"];
   for (const cmd of envRuntime ? [envRuntime] : ["python2.7", "python2"]) {
-    const r = spawnSync(cmd, ["--version"], { env: process.env });
+    const r = spawnSync(cmd, ["--version"], { env: tokenFreeEnv() });
     if (!r.error) return cmd;
   }
   return null;
@@ -230,7 +231,7 @@ export type CaptureOutcome = { ok: true; cases: number; branchPct: number; stopp
  *  cases.jsonl + coverage.json write-once (sealing stays in runUnit). Fails closed: writes nothing. */
 export function captureUnitOracle(a: {
   repoDir: string; mid: string; unit: string; unitPath: string; propose: ProposeInputs;
-  runCapture?: CaptureRunner; opts?: SearchOptions;
+  runCapture?: CaptureRunner; opts?: SearchOptions; link?: typeof linkSync;
 }): CaptureOutcome {
   const dir = oracleDir(a.repoDir, a.mid, a.unit);
   if (existsSync(join(dir, "cases.jsonl")) || alreadySealedInLog(a.repoDir, a.mid, a.unit)) {
@@ -247,7 +248,9 @@ export function captureUnitOracle(a: {
   if (r.cases.length === 0) return { ok: false, reason: "no cases captured" };
   const scratch = mkdtempSync(join(tmpdir(), "m27-replay-"));
   const t1 = join(scratch, "cases"), t2 = join(scratch, "replay");
-  const dirExisted = existsSync(dir);
+  // Every ancestor of `dir` this call creates (deepest first), so a failure removes exactly those and nothing that pre-existed.
+  const created: string[] = [];
+  for (let p = dir; !existsSync(p) && !created.includes(p); p = dirname(p)) created.push(p);
   const read = (p: string): Rec[] => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Rec);
   const tmpCases = join(dir, `.cases.${process.pid}.tmp`);
   const tmpCov = join(dir, `.coverage.${process.pid}.tmp`);
@@ -271,13 +274,15 @@ export function captureUnitOracle(a: {
     // cases.jsonl is the write-once marker: coverage first, then a non-overwriting link, so a crash between stays retryable.
     if (existsSync(join(dir, "cases.jsonl"))) return { ok: false, reason: "oracle already captured (write-once)" };
     renameSync(tmpCov, join(dir, "coverage.json"));
-    linkSync(tmpCases, join(dir, "cases.jsonl"));
+    (a.link ?? linkSync)(tmpCases, join(dir, "cases.jsonl"));
     return { ok: true, cases: r.cases.length, branchPct: cov.branchPct, stoppedReason: r.stoppedReason };
   } catch (e) {
     return { ok: false, reason: `capture error: ${e instanceof Error ? e.message : String(e)}` };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
     for (const t of [tmpCases, tmpCov]) rmSync(t, { force: true });
-    if (!dirExisted) { try { rmdirSync(dir); } catch { /* not empty or absent */ } }
+    // A directory this call created holds no one else's oracle: an unlinked coverage.json is ours and would only keep it (and its parents) alive.
+    if (created[0] === dir && !existsSync(join(dir, "cases.jsonl"))) rmSync(join(dir, "coverage.json"), { force: true });
+    for (const p of created) { try { rmdirSync(p); } catch { break; /* not empty or absent: stop, parents are not empty either */ } }
   }
 }
