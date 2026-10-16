@@ -1,12 +1,12 @@
 // M-01: modernize event types, log wrapper and state paths.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import {
   estimatePath, inventoryPath, isModernizeId, makeModernizeId, modernizeEventsPath,
-  modernizeRoot, oracleDir, planPath, reportJsonPath, reportMdPath, routesPath, unitCardPath,
+  MODERNIZE_EVENT_TYPES, modernizeRoot, oracleDir, planPath, reportJsonPath, reportMdPath, routesPath, unitCardPath,
 } from "../../../src/engine10/modernize/types.ts";
 
 let repoDir = "";
@@ -65,5 +65,18 @@ describe("ModernizeLog", () => {
     const log2 = new ModernizeLog(repoDir, mid);
     const e = log2.append("estimate.printed", { cost: null });
     expect(e.seq).toBe(1);
+  });
+});
+
+describe("event producers (FC-M25W)", () => {
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : []; });
+  it("every event name in types.ts has a producer in loki-ts/src", () => {
+    const src = join(import.meta.dir, "..", "..", "..", "src");
+    const typesFile = join(src, "engine10", "modernize", "types.ts");
+    // Producer = a quoted event name on a code line that is not a comment and not a reader (`type ===`). Covers `append("x"` and `cond ? "x" : "y"`.
+    const text = walk(src).filter((f) => f !== typesFile).flatMap((f) => readFileSync(f, "utf8").split("\n")).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && !/type\s*[!=]==/.test(l)).join("\n");
+    const orphans = MODERNIZE_EVENT_TYPES.filter((t) => !new RegExp(`["'\`]${t.replace(/\./g, "\\.")}["'\`]`).test(text));
+    // Declared but not yet emitted anywhere (separate failure-class rows). Shrink this list when a producer lands; never grow it.
+    expect(orphans).toEqual(["unit.planned", "codemod.skipped"]);
   });
 });

@@ -8,6 +8,10 @@
 // sit at depth 1 and grandchildren at depth 2. A grandchild that still fails at depth 2 is
 // NOT_PROVEN "depth cap reached" -- `slice` must never be called on it.
 import { describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import type { Unit } from "../../../src/engine10/modernize/cluster.ts";
 import type { EquivResult } from "../../../src/engine10/modernize/equiv.ts";
 import type { ResliceChecker, ResliceSlicer } from "../../../src/engine10/modernize/reslice.ts";
@@ -205,5 +209,19 @@ describe("reslice", () => {
     expect(result.verdict).toBe("NOT_PROVEN");
     const c1 = result.children[0];
     expect(c1?.reason).toContain("checker boom");
+  });
+});
+
+describe("reslice event (FC-M25W)", () => {
+  it("appends unit.resliced with the unit id and child ids in the {type, data} envelope", () => {
+    const dir = mkdtempSync(join(tmpdir(), "m25w-"));
+    try {
+      const mid = "mod-20260101T000000Z-abcdef";
+      const { slice, check } = buildCallbacks({ u0: [unit("c1", ["n0"]), unit("c2", ["n1"])] }, { c1: proven("c1"), c2: proven("c2") });
+      reslice(unit("u0", ["n0", "n1"]), slice, check, new ModernizeLog(dir, mid));
+      const ev = readModernizeEvents(dir, mid).filter((e) => e.type === "unit.resliced");
+      expect(ev).toHaveLength(1);
+      expect(ev[0]!.data).toEqual({ unit: "u0", depth: 0, children: ["c1", "c2"] });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

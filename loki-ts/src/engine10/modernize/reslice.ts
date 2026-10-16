@@ -18,6 +18,7 @@
 import type { Unit } from "./cluster.ts";
 import type { EquivResult } from "./equiv.ts";
 import { errMsg, modernizationVerified } from "./equiv.ts";
+import type { ModernizeLog } from "./log.ts";
 
 /** Produces this unit's children at the next depth (function granularity, per section 3.5).
  *  MAY throw; reslice() catches it and records the unit as NOT_PROVEN rather than propagating. */
@@ -40,7 +41,6 @@ export interface ResliceUnitResult {
   /** Re-sliced children in slicer order; empty for a leaf. */
   children: ResliceUnitResult[];
 }
-
 
 function leafNotProven(unit: Unit, result: EquivResult): string[] {
   if (result.failures.length > 0) {
@@ -69,7 +69,7 @@ function isStrictNarrowing(childNodes: readonly string[], parentNodes: readonly 
 
 /** Slices `unit` into children at `depth + 1` and evaluates each. PROVEN only if there is at least
  *  one child, every child strictly narrows `unit`, and every child is PROVEN. */
-function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
+function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker, log?: ModernizeLog): ResliceUnitResult {
   let kids: Unit[];
   try {
     kids = slice(unit);
@@ -87,8 +87,8 @@ function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: Resli
       notNarrowed.map((k) => `${unit.id}: re-slice child ${k.id} is not a strict subset of ${unit.id}`),
     );
   }
-
-  const children = kids.map((child) => evaluate(child, depth + 1, slice, check));
+  log?.append("unit.resliced", { unit: unit.id, depth, children: kids.map((k) => k.id) });
+  const children = kids.map((child) => evaluate(child, depth + 1, slice, check, log));
   const allProven = children.every((c) => c.verdict === "PROVEN");
   return {
     unit: unit.id,
@@ -102,7 +102,7 @@ function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: Resli
 
 /** Checks `unit` at `depth`. PROVEN if modernizationVerified says so; otherwise re-slices further
  *  unless `depth` reached the cap, in which case it is NOT_PROVEN and never sliced again. */
-function evaluate(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
+function evaluate(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker, log?: ModernizeLog): ResliceUnitResult {
   let result: EquivResult;
   try {
     result = check(unit);
@@ -115,11 +115,11 @@ function evaluate(unit: Unit, depth: number, slice: ResliceSlicer, check: Reslic
   if (depth >= RESLICE_MAX_DEPTH) {
     return notProvenNode(unit, depth, `depth cap (${RESLICE_MAX_DEPTH}) reached: still not proven`, leafNotProven(unit, result));
   }
-  return resliceAt(unit, depth, slice, check);
+  return resliceAt(unit, depth, slice, check, log);
 }
 
 /** Re-slices a unit that already failed equivalence after fix rounds and best-of-2 (section 3.5).
  *  Starts at depth 0 and never re-checks `unit` itself. */
-export function reslice(unit: Unit, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
-  return resliceAt(unit, 0, slice, check);
+export function reslice(unit: Unit, slice: ResliceSlicer, check: ResliceChecker, log?: ModernizeLog): ResliceUnitResult {
+  return resliceAt(unit, 0, slice, check, log);
 }
