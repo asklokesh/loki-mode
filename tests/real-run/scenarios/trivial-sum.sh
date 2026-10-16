@@ -7,4 +7,5 @@ SC_ARGS=(start "sum() skips the first element; fix it")
 SC_ENV=()
 SC_RECEIPT=("verdict == VERIFIED" "cost.usd <= 1" "time.wall_s <= 600" "cost.output_tokens exists")
 SC_WALL_EXECUTED=1  # FC-68: >= 2 executed checks, Wall test present and executed
+SC_EXPECT_CHECKS=node  # Q17-04: fixture has no lint config; node:<test path> is its real non-Wall check; mutation/review not enabled here
 SC_CONSOLE=("VERIFIED")
