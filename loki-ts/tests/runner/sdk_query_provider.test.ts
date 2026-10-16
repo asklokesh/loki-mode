@@ -104,6 +104,33 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     expect(readFileSync(r.capturedOutputPath, "utf8")).toContain("sdk-loop error");
   });
 
+  it("P12-26c: LOKI_PERMISSION_POLICY=compiled reaches query() permissionMode (no bypass)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "sdkq-perm-"));
+    const keys = ["LOKI_PERMISSION_POLICY", "LOKI_DATA_DIR", "LOKI_MANAGED_SETTINGS"] as const;
+    const prev = keys.map((k) => process.env[k]);
+    process.env["LOKI_PERMISSION_POLICY"] = "compiled";
+    process.env["LOKI_DATA_DIR"] = dataDir;
+    process.env["LOKI_MANAGED_SETTINGS"] = join(dataDir, "missing-managed.json");
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write; // silence the no-policy warning
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect(opts["permissionMode"]).toBe("acceptEdits");
+      expect(opts["allowDangerouslySkipPermissions"]).toBeUndefined();
+    } finally {
+      process.stderr.write = realWrite;
+      keys.forEach((k, i) => {
+        const v = prev[i];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes options.env spreading process.env (PATH survives -- the env-replace trap)", async () => {
     stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
