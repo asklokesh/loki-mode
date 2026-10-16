@@ -7,11 +7,13 @@ import { basename, join, relative } from "node:path";
 
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 
-/** LOKI_WALL_HOLDOUT_RATIO: default 0 (off, opt-in; founder decision C-C4 pending), e.g. 0.2 holds out ~20%, an unparseable value is off, capped at 0.9. */
+/** Default Wall holdout ratio (D99 item 4, C-C4): on by default. LOKI_WALL_HOLDOUT=0 or LOKI_WALL_HOLDOUT_RATIO=0 opts out; LOKI_WALL_HOLDOUT_RATIO=0.4 holds out ~40%, capped at 0.9. An unparseable value falls back to the default, never to off. */
+export const WALL_HOLDOUT_DEFAULT_RATIO = 0.2;
 export function wallHoldoutRatio(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return 0;
-  if (!/^(\d+\.?\d*|\.\d+)$/.test(raw.trim())) return 0; // decimal only: hex (0x1), exponent, sign and words are garbage
-  const r = Number(raw); return Number.isFinite(r) ? Math.min(r, 0.9) : 0;
+  if (env["LOKI_WALL_HOLDOUT"]?.trim() === "0") return 0;
+  const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return WALL_HOLDOUT_DEFAULT_RATIO;
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(raw.trim())) return WALL_HOLDOUT_DEFAULT_RATIO; // decimal only: hex (0x1), exponent, sign and words are garbage
+  const r = Number(raw); return Number.isFinite(r) ? Math.min(r, 0.9) : WALL_HOLDOUT_DEFAULT_RATIO;
 }
 
 /** Deterministic split ranked by sha256(seed:id). Count is max(1, round(ratio*N)) for N >= min, else none; ids keep input order. */
@@ -30,8 +32,8 @@ export function removeHoldout(runId: string, repoDir: string): void { rmSync(hol
 interface HoldoutManifest { targetDir: string; files: { name: string; runner: string; sha256: string }[]; }
 const MANIFEST = "manifest.json";
 
-/** Wall holdout needs at least 3 tests so the implementer keeps at least 2 visible ones. */
-export const WALL_HOLDOUT_MIN = 3;
+/** Wall holdout is active only with 5 or more eligible Wall checks (D99 item 4), so the implementer keeps at least 4 visible ones. */
+export const WALL_HOLDOUT_MIN = 5;
 
 /** Moves the held-out subset of srcDir's files out of the Wall author dir into a private dir under the OS tmp (never the repo), with a manifest. Returns the dir and the held names, or null when nothing is held. */
 export function stashHoldout(o: { runId: string; repoDir: string; srcDir: string; targetDir: string; names: string[]; runnerOf: (name: string) => string | null }): { dir: string; names: Set<string> } | null {

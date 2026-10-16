@@ -114,7 +114,7 @@ Audited against main, VERSION 11.17.1, local main a9f8b0b99 is pushed to origin,
 | DN-P12-09 | Next: engine10 quota wait and resume (HIGH) | 09b 37031def6, 09c c83921054 (ancestor of b136ed44e, CHANGELOG 11.17.1) | - |
 | DN-P12-25 | Next: Per-provider isolation matrix (LOW) | 8c256963b; BOARD P12-25 released | - |
 | DN-P12-40 | Next: Unmeasured Nx claim guard (LOW) | fe49c59b4, 40b 0445b8453 (in 11.17.1) | - |
-| DN-P12-05 | Next: Wall holdout in engine10 (HIGH) | 87637d1ee; BOARD P12-05 released; default off pending C-C4 | Default flip depends on C-C4 |
+| DN-P12-05 | Next: Wall holdout in engine10 (HIGH) | 87637d1ee; BOARD P12-05 released; default ON (ratio 0.2, 5+ checks) per D99 item 4 | Done: default flipped, failure blocks the Seal |
 | R5 | Risk: steer provenance source=cli for GitHub/chat; merge not pinned to proven head | P12-14 64a1113a7, P12-15 2fefb15ad, P12-17 2d333d158, P12-03 b3ff4bb1d, P12-04 6b5774c46 | Verify other steer sources (Jira/Linear, P12-18) record provenance; ack-comment follow-up open (P12-14) |
 | P0-01 | Source epic (section 9): Pinned Claude adapter + compatibility manifest | P12-24 e6754c961 (min CLI version, compat manifest), P12-23 tuple, P12-25 isolation matrix; released v11.17.1 | Per-release upgrade smoke suite and canary not evidenced (Q2) |
 
@@ -178,13 +178,13 @@ None at this audit. No P12-NN slice is in ready state on docs/v10/BOARD.md (P12 
 | S07 | North star hosted Company OS | C-F5 founder scope call | Founder decision C-F5 |
 | S08 | Stale version references (v11.4.2) | C-F8; plan says VERSION 11.14.0, now 11.17.1 | Founder-owned doc refresh; update plan version refs |
 | S14 | Cost at or under half of raw CC | P12-28 not started; COST-6 parked@2026-10-16 paid eval; C-F1 spend go | C-F1 spend approval, COST-6 run, P12-28 valid B9 row and parity gate |
-| C01 | Wall authored in isolation with holdout | P12-05 87637d1ee released v11.17.1, default off pending C-C4 | Founder decision C-C4 holdout ratio / default on |
+| C01 | Wall authored in isolation with holdout | P12-05 87637d1ee released v11.17.1, default ON per D99 item 4 (C-C4 decided) | None; opt out with LOKI_WALL_HOLDOUT=0 |
 | M4 | n>=3 per cell | COST-6 parked@2026-10-16T00:12Z; C-F1 paid spend | Founder approves spend; run COST-6 attribution --execute n=3 |
 | M8 | Ablation producer | BOARD S-112 parked@2026-09-27T20:00Z; autonomy/lib/ablation.py absent; C-F1 | Unpark after C-F1; implement ablation.py |
 | M11 | Measured cost figures | COST-2/COST-3 parked@2026-10-16T00:12Z; C-C3 CTO pending; COST-6 parked | C-C3 decision then COST-2/3 measurement runs |
 | M12 | Version in docs | C-F8 pending (doc v11.4.2 stale) | Founder updates source doc version and deploy claim |
 | N7 | Comparative pilot | C-F7 paid external pilot, no work | Founder decision on C-F7 |
-| P12-05 | Wall holdout in engine10 | 87637d1ee, 76e0ba56e, 72a5a124c in v11.17.0 (BOARD: Wall holdout, off by default); default off pending C-C4 | Founder decision C-C4 (holdout ratio, block vs warn); then flip default on. No C-C4 row in FOUNDER-QUEUE.md. |
+| P12-05 | Wall holdout in engine10 | 87637d1ee, 76e0ba56e, 72a5a124c in v11.17.0 (BOARD: Wall holdout, off by default); default ON (ratio 0.2, 5+ checks, a holdout failure blocks the Seal) per D99 item 4 | None; C-C4 decided. Opt out with LOKI_WALL_HOLDOUT=0. |
 | P12-32 | Router objective: expected accepted-outcome cost | No BOARD row or commits. Plan card dep C-C3 (COST-2/3 moat overlap), listed in PLAN-V12 section C as a pending CTO decision. | Needs C-C3 decision, then scoring module in loki-ts/src/runner/router with history fixture test, keeping never_below_raw green. |
 | C-F1 | Paid evaluation spend (COST-6, B9 n>=3 live run, unpark S-112) | PLAN-V12 sec C; no entry in FOUNDER-QUEUE.md; BOARD COST-6 row present; P12-28 has no commits | Founder approves spend; then P12-28 live B9 run and COST-6 n=3 run |
 | C-F5 | Hosted Company OS in/out of scope | PLAN-V12 sec C; not in FOUNDER-QUEUE.md | Founder scope decision |
@@ -194,7 +194,7 @@ None at this audit. No P12-NN slice is in ready state on docs/v10/BOARD.md (P12 
 | C-C1 | Gateway lane policy: non-Anthropic routes behind claude CLI and label wording | PLAN-V12 sec C; P12-27 depends on it; P12-27 no commits, no BOARD row; FOUNDER-QUEUE.md has no entry | CTO/founder decides wording; then P12-27 (also needs P12-26 merged, now true) |
 | C-C2 | Flip default from skip-permissions flag to compiled permission mode | PLAN-V12 sec C and risk 4; CHANGELOG 11.17.0 compiled policy behind LOKI_PERMISSION_POLICY, default unchanged | Founder/CTO approval, then flag-flip slice (default compiled, update E05, providers/claude.sh and runner/providers.ts) |
 | C-C3 | COST-2/COST-3 moat changes and overlap with router objective | PLAN-V12 sec C; P12-32 has no commits and no BOARD row | CTO decision; then P12-32 |
-| C-C4 | Wall holdout ratio and block-vs-warn on holdout failures | loki-ts/src/util/holdout.ts:10 default ratio 0 'founder decision C-C4 pending'; P12-05 merged 87637d1ee, released 11.17.0 | Decide default ratio (e.g. 0.2) and block/warn; then flip default in holdout.ts |
+| C-C4 | Wall holdout ratio and block-vs-warn on holdout failures | loki-ts/src/util/holdout.ts:10 default ratio 0 'founder decision C-C4 pending'; P12-05 merged 87637d1ee, released 11.17.0 | Decided in D99 item 4: ratio 0.2, active at 5+ checks, failure blocks the Seal (NOT_PROVEN naming the holdout), default on in holdout.ts |
 | R2 | Risk: COST-HALF unproven, no valid B9 row | BOARD COST-4/COST-6 notes best 0.68x; P12-28 not started; needs C-F1 | Founder spend then P12-28 and COST-6 run |
 | R4 | Risk: main calls use the skip-permissions flag, no policy compiler | Compiled policy exists behind LOKI_PERMISSION_POLICY (CHANGELOG 11.17.0); default unchanged; needs C-C2 | C-C2 decision then flip slice |
 | P1-04 | Source epic (section 9): Enterprise pilot hardening | P12-48 retention/backup no commits; SCIM/HA/support wait on C-F6; P12-42 tenant scope no commits | C-F6 founder decision; P12-48 buildable independently |
