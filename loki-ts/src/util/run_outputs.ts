@@ -146,9 +146,9 @@ export function stageCheckpoints(events: readonly EventEnvelope[]): Checkpoint[]
   return out;
 }
 
-/** First flow stage with no stage.completed or stage.skipped; null when every stage settled. Pure and lenient (handoff text only). */
-export function firstIncompleteStage(events: readonly EventEnvelope[]): string | null {
-  return STAGE_ORDER.find((s) => !settled(events, s)) ?? null;
+/** First flow stage with no stage.completed (or stage.skipped, unless completedOnly); null when every stage settled. Pure and lenient (handoff text only). */
+export function firstIncompleteStage(events: readonly EventEnvelope[], completedOnly = false): string | null {
+  return STAGE_ORDER.find((s) => !(completedOnly ? events.some((e) => e.stage === s && e.type === "stage.completed") : settled(events, s))) ?? null;
 }
 
 export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[] } | { ok: false; reason: string };
@@ -165,20 +165,22 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   if (events.some((e, i) => e.seq !== i)) return { ok: false, reason: "event log has a sequence gap" };
   if (new Set(events.map((e) => e.run)).size !== 1) return { ok: false, reason: "event log mixes run ids" };
   if (!events.some((e) => e.type === "run.started")) return { ok: false, reason: "no run.started event" };
+  if (events.some((e) => e.type === "tamper.detected")) return { ok: false, reason: "event log was flagged as tampered" };
   if (events.some((e) => e.type === "run.completed")) return { ok: false, reason: "run already completed; nothing to resume" };
   const intake = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake");
   if (intake && typeof intake.data["base_sha"] !== "string") return { ok: false, reason: "intake checkpoint has no base_sha" };
   const next = firstIncompleteStage(events);
   if (next === null) return { ok: false, reason: "every stage settled; nothing to resume" };
   const idx = STAGE_ORDER.indexOf(next as (typeof STAGE_ORDER)[number]);
-  const later = STAGE_ORDER.slice(idx + 1).find((s) => events.some((e) => e.stage === s && e.type === "stage.completed"));
+  const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
+  const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
   if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
   return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events) };
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
  *  (stage re-entry is not wired). Exit 2 on a refusal: unreadable state is never a success. */
-export async function resumeFlag(runId: string | undefined, deps: ResumeDeps = {}): Promise<number> {
+export async function resumeFlag(runId: string | undefined, noPr = false, deps: ResumeDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => { process.stderr.write(s); });
   let repoDir: string;
   try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { out("engine10: --resume: not inside a git repository\n"); return 2; }
@@ -189,6 +191,7 @@ export async function resumeFlag(runId: string | undefined, deps: ResumeDeps = {
   try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { out(`engine10: --resume refused: run ${it.runId} event log unreadable\n`); return 2; }
   const rp = resumePoint(it.events, raw);
   if (!rp.ok) { out(`engine10: --resume refused: ${rp.reason}\n`); return 2; }
+  if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"}); re-entry at ${rp.stage} is not wired yet, start a new run: loki start\n`);
   return 4;

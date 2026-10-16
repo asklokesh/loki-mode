@@ -211,8 +211,8 @@ describe("resume from stage (P12-07)", () => {
     const evs = killedAfterImplement();
     const h = (outcome: string): string => renderHandoff(composeHandoff({ repoDir: tmpdir(), runId: RID, events: evs, outcome, usd: null, elapsedS: null, notProven: [] }));
     expect(firstIncompleteStage(evs)).toBe("verify");
-    expect(h("BUDGET_STOP")).toContain("Resume from stage verify");
-    expect(h("VERIFIED")).not.toContain("Resume from stage");
+    expect(h("BUDGET_STOP")).toContain("Stopped before stage verify completed");
+    expect(h("VERIFIED")).not.toContain("Stopped before stage");
   });
   test("resumeFlag: torn log exits 2 and never resumes; intact pre-publish log exits 4 naming the stage", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-p1207-"));
@@ -225,12 +225,48 @@ describe("resume from stage (P12-07)", () => {
       const say: string[] = [], out = (s: string): void => { say.push(s); };
       process.chdir(dir);
       writeFileSync(p, text(evs));
-      expect(await resumeFlag(RID, { out })).toBe(4);
+      expect(await resumeFlag(RID, false, { out })).toBe(4);
       expect(say.join("")).toContain("resume from stage verify");
       writeFileSync(p, text(evs) + '{"v":1,"seq":5,"ty');
       say.length = 0;
-      expect(await resumeFlag(RID, { out })).toBe(2);
+      expect(await resumeFlag(RID, false, { out })).toBe(2);
       expect(say.join("")).toContain("refused");
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("resume review fixes (P12-07)", () => {
+  test("handoff does not count a cap-skipped stage as settled", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"], ["stage.skipped", "verify"]]);
+    const h = renderHandoff(composeHandoff({ repoDir: tmpdir(), runId: RID, events: evs, outcome: "BUDGET_STOP", usd: null, elapsedS: null, notProven: [] }));
+    expect(h).toContain("Stopped before stage verify completed");
+    expect(h).toContain("start a new run: loki start");
+  });
+  test("wall finishing before plan is accepted; resume re-enters at plan", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["stage.completed", "wall"]]);
+    const r = resumePoint(evs, text(evs));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.stage).toBe("plan");
+  });
+  test("a log containing tamper.detected refuses", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["tamper.detected", null]]);
+    expect(resumePoint(evs, text(evs)).ok).toBe(false);
+  });
+  test("--no-pr on a publish-phase run refuses and never publishes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207b-"));
+    const cwd = process.cwd();
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "a" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"], ["stage.completed", "verify"], ["stage.completed", "commit"], ["receipt.sealed", "seal", { verdict: "VERIFIED" }]]);
+      writeFileSync(join(dir, ".loki", "runs", RID, "events.jsonl"), text(evs));
+      process.chdir(dir);
+      const say: string[] = [];
+      let called = 0;
+      const runPr = async (): Promise<never> => { called++; throw new Error("must not publish"); };
+      expect(await resumeFlag(RID, true, { out: (s) => { say.push(s); }, runPr })).toBe(2);
+      expect(called).toBe(0);
+      expect(say.join("")).toContain("--no-pr");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
   });
 });

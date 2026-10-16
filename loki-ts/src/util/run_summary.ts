@@ -209,7 +209,7 @@ export function renderHandoff(i: HandoffInput): string {
   for (const n of notChecked.slice(0, 8)) L.push(`- ${n}`);
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");
   if (notChecked.length > 8) L.push(`- +${notChecked.length - 8} more`);
-  if (i.resumeFrom) L.push("", `Resume from stage ${clip(i.resumeFrom, 20)} (first stage that never settled in run ${i.runId})`);
+  if (i.resumeFrom) L.push("", `Stopped before stage ${clip(i.resumeFrom, 20)} completed (run ${i.runId}). Resuming a stopped run is not available; start a new run: loki start`);
   L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
   if (i.prUrl) L.push(`Merge: ${mergeText(i.merge)}`);
   return `${L.join("\n")}\n`;
@@ -265,7 +265,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
     usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,
-    resumeFrom: ["BUDGET_STOP", "CANCELLED", "STALLED", "FAILED"].includes(f.outcome) ? firstIncompleteStage(f.events) : null,
+    resumeFrom: ["BUDGET_STOP", "CANCELLED", "STALLED", "FAILED"].includes(f.outcome) ? firstIncompleteStage(f.events, true) : null,
   };
 }
 /** Atomic write of HANDOFF.md and handoff.json; returns the markdown, or null when nothing could be written. Never throws. */
