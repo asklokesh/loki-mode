@@ -78,3 +78,42 @@ export function modelRouteEnv(env: Env = process.env): Record<string, string> {
 export function modelRouteModel(env: Env = process.env): string | null {
   return resolveModelRoute(routeSpecFromEnv(env), env)?.model ?? null;
 }
+
+/** Label for a non-Anthropic model behind the claude CLI (D99 item 1). */
+export const GATEWAY_LANE_LABEL = "gateway lane (unqualified)";
+export const GATEWAY_LANE_LOSS =
+  "prompt caching, extended thinking, server tools and hooks are not guaranteed on this lane";
+
+function isClaudeModelId(m: string): boolean {
+  const s = m.trim().toLowerCase();
+  return s === "" || s === "opus" || s === "sonnet" || s === "haiku" || s.startsWith("claude-") || s.includes("anthropic/claude");
+}
+
+/**
+ * GATEWAY_LANE_LABEL when a non-Anthropic model is routed behind the claude CLI
+ * (an active model route, or ANTHROPIC_BASE_URL plus a non-Claude
+ * LOKI_MODEL_OVERRIDE). Null for Claude routes: no label.
+ */
+export function gatewayLaneLabel(env: Env = process.env): string | null {
+  if (resolveModelRoute(routeSpecFromEnv(env), env)) return GATEWAY_LANE_LABEL;
+  const base = (env["ANTHROPIC_BASE_URL"] ?? "").trim();
+  return base && !isClaudeModelId(env["LOKI_MODEL_OVERRIDE"] ?? "") ? GATEWAY_LANE_LABEL : null;
+}
+
+/** OTel variables handed to the provider child unchanged; only those set, never invented. */
+export const OTEL_PASSTHROUGH_VARS = [
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_HEADERS",
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "OTEL_SERVICE_NAME",
+  "CLAUDE_CODE_ENABLE_TELEMETRY",
+] as const;
+
+export function otelPassthroughEnv(env: Env = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of OTEL_PASSTHROUGH_VARS) {
+    const v = env[k];
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}

@@ -55,7 +55,7 @@ import type {
   SessionTier,
 } from "./types.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
-import { modelRouteEnv, modelRouteModel } from "../providers/model_routes.ts";
+import { modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 
 // ---------------------------------------------------------------------------
@@ -530,7 +530,7 @@ export function claudeProvider(): ProviderInvoker {
           : undefined;
       const r = await shellRun(argv, {
         cwd: call.cwd,
-        env: { ...cavemanEnv, ...modelRouteEnv(process.env) },
+        env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env) },
         timeoutMs: _callTimeoutMs,
       });
       await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
@@ -771,7 +771,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // process.env or PATH/HOME/ANTHROPIC_API_KEY vanish and query() fails.
         const env: Record<string, string> = { ...(process.env as Record<string, string>) };
         if (cavemanLvl) env["CAVEMAN_DEFAULT_MODE"] = cavemanLvl;
-        Object.assign(env, modelRouteEnv(process.env)); // OC-MODELS: child-only route env
+        Object.assign(env, otelPassthroughEnv(process.env), modelRouteEnv(process.env)); // OC-MODELS: child-only route env
         // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
         // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
         for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];

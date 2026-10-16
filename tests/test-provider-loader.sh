@@ -372,6 +372,39 @@ else
     log_fail "p12-26b helper: leak=[$_pl_leak] cmpleak=[$_pl_cmpleak] miss=[$_pl_miss] qs=[$_pl_qs]"
 fi
 
+# Test 16: P12-27 OTel passthrough (set vars only, unchanged, never invented)
+echo ""
+echo "Test 16: OTel passthrough and gateway lane label (P12-27)"
+_ot_out=$(env -u OTEL_SERVICE_NAME -u OTEL_RESOURCE_ATTRIBUTES -u OTEL_EXPORTER_OTLP_HEADERS \
+    OTEL_EXPORTER_OTLP_ENDPOINT="http://c:4318" CLAUDE_CODE_ENABLE_TELEMETRY=1 \
+    bash -c 'source "$1/providers/loader.sh"; load_provider claude >/dev/null 2>&1
+      bash "$1/providers/model_route_exec.sh" env | grep -E "^(OTEL_|CLAUDE_CODE_ENABLE_TELEMETRY)" | sort | tr "\n" "|"' _ "$PROVIDERS_DIR/..")
+if [ "$_ot_out" = "CLAUDE_CODE_ENABLE_TELEMETRY=1|OTEL_EXPORTER_OTLP_ENDPOINT=http://c:4318|" ]; then
+    log_pass "OTel vars reach the child unchanged; unset ones are not invented"
+else
+    log_fail "otel passthrough: [$_ot_out]"
+fi
+
+_gl_route=$(env -u ANTHROPIC_BASE_URL -u LOKI_MODEL_OVERRIDE LOKI_MODEL_ROUTE=ollama/qwen3-coder \
+    bash -c 'source "$1/model_routes.sh"; loki_model_route_lane_label' _ "$PROVIDERS_DIR")
+_gl_gw=$(env -u LOKI_MODEL_ROUTE ANTHROPIC_BASE_URL=https://gw.example LOKI_MODEL_OVERRIDE=gpt-5 \
+    bash -c 'source "$1/model_routes.sh"; loki_model_route_lane_label' _ "$PROVIDERS_DIR")
+_gl_claude=$(env -u LOKI_MODEL_ROUTE ANTHROPIC_BASE_URL=https://gw.example LOKI_MODEL_OVERRIDE=sonnet \
+    bash -c 'source "$1/model_routes.sh"; loki_model_route_lane_label' _ "$PROVIDERS_DIR")
+_gl_none=$(env -u LOKI_MODEL_ROUTE -u ANTHROPIC_BASE_URL -u LOKI_MODEL_OVERRIDE \
+    bash -c 'source "$1/model_routes.sh"; loki_model_route_lane_label' _ "$PROVIDERS_DIR")
+_gl_rep=$(env -u ANTHROPIC_BASE_URL -u LOKI_MODEL_OVERRIDE LOKI_MODEL_ROUTE=ollama/qwen3-coder \
+    bash -c 'source "$1/model_routes.sh"; loki_model_route_lane_report' _ "$PROVIDERS_DIR" | tail -1)
+if [ "$_gl_rep" != "prompt caching, extended thinking, server tools and hooks are not guaranteed on this lane" ]; then
+    log_fail "lane report loss line: [$_gl_rep]"
+fi
+if [ "$_gl_route" = "gateway lane (unqualified)" ] && [ "$_gl_gw" = "gateway lane (unqualified)" ] \
+   && [ -z "$_gl_claude" ] && [ -z "$_gl_none" ]; then
+    log_pass "gateway lane label on non-Anthropic routes only"
+else
+    log_fail "lane label: route=[$_gl_route] gw=[$_gl_gw] claude=[$_gl_claude] none=[$_gl_none]"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"
