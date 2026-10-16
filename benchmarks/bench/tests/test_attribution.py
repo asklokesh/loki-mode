@@ -818,6 +818,27 @@ class CostTableTest(unittest.TestCase):
         loki = self._line(self._table(), "loki")
         self.assertIn("$3.0000", loki)  # larger of reported and ledger
 
+    def test_missing_cost_without_ledger_is_unmeasured_not_zero(self):
+        self._write([row("raw-configured", True, cost=4.0),
+                     row("raw-bare", True, cost=2.0), row("loki", True, cost=None)])
+        loki = self._line(self._table(), "loki")
+        self.assertNotIn("$0.0000", loki)
+        self.assertNotIn("$", loki)
+        self.assertNotRegex(loki, r"\d\.\d\dx")  # no ratio computed from $0
+        self.assertIn("unmeasured", loki)
+
+    def test_malformed_ledger_line_keeps_valid_lines(self):
+        r = row("loki", True, cost=1.0)
+        r["task"] = "tk"
+        self._write([row("raw-configured", True, cost=4.0), r])
+        mdir = os.path.join(self.d, "evidence-20260101T000000Z", "tk-loki-1",
+                            ".loki", "metrics")
+        os.makedirs(mdir)
+        with open(os.path.join(mdir, "child-sessions.jsonl"), "w") as fh:
+            fh.write('{"usd": 1.5}\n{not json\n\n{"usd": "x"}\n{"usd": 2.0}\n')
+        loki = self._line(self._table(), "loki")
+        self.assertIn("$3.5000", loki)  # 1.5 + 2.0 summed, bad lines skipped
+
     def test_no_result_files(self):
         text = self._table()
         self.assertIn("no result files", text)
