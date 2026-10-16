@@ -154,6 +154,53 @@ git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm addsub
 [ "$(gd)" = "False" ] && ok "writer: clean submodule tree is clean" || bad "writer sub clean: $(gd)"
 echo 2 > "$GD_REPO/sub/f"
 [ "$(gd)" = "True" ] && ok "writer: modified submodule is dirty despite ignore=all" || bad "writer sub dirty: $(gd)"
+# P12-03c: skip-worktree and assume-unchanged flags must not hide a modified file.
+echo 1 > "$GD_REPO/sub/f"
+[ "$(gd)" = "False" ] && ok "writer: restored submodule is clean again" || bad "writer sub restore: $(gd)"
+for _flag in skip-worktree assume-unchanged; do
+  git -C "$GD_REPO" update-index "--$_flag" a
+  echo "edit-$_flag" >> "$GD_REPO/a"
+  [ "$(gd 2>/dev/null)" = "True" ] && ok "writer: $_flag-hidden edit is dirty" || bad "writer $_flag: $(gd 2>&1)"
+  gd 2>&1 >/dev/null | grep -q "a is flagged $_flag.*update-index --no-$_flag -- a" && ok "writer: $_flag reason names path and fix" || bad "writer $_flag reason: $(gd 2>&1)"
+  git -C "$GD_REPO" update-index "--no-$_flag" a
+  git -C "$GD_REPO" checkout -q -- a
+  [ "$(gd)" = "False" ] && ok "writer: cleared $_flag is clean" || bad "writer $_flag cleared: $(gd)"
+done
+# P12-03c: a flagged but unmodified file, and a sparse-excluded (absent) skip-worktree file, are clean.
+for _flag in skip-worktree assume-unchanged; do
+  git -C "$GD_REPO" update-index "--$_flag" a
+  [ "$(gd)" = "False" ] && ok "writer: $_flag on an unmodified file is clean" || bad "writer $_flag unmodified: $(gd)"
+  git -C "$GD_REPO" update-index "--no-$_flag" a
+done
+git -C "$GD_REPO" update-index --skip-worktree a
+rm "$GD_REPO/a"
+[ "$(gd 2>/dev/null)" = "True" ] && ok "writer: skip-worktree file deleted without sparse checkout is dirty" || bad "writer skip deleted: $(gd 2>&1)"
+git -C "$GD_REPO" update-index --no-skip-worktree a
+git -C "$GD_REPO" checkout -q -- a
+# Real sparse checkout: an excluded file is absent and flagged skip-worktree by git itself; clean.
+SP_REPO="$WORK/sprepo"; mkdir -p "$SP_REPO/keep" "$SP_REPO/other"
+git -C "$SP_REPO" init -q
+echo 1 > "$SP_REPO/keep/f"; echo 2 > "$SP_REPO/other/g"
+git -C "$SP_REPO" add keep other
+git -C "$SP_REPO" -c user.name=t -c user.email=t@t commit -qm sp
+git -C "$SP_REPO" sparse-checkout set --no-cone /keep/ >/dev/null 2>&1
+[ ! -e "$SP_REPO/other/g" ] && ok "sparse: excluded file absent" || bad "sparse setup: other/g present"
+SPV="$(python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$SP_REPO")"
+[ "$SPV" = "False" ] && ok "writer: real sparse-checkout repo is clean" || bad "writer real sparse: $SPV"
+# CRLF in the index plus autocrlf: raw bytes match, so a flagged file is clean.
+printf 'x\r\n' > "$GD_REPO/crlf"
+git -C "$GD_REPO" -c core.autocrlf=false add crlf
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm crlf
+git -C "$GD_REPO" config core.autocrlf true
+git -C "$GD_REPO" update-index --skip-worktree crlf
+[ "$(gd)" = "False" ] && ok "writer: CRLF-in-index flagged file is clean under autocrlf" || bad "writer crlf: $(gd)"
+git -C "$GD_REPO" update-index --no-skip-worktree crlf
+git -C "$GD_REPO" config --unset core.autocrlf
+git -C "$GD_REPO" update-index --assume-unchanged a
+rm "$GD_REPO/a"
+[ "$(gd 2>/dev/null)" = "True" ] && ok "writer: assume-unchanged file deleted on disk is dirty" || bad "writer assume deleted: $(gd 2>&1)"
+git -C "$GD_REPO" update-index --no-assume-unchanged a
+git -C "$GD_REPO" checkout -q -- a
 # Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
 printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
 bash "$LOKI" merge pr feat-race >/dev/null 2>&1
