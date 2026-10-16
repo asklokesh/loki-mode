@@ -10,6 +10,31 @@ SUPPORTED_PROVIDERS=("claude" "codex" "cline" "aider" "opencode")
 # Default provider
 DEFAULT_PROVIDER="claude"
 
+# OTel variables handed to the provider child unchanged (P12-27, D99). Mirror of
+# OTEL_PASSTHROUGH_VARS in loki-ts/src/providers/model_routes.ts.
+LOKI_OTEL_PASSTHROUGH_VARS=(
+    OTEL_EXPORTER_OTLP_ENDPOINT
+    OTEL_EXPORTER_OTLP_HEADERS
+    OTEL_RESOURCE_ATTRIBUTES
+    OTEL_SERVICE_NAME
+    CLAUDE_CODE_ENABLE_TELEMETRY
+)
+
+# Export each passthrough var that is SET, with its value untouched. Never
+# invents a value: an unset var stays unset.
+# The child inherits exported env anyway, so this is a documented guarantee
+# for shell-local (non-exported) values rather than new behavior.
+loki_otel_passthrough_export() {
+    local v
+    for v in "${LOKI_OTEL_PASSTHROUGH_VARS[@]}"; do
+        if [[ -n "${!v+x}" ]]; then
+            # shellcheck disable=SC2163
+            export "$v"
+        fi
+    done
+    return 0
+}
+
 # Validate provider name
 validate_provider() {
     local provider="$1"
@@ -58,6 +83,7 @@ load_provider() {
         return 1
     fi
 
+    loki_otel_passthrough_export
     return 0
 }
 

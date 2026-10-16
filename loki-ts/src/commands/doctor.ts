@@ -25,6 +25,7 @@ import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
+import { GATEWAY_LANE_LOSS, gatewayLaneLabel } from "../providers/model_routes.ts";
 
 // ---------- Setup requirements per execution path -----------------------------
 // The table lives in autonomy/lib/setup-requirements.json (one source for doctor, loki setup,
@@ -1276,6 +1277,12 @@ async function runText(): Promise<number> {
       );
       bump(tally, "pass");
     }
+  }
+  const lane = gatewayLaneLabel(env);
+  if (lane) {
+    process.stdout.write(`  ${badge("warn")}  ${lane}\n`);
+    process.stdout.write(`         ${GATEWAY_LANE_LOSS}\n`);
+    bump(tally, "warn");
   }
   process.stdout.write(`\n`);
 

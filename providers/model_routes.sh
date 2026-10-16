@@ -71,6 +71,37 @@ loki_model_route_model() {
     return 0
 }
 
+# Gateway lane label (D99 item 1). Mirror of gatewayLaneLabel in model_routes.ts.
+LOKI_GATEWAY_LANE_LABEL="gateway lane (unqualified)"
+LOKI_GATEWAY_LANE_LOSS="prompt caching, extended thinking, server tools and hooks are not guaranteed on this lane"
+
+# Echo the label when a non-Anthropic model runs behind the claude CLI (an active
+# route, or ANTHROPIC_BASE_URL plus a non-Claude LOKI_MODEL_OVERRIDE). Claude
+# routes print nothing.
+loki_model_route_lane_label() {
+    local spec m
+    spec="$(loki_model_route_spec)"
+    if [ -n "$spec" ] && loki_model_route_parse "$spec"; then
+        printf '%s\n' "$LOKI_GATEWAY_LANE_LABEL"
+        return 0
+    fi
+    [ -n "${ANTHROPIC_BASE_URL:-}" ] || return 0
+    m="$(printf '%s' "${LOKI_MODEL_OVERRIDE:-}" | tr '[:upper:]' '[:lower:]')"
+    case "$m" in
+        ""|opus|sonnet|haiku|claude-*|*anthropic/claude*) ;;
+        *) printf '%s\n' "$LOKI_GATEWAY_LANE_LABEL" ;;
+    esac
+    return 0
+}
+
+# Label plus the feature-loss line, for any bash surface that reports the lane.
+loki_model_route_lane_report() {
+    local label
+    label="$(loki_model_route_lane_label)"
+    [ -n "$label" ] || return 0
+    printf '%s\n%s\n' "$label" "$LOKI_GATEWAY_LANE_LOSS"
+}
+
 # Populate _LOKI_ROUTE_EXEC with a command prefix for the claude child. Empty
 # array when no route is active, so callers expand it with ${arr[@]+...}.
 loki_model_route_prefix() {

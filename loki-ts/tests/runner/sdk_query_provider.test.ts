@@ -191,6 +191,27 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     }
   });
 
+  it("P12-27: set OTEL_* vars are in options.env; unset ones are not invented", async () => {
+    const keys = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME"];
+    const prev = keys.map((k) => process.env[k]);
+    process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://c:4318";
+    delete process.env["OTEL_SERVICE_NAME"];
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const env = lastQueryArgs?.options?.["env"] as Record<string, string>;
+      expect(env["OTEL_EXPORTER_OTLP_ENDPOINT"]).toBe("http://c:4318");
+      expect("OTEL_SERVICE_NAME" in env).toBe(false);
+    } finally {
+      keys.forEach((k, i) => {
+        const v = prev[i];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      });
+    }
+  });
+
   it("passes options.env spreading process.env (PATH survives -- the env-replace trap)", async () => {
     stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");

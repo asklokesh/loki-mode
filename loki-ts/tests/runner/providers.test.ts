@@ -436,6 +436,31 @@ describe("claudeProvider invocation", () => {
   // LOKI_MODEL_OVERRIDE alt-provider routing. Added per Opus #2 reviewer
   // CONCERN that the bash and Bun routes had bash-only test coverage; this
   // closes the parity gap by directly exercising the Bun override branch.
+  it("P12-27: set OTEL_* vars reach the child env unchanged; unset ones are not invented", async () => {
+    const envLog = join(tmp, "env.log");
+    writeFileSync(stubPath, `#!/bin/sh\nenv > '${envLog}'\nexit 0\n`);
+    chmodSync(stubPath, 0o755);
+    const keys = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES", "CLAUDE_CODE_ENABLE_TELEMETRY"];
+    const prev = keys.map((k) => process.env[k]);
+    process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://c:4318";
+    process.env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1";
+    delete process.env["OTEL_SERVICE_NAME"];
+    delete process.env["OTEL_RESOURCE_ATTRIBUTES"];
+    try {
+      await claudeProvider().invoke(makeCall());
+      const lines = readFileSync(envLog, "utf8").split("\n");
+      expect(lines).toContain("OTEL_EXPORTER_OTLP_ENDPOINT=http://c:4318");
+      expect(lines).toContain("CLAUDE_CODE_ENABLE_TELEMETRY=1");
+      expect(lines.some((l) => l.startsWith("OTEL_SERVICE_NAME="))).toBe(false);
+    } finally {
+      keys.forEach((k, i) => {
+        const v = prev[i];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      });
+    }
+  });
+
   it("Phase I: LOKI_MODEL_OVERRIDE wins when ANTHROPIC_BASE_URL also set", async () => {
     process.env["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api/v1";
     process.env["LOKI_MODEL_OVERRIDE"] = "anthropic/claude-3.5-sonnet";
