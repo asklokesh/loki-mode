@@ -820,13 +820,12 @@ loki_apply_small_profile() {
     : "${LOKI_WIKI_AUTO:=0}"
     : "${LOKI_AUTO_DOCS:=false}"
     : "${LOKI_GATE_DEVILS_ADVOCATE:=false}"
-    : "${LOKI_REVIEW_REQUIREMENTS_ONLY:=1}"
     : "${LOKI_COUNCIL_MODEL_VOTERS:=0}"
     : "${LOKI_ADVISOR_MODEL:=haiku}"
     : "${LOKI_SIMPLE:=1}"
     : "${LOKI_DOCS_TIER:=small}"
     export LOKI_SPEC_GRILL LOKI_PRD_ENRICH LOKI_WIKI_AUTO LOKI_AUTO_DOCS
-    export LOKI_GATE_DEVILS_ADVOCATE LOKI_REVIEW_REQUIREMENTS_ONLY
+    export LOKI_GATE_DEVILS_ADVOCATE
     export LOKI_COUNCIL_MODEL_VOTERS LOKI_ADVISOR_MODEL LOKI_SIMPLE LOKI_DOCS_TIER
     LOKI_SMALL_PROFILE_ACTIVE=1
     export LOKI_SMALL_PROFILE_ACTIVE
@@ -837,6 +836,8 @@ loki_apply_small_profile() {
 # "--setting-sources project" to "project,local" so project-local settings
 # still apply. Returns 1 (array empty) on any other profile, so the caller
 # keeps its existing "user,project,local" pin. LOKI_SMALL_LEAN_MAIN=0 opts out.
+# "--bare" is never passed to the main session: it skips hooks and the host
+# command guard. Lean flags apply to child sessions only.
 loki_small_main_session_flags() {
     _LOKI_SMALL_MAIN_ARGV=()
     [ "${LOKI_SMALL_PROFILE_ACTIVE:-0}" = "1" ] || return 1
@@ -845,6 +846,7 @@ loki_small_main_session_flags() {
     local _line _prev=""
     while IFS= read -r _line; do
         [ -n "$_line" ] || continue
+        [ "$_line" != "--bare" ] || continue
         if [ "$_prev" = "--setting-sources" ] && [ "$_line" = "project" ]; then
             _line="project,local"
         fi
@@ -16471,7 +16473,7 @@ _dispatch_reviewer() {
                 _rv_argv+=(
                     "--settings" "$LOKI_HOST_GUARD_SETTINGS_JSON"
                     "--setting-sources" ""
-                    "--tools" ""
+                    "--tools="
                     "--mcp-config" '{"mcpServers":{}}'
                     "--strict-mcp-config"
                     "--disable-slash-commands"
@@ -17869,6 +17871,11 @@ SPECIALIST_SELECT
 
     if [ -z "$selected_specialists" ]; then
         log_error "Code review: Specialist selection failed"
+        return 1
+    fi
+    # An empty reviewer list must never read as "passed (0/0)": fail closed.
+    if ! printf '%s' "$selected_specialists" | python3 -c 'import sys,json; sys.exit(0 if json.load(sys.stdin).get("reviewers") else 1)' 2>/dev/null; then
+        log_error "Code review: no reviewers selected; review is inconclusive"
         return 1
     fi
 

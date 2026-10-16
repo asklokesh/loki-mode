@@ -107,7 +107,7 @@ check "small: PRD_ENRICH off"        "0"     "$(sval "$R" LOKI_PRD_ENRICH)"
 check "small: WIKI_AUTO off"         "0"     "$(sval "$R" LOKI_WIKI_AUTO)"
 check "small: AUTO_DOCS false"       "false" "$(sval "$R" LOKI_AUTO_DOCS)"
 check "small: DEVILS_ADVOCATE off"   "false" "$(sval "$R" LOKI_GATE_DEVILS_ADVOCATE)"
-check "small: REQUIREMENTS_ONLY on"  "1"     "$(sval "$R" LOKI_REVIEW_REQUIREMENTS_ONLY)"
+check "small: REQUIREMENTS_ONLY not forced" "<unset>" "$(sval "$R" LOKI_REVIEW_REQUIREMENTS_ONLY)"
 check "small: council single call"   "0"     "$(sval "$R" LOKI_COUNCIL_MODEL_VOTERS)"
 check "small: reviewer model haiku"  "haiku" "$(sval "$R" LOKI_ADVISOR_MODEL)"
 check "small: SIMPLE prompt arm"     "1"     "$(sval "$R" LOKI_SIMPLE)"
@@ -167,6 +167,18 @@ check "main flags: inactive profile -> none" "NONE" "$(main_flags 'true')"
 check "main flags: small -> lean + project,local" \
     "--setting-sources|project,local|--strict-mcp-config|--mcp-config|{\"mcpServers\":{}}|" \
     "$(main_flags 'export LOKI_SMALL_PROFILE_ACTIVE=1')"
+# API-key host: child helper emits --bare; the main session must never get it.
+bare_flags() {
+    env -i bash -c "export LOKI_SMALL_PROFILE_ACTIVE=1
+$PROFILE_CODE
+loki_lean_child_flags() { printf '%s\n' --bare; }
+if loki_small_main_session_flags; then printf '%s|' \"\${_LOKI_SMALL_MAIN_ARGV[@]}\"; else echo NONE; fi"
+}
+check "main flags: --bare never passed to main" "NONE" "$(bare_flags)"
+check "supervised reviewer uses single --tools= arg" "1" \
+    "$(grep -c '^ *"--tools="$' "$RUN_SH")"
+check "empty reviewer list guard present" "1" \
+    "$(grep -c 'no reviewers selected; review is inconclusive' "$RUN_SH")"
 check "main flags: opt-out -> none" "NONE" \
     "$(main_flags 'export LOKI_SMALL_PROFILE_ACTIVE=1 LOKI_SMALL_LEAN_MAIN=0')"
 

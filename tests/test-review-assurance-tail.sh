@@ -999,9 +999,9 @@ import json
 import sys
 
 args = json.load(open(sys.argv[1], encoding="utf-8"))
-tools = args.index("--tools")
+assert "--tools=" in args
+assert "--tools" not in args
 mcp = args.index("--mcp-config")
-assert args[tools + 1] == ""
 assert json.loads(args[mcp + 1]) == {"mcpServers": {}}
 assert "--strict-mcp-config" in args
 assert "--disable-slash-commands" in args
