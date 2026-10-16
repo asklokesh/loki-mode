@@ -6,12 +6,12 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 71
+- KEEP-MODERN: 73
 - UPDATE: 22
 - DROP-LEGACY: 31
 - DELETE: 14
-- Total rows: 138
-- Registry paths (commands and nested subcommands): 194
+- Total rows: 140
+- Registry paths (commands and nested subcommands): 196
 
 ## Commands
 
@@ -24,6 +24,8 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | provider | bun route, bash fallthrough | KEEP-MODERN | Provider-agnostic core |
 | memory | bun route, bash fallthrough | UPDATE | Memory still carries legacy store paths |
 | rollback | bun route, bash fallthrough | KEEP-MODERN | Checkpoint restore is engine-neutral |
+| backup | autonomy/loki | KEEP-MODERN | Enterprise retention and backup (D99 item 7) |
+| restore | autonomy/loki | KEEP-MODERN | Enterprise retention and backup (D99 item 7) |
 | proof | bun route, bash fallthrough | KEEP-MODERN | The Evidence Receipt moat |
 | receipt | bun route, bash fallthrough | DELETE | Alias of proof; shown only under 'loki help aliases' |
 | wiki | bun route, bash fallthrough | KEEP-MODERN | Bun-native knowledge feature |
