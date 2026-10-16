@@ -1,6 +1,6 @@
 // XV-1: default to a different vendor when one is installed (LOKI_XVENDOR_DEFAULT=1). Vendor CLIs are stubbed on a temp PATH; no real CLI runs.
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, utimesSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crossReview, minVerdict, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
@@ -83,6 +83,12 @@ describe("crossReview COST-4 risk gate", () => {
   it("low risk is skipped honestly, never pass", async () => {
     const r = await run("low");
     expect(r?.level).toBe("not_run"); expect(r?.notes.join(" ")).toContain("skipped: low risk");
+  });
+  it("stale low record from a previous run does not suppress the review", async () => {
+    const c = withTier("low") as unknown as { repoDir: string; startedAtMs?: number };
+    utimesSync(join(c.repoDir, ".loki", "state", "risk-tier.json"), 1, 1); c.startedAtMs = Date.now();
+    process.env["LOKI_REVIEW_PROVIDER"] = "codex";
+    try { expect((await crossReview(c as never, "VERIFIED", "HEAD"))?.notes.join(" ")).not.toContain("skipped: low risk"); } finally { delete process.env["LOKI_REVIEW_PROVIDER"]; }
   });
   it("medium and high still attempt the review", async () => {
     for (const t of ["medium", "high"]) expect((await run(t))?.notes.join(" ")).not.toContain("skipped: low risk");

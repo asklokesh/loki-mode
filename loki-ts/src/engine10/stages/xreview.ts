@@ -91,7 +91,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const agent = configuredReviewer(ctx.repoDir);
   const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (!p) return null; // a configured reviewer/council agent turns the default review on
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
-  if (readRiskRecord(ctx.repoDir)?.tier === "low") return { provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }; // COST-4: low risk records the skip, never a pass
+  if (readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "low") return { provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }; // COST-4: low risk records the skip, never a pass
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
