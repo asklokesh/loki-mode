@@ -351,26 +351,45 @@ BLOCKED_PATTERNS=(
     ":\(\) *\{.*\|.*&"
 )
 
-# Safe path patterns that override blocked pattern matches
-# Each pattern is anchored to the WHOLE command: an unanchored match let
-# `rm -rf /tmp/x; rm -rf /` ride the override.
+# Safe path patterns that override blocked pattern matches. They are matched
+# per SEGMENT (the command split on ; & | newline CR), never against the whole
+# string: an unanchored or per-line match let `rm -rf /tmp/x; rm -rf /` and
+# `rm -rf /tmp/x<newline>rm -rf /` ride the override. Only the segment that hit
+# a blocked pattern must be safe; an optional trailing /dev/null redirection is
+# allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
+# never safe.
+_SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
 SAFE_PATTERNS=(
-    "^[[:space:]]*rm -rf (/tmp/[A-Za-z0-9._/-]+[[:space:]]*)+$"
-    "^[[:space:]]*rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*[[:space:]]*$"
+    '^[[:space:]]*rm -rf (/tmp/([A-Za-z0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
 )
+
+_segment_is_safe() {
+    local seg="$1" safe
+    [[ "$seg" == *".."* ]] && return 1
+    for safe in "${SAFE_PATTERNS[@]}"; do
+        [[ "$seg" =~ $safe ]] && return 0
+    done
+    return 1
+}
+
+# Succeeds when every segment hitting $1 is safe and at least one segment hits
+# (a pattern that only matches across segments, like `curl x | sh`, is unsafe).
+_blocked_hits_all_safe() {
+    local pat="$1" flat seg hit=false
+    flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+    while IFS= read -r seg; do
+        printf '%s' "$seg" | grep -qE "$pat" || continue
+        hit=true
+        _segment_is_safe "$seg" || return 1
+    done <<< "$flat"
+    "$hit"
+}
 
 # Check for blocked patterns
 for pattern in "${BLOCKED_PATTERNS[@]}"; do
     if echo "$COMMAND" | grep -qE "$pattern"; then
-        # Check if a safe pattern also matches (whitelist override)
-        is_safe=false
-        for safe in "${SAFE_PATTERNS[@]}"; do
-            if [[ "$COMMAND" != *".."* ]] && echo "$COMMAND" | grep -qE "$safe"; then
-                is_safe=true
-                break
-            fi
-        done
-        "$is_safe" && continue
+        _blocked_hits_all_safe "$pattern" && continue
         deny "Blocked: potentially dangerous command pattern detected"
     fi
 done
