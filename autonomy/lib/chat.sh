@@ -76,9 +76,9 @@ HLP
 _chat_steer() {
     local loki="$1" msg="$2" out rc=0 first
     case "$msg" in
-        ""|help|h|-*) echo "usage: /steer <message> (not a flag or help)"; return 0 ;;
+        ""|help|h) echo "usage: /steer <message> (not help)"; return 0 ;;
     esac
-    out="$(LOKI_STEER_SOURCE=chat LOKI_STEER_ACTOR="${LOKI_STEER_ACTOR:-${USER:-chat}}" "$loki" steer "$msg" 2>&1)" || rc=$?
+    out="$(LOKI_STEER_SOURCE=chat LOKI_STEER_ACTOR="${LOKI_STEER_ACTOR:-${USER:-chat}}" "$loki" steer -- "$msg" 2>&1)" || rc=$?
     [ -z "$out" ] || printf '%s\n' "$out"
     if [ "$rc" -ne 0 ]; then echo "(exit $rc)"
     elif ! printf '%s\n' "$out" | grep -q 'Steer rev [0-9][0-9]* received'; then
@@ -86,6 +86,42 @@ _chat_steer() {
         echo "Steer not confirmed: ${first:-no confirmation from loki steer}"
     fi
     return 0
+}
+
+# /run launch: background `loki start`, then print "Run started" only after the same
+# signals `loki status` reads show a live new run (a new engine10 run dir or a live pid file
+# that was not live before). A start that exits first reports its real error and the log path.
+# Returns non-zero when the start is not proven.
+_chat_run_launch() {
+    local loki="$1" input="$2" root="${LOKI_DIR:-.loki}" log pid rc=0 i max before_dir before_state
+    log="$root/chat-run.log"
+    mkdir -p "$root"
+    before_dir="$(_chat_run_dir)"; before_state="$(_chat_run_state "$before_dir")"
+    _chat_run_start "$loki" "$input" < /dev/null > "$log" 2>&1 &
+    pid=$!
+    local wait_s="${LOKI_CHAT_START_WAIT:-15}"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=15 ;; esac
+    [ "$wait_s" -ge 1 ] || wait_s=1
+    max=$(( wait_s * 5 ))
+    for ((i = 0; i < max; i++)); do
+        local nd ns
+        nd="$(_chat_run_dir)"; ns="$(_chat_run_state "$nd")"
+        if [ "$ns" = "running" ] && { { [ "$nd" != "$before_dir" ] && _chat_pidfile_live "$nd/run.pid"; } || { [ "$nd" = "$before_dir" ] && [ "$before_state" != "running" ]; }; }; then
+            echo "Run started in the background (pid $pid). Output: $log"
+            return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            rc="$(sed -n 's/.*(run finished, exit \([0-9][0-9]*\).*/\1/p' "$log" 2>/dev/null | tail -n1)"
+            case "$rc" in ''|0) rc=1 ;; esac
+            echo "Run did not start (loki start exited $rc before a live run appeared). Log: $log" >&2
+            tail -n 5 "$log" 2>/dev/null | cut -c1-200 >&2
+            return "$rc"
+        fi
+        sleep 0.2
+    done
+    echo "Run start not confirmed after ${wait_s}s (no live run state; launcher pid $pid still running). Log: $log" >&2
+    return 1
 }
 
 # Run a delegate without letting a non-zero exit end the session (autonomy/loki runs under set -e).
@@ -354,10 +390,8 @@ Question: $line" || true
             /build) mode="build"; echo "Build mode: edits allowed." ;;
             /run|/start)
                 [ -n "$rest" ] || { echo "usage: /run <prd|brief>"; continue; }
-                mkdir -p "${LOKI_DIR:-.loki}"
-                _chat_run_start "$loki" "$rest" < /dev/null > "${LOKI_DIR:-.loki}/chat-run.log" 2>&1 &
-                echo "Run started in the background (pid $!). Output: ${LOKI_DIR:-.loki}/chat-run.log"
-                _chat_attach_banner || true ;;
+                local _lrc=0; _chat_run_launch "$loki" "$rest" || _lrc=$?
+                if [ "$_lrc" -eq 0 ]; then _chat_attach_banner || true; else echo "(exit $_lrc)"; fi ;;
             /workspace)
                 local _ws_name="${rest%% *}" _ws_brief=""
                 [ "$_ws_name" != "$rest" ] && _ws_brief="${rest#* }"
