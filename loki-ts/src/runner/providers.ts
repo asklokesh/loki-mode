@@ -53,7 +53,7 @@ import type {
   ProviderResult,
   SessionTier,
 } from "./types.ts";
-import { resolveClaudeModel } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
 import { modelRouteEnv, modelRouteModel } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 
@@ -203,14 +203,14 @@ function claudeTierToModel(tier: SessionTier): string {
 // EL-W0-06 (D86, FC-04, L1): an engine10 child with nothing configured passes NO model, so the
 // claude CLI uses its own default exactly like raw `claude -p`. session.ts sets LOKI_E10_MODEL_DEFAULT=1
 // only when no override or pin exists; any explicit tier pin, ceiling or routing here still wins.
-function useProviderDefaultModel(call: ProviderInvocation): boolean {
+export function useProviderDefaultModel(call: ProviderInvocation): boolean {
   const e = process.env;
   if (e["LOKI_E10_MODEL_DEFAULT"] !== "1" || call.tier === "fast") return false;
   const name = call.tier === "planning" ? "PLANNING" : "DEVELOPMENT";
   return !(e[`LOKI_CLAUDE_MODEL_${name}`] || e[`LOKI_MODEL_${name}`] || e["LOKI_MODEL_OVERRIDE"] || e["LOKI_MAX_TIER"] || e["LOKI_TIER_ROUTING"]);
 }
 
-function claudeModelFor(call: ProviderInvocation): string {
+export function claudeModelFor(call: ProviderInvocation): string {
   const routedModel = modelRouteModel(process.env); // OC-MODELS: openrouter/ollama/... route wins
   if (routedModel) return routedModel;
   const opusPin =
@@ -857,6 +857,7 @@ export function sdkQueryProvider(): ProviderInvoker {
           cwd: call.cwd,
           iteration: process.env["LOKI_ITERATION"] ?? "0",
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
+          requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : model, // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
         });
         captured = res.capturedText;

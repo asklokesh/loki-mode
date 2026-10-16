@@ -203,7 +203,6 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.stubEnv).toContain("implement GH_TOKEN=ghp_LOKIWITHHELDsentinel");
     expect(r.stubEnv).not.toContain(CANARY);
     expect(r.stubEnv).not.toMatch(/LOKI_LEGACY_BASH=\S/);
-    expect(r.stubEnv).toMatch(/LOKI_REQUESTED_MODEL=\S/); // P12-23: the requested model reaches the worker session env
     const started = r.events.find((e) => e.type === "run.started")!.data;
     expect(started.requested_model).toBeTruthy();
     expect(started).toHaveProperty("config_digest");

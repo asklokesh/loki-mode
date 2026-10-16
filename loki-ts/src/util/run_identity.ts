@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { modelRouteEnv, modelRouteModel } from "../providers/model_routes.ts";
+import { modelRouteEnv } from "../providers/model_routes.ts";
 
 export interface RunIdentity { cli_version: string | null; endpoint: string | null; config_digest: string | null; requested_model: string }
 export interface ModelOutcome { requested_model: string; actual_model: string | null; downgraded: boolean | null }
@@ -68,18 +68,4 @@ export function runIdentity(repoDir: string, env: NodeJS.ProcessEnv, requestedMo
 export function modelOutcome(requested: string, actual: string | null | undefined): ModelOutcome {
   const a = actual || null, rf = family(requested), af = a ? family(a) : null;
   return { requested_model: requested, actual_model: a, downgraded: rf === null || af === null ? null : STRENGTH.indexOf(af) > STRENGTH.indexOf(rf) };
-}
-
-const PROVIDER_DEFAULT = "claude (provider default)"; // same label as engine10/session.ts PROVIDER_DEFAULT_MODEL (not imported: session.ts imports this file)
-/** The model one session of `tier` was configured to run, read from its child env after tier and router-pin resolution
- *  (mirrors runner/providers.ts claudeModelFor). Requested is per session: a fast-tier stage on a run-level opus is not a downgrade. */
-export function requestedModelForTier(env: NodeJS.ProcessEnv, tier: string): string {
-  const name = tier === "planning" ? "PLANNING" : tier === "fast" ? "FAST" : "DEVELOPMENT";
-  if (env.LOKI_MODEL_OVERRIDE) return env.LOKI_MODEL_OVERRIDE;
-  const routed = modelRouteModel(env);
-  if (routed) return routed;
-  const pin = env[`LOKI_CLAUDE_MODEL_${name}`] || env[`LOKI_MODEL_${name}`];
-  if (pin) return pin;
-  if (env.LOKI_E10_MODEL_DEFAULT === "1" && tier !== "fast" && !env.LOKI_MAX_TIER && !env.LOKI_TIER_ROUTING) return PROVIDER_DEFAULT;
-  return tier === "fast" && env.LOKI_ALLOW_HAIKU === "true" ? "haiku" : "sonnet";
 }

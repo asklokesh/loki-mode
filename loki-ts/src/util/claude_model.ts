@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
 
+/** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
+export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
+
 const FAMILY_ALIASES = new Set(["haiku", "sonnet", "opus", "fable"]);
 
 /** Resolves a Claude cli_alias (haiku, sonnet, opus, fable) to its providers/model_catalog.json id; an id already, or an unknown alias, passes through unchanged. Catalog is located via REPO_ROOT (works from src and dist) and honours LOKI_MODEL_CATALOG. */

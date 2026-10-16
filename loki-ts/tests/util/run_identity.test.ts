@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configDigest, endpointHost, modelOutcome, requestedModelForTier, runIdentity } from "../../src/util/run_identity.ts";
-import { childEnv } from "../../src/engine10/session.ts";
+import { configDigest, endpointHost, modelOutcome, runIdentity } from "../../src/util/run_identity.ts";
+import { claudeModelFor, useProviderDefaultModel } from "../../src/runner/providers.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../../src/util/claude_model.ts";
 import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 
 let dir: string;
@@ -56,13 +57,12 @@ describe("run identity tuple", () => {
     expect(modelOutcome("opus", "some-other-model").downgraded).toBeNull();
   });
   test("stream parser records requested and actual model with the downgrade flag", async () => {
-    process.env["LOKI_REQUESTED_MODEL"] = "opus";
     const msgs = [
       { type: "system", subtype: "init", model: "claude-sonnet-4-6", session_id: "s" },
       { type: "result", subtype: "success", total_cost_usd: 0.1, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" },
     ];
     async function* gen() { for (const m of msgs) yield m as never; }
-    await consumeSdkStream(gen(), { cwd: dir, iteration: "1", hookEventsEnabled: true, write: () => {} });
+    await consumeSdkStream(gen(), { cwd: dir, iteration: "1", hookEventsEnabled: true, write: () => {}, requestedModel: "opus" });
     const rec = JSON.parse(readFileSync(join(dir, ".loki", "metrics", "result-cost-1.json"), "utf8"));
     expect(rec.model).toBe("claude-sonnet-4-6");
     expect(rec.requested_model).toBe("opus");
@@ -73,28 +73,56 @@ describe("run identity tuple", () => {
     expect(endpointHost({ CLAUDE_CODE_USE_VERTEX: "1" })).toBeNull();
     expect(endpointHost({ CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://b.example.com" })).toBe("b.example.com");
   });
-  test("requested model is per session tier: an opus run with a fast-tier stage is not a downgrade", () => {
-    const env = { LOKI_CLAUDE_MODEL_DEVELOPMENT: "opus" };
-    expect(requestedModelForTier(env, "development")).toBe("opus");
-    expect(requestedModelForTier(env, "fast")).toBe("sonnet");
-    expect(requestedModelForTier({ ...env, LOKI_CLAUDE_MODEL_FAST: "haiku" }, "fast")).toBe("haiku");
-    expect(requestedModelForTier({ LOKI_E10_MODEL_DEFAULT: "1" }, "development")).toBe("claude (provider default)");
-    expect(modelOutcome(requestedModelForTier({ LOKI_E10_MODEL_DEFAULT: "1" }, "development"), "claude-sonnet-4-6").downgraded).toBeNull();
-  });
-  async function flagFor(tier: string, actual: string): Promise<unknown> {
-    const saved = process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"];
-    process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "opus";
-    try {
-      const opts = { stage: "plan", brief: "b", tier, iterationId: "i", limitS: 1, signal: new AbortController().signal } as never;
-      process.env["LOKI_REQUESTED_MODEL"] = childEnv(opts, { provider: "claude" }).LOKI_REQUESTED_MODEL;
-    } finally { if (saved === undefined) delete process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"]; else process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = saved; }
-    const msgs = [{ type: "system", subtype: "init", model: actual, session_id: "s" }, { type: "result", subtype: "success", total_cost_usd: 0.1, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" }];
+  test("an inherited LOKI_REQUESTED_MODEL env var is ignored by the parser", async () => {
+    process.env["LOKI_REQUESTED_MODEL"] = "opus";
+    const msgs = [
+      { type: "system", subtype: "init", model: "claude-sonnet-4-6", session_id: "s" },
+      { type: "result", subtype: "success", total_cost_usd: 0.1, usage: { input_tokens: 1, output_tokens: 1 }, session_id: "s" },
+    ];
     async function* gen() { for (const m of msgs) yield m as never; }
-    await consumeSdkStream(gen(), { cwd: dir, iteration: "2", hookEventsEnabled: true, write: () => {} });
-    return JSON.parse(readFileSync(join(dir, ".loki", "metrics", "result-cost-2.json"), "utf8")).model_downgraded;
+    await consumeSdkStream(gen(), { cwd: dir, iteration: "3", hookEventsEnabled: true, write: () => {} });
+    const rec = JSON.parse(readFileSync(join(dir, ".loki", "metrics", "result-cost-3.json"), "utf8"));
+    expect(rec.requested_model).toBeUndefined();
+    expect(rec.model_downgraded).toBeUndefined();
+  });
+  const KEYS = ["LOKI_MAX_TIER", "LOKI_TIER_ROUTING", "LOKI_COMPLEXITY", "LOKI_SESSION_MODEL", "LOKI_MODEL_OVERRIDE", "ANTHROPIC_BASE_URL", "LOKI_E10_MODEL_DEFAULT", "LOKI_LEGACY_TIER_SWITCHING", "LOKI_ALLOW_HAIKU", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_MODEL_PLANNING", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_FAST"];
+  function withEnv<T>(set: Record<string, string>, fn: () => T): T {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+    Object.assign(process.env, set);
+    try { return fn(); } finally { for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
   }
-  test("session child env: fast tier on an opus run is not flagged, a real substitution on the dev tier is", async () => {
-    expect(await flagFor("fast", "claude-sonnet-4-6")).toBe(false);
-    expect(await flagFor("development", "claude-sonnet-4-6")).toBe(true);
+  const call = (tier: string, mainLoop = false) => ({ tier, mainLoop, cwd: dir }) as never;
+  // The runner passes claudeModelFor (or the sentinel) as requestedModel; mirror that exact rule.
+  const requested = (tier: string, mainLoop = false) => (useProviderDefaultModel(call(tier, mainLoop)) ? PROVIDER_DEFAULT_MODEL : claudeModelFor(call(tier, mainLoop)));
+  test("requested model parity with the runner: MAX_TIER ceiling beats the planning opus pin, so no false downgrade", () => {
+    withEnv({ LOKI_MAX_TIER: "sonnet", LOKI_SESSION_MODEL: "opus" }, () => {
+      expect(requested("planning", true)).toBe("sonnet");
+      expect(modelOutcome(requested("planning", true), "claude-sonnet-4-6").downgraded).toBe(false);
+    });
+  });
+  test("requested model parity: the session opus pin applies to the main-loop planning tier only", () => {
+    withEnv({ LOKI_SESSION_MODEL: "opus" }, () => {
+      expect(requested("planning", true)).toBe("opus");
+      expect(requested("planning", false)).not.toBe("opus");
+      expect(requested("development", true)).not.toBe("opus");
+    });
+  });
+  test("requested model parity: tier routing to opus on a complex planning task is a real downgrade when sonnet ran", () => {
+    withEnv({ LOKI_TIER_ROUTING: "1", LOKI_COMPLEXITY: "complex" }, () => {
+      expect(requested("planning")).toBe("opus");
+      expect(modelOutcome(requested("planning"), "claude-sonnet-4-6").downgraded).toBe(true);
+    });
+  });
+  test("requested model parity: gateway override wins only with a base URL", () => {
+    withEnv({ LOKI_MODEL_OVERRIDE: "my-model" }, () => { expect(requested("development")).not.toBe("my-model"); });
+    withEnv({ LOKI_MODEL_OVERRIDE: "my-model", ANTHROPIC_BASE_URL: "https://gw.example.com" }, () => { expect(requested("development")).toBe("my-model"); });
+  });
+  test("requested model parity: provider-default mode yields the sentinel and a null downgrade flag", () => {
+    withEnv({ LOKI_E10_MODEL_DEFAULT: "1" }, () => {
+      expect(requested("development")).toBe(PROVIDER_DEFAULT_MODEL);
+      expect(modelOutcome(requested("development"), "claude-sonnet-4-6").downgraded).toBeNull();
+      expect(requested("fast")).not.toBe(PROVIDER_DEFAULT_MODEL);
+    });
   });
 });

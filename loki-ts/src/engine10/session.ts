@@ -6,7 +6,8 @@ import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeProviderCost } from "../providers/provider_cost.ts";
-import { modelRouteModel } from "../providers/model_routes.ts"; import { requestedModelForTier } from "../util/run_identity.ts";
+import { modelRouteModel } from "../providers/model_routes.ts";
+import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
@@ -34,7 +35,7 @@ export interface SessionRunnerConfig {
   advisor?: { available: boolean; reason?: string };
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
-export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
+export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
 /** The model a session really runs: the override, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
 export function resolveModel(provider: string): string {
   const e = process.env;
@@ -75,7 +76,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
     env[`LOKI_MODEL_${t}`] = pin;
   }
-  return cfg.provider === "claude" ? { ...env, LOKI_REQUESTED_MODEL: requestedModelForTier(env, String(opts.tier)) } : env; // P12-23: per session, so a fast-tier stage on an opus run is not flagged
+  return env;
 }
 function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   try {
