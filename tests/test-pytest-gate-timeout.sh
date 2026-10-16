@@ -168,6 +168,77 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# S3 (cost program): verify-evidence false negatives. Bare `pytest` leaves the
+# repo root off sys.path and collects 0 items for non-pytest layouts; the helper
+# must use `python3 -m pytest` and fall back to stdlib unittest on exit 5.
+# ---------------------------------------------------------------------------
+S3_WORK=$(mktemp -d -t loki-pytest-gate-s3.XXXXXX) || exit 2
+trap 'rm -rf "$SANDBOX_BIN" "$SOURCE_HARNESS" "$S3_WORK"' EXIT
+
+echo "Test 4: root-level module imported from tests/ (needs cwd on sys.path)"
+mkdir -p "$S3_WORK/rootmod/tests"
+printf 'def add(a, b):\n    return a + b\n' > "$S3_WORK/rootmod/mod.py"
+printf 'import mod\n\ndef test_add():\n    assert mod.add(2, 3) == 5\n' > "$S3_WORK/rootmod/tests/test_mod.py"
+out4=$(_loki_run_pytest_with_timeout "$S3_WORK/rootmod" -q -p no:cacheprovider 2>&1)
+exit4=$?
+if [ "$exit4" -eq 0 ] && printf '%s' "$out4" | grep -q '1 passed'; then
+    log_pass "root-module import: python3 -m pytest passes (no ModuleNotFoundError)"
+else
+    log_fail "root-module import" "exit=$exit4 out=$(printf '%s' "$out4" | tail -3 | tr '\n' ' ')"
+fi
+
+echo "Test 5: pytest collects 0 (custom python_files) -> unittest fallback verifies"
+mkdir -p "$S3_WORK/fallback"
+printf '[pytest]\npython_files = nomatch_*.py\n' > "$S3_WORK/fallback/pytest.ini"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(1, 1)\n' > "$S3_WORK/fallback/test_ok.py"
+out5=$(_loki_run_pytest_with_timeout "$S3_WORK/fallback" -q -p no:cacheprovider 2>&1)
+exit5=$?
+if [ "$exit5" -eq 0 ] && printf '%s' "$out5" | grep -q 'fell back to python3 -m unittest discover' \
+   && printf '%s' "$out5" | grep -qE '^Ran 1 test'; then
+    log_pass "fallback: exit 0 and unittest ran 1 test"
+else
+    log_fail "fallback" "exit=$exit5 out=$(printf '%s' "$out5" | tail -4 | tr '\n' ' ')"
+fi
+
+echo "Test 6: zero tests from BOTH runners stays exit 5 (inconclusive, never verified)"
+mkdir -p "$S3_WORK/zero"
+printf 'assert 1 + 1 == 2\n' > "$S3_WORK/zero/test_modlevel.py"
+out6=$(_loki_run_pytest_with_timeout "$S3_WORK/zero" -q -p no:cacheprovider 2>&1)
+exit6=$?
+if [ "$exit6" -eq 5 ] && printf '%s' "$out6" | grep -qE '^Ran 0 tests'; then
+    log_pass "zero tests: exit 5 with 'Ran 0 tests' (caller records inconclusive)"
+else
+    log_fail "zero tests" "exit=$exit6 out=$(printf '%s' "$out6" | tail -4 | tr '\n' ' ')"
+fi
+
+echo "Test 7: a failing unittest after fallback is non-zero (never fake-green)"
+mkdir -p "$S3_WORK/failfb"
+printf '[pytest]\npython_files = nomatch_*.py\n' > "$S3_WORK/failfb/pytest.ini"
+printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_no(self):\n        self.assertEqual(1, 2)\n' > "$S3_WORK/failfb/test_no.py"
+_loki_run_pytest_with_timeout "$S3_WORK/failfb" -q -p no:cacheprovider >/dev/null 2>&1
+exit7=$?
+if [ "$exit7" -ne 0 ] && [ "$exit7" -ne 5 ]; then
+    log_pass "failing fallback suite: exit $exit7"
+else
+    log_fail "failing fallback suite" "exit=$exit7"
+fi
+
+echo "Test 8: acceptance seed from benchmarks/attribution/tasks/coord-1-api-web passes"
+COORD="$REPO_ROOT/benchmarks/attribution/tasks/coord-1-api-web"
+if [ -d "$COORD/reference" ]; then
+    mkdir -p "$S3_WORK/coord/tests"
+    cp -R "$COORD/reference/." "$S3_WORK/coord/"
+    cp "$COORD/acceptance/acceptance_test.py" "$S3_WORK/coord/tests/test_acceptance.py"
+    out8=$(_loki_run_pytest_with_timeout "$S3_WORK/coord" -q -p no:cacheprovider 2>&1)
+    exit8=$?
+    if [ "$exit8" -eq 0 ] && printf '%s' "$out8" | grep -q 'passed'; then
+        log_pass "coord-1-api-web reference + acceptance: tests passed"
+    else
+        log_fail "coord-1-api-web" "exit=$exit8 out=$(printf '%s' "$out8" | tail -3 | tr '\n' ' ')"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

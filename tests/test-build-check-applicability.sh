@@ -143,9 +143,50 @@ assert_status "CLI, no build script" "$d" "not_applicable"
 # A bare script dir with NO package.json is IGNORANCE ("I don't recognize a build
 # here"), not proof-of-no-build -> honest not_run, NEVER N/A. This is the
 # inversion's convergence line: N/A requires a package.json to positively assert.
-d="$(mk plain)"; printf 'print(1)\n' > "$d/app.py"
+d="$(mk plain)"; printf 'print(1)\n' > "$d/README.txt"
 TARGET_DIR="$d" enforce_build_check
-assert_status "plain script, NO package.json -> honest not_run (ignorance != N/A)" "$d" "not_run"
+assert_status "no recognizable stack, NO package.json -> honest not_run (ignorance != N/A)" "$d" "not_run"
+
+# --- S3: manifest-less Python tree RUNS python3 -m compileall -----------------
+# Never not_applicable (a broken .py must fail the build fact, not hide behind
+# "build not run"); runnable -> verified | failed.
+d="$(mk pyok)"; printf 'def f():\n    return 1\n' > "$d/app.py"
+TARGET_DIR="$d" enforce_build_check
+assert_status "plain python tree, clean -> verified (compileall ran)" "$d" "verified"
+if grep -q '"ran":true' "$d/.loki/quality/build-results.json" \
+   && grep -q 'compileall' "$d/.loki/quality/build-results.json"; then
+    ok "python build fact records ran:true and the compileall command"
+else
+    bad "python build fact missing ran:true / compileall command"
+fi
+if [ -d "$d/__pycache__" ]; then bad "compileall polluted the tree with __pycache__"; else ok "compileall leaves no __pycache__ in the tree"; fi
+
+d="$(mk pybad)"; printf 'def f(:\n    return 1\n' > "$d/app.py"
+TARGET_DIR="$d" enforce_build_check
+assert_status "plain python tree with a syntax error -> failed (never green, never N/A)" "$d" "failed"
+
+d="$(mk pynested)"; mkdir -p "$d/pkg"; printf 'x = (\n' > "$d/pkg/broken.py"
+TARGET_DIR="$d" enforce_build_check
+assert_status "syntax error in a subpackage -> failed" "$d" "failed"
+
+d="$(mk pyvenvonly)"; mkdir -p "$d/.venv/lib"; printf 'x = (\n' > "$d/.venv/lib/dep.py"
+TARGET_DIR="$d" enforce_build_check
+assert_status ".py only under .venv -> not_run (venv is not the project)" "$d" "not_run"
+
+d="$(mk pysetup)"; printf 'def f(:\n' > "$d/app.py"; printf 'from setuptools import setup\nsetup()\n' > "$d/setup.py"
+TARGET_DIR="$d" enforce_build_check
+assert_status "python + setup.py (foreign manifest) -> still not_run, byte-identical behavior" "$d" "not_run"
+
+d="$(mk pymake)"; printf 'print(1)\n' > "$d/app.py"; printf 'all:\n\ttrue\n' > "$d/Makefile"
+TARGET_DIR="$d" enforce_build_check
+assert_status "python + Makefile -> still not_run" "$d" "not_run"
+
+d="$(mk pysupervised)"; printf 'def f(:\n' > "$d/app.py"
+if LOKI_SUPERVISED_BUILD=1 LOKI_BUILD_PROFILE=simple-web TARGET_DIR="$d" enforce_build_check; then
+    bad "supervised python syntax error returned success"
+else
+    ok "supervised python syntax error returns nonzero"
+fi
 
 # --- INVERSION guard: the positive-no-build signal must NOT over-fire ---------
 # The new fake-green surface is "N/A fires on a real build". A package.json with
