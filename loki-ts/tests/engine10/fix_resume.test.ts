@@ -174,7 +174,7 @@ import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { workerCapS } from "../../src/engine10/worker.ts";
 import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
-import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { applyCapEnv, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
@@ -502,6 +502,23 @@ describe("resume from stage (P12-07)", () => {
     expect(workerCapS(true, {})).toBe(DEEP_CAP_S);
     expect(workerCapS(false, { LOKI_E10_CAP_S: "260" })).toBe(260);
     expect(workerCapS(false, {})).toBe(DEFAULT_CAP_S);
+  });
+  test("P12-07m: Infinity and non-numeric LOKI_E10_CAP_S fall back to the default cap", () => {
+    for (const bad of ["Infinity", "-Infinity", "abc", "", "0", "-5", "NaN"]) {
+      expect(workerCapS(true, { LOKI_E10_CAP_S: bad })).toBe(DEEP_CAP_S);
+      expect(workerCapS(false, { LOKI_E10_CAP_S: bad })).toBe(DEFAULT_CAP_S);
+    }
+  });
+  test("P12-07m: a fresh --deep start with a stale parent LOKI_E10_CAP_S delivers DEEP_CAP_S to the worker env", () => {
+    const env: NodeJS.ProcessEnv = { LOKI_E10_CAP_S: "Infinity", LOKI_E10_CAP_FIXED_S: "50" };
+    applyCapEnv(env, DEEP_CAP_S, null);
+    expect(env["LOKI_E10_CAP_S"]).toBe(String(DEEP_CAP_S));
+    expect(workerCapS(true, env)).toBe(DEEP_CAP_S);
+    const fast: NodeJS.ProcessEnv = { LOKI_E10_CAP_S: "5" };
+    applyCapEnv(fast, 900, { fixedS: 700 });
+    expect([fast["LOKI_E10_CAP_S"], fast["LOKI_E10_CAP_FIXED_S"]]).toEqual(["900", "700"]);
+    applyCapEnv(fast, 900, {});
+    expect(fast["LOKI_E10_CAP_FIXED_S"]).toBeUndefined();
   });
   test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {
     const { ctx } = fakeCtx();

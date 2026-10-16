@@ -13,7 +13,7 @@ import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
 import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
-import { DEEP_CAP_S, DEFAULT_CAP_S } from "./types.ts";
+import { DEEP_CAP_S, DEFAULT_CAP_S, envCapS } from "./types.ts";
 import type { EventType, RunContext, StageName } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
@@ -38,7 +38,7 @@ export async function runWorker(
   await drive((type, stage, data) => write(JSON.stringify({ type, stage, data }) + "\n"));
 }
 /** P12-07l: deep honors the same cap env as fast (remaining cap on resume; the supervisor sets the full cap otherwise). */
-export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { const e = Number(env.LOKI_E10_CAP_S); return e > 0 ? e : deep ? DEEP_CAP_S : DEFAULT_CAP_S; }
+export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { return envCapS(env.LOKI_E10_CAP_S) ?? (deep ? DEEP_CAP_S : DEFAULT_CAP_S); }
 
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
