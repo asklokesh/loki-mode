@@ -35,19 +35,19 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
 /** A claim older than this is orphaned even if its pid answers: a dead consumer's pid can be recycled by an unrelated process, and kill(pid, 0) would then succeed forever. */
 export const STEER_CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 
-/** True when the claim is a regular file that an ORPHAN archive already shares an inode with (unlink failed after a good link). Never reads content: a FIFO would hang and a repeated steer text must not be dropped. */
+/** True when the claim is a regular file that a human-input-*.md archive (normal or ORPHAN) already shares an inode with (unlink failed after a good link). Never reads content: a FIFO would hang and a repeated steer text must not be dropped. */
 function orphanAlreadyArchived(logs: string, claim: string): boolean {
   const c = lstatSync(claim);
   if (!c.isFile()) return false;
   for (const a of readdirSync(logs)) {
-    if (!/^human-input-ORPHAN-.*\.md$/.test(a)) continue;
+    if (!/^human-input-.*\.md$/.test(a)) continue;
     try { const s = statSync(join(logs, a)); if (s.ino === c.ino && s.dev === c.dev) return true; } catch { /* unreadable archive: not a match */ }
   }
   return false;
 }
 
 /** Claims left by a consumer that died between the claim and the archive (pid dead, or claim older than STEER_CLAIM_MAX_AGE_MS): archive each and report it unapplied, so Seal refuses instead of the steer vanishing.
- *  A claim that shares an inode with an ORPHAN archive is only removed, never re-archived or re-reported. */
+ *  A claim that shares an inode with any human-input-*.md archive is only removed, never re-archived or re-reported. ENOENT on the claim means another sweeper handled it: not stranded. */
 function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync, nowMs: number = Date.now()): void {
   let names: string[];
   try { names = readdirSync(logs); } catch { return; }
@@ -64,7 +64,7 @@ function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) =
     try {
       if (orphanAlreadyArchived(logs, join(logs, n))) { unlinkSync(join(logs, n)); continue; }
       archiveTo(logs, `human-input-ORPHAN-${stamp}`, join(logs, n), link); unapplied("orphaned claim");
-    } catch { unapplied(`steer stranded at .loki/logs/${n}`); }
+    } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; unapplied(`steer stranded at .loki/logs/${n}`); }
   }
 }
 

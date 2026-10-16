@@ -176,6 +176,30 @@ describe("engine10 steer", () => {
     expect(sink).toEqual([]);
     expect(archived(d)).toEqual(["human-input-ORPHAN-20200101T000000.md"]);
   });
+  test("an orphan hard-linked to a NORMAL archive (unlink failed) is only removed: no ORPHAN archive, no record", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-20200101T000000.md"), "APPLIED");
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    linkSync(join(logs, "human-input-20200101T000000.md"), claim);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink).toEqual([]);
+    expect(existsSync(claim)).toBe(false);
+    expect(archived(d)).toEqual(["human-input-20200101T000000.md"]);
+  });
+  test("a claim another sweeper removes mid-sweep (ENOENT) is not reported stranded", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    writeFileSync(claim, "RACE");
+    const link = ((): never => { rmSync(claim); throw Object.assign(new Error("gone"), { code: "ENOENT" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { link });
+    expect(sink).toEqual([]);
+  });
   test("a new orphan repeating an old archive's text is still archived and reported", () => {
     const d = repo();
     const logs = join(d, ".loki", "logs");
