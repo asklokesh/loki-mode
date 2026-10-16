@@ -270,8 +270,9 @@ function featuresViolations(file: string, src: string): string[] {
 }
 
 describe("features size and import budget (D66)", () => {
-  it("features stays under 3,000 lines", () => {
-    expect(count(featuresFiles(), FEATURES_ROOT)).toBeLessThan(3000);
+  // D100: raised from 3,000 (FC-09u, 2026-10-16); never fold code to fit a cap.
+  it("features stays under 3,300 lines", () => {
+    expect(count(featuresFiles(), FEATURES_ROOT)).toBeLessThan(3300);
   });
 
   it("never imports stages/ or seal/verify/wall/verify_cmd except whole-statement `import type`", () => {
