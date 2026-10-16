@@ -363,7 +363,7 @@ BLOCKED_PATTERNS=(
 # allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
 # never safe.
 _SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
-_SAFE_ENV='([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
+_SAFE_ENV='([A-Z_][A-Z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
 # A dot-leading path component with a glob char (`/tmp/.*` expands to `/tmp/..`).
 _DOT_GLOB='/\.[^/[:space:]]*[*?[]'
 SAFE_PATTERNS=(
@@ -379,7 +379,7 @@ _env_prefix_is_risky() {
         name="${BASH_REMATCH[1]}"
         rest="${BASH_REMATCH[2]}"
         case "$name" in
-            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH) return 0 ;;
+            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH|EXECIGNORE) return 0 ;;
         esac
     done
     return 1

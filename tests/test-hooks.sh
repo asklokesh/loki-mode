@@ -498,6 +498,8 @@ test_validate_bash_safe_override_rejects_earlier_segment_taint() {
         'source /tmp/x.sh; rm -rf /tmp/a' 'enable -f x.so rm; rm -rf /tmp/a'
         'echo hi; rm -rf /tmp/a' 'cd /tmp; rm -rf /tmp/a' 'FOO="a b"; rm -rf /tmp/a'
         'FOO=$(x); rm -rf /tmp/a' 'foo=1; rm -rf /tmp/a'
+        'path=/tmp/x rm -rf /tmp/a' 'ifs=/ rm -rf /tmp/a' 'Path=/tmp/x rm -rf /tmp/a'
+        'EXECIGNORE=/bin/rm; rm -rf /tmp/a' 'EXECIGNORE=/bin/rm rm -rf /tmp/a'
     )
     local nl=$'\n'
     taint+=(
