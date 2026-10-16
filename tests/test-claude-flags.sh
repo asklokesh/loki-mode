@@ -206,16 +206,20 @@ out=$(loki_lean_child_flags review)
 has_line "$out" "--bare" && ok "S2: apiKeyHelper host gets --bare" || bad "S2: apiKeyHelper host no --bare: [$out]"
 rm -f "$HOME/.claude/settings.json"
 
-# text-only role: --tools followed by an empty-string line; tool role: no --tools
-# (read line by line: command substitution would strip the trailing empty line)
+# text-only role: single argument "--tools=" (the variadic --tools swallows a
+# trailing prompt when given an empty value); tool role: no --tools
 lines=()
 while IFS= read -r l; do lines+=("$l"); done < <(loki_lean_child_flags grill)
 last=$(( ${#lines[@]} - 1 ))
-if [ "${lines[$last]}" = "" ] && [ "${lines[$((last - 1))]}" = "--tools" ]; then
-    ok "S2: text-only role gets --tools followed by empty-string line"
+if [ "${lines[$last]}" = "--tools=" ]; then
+    ok "S2: text-only role gets single argument --tools="
 else
     bad "S2: text-only role --tools value wrong: [${lines[*]}]"
 fi
+empty=0
+for l in "${lines[@]}"; do [ -z "$l" ] && empty=$((empty + 1)); done
+[ "$empty" -eq 0 ] && ok "S2: no emitted argument is an empty line" || bad "S2: $empty empty line(s) emitted: [${lines[*]}]"
+has_line "$(loki_lean_child_flags grill)" "--tools" && bad "S2: bare --tools emitted" || ok "S2: bare --tools never emitted"
 out=$(loki_lean_child_flags implement)
 has_line "$out" "--tools" && bad "S2: tool role got --tools" || ok "S2: tool role never gets --tools"
 

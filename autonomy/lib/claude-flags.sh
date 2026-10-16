@@ -214,13 +214,14 @@ _loki_apikey_helper_configured() {
 
 # ---------- S2: lean child-session flags + cost ledger ----------
 # loki_lean_child_flags <role> prints the lean flag set for a NON-MAIN child
-# `claude -p` session, ONE ARGUMENT PER LINE (an empty line is an empty-string
-# argument, e.g. the value after --tools). Callers read it with a line loop.
+# `claude -p` session, ONE ARGUMENT PER LINE (never an empty line).
+# Callers read it with a line loop.
 #   - API-key/apiKeyHelper host: "--bare" (gated by loki_subcall_bare_enabled,
 #     which keeps OAuth-only hosts off --bare; it would fail auth there).
 #   - Otherwise: --setting-sources project, --strict-mcp-config, an empty
 #     --mcp-config, --disable-slash-commands.
-#   - Text-only roles additionally get --tools "" (no tools).
+#   - Text-only roles additionally get the single argument "--tools=" (no tools). --tools is
+#     variadic: "--tools" plus an empty argument swallows a trailing prompt.
 # Every flag is probed with loki_claude_flag_supported; an unsupported flag and
 # its value are dropped. LOKI_LEAN_CHILDREN=0 prints nothing. Main-session
 # flags are not touched by this helper.
@@ -246,7 +247,7 @@ loki_lean_child_flags() {
     case "$role" in
         grill|council|vote|review|reviewer|enrich|wiki|docs|docgen|summary)
             if loki_claude_flag_supported "--tools"; then
-                printf '%s\n' "--tools" ""
+                printf '%s\n' "--tools="
             fi
             ;;
     esac
