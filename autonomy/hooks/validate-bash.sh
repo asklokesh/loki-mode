@@ -363,19 +363,19 @@ BLOCKED_PATTERNS=(
 # allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
 # never safe.
 _SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
-_SAFE_ENV='([A-Z_][A-Z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
+_SAFE_ENV='([ABCDEFGHIJKLMNOPQRSTUVWXYZ_][ABCDEFGHIJKLMNOPQRSTUVWXYZ0-9_]*=[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0-9._/:-]*[[:space:]]+)*'
 # A dot-leading path component with a glob char (`/tmp/.*` expands to `/tmp/..`).
 _DOT_GLOB='/\.[^/[:space:]]*[*?[]'
 SAFE_PATTERNS=(
-    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf (/tmp/([A-Za-z0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
-    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf (/tmp/([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf \.loki/queue/dead-letter[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0-9._/-]*'"$_SAFE_REDIR"'$'
 )
 
 # Env names that change what the allowed command executes or loads; a prefix
 # naming one never rides the safe-path override.
 _env_prefix_is_risky() {
     local rest="$1" name
-    while [[ "$rest" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]*(.*)$ ]]; do
+    while [[ "$rest" =~ ^[[:space:]]*([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0-9_]*)=[^[:space:]]*(.*)$ ]]; do
         name="${BASH_REMATCH[1]}"
         rest="${BASH_REMATCH[2]}"
         case "$name" in
@@ -391,7 +391,7 @@ _env_prefix_is_risky() {
 # grouping and redirection characters). Anything else (export, declare, unset,
 # eval, source, hash, alias, function, subshell, echo, cd, ...) can change how a
 # later rm resolves, so it disables the override. Over-denial is intended.
-_ASSIGN_ONLY='^[[:space:]]*([A-Z_][A-Z0-9_]*)=([^][\"'"'"'\\$`(){}<>[:space:]]*)[[:space:]]*$'
+_ASSIGN_ONLY='^[[:space:]]*([ABCDEFGHIJKLMNOPQRSTUVWXYZ_][ABCDEFGHIJKLMNOPQRSTUVWXYZ_0-9]*)=([^][\"'"'"'\\$`(){}<>[:space:]]*)[[:space:]]*$'
 _segment_is_inert() {
     local seg="$1"
     [[ "$seg" =~ ^[[:space:]]*(true|false|:)?[[:space:]]*$ ]] && return 0
@@ -436,6 +436,76 @@ _blocked_hits_all_safe() {
     done <<< "$flat"
     "$hit"
 }
+
+# A recursive rm whose target IS a temp root, or a bare glob directly under
+# one, wipes every tenant of the temp dir. The target is normalized first
+# (quotes dropped, repeated and trailing slashes and `/./` collapsed) so
+# `//tmp`, `/tmp//`, `/private//tmp/` and `"$TMPDIR"/*` cannot hide. A named
+# child (`/tmp/loki-run.abc123`, `/tmp/foo*`) is not a bare glob and stays ok.
+_normalize_rm_target() {
+    local t="${1//[\"\']/}" prev=""
+    while [ "$t" != "$prev" ]; do
+        prev="$t"
+        t="${t//\/\//\/}"
+        t="${t//\/.\//\/}"
+    done
+    while [[ "$t" == */. && "$t" != "/." ]]; do t="${t%/.}"; done
+    while [[ "$t" == */ && "$t" != "/" ]]; do t="${t%/}"; done
+    printf '%s' "$t"
+}
+
+_GLOB_ONLY='^[]*?.[]+$'
+_rm_target_is_temp_root_or_glob() {
+    local t rest
+    t=$(_normalize_rm_target "$1")
+    case "$t" in
+        /tmp|/var/tmp|/private/tmp|/private/var/tmp|'$TMPDIR'|'${TMPDIR}') return 0 ;;
+        /private/var/tmp/*) rest="${t#/private/var/tmp/}" ;;
+        /private/tmp/*) rest="${t#/private/tmp/}" ;;
+        /var/tmp/*) rest="${t#/var/tmp/}" ;;
+        /tmp/*) rest="${t#/tmp/}" ;;
+        '$TMPDIR'/*) rest="${t#\$TMPDIR/}" ;;
+        '${TMPDIR}'/*) rest="${t#\$\{TMPDIR\}/}" ;;
+        *) return 1 ;;
+    esac
+    # first component made only of glob characters and dots: `*`, `.*`, `?`, `[a]`
+    [[ "${rest%%/*}" =~ $_GLOB_ONLY ]] && return 0
+    return 1
+}
+
+_segment_rm_hits_temp_root() {
+    local seg="$1" tok recursive=false seen_rm=false
+    local -a words
+    read -r -a words <<< "$seg"
+    for tok in "${words[@]}"; do
+        if ! $seen_rm; then
+            [ "$tok" = "rm" ] && seen_rm=true
+            continue
+        fi
+        case "$tok" in
+            --recursive) recursive=true ;;
+            -*) [[ "$tok" =~ ^-[[:alpha:]]*[rR] ]] && recursive=true ;;
+        esac
+    done
+    $seen_rm && $recursive || return 1
+    seen_rm=false
+    for tok in "${words[@]}"; do
+        if ! $seen_rm; then
+            [ "$tok" = "rm" ] && seen_rm=true
+            continue
+        fi
+        case "$tok" in -*) continue ;; esac
+        _rm_target_is_temp_root_or_glob "$tok" && return 0
+    done
+    return 1
+}
+
+_flat_for_temp_root=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+while IFS= read -r _seg; do
+    if _segment_rm_hits_temp_root "$_seg"; then
+        deny "Blocked: recursive delete of a temp root or a bare glob under it"
+    fi
+done <<< "$_flat_for_temp_root"
 
 # Check for blocked patterns
 for pattern in "${BLOCKED_PATTERNS[@]}"; do
