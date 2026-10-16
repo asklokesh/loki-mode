@@ -154,6 +154,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -168,6 +173,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "plan",
@@ -352,6 +362,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -366,6 +381,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "implement,fix",
@@ -549,6 +569,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -563,6 +588,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "plan",
@@ -741,6 +771,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -755,6 +790,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "plan",
@@ -941,6 +981,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -955,6 +1000,11 @@
           "max_cost_usd": 0,
           "model_override_applied": true,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "all",
@@ -1124,6 +1174,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -1138,6 +1193,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "plan",
@@ -1316,6 +1376,11 @@
           "max_cost_usd",
           "model_override_applied",
           "branch",
+          "actor",
+          "policy_revision",
+          "parent_run",
+          "answered_run",
+          "answer_sha256",
           "downgrades",
           "origin_repo"
         ],
@@ -1330,6 +1395,11 @@
           "max_cost_usd": 0,
           "model_override_applied": false,
           "branch": "<branch>",
+          "actor": "e2e",
+          "policy_revision": null,
+          "parent_run": null,
+          "answered_run": null,
+          "answer_sha256": null,
           "downgrades": [
             {
               "stage": "plan",

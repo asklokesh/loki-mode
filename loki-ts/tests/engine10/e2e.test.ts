@@ -128,6 +128,7 @@ describe("engine10 e2e (stub claude)", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
     expect(lines.length).toBeLessThanOrEqual(8);
+    expect(lines[lines.length - 1]).toMatch(/; Readiness: \d+\/100 \([A-F]\)/); // FV-readiness-env-3: folded into the last line, never a ninth line
     expect((lines[0] ?? "").split("; downgrade: ")[0]).toBe(`Loki 10 engine, PR target: main, base: main, ${hasApiKey(process.env) ? "cap $100.00 (default)" : "no dollar cap (subscription)"}`); // D82-COSTCAP: the cap follows whether the env holds an API key
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);

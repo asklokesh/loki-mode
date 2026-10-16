@@ -56,9 +56,15 @@ describe("R1-09 cost event fields", () => {
     expect(d["advisor_output_tokens"]).toBe(40);
     expect(d["advisor_calls"]).toBe(2);
   });
-  test("flag off: cost event keys are exactly the pre-router set", async () => {
-    const d = await withCost(undefined);
-    expect(Object.keys(d).sort()).toEqual(["cache_creation_tokens", "cache_read_tokens", "input_tokens", "model", "output_tokens", "session_id", "source", "usd"]);
+  test("flag off: cost event keys are exactly the pre-router set (plus COST-1 effort, which is not a router field)", async () => {
+    const PRE = ["cache_creation_tokens", "cache_read_tokens", "input_tokens", "model", "output_tokens", "session_id", "source", "usd"];
+    const keep = process.env["LOKI_E10_EFFORT_POLICY"];
+    try {
+      delete process.env["LOKI_E10_EFFORT_POLICY"]; // COST-1: the effort policy is on by default and records the stage effort
+      expect(Object.keys(await withCost(undefined)).sort()).toEqual([...PRE, "effort"].sort());
+      process.env["LOKI_E10_EFFORT_POLICY"] = "off";
+      expect(Object.keys(await withCost(undefined)).sort()).toEqual(PRE);
+    } finally { if (keep === undefined) delete process.env["LOKI_E10_EFFORT_POLICY"]; else process.env["LOKI_E10_EFFORT_POLICY"] = keep; }
   });
 });
 
