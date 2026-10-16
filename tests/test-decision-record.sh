@@ -162,6 +162,70 @@ else
     bad "emoji or em-dash present"
 fi
 
+# --- 11. Design records: schema round-trip ---------------------------------
+T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
+OUT="$(cd "$T" && python3 "$DR" design --rationale="smaller blast radius" --alternatives="rewrite|patch in place" --source=plan --scope=auth --decided_at=2026-10-16T00:00:00Z --prompt="secret" 2>/dev/null)"
+if printf '%s' "$OUT" | grep -q '"status": "recorded"' && printf '%s' "$OUT" | grep -q '"dropped_fields"'; then
+    ok "a design record is written and non-allowlisted fields are surfaced as dropped"
+else
+    bad "design record not written: $OUT"
+fi
+RT="$(python3 -c "
+import sys, json; sys.path.insert(0, '$REPO_ROOT/autonomy/lib')
+from decision_record import read_design, DESIGN_FIELDS
+r = read_design('$T/.loki')
+assert len(r) == 1, r
+d = r[0]
+assert d['rationale'] == 'smaller blast radius' and d['alternatives'] == ['rewrite', 'patch in place'], d
+assert d['source'] == 'plan' and d['scope'] == 'auth' and d['decided_at'] == '2026-10-16T00:00:00Z', d
+assert 'prompt' not in d
+assert sorted(DESIGN_FIELDS) == ['alternatives','decided_at','rationale','recorded_at','schema_version','scope','source'], DESIGN_FIELDS
+print('roundtrip-ok')" 2>&1)"
+if [ "$RT" = "roundtrip-ok" ]; then
+    ok "design record round-trips with a pinned field set"
+else
+    bad "design round-trip failed: $RT"
+fi
+if [ ! -f "$T/.loki/decisions/decisions.jsonl" ]; then
+    ok "design records stay out of the dispatch log"
+else
+    bad "design record polluted decisions.jsonl"
+fi
+rm -rf "$T"
+
+# --- 12. Design record without rationale is rejected ------------------------
+T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
+OUT="$(cd "$T" && python3 "$DR" design --source=plan --scope=auth 2>/dev/null)"
+if printf '%s' "$OUT" | grep -q '"reason": "no_rationale"' && [ ! -f "$T/.loki/decisions/design.jsonl" ]; then
+    ok "a design record without rationale is refused and writes nothing"
+else
+    bad "a rationale-less design record was accepted: $OUT"
+fi
+OUT="$(cd "$T" && python3 "$DR" design --rationale="   " 2>/dev/null)"
+if printf '%s' "$OUT" | grep -q '"reason": "no_rationale"'; then
+    ok "a blank rationale is refused"
+else
+    bad "a blank rationale was accepted"
+fi
+rm -rf "$T"
+
+# --- 13. design-file: the plan-stage hook path -------------------------------
+T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
+printf '{"rationale":"keep the module","alternatives":["fork it"],"source":"plan","scope":"cli"}' > "$T/dd.json"
+OUT="$(cd "$T" && python3 "$DR" design-file "$T/dd.json" 2>/dev/null)"
+if printf '%s' "$OUT" | grep -q '"status": "recorded"' && grep -q 'keep the module' "$T/.loki/decisions/design.jsonl"; then
+    ok "design-file records the plan-stage decision"
+else
+    bad "design-file did not record: $OUT"
+fi
+printf '{"scope":"cli"}' > "$T/dd2.json"
+if ! (cd "$T" && python3 "$DR" design-file "$T/dd2.json" >/dev/null 2>&1); then
+    ok "design-file with no rationale exits non-zero"
+else
+    bad "design-file accepted a rationale-less file"
+fi
+rm -rf "$T"
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
