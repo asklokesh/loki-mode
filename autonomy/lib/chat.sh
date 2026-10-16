@@ -144,7 +144,9 @@ _chat_run_launch() {
             tail -n 5 "$log" 2>/dev/null | cut -c1-200 >&2
             return "$rc"
         fi
-        now_ms="$(_chat_now_ms)"
+        # A failed or non-numeric clock read (perl fork EAGAIN) counts as the deadline: never mix clock bases.
+        now_ms="$(_chat_now_ms)" || break
+        case "$now_ms" in ''|*[!0-9]*) break ;; esac
         rem_ms=$(( deadline_ms - now_ms ))
         [ "$rem_ms" -gt 0 ] || break
         [ "$iter" -lt "$max_iter" ] || break

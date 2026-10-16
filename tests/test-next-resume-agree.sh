@@ -241,6 +241,7 @@ if command -v bun >/dev/null 2>&1; then
         *) fail "--mirofish-docker image was misparsed as a run id: $out" ;;
     esac
     # P12-07g: every value-taking start flag (also the Bun-route ones) is skipped by the scan.
+    # Tolerance intent: the scan must only skip each flag value; it need not honor the flag.
     for pair in "--model sonnet" "--max-cost 5" "--max-wait 30" "--session-model high" "--max-iterations 3" "--budget-limit 4"; do
         # shellcheck disable=SC2086 # intentional split: "$pair" is flag plus value
         out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume $pair 2>&1)"

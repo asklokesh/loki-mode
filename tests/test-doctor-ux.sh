@@ -240,6 +240,14 @@ el="$(sed -n 's/^elapsed=//p' <<<"$out")"
 if grep -q 'rc=1' <<<"$out" && [ -n "$el" ] && [ "$el" -le 3700 ]; then ok "P12-16c: wait loop stays within its deadline (fake clock ${el}ms of 3000ms + one poll)"; else bad "P12-16c: deadline overrun, elapsed=${el:-none}: $out"; fi
 out="$(POLL_COST=0 APPEAR_AT=3000 LOKI_DIR="$C_DIR/d2/.loki" LOKI_CHAT_START_WAIT=3 bash -c "$DL_SCRIPT" _ "$CHAT_SH" "$C_DIR/loki-sleep" "$C_DIR/clk2" 2>&1)"
 if grep -q 'rc=0' <<<"$out" && grep -q 'Run started' <<<"$out"; then ok "P12-16c: a run appearing at the deadline is caught by the final check"; else bad "P12-16c: final-check output: $out"; fi
+# P12-16d: perl picked as the clock, then fails mid-wait (fork EAGAIN): deadline reached, no arithmetic abort.
+mkdir -p "$C_DIR/pstub"
+printf '#!/bin/sh\nn=$(cat "%s/pcount" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "%s/pcount"\n[ "$n" -le 1 ] && exit 0\n[ "$n" -eq 2 ] && { echo 1000; exit 0; }\nexit 1\n' "$C_DIR" "$C_DIR" > "$C_DIR/pstub/perl"
+chmod +x "$C_DIR/pstub/perl"
+t0=$SECONDS
+out="$(PATH="$C_DIR/pstub:$PATH" LOKI_DIR="$C_DIR/d3/.loki" LOKI_CHAT_START_WAIT=10 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-sleep" 2>&1)"
+el=$(( SECONDS - t0 ))
+if grep -q 'rc=1' <<<"$out" && grep -q 'not confirmed' <<<"$out" && [ "$el" -le 4 ]; then ok "P12-16d: a failed clock read ends the wait at once (${el}s of a 10s wait), never spinning on an empty clock"; else bad "P12-16d: clock failure waited ${el}s: $out"; fi
 while read -r sp; do kill "$sp" 2>/dev/null || true; done < "$C_DIR/sleep.pid"
 rm -rf "$C_DIR"
 
