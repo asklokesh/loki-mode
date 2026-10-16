@@ -17,20 +17,22 @@ export const STEER_END = "--- END OPERATOR GUIDANCE ---";
 export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.env, now: () => Date = () => new Date(), sink?: IntentRevision[]): string | null {
   if (/^(0|false)$/i.test(env.LOKI_PROMPT_INJECTION ?? "")) return null;
   const f = join(repoDir, ".loki", "HUMAN_INPUT.md");
+  // One mechanism for every steer that could not be consumed (unwritable logs dir, oversize, non-file entry, any throw): an `unapplied` record in the sink, which Seal always refuses.
+  const unapplied = (): void => { sink?.push({ rev: 0, source: null, actor: null, sha: "", at: now().getTime(), unapplied: true }); };
   try {
     const st = lstatSync(f, { throwIfNoEntry: false });
     if (!st) return null;
     if (st.isSymbolicLink()) { rmSync(f, { force: true }); return null; }
-    if (!st.isFile()) return null;
+    if (!st.isFile()) { unapplied(); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
-    if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); return null; }
+    if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); unapplied(); return null; }
     const text = readFileSync(f, "utf8").trim();
     renameSync(f, join(logs, `human-input-${stamp}.md`));
     if (text !== "") { const recs = recordRevisions(repoDir, text, `human-input-${stamp}.md`, now()); sink?.push(...recs); }
     return text === "" ? null : text;
-  } catch { return null; }
+  } catch { try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied(); } catch { /* unreadable: nothing more to learn */ } return null; }
 }
 
 const REV_HDR = /^## Operator directive rev (\d+) \(([^)]*)\) actor=(\S*) source=(\S*)\s*$/;
@@ -59,7 +61,7 @@ function recordRevisions(repoDir: string, text: string, archived: string, at: Da
   return recs;
 }
 
-export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number }
+export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number; unapplied?: boolean }
 /** Revisions consumed at or after sinceMs (epoch ms), by rev. Only the engine-written consumed_at counts, never the operator-supplied header ts; an older run's records and torn lines are skipped. */
 export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevision[] {
   const out: IntentRevision[] = [];
@@ -78,8 +80,8 @@ export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevisio
 /** Revisions (kept in machine memory by withSteer, never re-read from the agent-writable repo file) consumed at or after the latest Wall authoring STARTED (the Wall session never receives steers, so a tie is a late steer):
  *  the Wall was written from an older intent. Empty when no Wall ran, so a pre-Wall revision never stales it; a re-authored Wall (later start) clears earlier ones. */
 export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, timeline: readonly { stage: string; startMs: number }[] | undefined): IntentRevision[] {
-  const starts = (timeline ?? []).filter((t) => t.stage === "wall").map((t) => t.startMs);
-  return starts.length === 0 ? [] : (revs ?? []).filter((r) => r.at >= Math.max(...starts));
+  const starts = (timeline ?? []).filter((t) => t.stage === "wall").map((t) => t.startMs), from = starts.length ? Math.max(...starts) : Infinity;
+  return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
 /** Seal gate: consumes a steer still pending in HUMAN_INPUT.md (sent after the last implement session, so no work reflects it) into ctx.intentRevisions and counts it stale
