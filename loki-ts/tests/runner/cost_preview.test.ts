@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendRunOutcome, WALL_KIND } from "../../src/runner/router/history.ts";
-import { ESTIMATE_HELP, encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, runEstimate, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
+import { appendRunOutcome, isCodeLoss, routeScore, WALL_KIND } from "../../src/runner/router/history.ts";
+import { outcomeFor, ESTIMATE_HELP, encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, runEstimate, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
 
 const SHAPE = "single:bun";
 const KEY = "a".repeat(64);
@@ -168,5 +168,23 @@ describe("loki estimate is the same estimator as the loki start preview (ESTIMAT
     expect(run(["--model"]).rc).toBe(1);
     const h = run(["--help"]);
     expect(h.rc).toBe(0); expect(h.out).toBe(ESTIMATE_HELP); expect(h.out).toContain("--iterations is removed");
+  });
+});
+
+describe("P12-32 outcomeFor feeds router acceptance", () => {
+  test("VERIFIED is an accepted pass", () => {
+    expect(outcomeFor("s", "claude-sonnet-4", "VERIFIED", 1, 10)).toMatchObject({ verdict: "pass", owner: null, executor: "sonnet" });
+  });
+  test("FAILED is a code-owned loss the router counts", () => {
+    const r = outcomeFor("s", "claude-haiku-4", "FAILED", 1, 10)!;
+    expect(r).toMatchObject({ verdict: "fail", owner: "code", executor: "haiku" });
+    expect(isCodeLoss(r)).toBe(true);
+  });
+  test("PARTIAL and other verdicts are not recorded", () => {
+    for (const v of ["PARTIAL", "SPEC_CONFLICT", "ALREADY_SATISFIED"]) expect(outcomeFor("s", "m", v, 1, 10)).toBeNull();
+  });
+  test("recorded FAILED rows lower a route acceptance below 1", () => {
+    const rows = [outcomeFor("s", "haiku", "VERIFIED", 1, 5)!, outcomeFor("s", "haiku", "FAILED", 1, 5)!, outcomeFor("s", "haiku", "FAILED", 1, 5)!];
+    expect(routeScore(rows, "s", "haiku")!.acceptance).toBeCloseTo(1 / 3);
   });
 });

@@ -75,6 +75,8 @@ export function isCodeLoss(r: RunOutcome): boolean {
 export const PRIOR_ACCEPTANCE = 0.5;
 export const ACCEPTANCE_FLOOR = 0.05;
 export const MIN_SCORED_RUNS = 3;
+/** Only the newest counted runs score a route, so old runs cannot outweigh recent ones. */
+export const SCORE_WINDOW = 10;
 
 /** Expected accepted-outcome cost: price per attempt divided by the acceptance rate (never below the floor). Pure. */
 export function expectedCost(pricePerAttempt: number, acceptanceRate: number): number {
@@ -87,7 +89,7 @@ export function expectedCost(pricePerAttempt: number, acceptanceRate: number): n
  * Fewer than MIN_SCORED_RUNS counted runs uses PRIOR_ACCEPTANCE. Null when no counted run exists.
  */
 export function routeScore(runs: readonly RunOutcome[], shape: string, executor: RunExecutor): { cost: number; acceptance: number; n: number; prior: boolean } | null {
-  const counted = runs.filter((r) => r.shape === shape && r.executor === executor && (isCodeLoss(r) || (r.verdict === "pass" && !r.escalated)));
+  const counted = runs.filter((r) => r.shape === shape && r.executor === executor && (isCodeLoss(r) || (r.verdict === "pass" && !r.escalated))).slice(-SCORE_WINDOW);
   if (counted.length === 0) return null;
   const price = counted.reduce((a, r) => a + r.usd, 0) / counted.length;
   const prior = counted.length < MIN_SCORED_RUNS;

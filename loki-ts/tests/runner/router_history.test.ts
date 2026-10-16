@@ -346,4 +346,10 @@ describe("shapeDefault (shipped router-shape-defaults.json)", () => {
     expect(shapeDefault("single:none", corrupt)).toBeNull();
     expect(shapeDefault("single:none", join(root, "missing.json"))).toBeNull();
   });
+
+  it("P12-32 window: old losses age out of the score", () => {
+    const mk = (verdict: "pass" | "fail"): RunOutcome => ({ shape: "s", executor: "haiku", verdict, owner: verdict === "fail" ? "code" : null, escalated: false, usd: 1, wallS: 1 });
+    const runs = [...Array(10).fill(0).map(() => mk("fail")), ...Array(10).fill(0).map(() => mk("pass"))];
+    expect(routeScore(runs, "s", "haiku")!.acceptance).toBe(1);
+  });
 });
