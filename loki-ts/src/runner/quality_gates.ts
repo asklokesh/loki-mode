@@ -52,6 +52,7 @@ import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { stripAnsi } from "../util/check_result.ts";
 import { safeGitRun } from "../util/safe_git.ts";
+import { runSkillChecks } from "../util/skill_checks.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
 // (which is sync because it sits inside the runQualityGates for-loop). Bun
@@ -93,7 +94,8 @@ export type GateName =
   | "code_review"
   | "doc_coverage"
   | "magic_debate"
-  | "lsp_diagnostics";
+  | "lsp_diagnostics"
+  | "skill_checks";
 
 export type GateResult = {
   passed: boolean;
@@ -2925,6 +2927,7 @@ type GateToggles = {
   docCoverage: boolean;
   magicDebate: boolean;
   lspDiagnostics: boolean;
+  skillChecks: boolean;
 };
 
 export function readToggles(): GateToggles {
@@ -2976,6 +2979,8 @@ export function readToggles(): GateToggles {
     // default-on does not surprise users. LSP NEVER blocks on either route
     // (no _BLOCK flag exists). Opt out with LOKI_GATE_LSP_DIAGNOSTICS=false.
     lspDiagnostics: flag("LOKI_GATE_LSP_DIAGNOSTICS", true),
+    // P12-44: checks declared by repo skills (.claude/skills/*/SKILL.md). Blocking, fail closed; no skills = pass.
+    skillChecks: flag("LOKI_GATE_SKILL_CHECKS", true),
   };
 }
 
@@ -3164,6 +3169,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },
     { name: "lsp_diagnostics", enabled: toggles.lspDiagnostics, run: () => runLSPDiagnostics(ctx) },
+    { name: "skill_checks", enabled: toggles.skillChecks, run: () => runSkillChecks(ctx.cwd) },
   ];
 
   for (const gate of sequence) {
