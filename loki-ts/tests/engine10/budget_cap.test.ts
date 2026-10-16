@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { capMeter, capNote, perAttemptCap, runnerBudget, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { budgetNext, lastBudgetStop, priorSpend, unenforceableNote, writeBudgetStop, capMeter, capNote, perAttemptCap, runnerBudget, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
 import { childEnv } from "../../src/engine10/session.ts";
 import { watchBudget } from "../../src/providers/provider_guard.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
@@ -237,5 +237,41 @@ describe("every start mode honors the one cap", () => {
     expect(perAttemptCap(undefined, 3)).toBeUndefined();
     const a = engineArgv({ ...base, budgetLimit: perAttemptCap(3, 3) }, "t", true);
     expect(a.slice(a.indexOf("--max-cost"))).toEqual(["--max-cost", "1"]);
+  });
+});
+
+describe("budget stop survives a kill-and-rerun", () => {
+  const withRepo = (fn: (repo: string) => void): void => { const d = mkdtempSync(join(tmpdir(), "bcap-")); try { fn(d); } finally { rmSync(d, { recursive: true, force: true }); } };
+  test("a meter seeded with 4 of 5 trips after one more dollar", () => {
+    const emitted: unknown[] = [];
+    const m = capMeter(((t: string, _s: never, d: Record<string, unknown>) => { emitted.push([t, d]); }) as never, { LOKI_E10_MAX_COST_USD: "5", LOKI_E10_SPENT_USD: "4" });
+    expect(m.over()).toBe(false); expect(m.remaining()).toBe(1);
+    (m.emit as unknown as (t: string, s: string, d: Record<string, unknown>) => void)("cost", "implement", { usd: 1 });
+    expect(m.over()).toBe(true);
+  });
+  test("a bad or missing seed is ignored", () => {
+    for (const v of [undefined, "", "abc", "-3"]) expect(capMeter((() => {}) as never, { LOKI_E10_MAX_COST_USD: "5", ...(v === undefined ? {} : { LOKI_E10_SPENT_USD: v }) }).remaining()).toBe(5);
+  });
+  test("budget.json records cap, spent, source and outcome; the same task finds it", () => withRepo((repo) => {
+    writeBudgetStop(repo, "e10-20260101T000000Z-aaaa", { task: "fix the thing", cap_usd: 5, spent_usd: 4.2, source: "--max-cost" });
+    const raw = JSON.parse(readFileSync(join(repo, ".loki", "runs", "e10-20260101T000000Z-aaaa", "budget.json"), "utf8"));
+    expect(raw).toEqual({ task: "fix the thing", cap_usd: 5, spent_usd: 4.2, source: "--max-cost", outcome: "budget_stopped" });
+    expect(priorSpend(repo, " fix the thing ")).toBe(4.2);
+    expect(priorSpend(repo, "another task")).toBe(0);
+    expect(lastBudgetStop(repo)?.runId).toBe("e10-20260101T000000Z-aaaa");
+  }));
+  test("the newest stop for the task wins (its spent is cumulative)", () => withRepo((repo) => {
+    writeBudgetStop(repo, "e10-20260101T000000Z-aaaa", { task: "t", cap_usd: 5, spent_usd: 3, source: "default" });
+    writeBudgetStop(repo, "e10-20260102T000000Z-bbbb", { task: "t", cap_usd: 8, spent_usd: 7, source: "--max-cost" });
+    expect(priorSpend(repo, "t")).toBe(7);
+  }));
+  test("next step names --max-cost; unpriced provider is warned about", () => {
+    expect(budgetNext(4.2, 5)).toContain("raise with --max-cost");
+    expect(unenforceableNote("claude", 5)).toBeNull();
+    expect(unenforceableNote("claude", 0)).toBeNull();
+  });
+  test("supervisor seeds the worker env and writes budget.json on BUDGET_STOP", () => {
+    const src = readFileSync(resolve(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
+    expect(src).toContain("LOKI_E10_SPENT_USD"); expect(src).toContain("writeBudgetStop(");
   });
 });

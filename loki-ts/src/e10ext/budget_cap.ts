@@ -4,6 +4,7 @@
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import { join } from "node:path"; import { capability } from "../providers/provider_guard.ts";
 export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default per-run cap lives in loki-ts/data/model-pricing.json, read by runner/budget.ts
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
 export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
@@ -32,13 +33,13 @@ export function capNote(usd: number, source: CapSource): string {
 export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number): NodeJS.ProcessEnv { return capUsd > 0 ? { ...env, LOKI_BUDGET_LIMIT: String(capUsd) } : env; }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
 export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
-  const m = costMeter(parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0);
+  const m = costMeter(parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0, Number(env.LOKI_E10_SPENT_USD)); // LOKI_E10_SPENT_USD: prior spend on this task, so kill-and-rerun cannot reset the cap
   const emit = ((type: string, stage: never, data: Record<string, unknown>) => { if (type === "cost") m.add(data.usd); (raw as unknown as (...a: unknown[]) => void)(type, stage, data); }) as unknown as E;
   return { emit, over: m.over, remaining: m.remaining };
 }
 /** Running priced total for the worker; call with each emitted cost event's usd. */
-export function costMeter(capUsd: number): { add(usd: unknown): void; over(): boolean; remaining(): number | null } {
-  let sum = 0;
+export function costMeter(capUsd: number, seedUsd = 0): { add(usd: unknown): void; over(): boolean; remaining(): number | null } {
+  let sum = Number.isFinite(seedUsd) && seedUsd > 0 ? seedUsd : 0;
   return { add: (u) => { if (typeof u === "number" && Number.isFinite(u) && u > 0) sum += u; }, over: () => capUsd > 0 && sum >= capUsd, remaining: () => (capUsd > 0 ? Math.max(capUsd - sum, 0) : null) };
 }
 /** LOKI_BUDGET_LIMIT for one session child: what is left of the cap, floored so a spent cap still reads as a (tiny) limit. null = no dollar cap. */
@@ -52,4 +53,28 @@ export function runnerBudget(explicit: number | undefined, repoDir: string, env:
 /** `--attempts N` shares one total: each attempt gets total/N (cents, min 0.01). undefined = no dollar cap to divide. */
 export function perAttemptCap(totalUsd: number | undefined, n: number): number | undefined {
   return totalUsd === undefined || totalUsd <= 0 || n <= 1 ? totalUsd : Math.max(Math.floor((totalUsd / n) * 100) / 100, 0.01);
+}
+
+export type BudgetStop = { task: string; cap_usd: number; spent_usd: number; source: CapSource; outcome: "budget_stopped" };
+/** Supervisor side: record a BUDGET_STOP at .loki/runs/<id>/budget.json (best effort; never throws into the run). */
+export function writeBudgetStop(repoDir: string, runId: string, rec: Omit<BudgetStop, "outcome">): void {
+  try { const d = join(repoDir, ".loki", "runs", runId); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "budget.json"), JSON.stringify({ ...rec, outcome: "budget_stopped" }) + "\n"); } catch { /* the stop itself is already in events.jsonl */ }
+}
+function readBudgetStop(file: string): BudgetStop | null {
+  try { const b = JSON.parse(readFileSync(file, "utf8")) as BudgetStop; return b.outcome === "budget_stopped" && typeof b.spent_usd === "number" && typeof b.cap_usd === "number" ? b : null; } catch { return null; }
+}
+/** Most recent budget-stopped run (run ids sort by time) for this task, or null with no task filter match. Its spent_usd is already cumulative. */
+export function lastBudgetStop(repoDir: string, task?: string): (BudgetStop & { runId: string }) | null {
+  const root = join(repoDir, ".loki", "runs");
+  let ids: string[] = []; try { ids = existsSync(root) ? readdirSync(root).sort().reverse() : []; } catch { return null; }
+  for (const id of ids) { const b = readBudgetStop(join(root, id, "budget.json")); if (b && (task === undefined || b.task === task.trim())) return { ...b, runId: id }; }
+  return null;
+}
+/** Dollars already spent on this exact task by budget-stopped runs; 0 when none. */
+export function priorSpend(repoDir: string, task: string): number { return lastBudgetStop(repoDir, task)?.spent_usd ?? 0; }
+/** The one next step after a budget stop. */
+export function budgetNext(spentUsd: number, capUsd: number): string { return `raise with --max-cost (spent $${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}), then rerun the same task`; }
+/** Start-time warning when a dollar cap is set but the provider reports no cost, so the cap cannot stop anything. null otherwise. */
+export function unenforceableNote(provider: string, capUsd: number): string | null {
+  return capUsd > 0 && capability(provider)?.cost === "none" ? `warning: ${provider} reports no cost, so the $${capUsd.toFixed(2)} cap cannot be enforced` : null;
 }

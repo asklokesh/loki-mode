@@ -234,3 +234,20 @@ runner stops launching pending units with `BUDGET_STOP` once the summed measured
 finished units reaches that cap. Units already running when the cap is crossed finish, so
 the total can overshoot by at most the in-flight units. `budgets.per_run` is accepted as an
 alias of `budgets.per_run_usd` in `loki.yaml`.
+
+## A budget stop survives a rerun
+
+When the Bun engine stops a run on its dollar cap it writes
+`.loki/runs/<id>/budget.json` with the cap, the amount spent, where the cap
+came from, and the outcome `budget_stopped`. `loki status` shows the latest
+stop, and the run summary's next step reads "raise with --max-cost, then rerun
+the same task".
+
+Rerunning the same task does not reset the meter. The supervisor finds the
+newest budget stop for that exact task text and hands its spend to the worker
+as `LOKI_E10_SPENT_USD`, so the cap counts the earlier spend too. To continue,
+raise the cap with `--max-cost`.
+
+When a dollar cap is set but the provider reports no cost, the start output
+adds a warning: the cap cannot be enforced, because unmeasured sessions never
+count toward it.
