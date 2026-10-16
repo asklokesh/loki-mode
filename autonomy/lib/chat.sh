@@ -99,23 +99,28 @@ _chat_run_launch() {
     before_dir="$(_chat_run_dir)"; before_state="$(_chat_run_state "$before_dir")"
     _chat_run_start "$loki" "$input" < /dev/null > "$log" 2>&1 &
     pid=$!
-    max=$(( ${LOKI_CHAT_START_WAIT:-15} * 5 ))
+    local wait_s="${LOKI_CHAT_START_WAIT:-15}"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=15 ;; esac
+    [ "$wait_s" -ge 1 ] || wait_s=1
+    max=$(( wait_s * 5 ))
     for ((i = 0; i < max; i++)); do
         local nd ns
         nd="$(_chat_run_dir)"; ns="$(_chat_run_state "$nd")"
-        if [ "$ns" = "running" ] && { [ "$nd" != "$before_dir" ] || [ "$before_state" != "running" ]; }; then
+        if [ "$ns" = "running" ] && { { [ "$nd" != "$before_dir" ] && _chat_pidfile_live "$nd/run.pid"; } || { [ "$nd" = "$before_dir" ] && [ "$before_state" != "running" ]; }; }; then
             echo "Run started in the background (pid $pid). Output: $log"
             return 0
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
-            wait "$pid" 2>/dev/null || rc=$?
-            echo "Run did not start (loki start ended before a live run appeared). Log: $log" >&2
+            wait "$pid" 2>/dev/null || true
+            rc="$(sed -n 's/.*(run finished, exit \([0-9][0-9]*\).*/\1/p' "$log" 2>/dev/null | tail -n1)"
+            case "$rc" in ''|0) rc=1 ;; esac
+            echo "Run did not start (loki start exited $rc before a live run appeared). Log: $log" >&2
             tail -n 5 "$log" 2>/dev/null | cut -c1-200 >&2
-            return 1
+            return "$rc"
         fi
         sleep 0.2
     done
-    echo "Run start not confirmed after ${LOKI_CHAT_START_WAIT:-15}s (no live run state; launcher pid $pid still running). Log: $log" >&2
+    echo "Run start not confirmed after ${wait_s}s (no live run state; launcher pid $pid still running). Log: $log" >&2
     return 1
 }
 
@@ -385,7 +390,8 @@ Question: $line" || true
             /build) mode="build"; echo "Build mode: edits allowed." ;;
             /run|/start)
                 [ -n "$rest" ] || { echo "usage: /run <prd|brief>"; continue; }
-                if _chat_run_launch "$loki" "$rest"; then _chat_attach_banner || true; else echo "(exit 1)"; fi ;;
+                local _lrc=0; _chat_run_launch "$loki" "$rest" || _lrc=$?
+                if [ "$_lrc" -eq 0 ]; then _chat_attach_banner || true; else echo "(exit $_lrc)"; fi ;;
             /workspace)
                 local _ws_name="${rest%% *}" _ws_brief=""
                 [ "$_ws_name" != "$rest" ] && _ws_brief="${rest#* }"
