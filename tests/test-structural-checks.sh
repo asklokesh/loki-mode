@@ -206,6 +206,18 @@ git -C "$G" add fence.md
 git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m fence1
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
 if failed_check "$out" "unmeasured Nx" >/dev/null; then ok "claim after an edited opening fence is flagged"; else bad "edited fence hid a later claim"; fi
+# Hunk-header function-context text containing +<digits> must not shift line numbers.
+git -C "$G" checkout -q main
+git -C "$G" checkout -q -b hunk-ctx
+printf 'Intro\nx\n\nA +1\n' > "$G/h.md"
+git -C "$G" add h.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m h0
+git -C "$G" branch -f main HEAD
+printf '```\nfoo 8x faster\n```\n' >> "$G/h.md"
+git -C "$G" add h.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m h1
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
+if ! failed_check "$out" "unmeasured Nx" >/dev/null; then ok "fenced claim not flagged when hunk context has +digits"; else bad "hunk context +digits misread fence state"; fi
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

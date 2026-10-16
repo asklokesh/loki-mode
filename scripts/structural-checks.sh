@@ -126,7 +126,7 @@ unmeasured_claims() {
             if (/^\+\+\+ b\/(.*)$/) { $file = $1; %in = (); $o = 0; $i = 0;
               if (open(F, "<", $file)) { while (<F>) { $i++; if (/^\s*(```|~~~)/) { $in{$i} = 1; $o = !$o } elsif ($o) { $in{$i} = 1 } } close F }
               next }
-            if (/^@@ .*\+(\d+)/) { $ln = $1; next }
+            if (/^@@ -\S+ \+(\d+)(?:,\d+)? @@/) { $ln = $1; next }
             next unless /^\+(?!\+\+ )(.*)$/;
             $l = $1; $cur = $ln++;
             next if $in{$cur} || $l =~ /<!-- claim-ok -->/ || $l =~ /$k/;
