@@ -187,9 +187,9 @@ describe("FC-09t runner_config commented headers and path deps", () => {
     expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { path = "../f" }'))).toEqual(["Cargo.toml"]);
     expect(capsOn("Cargo.toml", CARGO, CARGO + '\n[workspace.dependencies]\nfoo = { path = "../f" }\n')).toEqual(["Cargo.toml"]);
   });
-  test("dev-dependency git= caps; [dependencies] git= alone does not", () => {
+  test("dev-dependency and [dependencies] git= cap", () => {
     expect(capsOn("Cargo.toml", CARGO, CARGO.replace('tokio = "1"', 'tokio = { git = "https://x/y" }'))).toEqual(["Cargo.toml"]);
-    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual([]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual(["Cargo.toml"]);
   });
   test("[[test]] path and [lib] test = false cap", () => {
     expect(capsOn("Cargo.toml", CARGO, CARGO + '\n[[test]]\nname = "it"\npath = "fake.rs"\n')).toEqual(["Cargo.toml"]);
@@ -273,7 +273,6 @@ describe("FC-09t r3 Cargo multi-line, nested inline and legacy sections", () => 
     expect(capsOn("Cargo.toml", H, H + "# note\n")).toEqual([]);
     expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { version = "2", features = ["a"] }').replace('tokio = "1"', 'tokio = { version = "2", features = ["rt"] }'))).toEqual([]);
     expect(capsOn("Cargo.toml", CARGO, CARGO.replace('name = "x"\n\n[dep', 'name = "y"\ndescription = """\nmulti [ line {\n"""\n\n[dep') + '\n[features]\ndefault = ["a"]\n')).toEqual([]);
-    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual([]);
   });
 });
 
@@ -333,5 +332,34 @@ describe("FC-09t r4 one TOML scanner, escape-decoded keys, empty sides", () => {
     expect(sideCaps(null, CARGO.replace('tokio = "1"', 'tokio = { path = "../f" }'))).toEqual(["Cargo.toml"]);
     expect(sideCaps(null, '[package]\nname = "x"\nautotests = false\n')).toEqual(["Cargo.toml"]);
     expect(sideCaps(CARGO.replace('tokio = "1"', 'tokio = { path = "../f" }'), null)).toEqual(["Cargo.toml"]);
+  });
+});
+
+describe("FC-09t r5 target keys and dependency sources", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n';
+  const B = CARGO + '\n[[bin]]\nname = "a"\npath = "src/main.rs"\n';
+  const capsOn = (base: string, head: string): string[] => { const r = repo({ "Cargo.toml": base }); r.edit("Cargo.toml", head); return testConfigChanged(r.dir, r.base, ["Cargo.toml"]); };
+  test.each([
+    ["bin harness=false", B, B.replace('name = "a"', 'name = "b"\nharness = false')],
+    ["bin required-features", B, B.replace('name = "a"', 'name = "a"\nrequired-features = ["never"]')],
+    ["bin path change", B, B.replace("src/main.rs", "src/fake.rs")],
+    ["bench harness", CARGO, CARGO + '\n[[bench]]\nname = "b"\nharness = false\n'],
+    ["example path", CARGO, CARGO + '\n[[example]]\nname = "e"\npath = "x.rs"\n'],
+    ["normal dep git", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "file:///tmp/fake" }')],
+    ["normal dep package", CARGO, CARGO.replace('serde = "1"', 'serde = { version = "1", package = "evil" }')],
+    ["dep workspace=true", CARGO, CARGO.replace('serde = "1"', 'serde = { workspace = true }')],
+    ["package.workspace", CARGO, CARGO.replace('name = "x"', 'name = "x"\nworkspace = "../other"')],
+  ])("%s caps", (_n, base, head) => {
+    expect(capsOn(base, head)).toEqual(["Cargo.toml"]);
+  });
+  test.each(["rev", "branch", "tag"])("dev-dependency git %s change caps", (k) => {
+    const g = (v: string): string => CARGO.replace('tokio = "1"', `tokio = { git = "https://x/y", ${k} = "${v}" }`);
+    expect(capsOn(g("a"), g("b"))).toEqual(["Cargo.toml"]);
+  });
+  test("version bump, bin name, description, keywords, features do not cap", () => {
+    expect(capsOn(CARGO, CARGO.replace('serde = "1"', 'serde = { version = "2", features = ["x"] }'))).toEqual([]);
+    expect(capsOn(B, B.replace('name = "a"', 'name = "c"'))).toEqual([]);
+    expect(capsOn(CARGO, CARGO.replace('name = "x"', 'name = "x"\ndescription = "d"\nkeywords = ["k"]'))).toEqual([]);
+    expect(capsOn(CARGO, CARGO + '\n[features]\nf = []\n')).toEqual([]);
   });
 });

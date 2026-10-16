@@ -42,12 +42,12 @@ function relevant(shared: Sections, text: string): string {
     let blk = false;
     return lines(text).map((l) => l.replace(/\s*\/\/.*$/, "")).filter(Boolean).filter((l) => { if (blk) { if (l === ")") blk = false; return true; } if (/^(replace|use)\s*\($/.test(l)) { blk = true; return true; } return /^(replace|use)\s/.test(l); }).join("\n");
   }
-  if (shared === "cargo") { // flatten every statement (multi-line arrays and inline tables included) to dotted leaf paths and judge each: patch/replace, dependency path=, dev/build-dependency git/package/registry, test-steering keys
-    const dep = /(^|\.)(dev-|build-)?dependencies(\.|$)/, pr = /^(patch|replace)(\.|$)/, TK = /^(test\.(path|harness|test|required-features)|lib\.(test|path|harness|doctest)|bin\.test|package\.(autotests|build)|workspace\.(members|default-members|exclude)|profile\.(test\..*|.*\.(debug-assertions|overflow-checks)))$/, out: string[] = []; let sec = "";
+  if (shared === "cargo") { // flatten every statement (multi-line arrays and inline tables included) to dotted leaf paths and judge each: patch/replace, dependency path=, any dependency git/package/registry/rev/branch/tag/workspace, test-steering keys
+    const dep = /(^|\.)(dev-|build-)?dependencies(\.|$)/, pr = /^(patch|replace)(\.|$)/, TK = /^((lib|bin|test|bench|example)\.(test|harness|path|required-features|doctest)|package\.(autotests|build|workspace)|workspace\.(members|default-members|exclude)|profile\.(test\..*|.*\.(debug-assertions|overflow-checks)))$/, out: string[] = []; let sec = "";
     for (const st of cargoStmts(text)) {
       if (st[0] === "[") { const dbl = st.startsWith("[["), [k, j] = tomlKey2(st, dbl ? 2 : 1, false); if (st.slice(j).trim() !== (dbl ? "]]" : "]")) throw new Error("toml header"); sec = k; if (pr.test(sec) || KW.test(st)) out.push(`[${sec}]`); continue; }
       const [k, i] = tomlKey2(st);
-      for (const [f, v] of tomlLeaves((sec ? sec + "." : "") + k, st.slice(i))) { const last = f.slice(f.lastIndexOf(".") + 1); if (KW.test(f + "=" + v) || pr.test(f) || TK.test(f) || (dep.test(f) && (last === "path" || (/(dev|build)-dependencies/.test(f) && /^(git|package|registry)$/.test(last))))) out.push(`${f}=${v}`); }
+      for (const [f, v] of tomlLeaves((sec ? sec + "." : "") + k, st.slice(i))) { const last = f.slice(f.lastIndexOf(".") + 1); if (KW.test(f + "=" + v) || pr.test(f) || TK.test(f) || (dep.test(f) && (last === "path" || /dependencies\..+\.(git|package|registry|rev|branch|tag|workspace)$/.test(f)))) out.push(`${f}=${v}`); }
     }
     return out.join("\n"); }
   if (shared === "tsconfig") { const j = jsonc(text) as { compilerOptions?: Record<string, unknown>; extends?: unknown }; const o = j.compilerOptions ?? {}; return JSON.stringify(["extends", "baseUrl", "paths", "rootDirs", "moduleSuffixes", "customConditions"].map((k) => (k === "extends" ? j["extends"] : o[k]))); }
