@@ -276,3 +276,62 @@ describe("FC-09t r3 Cargo multi-line, nested inline and legacy sections", () => 
     expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual([]);
   });
 });
+
+describe("FC-09t r4 one TOML scanner, escape-decoded keys, empty sides", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[lib]\nname = "x"\n';
+  const capsOn = (base: string, head: string): string[] => { const r = repo({ "Cargo.toml": base }); r.edit("Cargo.toml", head); return testConfigChanged(r.dir, r.base, ["Cargo.toml"]); };
+  const DEV = (desc: string, dep: string): string => `[package]\nname = "x"\n${desc}\n\n[dev-dependencies]\nserde = ${dep}\n# """\n`;
+  test.each([
+    ["basic ml with inner quote and hash", 'description = """ab"c # x"""'],
+    ["literal ml with apostrophe and hash", "description = '''it's a # thing'''"],
+  ])("string then comment-looking text: %s", (_n, desc) => {
+    expect(capsOn(DEV(desc, '"1"'), DEV(desc, '{ path = "../serde" }'))).toEqual(["Cargo.toml"]);
+    expect(capsOn(DEV(desc, '"1"'), DEV(desc, '"2"'))).toEqual([]);
+  });
+  test("closing triple quote followed by a comment does not cap", () => {
+    expect(capsOn(CARGO, CARGO.replace('name = "x"\n\n[dep', 'name = "x"\ndescription = """\nabc\n""" # c\n\n[dep'))).toEqual([]);
+    expect(capsOn(CARGO, CARGO.replace('name = "x"\n\n[dep', 'name = "x"\ndescription = """ab""""\n\n[dep'))).toEqual([]);
+  });
+  test.each([
+    ['["dev-dependencies"]'], ["['dev-dependencies']"], ['["dev\\u002ddependencies"]'], ['["dev\\U0000002ddependencies"]'], ['[ "dev-dependencies" ]'],
+    ['["dev-dependencies".x]'], ['["patch".crates-io]'], ['["dev\\qdeps"]'],
+  ])("quoted header %s caps", (h) => {
+    expect(capsOn(CARGO, CARGO + `\n${h}\nserde = { path = "../serde" }\n`)).toEqual(["Cargo.toml"]);
+  });
+  test("quoted header version bump does not cap", () => {
+    const q = (v: string): string => CARGO + `\n["dev-dependencies"]\nserde = ${v}\n`;
+    expect(capsOn(q('"1"'), q('"2"'))).toEqual([]);
+  });
+  test("quoted dotted key in a section caps", () => {
+    expect(capsOn(CARGO, CARGO.replace('tokio = "1"', '"tokio" = { "path" = "../f" }'))).toEqual(["Cargo.toml"]);
+  });
+  test.each([
+    ["profile.test", "[profile.test]\nopt-level = 1\n"], ["profile.dev debug-assertions", "[profile.dev]\ndebug-assertions = false\n"],
+    ["profile.release overflow-checks", "[profile.release]\noverflow-checks = false\n"], ["workspace members", '[workspace]\nmembers = ["a"]\n'],
+    ["workspace default-members", '[workspace]\ndefault-members = ["a"]\n'], ["workspace exclude", '[workspace]\nexclude = ["a"]\n'],
+  ])("advisory key %s caps", (_n, add) => {
+    expect(capsOn(CARGO, CARGO + "\n" + add)).toEqual(["Cargo.toml"]);
+  });
+  test("package build caps", () => {
+    expect(capsOn(CARGO, CARGO.replace('name = "x"\n', 'name = "x"\nbuild = "fake.rs"\n'))).toEqual(["Cargo.toml"]);
+  });
+  test("profile.release opt-level does not cap", () => {
+    expect(capsOn(CARGO, CARGO + "\n[profile.release]\nopt-level = 3\n")).toEqual([]);
+  });
+  test("datetime with a space parses and does not cap", () => {
+    expect(capsOn(CARGO, "d = 1979-05-27 07:32:00\n" + CARGO)).toEqual([]);
+    expect(capsOn(CARGO, "d = 1979-05-27 07:32:00.5Z\ne = 1979-05-27T07:32:00-08:00\n" + CARGO)).toEqual([]);
+  });
+  const sideCaps = (base: string | null, head: string | null): string[] => {
+    const r = repo(base === null ? { README: "x" } : { "Cargo.toml": base });
+    if (head === null) rmSync(join(r.dir, "Cargo.toml")); else r.edit("Cargo.toml", head);
+    return testConfigChanged(r.dir, r.base, ["Cargo.toml"]);
+  };
+  test("added or deleted Cargo.toml parses the empty side as an empty document", () => {
+    expect(sideCaps(null, CARGO)).toEqual([]);
+    expect(sideCaps(CARGO, null)).toEqual([]);
+    expect(sideCaps(null, CARGO.replace('tokio = "1"', 'tokio = { path = "../f" }'))).toEqual(["Cargo.toml"]);
+    expect(sideCaps(null, '[package]\nname = "x"\nautotests = false\n')).toEqual(["Cargo.toml"]);
+    expect(sideCaps(CARGO.replace('tokio = "1"', 'tokio = { path = "../f" }'), null)).toEqual(["Cargo.toml"]);
+  });
+});
