@@ -50,6 +50,9 @@ export function stashHoldout(o: { runId: string; repoDir: string; srcDir: string
   return { dir, names: new Set(held) };
 }
 
+/** C-C4b-c: the only signature a held-out failure reaches the fixer under; never a code-owned failure, so it never escalates a rung. */
+export const HOLDOUT_GROUP = "held-out checks";
+
 /** Verify time only: copies the held files into the Wall target dir under neutral names and returns their TestRefs. A missing dir, manifest or file, or a sha mismatch, yields a `missing` entry so the caller fails closed. */
 export function stageHoldout(dir: string, repoDir: string): { tests: { runner: string; path: string }[]; missing: string[]; cleanup: () => void } {
   const put: string[] = [], tests: { runner: string; path: string }[] = [], missing: string[] = [];

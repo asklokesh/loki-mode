@@ -1,6 +1,7 @@
 // ROUTER-1: every model decision the engine10 stages make under LOKI_ROUTER=1 lives here, outside the engine10 line budget.
 // Invariant (L1, tested semantically in tests/engine10/route_matrix.test.ts): a session is never started below the run's model
 // unless a VALID Opus route record (plan.units: every unit executor "haiku" with a reason, nothing NOT PROVEN) names haiku.
+import { HOLDOUT_GROUP } from "../../util/holdout.ts";
 import { resolveModelAlias } from "../../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
@@ -43,7 +44,7 @@ export function routedFix(runModel: string, out: StageOutputs, o: { repeated: bo
   const carried = String(out["fix"]?.["model"] ?? out["implement"]?.["route_model"] ?? rec.model);
   const floor = runFloor(runModel);
   const cur = !rec.valid && modelRank(carried) < modelRank(floor) ? floor : carried; // a below-run model carries only with a valid route record
-  const tests = o.groups.filter((g) => !g.signature.startsWith("lint:") && g.signature !== "select-tests").length;
+  const tests = o.groups.filter((g) => !g.signature.startsWith("lint:") && g.signature !== "select-tests" && g.signature !== HOLDOUT_GROUP).length; // C-C4b-c: held-out red is not code-owned evidence
   const redo = unitRedo(isHaiku(cur) ? "haiku" : "sonnet", tests > 0 ? "code" : "harness") === "redo-sonnet"; // B4: a haiku unit with a code-owned failure is redone on sonnet
   const climbed = tests > 0 && (o.repeated || o.stall || redo) ? climb("run", cur, o.stall ? "stall" : "code_fail", o.reason) : null;
   return { pin: climbed?.to ?? (cur !== runModel ? cur : undefined), climbed };

@@ -7,13 +7,14 @@ import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
+import { HOLDOUT_GROUP } from "../../util/holdout.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
 import { buildFixResumeBrief, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean {
-  return !g.signature.startsWith("lint:") && g.signature !== "select-tests";
+  return !g.signature.startsWith("lint:") && g.signature !== "select-tests" && g.signature !== HOLDOUT_GROUP; // C-C4b-c: a held-out red never escalates
 }
 
 export function buildFixBrief(

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
-import { WALL_HOLDOUT_MIN, holdoutDirFor, holdoutSplit, removeHoldout, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
+import { HOLDOUT_GROUP, WALL_HOLDOUT_MIN, holdoutDirFor, holdoutSplit, removeHoldout, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunOptions, StageName, TestRef } from "../../src/engine10/types.ts";
 
 const dirs: string[] = [];
@@ -91,16 +91,16 @@ describe("Wall holdout end to end", () => {
     const vctx = mkCtx(repoDir, base, [], r.data); vctx.tests = { detect: async () => ({ runners: ["bun"], tests: visible }), impacted: () => [] } as never;
     const v = await verifyStage.run(vctx, new AbortController().signal);
     const checks = v.data.checks as { name: string; result: string; cmd: string }[];
-    expect(checks.find((c) => c.name === "holdout:1")?.result).toBe("fail");
-    expect(checks.find((c) => c.name === "holdout:1")!.cmd).not.toContain(held!); // neutral name
+    expect(checks.find((c) => c.name === "holdout")?.result).toBe("fail");
+    expect(checks.find((c) => c.name === "holdout")!.cmd).not.toContain(held!); // neutral name
     expect(checks.filter((c) => c.name.startsWith("bun:") && c.result !== "pass")).toEqual([]);
     expect(v.data.failures_grouped as unknown[]).toHaveLength(1);
-    expect(v.data.not_proven as string[]).toContain("holdout check failed: holdout:1"); // D99 item 4: names the holdout check, never a warning
+    expect(v.data.not_proven as string[]).toContain("holdout check failed"); // D99 item 4: names the holdout check, never a warning
     expect(walk(repoDir).filter((p) => p.includes("loki_wall_holdout"))).toEqual([]); // copied in only for the run
     // control: implement the held function too -> holdout passes
     writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => `export const f${k + 1} = () => ${k + 1};\n`).join(""));
     const ok = await verifyStage.run(vctx, new AbortController().signal);
-    expect((ok.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout:1")?.result).toBe("pass");
+    expect((ok.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout")?.result).toBe("pass");
   }, 120_000);
 
   test("fewer than 5 Wall tests, or opt-out: nothing held", async () => {
@@ -135,8 +135,28 @@ describe("Wall holdout end to end", () => {
     writeFileSync(join(dir, held), "// tampered\n"); expect(existsSync(join(dir, held))).toBe(true);
     writeFileSync(join(repoDir, "src", "impl.ts"), "export const f0 = () => 1;\n");
     const v = await verifyStage.run(mkCtx(repoDir, base, [], r.data), new AbortController().signal);
-    expect((v.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout:store")?.result).toBe("fail");
+    const hs = (v.data.checks as { name: string; result: string; owner?: string }[]).find((c) => c.name === "holdout")!;
+    expect(hs.result).toBe("not_run"); expect(hs.owner).toBe("harness"); // C-C4b-c: infrastructure failure, not a test failure the fixer sees
+    expect((v.data.failures_grouped as { signature: string }[]).some((g) => g.signature.includes("holdout") || g.signature === HOLDOUT_GROUP)).toBe(false); // the store failure adds no group
+    expect(JSON.stringify(v.data)).not.toContain(held);
   }, 60_000);
+
+  test("C-C4b-c: a holdout-only red leaves no holdout id or message in events, and the fixer sees one opaque group", async () => {
+    const { repoDir, base } = mkRepo(), all = names(5), [held] = holdoutSplit(RUN, all, { ratio: 0.2, min: 5 });
+    const r = await runWall(mkCtx(repoDir, base, all), new AbortController().signal, { baseRunner: pass });
+    const data = r.data as { files: { path: string }[] }, i = all.indexOf(held!) + 1;
+    writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => (k + 1 === i ? "" : `export const f${k + 1} = () => ${k + 1};\n`)).join(""));
+    const visible: TestRef[] = data.files.map((f) => ({ runner: "bun", path: `tests/${f.path.split("/").pop()}` }));
+    const log: { type: string; data: unknown }[] = [];
+    const vctx = mkCtx(repoDir, base, [], r.data); vctx.emit = ((type: string, _s: unknown, d: unknown) => { log.push({ type, data: d }); }) as never;
+    vctx.tests = { detect: async () => ({ runners: ["bun"], tests: visible }), impacted: () => [] } as never;
+    const v = await verifyStage.run(vctx, new AbortController().signal);
+    log.push({ type: "stage.completed", data: v.data });
+    const text = JSON.stringify(log);
+    expect(text).not.toContain("holdout:"); expect(text).not.toContain(held!); expect(text).not.toContain(`f${i}`); expect(text).not.toContain("first_error");
+    expect(log.some((e) => e.type === "test.result" && (e.data as { name: string }).name === "holdout")).toBe(true);
+    expect(v.data.failures_grouped).toEqual([{ signature: HOLDOUT_GROUP, count: 1, sample: "" }]);
+  }, 120_000);
 });
 
 describe("holdout store cleanup", () => {
@@ -157,5 +177,24 @@ describe("holdout store cleanup", () => {
     const { repoDir, dir } = stash(); const ctx = mkCtx(repoDir, "x", []);
     const r = await runMachine(ctx, stub("failed")); expect(r.stopped).toBe("intake failed");
     expect(existsSync(dir)).toBe(false);
+  });
+});
+
+describe("holdout-only red never escalates", () => {
+  test("fix stage: repeated holdout-only signature pins no escalation model and emits no route.escalated", async () => {
+    const { fixStage } = await import("../../src/engine10/stages/fix.ts");
+    const groups = [{ signature: HOLDOUT_GROUP, count: 1, sample: "" }];
+    const events: string[] = [];
+    const ctx = { runId: "r", repoDir: "/nonexistent-c-c4b-c", runDir: "/nonexistent-c-c4b-c", baseSha: "x", branch: "b", provider: "claude", model: "claude-sonnet-4-5", deep: false, capS: 900, emit: (t: string) => { events.push(t); },
+      sessions: { run: async () => { throw new Error("stop"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+      cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 },
+      outputs: () => ({ verify: { failures_grouped: groups }, fix: { round: 1, signatures: HOLDOUT_GROUP } }) } as unknown as RunContext;
+    await fixStage.run(ctx, new AbortController().signal).catch(() => undefined);
+    expect(events).not.toContain("route.escalated");
+  });
+  test("router: routedFix does not climb on a holdout-only group, even repeated or stalled", async () => {
+    const { routedFix } = await import("../../src/runner/router/unit_model.ts");
+    const groups = [{ signature: HOLDOUT_GROUP }];
+    expect(routedFix("claude-sonnet-4-5", {}, { repeated: true, stall: true, groups, reason: HOLDOUT_GROUP }).climbed).toBeNull();
   });
 });
