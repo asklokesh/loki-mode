@@ -16,6 +16,8 @@ import type { CostPrior } from "./estimate.ts";
 import { ModernizeLog } from "./log.ts";
 import { isModernizeId, makeModernizeId } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
+import { productionWaveDeps, runWaves } from "./coordinator.ts";
+import type { WaveDeps } from "./coordinator.ts";
 import { unitMain } from "../../util/modernize_unit.ts";
 
 const TARGETS: readonly ModernizeTarget[] = ["python3", "java21"];
@@ -174,14 +176,14 @@ export interface ModernizeCliDeps {
   /** Cost/time priors (eta.ts/cost.ts history, or the Legacy-Bench pilot median, M-27).
    *  Unmeasured (null/null) until that wiring lands; estimate.ts prints "not measured", never $0. */
   prior?: CostPrior;
+  /** Complete wave dependencies (tests inject stubs); absent means productionWaveDeps, which names what is not built. */
+  waves?: WaveDeps;
 }
 const NO_PRIOR: CostPrior = { usdPerUnit: null, p50UnitTimeS: null };
 
-/** `loki modernize` entry point (TABLE route in ../cli.ts). Section 2/3.1: parses and
- *  validates flags, opens the modernize log, runs Inventory and the up-front estimate, and
- *  for --dry-run prints it and stops at zero model spend. Oracle capture, planning and
- *  execution (sections 3.2-3.6) are later slices (M-09 onward); a non-dry-run invocation
- *  stops after the estimate rather than claiming work those slices have not built yet. */
+/** `loki modernize` entry point (TABLE route in ../cli.ts). Section 2/3.1: parses and validates flags, opens the modernize
+ *  log, runs Inventory and the up-front estimate, and for --dry-run prints it and stops at zero model spend. Otherwise it
+ *  hands the plan to runWaves (coordinator.ts); when a dependency of that is not built, productionWaveDeps names it and exits 2. */
 export async function main(args: readonly string[], deps: ModernizeCliDeps = {}): Promise<number> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(USAGE);
@@ -229,6 +231,14 @@ export async function main(args: readonly string[], deps: ModernizeCliDeps = {})
   process.stdout.write(formatDryRun(est) + "\n");
   if (opts.dryRun) return 0;
 
-  process.stderr.write("modernize: oracle capture and execution are not built yet; use --dry-run\n");
-  return 2;
+  let waveDeps = deps.waves;
+  if (!waveDeps) {
+    const built = productionWaveDeps({ repoDir: opts.repoDir, mid, target: opts.target, workers: opts.workers, budgetUsd: opts.budgetUsd, resume: opts.resume !== null, noPr: opts.noPr });
+    if (!built.ok) { process.stderr.write(`${built.reason}; use --dry-run\n`); return 2; }
+    waveDeps = built.deps;
+  }
+  const res = await runWaves(clustered, waveDeps);
+  for (const w of res.waves) process.stdout.write(`wave ${w.wave}: ${w.verdict.verified ? "verified" : `not verified (${w.verdict.reason})`}${w.shipped ? `, shipped ${w.url ?? ""}` : w.reason ? `, not shipped (${w.reason})` : ""}\n`);
+  if (res.blocked) process.stderr.write(`modernize: ${res.blocked}\n`);
+  return res.ok ? 0 : 1;
 }
