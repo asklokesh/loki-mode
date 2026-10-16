@@ -191,7 +191,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const outcome: Outcome = cancelled ? "CANCELLED" : outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED";
   if (blocked || (verdict === "FAILED" && prUrl === null && !cancelled)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
-    const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
+    const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"]; await (await import("../integrations/writeback.ts")).writeBack({ phase: blocked ? "blocked" : "failed", reason, verdict, prUrl, receiptSha256: null, task: "" }, env); // opt-in tracker writeback (key from LOKI_WRITEBACK_ISSUE), never throws
     if (blocked) await slackEvent(env, "blocked", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), question: reason }); // D51-A4
     const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== "";
     if (isIssueWithRef && opts.comment) {
@@ -252,7 +252,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
-  const trackerRef = parseTrackerRef(task), isIssue = ISSUE_RE.test(task) || trackerRef !== null, model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env };
+  const trackerRef = parseTrackerRef(task), isIssue = ISSUE_RE.test(task) || trackerRef !== null, model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env }; if (trackerRef && !process.env.LOKI_WRITEBACK_ISSUE) process.env.LOKI_WRITEBACK_ISSUE = env.LOKI_WRITEBACK_ISSUE = trackerRef.key; // writeback keys off the intake ref (direct `loki jira:KEY` path)
   { // D61-11b: unit intake first (fails closed, so a unit is never split into a group); its frozen spec and cost cap reach the worker env
     const u = (await import("../features/speed/unit_mode.ts")).unitIntake(process.env, repoDir, cap.usd);
     if (u && !u.ok) { process.stderr.write(`engine10: ${u.note}\n`); return 2; }
