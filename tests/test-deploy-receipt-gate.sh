@@ -1076,6 +1076,41 @@ EOF
         else
             bad "25c. unsupported provider did not refuse --canary" "rc=$RC25C sentinels=$(any_sentinel)"
         fi
+
+        # 26. --destination: production refuses without a VERIFIED staging record for this SHA; allowed after one
+        printf '%s' "http://127.0.0.1:$HS_PORT/ok" > "$WORKROOT/canary-url"
+        mk_hfix d26; D26="$WORKROOT/d26"
+        rm -f "$SENTINEL_DIR/vercel-calls"
+        OUT26A="$(run_h "$D26" --execute --destination production)"; RC26A=$?
+        if [ "$RC26A" -ne 0 ] && [ ! -e "$SENTINEL_DIR/vercel-calls" ] && grep -q "no VERIFIED staging deploy receipt" <<<"$OUT26A"; then
+            ok "26a. production with no staging receipt refuses, names why, runs nothing"
+        else
+            bad "26a. production ran or refused without naming staging" "rc=$RC26A calls=$(cat "$SENTINEL_DIR/vercel-calls" 2>/dev/null)"
+        fi
+        _="$(run_h "$D26" --execute --destination staging)"; RC26S=$?
+        R26S="$(last_record "$D26")"
+        if [ "$RC26S" -eq 0 ] && [ "$(rec_field "$R26S" destination)" = "staging" ] && ! grep -q -- "--prod" "$SENTINEL_DIR/vercel-calls"; then
+            ok "26b. staging deploy runs without --prod and records destination=staging"
+        else
+            bad "26b. staging deploy wrong" "rc=$RC26S calls=$(cat "$SENTINEL_DIR/vercel-calls" 2>/dev/null)"
+        fi
+        cp "$R26S" "$WORKROOT/r26s.bak"
+        python3 -c 'import json,sys;p=sys.argv[1];r=json.load(open(p));r["exit_code"]=0;r["head_sha"]="x";json.dump(r,open(p,"w"),indent=2)' "$R26S"
+        rm -f "$SENTINEL_DIR/vercel-calls"
+        _="$(run_h "$D26" --execute --destination production)"; RC26T=$?
+        if [ "$RC26T" -ne 0 ] && [ ! -e "$SENTINEL_DIR/vercel-calls" ]; then
+            ok "26c. an edited staging record no longer authorizes production"
+        else
+            bad "26c. tampered staging record authorized production" "rc=$RC26T"
+        fi
+        cp "$WORKROOT/r26s.bak" "$R26S"
+        rm -f "$SENTINEL_DIR/vercel-calls"
+        OUT26P="$(run_h "$D26" --execute --destination production)"; RC26P=$?
+        if [ "$RC26P" -eq 0 ] && grep -q -- "--prod" "$SENTINEL_DIR/vercel-calls" && [ "$(rec_field "$(last_record "$D26")" destination)" = "production" ]; then
+            ok "26d. production deploys after a VERIFIED staging deploy of the same SHA"
+        else
+            bad "26d. production not allowed after staging" "rc=$RC26P $(printf '%s' "$OUT26P" | tail -4)"
+        fi
         fi
     fi
     kill "$HS_PID" 2>/dev/null || true
