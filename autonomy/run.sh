@@ -12486,6 +12486,8 @@ enforce_build_check() {
     #   none       -> positively no build phase at all                 -> not_applicable (N/A)
     local cmd="" ran="false" applicable="false" exit_code="null" status="not_run"
     local build_class="present"
+    # exec_cmd overrides cmd for execution only (the recorded command stays JSON-safe).
+    local exec_cmd="" exec_env="" exec_tmo=""
 
     # INVERTED classification (three council rounds each found a fake-green hole in
     # an allowlist of build systems -> the allowlist is structurally leaky). The
@@ -12539,7 +12541,24 @@ enforce_build_check() {
         # bazel/anything-unborn silently reads VERIFIED. This makes the ENTIRE
         # no-package.json universe honest by CONSTRUCTION (list-free), which is why
         # this converges where four rounds of adding-to-a-list could not.
-        if [ "$has_foreign_manifest" = "false" ] && [ -f "$tree/package.json" ]; then
+        # S3 (cost program): a manifest-less PYTHON tree (no package.json, no foreign
+        # manifest, no setup.py/pyproject) has a runnable, deterministic build
+        # equivalent: byte-compiling every module (syntax + import-time constants).
+        # We RUN it and record verified/failed. This is NOT a not_applicable
+        # claim: a broken .py file fails the build fact instead of hiding behind
+        # "build not run".
+        if [ "$has_foreign_manifest" = "false" ] && [ ! -f "$tree/package.json" ] \
+           && command -v python3 >/dev/null 2>&1 \
+           && find "$tree" -maxdepth 4 -type f -name '*.py' \
+                -not -path '*/.loki/*' -not -path '*/.git/*' -not -path '*/node_modules/*' \
+                -not -path '*/.venv/*' -not -path '*/venv/*' \
+                -print -quit 2>/dev/null | grep -q .; then
+            cmd="python3 -m compileall -q ."; applicable="true"; build_class="runnable"
+            exec_cmd="python3 -m compileall -q -x '(^|/)(\\.loki|\\.git|node_modules|\\.venv|venv)(/|\$)' ."
+            exec_env="PYTHONPYCACHEPREFIX=$quality_dir/.pycache"
+            if command -v timeout >/dev/null 2>&1; then exec_tmo="timeout $timeout_s"
+            elif command -v gtimeout >/dev/null 2>&1; then exec_tmo="gtimeout $timeout_s"; fi
+        elif [ "$has_foreign_manifest" = "false" ] && [ -f "$tree/package.json" ]; then
             local has_build_devdep="false"
             # A build TOOL as a (dev)dependency means a build exists even if it runs
             # under a non-"build" script name -> stay not_run, do not claim N/A.
@@ -12584,7 +12603,13 @@ enforce_build_check() {
             return $?
         else
             local rc=0
-            ( cd "$tree" && timeout "$timeout_s" sh -c "$cmd" >/dev/null 2>&1 ) || rc=$?
+            if [ -n "$exec_cmd" ]; then
+                # Python compileall: pycache redirected out of the repo; timeout
+                # prefix is optional so a box without timeout is not a false RED.
+                ( cd "$tree" && env "$exec_env" $exec_tmo sh -c "$exec_cmd" >/dev/null 2>&1 ) || rc=$?
+            else
+                ( cd "$tree" && timeout "$timeout_s" sh -c "$cmd" >/dev/null 2>&1 ) || rc=$?
+            fi
             ran="true"; exit_code="$rc"
             if [ "$rc" -eq 0 ]; then status="verified"; else status="failed"; fi
             : > "$marker" 2>/dev/null || true
@@ -13790,7 +13815,32 @@ _loki_run_pytest_with_timeout() {
     local pytest_timeout="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
     local _to_cmd=()
     read -r -a _to_cmd <<< "$(_loki_timeout_prefix "$pytest_timeout" 'pytest gate')"
-    (cd "$target_dir" && "${_to_cmd[@]}" pytest "$@" 2>&1)
+    # S3 (cost program): bare `pytest` does not put the cwd on sys.path, so
+    # root-level modules imported from tests/ raise ModuleNotFoundError (a false
+    # RED that drives repair loops). `python3 -m pytest` adds cwd. Falls back to
+    # the bare binary only when python3 cannot import pytest.
+    local _py_cmd=(pytest)
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import pytest' >/dev/null 2>&1; then
+        _py_cmd=(python3 -m pytest)
+    fi
+    local _pt_out _pt_rc
+    _pt_out=$(cd "$target_dir" && "${_to_cmd[@]}" "${_py_cmd[@]}" "$@" 2>&1)
+    _pt_rc=$?
+    # Exit 5 = pytest collected 0 items (module-level-assert files, custom
+    # python_files). Try stdlib unittest discovery before giving up. Zero tests
+    # from BOTH stays exit 5 (the caller records it inconclusive, never verified).
+    if [ "$_pt_rc" -eq 5 ] && command -v python3 >/dev/null 2>&1; then
+        local _ut_out _ut_rc
+        _ut_out=$(cd "$target_dir" && "${_to_cmd[@]}" python3 -m unittest discover -p 'test_*.py' 2>&1)
+        _ut_rc=$?
+        printf '%s\n[loki] pytest collected 0 tests (exit 5); fell back to python3 -m unittest discover\n%s\n' "$_pt_out" "$_ut_out"
+        if [ "$_ut_rc" -eq 0 ] && printf '%s\n' "$_ut_out" | grep -qE '^(Ran 0 tests|NO TESTS RAN$)'; then
+            return 5
+        fi
+        return "$_ut_rc"
+    fi
+    printf '%s\n' "$_pt_out"
+    return "$_pt_rc"
 }
 
 # ============================================================================
@@ -14339,14 +14389,27 @@ sys.stdout.write(t.strip())
             # v7.5.15 (Triage #14): wrapped with configurable timeout via helper.
             output=$(_loki_run_pytest_with_timeout "${TARGET_DIR:-.}" --tb=short)
             pytest_exit=$?
+            # S3: the helper falls back to unittest discover on pytest exit 5; the
+            # record must name the runner that actually produced the verdict.
+            case "$output" in *"fell back to python3 -m unittest discover"*) test_runner="unittest" ;; esac
             if [ "$pytest_exit" -eq 124 ]; then
                 local _pt_to="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
                 test_passed=false
                 log_warn "pytest gate timed out after ${_pt_to}s (exit 124)"
-                details="pytest: TIMED OUT after ${_pt_to}s -- $(echo "$output" | tail -3 | tr '\n' ' ')"
+                details="$test_runner: TIMED OUT after ${_pt_to}s -- $(echo "$output" | tail -3 | tr '\n' ' ')"
+            elif [ "$pytest_exit" -eq 5 ]; then
+                # Zero tests from pytest AND unittest: inconclusive, never verified.
+                # Stays passing only on a POSITIVE "Ran 0 tests" read, which the
+                # zero-test guard below downgrades to no_tests_run; anything else
+                # (no fallback output) is a plain failure.
+                test_runner="unittest"
+                if ! printf '%s\n' "$output" | grep -qE '^(Ran 0 tests|NO TESTS RAN$)'; then
+                    test_passed=false
+                fi
+                details="unittest: $(echo "$output" | tail -5 | tr '\n' ' ')"
             else
                 [ "$pytest_exit" -ne 0 ] && test_passed=false
-                details="pytest: $(echo "$output" | tail -5 | tr '\n' ' ')"
+                details="$test_runner: $(echo "$output" | tail -5 | tr '\n' ' ')"
             fi
         elif [ "$has_python_project" = "true" ] && command -v python3 &>/dev/null; then
             # #139: pytest ABSENT but a Python test suite exists. stdlib unittest

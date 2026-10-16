@@ -131,5 +131,44 @@ else
     bad "python3 not on PATH -- cannot exercise the unittest fallback"
 fi
 
+# --- S3: pytest exit-5 fallback chain feeds the zero-test guard ---------------
+# The shared helper falls back to unittest discover on pytest exit 5. Zero tests
+# from BOTH must come back as exit 5 + "Ran 0 tests" so the guard records
+# inconclusive; a real unittest suite must come back exit 0 and NOT be zero.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import pytest' >/dev/null 2>&1; then
+    log_warn() { :; }
+    awk '/^(_loki_timeout_prefix|_loki_run_pytest_with_timeout)\(\) \{/,/^\}$/' "$RUN_SH" > "$TMPROOT/helper.sh"
+    # shellcheck disable=SC1090
+    source "$TMPROOT/helper.sh"
+
+    d="$TMPROOT/modassert"; mkdir -p "$d"
+    printf 'assert 1 + 1 == 2\n' > "$d/test_modlevel.py"
+    out="$(_loki_run_pytest_with_timeout "$d" --tb=short -p no:cacheprovider)"; rc=$?
+    if [ "$rc" -eq 5 ] && _loki_zero_tests_executed "unittest" "$out"; then
+        ok "module-level-assert tree: exit 5 + zero-guard fires (inconclusive, never verified)"
+    else
+        bad "module-level-assert tree not inconclusive (rc=$rc)"
+    fi
+
+    d="$TMPROOT/fbpass"; mkdir -p "$d"
+    printf '[pytest]\npython_files = nomatch_*.py\n' > "$d/pytest.ini"
+    printf 'import unittest\nclass T(unittest.TestCase):\n    def test_x(self): self.assertEqual(1, 1)\n' > "$d/test_x.py"
+    out="$(_loki_run_pytest_with_timeout "$d" --tb=short -p no:cacheprovider)"; rc=$?
+    if [ "$rc" -eq 0 ] && ! _loki_zero_tests_executed "unittest" "$out"; then
+        ok "pytest collects 0 but unittest suite passes: exit 0, not zero-guarded (verified)"
+    else
+        bad "unittest fallback did not verify a real suite (rc=$rc)"
+    fi
+else
+    ok "SKIP: pytest not importable; S3 fallback chain not exercised"
+fi
+
+# Wiring: the gate call site must treat pytest exit 5 as the inconclusive path.
+if grep -qE 'elif \[ "\$pytest_exit" -eq 5 \]; then' "$RUN_SH"; then
+    ok "WIRING: enforce_test_coverage handles pytest exit 5 (zero tests) explicitly"
+else
+    bad "WIRING: exit-5 branch missing from the pytest gate call site"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
