@@ -707,6 +707,7 @@ async function runStatusText(): Promise<number> {
   await renderPhase1Section(dir);
 
   process.stdout.write(`${DIM}${lastRunLine(dir)}${NC}\n`);
+  await renderLastDeploy(dir);
 
   process.stdout.write(`\n`);
   process.stdout.write(`${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}\n`);
@@ -737,6 +738,55 @@ function lastRunLine(dir: string): string {
   } catch {
     return "Last run: receipt unreadable";
   }
+}
+
+// Newest .loki/deploys/*.json (loki.deploy/1): target, head, health, rollback and the signature
+// verdict from the one existing verify path (verify_cmd main; its stdout is muted here). Silent when none.
+async function renderLastDeploy(dir: string): Promise<void> {
+  const ddir = resolve(dir, "deploys");
+  let files: string[] = [];
+  try {
+    files = readdirSync(ddir).filter((f) => f.endsWith(".json")).sort();
+  } catch {
+    return;
+  }
+  const newest = files[files.length - 1];
+  if (newest === undefined) return;
+  const path = resolve(ddir, newest);
+  let rec: Record<string, unknown>;
+  try {
+    rec = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+  } catch {
+    process.stdout.write(`${DIM}Last deploy: record unreadable (${newest})${NC}\n`);
+    return;
+  }
+  if (rec["schema"] !== "loki.deploy/1") return;
+  const str = (k: string): string => (typeof rec[k] === "string" ? (rec[k] as string) : "");
+  let verdict = "UNCHECKED";
+  const realWrite = process.stdout.write.bind(process.stdout);
+  const realErr = process.stderr.write.bind(process.stderr);
+  try {
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    const { main } = await import("../engine10/verify_cmd.ts");
+    const rc = await main([path]);
+    verdict = rc === 0 ? "VERIFIED" : rc === 1 ? "TAMPERED" : "UNCHECKED";
+  } catch {
+    verdict = "UNCHECKED";
+  } finally {
+    process.stdout.write = realWrite;
+    process.stderr.write = realErr;
+  }
+  const health = str("health_status") || "unchecked";
+  const bad = health === "FAILED_HEALTH";
+  let rb = "no rollback";
+  if (rec["rollback_attempted"] === true) {
+    const post = str("post_rollback_health");
+    rb = rec["rollback_exit"] === 0 ? `rolled back (service ${post === "healthy" ? "healthy" : post === "FAILED_HEALTH" ? "STILL UNHEALTHY" : "not re-checked"})` : `rollback failed (exit ${String(rec["rollback_exit"])})`;
+  }
+  const colour = bad || verdict === "TAMPERED" ? RED : DIM;
+  process.stdout.write(`${colour}Last deploy: ${str("target") || "unknown"} at ${str("head_sha").slice(0, 12) || "unknown"}, health ${health}, ${rb}, record ${verdict}${NC}\n`);
+  if (bad) process.stdout.write(`${RED}  UNHEALTHY: the last deploy failed its health check. Record: ${path}${NC}\n`);
 }
 
 // v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
