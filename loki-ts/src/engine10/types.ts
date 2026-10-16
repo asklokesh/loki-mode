@@ -24,7 +24,7 @@ export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): numb
 export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
 export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
-  "run.started", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
+  "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
   "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "wall.sealed",
   "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",

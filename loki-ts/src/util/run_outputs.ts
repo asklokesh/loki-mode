@@ -226,7 +226,7 @@ export function resumeMachineOpts<F extends string>(ctx: Parameters<typeof seedR
   const rp = resumePoint(events, raw);
   if (!rp.ok) return rp;
   seedResumeCtx(ctx, rp);
-  const done = new Set<string>(STAGE_ORDER.filter((s) => settled(events, s))), restored: StageOutputs = {};
+  const done = new Set<string>(STAGE_ORDER.filter((s) => (s === "intake" || s === "plan" || s === "wall" || s === "implement") && settled(events, s))), restored: StageOutputs = {};
   for (const s of done) { const e = events.findLast((x) => x.type === "stage.completed" && x.stage === s); if (e) restored[s] = e.data; }
   const kept = flow.map((st) => typeof st === "string" ? (done.has(st) ? [] : st) : st.filter((n) => !done.has(n))).filter((st) => st.length > 0);
   return { ok: true, flow: kept as (F | readonly F[])[], restored };
@@ -248,10 +248,18 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
-  const br = `loki/${it.runId}`;
-  if (rp.skip.includes("intake") && currentBranch(repoDir) !== br) { try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; } }
+  const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), f = fold(it.events), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
+  if (it.events.some((e) => e.type === "cap.hit")) { out(`engine10: --resume refused: run ${it.runId} already hit its cost or time cap\n`); return 2; }
+  let activeS = 0; for (let i = 1; i < it.events.length; i++) { const g = (Date.parse(it.events[i]!.ts) - Date.parse(it.events[i - 1]!.ts)) / 1000; if (g > 0 && g <= 120) activeS += g; } // active time: gaps over 2 min are downtime, not run time
+  const capS = Number(st0["cap_s"]) > 0 ? Number(st0["cap_s"]) - activeS : undefined, ceilS = Number(st0["cap_ceiling_s"]) > 0 ? Number(st0["cap_ceiling_s"]) - activeS : undefined;
+  if (capS !== undefined && capS < 60) { out(`engine10: --resume refused: run ${it.runId} has under 60s of its time cap left\n`); return 2; }
+  if (rp.skip.includes("intake") && origBranch !== br) {
+    const dirty = safeGit(repoDir, ["status", "--porcelain", "--", ".", ":(exclude).loki"]).split("\n").filter(Boolean);
+    if (dirty.length) { out(`engine10: --resume refused: ${dirty.length} uncommitted or untracked file(s) in your working tree would ride onto ${br}; commit or stash them first\n`); return 2; }
+    try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; }
+  }
   const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;
-  const env: NodeJS.ProcessEnv = { ...process.env, ...(Number(st["cap_s"]) > 0 ? { LOKI_E10_CAP_S: String(st["cap_s"]) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(capS !== undefined ? { LOKI_E10_CAP_S: String(Math.floor(capS)) } : {}), ...(f.cost.usd !== null && f.cost.usd > 0 ? { LOKI_E10_SPENT_USD: String(f.cost.usd) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
   const runDir = join(repoDir, ".loki", "runs", it.runId), eventsPath = join(repoDir, eventsRelPath(it.runId));
   const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
     const gate = prGate(repoDir);
@@ -263,7 +271,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   };
   const supervise = deps.supervise ?? (async (o) => (await import("../engine10/supervisor.ts")).runSupervisor(o));
   const { EXIT } = await import("../engine10/output.ts");
-  const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: Number(st["cap_s"]) > 0 ? Number(st["cap_s"]) : undefined, capCeilingS: Number(st["cap_ceiling_s"]) > 0 ? Number(st["cap_ceiling_s"]) : undefined, workerArgv: [process.execPath, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
+  const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: capS === undefined ? undefined : Math.floor(capS), capCeilingS: ceilS === undefined ? undefined : Math.floor(ceilS), restoreBranch: origBranch, workerArgv: [process.execPath, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
   out(`engine10: resumed run ${it.runId}: ${res.outcome}\n`);
   return EXIT[res.outcome];
 }

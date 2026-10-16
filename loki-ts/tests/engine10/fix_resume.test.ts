@@ -355,6 +355,67 @@ describe("resume from stage (P12-07)", () => {
     expect(seenIntake).toBe("abc");
     expect(events.filter((e) => e.type === "stage.completed").map((e) => e.stage)).toEqual(["verify", "commit", "seal", "pr"]);
   });
+  const noPr = FLOW.filter((s) => s !== "pr");
+  const rerun = async (evs: ReturnType<typeof mk>): Promise<{ ran: string[]; sealSaw: unknown }> => {
+    const { ctx } = fakeCtx();
+    const r = resumeMachineOpts(ctx as never, evs, text(evs), noPr);
+    if (!r.ok) throw new Error(r.reason);
+    const ran: string[] = []; let sealSaw: unknown;
+    await runMachine(ctx, { flow: r.flow as typeof FLOW, restored: r.restored as never, load: async (n) => ({ name: n, targetS: 1, limitS: 5, run: async (c) => { ran.push(n); if (n === "seal") sealSaw = c.outputs().verify; return { status: "completed", data: {} }; } }) as Stage });
+    return { ran, sealSaw };
+  };
+  const base5: Spec[] = [["run.started", null], ["stage.completed", "intake", { base_sha: "abc", task: "t" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"]];
+  test("P12-07i review R1: a settled verify is never restored; the tree is re-verified before commit and seal", async () => {
+    const r = await rerun(mk([...base5, ["stage.completed", "verify", { checks: [{ name: "t", result: "pass" }] }], ["stage.started", "commit"]]));
+    expect(r.ran).toEqual(["verify", "commit", "seal", ]);
+    expect((r.sealSaw as Record<string, unknown>)["checks"]).toBeUndefined();
+  });
+  test("P12-07i review R1b: interrupted mid fix-loop re-enters at verify, not past it", async () => {
+    const r = await rerun(mk([...base5, ["stage.completed", "verify", { failures_grouped: [{ signature: "x" }] }], ["stage.completed", "fix"], ["stage.started", "verify"]]));
+    expect(r.ran[0]).toBe("verify");
+    expect(r.ran).toEqual(["verify", "commit", "seal"]);
+  });
+  const gitRepo = (dir: string) => (...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: dir, encoding: "utf8" });
+  test("P12-07i review R3: dirty user work blocks the resume checkout; the user's branch is handed to the supervisor to restore", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-r3-")), cwd = process.cwd();
+    try {
+      const g = gitRepo(dir);
+      g("init", "-q", "-b", "main"); writeFileSync(join(dir, "a.txt"), "1\n"); g("add", "a.txt"); g("commit", "-q", "-m", "i"); g("branch", `loki/${RID}`);
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      writeFileSync(join(dir, ".loki", "runs", RID, "events.jsonl"), text(mk(base5)));
+      writeFileSync(join(dir, "a.txt"), "WIP\n"); writeFileSync(join(dir, "secret.env"), "T=x\n");
+      process.chdir(dir);
+      const say: string[] = [], seen: { restoreBranch?: string | null }[] = [], supervise = (async (o: never) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never;
+      expect(await resumeFlag(RID, true, { out: (x) => { say.push(x); }, supervise })).toBe(2);
+      expect(say.join("")).toContain("2 uncommitted");
+      expect(g("symbolic-ref", "--short", "HEAD").trim()).toBe("main");
+      expect(seen.length).toBe(0);
+      g("checkout", "-q", "--", "a.txt"); rmSync(join(dir, "secret.env"));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[0]!.restoreBranch).toBe("main");
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07i review R5: resume refuses a run that hit its cap, and seeds prior spend and remaining time otherwise", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-r5-")), cwd = process.cwd();
+    try {
+      const g = gitRepo(dir);
+      g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i"); g("checkout", "-q", "-b", `loki/${RID}`);
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const pre: Spec[] = [["run.started", null, { provider: "claude", model: "m", cap_s: 900, max_cost_usd: 5 }], ["stage.completed", "intake", { base_sha: "abc", task: "t" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["cost", "implement", { session_id: "s", usd: 3 }]];
+      const evFile = join(dir, ".loki", "runs", RID, "events.jsonl");
+      process.chdir(dir);
+      const seen: { env: Record<string, string | undefined>; capS?: number }[] = [], supervise = (async (o: never) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never, say: string[] = [];
+      writeFileSync(evFile, text(mk([...pre, ["cap.hit", "implement", { elapsed_s: 1 }], ["stage.failed", "implement", { reason: "cap" }]])));
+      expect(await resumeFlag(RID, true, { out: (x) => { say.push(x); }, supervise })).toBe(2);
+      expect(say.join("")).toContain("hit its cost or time cap");
+      expect(seen.length).toBe(0);
+      writeFileSync(evFile, text(mk(pre)));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[0]!.env["LOKI_E10_SPENT_USD"]).toBe("3");
+      expect(seen[0]!.env["LOKI_E10_MAX_COST_USD"]).toBe("5");
+      expect(seen[0]!.capS).toBeLessThanOrEqual(900);
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
   test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {
     const { ctx } = fakeCtx();
     const evs = killedAfterImplement();
