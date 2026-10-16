@@ -3,11 +3,11 @@
 // pushArgv), supervisor side only. The PR is a draft unless the wave verified (M-20) and every unit is
 // PROVEN; a missing verdict or an empty wave is a draft too (fail-safe). The body lists every unit with
 // its verdict, receipt path and sha256. The push is injectable so tests need no network.
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pushArgv } from "../types.ts";
-import { DEFAULT_PUSH_SH, PR_URL_RE } from "../stages/pr.ts";
+import { runPushPr } from "../stages/pr.ts";
+import type { PushPrResult } from "../stages/pr.ts";
+import { clean } from "../pr_body.ts";
 import type { ModernizeLog } from "./log.ts";
 import type { WaveVerdict } from "./wave.ts";
 
@@ -17,11 +17,15 @@ export interface ShipUnit {
   not_proven: string[];
   receiptPath: string;
   receiptSha256: string;
+  runId: string;
+  /** Equivalence pass rate (0..1) and branch coverage percent; null when never measured. */
+  rate: number | null;
+  branchPct: number | null;
 }
-export interface PushRun { status: number | null; stdout: string; stderr: string }
-/** Receives engine10-push.sh arguments; the default runs the script with the pinned origin. */
-export type PushRunner = (args: string[]) => PushRun;
-export interface ShipResult { shipped: boolean; url: string | null; draft: boolean; reason: string | null }
+type PushArgs = Parameters<typeof runPushPr>[0];
+/** Injectable; defaults to the shared credentialed push helper in stages/pr.ts. */
+export type PushRunner = (a: PushArgs) => PushPrResult;
+export interface ShipResult { shipped: boolean; url: string | null; draft: boolean; existing: boolean | null; reason: string | null }
 
 export interface ShipWaveOpts {
   repoDir: string;
@@ -38,44 +42,36 @@ export interface ShipWaveOpts {
 }
 
 export function waveIsDraft(verdict: WaveVerdict | null, units: ShipUnit[]): boolean {
-  return verdict === null || !verdict.verified || units.length === 0 || units.some((x) => x.verdict !== "PROVEN");
+  return verdict === null || verdict.verified !== true || units.length === 0 || units.some((x) => x.verdict !== "PROVEN");
 }
+
+/** One table cell: single line, bounded, pipes escaped, so a value can never forge a row or header. */
+const cell = (v: string): string => clean(String(v)).replace(/\|/g, "\\|");
+const num = (v: number | null, f: (n: number) => string): string => (typeof v === "number" && Number.isFinite(v) ? f(v) : "n/a");
 
 export function renderWaveBody(wave: number, verdict: WaveVerdict | null, units: ShipUnit[]): string {
   const state = verdict === null ? "not verified (no wave verify result)"
-    : verdict.verified ? "verified" : `FAILED: ${verdict.reason ?? `${verdict.failedStep} failed`}`;
+    : verdict.verified === true ? "verified" : `FAILED: ${cell(verdict.reason ?? `${verdict.failedStep} failed`)}`;
   const rows = units.map((x) => {
-    const why = x.not_proven.length ? ` (${x.not_proven.join("; ")})` : "";
-    return `| ${x.unit} | ${x.verdict}${why} | ${x.receiptPath} | ${x.receiptSha256} |`;
+    const why = x.not_proven.length ? ` (${x.not_proven.map(cell).join("; ")})` : "";
+    return `| ${cell(x.unit)} | ${cell(x.verdict)}${why} | ${num(x.rate, (n) => `${(n * 100).toFixed(1)}%`)} | ${num(x.branchPct, (n) => `${n.toFixed(1)}%`)} | ${cell(x.runId)} | ${cell(x.receiptPath)} | ${cell(x.receiptSha256)} |`;
   });
-  return [`Modernize wave ${wave}: ${state}`, "", "| Unit | Verdict | Receipt | sha256 |", "| --- | --- | --- | --- |", ...rows, ""].join("\n");
-}
-
-const lastLine = (s: string): string => s.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
-
-function pushScript(pinnedOrigin: string): PushRunner {
-  return (args) => {
-    const r = spawnSync("bash", [DEFAULT_PUSH_SH, ...args], {
-      encoding: "utf8", env: { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin },
-    });
-    return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-  };
+  return [`Modernize wave ${wave}: ${state}`, "", "| Unit | Verdict | Equiv rate | Branch cov | Run | Receipt | sha256 |", "| --- | --- | --- | --- | --- | --- | --- |", ...rows, ""].join("\n");
 }
 
 export function shipWave(o: ShipWaveOpts): ShipResult {
   const draft = waveIsDraft(o.verdict, o.units);
-  const fail = (reason: string): ShipResult => ({ shipped: false, url: null, draft, reason });
-  if (!o.pinnedOrigin) return fail("no pinned origin: refusing to push (Rule of Two)");
+  const fail = (reason: string, url: string | null = null, existing: boolean | null = null): ShipResult => ({ shipped: false, url, draft, existing, reason });
+  const pinnedOrigin = o.pinnedOrigin.trim();
+  if (!pinnedOrigin) return fail("no pinned origin: refusing to push (Rule of Two)");
   const dir = join(o.repoDir, ".loki", "modernize", o.mid);
   mkdirSync(dir, { recursive: true });
   const bodyFile = join(dir, `wave-${o.wave}-pr-body.md`);
   writeFileSync(bodyFile, renderWaveBody(o.wave, o.verdict, o.units), "utf8");
-  const built = pushArgv({ cmd: "push-pr", repoDir: o.repoDir, branch: o.branch, title: `Loki modernize: wave ${o.wave}${draft ? " (draft)" : ""}`, bodyFile, draft });
-  if (built.pop() === "1") built.push("--draft");
-  const r = (o.push ?? pushScript(o.pinnedOrigin))(built);
-  if (r.status !== 0) return fail(`push-pr failed (exit ${r.status}): ${r.stderr.trim()}`);
-  const url = lastLine(r.stdout);
-  if (!PR_URL_RE.test(url)) return fail(`push-pr printed no valid PR URL (got: ${url || "(empty)"})`);
-  o.log?.append("wave.shipped", { wave: o.wave, url, draft });
-  return { shipped: true, url, draft, reason: null };
+  const r = (o.push ?? runPushPr)({ repoDir: o.repoDir, branch: o.branch, title: `Loki modernize: wave ${o.wave}${draft ? " (draft)" : ""}`, bodyFile, draft, pinnedOrigin });
+  if (!r.ok) return fail(r.reason);
+  // engine10-push.sh ignores --draft when it reuses an open PR, so a draft claim would be false.
+  if (draft && r.existing !== false) return fail("existing PR reused; draft state not applied", r.url, r.existing);
+  o.log?.append("wave.shipped", { wave: o.wave, url: r.url, draft, existing: r.existing });
+  return { shipped: true, url: r.url, draft, existing: r.existing, reason: null };
 }

@@ -40,7 +40,7 @@ export interface PrOptions {
   pushScriptPath?: string;
 }
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
-export const PR_URL_RE =/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
+export const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 function lastNonEmptyLine(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
@@ -54,6 +54,29 @@ function toPushShellArgs(args: PushArgs): string[] {
   const flag = built.pop();
   if (flag === "1") built.push("--draft");
   return built;
+}
+function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
+  if (resolvePrAuthor(repoDir) === "bot") {
+    const botToken = process.env.LOKI_PR_BOT_TOKEN;
+    if (botToken) env.GH_TOKEN = botToken; // child env only; never logged
+    else process.stderr.write("loki: pr.author is bot but LOKI_PR_BOT_TOKEN is not set; opening the PR as me\n");
+  }
+  return env;
+}
+/** The one credentialed push-pr call (env, bot token, spawn, URL check incl. E-41 local://); stage and modernize ship share it. */
+export type PushPrResult = { ok: true; url: string; existing: boolean | null; localOk: boolean } | { ok: false; reason: string };
+export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string }): PushPrResult {
+  const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
+  const env = pushEnv(a.repoDir, a.pinnedOrigin);
+  const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, ...args], { env, encoding: "utf8" });
+  if (r.status !== 0) return { ok: false, reason: `engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
+  const url = lastNonEmptyLine(r.stdout ?? "");
+  const markers = (r.stdout ?? "").split("\n").map((l) => l.trim());
+  // E-41: for a local bare origin (the eval harness) push-pr prints exactly local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
+  const localOk = a.pinnedOrigin.startsWith("/") && !a.pinnedOrigin.includes(":") && url === `local://${a.pinnedOrigin}#${a.branch}`;
+  if (!localOk && !PR_URL_RE.test(url)) return { ok: false, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
+  return { ok: true, url, localOk, existing: markers.includes("reused") ? true : markers.includes("created") ? false : null }; // null = unknown, never fabricated
 }
 function briefSection(ctx: PrContext): string {
   if (!reviewerBriefEnabled()) return "";
@@ -89,27 +112,11 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
   writeFileSync(bodyFile, withAiMarker(withSealRoute(renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), process.env, seal), aiMarkerLine({ runId: ctx.runId, provider: ctx.provider, model: ctx.model })) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== "") + (ctx.handoffMd ?? ""), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
-  const pushShellArgs = [...toPushShellArgs({ cmd: "push-pr", repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft }), ...(base ? ["--base", base] : [])];
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
-  const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
-  if (resolvePrAuthor(ctx.repoDir) === "bot") {
-    const botToken = process.env.LOKI_PR_BOT_TOKEN;
-    if (botToken) env.GH_TOKEN = botToken; // child env only; never logged
-    else process.stderr.write("loki: pr.author is bot but LOKI_PR_BOT_TOKEN is not set; opening the PR as me\n");
-  }
-  const pushResult = spawnSync("bash", [scriptPath, ...pushShellArgs], { env, encoding: "utf8" });
-  if (pushResult.status !== 0) {
-    return { status: "failed", data: {}, reason: `engine10-push.sh push-pr failed (exit ${pushResult.status}): ${(pushResult.stderr ?? "").trim()}` };
-  }
-  const url = lastNonEmptyLine(pushResult.stdout ?? "");
-  const markers = (pushResult.stdout ?? "").split("\n").map((l) => l.trim());
-  // E-41: for a local bare origin (the eval harness) push-pr prints exactly
-  // local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
-  const localOk = pinnedOrigin.startsWith("/") && !pinnedOrigin.includes(":") && url === `local://${pinnedOrigin}#${ctx.branch}`;
-  if (!localOk && !PR_URL_RE.test(url)) {
-    return { status: "failed", data: {}, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
-  }
-  const existing: boolean | null = markers.includes("reused") ? true : markers.includes("created") ? false : null; // null = unknown, never fabricated
+  const env = pushEnv(ctx.repoDir, pinnedOrigin);
+  const pr = runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath });
+  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
+  const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
   const notProvenOut: string[] = [];
