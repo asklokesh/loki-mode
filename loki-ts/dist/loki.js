@@ -2404,4 +2404,4 @@ Unknown commands exit 2 with a suggestion; run 'loki help' for the full list.
 `);{let{suggestCommand:X}=await Promise.resolve().then(() => (Wu(),vI0)),Y=$===void 0?void 0:X($);if(Y)process.stderr.write(`Did you mean 'loki ${Y}'?
 `)}return process.stderr.write(WT0),2}}jH0();var QT0=()=>globalThis[Symbol.for("loki.ownsStopSignals")]===!0;process.on("SIGINT",()=>{if(!QT0())process.exit(130)});process.on("SIGTERM",()=>{if(!QT0())process.exit(143)});var b49=await y49(Bun.argv.slice(2));process.exit(b49);
 
-//# debugId=F323D38861B3F41AC419DA2983F1F062
+//# debugId=E8682275358C7577A9471C06589A1811
