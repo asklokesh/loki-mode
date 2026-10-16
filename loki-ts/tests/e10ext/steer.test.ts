@@ -1,6 +1,7 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
@@ -53,6 +54,51 @@ describe("engine10 steer", () => {
     const o = repo("x");
     expect(consumeSteer(o, { LOKI_PROMPT_INJECTION: "0" })).toBeNull();
     expect(existsSync(join(o, ".loki", "HUMAN_INPUT.md"))).toBe(true);
+  });
+  test("a regular steer swapped for a symlink (live or dangling) still refuses with the symlink reason and never reads the target", () => {
+    for (const target of ["secret.md", "missing.md"]) {
+      const d = repo("real");
+      writeFileSync(join(d, "secret.md"), "SECRET");
+      rmSync(join(d, ".loki", "HUMAN_INPUT.md"));
+      symlinkSync(join(d, target), join(d, ".loki", "HUMAN_INPUT.md"));
+      const sink: IntentRevision[] = [];
+      expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+      expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "symlink"]]);
+      expect(existsSync(join(d, ".loki", "HUMAN_INPUT.md"))).toBe(false);
+      expect(archived(d)).toEqual([]);
+    }
+  });
+  test("the content comes from the opened fd: a path swapped to a symlink between open and read is not followed", () => {
+    const d = repo("REAL");
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    writeFileSync(join(d, "secret.md"), "SECRET");
+    let swapped = false;
+    const now = (): Date => { // first call happens after the open and fstat, before the read
+      if (!swapped) { swapped = true; renameSync(f, join(d, "moved.md")); symlinkSync(join(d, "secret.md"), f); }
+      return new Date();
+    };
+    expect(consumeSteer(d, {}, now)).toBe("REAL");
+    expect(swapped).toBe(true);
+  });
+  test("a unix socket at the steer path refuses as not a regular file", async () => {
+    const d = repo();
+    const srv = createServer();
+    await new Promise<void>((res, rej) => { srv.once("error", rej); srv.listen(join(d, ".loki", "HUMAN_INPUT.md"), res); });
+    try {
+      const sink: IntentRevision[] = [];
+      expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+      expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
+    } finally { srv.close(); }
+  });
+  test("an oversize steer with mode 000 is still quarantined with the over 1 MiB reason", () => {
+    const d = repo("x".repeat(1024 * 1024 + 1));
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    chmodSync(f, 0o000);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "over 1 MiB"]]);
+    expect(existsSync(f)).toBe(false);
+    expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-TOOLARGE-"))).toBe(true);
   });
   test("header-bearing steers are archived with a numbered revision record, rev incrementing across steers", () => {
     const hdr = (n: number, src: string): string => `## Operator directive rev ${n} (2026-10-15T00:00:0${n}Z) actor=alice source=${src}\n`;

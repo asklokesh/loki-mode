@@ -78,3 +78,16 @@ describe("A-117 log.sealed", () => {
     try { expect(await main([r.dir.split("/").pop()!], { runsRoot: join(root, "runs") })).toBe(2); } finally { process.stdout.write = w; }
   });
 });
+
+describe("P12-08c SUPERVISOR_ONLY", () => {
+  test("a worker line of type deep.started is dropped by ingest; the supervisor append still lands", () => {
+    const dir = join(root, "runs", `e10-so-${n++}`);
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(join(dir, "events.jsonl"), "so1");
+    log.append("run.started", null, {});
+    expect(log.ingest(JSON.stringify({ type: "deep.started", stage: "deep", data: { pid: 1 } }))).toBeNull();
+    expect(readFileSync(join(dir, "events.jsonl"), "utf8")).not.toContain("deep.started");
+    log.append("deep.started", "deep", { pid: 2 });
+    expect(readFileSync(join(dir, "events.jsonl"), "utf8")).toContain("deep.started");
+  });
+});

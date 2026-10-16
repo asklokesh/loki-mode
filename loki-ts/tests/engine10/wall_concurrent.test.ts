@@ -1,11 +1,11 @@
 // WC-01b: LOKI_E10_WALL_CONCURRENT=1 authors the Wall alongside plan and implement, installs once before verify.
 import { afterEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
-import { staleWallRevisions } from "../../src/util/steer.ts";
+import { STEER_MAX_BYTES, staleAtSeal, staleReason, staleWallRevisions } from "../../src/util/steer.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
 type Ev = { type: string; stage: StageName | null; data: Record<string, unknown> };
@@ -106,5 +106,41 @@ describe("WC-01b wall concurrent", () => {
     s.seal = { name: "seal", targetS: 1, limitS: 5, run: async (c: RunContext) => { stale = staleWallRevisions(c.intentRevisions, c.timeline).map((r) => r.rev); return { status: "completed", data: {} }; } };
     await run(f, s);
     expect(stale).toEqual([1]);
+  });
+  describe("P12-02b: following the Seal refusal remedy produces a run that seals", () => {
+    const HDR = "## Operator directive rev 1 (t) actor=a source=chat\n";
+    // Plan consumes a steer present at run start (plan||wall start together), Seal applies the real staleness check.
+    const attempt = async (f: ReturnType<typeof fixture>) => {
+      f.ctx.intentRevisions = undefined; f.ctx.timeline = undefined; f.log.length = 0;
+      const s = stages(f), out: { status: string; reason?: string } = { status: "?" };
+      s.plan = { name: "plan", targetS: 1, limitS: 5, run: async (c: RunContext) => { await c.sessions.run({ stage: "plan", brief: "b" } as never); return { status: "completed", data: {} }; } };
+      s.seal = { name: "seal", targetS: 1, limitS: 5, run: async (c: RunContext) => { const st = staleAtSeal(c.repoDir, c); out.status = st.length ? "failed" : "completed"; if (st.length) out.reason = staleReason(st); return { status: "completed", data: {} }; } };
+      f.ctx.sessions = { run: async () => ({ exit: 0, durationMs: 1, text: "", stderrTail: "" }) as never };
+      await run(f, s); return out;
+    };
+    const cases: [string, (repo: string) => void, (repo: string) => void][] = [
+      ["symlink", (r) => symlinkSync("/dev/null", join(r, ".loki/HUMAN_INPUT.md")), () => undefined],
+      ["not a regular file", (r) => mkdirSync(join(r, ".loki/HUMAN_INPUT.md")), (r) => rmSync(join(r, ".loki/HUMAN_INPUT.md"), { recursive: true })],
+      ["over 1 MiB", (r) => writeFileSync(join(r, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`), () => undefined],
+      ["logs dir unwritable or file unreadable", (r) => { writeFileSync(join(r, ".loki/logs"), "f"); writeFileSync(join(r, ".loki/HUMAN_INPUT.md"), `${HDR}go\n`); }, (r) => { rmSync(join(r, ".loki/HUMAN_INPUT.md")); rmSync(join(r, ".loki/logs")); mkdirSync(join(r, ".loki/logs")); }],
+    ];
+    for (const [reason, setup, remedy] of cases) {
+      it(`${reason}: refused, then the remedy leaves a run that seals`, async () => {
+        process.env.LOKI_E10_WALL_CONCURRENT = "1";
+        const f = fixture(); mkdirSync(join(f.repoDir, ".loki"), { recursive: true }); setup(f.repoDir);
+        const first = await attempt(f);
+        expect(first.status).toBe("failed");
+        expect(first.reason).toContain(`(${reason})`); expect(first.reason).toContain('delete .loki/HUMAN_INPUT.md and re-run with loki "<task with the steer folded in>"');
+        // Follow the remedy exactly: delete .loki/HUMAN_INPUT.md (and make .loki/logs writable); the steer is folded into the task, not left in place.
+        remedy(f.repoDir); expect(lstatSync(join(f.repoDir, ".loki/HUMAN_INPUT.md"), { throwIfNoEntry: false })).toBeUndefined();
+        expect((await attempt(f)).status).toBe("completed");
+      });
+    }
+    it("control: leaving the steer in place (the old remedy) is refused again", async () => {
+      process.env.LOKI_E10_WALL_CONCURRENT = "1";
+      const f = fixture(); mkdirSync(join(f.repoDir, ".loki"), { recursive: true });
+      writeFileSync(join(f.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}go\n`);
+      expect((await attempt(f)).status).toBe("failed");
+    });
   });
 });

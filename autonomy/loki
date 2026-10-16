@@ -2551,10 +2551,16 @@ _loki_start_handoff() {
 # The one list: the --workspace brief scan and the --resume scan both use it.
 _loki_start_flag_takes_value() {
     case "$1" in
-        --provider|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) return 0 ;;
+        --provider|--brief|--budget|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) return 0 ;;
     esac
     return 1
 }
+
+# Optional-value cmd_start flags (--mirofish [URL]). The one decision on whether
+# the NEXT token is the flag's value: non-empty and not another --flag. The
+# cmd_start --mirofish arm and both scans use it, so they cannot disagree.
+_loki_start_flag_optional_value() { [ "$1" = "--mirofish" ]; }
+_loki_start_optval_consumes() { [[ -n "${1:-}" && "${1:-}" != --* ]]; }
 
 # One exit-code mapping for an engine10 resume, shared by cmd_resume and
 # `loki start --resume`. 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1.
@@ -2634,12 +2640,13 @@ cmd_start() {
         local _ps_skip=0
         for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
             if [ "$_ps_skip" = 1 ]; then _ps_skip=0; continue; fi
+            if [ "$_ps_skip" = 3 ]; then _ps_skip=0; if _loki_start_optval_consumes "$_ps_a"; then continue; fi; fi
             if [ "$_ps_skip" = 2 ]; then _ps_skip=0; _ps_brief+=("$_ps_a"); continue; fi
             case "$_ps_a" in
                 --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
                 --brief) _ps_skip=2 ;;
                 # Every value-taking cmd_start flag: its value is never brief text.
-                -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_skip=1; fi ;;
+                -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_skip=1; elif _loki_start_flag_optional_value "$_ps_a"; then _ps_skip=3; fi ;;
                 *) _ps_brief+=("$_ps_a") ;;
             esac
         done
@@ -2666,14 +2673,15 @@ cmd_start() {
     fi
     # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
     # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
-    # new build. Exit 0 resumed, 4 phase reported, 3 nothing to resume, else failure.
+    # new build. Exit codes go through _loki_e10_resume_map (0 and 4 -> 0, 5 -> 1); any other code, such as 3 for nothing to resume, is returned as is.
     local _ps_resume=0 _ps_resume_args=() _ps_rskip=0
     for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
         if [ "$_ps_rskip" = 1 ]; then _ps_rskip=0; continue; fi
+        if [ "$_ps_rskip" = 3 ]; then _ps_rskip=0; if _loki_start_optval_consumes "$_ps_a"; then continue; fi; fi
         case "$_ps_a" in
             --resume) _ps_resume=1 ;;
             --*=*) ;;
-            -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_rskip=1; fi ;;
+            -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_rskip=1; elif _loki_start_flag_optional_value "$_ps_a"; then _ps_rskip=3; fi ;;
             *) _ps_resume_args+=("$_ps_a") ;;
         esac
     done
@@ -3100,7 +3108,7 @@ cmd_start() {
                 shift
                 ;;
             --mirofish)
-                if [[ -n "${2:-}" ]] && [[ "${2:-}" != --* ]]; then
+                if _loki_start_optval_consumes "${2:-}"; then
                     mirofish_url="$2"
                     shift 2
                 else

@@ -166,6 +166,33 @@ describe("engine10 machine", () => {
       expect(calls).toBeLessThan(40);
       expect(slept.length).toBeGreaterThan(0);
     });
+    it("the dollar cap (ctx.overCap) ends the quota wait between attempts", async () => {
+      const { ctx } = fakeCtx(900000);
+      const slept = virtual(ctx);
+      let calls = 0;
+      ctx.overCap = () => slept.length >= 1;
+      ctx.sessions = { run: async () => { calls++; return failing("insufficient_quota"); } };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+      expect(calls).toBe(1);
+      expect(slept.length).toBe(1);
+      expect(r.stopped).toBeNull();
+      expect(r.capHit).toBe(true);
+    });
+    it("the SDK iteration-log credit line, through the real session runner, waits and ends budget_stopped", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-"));
+      try {
+        const { ctx } = fakeCtx(900000);
+        const slept = virtual(ctx);
+        const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", 'mkdir -p .loki; echo "[sdk-loop error: Your credit balance is too low to access the API]" > ".loki/iteration-$LOKI_ITERATION.log"; exit 1']] });
+        let calls = 0;
+        ctx.overCap = () => slept.length >= 2;
+        ctx.sessions = { run: (o) => { calls++; return runner.run({ ...o, cwd: dir }); } };
+        const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+        expect(r.stopped).toBeNull();
+        expect(r.capHit).toBe(true);
+        expect(calls).toBe(2);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
     it("auth stays fatal with no wait", async () => {
       const { ctx } = fakeCtx();
       const slept = virtual(ctx);
