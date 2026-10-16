@@ -580,6 +580,66 @@ test_validate_bash_residual_rm_gaps_denied() {
     pass "residual rm gaps denied; legit run-dir, range and named targets allowed"
 }
 
+# P12-26g-d: allow-grammar for recursive rm targets (fails closed) and
+# inspection of real rm command words only.
+test_validate_bash_rm_allow_grammar() {
+    log_test "validate-bash.sh: rm allow-grammar denies each reviewer bypass, allows grammar shapes"
+    local c got t rmcmd rt="/tmp/loki-run.abc123"
+    # shellcheck disable=SC2016,SC2088 # expansions and tildes are literal hook input
+    local deny_set=(
+        '"$LOKI_RUN_TMP"/..$1/*' '$1/tmp/*' '"$@"/*' '${!X}/tmp/*' "\$'/tmp'" "\$'/tmp/'*"
+        "\"\$LOKI_RUN_TMP\"/\$'..'/*" '${X:-${Y:-/}}tmp/*' '${TMPDIR%/}' '${TMPDIR%/*}'
+        '${TMPDIR:0:1}tmp/*' '/$X/tmp/*' '/tmp$X' '"/tmp"$X'
+        '$*/x' '$#/x' '$?/x' '$!/x' '${1}/x' '${#X}/x' '$$/x' '${TMPDIR:-/tmp}' '${TMPDIR-/tmp}/*'
+        '${TMPDIR^^}/x' '${X/a/b}/c' '${X:1}/c' '"${X%/}"/y' '$TMPDIR' '$TMPDIR/*' '$TMPDIR/..'
+        '*' '*/x' '?x' '[a]x' '.' './' 'a/..' '.*' '../x' '/$X' '$X' '$X/' '$X/..' '$X*'
+        '~root/x' '~' '$HOME' '~/..' '$HOME/../x' '/home/*' '/*' '/x/*/y' '$(echo /tmp)' '`echo /tmp`'
+    )
+    for t in "${deny_set[@]}"; do
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "" "" "$rt")
+            [ "$got" = "2:deny" ] || { fail "grammar bypass not denied: $c (got $got)"; return; }
+        done
+    done
+    # shellcheck disable=SC2088 # tilde targets are literal hook input
+    local ok_set=(
+        'build' 'build/out' './build/x' 'a/b/../c' 'dist/*' 'node_modules' 'out/{1..3}' 'x/{a,b}/y'
+        '/home/u/proj/build' '/tmp/foo*' '/tmp/foo/bar' '"$LOKI_RUN_TMP"' '"$LOKI_RUN_TMP"/x/*'
+        '"${LOKI_RUN_TMP}"/a' '$TMPDIR/foo' '"${TMPDIR}"/foo/bar' '$HOME/proj/build' '~/proj/x'
+        '"$BUILD_DIR"/out' '${BUILD_DIR}/out' '"$BUILD_DIR"/shard{1..4}'
+    )
+    for t in "${ok_set[@]}"; do
+        c=$(printf 'rm -r %s' "$t")
+        got=$(HOME=/home/u run_hook_case "$c" "" "" "$rt")
+        [ "$got" = "0:allow" ] || { fail "grammar shape wrongly denied: $c (got $got)"; return; }
+    done
+    # Quoted printf/echo data and cat heredoc bodies are not rm command words.
+    local data_ok=(
+        "printf '%s' \"rm -r /tmp\""
+        "echo 'rm -r /tmp'"
+        "printf 'rm -r target\\n' > notes.txt"
+        "$(printf 'cat <<EOF\nrm -r /tmp\nEOF')"
+        "echo hi; printf '%s' \"rm -r /tmp/*\""
+    )
+    for c in "${data_ok[@]}"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "rm text inside data wrongly denied: $(printf '%q' "$c") (got $got)"; return; }
+    done
+    # Real rm words and data run as code stay denied.
+    local still_deny=(
+        "printf 'x' ; rm -r /tmp" "printf '%s' 'rm -r /tmp' | sh" "echo 'rm -r /tmp' | bash"
+        "eval \"rm -r /tmp\"" "echo \"\$(rm -r /tmp)\"" "cat <<EOF | sh
+rm -r /tmp
+EOF" "printf x && rm -r /tmp/*"
+    )
+    for c in "${still_deny[@]}"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "real rm word not denied: $(printf '%q' "$c") (got $got)"; return; }
+    done
+    pass "rm allow-grammar fails closed; data text and real rm words separated"
+}
+
 # P12-26g-c: a slow analysis must fail closed before the hook timeout.
 test_validate_bash_rm_analysis_budget_fails_closed() {
     log_test "validate-bash.sh: rm analysis over its time budget denies instead of timing out"
@@ -745,6 +805,7 @@ test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
 test_validate_bash_temp_root_and_glob_denied
 test_validate_bash_residual_rm_gaps_denied
+test_validate_bash_rm_allow_grammar
 test_validate_bash_rm_analysis_budget_fails_closed
 test_validate_bash_safe_patterns_locale_independent
 test_validate_bash_safe_override_rejects_risky_env
