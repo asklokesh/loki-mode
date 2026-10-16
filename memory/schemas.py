@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 
@@ -55,6 +55,31 @@ def _parse_utc_datetime(s: str) -> datetime:
 # -----------------------------------------------------------------------------
 # Supporting Types
 # -----------------------------------------------------------------------------
+
+
+DEFAULT_TENANT = "default"
+OUTCOMES = ("success", "failure")
+# Rank multiplier per outcome feedback; unset outcome is neutral.
+OUTCOME_FACTOR = {"success": 1.2, "failure": 0.7}
+
+
+def record_expires_at(record: Dict[str, Any]) -> Optional[datetime]:
+    """Expiry of a raw record: explicit expires_at, else created_at + ttl_seconds. None = never."""
+    try:
+        if record.get("expires_at"):
+            return _parse_utc_datetime(str(record["expires_at"]))
+        ttl, created = record.get("ttl_seconds"), record.get("created_at")
+        if ttl is not None and created:
+            return _parse_utc_datetime(str(created)) + timedelta(seconds=float(ttl))
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def is_expired(record: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """True when the record has a TTL that has elapsed. Old records without TTL never expire."""
+    exp = record_expires_at(record)
+    return exp is not None and exp <= (now or datetime.now(timezone.utc))
 
 
 @dataclass
@@ -524,6 +549,10 @@ class SemanticPattern:
     importance: float = 0.5
     last_accessed: Optional[datetime] = None
     access_count: int = 0
+    tenant: str = DEFAULT_TENANT
+    ttl_seconds: Optional[int] = None
+    expires_at: Optional[datetime] = None
+    outcome: Optional[str] = None  # "success" | "failure" feedback; adjusts rank
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -540,11 +569,18 @@ class SemanticPattern:
             "links": [link.to_dict() for link in self.links],
             "importance": self.importance,
             "access_count": self.access_count,
+            "tenant": self.tenant,
         }
         if self.last_used:
             result["last_used"] = _to_utc_isoformat(self.last_used)
         if self.last_accessed:
             result["last_accessed"] = _to_utc_isoformat(self.last_accessed)
+        if self.ttl_seconds is not None:
+            result["ttl_seconds"] = self.ttl_seconds
+        if self.expires_at:
+            result["expires_at"] = _to_utc_isoformat(self.expires_at)
+        if self.outcome:
+            result["outcome"] = self.outcome
         return result
 
     @classmethod
@@ -585,6 +621,10 @@ class SemanticPattern:
             importance=data.get("importance", 0.5),
             last_accessed=last_accessed,
             access_count=data.get("access_count", 0),
+            tenant=data.get("tenant") or DEFAULT_TENANT,
+            ttl_seconds=data.get("ttl_seconds"),
+            expires_at=_parse_utc_datetime(data["expires_at"]) if data.get("expires_at") else None,
+            outcome=data.get("outcome"),
         )
 
     def validate(self) -> List[str]:
@@ -604,6 +644,8 @@ class SemanticPattern:
             errors.append("SemanticPattern.importance must be between 0.0 and 1.0")
         if self.access_count < 0:
             errors.append("SemanticPattern.access_count must be non-negative")
+        if self.outcome is not None and self.outcome not in OUTCOMES:
+            errors.append("SemanticPattern.outcome must be success or failure")
 
         # Validate links
         for i, link in enumerate(self.links):

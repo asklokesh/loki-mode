@@ -39,7 +39,7 @@ except ImportError:
     )
 
 # Import from sibling modules
-from .schemas import EpisodeTrace, SemanticPattern, ProceduralSkill
+from .schemas import EpisodeTrace, SemanticPattern, ProceduralSkill, DEFAULT_TENANT, OUTCOME_FACTOR, is_expired
 from .token_economics import estimate_memory_tokens, optimize_context, get_context_efficiency
 
 
@@ -270,6 +270,7 @@ class MemoryRetrieval:
         base_path: str = ".loki/memory",
         namespace: Optional[str] = None,
         include_unstamped_legacy: bool = False,
+        tenant: Optional[str] = None,
     ):
         """
         Initialize the memory retrieval system.
@@ -294,6 +295,9 @@ class MemoryRetrieval:
         self.base_path = Path(base_path)
         self._namespace = namespace
         self._include_unstamped_legacy = include_unstamped_legacy
+        # None = unscoped (all tenants, current behavior). Records without a
+        # tenant field belong to DEFAULT_TENANT.
+        self._tenant = tenant
         # Track when indices were last built to detect staleness (BUG-MEM-002).
         # When consolidation modifies patterns, indices become stale and should
         # be rebuilt before the next similarity search.
@@ -337,7 +341,14 @@ class MemoryRetrieval:
           verified a single-project store predates stamping can opt back in via
           include_unstamped_legacy=True.
         - Otherwise (stamp present but does not match), reject.
+
+        Also the single gate for P12-42 lifecycle: expired records and, when a
+        tenant is set, records of another tenant are rejected.
         """
+        if is_expired(result):
+            return False
+        if self._tenant is not None and (result.get("tenant") or DEFAULT_TENANT) != self._tenant:
+            return False
         if self._namespace is None:
             return True
         result_ns = result.get("_namespace")
@@ -391,6 +402,7 @@ class MemoryRetrieval:
             base_path=str(self.base_path),
             namespace=namespace,
             include_unstamped_legacy=self._include_unstamped_legacy,
+            tenant=self._tenant,
         )
 
     # -------------------------------------------------------------------------
@@ -1125,8 +1137,8 @@ class MemoryRetrieval:
         # Importance contributes 30% of the final score
         importance_factor = 0.7 + (0.3 * importance)
         score = base_score * weight * importance_factor * confidence
-
-        return score
+        # Outcome feedback (P12-42): success lifts, failure lowers, unset is neutral.
+        return score * OUTCOME_FACTOR.get(result.get("outcome"), 1.0)
 
     def _merge_results(
         self,
