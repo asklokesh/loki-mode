@@ -40,7 +40,7 @@ export interface PrOptions {
   pushScriptPath?: string;
 }
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
-const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
+export const PR_URL_RE =/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 function lastNonEmptyLine(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
