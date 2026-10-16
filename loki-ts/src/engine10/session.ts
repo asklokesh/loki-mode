@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeProviderCost } from "../providers/provider_cost.ts";
+import { archivePriorCost, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
@@ -160,6 +160,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
+      if (cfg.lokiRoot) for (const root of new Set([join(opts.cwd ?? process.cwd(), ".loki"), cfg.lokiRoot])) archivePriorCost(root, opts.iterationId); // P12-09b
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
         // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.

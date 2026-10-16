@@ -13,6 +13,8 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
+import { resultCostPath, sumResultCosts } from "../../src/engine10/cost.ts";
+import { withArchivedCosts } from "../../src/providers/provider_cost.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
@@ -77,6 +79,17 @@ describe("engine10 session", () => {
     expect(events.filter((e) => e.type === "session.stalled").length).toBe(1);
     expect(events.find((e) => e.type === "heartbeat")?.data["progress"]).toBeDefined();
   }, 10_000);
+
+  test("P12-09b: a rerun with the same iterationId keeps the earlier attempt's cost (summed, not overwritten)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-cost-"));
+    try {
+      const lokiRoot = join(dir, ".loki");
+      const child = (usd: number) => ["bash", ["-c", `mkdir -p .loki/metrics; echo '{"total_cost_usd":${usd},"input_tokens":5,"output_tokens":5,"model":"m"}' > .loki/metrics/result-cost-$LOKI_ITERATION.json; exit 1`]] as [string, string[]];
+      for (const usd of [1, 2]) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: child(usd) }).run(baseOpts({ cwd: dir, iterationId: "q-1", limitS: 20 }));
+      expect(existsSync(resultCostPath(lokiRoot, "q-1"))).toBe(true);
+      expect(sumResultCosts(lokiRoot, withArchivedCosts(lokiRoot, ["q-1"])).usd).toBe(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
 
   test("emits a heartbeat event while waiting", async () => {
     const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];

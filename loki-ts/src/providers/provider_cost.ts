@@ -5,7 +5,7 @@
 //   1. provider-reported dollars (aider "Cost: $X session"): estimated=false
 //   2. provider-reported tokens (codex, aider, cline), priced from the table: estimated=true
 //   3. prompt/response sizes, priced from the table: estimated=true
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CostResult } from "../engine10/cost.ts";
 import { estimateTokens, priceFor, usdFor } from "../providers/price_table.ts";
@@ -172,4 +172,18 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
   }
   writeFileSync(join(dir, `iteration-${n}.json`), JSON.stringify(rec));
   return n;
+}
+
+// P12-09b: a quota rerun reuses its iterationId, and the result-cost file is keyed by it. Kept here (outside the engine10 core line budget).
+const costFile = (lokiRoot: string, id: string): string => join(lokiRoot, "metrics", `result-cost-${id}.json`);
+/** Moves the earlier attempt's result-cost aside (-q<k>) so the rerun cannot overwrite it. */
+export function archivePriorCost(lokiRoot: string, id: string): void {
+  if (!existsSync(costFile(lokiRoot, id))) return;
+  let k = 1; while (existsSync(costFile(lokiRoot, `${id}-q${k}`))) k++;
+  renameSync(costFile(lokiRoot, id), costFile(lokiRoot, `${id}-q${k}`));
+}
+/** ids plus every archived earlier attempt of them, so a sum counts each attempt once. */
+export function withArchivedCosts(lokiRoot: string, ids: string[]): string[] {
+  let files: string[] = []; try { files = readdirSync(join(lokiRoot, "metrics")); } catch { /* none yet */ }
+  return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)))])];
 }
