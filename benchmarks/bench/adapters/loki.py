@@ -100,11 +100,87 @@ def _count_iteration_completes(loki_dir):
         return None
 
 
+TAIL_CHARS = 2000
+
+
+def _tail(text, n=TAIL_CHARS):
+    text = text or ""
+    return text[-n:]
+
+
+def _latest_v10_run_dir(loki_dir):
+    """Newest .loki/runs/<run-id> dir (engine10 layout, ENGINE.md section 9/10),
+    or None. Run ids are timestamp-prefixed so the largest name is the latest."""
+    runs = os.path.join(loki_dir, "runs")
+    try:
+        names = sorted(d for d in os.listdir(runs)
+                       if os.path.isdir(os.path.join(runs, d)))
+    except Exception:
+        return None
+    return os.path.join(runs, names[-1]) if names else None
+
+
+def _read_json_file(path):
+    try:
+        with open(path) as fh:
+            obj = json.load(fh)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _read_v10_events(run_dir):
+    """Parsed events from <run_dir>/events.jsonl, or None when unreadable."""
+    if not run_dir:
+        return None
+    events = []
+    try:
+        with open(os.path.join(run_dir, "events.jsonl")) as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(ev, dict):
+                    events.append(ev)
+    except Exception:
+        return None
+    return events
+
+
+def _read_v10_receipt(loki_dir):
+    """engine10 receipt.json (schema loki.v10.receipt/1) of the latest run, or None."""
+    run_dir = _latest_v10_run_dir(loki_dir)
+    return _read_json_file(os.path.join(run_dir, "receipt.json")) if run_dir else None
+
+
+def _read_v10_failure_reason(loki_dir):
+    """Failure reason from engine10 events: the last stage.failed (stage name as
+    class, its reason as brief), else a cap.hit. None when the log shows neither."""
+    events = _read_v10_events(_latest_v10_run_dir(loki_dir))
+    if not events:
+        return None
+    for ev in reversed(events):
+        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+        if ev.get("type") == "stage.failed":
+            return {"error_class": ev.get("stage") or "stage.failed",
+                    "brief": data.get("reason")}
+        if ev.get("type") == "cap.hit":
+            return {"error_class": "cap.hit", "brief": json.dumps(data, sort_keys=True)[:300]}
+    return None
+
+
 def _read_iteration_count(loki_dir):
     """Iteration count for the bench schema. CANONICAL source is the
     events.jsonl 'iteration_complete' count (matches speed-benchmark.sh); the
     session.json/autonomy-state.json counter is only a FALLBACK for when
     events.jsonl is absent (older runs)."""
+    # engine10: one provider session per session.started event.
+    v10 = _read_v10_events(_latest_v10_run_dir(loki_dir))
+    if v10:
+        n = sum(1 for ev in v10 if ev.get("type") == "session.started")
+        if n:
+            return n
     canonical = _count_iteration_completes(loki_dir)
     if canonical is not None:
         return canonical
@@ -132,6 +208,9 @@ def _read_failure_reason(loki_dir):
     A failure whose reason is not captured cannot be learned from -- so surface
     it. Returns a dict {error_class, brief} or None when there is no record
     (a clean run). Best-effort: any read/parse problem returns None."""
+    v10 = _read_v10_failure_reason(loki_dir)
+    if v10 is not None:
+        return v10
     path = os.path.join(loki_dir, "state", "LAST_ERROR.json")
     try:
         with open(path) as fh:
@@ -157,6 +236,11 @@ def _read_honesty(loki_dir):
     headline cannot be recovered. Returns None when no proof is readable
     (no proof machinery ran). Best-effort: any read/parse problem returns None.
     """
+    receipt = _read_v10_receipt(loki_dir)
+    if receipt is not None and isinstance(receipt.get("verdict"), str):
+        np = receipt.get("not_proven")
+        return {"headline": receipt["verdict"].strip() or None,
+                "degraded": np if isinstance(np, list) else None}
     proofs_dir = os.path.join(loki_dir, "proofs")
     try:
         run_dirs = sorted(
@@ -255,7 +339,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-"))
     ):
         run_env["LOKI_SESSION_MODEL"] = _pin
-    rc, _out, _err, status, duration = _base.run_cli(
+    rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
         env=run_env,
     )
@@ -278,6 +362,15 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             model_used = model_from_eff or None
         except Exception:
             pass
+
+    # The collector labels the main-session spend "implement", which misreads as a
+    # phase split. With no ledger phases it is the whole run: call it "total";
+    # beside ledger phases it is the main session: call it "main_session".
+    phases = cost.get("cost_by_phase")
+    if isinstance(phases, dict) and "implement" in phases:
+        phases = dict(phases)
+        main = phases.pop("implement")
+        phases = {("main_session" if phases else "total"): main, **phases}
 
     return _base.build_output(
         tool="loki",
@@ -309,7 +402,11 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # True spend split by phase, and whether the child-session ledger
             # was read ("present") or missing ("absent"), from the shared
             # efficiency_cost collector.
-            "cost_by_phase": cost.get("cost_by_phase"),
+            "cost_by_phase": phases,
             "ledger": cost.get("ledger"),
+            # The real process outcome, so a caller never has to infer rc from status.
+            "rc": rc,
+            "stdout_tail": _tail(out),
+            "stderr_tail": _tail(err),
         },
     )

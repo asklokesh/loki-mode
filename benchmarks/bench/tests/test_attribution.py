@@ -421,6 +421,97 @@ class LokiModelPinTest(unittest.TestCase):
         self.assertEqual(env["loki_session_model_effective"], "claude-sonnet-5")
 
 
+class CostHarnRealOutcomeTest(unittest.TestCase):
+    """COST-HARN: real rc, origin remote, v10 evidence, kept evidence."""
+
+    SLUG_RE = r"[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$"  # run_group.ts SLUG_RE
+
+    def _run(self, rc, populate=None, stderr="boom\n"):
+        import json as _json
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        pf = os.path.join(d, "p.md")
+        open(pf, "w").write("x")
+
+        def fake(cmd, **kw):
+            if cmd[1:2] == ["start"]:
+                if populate:
+                    populate(os.path.join(d, ".loki"), _json)
+                return subprocess.CompletedProcess(cmd, rc, "out\n", stderr)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        try:
+            return A.run_loki(d, pf, model="claude-sonnet-5", budget_usd=1.0,
+                              timeout_s=5, runner=fake)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_seed_has_origin_remote_run_group_accepts(self):
+        import re
+        t = A.load_tasks(A.DEFAULT_TASKS_DIR)[0][0]
+        wd = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            A.materialize_seed(t, wd)
+            url = subprocess.run(["git", "-C", wd, "remote", "get-url", "origin"],
+                                 capture_output=True, text=True).stdout.strip()
+            self.assertTrue(re.search(self.SLUG_RE, url), "origin %r has no owner/repo" % url)
+        finally:
+            shutil.rmtree(wd, ignore_errors=True)
+
+    def test_failed_run_stores_real_rc_and_stderr_tail(self):
+        res = self._run(1, stderr="x" * 3000 + "TAIL")
+        self.assertEqual(res["rc"], 1)
+        self.assertFalse(res["reported_success"])
+        self.assertTrue(res["stderr_tail"].endswith("TAIL"))
+        self.assertEqual(len(res["stderr_tail"]), 2000)
+
+    def test_clean_run_is_success_with_rc_zero(self):
+        res = self._run(0)
+        self.assertEqual(res["rc"], 0)
+        self.assertTrue(res["reported_success"])
+
+    def test_v10_receipt_and_events_are_read_first(self):
+        def pop(loki, js):
+            rd = os.path.join(loki, "runs", "20260101T000000Z-aaa")
+            os.makedirs(rd)
+            with open(os.path.join(rd, "receipt.json"), "w") as f:
+                js.dump({"verdict": "VERIFIED", "not_proven": ["full suite"]}, f)
+            with open(os.path.join(rd, "events.jsonl"), "w") as f:
+                for ty, st, data in (("session.started", "implement", {}),
+                                     ("session.started", "fix", {}),
+                                     ("stage.failed", "verify", {"reason": "tests red"})):
+                    f.write(js.dumps({"type": ty, "stage": st, "data": data}) + "\n")
+        res = self._run(0, pop)
+        self.assertEqual(res["verify_verdict"], "VERIFIED")
+        self.assertEqual(res["honesty"]["degraded"], ["full suite"])
+        self.assertEqual(res["iterations"], 2)
+        self.assertEqual(res["failure_reason"], {"error_class": "verify", "brief": "tests red"})
+
+    def test_cell_keeps_loki_evidence_before_workdir_deleted(self):
+        t = A.load_tasks(A.DEFAULT_TASKS_DIR)[0][0]
+        scratch = tempfile.mkdtemp(prefix="loki-attr-test-")
+        ev = tempfile.mkdtemp(prefix="loki-attr-test-")
+
+        def fake(cmd, **kw):
+            if cmd[1:2] == ["start"]:
+                os.makedirs(os.path.join(kw["cwd"], ".loki", "runs", "r1"))
+                open(os.path.join(kw["cwd"], ".loki", "runs", "r1", "events.jsonl"), "w").write("{}\n")
+                os.makedirs(os.path.join(kw["cwd"], ".loki", "node_modules"))
+                open(os.path.join(kw["cwd"], ".loki", "node_modules", "big"), "w").write("x")
+                return subprocess.CompletedProcess(cmd, 1, "", "kaput")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        try:
+            row = A.run_cell(t, "loki", 1, model="claude-sonnet-5", budget_usd=1.0,
+                             timeout_s=5, scratch=scratch, runner=fake, evidence_dir=ev)
+            cell = os.path.join(ev, "%s-loki-1" % t["id"])
+            self.assertTrue(os.path.isfile(os.path.join(cell, ".loki", "runs", "r1", "events.jsonl")))
+            self.assertFalse(os.path.exists(os.path.join(cell, ".loki", "node_modules")))
+            self.assertIn("kaput", open(os.path.join(cell, "stderr.txt")).read())
+            self.assertEqual(row["rc"], 1)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+            shutil.rmtree(ev, ignore_errors=True)
+
+
 class LokiLedgerRowTest(unittest.TestCase):
     """S1: the loki row carries true (ledger-summed) cost, phase split, engine and honesty."""
 
@@ -463,7 +554,8 @@ class LokiLedgerRowTest(unittest.TestCase):
         res = self._run(pop)
         self.assertAlmostEqual(res["cost_usd"], 0.6, places=4)
         self.assertEqual(res["ledger"], "present")
-        self.assertAlmostEqual(res["cost_by_phase"]["implement"], 0.25, places=4)
+        self.assertAlmostEqual(res["cost_by_phase"]["main_session"], 0.25, places=4)
+        self.assertNotIn("implement", res["cost_by_phase"])
         self.assertAlmostEqual(res["cost_by_phase"]["docs"], 0.2, places=4)
 
     def test_absent_ledger_is_flagged_not_silent(self):
