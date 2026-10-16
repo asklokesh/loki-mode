@@ -5,6 +5,66 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.2 (2026-10-16)
+
+Hardening release for `loki start` and its resume path, the steer channel, the Seal verifier, and the command safety hook. `loki start` with Claude remains the primary path and every change here applies to it; chat routes through the same commands.
+
+### Added
+- `loki modernize <repo> --to python3` runs end to end: it captures an oracle for each unit, schedules waves, merges each wave, verifies it and ships. Capture needs python2.7 or `LOKI_MOD_OLD_RUNTIME`; without it every unit is NOT PROVEN and the command exits 1. Multi-file units are NOT PROVEN for now, and a wave with no integration tests is verified with a warning (M-26b, M-27A to M-27E).
+- Wall holdout is on by default: with 5 or more Wall checks, 20 percent are held out from the build stages, and a held-out failure blocks the Seal. Set `LOKI_WALL_HOLDOUT=0` to opt out (C-C4).
+- `loki backup` and `loki restore`, and audit retention with a chain checkpoint. `LOKI_AUDIT_RETENTION_DAYS` sets the window (default 90) (P12-48).
+- `loki doctor` labels an unqualified gateway lane and prints the features that lane loses (P12-27). `loki doctor --repo` appends a readiness record, and `--round-trip` adds an opt-in live provider check (P12-41).
+- Pause and cancel requests are read at stage boundaries (P12-10). Jira and Linear comments can steer a run, and each phase transitions the ticket (P12-18).
+- An idempotency-keyed outbox for the pull request side effect, so a retried run never opens a second PR (P12-36).
+- Design decision records with rationale validation (P12-37), typed constraints in the contract (P12-43), and skill-derived checks as quality gates (P12-44).
+- Memory gains tenant scope, TTL expiry, outcome feedback and pick reasons (P12-42).
+- `LOKI_VISUAL_GATE=1` makes a visual evidence failure a verify failure (P12-47).
+- A deploy destination enum and a staging-before-production gate (P12-33). A PreCompact hook flushes milestones before context compaction (P12-38).
+- `loki status` shows a freshness label and a Control Plane deep link (P12-19). A large sizing tier (P12-46).
+- Parallel group units share one budget ledger, so the run cap holds across them (P12-22r). Unit resume is aware of spec revisions (P12-45).
+- Expected accepted-outcome cost scoring for model routing. It ships dark until a router caller exists (P12-32).
+- The B9 per-task cost table and a small-edit parity gate on recorded fixtures (P12-28).
+
+### Changed
+- `loki start --resume` reruns verification before it trusts a resumed run, refuses to resume over a dirty working tree or a run that already hit its cost cap, seeds the spend already recorded, passes only the remaining cap to the resumed run, and emits a `run.resumed` event (P12-07i).
+- An "already satisfied" verdict survives a resume only when the supervisor attested it (P12-07j).
+- Time spent in a quiet stage counts toward the run's active time, the deep worker honors `LOKI_E10_CAP_S`, and a non-finite cap value is ignored instead of disabling the cap (P12-07l, P12-07m).
+- A run killed during verification writes a heartbeat, so a resume counts the verify time it spent instead of losing it. A forged or out-of-range heartbeat value is ignored (P12-07n).
+- On the bash route (`LOKI_LEGACY_BASH=1`, or no bun available), `loki start --resume` and `--workspace` combined with a Bun-only flag now exit 64 with a message instead of silently ignoring the flag. One allowlist governs which start flags each route accepts; `--model` is kept (P12-07k).
+- Chat reports "Run start unproven" when it cannot confirm a live run, instead of claiming the run started (P12-16f).
+- The test harness requires its dependencies in CI and local CI, scopes skips to a single run, reports a blocked read as SKIP rather than a vacuous pass, runs Python isolated, and fails closed when a source cannot be resolved (P12-30c, P12-30d, P12-30e).
+
+### Fixed
+- The weekly integrity audit installs Bun with its cache off, so an issue-triggered job can no longer seed a cache that a write-permission job restores (Rule of Two, P9).
+- Steer input handling: FIFOs, directories and non-regular files are refused, duplicate inodes are deduplicated, claim times are recorded on the claim itself, and an applied marker is written before the input is removed. A consume killed midway now reports an orphaned claim, and Seal refuses the run until it is resolved. The orphan sweep uses a set lookup (P12-02c to P12-02h).
+- `loki verify` reports a receipt with an unknown schema as TAMPERED instead of passing it, and a test that could pass without running is fixed (P12-01e).
+- The command safety hook checks environment-variable prefixes on `rm`, joins backslash-newline continuations before matching, treats `GCONV_PATH`, `LOCPATH` and `EXECIGNORE` as risky, and accepts only uppercase names as safe environment assignments (P12-26e, P12-26f).
+- `loki modernize` with `--help` or `-h` anywhere on the command line prints usage and exits 0 instead of failing with exit 2 (M-MOD).
+- The no-progress detector compares diff size using the same directory scope as its file lists, so a file growing outside the run's subdirectory no longer looks like progress (P12-12e).
+- Issue-ref runs survive `kill -9` and resume, steers are covered end to end, and a skipped Wall no longer freezes steers (P12-13).
+- The command safety hook expands braces before matching, which closes temp-root bypasses, and denies recursive `rm` of temp roots (P12-26g, P12-26g-b).
+- The transcript parser degrades on a truncated transcript instead of failing (P12-39). The failure fingerprint store moved into the shared failure memory (P12-11).
+- `loki doctor` spawns the provider with a token-free environment, workspace scan accepts forwarded flags, and the harness clone pins main.
+- A run that edits a test runner config, or a file that config loads, can no longer seal VERIFIED (LOST-1, FC-09).
+- The engine10 system prefix is cache-stable by default, which cuts repeated prompt cost; `LOKI_E10_STABLE_PREFIX=0` opts out (LOST-2).
+- Once the Wall seals, steers are frozen even when no Wall output is recorded; a late steer after a kill is refused (P12-13c).
+- Held-out test failures reach the fix stage only as an opaque count, so the fixer cannot overfit to them (C-C4b).
+- The router ranks candidate models by expected cost per accepted outcome once history clears the floor, and records history under the model that ran (P12-32b).
+- `loki pause`, `loki resume` and `loki cancel` dispatch to a live run with a liveness-checked poll; cancel completes as cancelled (P12-10b).
+- A flaky rerun signal outranks build_failed in recovery, scoped to the recorded tree, and the run summary lists the real flaky tests (P12-11b).
+- `loki modernize` oracle capture runs token-free in a temp directory with wave-scoped compile checks (M-27F).
+- PR journey stubs record `gh pr edit` and `gh pr comment` arguments (P12-13b).
+- The shared group budget ledger fails closed when it cannot be created, and a resumed spend seed is written once and never double counted (P12-22s).
+- The recursive delete safety hook denies the remaining temp-root bypasses: inexact run-tmp variables, dotdot climbs through variables, and variable-led glob targets (P12-26g-c).
+- Unchanged runner configs are no longer re-parsed at seal time, and an unparseable runner config caps the seal (LOST-1b).
+- Flaky rerun evidence counts only when taken on a clean worktree at the verify-time tree (P12-11b-c).
+- Model escalation records only the final rung in routing history (P12-32b-c).
+- Hook timeouts match between the TypeScript and bash runners (P12-38).
+- Held-out test ids and messages never leave the verify stage, a held-out-only failure never escalates the model, and a held-out store failure is reported as a harness failure (C-C4b-c).
+- CI guard repairs: cleanTreeId now runs git through safeGit, the L2 destructive-verb scanner exempts command registrations, the sigpipe legacy-form ceiling drops from 1742 to 1728, and `loki backup` and `loki restore` gain shell completions.
+- Budget ledger: a regression test pins that only the first seed line counts toward the ledger sum.
+- CLI help guard: the dispatch-label check now accepts labels that follow "|" in an alias row, so `pause | resume | cancel` counts for all three commands.
+
 ## v11.17.1 (2026-10-16)
 
 v11.17.0 was never published to npm. Its release failed required CI because the changelog named `loki start --resume` while the start help and bash completion did not. This release fixes that, and it is the first to publish everything listed under v11.17.0 and v11.16.0, plus the fixes below. `loki start` with Claude remains the primary path, and every change here applies to it.

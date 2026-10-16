@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.1. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.2. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -30,6 +30,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki rollback show` | Show a checkpoint |
 | `loki rollback to` | Restore a checkpoint |
 | `loki rollback latest` | Restore the latest checkpoint |
+| `loki backup` | Back up dashboard state (audit log, checkpoint) with a sha256 manifest |
+| `loki restore` | Restore dashboard state from a verified backup archive |
 | `loki proof` (alias: `receipt`) | Inspect and share proof-of-run receipts |
 | `loki proof list` | List receipts |
 | `loki proof show` | Show a receipt |
@@ -112,6 +114,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki stop` | Stop execution immediately |
 | `loki pause` | Pause after the current session |
 | `loki resume` | Resume a paused or interrupted run |
+| `loki cancel` | Cancel the active Loki 10 run at the next stage boundary |
 | `loki why` | Explain how the last run ended |
 | `loki next` | Run the right next step |
 | `loki logs` | Tail recent log output |
