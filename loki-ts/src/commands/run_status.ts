@@ -7,6 +7,7 @@ import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { STALE_S, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
+import { writeRunControl, type RunControlAction } from "../util/run_control.ts";
 import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
@@ -171,5 +172,14 @@ export async function runIntentShow(argv: readonly string[], env: NodeJS.Process
     } catch { /* no answer recorded */ }
   }
   process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+/** `loki pause|resume|cancel`: writes the request into the newest run dir; the engine acts at the next stage boundary (P12-10). */
+export function runControlVerb(verb: RunControlAction, env: NodeJS.ProcessEnv = process.env, repoDir: string = env.LOKI_E10_REPO_DIR ?? process.cwd()): number {
+  const root = runsRoot(env, repoDir), id = latestRunId(root);
+  if (id === null) { process.stderr.write(`loki ${verb}: ${NO_RUN_HINT}\n`); return 1; }
+  writeRunControl(join(root, id), verb);
+  process.stdout.write(`${verb} requested for run ${id}; it takes effect at the next stage boundary\n`);
   return 0;
 }

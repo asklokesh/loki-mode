@@ -6,9 +6,9 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts";
+import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
-import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
+import type { EventType, Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
 interface WallSplit {
@@ -236,6 +236,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (wallJob && (jumped || capReached())) abortWall();
       const isTail = todo.every((n) => TAIL.includes(n));
       if (jumped && !isTail) continue;
+      if (!isTail && !jumped && await runControlBoundary(ctx.runDir, (t) => ctx.emit(t as EventType, null, {}))) { jumped = true; stopped = "cancelled by request"; continue; } // P12-10: pause/cancel read at stage boundaries only
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       if (wallConcurrent() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
