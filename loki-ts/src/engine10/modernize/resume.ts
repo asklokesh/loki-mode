@@ -10,8 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { EventEnvelope } from "../types.ts";
 import { validateEnvelope } from "../events.ts";
 import type { ClusterResult } from "./cluster.ts";
-import type { ModernizeLog } from "./log.ts";
-import { schedule } from "./scheduler.ts";
+import { mergeOnce, schedule } from "./scheduler.ts";
 import type { ScheduleReport, SchedulerOpts } from "./scheduler.ts";
 import { modernizeEventsPath, planPath } from "./types.ts";
 
@@ -132,35 +131,29 @@ export function planResume(plan: ClusterResult, state: ResumeState): ResumePlan 
   return { skipped, actions, plan: { ...plan, units: plan.units.filter((x) => !dropped.has(x.id)), waves } };
 }
 
-export interface MergeOps {
-  /** True when the unit's change is already in the integration branch. Must read the repo, not memory. */
-  isMerged(unit: string): boolean;
-  merge(unit: string): void;
-}
-export type MergeResult = "merged" | "already_completed" | "adopted";
-
-/** Idempotent merge. The merge and the unit.completed write are not atomic, so a crash can land between
- *  them: on restart the repo says merged but the log does not say completed. That case is adopted (the
- *  completion is recorded) and the merge is never repeated. */
-export function mergeOnce(unit: string, ops: MergeOps, log: ModernizeLog, completed: ReadonlySet<string>): MergeResult {
-  if (completed.has(unit)) return "already_completed";
-  if (ops.isMerged(unit)) {
-    log.append("unit.completed", { unit, adopted: true });
-    return "adopted";
-  }
-  ops.merge(unit);
-  log.append("unit.completed", { unit });
-  return "merged";
-}
+export { mergeOnce } from "./scheduler.ts";
+export type { MergeOps, MergeResult } from "./scheduler.ts";
 
 export type ResumeRun = { ok: true; skipped: string[]; actions: ResumeAction[]; report: ScheduleReport } | { ok: false; reason: string };
 
-/** Loads state (failing closed), then runs the scheduler over the units still owed. opts.log is a fresh
- *  writer, which continues seq from the file's max. */
+/** Loads state (failing closed), adopts any unit whose merge landed before its unit.completed write, then runs the
+ *  scheduler over the units still owed. In-flight units that logged a run id resume through it (the scheduler reattaches
+ *  the worktree or logs unit.resume_fallback). opts.log is a fresh writer, which continues seq from the file's max. */
 export async function resumeSchedule(plan: ClusterResult, opts: SchedulerOpts): Promise<ResumeRun> {
   const loaded = loadResumeState(opts.repoDir, opts.mid);
   if (!loaded.ok) return loaded;
-  const rp = planResume(plan, loaded.state);
-  const report = await schedule(rp.plan, opts);
+  const state = loaded.state;
+  if (opts.merge) {
+    for (const id of [...state.inFlight.keys()]) {
+      if (mergeOnce(id, opts.merge, opts.log, state.completed) === "adopted") {
+        state.completed.add(id);
+        state.inFlight.delete(id);
+      }
+    }
+  }
+  const rp = planResume(plan, state);
+  const resumeRuns = new Map<string, string>();
+  for (const a of rp.actions) if (a.action === "resume") resumeRuns.set(a.unit, a.runId);
+  const report = await schedule(rp.plan, { ...opts, completed: state.completed, resumeRuns });
   return { ok: true, skipped: rp.skipped, actions: rp.actions, report };
 }

@@ -7,6 +7,7 @@ import type { ClusterResult, Unit } from "../../../src/engine10/modernize/cluste
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import { loadResumeState, mergeOnce, planResume, resumeSchedule } from "../../../src/engine10/modernize/resume.ts";
 import type { MergeOps } from "../../../src/engine10/modernize/resume.ts";
+import { schedule } from "../../../src/engine10/modernize/scheduler.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 import { modernizeEventsPath, planPath } from "../../../src/engine10/modernize/types.ts";
@@ -188,5 +189,90 @@ describe("resumeSchedule", () => {
     expect(ran).toBe(0);
     expect(existsSync(f.dir)).toBe(true);
     f.done();
+  });
+});
+
+describe("scheduler merge path end to end", () => {
+  it("crash after a merge and before its log write: resume adopts it, never re-merges, runs the rest", async () => {
+    const f = fx();
+    const plan = planOf([[u("a"), u("b")], [u("c")]]);
+    const merged = new Set<string>();
+    const mergeCalls: string[] = [];
+    const merge: MergeOps = { isMerged: (x) => merged.has(x), merge: (x) => { mergeCalls.push(x); merged.add(x); } };
+    const ran: string[] = [];
+    const run = async (c: AttemptCtx): Promise<AttemptOutcome> => { ran.push(c.unit.id); return { result: proven(c.unit.id), costUsd: 0 }; };
+    const base = { repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge, run };
+    const first = await schedule(plan, { ...base, log: f.log });
+    expect(first.outcomes.every((o) => o.status === "PROVEN")).toBe(true);
+    expect(mergeCalls).toEqual(["a", "b", "c"]);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed").map((e) => e.data.unit)).toEqual(["a", "b", "c"]);
+
+    // Crash: b's merge landed, but unit.completed for b (and everything after) never reached the log.
+    const p = modernizeEventsPath(f.dir, MID);
+    const lines = readFileSync(p, "utf8").split("\n").filter((l) => l !== "");
+    const cut = lines.findIndex((l) => l.includes('"unit.completed"') && l.includes('"unit":"b"'));
+    writeFileSync(p, lines.slice(0, cut).join("\n") + "\n");
+    merged.delete("c");
+    mergeCalls.length = 0;
+    ran.length = 0;
+
+    const r = await resumeSchedule(plan, { ...base, log: new ModernizeLog(f.dir, MID) });
+    expect(r.ok).toBe(true);
+    expect(mergeCalls).toEqual(["c"]);
+    expect(ran).toEqual(["c"]);
+    const evs = readModernizeEvents(f.dir, MID);
+    expect(evs.filter((e) => e.type === "unit.completed").map((e) => e.data.unit)).toEqual(["a", "b", "c"]);
+    const seqs = evs.map((e) => e.seq);
+    expect(seqs.every((x, i) => i === 0 || x > seqs[i - 1]!)).toBe(true);
+    f.done();
+  });
+
+  it("a merge that throws marks the unit NOT_PROVEN with a reason", async () => {
+    const f = fx();
+    const merge: MergeOps = { isMerged: () => false, merge: () => { throw new Error("conflict"); } };
+    const r = await schedule(planOf([[u("a")]]), {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge,
+      log: f.log, run: async (c) => ({ result: proven(c.unit.id), costUsd: 0 }),
+    });
+    expect(r.outcomes[0]!.status).toBe("NOT_PROVEN");
+    expect(r.outcomes[0]!.reason).toMatch(/merge failed: conflict/);
+    f.done();
+  });
+});
+
+describe("resume of an in-flight unit", () => {
+  const setup = (reusable: boolean | undefined) => {
+    const f = fx();
+    f.log.append("unit.started", { unit: "a", model: "sonnet", worker: 1, variant: 0, run_id: "run-77" });
+    const created: string[] = [];
+    const worktrees: WorktreeOps = { create: (_r, p) => { created.push(p); }, remove: () => {}, ...(reusable === undefined ? {} : { reusable: () => reusable }) };
+    const ctxs: AttemptCtx[] = [];
+    const opts = {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees,
+      log: new ModernizeLog(f.dir, MID), run: async (c: AttemptCtx): Promise<AttemptOutcome> => { ctxs.push(c); return { result: proven(c.unit.id), costUsd: 0 }; },
+    };
+    return { f, created, ctxs, opts };
+  };
+
+  it("reattaches the worktree and passes the recorded run id to the runner", async () => {
+    const { f, created, ctxs, opts } = setup(true);
+    const r = await resumeSchedule(planOf([[u("a")]]), opts);
+    expect(r.ok).toBe(true);
+    expect(ctxs[0]!.resumeRunId).toBe("run-77");
+    expect(created).toEqual([]);
+    f.done();
+  });
+
+  it("falls back to a clean restart and logs the reason when the worktree is not reusable", async () => {
+    for (const reusable of [false, undefined]) {
+      const { f, created, ctxs, opts } = setup(reusable);
+      await resumeSchedule(planOf([[u("a")]]), opts);
+      expect(ctxs[0]!.resumeRunId).toBeUndefined();
+      expect(created.length).toBe(1);
+      const fb = readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.resume_fallback");
+      expect(fb.length).toBe(1);
+      expect(String(fb[0]!.data.reason)).toMatch(/restarted cleanly/);
+      f.done();
+    }
   });
 });
