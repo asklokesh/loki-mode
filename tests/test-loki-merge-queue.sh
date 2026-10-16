@@ -174,9 +174,28 @@ for _flag in skip-worktree assume-unchanged; do
 done
 git -C "$GD_REPO" update-index --skip-worktree a
 rm "$GD_REPO/a"
-[ "$(gd)" = "False" ] && ok "writer: sparse-excluded skip-worktree file is clean" || bad "writer sparse: $(gd)"
+[ "$(gd 2>/dev/null)" = "True" ] && ok "writer: skip-worktree file deleted without sparse checkout is dirty" || bad "writer skip deleted: $(gd 2>&1)"
 git -C "$GD_REPO" update-index --no-skip-worktree a
 git -C "$GD_REPO" checkout -q -- a
+# Real sparse checkout: an excluded file is absent and flagged skip-worktree by git itself; clean.
+SP_REPO="$WORK/sprepo"; mkdir -p "$SP_REPO/keep" "$SP_REPO/other"
+git -C "$SP_REPO" init -q
+echo 1 > "$SP_REPO/keep/f"; echo 2 > "$SP_REPO/other/g"
+git -C "$SP_REPO" add keep other
+git -C "$SP_REPO" -c user.name=t -c user.email=t@t commit -qm sp
+git -C "$SP_REPO" sparse-checkout set --no-cone /keep/ >/dev/null 2>&1
+[ ! -e "$SP_REPO/other/g" ] && ok "sparse: excluded file absent" || bad "sparse setup: other/g present"
+SPV="$(python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$SP_REPO")"
+[ "$SPV" = "False" ] && ok "writer: real sparse-checkout repo is clean" || bad "writer real sparse: $SPV"
+# CRLF in the index plus autocrlf: raw bytes match, so a flagged file is clean.
+printf 'x\r\n' > "$GD_REPO/crlf"
+git -C "$GD_REPO" -c core.autocrlf=false add crlf
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm crlf
+git -C "$GD_REPO" config core.autocrlf true
+git -C "$GD_REPO" update-index --skip-worktree crlf
+[ "$(gd)" = "False" ] && ok "writer: CRLF-in-index flagged file is clean under autocrlf" || bad "writer crlf: $(gd)"
+git -C "$GD_REPO" update-index --no-skip-worktree crlf
+git -C "$GD_REPO" config --unset core.autocrlf
 git -C "$GD_REPO" update-index --assume-unchanged a
 rm "$GD_REPO/a"
 [ "$(gd 2>/dev/null)" = "True" ] && ok "writer: assume-unchanged file deleted on disk is dirty" || bad "writer assume deleted: $(gd 2>&1)"

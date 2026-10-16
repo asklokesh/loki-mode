@@ -1210,6 +1210,7 @@ def git_dirty(repo):
         f = meta.split()
         if len(f) == 3 and f[2] == "0":
             blobs[p] = (f[0], f[1])
+    sparse = (_vr_git_args(repo, ["config", "--bool", "core.sparseCheckout"]) or "").strip() == "true"
     root = repo or "."
     bad = None
     todo = []
@@ -1217,7 +1218,7 @@ def git_dirty(repo):
         full = os.path.join(root, path)
         mode, want = blobs.get(path, ("", ""))
         if not os.path.lexists(full):
-            if skip:
+            if skip and sparse:
                 continue
             bad = (skip, path)
             break
@@ -1237,10 +1238,17 @@ def git_dirty(repo):
         out = _vr_git_args(repo, ["hash-object", "--"] + [p for _, p in chunk])
         if out is None:
             return None
-        for (skip, path), h in zip(chunk, out.split()):
-            if h != blobs.get(path, ("", ""))[1]:
-                bad = (skip, path)
-                break
+        miss = [(s, p) for (s, p), h in zip(chunk, out.split())
+                if h != blobs.get(p, ("", ""))[1]]
+        if miss:
+            # Identical raw bytes mean clean (CRLF in the index plus autocrlf).
+            raw = _vr_git_args(repo, ["hash-object", "--no-filters", "--"] + [p for _, p in miss])
+            if raw is None:
+                return None
+            for (skip, path), h in zip(miss, raw.split()):
+                if h != blobs.get(path, ("", ""))[1]:
+                    bad = (skip, path)
+                    break
     if bad:
         skip, path = bad
         kind, fix = (("skip-worktree", "--no-skip-worktree") if skip
