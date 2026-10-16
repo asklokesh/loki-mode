@@ -456,10 +456,18 @@ test_validate_bash_safe_override_rejects_risky_env() {
         'FOO=1 IFS=x rm -rf /tmp/a' 'NODE_OPTIONS=x rm -rf /tmp/a'
         'GIT_SSH_COMMAND=x rm -rf /tmp/a' 'PYTHONPATH=/tmp/x rm -rf /tmp/a'
     )
+    local nl=$'\n'
+    risky+=(
+        "PATH=/tmp/x \\${nl}rm -rf /tmp/a" "PATH=/tmp/x\\${nl} rm -rf /tmp/a"
+        "LD_PRELOAD=/tmp/x.so \\${nl}rm -rf /tmp/a" "FOO=1 \\${nl}PATH=/tmp/x \\${nl}rm -rf /tmp/a"
+        "rm \\${nl}-rf /" "GCONV_PATH=/tmp/x rm -rf /tmp/a" "LOCPATH=/tmp/x rm -rf /tmp/a"
+    )
     for c in "${risky[@]}"; do
         got=$(run_hook_case "$c" "")
-        [ "$got" = "2:deny" ] || { fail "risky env prefix not blocked: $c (got $got)"; return; }
+        [ "$got" = "2:deny" ] || { fail "risky env prefix not blocked: $(printf '%q' "$c") (got $got)"; return; }
     done
+    got=$(run_hook_case "FOO=1 \\${nl}rm -rf /tmp/a" "")
+    [ "$got" = "0:allow" ] || { fail "continued ordinary prefix blocked (got $got)"; return; }
     got=$(run_hook_case 'FOO=1 rm -rf /tmp/a' "")
     [ "$got" = "0:allow" ] || { fail "ordinary env prefix blocked (got $got)"; return; }
     got=$(run_hook_case 'LOKI_X=1 rm -rf /tmp/foo' "")

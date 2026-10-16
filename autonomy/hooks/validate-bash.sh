@@ -51,6 +51,10 @@ except Exception:
     raise SystemExit(2)
 if not isinstance(command, str) or not command.strip():
     raise SystemExit(2)
+# Join backslash-newline continuations as bash does (an odd run of backslashes
+# before the newline), so every later split and pattern match sees one command.
+import re
+command = re.sub(r"(?<!\\)((?:\\\\)*)\\\r?\n", r"\1", command)
 sys.stdout.write(command)
 '); then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: malformed or missing Bash command input was denied."
@@ -375,7 +379,7 @@ _env_prefix_is_risky() {
         name="${BASH_REMATCH[1]}"
         rest="${BASH_REMATCH[2]}"
         case "$name" in
-            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT) return 0 ;;
+            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH) return 0 ;;
         esac
     done
     return 1
