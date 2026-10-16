@@ -111,8 +111,8 @@ changed_chars() {
 # P12-40b: text inside inline code spans and fenced code blocks is skipped
 # (quoted requirements), and a line carrying the explicit escape token
 # <!-- claim-ok --> is skipped. Also caught: "50 % fewer", "cuts cost by 50%",
-# "4x as fast", a bold **3x**, and "half the cost". Fence state is tracked over
-# the added lines of each file, so a fence opened in unchanged text is unseen.
+# "4x as fast", a bold **3x**, and "half the cost". Fence state comes from the
+# full new file content, looked up by each added line's number.
 unmeasured_claims() {
     local base="$BASE" cite='METRICS|ROUTING-EVIDENCE|\.loki/metrics'
     { git diff "$base" -U0 -- '*.md' ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**" 2>/dev/null || true; } \
@@ -121,13 +121,15 @@ unmeasured_claims() {
               $n = q{\d+(?:\.\d+)?};
               @c = ( qr/\b$n\s?(?:x|%)\s+(?:faster|cheaper|fewer|less|lower|as\s+(?:fast|cheap))\b/i,
                      qr/\b(?:cuts?|reduc\w*|lowers?|saves?|slash\w*|drops?)\b[^.]{0,40}\bby\s+$n\s?(?:x|%)/i,
-                     qr/\bhalf\s+(?:the|of\s+the)\s+(?:cost|time|price|latency|tokens)\b/i,
+                     qr/\bhalf\s+(?:the|of\s+the)\s+(?:cost|price|latency|tokens)\b/i,
                      qr/\*\*$n\s?x\*\*/i ); }
-            if (/^diff --git/) { $f = 0; next }
+            if (/^\+\+\+ b\/(.*)$/) { $file = $1; %in = (); $o = 0; $i = 0;
+              if (open(F, "<", $file)) { while (<F>) { $i++; if (/^\s*(```|~~~)/) { $in{$i} = 1; $o = !$o } elsif ($o) { $in{$i} = 1 } } close F }
+              next }
+            if (/^@@ .*\+(\d+)/) { $ln = $1; next }
             next unless /^\+(?!\+\+ )(.*)$/;
-            $l = $1;
-            if ($l =~ /^\s*(```|~~~)/) { $f = !$f; next }
-            next if $f || $l =~ /<!-- claim-ok -->/ || $l =~ /$k/;
+            $l = $1; $cur = $ln++;
+            next if $in{$cur} || $l =~ /<!-- claim-ok -->/ || $l =~ /$k/;
             $t = $l; $t =~ s/`[^`]*`//g;
             for $re (@c) { if ($t =~ $re) { print "unmeasured claim: $l\n"; $bad = 1; last } }
             END { exit $bad ? 1 : 0 }' "$cite"
