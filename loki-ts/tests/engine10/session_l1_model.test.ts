@@ -57,7 +57,8 @@ describe("EL-W0-06 never below raw", () => {
   }, 20_000);
 
   test("effort passes through when set and is absent from the child env when unset", async () => {
-    expect(await childEnvDump()).not.toContain("LOKI_E10_EFFORT=");
+    const prev = process.env["LOKI_E10_EFFORT_POLICY"]; process.env["LOKI_E10_EFFORT_POLICY"] = "off"; // COST-1: the policy is default-on, so the unset case needs the opt-out
+    try { expect(await childEnvDump()).not.toContain("LOKI_E10_EFFORT="); } finally { if (prev === undefined) delete process.env["LOKI_E10_EFFORT_POLICY"]; else process.env["LOKI_E10_EFFORT_POLICY"] = prev; }
     expect(await childEnvDump({ effort: "high" })).toContain("LOKI_E10_EFFORT=high");
   }, 20_000);
 
