@@ -835,7 +835,7 @@ export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
 // --permission-mode plus --allowedTools/--disallowedTools from the task policy.
 // LOKI_PERMISSION_POLICY=legacy: the historical --dangerously-skip-permissions,
 // byte-identical. Unset: compiled only when an operator claude_permissions policy exists,
-// otherwise legacy (headless acceptEdits with no allowedTools denies npm test / git commit).
+// otherwise legacy (headless acceptEdits with no allowedTools denies test runners and git commit).
 // Any other value fails closed to compiled with a one-time warning.
 // ---------------------------------------------------------------------------
 interface PermissionsModule {

@@ -628,7 +628,7 @@ test_validate_bash_rm_allow_grammar() {
     )
     for t in "${ok_set[@]}"; do
         c=$(printf 'rm -r %s' "$t")
-        got=$(HOME=/home/u run_hook_case "$c" "" "" "$rt")
+        got=$(HOME='/home/u' run_hook_case "$c" "" "" "$rt")
         [ "$got" = "0:allow" ] || { fail "grammar shape wrongly denied: $c (got $got)"; return; }
     done
     # Real-world idioms: trap with a named variable, for-loop, find -exec.
@@ -639,7 +639,7 @@ test_validate_bash_rm_allow_grammar() {
         'find . -name x -exec rm -rf {} \;'
     )
     for c in "${idioms[@]}"; do
-        got=$(HOME=/home/u run_hook_case "$c" "" "" "$rt")
+        got=$(HOME='/home/u' run_hook_case "$c" "" "" "$rt")
         [ "$got" = "0:allow" ] || { fail "common idiom wrongly denied: $c (got $got)"; return; }
     done
     # Quoted printf/echo data and cat heredoc bodies are not rm command words.
@@ -659,14 +659,14 @@ test_validate_bash_rm_allow_grammar() {
         "printf 'x' ; rm -r /tmp" "printf '%s' 'rm -r /tmp' | sh" "echo 'rm -r /tmp' | bash"
         "eval \"rm -r /tmp\"" "echo \"\$(rm -r /tmp)\"" "cat <<EOF | sh
 rm -r /tmp
-EOF" "printf x && rm -r /tmp/*"
+EOF" "printf x && rm -r /tmp/"'*'
         'echo "<<EOF"
 rm -rf "$TMPDIR"
 EOF'
         'echo "done" # see cat <<EOF
 rm -rf "$TMPDIR"'
         'echo "a <<EOF b"
-rm -rf "$TMPDIR"/*
+rm -rf "$TMPDIR"/''*
 EOF'
         'echo "<<EOF"
 rm -rf ..'
