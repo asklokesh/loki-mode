@@ -17,10 +17,10 @@ describe("run identity tuple", () => {
     const env = { HOME: join(dir, "nohome"), ANTHROPIC_BASE_URL: "https://user:secret@gw.example.com:8443/v1?k=1" };
     const id = runIdentity(dir, env, "opus", () => "2.1.34");
     expect(id.cli_version).toBe("2.1.34");
-    expect(id.endpoint).toBe("gw.example.com");
+    expect(id.endpoint).toBe("gw.example.com:8443");
     expect(JSON.stringify(id)).not.toContain("secret");
     expect(id.config_digest).toMatch(/^[0-9a-f]{64}$/);
-    expect(id.policy_id).toMatch(/^[0-9a-f]{64}$/);
+    expect(id).not.toHaveProperty("policy_id");
     expect(id.requested_model).toBe("opus");
   });
   test("config digest changes with CLAUDE.md and is null with no config", () => {
@@ -31,6 +31,17 @@ describe("run identity tuple", () => {
     writeFileSync(join(dir, "CLAUDE.md"), "b");
     expect(configDigest(dir, env)).not.toBe(a);
   });
+  test("a custom gateway route records the gateway host", () => {
+    expect(endpointHost({ LOKI_MODEL_ROUTE: "custom/m", LOKI_MODEL_BASE_URL: "https://gw.internal:9000/x" })).toBe("gw.internal:9000");
+  });
+  test("settings env values never enter the digest, env key names do", () => {
+    mkdirSync(join(dir, ".claude"));
+    const env = { HOME: join(dir, "nohome") };
+    const w = (e: Record<string, string>) => writeFileSync(join(dir, ".claude", "settings.json"), JSON.stringify({ model: "x", env: e }));
+    w({ K: "secret1" }); const a = configDigest(dir, env);
+    w({ K: "secret2" }); expect(configDigest(dir, env)).toBe(a);
+    w({ K2: "secret2" }); expect(configDigest(dir, env)).not.toBe(a);
+  });
   test("default endpoint and unparseable endpoint", () => {
     expect(endpointHost({})).toBe("api.anthropic.com");
     expect(endpointHost({ ANTHROPIC_BASE_URL: "not a url" })).toBeNull();
@@ -39,7 +50,9 @@ describe("run identity tuple", () => {
     expect(modelOutcome("opus", "claude-sonnet-4-6")).toEqual({ requested_model: "opus", actual_model: "claude-sonnet-4-6", downgraded: true });
     expect(modelOutcome("sonnet", "claude-sonnet-4-6").downgraded).toBe(false);
     expect(modelOutcome("sonnet", "claude-opus-4-7").downgraded).toBe(false);
-    expect(modelOutcome("opus", null).downgraded).toBe(false);
+    expect(modelOutcome("opus", null).downgraded).toBeNull();
+    expect(modelOutcome("claude (provider default)", "claude-sonnet-4-6").downgraded).toBeNull();
+    expect(modelOutcome("opus", "some-other-model").downgraded).toBeNull();
   });
   test("stream parser records requested and actual model with the downgrade flag", async () => {
     process.env["LOKI_REQUESTED_MODEL"] = "opus";

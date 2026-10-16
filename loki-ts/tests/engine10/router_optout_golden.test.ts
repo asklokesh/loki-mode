@@ -151,6 +151,7 @@ function captureEntry(extra: Record<string, string>): Record<string, unknown> {
   const events = readFileSync(join(repo, marker.events), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { type: string; data: Record<string, unknown> });
   const started = { ...events.find((e) => e.type === "run.started")!.data };
   started["branch"] = "<branch>";
+  for (const k of ["cli_version", "endpoint", "config_digest", "requested_model"]) delete started[k]; // P12-23 run identity: host-dependent, not pre-router model behavior (the model key is still pinned)
   const fullStart = (r.stdout.toString().split("\n")[0] ?? "");
   // 11.3.0 T1 appends a cost-preview estimate to the start line. It is not pre-router model or option
   // behavior, so it is compared on its own record; everything before it stays byte-for-byte.
