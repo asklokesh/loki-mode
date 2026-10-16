@@ -25,7 +25,7 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EEXIST") continue;
       if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "EMLINK") throw e;
-      const name2 = `${prefix}-${randomBytes(4).toString("hex")}.md`; renameSync(src, join(logs, name2)); return name2;
+      const name2 = `${prefix}-${randomBytes(4).toString("hex")}.md`; renameSync(src, join(logs, name2)); onLinked?.(name2); return name2;
     }
     // onLinked runs while the claim still exists: the applied record and marker are durable before the claim goes, so a kill in this window leaves a claim the sweep can prove unapplied.
     onLinked?.(name);
@@ -61,6 +61,8 @@ function orphanAlreadyArchived(logs: string, claim: string): boolean {
 function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync, nowMs: number = Date.now()): void {
   let names: string[];
   try { names = readdirSync(logs); } catch { return; }
+  // Bound marker growth: a marker whose archive is gone proves nothing and is dropped.
+  for (const n of names) if (n.startsWith(".applied-") && !names.includes(n.slice(".applied-".length))) { try { unlinkSync(join(logs, n)); } catch { /* best effort */ } }
   for (const n of names) {
     const m = /^\.claim-(\d+)-[0-9a-f]+$/.exec(n);
     if (!m || Number(m[1]) === process.pid) continue;

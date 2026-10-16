@@ -305,6 +305,28 @@ describe("engine10 steer", () => {
     expect(archived(d).filter((n) => n.startsWith("human-input-")).length).toBe(1);
     expect(archived(d).some((n) => n.startsWith(".claim-"))).toBe(false);
   });
+  test("P12-02g: a no-hardlink filesystem (EPERM) still records the revision and writes the applied marker", () => {
+    const d = repo("## Operator directive rev 1 (t) actor=a source=cli\nbody\n");
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "EPERM" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink, { link })).toContain("body");
+    expect(sink.map((r) => [r.rev, r.unapplied])).toEqual([[1, undefined]]);
+    const logs = join(d, ".loki", "logs");
+    const normal = readdirSync(logs).find((n) => /^human-input-.*\.md$/.test(n))!;
+    expect(existsSync(join(logs, `.applied-${normal}`))).toBe(true);
+    expect(readFileSync(join(d, ".loki", "intent-revisions.jsonl"), "utf8")).toContain('"rev":1');
+  });
+  test("P12-02g: a sweep prunes an .applied- marker whose archive is gone and keeps one whose archive exists", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-20200101T000000.md"), "X");
+    writeFileSync(join(logs, ".applied-human-input-20200101T000000.md"), "d");
+    writeFileSync(join(logs, ".applied-human-input-19990101T000000.md"), "d");
+    consumeSteer(d, {}, () => new Date(), []);
+    expect(existsSync(join(logs, ".applied-human-input-20200101T000000.md"))).toBe(true);
+    expect(existsSync(join(logs, ".applied-human-input-19990101T000000.md"))).toBe(false);
+  });
   test("a non-file steer with no fresh steer is restored in place", () => {
     const d = repo();
     const f = join(d, ".loki", "HUMAN_INPUT.md");
