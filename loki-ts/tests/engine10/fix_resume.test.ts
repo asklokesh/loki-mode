@@ -534,6 +534,22 @@ describe("resume from stage (P12-07)", () => {
       expect(readAliveBeat(runDir)).toBeGreaterThan(old);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  test("P12-07n: a garbage alive file is no heartbeat and never stops the resume", async () => {
+    for (const junk of ["1e20", "-5", "abc", "", String(Date.now() + 3_600_000)]) {
+      const dir = mkdtempSync(join(tmpdir(), "loki-p1207n-g-"));
+      try {
+        const g = gitRepo(dir);
+        g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i");
+        const runDir = join(dir, ".loki", "runs", RID); mkdirSync(runDir, { recursive: true });
+        writeFileSync(join(runDir, "alive"), junk + "\n");
+        expect(readAliveBeat(runDir)).toBeNull();
+        await runSupervisor({ runId: RID, repoDir: dir, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, capS: 600, resume: true, workerArgv: [process.execPath, "-e", "process.exit(0)"], started: {} });
+        const ev = readEvents(join(runDir, "events.jsonl")).find((e) => e.type === "run.resumed");
+        expect(ev).toBeDefined();
+        expect(ev!.data["last_alive_ts"]).toBeUndefined();
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
+  });
   test("P12-07l: the deep worker honors LOKI_E10_CAP_S (remaining cap on resume) and falls back to its full cap", () => {
     expect(workerCapS(true, { LOKI_E10_CAP_S: "260" })).toBe(260);
     expect(workerCapS(true, {})).toBe(DEEP_CAP_S);

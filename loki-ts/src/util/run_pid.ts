@@ -83,4 +83,4 @@ export function cancelSessions(waitMs = 8000): Promise<void> {
 /** P12-07n: <run dir>/alive, one overwritten epoch-ms line the supervisor refreshes during quiet stages so resume can tell time spent running from time spent killed. */
 export const aliveBeatPath = (runDir: string): string => join(runDir, "alive");
 export function writeAliveBeat(runDir: string, now: number = Date.now()): void { try { writeFileSync(aliveBeatPath(runDir), `${now}\n`); } catch { /* best effort: without it resume counts the whole gap as downtime */ } }
-export function readAliveBeat(runDir: string): number | null { try { const n = Number(readFileSync(aliveBeatPath(runDir), "utf8").trim()); return Number.isFinite(n) && n > 0 ? n : null; } catch { return null; } }
+export function readAliveBeat(runDir: string): number | null { try { const n = Number(readFileSync(aliveBeatPath(runDir), "utf8").trim()); return Number.isFinite(n) && n > 0 && n <= Math.min(Date.now() + 60_000, 8.64e15) ? n : null; } catch { return null; } } // a corrupt or forged value is no heartbeat, never a throw downstream
