@@ -804,3 +804,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the gate reads headRefOid, requires every clean (non-dirty) proof for that head to agree on VERIFIED, refuses with gate: head when none exists or the head is unreadable or moved, and merges with --match-head-commit.
 - Fixture: tests/test-loki-merge-queue.sh (pin flag, stale proof, proof resolved by head, older VERIFIED vs newer NOT_PROVEN, dirty proof, unreadable head, head moved).
 - Known limits: a proof without facts.git.head_sha never matches (fails closed); dirty is ignoring .loki/ only.
+
+## FC-101 A receipt field the writer always emits was treated as optional, so deleting it passed as UNSIGNED (RECEIPT-FIELD-OPTIONAL)
+- User saw: a hand-edited receipt with events_sha256, time or time.stages removed (or set to null or a string) verified as UNSIGNED, and --allow-unsigned accepted it.
+- Law: a verifier may treat a field as optional only if some writer omits it; absence of an always-written field is evidence of editing, never a pass.
+- Cause (measured): checkEventLog returned null when events_sha256 was not a string, and the P12-01b stages check accepted any non-object time; seal.ts has written both fields since ad80fd4e6.
+- Siblings swept: the group receipt (seal_group.ts), Python proof receipts and control-plane fixtures never carry these fields and are not gated; signed receipts already cover both fields through receipt_sha256 and the attestation.
+- Mechanism: verify_cmd.ts checkEventLog, for schema loki.v10.receipt/1 only, returns TAMPERED naming the missing field (events_sha256 not 64-char lowercase hex, time absent or null, time.stages not a plain object) and ends "Re-run the task to produce a fresh receipt."
+- Fixture: loki-ts/tests/engine10/verify_cmd.test.ts P12-01c (field missing, malformed hash, time removed with stages at top level, time null, stages string, stages array, honest zero-stage receipt stays UNSIGNED); hand-built receipt/1 fixtures in seal_group, log_seal and visual_evidence tests now carry both fields.
+- Known limits: a receipt/1 stripped of its schema field falls to the ungated path (its receipt_sha256 still must match, and signed ones are covered by the attestation).

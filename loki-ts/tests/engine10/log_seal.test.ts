@@ -21,7 +21,7 @@ function run(tamper: boolean, marker = true): { dir: string; path: string; lines
   const log = new SupervisorLog(ev, id);
   log.append("run.started", null, { provider: "claude" });
   if (tamper) writeFileSync(ev, readFileSync(ev, "utf8").replace('"claude"', '"claudX"'));
-  const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), ...(marker ? { log_seal: true } : {}) };
+  const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, ...(marker ? { log_seal: true } : {}) };
   const hash = receiptSha256(body as never);
   writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
   log.append("receipt.sealed", "seal", { receipt_sha256: hash });

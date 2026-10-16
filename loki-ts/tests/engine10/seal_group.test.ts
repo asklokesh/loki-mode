@@ -71,7 +71,7 @@ function writeGroup(runDir: string, units: U[]): void {
     mkdirSync(d, { recursive: true });
     const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: { group_id: "g1", unit_id: u.id } }) + "\n";
     writeFileSync(join(d, "events.jsonl"), events);
-    const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: u.verdict ?? "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(events), not_proven: [] };
+    const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: u.verdict ?? "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(events), time: { wall_s: 0, stages: {} }, not_proven: [] };
     const h = receiptSha256(body as never), sig = u.unsigned ? { jwt: null, kid: null } : signReceipt(u.id, h);
     writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: h, verification: sig }, null, 2) + "\n");
   }
@@ -236,7 +236,7 @@ describe("D61-13 group seal and verify", () => {
     rewrite(path, (r) => { r["verdict"] = "VERIFIED"; }, true);
     const ud = join(ctx.runDir, "group/units/x");
     mkdirSync(ud, { recursive: true });
-    const body = { schema: "loki.v10.receipt/1", run_id: "x", verdict: "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(""), not_proven: [] };
+    const body = { schema: "loki.v10.receipt/1", run_id: "x", verdict: "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(""), time: { wall_s: 0, stages: {} }, not_proven: [] };
     const h = receiptSha256(body as never), subTxt = JSON.stringify({ ...body, receipt_sha256: h, verification: { jwt: null, kid: null } });
     writeFileSync(join(ud, "receipt.json"), subTxt);
     rewrite(path, (r) => { r["group"] = { group_id: "g", units: [{ index: 0, unit_id: "x", sub_receipt_sha256: sha256(subTxt), receipt_sha256: h, events_file_sha256: null, verdict: "VERIFIED" }] }; }, true);
@@ -334,7 +334,7 @@ function writeWs(name: string, kids: C[], integ: Record<string, unknown> = {}, l
   for (const k of kids) {
     const head = k.head ?? `${k.repo[0]}`.repeat(40);
     heads[k.repo] = head; outcomes[k.repo] = "ok";
-    const body = { schema: "loki.v10.receipt/1", run_id: `run-${k.repo}`, verdict: k.verdict ?? "VERIFIED", head_sha: head, events_sha256: sha256(""), not_proven: [] };
+    const body = { schema: "loki.v10.receipt/1", run_id: `run-${k.repo}`, verdict: k.verdict ?? "VERIFIED", head_sha: head, events_sha256: sha256(""), time: { wall_s: 0, stages: {} }, not_proven: [] };
     const h = receiptSha256(body as never), sig = k.unsigned ? { jwt: null, kid: null } : signReceipt(`run-${k.repo}`, h);
     mkdirSync(dirname(childPath(runDir, k.repo)), { recursive: true });
     writeFileSync(childPath(runDir, k.repo), JSON.stringify({ ...body, receipt_sha256: h, verification: sig }, null, 2) + "\n");
@@ -589,7 +589,7 @@ describe("group run: Group Seal and resume", () => {
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
       writeFileSync(join(d, "events.jsonl"), events);
-      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), not_proven: [] };
+      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), time: { wall_s: 0, stages: {} }, not_proven: [] };
       const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
       const rec = { ...body, receipt_sha256: h, verification: sig };
       if (o.tamper?.includes(n)) rec.verdict = "FAILED";
