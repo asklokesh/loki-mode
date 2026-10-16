@@ -25984,7 +25984,7 @@ _merge_pr_watch() {
         if [ "$attempt" -ge "$max" ]; then
             gh pr ready "$pr" --undo >/dev/null 2>&1 || true
             echo "$pr: not merged, gate: checks (gh pr checks rc=$rc after $attempt repair attempts); PR left as draft" >&2
-            _pr_record_merge "blocked:checks" "checks" "failing after $attempt repair attempts"
+            _pr_record_merge "$pr" "blocked:checks" "checks" "failing after $attempt repair attempts"
             echo "Last failure evidence:" >&2; sed 's/^/    /' "$evid" >&2
             rm -rf "$tmp"
             return 1
@@ -26007,13 +26007,16 @@ _merge_pr_watch() {
 
 # Record the merge gate's own result in .loki/state/pr.json (merged,
 # blocked:<gate> or waiting) so the receipt and handoff read the same outcome
-# the gate produced. Only updates an existing "created" record; never invents one.
+# the gate produced. Only updates an existing "created" record that describes
+# the same PR (pr arg matches .branch or the number at the end of .url); any
+# other record is left untouched. Never invents one. File mode is preserved.
 _pr_record_merge() {
-    local outcome="$1" gate="${2:-}" checks="${3:-not recorded}" f=".loki/state/pr.json" t
+    local pr="$1" outcome="$2" gate="${3:-}" checks="${4:-not recorded}" f=".loki/state/pr.json" t
     [ -f "$f" ] && command -v jq >/dev/null 2>&1 || return 0
     t="$(mktemp "$f.XXXXXX" 2>/dev/null)" || return 0
-    if jq --arg o "$outcome" --arg g "$gate" --arg c "$checks" \
-        'select(.state=="created") | .merge={outcome:$o, gate:(if $g=="" then null else $g end), checks:$c}' "$f" > "$t" 2>/dev/null && [ -s "$t" ]; then
+    cp -p "$f" "$t" 2>/dev/null || { rm -f "$t"; return 0; }
+    if jq --arg p "$pr" --arg o "$outcome" --arg g "$gate" --arg c "$checks" \
+        'select(.state=="created" and (.branch==$p or ((.url // "") | test("/pull/" + $p + "/?$")))) | .merge={outcome:$o, gate:(if $g=="" then null else $g end), checks:$c}' "$f" > "$t" 2>/dev/null && [ -s "$t" ]; then
         mv "$t" "$f"
     else
         rm -f "$t"
@@ -26037,11 +26040,11 @@ _merge_pr_gated() {
         esac
         shift
     done
-    command -v gh >/dev/null 2>&1 || { echo "$pr: not merged, gate: gh (gh CLI is required)" >&2; _pr_record_merge "blocked:gh" "gh"; return 1; }
+    command -v gh >/dev/null 2>&1 || { echo "$pr: not merged, gate: gh (gh CLI is required)" >&2; _pr_record_merge "$pr" "blocked:gh" "gh"; return 1; }
     d="$(gh pr view "$pr" --json isDraft -q .isDraft 2>/dev/null)" || d=""
     if [ "$d" != "false" ]; then
         echo "$pr: not merged, gate: draft (PR is a draft or its state is unreadable); PR left open" >&2
-        _pr_record_merge "blocked:draft" "draft"
+        _pr_record_merge "$pr" "blocked:draft" "draft"
         return 1
     fi
     if $need_verified; then
@@ -26052,23 +26055,26 @@ _merge_pr_gated() {
         fi
         if [ "$headline" != "VERIFIED" ]; then
             echo "$pr: not merged, gate: verdict (run verdict is '${headline:-missing}', need VERIFIED); PR left open" >&2
-            _pr_record_merge "blocked:verdict" "verdict"
+            _pr_record_merge "$pr" "blocked:verdict" "verdict"
             return 1
         fi
     fi
     rc=0; _pr_checks_wait "$pr" || rc=$?
     if [ "$rc" != "0" ]; then
         echo "$pr: not merged, gate: checks (gh pr checks rc=$rc); PR left open" >&2
-        if [ "$rc" = "8" ]; then _pr_record_merge "waiting" "checks" "pending"
-        else _pr_record_merge "blocked:checks" "checks" "failing"; fi
+        case "$rc" in
+            8) _pr_record_merge "$pr" "waiting" "checks" "pending" ;;
+            1) _pr_record_merge "$pr" "blocked:checks" "checks" "failing" ;;
+            *) _pr_record_merge "$pr" "blocked:checks" "checks" "unknown" ;;
+        esac
         return 1
     fi
     if ! gh pr merge "$pr" "${margs[@]}" >/dev/null 2>&1; then
         echo "$pr: not merged, gate: merge (gh pr merge failed); PR left open" >&2
-        _pr_record_merge "blocked:merge" "merge" "passing"
+        _pr_record_merge "$pr" "blocked:merge" "merge" "passing"
         return 1
     fi
-    _pr_record_merge "merged" "" "all passing"
+    _pr_record_merge "$pr" "merged" "" "all passing"
     return 0
 }
 
