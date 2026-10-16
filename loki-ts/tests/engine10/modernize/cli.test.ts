@@ -1,10 +1,13 @@
 // M-07: `loki modernize` CLI and flag parsing; TABLE route in engine10/cli.ts.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route, runEngine10 } from "../../../src/engine10/cli.ts";
 import { main, parseArgs } from "../../../src/engine10/modernize/cli.ts";
+import { fetchRepoRef, parseUnitArgs, unitMain } from "../../../src/util/modernize_unit.ts";
+import { safeGit } from "../../../src/util/safe_git.ts";
+import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 import { modernizeEventsPath } from "../../../src/engine10/modernize/types.ts";
 
 const PY_FIXTURE = join(import.meta.dir, "fixtures", "py");
@@ -223,5 +226,123 @@ describe("main", () => {
     cap.restore();
     expect(code).toBe(0);
     expect(cap.out).toContain("units: 0");
+  });
+});
+
+describe("modernize unit subcommand (M-23)", () => {
+  const ARGS = ["--repo", "acme/app", "--ref", "loki/x", "--unit", "billing.core", "--mid", "mod-20261015T000000Z-abcdef", "--target", "python3"];
+  const result = (verdict: UnitRunResult["verdict"], not_proven: string[] = []): UnitRunResult =>
+    ({ unit: "billing.core", verdict, oracle: null, wall: null, equiv: null, not_proven, conformance: null });
+  const wired = { implement: () => {}, runNew: (() => ({})) as never, runConformance: (() => ({})) as never, collect: (() => ({})) as never };
+  /** A checkout stub that records where it was asked to populate, and drops a marker file there. */
+  const fakeCheckout = (seen: string[]) => (repo: string, ref: string, dest: string): void => {
+    seen.push(`${repo}@${ref}:${dest}`);
+    writeFileSync(join(dest, "marker.txt"), "x");
+  };
+
+  it("routes through the existing engine10 modernize arm, no new arm", () => {
+    expect(route(["modernize", "unit", ...ARGS])?.module).toBe("modernize/cli.ts");
+  });
+
+  it("parses args and rejects unknown, missing, flag-shaped and dot-segment values", () => {
+    const ok = parseUnitArgs(ARGS);
+    expect(ok.ok && ok.opts).toEqual({ repo: "acme/app", ref: "loki/x", unit: "billing.core", mid: "mod-20261015T000000Z-abcdef", target: "python3" });
+    expect(parseUnitArgs(["--repo", "a/b"]).ok).toBe(false);
+    expect(parseUnitArgs([...ARGS, "--token", "t"]).ok).toBe(false);
+    expect(parseUnitArgs(["--repo", "--x/y", "--ref", "r", "--unit", "u"]).ok).toBe(false);
+    expect(parseUnitArgs(["--repo", "../x", "--ref", "r", "--unit", "u"]).ok).toBe(false);
+    expect(parseUnitArgs(["--repo", "x/..", "--ref", "r", "--unit", "u"]).ok).toBe(false);
+  });
+
+  it("checks out repo@ref into a run-owned temp dir, runs the unit there, exits 0 on PROVEN, then removes the dir", async () => {
+    const root = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      const seen: string[] = [];
+      let card: { unit: string; mid: string; target: string; repoDir: string } | undefined;
+      let markerSeen = false;
+      const cap = captureStd();
+      const code = await unitMain(ARGS, { unit: {
+        ...wired, tmpRoot: root, checkout: fakeCheckout(seen),
+        runUnit: ((c: { repoDir: string }) => { card = c as never; markerSeen = existsSync(join(c.repoDir, "marker.txt")); return result("PROVEN"); }) as never,
+      } });
+      cap.restore();
+      expect(code).toBe(0);
+      expect(card).toMatchObject({ unit: "billing.core", mid: "mod-20261015T000000Z-abcdef", target: "python3" });
+      expect(card!.repoDir.startsWith(root)).toBe(true);
+      expect(card!.repoDir).not.toBe(process.cwd());
+      expect(seen).toEqual([`acme/app@loki/x:${card!.repoDir}`]);
+      expect(markerSeen).toBe(true);
+      expect(existsSync(card!.repoDir)).toBe(false);
+      expect(readdirSync(root)).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("refuses with the checkout reason and never runs the unit when the checkout fails; the temp dir is removed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      let ran = false;
+      const cap = captureStd();
+      const code = await unitMain(ARGS, { unit: {
+        ...wired, tmpRoot: root, checkout: () => { throw new Error("cannot check out acme/app@loki/x: not found"); },
+        runUnit: (() => { ran = true; return result("PROVEN"); }) as never,
+      } });
+      cap.restore();
+      expect(code).toBe(1);
+      expect(ran).toBe(false);
+      expect(cap.err).toContain("cannot check out acme/app@loki/x: not found");
+      expect(readdirSync(root)).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("fetchRepoRef checks out the named ref from a real git repo and fails with a reason for a missing ref", () => {
+    const root = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      const src = join(root, "src");
+      mkdirSync(src);
+      safeGit(src, ["init", "-q", "-b", "main"]);
+      writeFileSync(join(src, "a.py"), "x = 1\n");
+      safeGit(src, ["add", "a.py"]);
+      safeGit(src, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c"]);
+      const dest = join(root, "dest");
+      mkdirSync(dest);
+      fetchRepoRef("acme/app", "main", dest, () => src);
+      expect(readFileSync(join(dest, "a.py"), "utf8")).toBe("x = 1\n");
+      const dest2 = join(root, "dest2");
+      mkdirSync(dest2);
+      expect(() => fetchRepoRef("acme/app", "nope", dest2, () => src)).toThrow(/cannot check out acme\/app@nope/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("exits nonzero with the reason on NOT_PROVEN, a throw, and unwired runners", async () => {
+    const root = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      const base = { ...wired, tmpRoot: root, checkout: () => {} };
+      let cap = captureStd();
+      let code = await unitMain(ARGS, { unit: { ...base, runUnit: (() => result("NOT_PROVEN", ["ablation not run"])) as never } });
+      cap.restore();
+      expect(code).toBe(1);
+      expect(cap.err).toContain("ablation not run");
+      cap = captureStd();
+      code = await unitMain(ARGS, { unit: { ...base, runUnit: (() => { throw new Error("boom"); }) as never } });
+      cap.restore();
+      expect(code).toBe(1);
+      expect(cap.err).toContain("boom");
+      cap = captureStd();
+      code = await unitMain(ARGS, { unit: { tmpRoot: root } });
+      cap.restore();
+      expect(code).toBe(2);
+      expect(cap.err).toContain("not wired");
+      expect(readdirSync(root)).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("the shipped bin/loki routes `modernize unit` to the Bun CLI and reaches unitMain (not wired, rc 2)", () => {
+    const loki = join(import.meta.dir, "..", "..", "..", "..", "bin", "loki");
+    const r = Bun.spawnSync(["bash", loki, "modernize", "unit", "--repo", "a/b", "--ref", "main", "--unit", "u1"], { env: { ...process.env, LOKI_NO_BROWSER: "1" } });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr.toString()).toContain("not wired yet; cannot run unit u1");
+    const bad = Bun.spawnSync(["bash", loki, "modernize", "unit", "--repo", "a/b"], { env: { ...process.env, LOKI_NO_BROWSER: "1" } });
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stderr.toString()).toContain("missing --ref");
   });
 });

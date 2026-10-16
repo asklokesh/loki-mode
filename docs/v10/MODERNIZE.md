@@ -398,3 +398,34 @@ The report never states more than the equivalence data proves. It is sealed and 
 - Red: the test file is missing or asserts the absent behavior.
 - Green: every assertion named in the goal holds.
 - Each HIGH slice needs a unanimous opus review (D12).
+
+## 14. Fan-out alignment: G-04 cloud dispatch and the M-23 unit job (G-05)
+
+Both fan-outs hand one independent piece of work to a remote worker and accept the result only after the coordinator checks it. They share one shape so a single dispatcher can drive either.
+
+**M-23 unit job schema** (POST /jobs, same bearer token as every job kind; the schema is closed and any other field is rejected with 400):
+
+| Field | Bound | Required |
+|---|---|---|
+| `kind` | the literal `unit` | yes |
+| `repo` | `owner/name`, at most 140 chars, no leading dash, no `.` or `..` segment | yes |
+| `ref` | git ref, at most 200 chars, no `..`, no leading dash | yes |
+| `unit` | unit id, `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`, never contains `~` | yes |
+| `mid` | `mod-<utc>-<6 hex>` | no |
+| `target` | `python3` or `java21` | no |
+
+The worker runs `loki modernize unit --repo <repo> --ref <ref> --unit <unit>` (plus `--mid` and `--target` when given). It fetches repo@ref into a run-owned temp directory with the safe_git helpers, runs the unit there through the same unit runner as a local run, and removes the directory afterwards. A checkout failure, a runner failure or any verdict other than PROVEN exits nonzero with the reason on stderr; exit 2 means bad arguments or runners that are not wired yet.
+
+**G-04 dispatch fields mapped onto it** (scripts/cloud-dispatch.sh, docs/v10/SWARM.md "Cloud dispatch"):
+
+| G-04 field | M-23 field | Rule |
+|---|---|---|
+| slice id (`SLICE-ID`) | `unit` | Same unit-id charset; the id is the unit of fan-out and of overlap checks. |
+| branch `cloud/<slice-id>` | `ref` | The worker works on and returns this ref; the coordinator never merges a ref it did not name. |
+| repository of the checkout | `repo` | Always `owner/name`; no URL, no userinfo. |
+| file set (overlap check) | the unit's own files | Resolved coordinator-side from plan.json before dispatch; never sent in the job. Overlap with in-flight work refuses the dispatch in both. |
+| tier and governor max | scheduler `--workers` | Concurrency is the governor cap, not a job field. |
+| cloud session id (BOARD note) | server job `id` | Recorded by the coordinator against the unit (events.jsonl for M-23, the BOARD row for G-04). |
+| PR and check conclusion | local re-verify | The PR check result and the remote "passed" are claims. The coordinator re-verifies locally (equivalence check for a unit, required checks for a slice) and merges only if both agree. |
+
+Shared rules: credentials are never in the payload (the token is an Authorization header for POST /jobs, and the cloud session uses its own login); an unobserved or unknown remote outcome is not a pass; a remote pass with a failing local re-verify never merges; dispatch refuses rather than guesses when the schema, the overlap check or the cap cannot be evaluated.

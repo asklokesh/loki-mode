@@ -187,6 +187,74 @@ def valid_spec(spec):
     return True
 
 
+# M-23: POST /jobs kind "unit" (remote modernize unit). The schema is closed:
+# any field outside UNIT_JOB_FIELDS is rejected, so no credential, env var or
+# command can ride the payload. Credentials come from the worker's own secret
+# mount, never from the job. Every value is bounded and dash-leading values are
+# refused so none can be parsed as a CLI flag.
+UNIT_JOB_KIND = "unit"
+UNIT_JOB_FIELDS = frozenset(("kind", "repo", "ref", "unit", "mid", "target"))
+UNIT_JOB_REQUIRED = ("repo", "ref", "unit")
+UNIT_JOB_TARGETS = ("python3", "java21")
+MAX_UNIT_REPO_LEN = 140
+MAX_UNIT_REF_LEN = 200
+# fullmatch + explicit ASCII classes: "$" would accept a trailing newline and
+# "\d" would accept Unicode digits. Mirrors the TS REPO_RE/REF_RE/UNIT_RE/MID_RE.
+UNIT_REPO_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*/[A-Za-z0-9._-]+", re.ASCII)
+UNIT_REF_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*", re.ASCII)
+UNIT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", re.ASCII)
+UNIT_MID_RE = re.compile(r"mod-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}", re.ASCII)
+
+
+def validate_unit_job(payload):
+    """Strictly validate a kind "unit" payload.
+
+    Returns (clean_dict, None) or (None, error). The clean dict holds only
+    known string fields, so downstream code never sees anything else.
+    """
+    if not isinstance(payload, dict):
+        return None, "payload must be a JSON object"
+    unknown = sorted(str(k) for k in payload if k not in UNIT_JOB_FIELDS)
+    if unknown:
+        return None, "unknown field(s): %s" % ", ".join(k[:40] for k in unknown[:5])
+    for key in UNIT_JOB_REQUIRED:
+        if key not in payload:
+            return None, "missing field: %s" % key
+    for key, value in payload.items():
+        if not isinstance(value, str):
+            return None, "field %s must be a string" % key
+    repo, ref, unit = payload["repo"], payload["ref"], payload["unit"]
+    if (len(repo) > MAX_UNIT_REPO_LEN or not UNIT_REPO_RE.fullmatch(repo)
+            or any(seg in (".", "..") for seg in repo.split("/"))):
+        return None, "invalid repo"
+    if (not ref or len(ref) > MAX_UNIT_REF_LEN or not UNIT_REF_RE.fullmatch(ref)
+            or ".." in ref or ref.endswith((".lock", "/", "."))):
+        return None, "invalid ref"
+    if not UNIT_ID_RE.fullmatch(unit):
+        return None, "invalid unit"
+    clean = {"kind": UNIT_JOB_KIND, "repo": repo, "ref": ref, "unit": unit}
+    if "mid" in payload:
+        if not UNIT_MID_RE.fullmatch(payload["mid"]):
+            return None, "invalid mid"
+        clean["mid"] = payload["mid"]
+    if "target" in payload:
+        if payload["target"] not in UNIT_JOB_TARGETS:
+            return None, "invalid target"
+        clean["target"] = payload["target"]
+    return clean, None
+
+
+def unit_start_args(unit_job):
+    """argv for the modernize unit worker. One list, never a shell string."""
+    args = ["modernize", "unit", "--repo", unit_job["repo"],
+            "--ref", unit_job["ref"], "--unit", unit_job["unit"]]
+    if "mid" in unit_job:
+        args += ["--mid", unit_job["mid"]]
+    if "target" in unit_job:
+        args += ["--target", unit_job["target"]]
+    return args
+
+
 def constant_time_equals(a, b):
     """Constant-time string compare that never raises on odd input.
 
@@ -687,8 +755,15 @@ def handle_job_event(payload, dry_run=False):
     spec = payload.get("spec")
     if not valid_spec(spec):
         return None, "rejected (invalid spec)"
+    unit_job = payload.get("unit_job")
+    if unit_job is not None:
+        # Re-validated here so the handler is safe no matter who calls it.
+        clean, _err = validate_unit_job(unit_job)
+        if clean is None:
+            return None, "rejected (invalid unit job)"
+        args = unit_start_args(clean)
     # Jira/Teams delegation sets pr=True: receipt-gated PR run, never a deploy.
-    if payload.get("pr") is True:
+    elif payload.get("pr") is True:
         args = brief_start_args(spec.strip())
     else:
         args = ["start", spec.strip(), "--detach"]
@@ -1823,6 +1898,10 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "payload must be a JSON object"})
             return
 
+        if payload.get("kind") == UNIT_JOB_KIND:
+            self._handle_unit_submit(payload)
+            return
+
         spec = payload.get("spec")
         if not valid_spec(spec):
             log_event(JOB_EVENT, "", "", "rejected (invalid spec)")
@@ -1834,7 +1913,24 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
 
-    def _enqueue_job(self, spec, reply_target=None, pr=False):
+    def _handle_unit_submit(self, payload):
+        """POST /jobs {"kind": "unit", ...}; caller already authenticated."""
+        clean, err = validate_unit_job(payload)
+        if clean is None:
+            log_event(JOB_EVENT, "", "", "rejected (invalid unit job)")
+            self._send_json(400, {"error": err})
+            return
+        summary = "unit:%s@%s:%s" % (clean["repo"], clean["ref"], clean["unit"])
+        if not valid_spec(summary):
+            log_event(JOB_EVENT, "", "", "rejected (invalid unit job)")
+            self._send_json(400, {"error": "invalid unit job"})
+            return
+        job_id = self._enqueue_job(summary, unit_job=clean)
+        if job_id is None:
+            return
+        self._send_json(202, {"id": job_id, "status": "queued"})
+
+    def _enqueue_job(self, spec, reply_target=None, pr=False, unit_job=None):
         """Record and enqueue one validated job; shared by /jobs, /slack, /linear.
 
         Returns the job id, or None after sending 429 when the queue is full.
@@ -1844,6 +1940,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         job = {"spec": spec, "job_id": job_id}
         if pr:
             job["pr"] = True
+        if unit_job is not None:
+            job["unit_job"] = unit_job
 
         # Record BEFORE enqueueing. A worker can pick the job up the instant
         # submit() returns and write "running"/"fired"; record_job is
