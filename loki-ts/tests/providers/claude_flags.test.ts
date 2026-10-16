@@ -859,38 +859,61 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(live("providers/claude.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG="))).toEqual([]);
   });
 
-  it("P12-26b: no unlisted raw --dangerously-skip-permissions launch remains in autonomy/, providers/, dashboard/, magic/", () => {
+  // P12-26b guard. Exemptions are whole-line (trimmed) matches; a raw launch sharing a line with
+  // an exempt shape is NOT exempt.
+  const LIT = "--dangerously-skip-permissions";
+  const EXACT_OK = [
+    `_LOKI_PERM_ARGV=(${LIT})`,
+    `PROVIDER_AUTONOMOUS_FLAG="${LIT}"`,
+    `_LEGACY = ["${LIT}"]`,
+  ];
+  // file -> exact lines allowed only there (docs/display text, never a launch)
+  const FILE_LINES: Record<string, string[]> = {
+    "autonomy/loki": [`claude ${LIT}`, `echo "Flag:        ${LIT}"`],
+  };
+  // Whole files scoped out, with a reason. Any raw launch in them is accepted.
+  const SCOPED_OUT: Record<string, string> = {
+    "dashboard/build_supervisor.py": "sandboxed fixed printf readiness probe must run Bash; a policy would cause a false auth failure",
+    "scripts/first-run-gate.sh": "benchmark raw-claude baseline arm and help-text stub, deliberately not policy-routed",
+    "scripts/b9-scoreboard.sh": "benchmark raw-claude baseline arms and help-text stub, deliberately not policy-routed",
+    "scripts/e2e-d65/stub-claude.sh": "stub claude help text only, not a launch",
+    "eval/loki10/harness.py": "eval harness raw-claude baseline arm, deliberately not policy-routed",
+  };
+  const rawLaunches = (rel: string, text: string): string[] =>
+    text.split("\n").filter((l) => {
+      if (!l.includes(LIT)) return false;
+      const t = l.trim();
+      if (/^(#|\/\/|\*)/.test(t)) return false;
+      if (EXACT_OK.includes(t)) return false;
+      if ((FILE_LINES[rel] ?? []).includes(t)) return false;
+      return true;
+    });
+
+  it("P12-26b: guard flags raw launch shapes", () => {
+    expect(rawLaunches("autonomy/x.sh", `claude ${LIT} -p "$prompt"`).length).toBe(1);
+    expect(rawLaunches("autonomy/x.sh", `    claude ${LIT} -p "$prompt"`).length).toBe(1);
+    expect(rawLaunches("autonomy/x.sh", `_LOKI_PERM_ARGV=(${LIT}); claude ${LIT} -p x`).length).toBe(1);
+    expect(rawLaunches("autonomy/x.sh", `claude ${LIT}`).length).toBe(1); // heredoc line only exempt in autonomy/loki
+    expect(rawLaunches("autonomy/loki", `claude ${LIT}`).length).toBe(0);
+    expect(rawLaunches("autonomy/x.sh", `    _LOKI_PERM_ARGV=(${LIT})`).length).toBe(0);
+  });
+
+  it("P12-26b: no unlisted raw --dangerously-skip-permissions launch remains in autonomy/, providers/, dashboard/, magic/, scripts/, eval/loki10/harness.py", () => {
     const root = join(import.meta.dir, "../../..");
-    const lit = "--dangerously-skip-permissions";
-    // Scoped-out list: path -> (reason, max live lines). Everything else must be policy-routed.
-    const scopedOut: Record<string, string> = {
-      "autonomy/run.sh": "PROVIDER_AUTONOMOUS_FLAG default and _LOKI_PERM_ARGV legacy defaults",
-      "autonomy/lib/claude-flags.sh": "defines the legacy default of the helper",
-      "autonomy/lib/done-recognition.sh": "_LOKI_PERM_ARGV legacy default",
-      "autonomy/lib/prd-enrich.sh": "_LOKI_PERM_ARGV legacy default",
-      "autonomy/lib/voter-agents.sh": "_LOKI_PERM_ARGV legacy default",
-      "autonomy/grill.sh": "_LOKI_PERM_ARGV legacy default",
-      "autonomy/quickstart.sh": "_LOKI_PERM_ARGV legacy default",
-      "providers/claude.sh": "PROVIDER_AUTONOMOUS_FLAG default",
-      "dashboard/build_supervisor.py": "sandboxed fixed printf readiness probe must run Bash; a policy would cause a false auth failure",
-      "autonomy/lib/claude_permissions.py": "legacy default of the python entry",
-      "autonomy/loki": "display text, usage docs, and _loki_perm_argv_for legacy default",
-      "autonomy/README.md": "documentation",
-    };
-    const allowedLine = /_LOKI_PERM_ARGV=\(|PROVIDER_AUTONOMOUS_FLAG=|_LEGACY = |^\s*(#|\/\/|\*)|echo "Flag:|^claude --dangerously|^\|/;
     const out: string[] = [];
+    const check = (r: string): void => {
+      const bad = rawLaunches(r, readFileSync(join(root, r), "utf8"));
+      if (bad.length && !(r in SCOPED_OUT)) out.push(`${r}: ${bad[0].trim().slice(0, 100)}`);
+    };
     const walk = (rel: string): void => {
       for (const e of readdirSync(join(root, rel), { withFileTypes: true })) {
         const r = `${rel}/${e.name}`;
         if (e.isDirectory()) { if (!["node_modules", "__pycache__", "dist", ".git"].includes(e.name)) walk(r); continue; }
-        if (!/\.(sh|py|ts|js|mjs)$/.test(e.name) && e.name !== "loki") continue;
-        const bad = readFileSync(join(root, r), "utf8").split("\n")
-          .filter((l) => l.includes(lit) && !allowedLine.test(l.trim()) && !allowedLine.test(l));
-        if (bad.length && !(r in scopedOut)) out.push(`${r}: ${bad[0].slice(0, 100)}`);
-        if (bad.length && r in scopedOut && !["dashboard/build_supervisor.py"].includes(r)) out.push(`${r}: scoped-out file has non-default raw launch`);
+        if (/\.(sh|py|ts|js|mjs)$/.test(e.name) || e.name === "loki") check(r);
       }
     };
-    for (const d of ["autonomy", "providers", "dashboard", "magic"]) walk(d);
+    for (const d of ["autonomy", "providers", "dashboard", "magic", "scripts"]) walk(d);
+    check("eval/loki10/harness.py");
     expect(out).toEqual([]);
   });
 

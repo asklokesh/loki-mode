@@ -137,14 +137,26 @@ _loki_caveman_narration_level() {
 # LOKI_PERMISSION_POLICY keeps --dangerously-skip-permissions byte-identically.
 _loki_perm_argv_for() {
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
-    if ! declare -F _loki_claude_permission_argv >/dev/null 2>&1; then
-        local _pa_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh"
+    # Unset policy: return before sourcing anything (claude-flags.sh exports caveman vars).
+    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    _LOKI_PERM_ARGV=(--permission-mode plan)
+    local _pa_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" _pa_out _pa_a
+    if [ ! -f "$_pa_lib" ]; then
+        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: helper missing; using most restrictive mode (plan)" >&2
+        return 0
+    fi
+    # Subshell so the helper's top-level exports never leak into this shell.
+    _pa_out="$(
+        LOKI_PROJECT_DIR="${1:-${LOKI_PROJECT_DIR:-$PWD}}"
         # shellcheck source=autonomy/lib/claude-flags.sh
-        [ -f "$_pa_lib" ] && . "$_pa_lib" 2>/dev/null
-    fi
-    if declare -F _loki_claude_permission_argv >/dev/null 2>&1; then
-        LOKI_PROJECT_DIR="${1:-${LOKI_PROJECT_DIR:-$PWD}}" _loki_claude_permission_argv
-    fi
+        . "$_pa_lib" >/dev/null 2>&1 || exit 1
+        declare -F _loki_claude_permission_argv >/dev/null 2>&1 || exit 1
+        _loki_claude_permission_argv
+        printf '%s\n' "${_LOKI_PERM_ARGV[@]}"
+    )" || return 0
+    [ -n "$_pa_out" ] || return 0
+    _LOKI_PERM_ARGV=()
+    while IFS= read -r _pa_a; do _LOKI_PERM_ARGV+=("$_pa_a"); done <<< "$_pa_out"
     return 0
 }
 
@@ -18208,7 +18220,7 @@ IMPORTANT RULES:
         # branch, byte-identical to pre-caveman (empty mode is NOT inert). No-op absent.
         local _loki_doc_cm=""
         _loki_doc_cm="$(_loki_caveman_narration_level)"
-            _loki_perm_argv_for "$codebase_path"
+        _loki_perm_argv_for "$codebase_path"
         case "$provider_name" in
             claude)
                 { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \

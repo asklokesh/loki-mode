@@ -346,6 +346,32 @@ else
     log_fail "p12-26b mismatch: qs_def=[$_pq_def] qs_cmp=[$_pq_cmp] py_def=[$_pq_pdef] py_cmp=[$_pq_pcmp]"
 fi
 
+# ===========================================
+# Test 15: P12-26b helper leaks no exports and fails closed
+# ===========================================
+log_test "loki _loki_perm_argv_for: no caveman leak when unset, plan when helper missing"
+_pl_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pl.XXXXXX")"
+sed -n '/^_loki_perm_argv_for() {/,/^}/p' "$PROVIDERS_DIR/../autonomy/loki" > "$_pl_dir/fn.sh"
+# shellcheck disable=SC2016
+_pl_probe='. "$1/fn.sh"; _LOKI_SCRIPT_DIR="$2"; _loki_perm_argv_for "$1"; printf "%s|%s" "${CAVEMAN_DEFAULT_MODE:-unset}" "${_LOKI_PERM_ARGV[*]}"'
+_pl_leak=$(env -u LOKI_PERMISSION_POLICY CAVEMAN_DEFAULT_MODE=full bash -c "$_pl_probe" _ "$_pl_dir" "$PROVIDERS_DIR/../autonomy" 2>/dev/null)
+_pl_cmpleak=$(LOKI_PERMISSION_POLICY=compiled HOME="$_pl_dir" LOKI_MANAGED_SETTINGS="$_pl_dir/none.json" CAVEMAN_DEFAULT_MODE=full bash -c "$_pl_probe" _ "$_pl_dir" "$PROVIDERS_DIR/../autonomy" 2>/dev/null)
+_pl_miss=$(LOKI_PERMISSION_POLICY=compiled CAVEMAN_DEFAULT_MODE=full bash -c "$_pl_probe" _ "$_pl_dir" "$_pl_dir/nolib" 2>/dev/null)
+# quickstart: helper missing + compiled must fail closed
+_pl_qs=$(LOKI_PERMISSION_POLICY=compiled LOKI_ALLOW_CLAUDE_SIDECALLS=1 LOKI_PROVIDER=claude PATH="$_pl_dir:$PATH" bash -c '
+  printf "#!/bin/sh\nprintf \"%%s|\" \"\$@\" > \"%s/argv\"\n" "$1" > "$1/claude"; chmod +x "$1/claude"
+  mkdir -p "$1/qs/lib"; cp "$2/autonomy/quickstart.sh" "$1/qs/quickstart.sh"; mkdir -p "$1/providers"; cp "$2/providers/"*.sh "$1/providers/"
+  . "$1/qs/quickstart.sh" >/dev/null 2>&1; _qs_classify_invoke hi >/dev/null 2>&1; cat "$1/argv"' _ "$_pl_dir" "$PROVIDERS_DIR/.." 2>/dev/null)
+rm -rf "$_pl_dir"
+if [ "$_pl_leak" = "full|--dangerously-skip-permissions" ] \
+   && [ "$_pl_cmpleak" = "full|--permission-mode acceptEdits" ] \
+   && [ "$_pl_miss" = "full|--permission-mode plan" ] \
+   && [ "$_pl_qs" = "--permission-mode|plan|-p|hi|" ]; then
+    log_pass "no leak, legacy when unset, plan when helper missing"
+else
+    log_fail "p12-26b helper: leak=[$_pl_leak] cmpleak=[$_pl_cmpleak] miss=[$_pl_miss] qs=[$_pl_qs]"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"
