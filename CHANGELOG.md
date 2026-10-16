@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.0 (2026-10-16)
+
+v11.16.0 was written into this changelog but never published to npm: its release failed required CI on four guard checks. This release fixes those checks and is the first to publish everything listed under v11.16.0, plus the engine-plan slices below. `loki start` with Claude remains the primary path, and every change here applies to it; chat and Slack route through the same commands.
+
+### Added
+- Per-stage resume for the v10 engine: an interrupted run resumes at the stage it stopped in, and the handoff states which stages are restored and which rerun (P12-07).
+- `loki verify` checks Seal drift: a receipt whose sealed commit no longer matches the repository is reported, not trusted (P12-01).
+- Compiled Claude permission policy behind `LOKI_PERMISSION_POLICY`. It is applied at every Claude launch site in the shell, Python and TypeScript paths, and a repository policy can never widen the user's policy. The SDK loop path honours it too: under `LOKI_PERMISSION_POLICY=compiled` it runs in acceptEdits and never in bypass mode. The default is unchanged when the variable is unset (P12-26, P12-26b, P12-26c).
+- Quota exhaustion is a bounded wait-then-rerun of the same provider call instead of a fatal stop. Waits back off exponentially and stop at the run cap, so a run ends budget-stopped rather than waiting forever. Authentication failures stay fatal (P12-09).
+- Work-item ids and extended lifecycle states in run state (P12-08). `loki status` now reports only states the engine actually writes: `observing` follows the deep-verify start after a PR opens, and blockers show the implement stage's spec conflict reason. The `paused` and `waiting_for_policy` states and `pr_ref` had no writer and are removed (P12-08b).
+- `loki start --resume` routes each run to the right resume path, the start and resume commands share one exit-code mapping, and the handoff names both commands (P12-07b, P12-07c).
+- A steer that arrives after the Wall freeze, or one that cannot be applied, blocks Seal with the reason recorded on the run record (P12-02).
+- Seven eval task families with nonce-gated hidden tests (P12-30), and a configured-Claude-Code eval arm for like-for-like comparison (P12-29).
+- A structural guard refuses uncited "Nx faster" or "N% cheaper" claims added to docs unless the line cites a measurement (P12-40).
+
+- `loki verify` reports a receipt/1 missing a valid time or events_sha256 as TAMPERED, and the test fixtures now match real Seal output (P12-01b, P12-01c).
+- Resume parses durable `intent.revised` and Wall start events, and fails closed when the Wall start is missing or in the future (P12-07d).
+- Holdout support for the Wall, off by default until the founder sets the ratio (P12-05).
+
+
+### Changed
+- Chat `/run` reports "Run started" only once a live run exists, and prints the real error and log path when the start fails (P12-16b).
+- Slack echoes redact secrets and escape user text before posting (P12-17b).
+
+- The proof cleanliness check runs batched over a sparse cone, so large repositories no longer pay one git call per rule (P12-03c, P12-03d).
+- Steer handling, work-item lifecycle and start-flag parsing tightened across the start and resume paths (P12-02b, P12-02c, P12-07e, P12-07f, P12-08c, P12-23, P12-23b).
+- The engine10 core keeps a line cap enforced by test (P12-CAP), and uncited claims in docs are tracked (P12-40b).
+
+### Fixed
+- `loki start` pre-scans skip the value of every value-taking flag, so a flag value is never read as a command, and the help no longer advertises a nonexistent `--model`; it points to `LOKI_MODEL_ROUTE` instead (P12-07g).
+- Four CI guards that blocked v11.16.0 now pass: a Seal drift git call now runs with a scrubbed environment; the credentialed verify-pr push and a benign file-name regex are allowlisted with reasons; and test pipes into `grep -q` use here-strings, keeping the SIGPIPE ceiling.
+- The permission guard test typechecks under strict index access.
+- A proof taken from a dirty working tree now fails closed. Renamed files and submodule changes count as changes, and the refusal says what to commit or stash (P12-03b).
+- The review allowlist guard anchors on the reviewer argv setup that P12-26 introduced.
+- Cost tests write result-cost during the run like the real child, so the runner's archive-before-spawn no longer hides it (P12-09b).
+- Eval tasks resolve the tracked fixture bundle when the pinned absolute path is absent, so CI can prepare the fam-* runs (P12-30).
+- The live-run trigger test pins `LOKI_DIR` itself, so a value leaked by another test module under parallel runs no longer points it at the wrong directory.
+
 ## v11.16.0 (2026-10-16)
 
 Engine-plan v1.2 slices, part two. `loki start` with Claude remains the primary path; chat and Slack steers now route through the same `loki steer` command and only report success when the steer's revision is confirmed.
