@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { capNote, costMeter, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { capNote, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { USAGE } from "../../src/engine10/cli.ts";
@@ -155,5 +155,22 @@ describe("a model with no known price is unmeasured, never priced by a guess or 
     const rec = buildProviderCost("aider", "totally-unknown-model-x", "p", "Tokens: 1.2k sent, 340 received. Cost: $0.01 message, $0.02 session.");
     expect(rec!.total_cost_usd).toBe(0.02);
     expect(rec!.cost_basis).toBe("provider-dollars");
+  });
+});
+
+describe("group env carries the resolved cap to unit children", () => {
+  test("a positive cap is exported as LOKI_BUDGET_LIMIT without mutating the input", () => {
+    const base = { PATH: "/bin" } as NodeJS.ProcessEnv;
+    const g = groupEnv(base, 5);
+    expect(g.LOKI_BUDGET_LIMIT).toBe("5");
+    expect(g.PATH).toBe("/bin");
+    expect(base.LOKI_BUDGET_LIMIT).toBeUndefined();
+  });
+  test("a subscription run (cap 0) leaves the env untouched", () => {
+    expect(groupEnv({ LOKI_BUDGET_LIMIT: "9" } as NodeJS.ProcessEnv, 0).LOKI_BUDGET_LIMIT).toBe("9");
+    expect(groupEnv({} as NodeJS.ProcessEnv, 0).LOKI_BUDGET_LIMIT).toBeUndefined();
+  });
+  test("supervisor hands the group the capped env, not process.env", () => {
+    expect(readFileSync(resolve(ROOT, "loki-ts/src/engine10/supervisor.ts"), "utf8")).toContain("maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd)");
   });
 });

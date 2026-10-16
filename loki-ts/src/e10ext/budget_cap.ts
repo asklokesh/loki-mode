@@ -28,6 +28,8 @@ export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.Proc
 export function capNote(usd: number, source: CapSource): string {
   if (usd <= 0) return "no dollar cap (subscription)";
   return `cap $${usd.toFixed(2)} (${source})`; }
+/** Env for group/unit children: the resolved run cap becomes their LOKI_BUDGET_LIMIT, so a flag cap cannot be re-defaulted per unit. */
+export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number): NodeJS.ProcessEnv { return capUsd > 0 ? { ...env, LOKI_BUDGET_LIMIT: String(capUsd) } : env; }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
 export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean } {
   const m = costMeter(parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0);

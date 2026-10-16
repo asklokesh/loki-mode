@@ -225,3 +225,12 @@ One table in `loki-ts/src/providers/provider_guard.ts` (`CAPABILITIES`) records 
 | cline | engine10 | estimated | post-iteration | yes | none | yes | no | post-iteration | none |
 | aider | engine10 | estimated | post-iteration | yes | --no-auto-commits | yes | no | post-iteration | none |
 | opencode | engine10 | none | none | yes | none | yes | no | post-iteration | none |
+
+### Parallel units and groups
+
+A decomposed run (`loki backlog --dag`, or a spec that splits into a unit group) shares one
+total. The resolved cap is exported to every unit as `LOKI_BUDGET_LIMIT`, and the backlog
+runner stops launching pending units with `BUDGET_STOP` once the summed measured cost of
+finished units reaches that cap. Units already running when the cap is crossed finish, so
+the total can overshoot by at most the in-flight units. `budgets.per_run` is accepted as an
+alias of `budgets.per_run_usd` in `loki.yaml`.
