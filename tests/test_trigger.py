@@ -356,8 +356,13 @@ class TestEventRouting(unittest.TestCase):
         import tempfile
         d = tempfile.mkdtemp()
         cwd = os.getcwd()
+        # Pin LOKI_DIR: other modules set it at import and never restore it,
+        # so under xdist an inherited value would point find_live_run elsewhere.
         try:
             os.chdir(d)
+            env_patch = patch.dict(os.environ, {"LOKI_DIR": os.path.join(d, ".loki")})
+            env_patch.start()
+            self.addCleanup(env_patch.stop)
             for rid, ref, pid in (("r-old", "owner/repo#42", False), ("r-live", "owner/repo#42", True), ("r-other", "owner/repo#7", True)):
                 rd = Path(".loki/runs") / rid
                 rd.mkdir(parents=True)
