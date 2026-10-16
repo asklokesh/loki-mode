@@ -84,11 +84,11 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-const STEER_REMEDY: Record<string, string> = { symlink: "The symlink .loki/HUMAN_INPUT.md was removed; send the steer again as a regular file.", "not a regular file": "Remove the directory or special file at .loki/HUMAN_INPUT.md.", "over 1 MiB": "Send a steer under 1 MiB (the oversize file was moved to .loki/logs/).", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory and .loki/HUMAN_INPUT.md a readable file.", unknown: "Remove or replace .loki/HUMAN_INPUT.md and make .loki/logs writable." };
+const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory.", unknown: "Make .loki/logs writable." };
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
-  if (bad.length) { const why = [...new Set(bad.map((r) => r.reason ?? "unknown"))]; return `a steer in .loki/HUMAN_INPUT.md could not be applied (${why.join("; ")}); this run cannot be sealed. ${why.map((w) => STEER_REMEDY[w] ?? STEER_REMEDY.unknown!).join(" ")} Then re-run.`; }
+  if (bad.length) { const why = [...new Set(bad.map((r) => r.reason ?? "unknown"))]; return `a steer in .loki/HUMAN_INPUT.md could not be applied (${why.join("; ")}); this run cannot be sealed. ${[...new Set(why.map((w) => STEER_REMEDY[w] ?? STEER_REMEDY.unknown!))].join(" ")} A steer left in place is read after the Wall starts and blocks the next run too: delete .loki/HUMAN_INPUT.md and re-run with loki "<task with the steer folded in>".`; }
   return `operator steer rev ${late.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"`;
 }
 

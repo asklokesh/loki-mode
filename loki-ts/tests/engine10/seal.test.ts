@@ -1421,41 +1421,41 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
   }, 30000);
   // Unconsumable steers must fail closed: an unwritable logs dir or an oversize file leaves no revision record by the old path.
   const HDR = "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\n";
-  const refuses = async (ctx: RunContext, why: string, remedy: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); this run cannot be sealed. ${remedy} Then re-run.`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
+  const refuses = async (ctx: RunContext, why: string, remedy: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); this run cannot be sealed. ${remedy} A steer left in place is read after the Wall starts and blocks the next run too: delete .loki/HUMAN_INPUT.md and re-run with loki "<task with the steer folded in>".`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
   test("logs path is a regular file: a steer at implement refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-impl", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}change\n`);
     expect(withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions).brief).toBe("b"); // not injected, but recorded as unapplied
-    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory and .loki/HUMAN_INPUT.md a readable file.");
+    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory.");
   }, 30000);
   test("logs path is a regular file: a late steer refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-late", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}late\n`);
-    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory and .loki/HUMAN_INPUT.md a readable file.");
+    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory.");
   }, 30000);
   test("an oversize late steer refuses the seal", async () => {
     const ctx = withRevs("rev-oversize-late", []);
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
-    await refuses(ctx, "over 1 MiB", "Send a steer under 1 MiB (the oversize file was moved to .loki/logs/).");
+    await refuses(ctx, "over 1 MiB", "The oversize file was moved to .loki/logs/.");
   }, 30000);
   test("an oversize steer at implement refuses the seal", async () => {
     const ctx = withRevs("rev-oversize-impl", []);
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
     withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions);
     rmSync(join(ctx.repoDir, ".loki/logs"), { recursive: true, force: true });
-    await refuses(ctx, "over 1 MiB", "Send a steer under 1 MiB (the oversize file was moved to .loki/logs/).");
+    await refuses(ctx, "over 1 MiB", "The oversize file was moved to .loki/logs/.");
   }, 30000);
   test("a symlinked steer file refuses the seal with a truthful reason", async () => {
     const ctx = withRevs("rev-symlink", []);
     symlinkSync("/dev/null", join(ctx.repoDir, ".loki/HUMAN_INPUT.md"));
-    await refuses(ctx, "symlink", "The symlink .loki/HUMAN_INPUT.md was removed; send the steer again as a regular file.");
+    await refuses(ctx, "symlink", "The symlink was removed.");
   }, 30000);
   test("a directory at HUMAN_INPUT.md refuses the seal naming that path", async () => {
     const ctx = withRevs("rev-dir", []);
     mkdirSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"));
-    await refuses(ctx, "not a regular file", "Remove the directory or special file at .loki/HUMAN_INPUT.md.");
+    await refuses(ctx, "not a regular file", "It is a directory or special file.");
   }, 30000);
   test("intentRevisionsBlock omits unapplied records", () => {
     expect(intentRevisionsBlock([rv(1, 1), { ...rv(0, 2), unapplied: true, reason: "x" }]).intent_revisions?.map((r) => r.rev)).toEqual([1]);
