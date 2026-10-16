@@ -175,9 +175,9 @@ export function readResultCost(lokiRoot: string, iteration: string): CostResult 
 
 // E-06b efficiency record writers live in providers/provider_cost.ts (engine10 core line budget); re-exported for existing callers.
 export { type EfficiencySessionInfo, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
-import { type EfficiencySessionInfo, withArchivedCosts, writeEfficiencyRecord } from "../providers/provider_cost.ts";
-/** P12-09b: ids plus their archived earlier attempts, minus archives sumResultCosts reads as missing (E-69: a quota is_error leaves a $0 zero-usage file that would blank the run). */
-export const archivedCostIds = (lokiRoot: string, ids: string[]): string[] => withArchivedCosts(lokiRoot, ids, (id) => sumResultCosts(lokiRoot, [id]).missing.length === 0);
+import { type EfficiencySessionInfo, neverRan, withArchivedCosts, writeEfficiencyRecord } from "../providers/provider_cost.ts";
+/** P12-09b: ids plus their archived earlier attempts, minus archives that never ran (E-69 shape; a quota is_error leaves a $0 zero-usage file that would blank the run). */
+export const archivedCostIds = (lokiRoot: string, ids: string[]): string[] => withArchivedCosts(lokiRoot, ids, (id) => !neverRan(resultCostPath(lokiRoot, id), UNMETERED));
 
 // What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
 // in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.

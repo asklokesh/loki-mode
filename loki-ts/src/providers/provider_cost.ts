@@ -5,7 +5,7 @@
 //   1. provider-reported dollars (aider "Cost: $X session"): estimated=false
 //   2. provider-reported tokens (codex, aider, cline), priced from the table: estimated=true
 //   3. prompt/response sizes, priced from the table: estimated=true
-import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CostResult } from "../engine10/cost.ts";
 import { estimateTokens, priceFor, usdFor } from "../providers/price_table.ts";
@@ -186,4 +186,11 @@ export function archivePriorCost(lokiRoot: string, id: string): void {
 export function withArchivedCosts(lokiRoot: string, ids: string[], keep: (archivedId: string) => boolean = () => true): string[] {
   let files: string[] = []; try { files = readdirSync(join(lokiRoot, "metrics")); } catch { /* none yet */ }
   return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)).filter(keep))])];
+}
+/** E-69 "never ran" shape of a result-cost file: a finite dollar figure, all four usage counts 0, source not the unmetered marker. Unreadable or any other shape is not it (an unknown cost must stay in the sum, flagged partial). */
+export function neverRan(path: string, unmeteredMarker: string): boolean {
+  try {
+    const r = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>, n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    return typeof r["total_cost_usd"] === "number" && Number.isFinite(r["total_cost_usd"]) && r["source"] !== unmeteredMarker && ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"].every((k) => n(r[k]) === 0);
+  } catch { return false; }
 }

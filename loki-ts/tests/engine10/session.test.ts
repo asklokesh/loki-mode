@@ -103,6 +103,30 @@ describe("engine10 session", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 20_000);
 
+  // P12-09b: an archived attempt that cost money or has unknown cost must stay in the sum (flagged partial/ambiguous), never be dropped.
+  for (const [name, first, ambiguous] of [
+    ["C: unpriced model, tokens but total_cost_usd null", '{"total_cost_usd":null,"input_tokens":90000,"output_tokens":20000,"model":"m"}', false],
+    ["E: resumed attempt at $1.20 with resumed_from", '{"total_cost_usd":1.2,"input_tokens":50,"output_tokens":50,"model":"m","resumed_from":"e-0"}', true],
+  ] as const) test(`P12-09b regression ${name}`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-reg-"));
+    try {
+      const lokiRoot = join(dir, ".loki"), sh = (body: string, code: number) => ["bash", ["-c", `mkdir -p .loki/metrics; echo '${body}' > .loki/metrics/result-cost-$LOKI_ITERATION.json; exit ${code}`]] as [string, string[]];
+      for (const [body, code] of [[first, 1], ['{"total_cost_usd":2.5,"input_tokens":5,"output_tokens":5,"model":"m"}', 0]] as const) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: sh(body, code) }).run(baseOpts({ cwd: dir, iterationId: "r-1", limitS: 20 }));
+      const ids = archivedCostIds(lokiRoot, ["r-1"]);
+      expect(ids).toContain("r-1-q1"); // the archive is counted, not dropped
+      const c = sumResultCosts(lokiRoot, ids);
+      expect(ambiguous ? c.partialUsd >= 2.5 : c.usd === null && c.missing.includes("r-1-q1")).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+  test("P12-09b: the unmetered stub record (B) is counted, not dropped as never-ran", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-unm-"));
+    try {
+      const lokiRoot = join(dir, ".loki"), sh = (body: string) => ["bash", ["-c", `mkdir -p .loki/metrics; echo '${body}' > .loki/metrics/result-cost-$LOKI_ITERATION.json; exit 1`]] as [string, string[]];
+      for (const body of ['{"total_cost_usd":0,"input_tokens":0,"output_tokens":0,"model":"m","source":"cli-invoker-unmetered"}', '{"total_cost_usd":2.5,"input_tokens":5,"output_tokens":5,"model":"m"}']) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: sh(body) }).run(baseOpts({ cwd: dir, iterationId: "u-1", limitS: 20 }));
+      expect(archivedCostIds(lokiRoot, ["u-1"])).toContain("u-1-q1");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+
   test("emits a heartbeat event while waiting", async () => {
     const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
     const runner = createSessionRunner({
