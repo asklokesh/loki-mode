@@ -177,7 +177,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN); const cancelled = worker.cancelled ?? null; if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
+  if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);

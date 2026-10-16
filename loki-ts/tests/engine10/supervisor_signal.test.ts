@@ -174,3 +174,32 @@ describe("engine10 SIGINT cancellation (stub provider that sleeps)", () => {
     expect(out).not.toMatch(/Cost:\s+\$0\.00/);
   }, 120_000);
 });
+
+// P12-10b: a cancel honoured at a stage boundary (control-request.json) ends the run CANCELLED with run.completed cancelled:true, no PR.
+describe("supervisor request cancel", () => {
+  test("cancel_effective from the worker completes the run as cancelled", async () => {
+    const base = mkdtempSync(join(tmpdir(), "e10-rcancel-"));
+    roots.push(base);
+    const dir = join(base, "repo");
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "base\n");
+    git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+    writeFileSync(join(base, "worker.js"), `
+console.log(JSON.stringify({ type: "cancel_requested", stage: null, data: {} }));
+console.log(JSON.stringify({ type: "cancel_effective", stage: null, data: {} }));
+console.log(JSON.stringify({ type: "escalated", stage: null, data: { stop: "cancelled by request" } }));
+`);
+    writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
+const r = await runSupervisor({ runId: "e10-rc", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
+console.log("OUTCOME=" + r.outcome);`);
+    const r = Bun.spawnSync([process.execPath, join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" } });
+    expect(r.stdout.toString()).toContain("OUTCOME=CANCELLED");
+    const marker = JSON.parse(readFileSync(join(dir, ".loki", "engine.json"), "utf8")) as { events: string };
+    const evs = readFileSync(join(dir, marker.events), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { type: string; data: Record<string, unknown> });
+    const done = evs.findLast((e) => e.type === "run.completed");
+    expect(done?.data.cancelled).toBe(true);
+    expect(done?.data.outcome).toBe("CANCELLED");
+    expect(evs.some((e) => e.type === "pr.opened")).toBe(false);
+  }, 30_000);
+});

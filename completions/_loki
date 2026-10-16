@@ -209,6 +209,7 @@ function _loki_commands {
         'stop:Stop execution'
         'pause:Pause execution'
         'resume:Resume execution'
+        'cancel:Cancel the active Loki 10 run'
         'steer:Steer a running build with a note (needs LOKI_PROMPT_INJECTION=1)'
         'status:Show status'
         'next:Run the right next step for the current build'
