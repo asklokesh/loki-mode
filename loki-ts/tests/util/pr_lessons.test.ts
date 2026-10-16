@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -467,6 +467,7 @@ describe("respondToReview", () => {
       return { code: 0, stdout: "{}", stderr: "" };
     };
     const gitCalls: string[][] = [];
+    const pushes: string[] = [];
     let n = 0, dirty = opts.preDirty ?? false;
     const vcs = (args: string[]): string => {
       gitCalls.push(args);
@@ -477,18 +478,18 @@ describe("respondToReview", () => {
       return "";
     };
     const edit = async (): Promise<boolean> => { dirty = true; return true; };
-    return { gh, vcs, calls, gitCalls, edit };
+    return { gh, vcs, calls, gitCalls, edit, pushes, push: (h: string) => { pushes.push(h); } };
   };
   const replies = (calls: string[][]) => calls.filter((a) => a.some((x) => /\/replies$/.test(x)));
 
   it("one commit and one sha-citing reply per open comment; resolved threads are skipped and never resolved", async () => {
     const e = mkEnv([C(1, "Rename this variable."), C(2, "Handle the null case."), C(3, "Old nit.")], [3]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
     expect(r.fixed).toBe(2);
     expect(r.skipped).toBe(1);
     expect(e.gitCalls.filter((a) => a[0] === "commit").length).toBe(2);
-    expect(e.gitCalls.filter((a) => a[0] === "push").length).toBe(1);
-    expect(e.gitCalls.find((a) => a[0] === "push")).toEqual(["push", "origin", "HEAD:refs/heads/feat"]);
+    expect(e.gitCalls.some((a) => a[0] === "push")).toBe(false);
+    expect(e.pushes).toEqual(["feat"]);
     const rp = replies(e.calls);
     expect(rp.length).toBe(2);
     expect(rp[0]!.join(" ")).toContain("sha1");
@@ -496,20 +497,40 @@ describe("respondToReview", () => {
     expect(e.calls.some((a) => a.join(" ").includes("resolveReviewThread"))).toBe(false);
   });
 
+  it("a push that throws (PR no longer open) posts no reply", async () => {
+    const e = mkEnv([C(1, "x")]);
+    const push = () => { throw new GhError("the PR for feat is no longer open; pushed but no reply posted"); };
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push, fix: e.edit })).rejects.toThrow(/no longer open/);
+    expect(replies(e.calls).length).toBe(0);
+  });
+
+  it("default push throws on a created marker and the default vcs never enables allowToken", async () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/util/pr_lessons.ts"), "utf8");
+    expect(src).not.toMatch(/allowToken/);
+    const d = mk();
+    const script = join(d, "fake-push.sh");
+    writeFileSync(script, "#!/bin/sh\necho created\necho https://github.com/o/r/pull/9\n");
+    expect(() => defaultRespondPush(d, "feat", script)).toThrow(/no longer open/);
+    writeFileSync(script, "#!/bin/sh\necho reused\necho https://github.com/o/r/pull/9\n");
+    expect(() => defaultRespondPush(d, "feat", script)).not.toThrow();
+    writeFileSync(script, "#!/bin/sh\necho boom >&2\nexit 3\n");
+    expect(() => defaultRespondPush(d, "feat", script)).toThrow(/boom/);
+  });
+
   it("a fix that edits nothing gets no commit and no reply; max bounds the work", async () => {
     const e = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
-    const none = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: async () => false });
+    const none = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: async () => false });
     expect(none.fixed).toBe(0);
     expect(replies(e.calls).length).toBe(0);
     const e2 = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e2.gh, git: e2.vcs, fix: e2.edit, max: 1 });
+    const r = await respondToReview(mk(), "o/r#7", { gh: e2.gh, git: e2.vcs, push: e2.push, fix: e2.edit, max: 1 });
     expect(r.fixed).toBe(1);
     expect(replies(e2.calls).length).toBe(1);
   });
 
   it("refuses when the checkout is not the PR head branch: no fix, commit, push or reply", async () => {
     const e = mkEnv([C(1, "x")], [], { branch: "main" });
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit })).rejects.toThrow(/PR branch/);
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/PR branch/);
     expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
     expect(replies(e.calls).length).toBe(0);
   });
@@ -517,14 +538,14 @@ describe("respondToReview", () => {
   it("refuses a tree that is dirty before any fix runs", async () => {
     const e = mkEnv([C(1, "x")], [], { preDirty: true });
     let fixed = false;
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/uncommitted/);
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/uncommitted/);
     expect(fixed).toBe(false);
     expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
   });
 
   it("refuses when the PR head branch cannot be resolved", async () => {
     const e = mkEnv([C(1, "x")], [], { head: null });
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit })).rejects.toThrow(/head branch/);
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/head branch/);
   });
 
   it("never stages .loki run artifacts: a real source edit is staged, the .loki file is not", async () => {
@@ -534,7 +555,7 @@ describe("respondToReview", () => {
       if (args[0] === "status") return edited ? " M src/real.ts\n?? .loki/runs/e10-1/spec.snapshot.md\n?? .loki/state.json\n" : "";
       return e.vcs(args);
     };
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, fix: async () => { edited = true; return true; } });
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
     expect(r.fixed).toBe(1);
     const add = e.gitCalls.find((a) => a[0] === "add")!;
     expect(add).toEqual(["add", "--", "src/real.ts"]);
@@ -550,7 +571,7 @@ describe("respondToReview", () => {
     mkdirSync(join(d, ".loki", "runs"), { recursive: true }); writeFileSync(join(d, ".loki", "runs", "x.json"), "{}");
     const e = mkEnv([C(1, "x")]);
     const vcs = (args: string[]): string => args[0] === "push" ? "" : run(args);
-    const r = await respondToReview(d, "o/r#7", { gh: e.gh, git: vcs, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
+    const r = await respondToReview(d, "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
     expect(r.fixed).toBe(1);
     const files = run(["show", "--name-only", "--format=", "HEAD"]).trim().split("\n").sort();
     expect(files).toEqual(["a.ts", "sub/.loki/keep.txt"]);
@@ -564,13 +585,13 @@ describe("respondToReview", () => {
       if (args[0] === "status") return edited ? "R  .loki/a.ts -> src/b.ts\n" : "";
       return e.vcs(args);
     };
-    await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, fix: async () => { edited = true; return true; } });
+    await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
     expect(e.gitCalls.find((a) => a[0] === "add")).toEqual(["add", "--", "src/b.ts"]);
   });
 
   it("skips replies and already-answered threads", async () => {
     const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
     expect(r.fixed).toBe(1);
   });
 });
