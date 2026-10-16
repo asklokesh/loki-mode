@@ -103,3 +103,5 @@ src/features/runner_config.ts	jest
 src/features/runner_config.ts	package.json
 src/features/runner_config.ts	pytest
 src/features/runner_config.ts	vitest
+# M-27D detectWaveCommands detects the TARGET repo own test command (pytest when the target is Python) so a modernize wave can run the repo suite; it reads the target repo as data to choose a command, never hardcodes one for the harness. Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
+src/engine10/modernize/wave.ts	pytest
