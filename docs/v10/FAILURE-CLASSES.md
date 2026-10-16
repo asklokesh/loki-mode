@@ -813,3 +813,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: verify_cmd.ts checkEventLog, for schema loki.v10.receipt/1 only, returns TAMPERED naming the missing field (events_sha256 not 64-char lowercase hex, time absent or null, time.stages not a plain object) and ends "Re-run the task to produce a fresh receipt."
 - Fixture: loki-ts/tests/engine10/verify_cmd.test.ts P12-01c (field missing, malformed hash, time removed with stages at top level, time null, stages string, stages array, honest zero-stage receipt stays UNSIGNED); hand-built receipt/1 fixtures in seal_group, log_seal and visual_evidence tests now carry both fields.
 - Known limits: a receipt with a schema variant or no schema field falls to the ungated path and reads UNSIGNED (its receipt_sha256 still must match, and signed ones are covered by the attestation).
+
+## FC-102 A resumed run lost intake's deferred already_satisfied flag (D61-04, P12-07j)
+- User saw: after `loki start --resume`, a run whose intent was already satisfied committed and verified its own diff and opened a redundant PR instead of short-circuiting to ALREADY_SATISFIED. Raw: the deferred hit was applied in memory only.
+- Law: L4 (the durable log must carry every fact a later stage reads).
+- Siblings swept: every other stage output restored by resumeMachineOpts is written before its stage.completed emit; intake is the only stage whose data is mutated afterward (machine.ts keeps the same object for that reason). seal.ts, discard.ts and machine.ts mustJump read intake.already_satisfied. A lost flag is never a false VERIFIED because verify always reruns.
+- Mechanism: the deferred hit emits `already.satisfied` with `already_satisfied: true` and its evidence (already_done_async.ts); resumeMachineOpts (util/run_outputs.ts) folds a well-formed event into the restored intake output. Absent or malformed (flag not true, evidence empty or non-string) restores exactly as before. The event type already existed, so the schema change is additive.
+- Fixture: loki-ts/tests/engine10/fix_resume.test.ts P12-07j (hit survives, old log unchanged, malformed ignored).

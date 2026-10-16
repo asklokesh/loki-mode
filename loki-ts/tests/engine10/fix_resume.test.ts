@@ -355,6 +355,25 @@ describe("resume from stage (P12-07)", () => {
     expect(seenIntake).toBe("abc");
     expect(events.filter((e) => e.type === "stage.completed").map((e) => e.stage)).toEqual(["verify", "commit", "seal", "pr"]);
   });
+  const satLog = (extra: Spec[]) => mk([["run.started", null], ["stage.completed", "intake", { base_sha: "abc", task: "t", already_satisfied: false }], ["stage.completed", "plan"], ["stage.completed", "wall"], ...extra, ["stage.completed", "implement"]]);
+  const restoreIntake = (evs: ReturnType<typeof mk>): Record<string, unknown> | undefined => {
+    const { ctx } = fakeCtx(); const r = resumeMachineOpts(ctx as never, evs, text(evs), FLOW);
+    if (!r.ok) throw new Error(r.reason);
+    return r.restored["intake"] as Record<string, unknown> | undefined;
+  };
+  test("P12-07j (D61-04): a deferred already-done hit survives resume", () => {
+    const d = restoreIntake(satLog([["already.satisfied", "intake", { already_satisfied: true, evidence: ["src/a.ts has it"], deferred: true }]]));
+    expect(d?.["already_satisfied"]).toBe(true);
+    expect(d?.["evidence"]).toEqual(["src/a.ts has it"]);
+    expect(d?.["base_sha"]).toBe("abc");
+  });
+  test("P12-07j: an old log without the event restores exactly as before (not satisfied)", () => {
+    expect(restoreIntake(satLog([]))).toEqual({ base_sha: "abc", task: "t", already_satisfied: false });
+  });
+  test("P12-07j: a malformed already.satisfied event is ignored (fail safe)", () => {
+    for (const data of [{ evidence: ["x"] }, { already_satisfied: true }, { already_satisfied: true, evidence: [] }, { already_satisfied: true, evidence: [1] }, { already_satisfied: "true", evidence: ["x"] }])
+      expect(restoreIntake(satLog([["already.satisfied", "intake", data]]))?.["already_satisfied"]).toBe(false);
+  });
   const noPr = FLOW.filter((s) => s !== "pr");
   const rerun = async (evs: ReturnType<typeof mk>): Promise<{ ran: string[]; sealSaw: unknown }> => {
     const { ctx } = fakeCtx();
