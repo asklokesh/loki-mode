@@ -170,8 +170,8 @@ describe("fix resume trust and mutation (MW-2)", () => {
 
 // P12-07: per-stage checkpoints and resume-from-stage. Resume fails closed on any torn or inconsistent log.
 import { execFileSync } from "node:child_process";
-import { makeEvent } from "../../src/engine10/events.ts";
-import { firstIncompleteStage, resumeFlag, resumePoint, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { makeEvent, readEvents } from "../../src/engine10/events.ts";
+import { firstIncompleteStage, resumeFlag, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
@@ -198,6 +198,49 @@ describe("resume from stage (P12-07)", () => {
     const r = resumePoint(withSteer());
     if (!r.ok) throw new Error(r.reason);
     expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  const forge = (body: (log: SupervisorLog, t: number) => void): ReturnType<typeof resumePoint> => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-forge-")), log = new SupervisorLog(join(dir, "events.jsonl"), RID), j = (type: string, stage: string, data: object) => JSON.stringify({ type, stage, data });
+    try {
+      log.append("run.started", null, {}); log.append("stage.completed", "intake", { base_sha: "abc", task: "t" });
+      body(log, Date.now());
+      for (const s of ["plan", "wall", "implement"]) log.ingest(j("stage.completed", s, {}));
+      return resumePoint(readEvents(join(dir, "events.jsonl")));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const j2 = (type: string, stage: string, data: object) => JSON.stringify({ type, stage, data });
+  test("P12-07h: a forged late Wall start cannot make a late revision read on time (earliest start, capped at append time)", () => {
+    const r = forge((log, t) => {
+      log.ingest(j2("stage.started", "wall", { start_ms: t - 10000 }));
+      log.ingest(j2("intent.revised", "implement", { revisions: [{ rev: 1, source: "chat", actor: "a", sha: "s", at: t - 5000 }] }));
+      log.ingest(j2("stage.started", "wall", { start_ms: Date.now() }));
+    });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.timeline.length).toBe(1);
+    expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07h: a Wall start claimed before its own append time is capped at the append time", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "abc" }], ["stage.started", "wall", { start_ms: Date.parse("2026-01-01T00:00:00.000Z") + 99999 }], ["stage.completed", "plan"], ["stage.completed", "wall"]]);
+    const r = resumePoint(evs);
+    expect(r.ok && r.timeline[0]!.startMs).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
+  });
+  test("P12-07h: a pre-claimed rev (at:0) cannot displace the honest revision", () => {
+    const r = forge((log, t) => {
+      log.ingest(j2("stage.started", "wall", { start_ms: t - 10000 }));
+      log.ingest(j2("intent.revised", "plan", { revisions: [{ rev: 1, at: 0 }] }));
+      log.ingest(j2("intent.revised", "implement", { revisions: [{ rev: 1, source: "chat", actor: "a", sha: "s", at: t - 5000 }] }));
+    });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.intentRevisions.map((x) => x.sha)).toEqual(["s"]);
+    expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07h: seedResumeCtx seeds ctx.intentRevisions and ctx.timeline from the resume point", () => {
+    const r = resumePoint(withSteer());
+    if (!r.ok) throw new Error(r.reason);
+    const ctx: { intentRevisions?: typeof rev[]; timeline?: { stage: "wall"; startMs: number; endMs: number }[] } = {};
+    seedResumeCtx(ctx, r);
+    expect(ctx.intentRevisions).toEqual([rev]);
+    expect(ctx.timeline).toEqual([{ stage: "wall", startMs: 1000, endMs: 1000 }]);
   });
   test("P12-07d: a later empty intent.revised cannot clear an honest revision (union)", () => {
     const evs = mk([...withSteer().map((e): Spec => [e.type, e.stage, e.data]), ["intent.revised", "verify", { revisions: [] }], ["stage.completed", "verify"]]);
