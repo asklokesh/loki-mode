@@ -2,8 +2,8 @@
 
 New file: the python launch sites (dashboard, magic) need the same argv as the
 bash and TS routes; this is a thin caller of src/policies/claude_permissions.js
-(the single compiler), not a second implementation. Unset LOKI_PERMISSION_POLICY
-returns the legacy flag byte-identically.
+(the single compiler), not a second implementation. Compiled is the default (C-C2);
+LOKI_PERMISSION_POLICY=legacy returns the legacy flag byte-identically.
 """
 from __future__ import annotations
 
@@ -19,12 +19,15 @@ _FAIL_CLOSED = ["--permission-mode", "plan"]
 
 def claude_permission_argv(project_dir: str | None = None, env: dict | None = None) -> list:
     env = os.environ if env is None else env
-    if env.get("LOKI_PERMISSION_POLICY", "") != "compiled":
+    mode = env.get("LOKI_PERMISSION_POLICY", "")
+    if mode == "legacy":
         return list(_LEGACY)
+    if mode not in ("", "compiled"):
+        print(f"[loki] WARNING: LOKI_PERMISSION_POLICY={mode}: unknown value; using compiled", file=sys.stderr)
     helper = Path(__file__).resolve().parents[2] / "src" / "policies" / "claude_permissions.js"
     node = shutil.which("node")
     if node is None or not helper.is_file():
-        print("[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: compiler unavailable; using most restrictive mode (plan)", file=sys.stderr)
+        print("[loki] WARNING: compiled permission policy: compiler unavailable; using most restrictive mode (plan)", file=sys.stderr)
         return list(_FAIL_CLOSED)
     target = project_dir or env.get("LOKI_PROJECT_DIR") or os.getcwd()
     try:

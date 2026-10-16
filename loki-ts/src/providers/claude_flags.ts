@@ -786,19 +786,37 @@ export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
 }
 
 // ---------------------------------------------------------------------------
-// P12-26 -- LOKI_PERMISSION_POLICY=compiled
+// P12-26 / C-C2 -- compiled permission policy (the default)
 //
-// Permission argv for the Claude CLI. Unset (default): the historical
-// --dangerously-skip-permissions, byte-identical. "compiled": the shared rule in
+// Permission argv for the Claude CLI. Default (unset or "compiled"): the shared rule in
 // src/policies/claude_permissions.js (also invoked by providers/claude.sh) emits
 // --permission-mode plus --allowedTools/--disallowedTools from the task policy.
+// LOKI_PERMISSION_POLICY=legacy: the historical --dangerously-skip-permissions,
+// byte-identical. Any other value fails closed to compiled with a warning.
 // ---------------------------------------------------------------------------
+export function permissionPolicyMode(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
+): "compiled" | "legacy" {
+  const v = env["LOKI_PERMISSION_POLICY"] ?? "";
+  if (v === "legacy") return "legacy";
+  if (v !== "" && v !== "compiled") warn(`LOKI_PERMISSION_POLICY=${v}: unknown value; using compiled`);
+  return "compiled";
+}
+
+// The one start-banner line naming the active mode (byte-identical to the bash banner).
+export function permissionPolicyBanner(env: NodeJS.ProcessEnv = process.env): string {
+  return permissionPolicyMode(env, () => {}) === "legacy"
+    ? "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)"
+    : "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)";
+}
+
 export function permissionArgv(
   repoDir: string = process.env["LOKI_PROJECT_DIR"] || process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
 ): string[] {
-  if (env["LOKI_PERMISSION_POLICY"] !== "compiled") return ["--dangerously-skip-permissions"];
+  if (permissionPolicyMode(env, warn) === "legacy") return ["--dangerously-skip-permissions"];
   try {
     const req = createRequire(import.meta.url);
     const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -815,14 +833,14 @@ export function permissionArgv(
     r.warnings.forEach(warn);
     return r.args;
   } catch (e) {
-    warn(`LOKI_PERMISSION_POLICY=compiled: compiler unavailable (${(e as Error).message}); using most restrictive mode (plan)`);
+    warn(`compiled permission policy: compiler unavailable (${(e as Error).message}); using most restrictive mode (plan)`);
     return ["--permission-mode", "plan"];
   }
 }
 
 // P12-26c -- Agent SDK permission options, derived from permissionArgv (the one
 // resolver) so the SDK route honours LOKI_PERMISSION_POLICY exactly like the CLI.
-// Unset: bypassPermissions + the required companion flag, byte-identical to the
+// Legacy: bypassPermissions + the required companion flag, byte-identical to the
 // previous hardcoded options. Only the argv shapes the compiler emits are read.
 export interface SdkPermissionOptions {
   permissionMode: "plan" | "default" | "acceptEdits" | "bypassPermissions";

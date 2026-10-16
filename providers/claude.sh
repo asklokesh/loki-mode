@@ -28,6 +28,7 @@ PROVIDER_DISPLAY_NAME="Claude Code"
 PROVIDER_CLI="claude"
 
 # CLI Invocation
+# Legacy flag only: the default is the compiled policy (C-C2); LOKI_PERMISSION_POLICY=legacy restores it.
 PROVIDER_AUTONOMOUS_FLAG="--dangerously-skip-permissions"
 PROVIDER_PROMPT_FLAG="-p"
 PROVIDER_PROMPT_POSITIONAL=false

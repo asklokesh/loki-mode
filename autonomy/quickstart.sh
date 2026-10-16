@@ -825,7 +825,7 @@ _qs_classify_invoke() {
     if command -v timeout >/dev/null 2>&1; then to="timeout"
     elif command -v gtimeout >/dev/null 2>&1; then to="gtimeout"; fi
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
-    if [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ]; then
+    if [ "${LOKI_PERMISSION_POLICY:-}" != "legacy" ]; then
         # P12-26b: nothing on this path sources claude-flags.sh. Compute in a subshell so its
         # top-level exports (caveman vars) never leak; fail closed to plan when unavailable.
         local _qs_flags _qs_out _qs_a

@@ -272,8 +272,8 @@ if [ -s "$ARGV_LOG" ]; then
   else
     bad "EMBED2: conflict --bare default-on" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
   fi
-  if argv_has "-p" && argv_has "--dangerously-skip-permissions"; then
-    ok "EMBED2: conflict argv still self-contained (-p + skip-permissions present)"
+  if argv_has "-p" && argv_has "--permission-mode" && ! argv_has "--dangerously-skip-permissions"; then
+    ok "EMBED2: conflict argv self-contained (-p + compiled permission-mode, C-C2 default)"
   else
     bad "EMBED2: conflict argv shape" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
   fi

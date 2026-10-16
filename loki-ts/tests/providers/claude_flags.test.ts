@@ -19,6 +19,8 @@ import {
   claudeFlagSupported,
   buildAutoFlags,
   permissionArgv,
+  permissionPolicyMode,
+  permissionPolicyBanner,
   sdkPermissionOptions,
   claudeSessionUuid,
   claudeIterationSessionUuid,
@@ -750,10 +752,45 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
   beforeEach(() => { repo = mkdtempSync(join(tmpdir(), "perm-pol-")); });
   afterEach(() => { rmSync(repo, { recursive: true, force: true }); });
 
-  it("default (flag unset) keeps skip-permissions on both routes", () => {
+  it("C-C2: default (flag unset) selects compiled on both routes", () => {
     const env = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    expect(permissionPolicyMode(env)).toBe("compiled");
+    const ts = permissionArgv(repo, env, () => {});
+    expect(ts).not.toEqual(SKIP);
+    expect(ts[0]).toBe("--permission-mode");
+    expect(bashArgv(env)).toEqual(ts);
+  });
+
+  it("C-C2: legacy restores skip-permissions byte-identically on both routes", () => {
+    const env = noManaged({ LOKI_PERMISSION_POLICY: "legacy" });
+    expect(permissionPolicyMode(env)).toBe("legacy");
     expect(permissionArgv(repo, env)).toEqual(SKIP);
     expect(bashArgv(env)).toEqual(SKIP);
+  });
+
+  it("C-C2: unknown value fails closed to compiled with a warning on both routes", () => {
+    writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"] } });
+    const env = noManaged({ LOKI_PERMISSION_POLICY: "bogus" });
+    const warns: string[] = [];
+    expect(permissionPolicyMode(env, (m) => warns.push(m))).toBe("compiled");
+    expect(warns.some((w) => w.includes("unknown value"))).toBe(true);
+    const ts = permissionArgv(repo, env, () => {});
+    expect(ts).not.toEqual(SKIP);
+    expect(bashArgv(env)).toEqual(ts);
+  });
+
+  it("C-C2: start banner names the active mode on both routes", () => {
+    const root = join(import.meta.dir, "../../..");
+    const bashBanner = (policy: string): string =>
+      Bun.spawnSync(
+        ["bash", "-c", `source "${root}/providers/claude.sh" 2>/dev/null; loki_permission_policy_banner`],
+        { env: { PATH: process.env["PATH"], HOME: repo, LOKI_PERMISSION_POLICY: policy } },
+      ).stdout.toString().trim();
+    const compiled = "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)";
+    expect(permissionPolicyBanner({})).toBe(compiled);
+    expect(bashBanner("")).toBe(compiled);
+    expect(permissionPolicyBanner({ LOKI_PERMISSION_POLICY: "legacy" })).toBe(bashBanner("legacy"));
+    expect(permissionPolicyBanner({ LOKI_PERMISSION_POLICY: "legacy" })).toContain("legacy");
   });
 
   it("compiled: mode + allow/deny lists, identical on both routes", () => {
@@ -921,8 +958,8 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
   });
 
   it("P12-26c: SDK path maps the policy to permissionMode via the same resolver", () => {
-    // unset: today's default, byte-identical
-    const unset = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    // legacy: the old default, byte-identical
+    const unset = { ...noManaged(), LOKI_PERMISSION_POLICY: "legacy" };
     expect(sdkPermissionOptions(repo, unset)).toEqual({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
     // compiled restrictive policy
     writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"], deny: ["Bash(rm:*)"] } });

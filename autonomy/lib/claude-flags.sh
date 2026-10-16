@@ -973,18 +973,40 @@ loki_export_subagent_capacity() {
 # without each one having to remember to call this.
 loki_export_subagent_capacity
 
-# P12-26: LOKI_PERMISSION_POLICY=compiled swaps --dangerously-skip-permissions for
-# --permission-mode / --allowedTools / --disallowedTools compiled from the task policy
-# by src/policies/claude_permissions.js (shared with the TS permissionArgv). Unset =
-# unchanged. Result lands in _LOKI_PERM_ARGV. A compile failure fails closed to plan.
+# P12-26 / C-C2: the compiled permission policy is the DEFAULT. It swaps
+# --dangerously-skip-permissions for --permission-mode / --allowedTools / --disallowedTools
+# compiled from the task policy by src/policies/claude_permissions.js (shared with the TS
+# permissionArgv). LOKI_PERMISSION_POLICY=legacy restores the old flag byte-identically.
+# Any other value fails closed to compiled with a warning. Result lands in _LOKI_PERM_ARGV.
+# A compile failure fails closed to plan.
+_loki_permission_policy_mode() {
+    case "${LOKI_PERMISSION_POLICY:-}" in
+        legacy) echo legacy ;;
+        ""|compiled) echo compiled ;;
+        *)
+            echo "[loki] WARNING: LOKI_PERMISSION_POLICY=${LOKI_PERMISSION_POLICY}: unknown value; using compiled" >&2
+            echo compiled
+            ;;
+    esac
+}
+
+# The one start-banner line naming the active mode.
+loki_permission_policy_banner() {
+    if [ "$(_loki_permission_policy_mode 2>/dev/null)" = "legacy" ]; then
+        echo "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)"
+    else
+        echo "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)"
+    fi
+}
+
 _loki_claude_permission_argv() {
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
-    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    [ "$(_loki_permission_policy_mode)" = "legacy" ] && return 0
     local _helper _out _a
     _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src/policies/claude_permissions.js"
     _LOKI_PERM_ARGV=(--permission-mode plan)
     if ! command -v node >/dev/null 2>&1 || [ ! -f "$_helper" ]; then
-        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: compiler unavailable; using most restrictive mode (plan)" >&2
+        echo "[loki] WARNING: compiled permission policy: compiler unavailable; using most restrictive mode (plan)" >&2
         return 0
     fi
     _out="$(node "$_helper" "${LOKI_PROJECT_DIR:-$PWD}")" || return 0

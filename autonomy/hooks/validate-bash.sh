@@ -28,12 +28,12 @@ case "${LOKI_HOST_GUARD:-0}" in
     1|true|yes|on) HOST_GUARD=true ;;
 esac
 
-# P12-26d: under LOKI_PERMISSION_POLICY=compiled the compiled allow/deny list
+# P12-26d: unless LOKI_PERMISSION_POLICY=legacy the compiled allow/deny list
 # and permission mode decide. An explicit hook "allow" skips the permission
 # prompt for every command that passes the blocklist, which would widen the
 # compiled policy, so the hook never emits one and fails closed on bad input.
 COMPILED_POLICY=false
-[ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] && COMPILED_POLICY=true
+[ "${LOKI_PERMISSION_POLICY:-}" != "legacy" ] && COMPILED_POLICY=true
 
 if ! command -v python3 >/dev/null 2>&1; then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: python3 is unavailable, so the Bash command cannot be inspected safely."

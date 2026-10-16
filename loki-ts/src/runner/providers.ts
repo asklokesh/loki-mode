@@ -488,7 +488,7 @@ export function claudeProvider(): ProviderInvoker {
 
       const argv: string[] = [
         cli,
-        // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (LOKI_PERMISSION_POLICY=compiled swaps it, P12-26)
+        // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (the compiled policy swaps it unless LOKI_PERMISSION_POLICY=legacy, C-C2)
         ...permissionArgv(call.cwd),
         ...modelArgv,
         ...autoFlags,
@@ -823,7 +823,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...(resumeId ? { resume: resumeId } : {}),
             ...(defaultModel ? {} : { model: extra.model ?? model }),
             cwd: call.cwd,
-            // P12-26c: honours LOKI_PERMISSION_POLICY via the shared resolver. Unset keeps
+            // P12-26c: honours LOKI_PERMISSION_POLICY via the shared resolver. Legacy keeps
             // bypassPermissions + the required allowDangerouslySkipPermissions companion.
             ...sdkPermissionOptions(call.cwd),
             includePartialMessages: true, // live delta streaming

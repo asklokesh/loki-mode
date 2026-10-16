@@ -138,12 +138,15 @@ beforeEach(() => {
   savedClaudeCli = process.env["LOKI_CLAUDE_CLI"];
   process.env["LOKI_DIR"] = lokiDir;
   process.env["LOKI_CLAUDE_CLI"] = FAKE_CLI;
+  // C-C2: this test pins the legacy argv shape; the compiled default is covered in claude_flags.test.ts.
+  process.env["LOKI_PERMISSION_POLICY"] = "legacy";
 
   logLines = [];
 });
 
 afterEach(() => {
   // Restore env first so a failure in fs cleanup does not leave it dirty.
+  delete process.env["LOKI_PERMISSION_POLICY"];
   if (savedLokiDir === undefined) delete process.env["LOKI_DIR"];
   else process.env["LOKI_DIR"] = savedLokiDir;
   if (savedClaudeCli === undefined) delete process.env["LOKI_CLAUDE_CLI"];
