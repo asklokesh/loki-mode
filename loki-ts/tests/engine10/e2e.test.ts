@@ -203,6 +203,10 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.stubEnv).toContain("implement GH_TOKEN=ghp_LOKIWITHHELDsentinel");
     expect(r.stubEnv).not.toContain(CANARY);
     expect(r.stubEnv).not.toMatch(/LOKI_LEGACY_BASH=\S/);
+    const started = r.events.find((e) => e.type === "run.started")!.data;
+    expect(started.requested_model).toBeTruthy();
+    expect(started).toHaveProperty("config_digest");
+    expect(started).not.toHaveProperty("policy_id");
     const leaked = Bun.spawnSync(["grep", "-rl", CANARY, join(r.repo, ".loki")], { env: process.env });
     expect(leaked.stdout.toString()).toBe("");
     // No stage event for pr: the worker's machine never loads it.

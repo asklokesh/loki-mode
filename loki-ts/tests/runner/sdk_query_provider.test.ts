@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PROVIDER_DEFAULT_MODEL } from "../../src/util/claude_model.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 
 let scratch: string;
@@ -71,6 +72,40 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     const body = readFileSync(r.capturedOutputPath, "utf8");
     expect(body).toContain("hello from the loop");
     expect(body).toContain("done");
+  });
+
+  it("requested_model in the result-cost record is the exact model passed to query (P12-23)", async () => {
+    const keys = ["LOKI_MAX_TIER", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_E10_MODEL_DEFAULT", "LOKI_ITERATION", "LOKI_ROUTER", "LOKI_TIER_ROUTING"];
+    const prev: Record<string, string | undefined> = {};
+    for (const k of keys) { prev[k] = process.env[k]; delete process.env[k]; }
+    process.env["LOKI_ITERATION"] = "7";
+    const msgs = [
+      { type: "system", subtype: "init", model: "claude-sonnet-4-6", session_id: "s" },
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {}, session_id: "s" },
+    ];
+    const rec = () => JSON.parse(readFileSync(join(scratch, ".loki", "metrics", "result-cost-7.json"), "utf8"));
+    try {
+      process.env["LOKI_MAX_TIER"] = "sonnet";
+      process.env["LOKI_CLAUDE_MODEL_PLANNING"] = "opus";
+      stubQuery(msgs);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call({ tier: "planning" }));
+      const passed = lastQueryArgs?.options?.["model"];
+      expect(typeof passed).toBe("string");
+      expect(rec().requested_model).toBe(passed as string);
+      expect(rec().requested_model).not.toBe("opus");
+
+      delete process.env["LOKI_MAX_TIER"];
+      delete process.env["LOKI_CLAUDE_MODEL_PLANNING"];
+      process.env["LOKI_E10_MODEL_DEFAULT"] = "1";
+      stubQuery(msgs);
+      await sdkQueryProvider().invoke(call({ tier: "development" }));
+      expect(lastQueryArgs?.options?.["model"]).toBeUndefined();
+      expect(rec().requested_model).toBe(PROVIDER_DEFAULT_MODEL);
+      expect(rec().model_downgraded).toBeNull();
+    } finally {
+      for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    }
   });
 
   it("is_error result -> exit 1", async () => {

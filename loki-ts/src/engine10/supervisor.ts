@@ -27,6 +27,7 @@ import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import { modelDowngrades } from "../runner/model_downgrades.ts";
+import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
@@ -317,7 +318,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
-      ...(downgrades.length ? { downgrades } : {}),
+      ...(downgrades.length ? { downgrades } : {}), ...runIdentity(repoDir, process.env, model),
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
       const gate = prGate(repoDir); // autonomy ladder: deny = no PR plus a not-proven line; require_approval = draft PR

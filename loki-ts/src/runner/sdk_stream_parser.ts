@@ -26,6 +26,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { num, routerTelemetryOn } from "../engine10/cost.ts";
+import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
@@ -75,6 +76,7 @@ export interface ParserContext {
   cwd: string; // repo root under which .loki lives
   iteration: string; // LOKI_ITERATION stamp for the result-cost file
   hookEventsEnabled: boolean; // LOKI_HOOK_EVENTS != "off"
+  requestedModel?: string; // the model the runner resolved for this call (P12-23); absent = no requested/downgrade fields
   // Live-output sink. The caller tees the same text to the terminal +
   // iterationOutputPath + captured log (mirroring the bash `tee`). Default: stdout.
   write?: (s: string) => void;
@@ -373,7 +375,7 @@ export async function consumeSdkStream(
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
       if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
-      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById));
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById), ctx.requestedModel);
 
       exitCode = data.is_error ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
@@ -555,6 +557,7 @@ function writeResultCost(
   model?: string,
   firstTurnPromptTokens?: number,
   router?: Record<string, number>,
+  requested?: string,
 ): void {
   try {
     const cost = data.total_cost_usd;
@@ -576,6 +579,7 @@ function writeResultCost(
       ...(Number(process.env["LOKI_E10_ATTEMPT"]) >= 1 ? { attempt: Math.floor(Number(process.env["LOKI_E10_ATTEMPT"])) } : {}),
       ...modelUsageFields(data),
       ...(model ? { model } : {}),
+      ...(model && requested ? { requested_model: requested, model_downgraded: modelOutcome(requested, model).downgraded } : {}), // P12-23 Q3: requested vs actual
       ...(firstTurnPromptTokens !== undefined ? { first_turn_prompt_tokens: firstTurnPromptTokens } : {}),
       ...(router ?? {}),
     };
