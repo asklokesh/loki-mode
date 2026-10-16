@@ -2551,7 +2551,7 @@ _loki_start_handoff() {
 # The one list: the --workspace brief scan and the --resume scan both use it.
 _loki_start_flag_takes_value() {
     case "$1" in
-        --provider|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) return 0 ;;
+        --provider|--brief|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) return 0 ;;
     esac
     return 1
 }
@@ -2666,7 +2666,7 @@ cmd_start() {
     fi
     # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
     # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
-    # new build. Exit 0 resumed, 4 phase reported, 3 nothing to resume, else failure.
+    # new build. Exit codes go through _loki_e10_resume_map (0 and 4 -> 0, 5 -> 1); any other code, such as 3 for nothing to resume, is returned as is.
     local _ps_resume=0 _ps_resume_args=() _ps_rskip=0
     for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
         if [ "$_ps_rskip" = 1 ]; then _ps_rskip=0; continue; fi
