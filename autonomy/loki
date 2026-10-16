@@ -1797,7 +1797,7 @@ show_help_all() {
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume a paused or interrupted run (after Ctrl-C or a crash)"
-    echo "  steer \"<note>\"    Nudge a running build (needs LOKI_PROMPT_INJECTION=1)"
+    echo "  steer \"<note>\"    Nudge a running build (on by default; LOKI_PROMPT_INJECTION=0 opts out)"
     echo ""
     echo "Verify / trust:"
     echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
