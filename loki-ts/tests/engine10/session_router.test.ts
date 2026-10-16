@@ -42,9 +42,11 @@ describe("R1-09 cost event fields", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-r109-"));
     try {
       mkdirSync(join(dir, "metrics"), { recursive: true });
-      writeFileSync(join(dir, "metrics", "result-cost-e10-r-1.json"), JSON.stringify({ total_cost_usd: 0.01, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, model: "m", requests_total: 7, requests_over_100k: 1, advisor_calls: 2, advisor_input_tokens: 300, advisor_output_tokens: 40 }));
+      // The real child writes its result-cost file DURING the run; the runner archives any file that exists before it (P12-09b).
+      const costJson = JSON.stringify({ total_cost_usd: 0.01, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, model: "m", requests_total: 7, requests_over_100k: 1, advisor_calls: 2, advisor_input_tokens: 300, advisor_output_tokens: 40 });
+      writeFileSync(join(dir, "cost-fixture.json"), costJson);
       const events: { type: string; data: Record<string, unknown> }[] = [];
-      await createSessionRunner({ provider: "claude", lokiRoot: dir, childCommand: say("ok"), emit: (type, _s, data) => events.push({ type, data }) }).run(opts({ cwd: dir }));
+      await createSessionRunner({ provider: "claude", lokiRoot: dir, childCommand: ["bash", ["-c", `cp "${join(dir, "cost-fixture.json")}" "${join(dir, "metrics", "result-cost-e10-r-1.json")}"`]], emit: (type, _s, data) => events.push({ type, data }) }).run(opts({ cwd: dir }));
       return events.find((e) => e.type === "cost")!.data;
     } finally { rmSync(dir, { recursive: true, force: true }); }
   };

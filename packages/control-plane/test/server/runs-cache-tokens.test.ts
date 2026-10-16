@@ -63,10 +63,10 @@ test("real createSessionRunner: a session with no result-cost file gives token_s
   try {
     const lokiRoot = join(d, ".loki");
     mkdirSync(join(lokiRoot, "metrics"), { recursive: true });
-    writeFileSync(join(lokiRoot, "metrics", "result-cost-e10-a.json"), JSON.stringify({ total_cost_usd: 0.5, input_tokens: 10, output_tokens: 20, session_id: "A" }));
+    writeFileSync(join(d, "cost-fixture.json"), JSON.stringify({ total_cost_usd: 0.5, input_tokens: 10, output_tokens: 20, session_id: "A" })); // the child copies it in during the run; a file present before the run is archived (P12-09b)
     const emitted: Record<string, unknown>[] = [];
     const run = (id: string, cmd: string) => createSessionRunner({ provider: "claude", lokiRoot, childCommand: ["bash", ["-c", cmd]], emit: (t: string, _s: unknown, data: Record<string, unknown>) => { if (t === "cost") emitted.push(data); } }).run({ stage: "implement", brief: "x", tier: "dev", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d } as never);
-    await run("e10-a", "exit 0");
+    await run("e10-a", `cp "${join(d, "cost-fixture.json")}" "${join(lokiRoot, "metrics", "result-cost-e10-a.json")}"`);
     await run("e10-b", "exit 1");
     expect(emitted.map((e) => e["session_id"])).toEqual(["e10-a", "e10-b"]);
     const { row } = seed(emitted);
