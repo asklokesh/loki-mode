@@ -385,20 +385,30 @@ _env_prefix_is_risky() {
     return 1
 }
 
-# A risky env name set, exported, declared or unset in ANY segment, an alias,
-# or a function definition changes how a later safe-looking command resolves,
-# so no segment of that command may ride the safe-path override. Over-deny is
-# intended: a risky name as a bare word counts wherever it appears.
-_RISKY_NAMES='(PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH)'
-_RISKY_TOKEN='(^|[[:space:]])'"$_RISKY_NAMES"'(\+?=|[[:space:]]|$)'
-_SHADOW_DEF='(^|[[:space:]])(alias|function)[[:space:]]|[A-Za-z_][A-Za-z0-9_.:-]*[[:space:]]*\([[:space:]]*\)'
-_command_taints_override() {
+# Allowlist: the safe-path override applies only when EVERY segment of the
+# command is blank, an accepted safe rm, or a bare `NAME=value` assignment
+# (uppercase name not on the risky list, value free of quoting, expansion,
+# grouping and redirection characters). Anything else (export, declare, unset,
+# eval, source, hash, alias, function, subshell, echo, cd, ...) can change how a
+# later rm resolves, so it disables the override. Over-denial is intended.
+_ASSIGN_ONLY='^[[:space:]]*([A-Z_][A-Z0-9_]*)=([^][\"'"'"'\\$`(){}<>[:space:]]*)[[:space:]]*$'
+_segment_is_inert() {
+    local seg="$1"
+    [[ "$seg" =~ ^[[:space:]]*(true|false|:)?[[:space:]]*$ ]] && return 0
+    if [[ "$seg" =~ $_ASSIGN_ONLY ]]; then
+        _env_prefix_is_risky "$seg" && return 1
+        return 0
+    fi
+    return 1
+}
+
+_all_segments_allowlisted() {
     local seg
     while IFS= read -r seg; do
-        [[ "$seg" =~ $_RISKY_TOKEN ]] && return 0
-        [[ "$seg" =~ $_SHADOW_DEF ]] && return 0
+        _segment_is_inert "$seg" && continue
+        _segment_is_safe "$seg" || return 1
     done <<< "$1"
-    return 1
+    return 0
 }
 
 _segment_is_safe() {
@@ -418,7 +428,7 @@ _blocked_hits_all_safe() {
     local pat="$1" flat seg hit=false
     # Strip fd duplication (2>&1) first: its `&` is not a command separator, and removing it hides no command.
     flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
-    _command_taints_override "$flat" && return 1
+    _all_segments_allowlisted "$flat" || return 1
     while IFS= read -r seg; do
         printf '%s' "$seg" | grep -qE "$pat" || continue
         hit=true
