@@ -3,8 +3,9 @@
 import { createWatchdog, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
@@ -78,14 +79,20 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   }
   return env;
 }
-function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
+export function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
+  let tmp = "";
   try {
-    const out = safeGit(cwd ?? process.cwd(), ["diff", "--shortstat"]).trim();
+    const dir = cwd ?? process.cwd(), real = resolve(dir, safeGit(dir, ["rev-parse", "--git-path", "index"]).trim());
+    tmp = mkdtempSync(join(tmpdir(), "loki-ds-")); // P12-12: --shortstat misses untracked files; intent-to-add them in a throwaway index copy, never the real one
+    const env = { ...process.env, GIT_INDEX_FILE: join(tmp, "index") };
+    if (existsSync(real)) copyFileSync(real, env.GIT_INDEX_FILE);
+    safeGit(dir, ["add", "-N", "--", ".", ":(exclude).loki"], { env });
+    const out = safeGit(dir, ["diff", "--shortstat"], { env }).trim();
     const files = /(\d+) files? changed/.exec(out);
     const ins = /(\d+) insertions?\(\+\)/.exec(out);
     const del = /(\d+) deletions?\(-\)/.exec(out);
     return { files: files ? Number(files[1]) : 0, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
-  } catch { return { files: 0, insertions: 0, deletions: 0 }; }
+  } catch { return { files: 0, insertions: 0, deletions: 0 }; } finally { if (tmp) rmSync(tmp, { recursive: true, force: true }); }
 }
 function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
