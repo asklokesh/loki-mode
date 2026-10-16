@@ -434,6 +434,10 @@ run_release_guard_rows() {
         esac
         stale_wt="${line#worktree }"
         stale_dir="$(dirname -- "$stale_wt")"
+        # Only a direct child of the temp root: no extra slash or .. component.
+        case "${stale_dir#"${tmp_root}"/}" in
+            */* | *..*) continue ;;
+        esac
         git -C "$ROOT_DIR" worktree remove --force "$stale_wt" >/dev/null 2>&1 || true
         case "$stale_dir" in
             "${tmp_root}"/loki-guard.*)
