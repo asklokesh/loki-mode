@@ -39,7 +39,7 @@ import {
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
 import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
-import { recordFingerprints, readFingerprints, failureFingerprint, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -921,5 +921,41 @@ describe("P12-11 recovery classes (FC-REQ)", () => {
   it("recordFingerprints tolerates junk input", () => {
     expect(recordFingerprints(tmp(), "r", "flaky", undefined)).toEqual([]);
     expect(recordFingerprints(tmp(), "r", "flaky", [1, "ok"] as unknown)).toEqual(["ok"]);
+  });
+});
+
+describe("P12-11b flaky rerun producer and summary wiring", () => {
+  const E = { LOKI_RECOVERY_POLICY: "1" } as NodeJS.ProcessEnv;
+  it("flakyRerunSignal yields rerun evidence only from a flaky row recorded on the same known tree", () => {
+    const dir = tmp();
+    expect(flakyRerunSignal(dir, "tree1")).toBeUndefined();
+    recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"], "tree1");
+    expect(flakyRerunSignal(dir, "")).toBeUndefined();
+    expect(flakyRerunSignal(dir, "tree1")).toEqual({ test: "t/a.test.ts", failTree: "tree1", passTree: "tree1" });
+  });
+  it("a flaky row from another tree, or recorded without a tree, is no evidence", () => {
+    const dir = tmp();
+    recordFingerprints(dir, "r1", "flaky", ["t/old.test.ts"], "treeOld");
+    recordFingerprints(dir, "r2", "flaky", ["t/notree.test.ts"]);
+    expect(flakyRerunSignal(dir, "treeNew")).toBeUndefined();
+    expect(flakyRerunSignal(dir, "treeOld")?.test).toBe("t/old.test.ts");
+  });
+  it("production shape (buildExitCode 1 plus produced rerun) reaches retry:flaky", () => {
+    const dir = tmp();
+    recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"], "tree1");
+    const rerun = flakyRerunSignal(dir, "tree1");
+    const d = decideRecovery({ output: "blip", buildExitCode: 1, rerun }, { env: E, history: [] });
+    expect(d).toMatchObject({ action: "retry", reason: "flaky" });
+  });
+  it("buildExitCode 1 without same-tree rerun evidence still revises", () => {
+    expect(decideRecovery({ output: "x", buildExitCode: 1 }, { env: E, history: [] })).toMatchObject({ action: "revise", reason: "build_failed" });
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun: { test: "t", failTree: "a", passTree: "b" } }, { env: E, history: [] }).action).toBe("revise");
+  });
+  it("autonomous.ts feeds rerun into decideRecovery and supervisor passes the real flaky list", () => {
+    const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
+    expect(au).toContain("flakyRerunSignal(");
+    expect(au).not.toMatch(/rerun: buildExitCode === 1/);
+    const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
+    expect(sv).not.toMatch(/notProven: res\.notProven, flaky: \[\]/);
   });
 });
