@@ -445,7 +445,7 @@ _blocked_hits_all_safe() {
 # alternatives are expanded and every alternative is checked. A named child
 # (`/tmp/loki-run.abc123`, `/tmp/foo*`) is not a bare glob and stays ok.
 _normalize_rm_target() {
-    local t="${1%%[<>]*}" prev="" comp joined=""
+    local t="${1%%[<>]*}" prev="" comp joined="" sc
     local -a parts=() stack=()
     t="${t//[\"\'\\]/}"
     while [ "$t" != "$prev" ]; do
@@ -459,7 +459,18 @@ _normalize_rm_target() {
             case "$comp" in
                 ''|.) ;;
                 ..)
-                    # never pop the first component of a $TMPDIR-relative path
+                    # A dotdot that would pop a temp root component is
+                    # unresolvable lexically ($TMPDIR/.. is the root's parent
+                    # on some hosts): report the temp root itself (deny).
+                    joined=""
+                    for sc in ${stack[@]+"${stack[@]}"}; do joined="${joined}/${sc}"; done
+                    case "$joined" in
+                        /tmp|/var/tmp|/private/tmp|/private/var/tmp|'/$TMPDIR'|'/${TMPDIR}')
+                            printf '%s' "/tmp"
+                            return 0
+                            ;;
+                    esac
+                    joined=""
                     if [ "${#stack[@]}" -gt 1 ] || { [ "${#stack[@]}" -eq 1 ] && [[ "$t" == /* ]]; }; then
                         unset 'stack[${#stack[@]}-1]'
                     fi
@@ -479,33 +490,50 @@ _normalize_rm_target() {
     printf '%s' "$t"
 }
 
-# Print each alternative of the first comma brace group, recursively. A
-# target with no comma brace group is printed unchanged.
+# Expand single-level comma brace groups into the global _ALTS array without
+# a subshell. Fails closed (returns 1) on nested braces, `{x..y}` ranges, or
+# more than 64 alternatives; the caller denies.
+_BRACE_CAP=64
 _expand_braces() {
-    local s="$1" i rest body pre post b alt
-    for ((i = 0; i < ${#s}; i++)); do
-        [ "${s:i:1}" = "{" ] || continue
-        rest="${s:i+1}"
-        [[ "$rest" == *"}"* ]] || continue
-        body="${rest%%\}*}"
-        [[ "$body" == *,* ]] || continue
-        pre="${s:0:i}"
-        post="${rest#*\}}"
-        b="$body"
-        while :; do
-            alt="${b%%,*}"
-            _expand_braces "${pre}${alt}${post}"
-            [[ "$b" == *,* ]] || break
-            b="${b#*,}"
-        done
-        return 0
+    local s="$1" cur pre body post b alt
+    local -a work=("$s")
+    _ALTS=()
+    if [[ "$s" =~ \{[^\}]*\{ || "$s" =~ \{[^\}]*\.\.[^\}]*\} ]]; then
+        return 1
+    fi
+    while [ "${#work[@]}" -gt 0 ]; do
+        cur="${work[0]}"
+        work=("${work[@]:1}")
+        if [[ "$cur" =~ ^([^\{]*)\{([^\}]*,[^\}]*)\}(.*)$ ]]; then
+            pre="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"; post="${BASH_REMATCH[3]}"
+            b="$body"
+            while :; do
+                alt="${b%%,*}"
+                work+=("${pre}${alt}${post}")
+                [[ "$b" == *,* ]] || break
+                b="${b#*,}"
+            done
+            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || return 1
+        else
+            _ALTS+=("$cur")
+            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || return 1
+        fi
     done
-    printf '%s\n' "$s"
+    return 0
 }
 
-# Glob-only text: `*`, `?`, `.` and bracket expressions with any contents
-# (`[a-z]`, `[!x]`, `[[:alpha:]]`).
-_GLOB_ONLY='^([*?.]|\[(\[:[a-z]+:\]|[^]])+\])+$'
+# A component is glob-only when it is only `*`, `?`, `.`, or when it holds a
+# `[` with no literal prefix before it (bracket parsing is ambiguous: `[!]]`,
+# `[]a]`, `[=a=]`, so fail closed).
+_glob_only() {
+    local c="$1" pre
+    [[ "$c" =~ ^[*?.]+$ ]] && return 0
+    if [[ "$c" == *"["* ]]; then
+        pre="${c%%\[*}"
+        [[ "$pre" =~ ^[*?.]*$ ]] && return 0
+    fi
+    return 1
+}
 _temp_target_is_root_or_glob() {
     local t rest
     t=$(_normalize_rm_target "$1")
@@ -517,25 +545,26 @@ _temp_target_is_root_or_glob() {
         /tmp/*) rest="${t#/tmp/}" ;;
         '$TMPDIR'/*) rest="${t#\$TMPDIR/}" ;;
         '${TMPDIR}'/*) rest="${t#\$\{TMPDIR\}/}" ;;
-        /private/var/tmp*) rest="${t#/private/var/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
-        /private/tmp*) rest="${t#/private/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
-        /var/tmp*) rest="${t#/var/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
-        /tmp*) rest="${t#/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
-        '$TMPDIR'*) rest="${t#\$TMPDIR}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
-        '${TMPDIR}'*) rest="${t#\$\{TMPDIR\}}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        /private/var/tmp*) rest="${t#/private/var/tmp}"; _glob_only "$rest"; return ;;
+        /private/tmp*) rest="${t#/private/tmp}"; _glob_only "$rest"; return ;;
+        /var/tmp*) rest="${t#/var/tmp}"; _glob_only "$rest"; return ;;
+        /tmp*) rest="${t#/tmp}"; _glob_only "$rest"; return ;;
+        '$TMPDIR'*) rest="${t#\$TMPDIR}"; _glob_only "$rest"; return ;;
+        '${TMPDIR}'*) rest="${t#\$\{TMPDIR\}}"; _glob_only "$rest"; return ;;
         *) return 1 ;;
     esac
     # first component made only of glob characters, dots and bracket expressions
-    [[ "${rest%%/*}" =~ $_GLOB_ONLY ]] && return 0
+    _glob_only "${rest%%/*}" && return 0
     return 1
 }
 
 _rm_target_is_temp_root_or_glob() {
     local alt
-    if [[ "$1" == *"{"* && "$1" == *,* ]]; then
-        while IFS= read -r alt; do
+    if [[ "$1" == *"{"* ]]; then
+        _expand_braces "$1" || return 0
+        for alt in ${_ALTS[@]+"${_ALTS[@]}"}; do
             _temp_target_is_root_or_glob "$alt" && return 0
-        done < <(_expand_braces "$1")
+        done
         return 1
     fi
     _temp_target_is_root_or_glob "$1"

@@ -459,6 +459,9 @@ test_validate_bash_temp_root_and_glob_denied() {
         '$TMPDIR*' '"$TMPDIR"*' '${TMPDIR}*' '/tmp/x/../*' '/var/../tmp'
         '/tmp/{*,}' '/tmp/*{,}' '/t{m,}p' '/{tmp,}'
         '\/tmp' '/t\mp' '/tmp\/' '/tmp>/dev/null'
+        '$TMPDIR/../T' '"$TMPDIR"/../T' '$TMPDIR/../T*' '${TMPDIR}/../T'
+        '/tmp/[!]]*' '/tmp/[]a]*' '/tmp/[![=a=]]*' '/tmp/[![.a.]]*'
+        '/tmp/{a,{b,*}}' '/{a,{tmp,b}}' '/tm{o..p}' '/tm{p..p}'
     )
     for t in "${targets[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -471,6 +474,13 @@ test_validate_bash_temp_root_and_glob_denied() {
         got=$(run_hook_case "$c" "")
         [ "$got" = "2:deny" ] || { fail "rm token variant not denied: $c (got $got)"; return; }
     done
+    local big='' n start dur
+    for n in {1..16}; do big="${big}{a,b}"; done; : "$n"
+    start=$(date +%s)
+    got=$(run_hook_case "rm -r /x${big} /tmp" "")
+    dur=$(( $(date +%s) - start ))
+    [ "$got" = "2:deny" ] || { fail "16 braces not denied (got $got)"; return; }
+    [ "$dur" -lt 2 ] || { fail "16 braces took ${dur}s (limit 2s)"; return; }
     rmcmd="rm -rf"
     c=$(printf 'FOO=1 %s /tmp/a /tmp/*' "$rmcmd")
     got=$(run_hook_case "$c" "")
