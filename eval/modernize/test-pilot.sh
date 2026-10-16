@@ -129,11 +129,15 @@ mode="$(cat "$dest/fake-mode")"
 id="$(cat "$dest/fake-id")"
 [ "$mode" = "bad" ] && exit 1
 mid="mod-fake-$id"
+PLANNED=1
+[ -f "$dest/fake-planned" ] && PLANNED="$(cat "$dest/fake-planned")"
 d="$dest/.loki/modernize/$mid"
 mkdir -p "$d"
 n=0
 ev() { n=$((n + 1)); printf '{"v":1,"seq":%s,"ts":"2026-10-16T00:00:%02dZ","run":"%s","type":"%s","stage":null,"data":%s}\n' "$n" "$n" "$mid" "$1" "$2" >>"$d/events.jsonl"; }
 ev modernize.started '{"repo":"x","to":"python3","budget_usd":1,"workers":4}'
+ev estimate.printed '{"units":'"$PLANNED"',"waves":1,"cost_usd":1,"wall_time_s":1,"risk_high":0,"risk_normal":1}'
+ev wave.started '{"units":'"$PLANNED"'}'
 ev unit.started '{"unit":"u1","model":"sonnet","worker":0,"variant":0}'
 case "$mode" in
     variant) ev unit.variant '{"unit":"u1","variant":1,"model":"sonnet"}'; ev unit.started '{"unit":"u1","model":"sonnet","worker":0,"variant":1}'; ev unit.equivalence '{"unit":"u1","verdict":"PROVEN","cases":4,"pass":4,"fail":0,"rate":1,"branch_pct":100}' ;;
@@ -145,6 +149,9 @@ esac
 if [ -f "$dest/fake-spent" ]; then
     ev budget.hit "{\"budget_usd\":1,\"spent_usd\":$(cat "$dest/fake-spent"),\"in_flight\":0}"
 fi
+[ "$mode" = "crash" ] && exit 1
+[ "$mode" = "nocomplete" ] && exit 0
+ev modernize.completed '{"verdict":"PROVEN","blocking_units":0,"blocking_waves":0,"report_sha256":"x"}'
 exit 0
 FAKE_EOF
 chmod +x "$FAKE"
@@ -231,6 +238,32 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     RES="$(find "$T/pilot-results" -name 'pilot-stub-*.json' 2>/dev/null | head -1)"
     if [ -n "$RES" ] && resj "$RES" 'd["calibration"]["non_evidence"] is True'; then pass "stub defaults to LOKI_RUN_TMP and is non_evidence"; else fail "stub default dir/non_evidence"; fi
 fi
+
+# 6e. M-27b F1: budget-skipped units and crashed runs are never ok
+FIRST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repos"][0]["id"])' "$MANIFEST")"
+runone() { python3 "$PILOT" --execute --max-spend-usd 100 --manifest "$MANIFEST" --source-dir "$1" --loki-bin "$FAKE" --only "$FIRST" --results-dir "$2" >"$T/out.txt" 2>&1; }
+
+# planned 10, one PROVEN, rest skipped by budget (no unit.* events), modernize.completed emitted
+mksrc "$T/src-bud" ok ok 3
+echo 10 >"$T/src-bud/$FIRST/fake-planned"
+runone "$T/src-bud" "$T/r-bud"
+RES="$(latest "$T/r-bud")"
+if resj "$RES" 'd["runs"][0]["units_total"]==10 and d["runs"][0]["units_proven"]==1 and d["runs"][0]["status"]!="ok" and abs(d["runs"][0]["equivalence_rate"]-0.1)<1e-9 and d["calibration"]["action"]!="raise"' \
+    && resj "$RES" '"lower bound" in d["runs"][0]["note"]' && grep -q "lower bound" "$T/out.txt"; then
+    pass "budget-skipped units count as not proven: 1 of 10 is not ok, no raise, cost labelled lower bound"
+else fail "budget-skip leg: $(cat "$T/out.txt")"; fi
+
+# crash after one unit: non-zero exit, no modernize.completed
+mksrc "$T/src-crash" crash
+runone "$T/src-crash" "$T/r-crash"
+RES="$(latest "$T/r-crash")"
+if resj "$RES" 'd["runs"][0]["status"] not in ("ok","not_proven") and d["calibration"]["action"]=="hold" and d["aggregate"]["runs_valid"]==0'; then pass "crash after one unit (rc!=0) is not ok and does not calibrate"; else fail "crash leg"; fi
+
+# clean exit but modernize.completed never emitted
+mksrc "$T/src-nocomp" nocomplete
+runone "$T/src-nocomp" "$T/r-nocomp"
+RES="$(latest "$T/r-nocomp")"
+if resj "$RES" 'd["runs"][0]["status"]=="incomplete" and d["calibration"]["action"]=="hold"'; then pass "missing modernize.completed is incomplete, not ok"; else fail "nocomplete leg"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

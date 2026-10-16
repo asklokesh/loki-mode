@@ -345,6 +345,19 @@ def read_modernize_artifacts(repo_dir):
             units[u] = bool(d) and u not in npv and proven_ok(d.get("verdict"), [], d.get("rate"))
     if not units:
         raise PilotError("no units derivable from report.json or events under %s" % mdir)
+    # Units the budget skipped write no unit.* event: planned count (wave.started sum, else
+    # estimate.printed) is the denominator, and unseen planned units are not proven.
+    wave_units = [(e.get("data") or {}).get("units") for e in events if e.get("type") == "wave.started"]
+    wave_units = [n for n in wave_units if isinstance(n, int) and not isinstance(n, bool) and n >= 0]
+    planned = sum(wave_units) if wave_units else None
+    if planned is None:
+        for e in events:
+            n = (e.get("data") or {}).get("units")
+            if e.get("type") == "estimate.printed" and isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+                planned = n
+    for i in range(max(0, (planned or 0) - len(units))):
+        units["<unseen-planned-%d>" % i] = False
+    completed = any(e.get("type") == "modernize.completed" for e in events)
     started, disturbed = {}, set()
     cost = None
     for e in events:
@@ -359,7 +372,7 @@ def read_modernize_artifacts(repo_dir):
     proven = [u for u, ok in units.items() if ok]
     first = len([u for u in proven if u not in disturbed])
     return {"mid": mid, "units": len(units), "proven": len(proven), "first_pass": first,
-            "resliced": None, "cost": cost, "touches": len(units) - len(proven)}
+            "resliced": None, "cost": cost, "touches": len(units) - len(proven), "completed": completed}
 
 
 def fetch_repo(url, commit, dest, source_dir=None, rid=None):
@@ -387,11 +400,16 @@ def execute_repo(r, budget, loki_bin, source_dir=None):
         except PilotError as exc:
             return make_run(r["id"], "execute", "no_report", 0, 0, 0, lines, None, 0, None, time.time() - t0,
                             note="rc=%d: %s" % (p.returncode, exc))
-        status = "ok" if a["proven"] == a["units"] else "not_proven"
+        if p.returncode != 0:
+            status = "failed_rc%d" % p.returncode
+        elif not a["completed"]:
+            status = "incomplete"
+        else:
+            status = "ok" if a["proven"] == a["units"] else "not_proven"
         return make_run(r["id"], "execute", status, a["units"], a["proven"], a["first_pass"], lines, a["cost"],
                         a["touches"], a["resliced"], time.time() - t0,
                         note="mid=%s; cost %s; units_resliced not measured (no writer emits unit.resliced)" % (
-                            a["mid"], "from budget.hit.spent_usd" if a["cost"] is not None else "not measured"))
+                            a["mid"], "from budget.hit.spent_usd (lower bound: spend after the hit is not counted)" if a["cost"] is not None else "not measured"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -491,7 +509,7 @@ def main(argv=None):
         agg = aggregate(runs)
         print("runs: %d valid, %d failed, %d skipped" % (agg["runs_valid"], agg["runs_failed"], agg["runs_skipped"]))
         print("cost per 1K lines: %s; units re-sliced: %s" % (
-            "%.4f USD" % agg["cost_per_1k_lines_usd"] if agg["cost_per_1k_lines_usd"] is not None else "not measured",
+            "%.4f USD (lower bound)" % agg["cost_per_1k_lines_usd"] if agg["cost_per_1k_lines_usd"] is not None else "not measured",
             agg["units_resliced"] if agg["units_resliced"] is not None else "not measured"))
         print("results: %s" % path)
         print("calibration: %s" % calibration["reason"])
