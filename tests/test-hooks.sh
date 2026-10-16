@@ -435,8 +435,8 @@ test_validate_bash_safe_override_is_anchored() {
     done
     local legit=(
         'rm -rf /tmp/loki-run.abc123' 'rm -rf /tmp/a /tmp/b' 'rm -rf .loki/queue/dead-letter'
-        'rm -rf /tmp/x 2>/dev/null' 'rm -rf /tmp/x || true' 'rm -rf /tmp/x && mkdir /tmp/x'
-        'rm -rf /tmp/foo*' 'rm -rf /tmp/test-$$' 'cd /tmp/x && rm -rf /tmp/x/build'
+        'rm -rf /tmp/x 2>/dev/null' 'rm -rf /tmp/x || true' 'rm -rf /tmp/x && rm -rf /tmp/y'
+        'rm -rf /tmp/foo*' 'rm -rf /tmp/test-$$' 'FOO=1 && rm -rf /tmp/x/build'
         'rm -rf /tmp/x;rm -rf /tmp/y' 'rm -rf /tmp/x 2>&1' 'rm -rf /tmp/x >/dev/null 2>&1'
         'FOO=1 rm -rf /tmp/x' 'A=b C=d rm -rf /tmp/x'
     )
@@ -473,6 +473,48 @@ test_validate_bash_safe_override_rejects_risky_env() {
     got=$(run_hook_case 'LOKI_X=1 rm -rf /tmp/foo' "")
     [ "$got" = "0:allow" ] || { fail "LOKI_X prefix blocked (got $got)"; return; }
     pass "risky env prefixes denied; ordinary prefixes still allowed"
+}
+
+test_validate_bash_safe_override_rejects_earlier_segment_taint() {
+    log_test "validate-bash.sh: earlier risky env/alias/function segment voids safe-path override"
+    local c got
+    local taint=(
+        'export PATH=/tmp/x; rm -rf /tmp/a' 'PATH=/tmp/x; rm -rf /tmp/a'
+        'declare -x PATH=/tmp/x; rm -rf /tmp/a' 'alias rm=/tmp/x; rm -rf /tmp/a'
+        'function rm { /tmp/x; }; rm -rf /tmp/a' 'rm() { /tmp/x; }; rm -rf /tmp/a'
+        'export LD_PRELOAD=/tmp/x.so && rm -rf /tmp/a' 'IFS=x; rm -rf /tmp/a'
+        'unset PATH; rm -rf /tmp/a' 'export GCONV_PATH=/tmp/x; rm -rf /tmp/a'
+        'rm () { :; }; rm -rf /tmp/a'
+        'export "PATH=/tmp/x:$PATH"; rm -rf /tmp/a' "export 'PATH=/tmp/x'; rm -rf /tmp/a"
+        'export P\ATH=/tmp/x; rm -rf /tmp/a' "export \$'PATH'=/tmp/x; rm -rf /tmp/a"
+        'export ${X}PATH=/tmp/x; rm -rf /tmp/a' 'declare -x "PATH=/tmp/x"; rm -rf /tmp/a'
+        'unset "PATH"; rm -rf /tmp/a' 'export "IFS=/"; rm -rf /tmp/a'
+        'export "DYLD_INSERT_LIBRARIES=/tmp/x"; rm -rf /tmp/a'
+        "eval 'PATH=/tmp/x'; rm -rf /tmp/a"
+        'hash -p /tmp/x/rm rm; rm -rf /tmp/a' 'hash rm=/tmp/x/rm; rm -rf /tmp/a'
+        'path=(/tmp/x $path); rm -rf /tmp/a' 'commands[rm]=/tmp/x/rm; rm -rf /tmp/a'
+        'functions[rm]=/tmp/x; rm -rf /tmp/a' 'aliases[rm]=/tmp/x; rm -rf /tmp/a'
+        'source <(printf x); rm -rf /tmp/a' '. /tmp/x.sh; rm -rf /tmp/a'
+        'source /tmp/x.sh; rm -rf /tmp/a' 'enable -f x.so rm; rm -rf /tmp/a'
+        'echo hi; rm -rf /tmp/a' 'cd /tmp; rm -rf /tmp/a' 'FOO="a b"; rm -rf /tmp/a'
+        'FOO=$(x); rm -rf /tmp/a' 'foo=1; rm -rf /tmp/a'
+        'path=/tmp/x rm -rf /tmp/a' 'ifs=/ rm -rf /tmp/a' 'Path=/tmp/x rm -rf /tmp/a'
+        'EXECIGNORE=/bin/rm; rm -rf /tmp/a' 'EXECIGNORE=/bin/rm rm -rf /tmp/a'
+    )
+    local nl=$'\n'
+    taint+=(
+        "(PATH=/tmp/x; rm -rf /tmp/a${nl})"
+        "shopt -s expand_aliases${nl}\\alias rm=/tmp/x; rm -rf /tmp/a"
+    )
+    for c in "${taint[@]}"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "earlier-segment taint not blocked: $(printf '%q' "$c") (got $got)"; return; }
+    done
+    for c in 'FOO=1; rm -rf /tmp/a' 'rm -rf /tmp/a' 'FOO=1; BAR=2; rm -rf /tmp/a' 'A=1; B=2 && rm -rf /tmp/a'; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "control blocked: $c (got $got)"; return; }
+    done
+    pass "earlier-segment taint denied; controls still allowed"
 }
 
 test_validate_bash_compiled_no_python_denies() {
@@ -514,6 +556,7 @@ test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
 test_validate_bash_safe_override_rejects_risky_env
+test_validate_bash_safe_override_rejects_earlier_segment_taint
 test_validate_bash_compiled_no_python_denies
 
 # Summary

@@ -363,7 +363,7 @@ BLOCKED_PATTERNS=(
 # allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
 # never safe.
 _SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
-_SAFE_ENV='([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
+_SAFE_ENV='([A-Z_][A-Z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
 # A dot-leading path component with a glob char (`/tmp/.*` expands to `/tmp/..`).
 _DOT_GLOB='/\.[^/[:space:]]*[*?[]'
 SAFE_PATTERNS=(
@@ -379,10 +379,36 @@ _env_prefix_is_risky() {
         name="${BASH_REMATCH[1]}"
         rest="${BASH_REMATCH[2]}"
         case "$name" in
-            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH) return 0 ;;
+            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH|EXECIGNORE) return 0 ;;
         esac
     done
     return 1
+}
+
+# Allowlist: the safe-path override applies only when EVERY segment of the
+# command is blank, an accepted safe rm, or a bare `NAME=value` assignment
+# (uppercase name not on the risky list, value free of quoting, expansion,
+# grouping and redirection characters). Anything else (export, declare, unset,
+# eval, source, hash, alias, function, subshell, echo, cd, ...) can change how a
+# later rm resolves, so it disables the override. Over-denial is intended.
+_ASSIGN_ONLY='^[[:space:]]*([A-Z_][A-Z0-9_]*)=([^][\"'"'"'\\$`(){}<>[:space:]]*)[[:space:]]*$'
+_segment_is_inert() {
+    local seg="$1"
+    [[ "$seg" =~ ^[[:space:]]*(true|false|:)?[[:space:]]*$ ]] && return 0
+    if [[ "$seg" =~ $_ASSIGN_ONLY ]]; then
+        _env_prefix_is_risky "$seg" && return 1
+        return 0
+    fi
+    return 1
+}
+
+_all_segments_allowlisted() {
+    local seg
+    while IFS= read -r seg; do
+        _segment_is_inert "$seg" && continue
+        _segment_is_safe "$seg" || return 1
+    done <<< "$1"
+    return 0
 }
 
 _segment_is_safe() {
@@ -402,6 +428,7 @@ _blocked_hits_all_safe() {
     local pat="$1" flat seg hit=false
     # Strip fd duplication (2>&1) first: its `&` is not a command separator, and removing it hides no command.
     flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+    _all_segments_allowlisted "$flat" || return 1
     while IFS= read -r seg; do
         printf '%s' "$seg" | grep -qE "$pat" || continue
         hit=true
