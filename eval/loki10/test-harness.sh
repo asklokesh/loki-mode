@@ -1261,7 +1261,9 @@ check_lg_shortcuts() {
         ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["ref"])' "$td/task.json")"
         setup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("setup") or "")' "$td/task.json")"
         run="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hidden"]["run"])' "$td/task.json")"
-        source="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source(sys.argv[2]))' "$HERE" "$source")"
+        raw_source="$source"
+        source="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source(sys.argv[2]))' "$HERE" "$raw_source" 2>/dev/null)" || source=""
+        if [ -z "$source" ]; then echo "FAIL(shortcut leg): $name: resolve_source failed for $raw_source"; ok=1; continue; fi
         workdir="$T/lgshortcut-$name"
         rm -rf "$workdir"
         if ! git clone -q "$source" "$workdir" >/dev/null 2>&1 || ! git -C "$workdir" checkout -q "$ref" >/dev/null 2>&1; then
@@ -1712,6 +1714,23 @@ grep -q 'resolve_source' "$HERE/../../scripts/real-repo-gate.sh" && grep -q 'res
 rs_src="$(cd / && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source("fixtures/empty-repo/empty-repo.bundle"))' "$HERE")"
 (cd / && git clone -q "$rs_src" "$T/rs-clone" >/dev/null 2>&1) && [ -f "$T/rs-clone/README.md" ] \
     && pass "P12-30c: resolved relative source clones from another cwd" || fail "P12-30c: resolved source did not clone"
+
+# P12-30e: readers run python3 -I (no cwd on sys.path) and fail closed when
+# resolve_source is unavailable, instead of cloning an empty source.
+[ "$(grep -c 'python3 -I -c .import sys; sys.path.insert' "$HERE/../../scripts/real-repo-gate.sh")" = 1 ] \
+    && sed -n '/^check_lg_shortcuts()/,/^}/p' "$HERE/test-harness.sh" | grep -q 'python3 -I -c .import sys; sys.path.insert' \
+    && pass "P12-30e: resolve_source callers use python3 -I" || fail "P12-30e: a resolve_source caller lacks -I"
+sed -n '/^check_lg_shortcuts()/,/^}/p' "$HERE/test-harness.sh" | grep -q 'resolve_source failed for' \
+    && pass "P12-30e: lg-shortcuts leg fails closed on resolve_source failure" || fail "P12-30e: lg-shortcuts leg lacks resolve_source failure guard"
+# measure-size with harness.py absent: the lazy import failure is a noted online failure, not a traceback
+mkdir -p "$T/ms-noharness"
+cp "$MS" "$T/ms-noharness/measure-size.py"
+python3 "$T/ms-noharness/measure-size.py" --online --tasks-dir "$T/ms-unreachable/tasks" --refdiff-dir "$T/ms-unreachable/refdiff" \
+    >"$T/ms-noharness.out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && grep -q "online fetch failed: cannot import harness" "$T/ms-noharness.out" && ! grep -q Traceback "$T/ms-noharness.out" \
+    && pass "P12-30e: measure-size reports a harness import failure via note" \
+    || fail "P12-30e: measure-size import failure rc=$rc: $(cat "$T/ms-noharness.out")"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
