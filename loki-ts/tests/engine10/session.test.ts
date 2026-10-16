@@ -569,6 +569,25 @@ describe("P12-12d diffSignature base path and per-list budget", () => {
   });
 });
 
+describe("P12-12e diffSignature uses one scope from a repo subdirectory", () => {
+  const g = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, encoding: "utf8" });
+  test("growth outside cwd leaves the signature alone, growth inside cwd moves it", () => {
+    const d = mkdtempSync(join(tmpdir(), "p12-12e-"));
+    try {
+      g(d, "init", "-q"); mkdirSync(join(d, "sub")); mkdirSync(join(d, "other"));
+      writeFileSync(join(d, "sub", "a.txt"), "one\n"); writeFileSync(join(d, "other", "b.txt"), "one\n"); g(d, "add", "."); g(d, "commit", "-qm", "init");
+      const sub = join(d, "sub");
+      writeFileSync(join(sub, "a.txt"), "one\ntwo\n");
+      const before = diffSignature(sub);
+      writeFileSync(join(d, "other", "b.txt"), "one\nelsewhere\n"); // outside cwd: not this run's progress
+      expect(diffShortstat(sub).files).toBe(1);
+      expect(diffSignature(sub)).toBe(before);
+      writeFileSync(join(sub, "a.txt"), "one\ntwo-with-more-text\n"); // inside cwd
+      expect(diffSignature(sub)).not.toBe(before);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
 describe("P12-12 diffShortstat counts untracked files", () => {
   const g = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, encoding: "utf8" });
   test("a stage that only adds new files reads as nonzero, .loki and the real index untouched", () => {

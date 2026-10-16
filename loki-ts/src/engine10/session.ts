@@ -81,7 +81,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
 export function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   const dir = cwd ?? process.cwd(), o = { timeout: 10_000 }; // P12-12: bounded, since the heartbeat runs this synchronously every 30s
   let out = "";
-  try { out = safeGit(dir, ["diff", "--shortstat"], o).trim(); } catch { /* unreadable: counts stay zero */ }
+  try { out = safeGit(dir, ["diff", "--shortstat", "--relative"], o).trim(); } catch { /* unreadable: counts stay zero */ } // --relative: same cwd scope as the name lists and ls-files, so the signature tracks only this run's subtree
   let untracked = 0; // --shortstat misses untracked files: count them (without reading content) so an add-only stage is not zero change
   try { untracked = safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o).split("\0").filter(Boolean).length; } catch { /* keep the tracked stat */ }
   const files = /(\d+) files? changed/.exec(out), ins = /(\d+) insertions?\(\+\)/.exec(out), del = /(\d+) deletions?\(-\)/.exec(out);
