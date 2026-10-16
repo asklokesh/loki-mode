@@ -20,6 +20,8 @@ The token is sent only to the Sentry host through a curl config on stdin, never 
 2. Start the server: `python3 autonomy/trigger-server.py --port 8080` and point the Sentry alert webhook at `/sentry`.
 3. A valid alert is normalized with `normalize_sentry_json` and enqueues `loki start "<brief>" --pr --detach`. A bad signature gets 401.
 
+The brief also carries the event's release and environment, the newest `.loki/deploys` record (`last deploy <sha7> <finished_at> health=<status>`) and, when the culprit file resolves inside the project, its last `git log -1` author. All of it is sanitized to one line and capped; it adds no authority.
+
 The output is a receipt-gated PR only, never a deploy. Whether the PR opens is still decided by the policy file (`autonomy`).
 
 
