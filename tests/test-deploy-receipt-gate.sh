@@ -745,11 +745,12 @@ import http.server, socketserver, sys
 HITS = {"recover": 0}
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        code = 200 if self.path.startswith("/ok") else 500
+        code = 200 if self.path.startswith(("/ok", "/ver")) else 500
+        body = b"build-abc123" if self.path.startswith("/ver") else b"x"
         if self.path.startswith("/recover"):
             HITS["recover"] += 1
             code = 500 if HITS["recover"] <= 2 else 200
-        self.send_response(code); self.end_headers(); self.wfile.write(b"x")
+        self.send_response(code); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
 srv = socketserver.TCPServer(("127.0.0.1", 0), H)
 open(sys.argv[1], "w").write(str(srv.server_address[1]))
@@ -833,6 +834,34 @@ EOF
             ok "15c. a rollback that restores service records post_rollback_health healthy"
         else
             bad "15c. recovered rollback mis-recorded" "rc=$RC15C rec=$R15C $(printf '%s' "$OUT15C" | tail -4)"
+        fi
+
+        # 15d. --health-match: body must contain the string; record carries match, code and tree sha
+        mk_hfix d15d; D15D="$WORKROOT/d15d"
+        OUT15D="$(run_h "$D15D" --execute --health-url "http://127.0.0.1:$HS_PORT/ver" --health-match abc123)"; RC15D=$?
+        R15D="$(last_record "$D15D")"
+        T15D="$(git -C "$D15D" rev-parse 'HEAD^{tree}' 2>/dev/null)"
+        if [ "$RC15D" -eq 0 ] && [ "$(rec_field "$R15D" health_status)" = "healthy" ] \
+           && [ "$(rec_field "$R15D" health_match)" = "abc123" ] && [ "$(rec_field "$R15D" health_http_code)" = "200" ] \
+           && [ -n "$T15D" ] && [ "$(rec_field "$R15D" tree_sha)" = "$T15D" ]; then
+            ok "15d. matching body records healthy with health_match, http code and tree_sha"
+        else
+            bad "15d. health-match happy path wrong" "rc=$RC15D rec=$R15D $(printf '%s' "$OUT15D" | tail -3)"
+        fi
+        mk_hfix d15e; D15E="$WORKROOT/d15e"
+        OUT15E="$(run_h "$D15E" --execute --health-url "http://127.0.0.1:$HS_PORT/ver" --health-match deadbeef)"; RC15E=$?
+        R15E="$(last_record "$D15E")"
+        if [ "$RC15E" -eq 4 ] && [ "$(rec_field "$R15E" health_status)" = "FAILED_HEALTH" ] \
+           && [ "$(rec_field "$R15E" health_match)" = "deadbeef" ] && [ "$(rec_field "$R15E" health_http_code)" = "200" ]; then
+            ok "15e. a 200 whose body lacks the match string is FAILED_HEALTH, exit 4"
+        else
+            bad "15e. mismatching body still passed" "rc=$RC15E rec=$R15E $(printf '%s' "$OUT15E" | tail -3)"
+        fi
+        OUT15F="$(run_h "$D15E" --execute --health-match abc123)"; RC15F=$?
+        if [ "$RC15F" -ne 0 ] && grep -q "requires --health-url" <<<"$OUT15F"; then
+            ok "15f. --health-match without --health-url is refused"
+        else
+            bad "15f. --health-match without a URL not refused" "rc=$RC15F"
         fi
 
         # 16. 500 without --auto-rollback: FAILED_HEALTH, NO rollback

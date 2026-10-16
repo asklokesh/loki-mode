@@ -43,6 +43,8 @@ The signed `loki.deploy/1` record also carries the post-deploy facts:
 `health_status`, `health_http_code`, and, when `--auto-rollback` ran, whether the
 rolled-back service answered again (`post_rollback_health`: `healthy`,
 `FAILED_HEALTH` or `unchecked`). A rollback that leaves the service down exits 5.
+With `--health-match STR` the probe body must contain STR, and the record stores
+`health_match` and the deployed `tree_sha`.
 
 ## Honest limits
 

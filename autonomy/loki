@@ -2549,7 +2549,7 @@ cmd_start() {
     # [--auto-rollback] chains the gated `loki deploy --execute` after a start
     # that ended 0. cmd_deploy owns every gate: no VERIFIED HEAD-anchored
     # receipt means a refusal, never a deploy.
-    local _ps_ws="" _ps_deploy=0 _ps_health="" _ps_rb=0 _ps_rest=() _ps_brief=() _ps_a
+    local _ps_ws="" _ps_deploy=0 _ps_health="" _ps_hmatch="" _ps_rb=0 _ps_rest=() _ps_brief=() _ps_a
     while [ $# -gt 0 ]; do
         case "$1" in
             --workspace)
@@ -2561,12 +2561,16 @@ cmd_start() {
                 [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--health-url requires a URL${NC}" >&2; exit 2; }
                 _ps_health="$2"; shift 2 ;;
             --health-url=*) _ps_health="${1#*=}"; shift ;;
+            --health-match)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--health-match requires a string${NC}" >&2; exit 2; }
+                _ps_hmatch="$2"; shift 2 ;;
+            --health-match=*) _ps_hmatch="${1#*=}"; shift ;;
             --auto-rollback) _ps_rb=1; shift ;;
             *) _ps_rest+=("$1"); shift ;;
         esac
     done
-    if { [ -n "$_ps_health" ] || [ "$_ps_rb" = 1 ]; } && [ "$_ps_deploy" != 1 ]; then
-        echo -e "${RED}--health-url and --auto-rollback apply only with --deploy${NC}" >&2
+    if { [ -n "$_ps_health" ] || [ -n "$_ps_hmatch" ] || [ "$_ps_rb" = 1 ]; } && [ "$_ps_deploy" != 1 ]; then
+        echo -e "${RED}--health-url, --health-match and --auto-rollback apply only with --deploy${NC}" >&2
         exit 2
     fi
     if [ -n "$_ps_ws" ]; then
@@ -2603,6 +2607,7 @@ cmd_start() {
         fi
         local _ps_dargs=(--execute)
         [ -n "$_ps_health" ] && _ps_dargs+=(--health-url "$_ps_health")
+        [ -n "$_ps_hmatch" ] && _ps_dargs+=(--health-match "$_ps_hmatch")
         [ "$_ps_rb" = 1 ] && _ps_dargs+=(--auto-rollback)
         cmd_deploy "${_ps_dargs[@]}"
         return $?
@@ -9771,7 +9776,7 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code]
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha]
 # Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
 # receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
 # authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
@@ -9794,7 +9799,7 @@ _deploy_record() {
     local health_status="${7:-unchecked}" health_url="${8:-}"
     local rb_attempted="${9:-false}" rb_exit="${10:-}"
     local receipt_sha="${11:-}" started_at="${12:-}" finished_at="${13:-}" target="${14:-}" canary="${15:-false}"
-    local post_rb="${16:-unchecked}" hcode_rec="${17:-}"
+    local post_rb="${16:-unchecked}" hcode_rec="${17:-}" hmatch="${18:-}" tree_sha="${19:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
@@ -9802,7 +9807,7 @@ _deploy_record() {
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
     DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
-    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" \
+    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -9829,6 +9834,8 @@ json.dump({
     "rollback_attempted": os.environ.get("DR_RBA") == "true",
     "rollback_exit": int(os.environ["DR_RBX"]) if os.environ.get("DR_RBX", "") != "" else None,
     "post_rollback_health": os.environ.get("DR_PRB") or "unchecked",
+    "health_match": os.environ.get("DR_HM", ""),
+    "tree_sha": os.environ.get("DR_TREE", ""),
     "health_http_code": int(os.environ["DR_HC"]) if os.environ.get("DR_HC", "").isdigit() else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
@@ -9898,20 +9905,31 @@ except Exception:
     return 0
 }
 
-# _deploy_probe_health <url>
-# Bounded poll: echoes the last HTTP status, returns 0 on any 2xx. Attempts and
+# _deploy_probe_health <url> [match]
+# Bounded poll: echoes the last HTTP status, returns 0 on any 2xx. With a match
+# string the 2xx body must also contain it (fixed-string), else the attempt fails
+# and the status is still echoed. Attempts and
 # spacing are env-tunable (LOKI_DEPLOY_HEALTH_ATTEMPTS / _INTERVAL) for tests.
 _deploy_probe_health() {
-    local url="${1:-}" attempts="${LOKI_DEPLOY_HEALTH_ATTEMPTS:-5}" interval="${LOKI_DEPLOY_HEALTH_INTERVAL:-3}"
-    local i=0 code="000"
+    local url="${1:-}" match="${2:-}" attempts="${LOKI_DEPLOY_HEALTH_ATTEMPTS:-5}" interval="${LOKI_DEPLOY_HEALTH_INTERVAL:-3}"
+    local i=0 code="000" body="/dev/null"
+    if [ -n "$match" ]; then body="$(mktemp 2>/dev/null)" || body="/dev/null"; fi
     case "$attempts" in ''|*[!0-9]*) attempts=5 ;; esac
     case "$interval" in ''|*[!0-9]*) interval=3 ;; esac
     while [ "$i" -lt "$attempts" ]; do
         i=$((i + 1))
-        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null)" || code="000"
-        case "$code" in 2??) printf '%s' "$code"; return 0 ;; esac
+        code="$(curl -s -o "$body" -w '%{http_code}' --max-time 10 "$url" 2>/dev/null)" || code="000"
+        case "$code" in
+            2??)
+                if [ -z "$match" ] || grep -qF -- "$match" "$body" 2>/dev/null; then
+                    [ "$body" = /dev/null ] || rm -f "$body"
+                    printf '%s' "$code"; return 0
+                fi
+                ;;
+        esac
         [ "$i" -lt "$attempts" ] && [ "$interval" -gt 0 ] && sleep "$interval"
     done
+    [ "$body" = /dev/null ] || rm -f "$body"
     printf '%s' "$code"
     return 1
 }
@@ -9977,6 +9995,7 @@ _deploy_try_execute() {
     local dir="${1:-.}" type="${2:-}"
     # Set by cmd_deploy (dynamic scope); empty/false when called any other way.
     local health_url="${_LOKI_DEPLOY_HEALTH_URL:-}" auto_rollback="${_LOKI_DEPLOY_AUTO_ROLLBACK:-false}"
+    local health_match="${_LOKI_DEPLOY_HEALTH_MATCH:-}"
 
     local command
     command="$(_deploy_first_installed_command "$dir" "$type")"
@@ -10101,7 +10120,7 @@ _deploy_try_execute() {
         if [ "$rc" -eq 0 ] && [ -n "$purl" ]; then
             health_url="$purl"
             echo "Probing canary health: ${health_url}"
-            if hcode="$(_deploy_probe_health "$health_url")"; then
+            if hcode="$(_deploy_probe_health "$health_url" "$health_match")"; then
                 health_status="healthy"
                 echo "Promoting: vercel promote ${purl}"
                 exec_cmd="vercel; vercel promote ${purl}"
@@ -10122,7 +10141,7 @@ _deploy_try_execute() {
     # failed deploy, status is "unchecked": never a claim the service is healthy.
     if [ "$canary_kind" != vercel ] && [ "$rc" -eq 0 ] && [ -n "$health_url" ]; then
         echo "Probing health: ${health_url}"
-        if hcode="$(_deploy_probe_health "$health_url")"; then
+        if hcode="$(_deploy_probe_health "$health_url" "$health_match")"; then
             health_status="healthy"
         else
             health_status="FAILED_HEALTH"
@@ -10130,7 +10149,7 @@ _deploy_try_execute() {
     fi
 
     if [ "$health_status" = "FAILED_HEALTH" ]; then
-        echo -e "${RED}FAILED_HEALTH: ${health_url} did not return 2xx (last status ${hcode:-000}).${NC}" >&2
+        echo -e "${RED}FAILED_HEALTH: ${health_url} did not return 2xx${health_match:+ containing \"${health_match}\"} (last status ${hcode:-000}).${NC}" >&2
         if [ "$auto_rollback" = true ] && [ -n "$rb_cmd" ] && ! _deploy_is_destructive "$rb_cmd"; then
             echo "Rolling back: ${rb_cmd}" >&2
             rb_attempted=true
@@ -10160,7 +10179,7 @@ _deploy_try_execute() {
     rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
     rec="$(_deploy_record "$dir" "$exec_cmd" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
         "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
-        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode")"
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -10302,7 +10321,7 @@ cmd_deploy() {
     # file alone weakens this gate.
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
     # Per-invocation like --execute; local so an ambient env var cannot set them.
-    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false
+    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_HEALTH_MATCH="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -10310,7 +10329,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--health-url URL [--auto-rollback]]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--health-url URL [--health-match STR] [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -10371,6 +10390,8 @@ cmd_deploy() {
                 echo "                    non-2xx marks the deploy FAILED_HEALTH and exits 4."
                 echo "                    Without a URL, health is recorded as 'unchecked',"
                 echo "                    never as healthy."
+                echo "  --health-match S  The 2xx body must also contain S (for example the HEAD sha"
+                echo "                    or version), else FAILED_HEALTH. Needs --health-url."
                 echo "  --auto-rollback   On FAILED_HEALTH run the provider's documented rollback:"
                 echo "                    'vercel rollback' or 'fly releases rollback <version"
                 echo "                    captured before the deploy>'. Netlify and Cloudflare"
@@ -10415,6 +10436,10 @@ cmd_deploy() {
                     *) echo "loki deploy --health-url requires an http(s) URL" >&2; return 1 ;;
                 esac
                 ;;
+            --health-match)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo "loki deploy --health-match requires a string" >&2; return 1; }
+                _LOKI_DEPLOY_HEALTH_MATCH="$2"; shift
+                ;;
             --auto-rollback)
                 _LOKI_DEPLOY_AUTO_ROLLBACK=true
                 ;;
@@ -10440,6 +10465,10 @@ cmd_deploy() {
 
     if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
         echo "loki deploy --auto-rollback requires --health-url (no health signal, no rollback)" >&2
+        return 1
+    fi
+    if [ -n "$_LOKI_DEPLOY_HEALTH_MATCH" ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
+        echo "loki deploy --health-match requires --health-url" >&2
         return 1
     fi
     if [ "$_LOKI_DEPLOY_CANARY" = true ] && [ "$do_execute" != true ]; then
