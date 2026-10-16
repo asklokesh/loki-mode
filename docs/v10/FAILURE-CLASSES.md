@@ -872,3 +872,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every name in the modernize types.ts event list must have at least one producer in loki-ts/src; cost has no per-unit producer either (only budget.hit spent_usd at scheduler.ts:203).
 - Mechanism: the coordinator (loki-ts/src/util/modernize_coordinator.ts) calls writeReport once at the end of a run; reslice.ts appends unit.resliced; a guard test asserts every declared event name has a producer.
 - Fixture: loki-ts/tests/engine10/modernize/e2e.test.ts asserts report.json exists after the stub run; a new producer-coverage case in the existing modernize test file.
+
+## FC-M25W-b Modernize events unit.planned and codemod.skipped are declared with no producer (MODERNIZE-EVENT-DARK)
+- User-visible vs raw: the modernize event log never shows which units were planned or why a codemod was skipped, so a user cannot see the plan or a missing-tool reason; the raw cause is two names in the types.ts event list with no append call.
+- Law broken: a control nobody reads is theatre (event declared with no producer).
+- Cause (measured 2026-10-16, M-25w build): `grep -rn "unit.planned\|codemod.skipped" loki-ts/src` finds only types.ts:8-9 and comments in codemod.ts:4,10; the M-25w producer guard allowlists both names.
+- Siblings to sweep: every name in the modernize types.ts event list; the allowlist in the M-25w producer guard must shrink to empty.
+- Mechanism: the planner appends unit.planned once per unit; the codemod caller appends codemod.skipped with the reason codemod.ts already returns; then delete both allowlist entries so the existing guard covers them.
+- Fixture: the M-25w producer-coverage case with an empty allowlist.
