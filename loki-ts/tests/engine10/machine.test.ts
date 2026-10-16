@@ -125,8 +125,8 @@ describe("engine10 machine", () => {
   });
   const failing = (tail: string) => ({ exit: 1, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: false, stderrTail: tail });
 
-  for (const [tail, klass] of [["Your credit balance is too low", "quota_exhausted"], ["invalid x-api-key", "auth"], ["billing_hard_limit_reached ... insufficient_quota", "quota_exhausted"]] as const) {
-    it(`a ${klass} error aborts on the first occurrence: no fix round, no further session`, async () => {
+  for (const [tail, klass] of [["invalid x-api-key", "auth"]] as const) {
+    it(`a ${klass} error is fatal on the first occurrence (quota now waits, P12-09): no fix round, no further session`, async () => {
       const { ctx, events } = fakeCtx();
       let sessions = 0;
       ctx.sessions = { run: async () => { sessions++; return failing(tail); } };
@@ -136,6 +136,47 @@ describe("engine10 machine", () => {
       expect(of(events, "stage.started")).not.toContain("fix");
     });
   }
+
+  describe("P12-09 quota wait and rerun", () => {
+    const okRes = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false, stderrTail: "" };
+    const virtual = (ctx: RunContext) => { let now = Date.now(); const slept: number[] = []; ctx.clock = { now: () => now, sleep: async (ms: number) => { slept.push(ms); now += ms; } }; return slept; };
+    it("a quota error twice then success waits on ctx.clock and the run completes", async () => {
+      const { ctx, events } = fakeCtx();
+      const slept = virtual(ctx);
+      let calls = 0, stageRuns = 0;
+      ctx.sessions = { run: async () => (++calls <= 2 ? failing("[sdk-loop error: Your credit balance is too low to access the API]") : okRes) };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: stage("implement", async (c, signal) => { stageRuns++; await c.sessions.run({ stage: "implement", brief: "", tier: "development", iterationId: "i", limitS: 1, signal, cwd: "/" }); return { status: "completed", data: {} }; }) })) });
+      expect(calls).toBe(3);
+      expect(stageRuns).toBe(1);
+      expect(slept.length).toBe(2);
+      expect(r.stopped).toBeNull();
+      expect(r.capHit).toBe(false);
+      expect(of(events, "stage.started").filter((n) => n === "implement").length).toBe(1);
+    });
+    it("a quota that never recovers ends budget_stopped (cap.hit), not fatal and not an infinite wait", async () => {
+      const { ctx, events } = fakeCtx(900);
+      const slept = virtual(ctx);
+      let calls = 0;
+      ctx.sessions = { run: async () => { calls++; return failing("insufficient_quota"); } };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+      expect(r.capHit).toBe(true);
+      expect(r.stopped).toBeNull();
+      expect(of(events, "cap.hit").length).toBe(1);
+      expect(calls).toBeGreaterThan(1);
+      expect(calls).toBeLessThan(40);
+      expect(slept.length).toBeGreaterThan(0);
+    });
+    it("auth stays fatal with no wait", async () => {
+      const { ctx } = fakeCtx();
+      const slept = virtual(ctx);
+      let calls = 0;
+      ctx.sessions = { run: async () => { calls++; return failing("invalid x-api-key"); } };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+      expect(r.stopped).toBe("fatal:auth");
+      expect(calls).toBe(1);
+      expect(slept.length).toBe(0);
+    });
+  });
 
   it("a 429 is transient: the run is not stopped fatal", async () => {
     const { ctx } = fakeCtx();
@@ -184,7 +225,6 @@ describe("engine10 machine", () => {
     ["the session child's own stderr", "echo 'invalid x-api-key' >&2; exit 1", "auth"],
     ["the real SDK auth line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.]' > .loki/iteration-it-implement.log; exit 1", "auth"],
     ["the SDK Not logged in error line", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Not logged in - Please run /login]' > .loki/iteration-it-implement.log; exit 1", "auth"],
-    ["the SDK error line in the iteration log","mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
   ] as const) {
     it(`real session runner: ${label} stops fatal:${klass} after ONE session`, async () => {
       const runs = { n: 0 };

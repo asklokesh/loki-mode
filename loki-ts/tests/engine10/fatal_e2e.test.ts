@@ -61,7 +61,7 @@ function run(env: Record<string, string>) {
 
 describe("A-113b fatal classification through the CLI invoker", () => {
   for (const [text, stop] of [["Your credit balance is too low to access the API", "fatal:quota_exhausted"], ["Invalid API key. API key is invalid", "fatal:auth"]] as const) {
-    test(`stderr '${text}' stops ${stop}`, () => {
+    if (stop === "fatal:auth") test(`stderr '${text}' stops ${stop}`, () => { // quota is a bounded wait now (P12-09), covered in machine.test.ts
       expect(run({ STUB_ERR: text, STUB_EXIT: "1" }).json.stop).toBe(stop);
     }, 120_000);
     test(`the same text on stdout is NOT fatal (transcript forgery guard)`, () => {
