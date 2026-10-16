@@ -349,15 +349,19 @@ def read_modernize_artifacts(repo_dir):
     # estimate.printed) is the denominator, and unseen planned units are not proven.
     wave_units = [(e.get("data") or {}).get("units") for e in events if e.get("type") == "wave.started"]
     wave_units = [n for n in wave_units if isinstance(n, int) and not isinstance(n, bool) and n >= 0]
-    planned = sum(wave_units) if wave_units else None
-    if planned is None:
-        for e in events:
-            n = (e.get("data") or {}).get("units")
-            if e.get("type") == "estimate.printed" and isinstance(n, int) and not isinstance(n, bool) and n >= 0:
-                planned = n
-    for i in range(max(0, (planned or 0) - len(units))):
+    est = [(e.get("data") or {}).get("units") for e in events if e.get("type") == "estimate.printed"]
+    est = [n for n in est if isinstance(n, int) and not isinstance(n, bool) and n >= 0]
+    planned = max([sum(wave_units)] + est[-1:]) if (wave_units or est) else 0
+    for i in range(max(0, planned - len(units))):
         units["<unseen-planned-%d>" % i] = False
-    completed = any(e.get("type") == "modernize.completed" for e in events)
+    # modernize.completed (report.ts): verdict "COMPLETE"/"INCOMPLETE" plus blocking_units/blocking_waves
+    # arrays. Production may not emit it yet; the caller treats rc == 0 as complete when it is absent.
+    done = [e.get("data") or {} for e in events if e.get("type") == "modernize.completed"]
+    if done:
+        d = done[-1]
+        completed = d.get("verdict") == "COMPLETE" and not d.get("blocking_units") and not d.get("blocking_waves")
+    else:
+        completed = None
     started, disturbed = {}, set()
     cost = None
     for e in events:
@@ -384,6 +388,13 @@ def fetch_repo(url, commit, dest, source_dir=None, rid=None):
     subprocess.run(["git", "-C", dest, "checkout", "-q", "FETCH_HEAD"], check=True)
 
 
+def charge_spend(run, allowed):
+    """Spend to charge against the cap: measured cost, else the full allowance for any executed run."""
+    if run["cost_usd"] is not None:
+        return run["cost_usd"]
+    return 0.0 if run["status"].startswith("skipped") else allowed
+
+
 def execute_repo(r, budget, loki_bin, source_dir=None):
     tmp = run_tmp("pilot-%s-" % r["id"])
     t0 = time.time()
@@ -402,10 +413,12 @@ def execute_repo(r, budget, loki_bin, source_dir=None):
                             note="rc=%d: %s" % (p.returncode, exc))
         if p.returncode != 0:
             status = "failed_rc%d" % p.returncode
-        elif not a["completed"]:
+        elif a["proven"] != a["units"]:
+            status = "not_proven"
+        elif a["completed"] is False:
             status = "incomplete"
         else:
-            status = "ok" if a["proven"] == a["units"] else "not_proven"
+            status = "ok"
         return make_run(r["id"], "execute", status, a["units"], a["proven"], a["first_pass"], lines, a["cost"],
                         a["touches"], a["resliced"], time.time() - t0,
                         note="mid=%s; cost %s; units_resliced not measured (no writer emits unit.resliced)" % (
@@ -493,7 +506,7 @@ def main(argv=None):
                 allowed = min(per, a.max_spend_usd - spent)
                 run = execute_repo(r, allowed, a.loki_bin, a.source_dir)
                 # Real spend only (budget.hit.spent_usd). Unmeasured spend is charged at the full allowance, so the cap holds.
-                spent += run["cost_usd"] if run["cost_usd"] is not None else (allowed if run["status"] in ("ok", "not_proven", "no_report") else 0.0)
+                spent += charge_spend(run, allowed)
                 runs.append(run)
             mode = "execute"
 

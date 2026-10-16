@@ -137,7 +137,9 @@ n=0
 ev() { n=$((n + 1)); printf '{"v":1,"seq":%s,"ts":"2026-10-16T00:00:%02dZ","run":"%s","type":"%s","stage":null,"data":%s}\n' "$n" "$n" "$mid" "$1" "$2" >>"$d/events.jsonl"; }
 ev modernize.started '{"repo":"x","to":"python3","budget_usd":1,"workers":4}'
 ev estimate.printed '{"units":'"$PLANNED"',"waves":1,"cost_usd":1,"wall_time_s":1,"risk_high":0,"risk_normal":1}'
-ev wave.started '{"units":'"$PLANNED"'}'
+WAVEU="$PLANNED"
+[ -f "$dest/fake-waveunits" ] && WAVEU="$(cat "$dest/fake-waveunits")"
+ev wave.started '{"units":'"$WAVEU"'}'
 ev unit.started '{"unit":"u1","model":"sonnet","worker":0,"variant":0}'
 case "$mode" in
     variant) ev unit.variant '{"unit":"u1","variant":1,"model":"sonnet"}'; ev unit.started '{"unit":"u1","model":"sonnet","worker":0,"variant":1}'; ev unit.equivalence '{"unit":"u1","verdict":"PROVEN","cases":4,"pass":4,"fail":0,"rate":1,"branch_pct":100}' ;;
@@ -151,7 +153,11 @@ if [ -f "$dest/fake-spent" ]; then
 fi
 [ "$mode" = "crash" ] && exit 1
 [ "$mode" = "nocomplete" ] && exit 0
-ev modernize.completed '{"verdict":"PROVEN","blocking_units":0,"blocking_waves":0,"report_sha256":"x"}'
+ev wave.verified '{"wave":1,"verified":true}'
+case "$mode" in
+    np|lowrate|incompleteverdict) ev modernize.completed '{"verdict":"INCOMPLETE","blocking_units":["u1"],"blocking_waves":[],"report_sha256":"x"}' ;;
+    *) ev modernize.completed '{"verdict":"COMPLETE","blocking_units":[],"blocking_waves":[],"report_sha256":"x"}' ;;
+esac
 exit 0
 FAKE_EOF
 chmod +x "$FAKE"
@@ -259,11 +265,41 @@ runone "$T/src-crash" "$T/r-crash"
 RES="$(latest "$T/r-crash")"
 if resj "$RES" 'd["runs"][0]["status"] not in ("ok","not_proven") and d["calibration"]["action"]=="hold" and d["aggregate"]["runs_valid"]==0'; then pass "crash after one unit (rc!=0) is not ok and does not calibrate"; else fail "crash leg"; fi
 
-# clean exit but modernize.completed never emitted
+# rc 0, every unit PROVEN, no modernize.completed event (production today): ok
 mksrc "$T/src-nocomp" nocomplete
 runone "$T/src-nocomp" "$T/r-nocomp"
 RES="$(latest "$T/r-nocomp")"
-if resj "$RES" 'd["runs"][0]["status"]=="incomplete" and d["calibration"]["action"]=="hold"'; then pass "missing modernize.completed is incomplete, not ok"; else fail "nocomplete leg"; fi
+if resj "$RES" 'd["runs"][0]["status"]=="ok" and d["runs"][0]["units_proven"]==1'; then pass "rc 0 with all units proven and no modernize.completed is ok"; else fail "nocomplete leg: $(cat "$T/out.txt")"; fi
+
+# rc 0, all units proven, real-shape modernize.completed says INCOMPLETE: incomplete
+mksrc "$T/src-incv" incompleteverdict
+runone "$T/src-incv" "$T/r-incv"
+RES="$(latest "$T/r-incv")"
+if resj "$RES" 'd["runs"][0]["status"]=="incomplete"'; then pass "INCOMPLETE verdict never counts as ok"; else fail "incomplete verdict leg: $(cat "$T/out.txt")"; fi
+
+# F3: wave.started sum (2) below estimate (3): the skipped unit is not proven
+mksrc "$T/src-wave" ok
+echo 3 >"$T/src-wave/$FIRST/fake-planned"
+echo 2 >"$T/src-wave/$FIRST/fake-waveunits"
+runone "$T/src-wave" "$T/r-wave"
+RES="$(latest "$T/r-wave")"
+if resj "$RES" 'd["runs"][0]["units_total"]==3 and d["runs"][0]["units_proven"]==1 and d["runs"][0]["status"]!="ok"'; then pass "planned units = max(estimate, wave sum): skipped unit not proven"; else fail "planned max leg: $(cat "$T/out.txt")"; fi
+
+# F2: unmeasured spend is charged the full allowance for every executed run, any status
+python3 - "$HERE" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import pilot
+for st in ("ok", "not_proven", "no_report", "incomplete", "failed_rc1", "failed_rc137"):
+    r = pilot.make_run("x", "execute", st, 1, 1, 1, 100, None, 0, None, 1.0)
+    assert pilot.charge_spend(r, 2.5) == 2.5, st
+r = pilot.make_run("x", "execute", "failed_rc1", 1, 1, 1, 100, 0.7, 0, None, 1.0)
+assert pilot.charge_spend(r, 2.5) == 0.7
+r = pilot.make_run("x", "execute", "skipped_over_max_loc", 0, 0, 0, 100, None, 0, None, 1.0)
+assert pilot.charge_spend(r, 2.5) == 0.0
+PY
+rc=$?
+if [ "$rc" -eq 0 ]; then pass "unmeasured cost charges the full allowance for failed and incomplete runs"; else fail "charge_spend"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
