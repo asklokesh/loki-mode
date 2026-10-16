@@ -46,7 +46,7 @@ function lastNonEmptyLine(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0); return lines[lines.length - 1] ?? "";
 }
 /** pushArgv's push-pr shape ends "...,"1"|"0"". engine10-push.sh instead wants only an optional literal "--draft" (4 or 5 total args). Translate rather than edit either file (see the header note). */
-function toPushShellArgs(args: PushArgs): string[] {
+export function toPushShellArgs(args: PushArgs): string[] {
   const built = pushArgv(args);
   const flag = built.pop(); if (flag === "1") built.push("--draft");
   return built;
