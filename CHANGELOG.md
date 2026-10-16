@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.15.0 (2026-10-16)
+
+v11.13.0 and v11.14.0 were written into this changelog but never published to npm: both failed required CI. This release fixes those failures and is the first to publish everything listed under v11.13.0 and v11.14.0, plus the modernize work below. `loki start` with Claude remains the primary path.
+
+### Added
+- `loki modernize` now drives waves end to end through a coordinator: each wave is scheduled (or resumed from the unit log), verified, gated, and shipped as one pull request. A real run still exits 2 before doing any work, and names each missing piece: oracle capture, unit merge operations, the ablation runner and the wave verify commands. It never reports a partial run as done.
+- `loki modernize unit` now runs a unit instead of exiting 2. The implement step runs as an engine session child whose environment never holds a GitHub token. New-tree cases replay through the Python capture runner for `python3` targets; other targets fail closed.
+- Modernize writes a sealed final report with a COMPLETE or INCOMPLETE verdict (M-25). The verdict fails closed on an empty wave, a gap between waves, a PROVEN unit with impure evidence, a recorded failed step, or a malformed token field.
+
+### Fixed
+- Modernize resume adopts a merge only when it already landed before the crash. It never merges an in-flight unit outside the verify stage, never ships a NOT_PROVEN unit as PROVEN, and fails closed when the merge check itself errors.
+- Under `--budget`, a non-finite unit cost (NaN or Infinity) now stops the run instead of slipping past the cap.
+- `loki verify-pr respond` re-checks the branch after each fix and requires every recorded commit to be an ancestor of the PR branch before it pushes. Repository names are compared case-insensitively.
+- The trigger server's steer reply now uses the revision printed by `loki steer` and is posted only after the steer is confirmed. If the revision cannot be parsed, the reply says "Steer received" without guessing a number. Live-run lookup honors `LOKI_DIR`.
+- The CI failures that blocked v11.14.0: the route matrix mutation test resolves the control-plane package from its temporary copy, the merge-queue suite no longer depends on a real `gh` and uses portable `stat` ordering, and the modernize CLI test carries the Tier A walk-all-src marker.
+- A modernize test that compared a token against the stringified process environment now asserts a boolean, so a failing run can no longer print environment secrets into logs.
+
+### Changed
+- The modernize engine was trimmed from 4107 to 3792 lines to stay under its line budget. Behavior is unchanged.
+
 ## v11.14.0 (2026-10-16)
 
 v11.13.0 was tagged in the changelog but never published to npm: its required CI failed on the credentialed push guard, because `loki verify-pr respond` pushed with credentials outside the trusted push path. This release fixes that and ships everything listed under v11.13.0, plus the modernize and GitHub loop work below. `loki start` with Claude remains the primary path.
