@@ -8,6 +8,7 @@
 #   README.md                    block  generated:facts
 #   helm/loki-mode/Chart.yaml    appVersion
 #   deploy/helm/*/Chart.yaml     appVersion
+#   wiki/*.md                    'still ships in X.Y.Z' version stamp
 #   docs/CLI-REFERENCE.md        whole file
 #   docs/v10/CLI-MODERN.md       whole file (existing registry generator)
 # Block markers: <!-- generated:NAME --> ... <!-- /generated -->
@@ -64,6 +65,11 @@ for chart in helm/loki-mode/Chart.yaml deploy/helm/*/Chart.yaml; do
     cmp -s "$WORK/chart.yaml" "$chart" || cat "$WORK/chart.yaml" >"$chart"
 done
 
+for page in wiki/*.md; do
+    sed -E "s/(still ships in )[0-9]+\.[0-9]+\.[0-9]+/\1${VERSION}/" "$page" >"$WORK/wiki-page.md"
+    cmp -s "$WORK/wiki-page.md" "$page" || cat "$WORK/wiki-page.md" >"$page"
+done
+
 {
     printf '# CLI reference\n\n'
     printf 'Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v%s. Do not edit by hand.\n' "$VERSION"
@@ -80,7 +86,7 @@ if [ "$lines" -ge 500 ]; then
     exit 1
 fi
 
-if [ "$CHECK" = 1 ] && [ -n "$(git status --porcelain -- SKILL.md README.md helm deploy/helm docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md)" ]; then
+if [ "$CHECK" = 1 ] && [ -n "$(git status --porcelain -- SKILL.md README.md wiki helm deploy/helm docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md)" ]; then
     echo "generate-stale-zero: generated facts are stale (run scripts/generate-stale-zero.sh)" >&2
     exit 1
 fi

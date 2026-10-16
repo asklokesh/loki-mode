@@ -101,5 +101,58 @@ else
     pass "no stale facts in docs"
 fi
 
+# --- Pinned facts (FV-docs-pin) -------------------------------------------------
+# loki answer starts a follow-up run; it does not resume the BLOCKED one.
+hits="$(cd "$REPO_ROOT" && grep -rIl "Resume a BLOCKED" README.md autonomy/loki loki-ts/src completions docs/CLI-REFERENCE.md docs/slack.md 2>/dev/null || true)"
+if [ -z "$hits" ]; then pass "loki answer wording: no 'Resume a BLOCKED' left"; else fail "loki answer wording stale in: $(echo "$hits" | tr '\n' ' ')"; fi
+if grep -qi "loki answer" "$REPO_ROOT/docs/slack.md"; then pass "docs/slack.md mentions CLI loki answer"; else fail "docs/slack.md lacks CLI loki answer line"; fi
+
+# wiki/Providers.md capability rows must equal the providers/<p>.sh vars.
+prov_out="$(cd "$REPO_ROOT" && python3 - <<'PY'
+import re
+rows = {}
+for line in open("wiki/Providers.md", encoding="utf-8"):
+    if line.startswith("| **") and line.count("|") >= 8:
+        c = [x.strip() for x in line.strip().strip("|").split("|")]
+        rows[re.sub(r"[* ]", "", c[0]).lower()] = c
+def var(p, k):
+    m = re.search(r"^%s=(\S+)" % k, open("providers/%s.sh" % p, encoding="utf-8").read(), re.M)
+    return m.group(1).split("#")[0] if m else None
+def ctx(v):
+    return "varies" if v is None else ("%dM" % (int(v) // 1000000) if int(v) % 1000000 == 0 else "%dK" % (int(v) // 1000))
+bad = []
+for p in ("claude", "cline", "codex", "aider", "opencode"):
+    c = rows.get(p)
+    if not c or len(c) < 7:
+        bad.append("%s: row or Degraded column missing" % p); continue
+    par = var(p, "PROVIDER_HAS_PARALLEL") == "true"
+    mx = var(p, "PROVIDER_MAX_PARALLEL")
+    want_par = ("Yes (max %s)" % mx) if par and mx != "1" and p == "codex" else ("Yes" if par else "No")
+    want = {3: want_par, 4: "Yes" if var(p, "PROVIDER_HAS_MCP") == "true" else "No", 5: ctx(var(p, "PROVIDER_CONTEXT_WINDOW")), 6: "Yes" if var(p, "PROVIDER_DEGRADED") == "true" else "No"}
+    for i, w in want.items():
+        if c[i] != w:
+            bad.append("%s col %d: doc '%s' != providers/%s.sh '%s'" % (p, i, c[i], p, w))
+print("\n".join(bad))
+PY
+)"
+if [ -z "$prov_out" ]; then pass "wiki/Providers.md matches providers/*.sh"; else fail "wiki/Providers.md drift: $(echo "$prov_out" | tr '\n' ';')"; fi
+grep -q "providers/\*.sh" "$REPO_ROOT/wiki/Providers.md" && pass "Providers.md cites its source" || fail "Providers.md lacks source note"
+
+# Documented minimum Node must equal package.json engines.node.
+node_min="$(cd "$REPO_ROOT" && python3 -c 'import json,re;print(re.search(r"(\d+)",json.load(open("package.json"))["engines"]["node"]).group(1))')"
+node_bad=""
+for f in README.md docs/INSTALLATION.md wiki/Installation.md; do
+    docs_min="$(grep -E '^- \*{0,2}Node|^- Node|^\| Node' "$REPO_ROOT/$f" | grep -oE '[0-9]+' | head -1 || true)"
+    [ "$docs_min" = "$node_min" ] || node_bad="$node_bad $f($docs_min)"
+done
+if [ -z "$node_bad" ]; then pass "documented Node floor equals package.json engines (${node_min})"; else fail "Node floor != ${node_min} in:$node_bad"; fi
+
+# wiki pages must be stamped with the current VERSION, and CLI-Reference carries no legacy banner.
+cur_ver="$(tr -d '\n' <"$REPO_ROOT/VERSION")"
+stale_stamps="$(grep -lE 'still ships in [0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT"/wiki/*.md | while read -r f; do grep -qE "still ships in ${cur_ver//./\\.}( |\\.|,)" "$f" || basename "$f"; done | tr '\n' ' ')"
+if [ -z "$stale_stamps" ]; then pass "wiki version stamps equal VERSION ${cur_ver}"; else fail "wiki stamps != ${cur_ver}: ${stale_stamps}"; fi
+if grep -q "Legacy engine note" "$REPO_ROOT/wiki/CLI-Reference.md"; then fail "wiki/CLI-Reference.md still has the legacy engine banner"; else pass "wiki/CLI-Reference.md has no legacy banner"; fi
+if grep -q 'wiki/\*.md' "$REPO_ROOT/scripts/generate-stale-zero.sh"; then pass "generate-stale-zero.sh stamps wiki pages"; else fail "generate-stale-zero.sh does not stamp wiki pages"; fi
+
 echo "  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

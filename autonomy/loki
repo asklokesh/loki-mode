@@ -1682,7 +1682,7 @@ PYEOF
 # `loki help answer`: `loki answer` is a v10 (loki-ts) command with no bash
 # implementation, so its help lives here rather than behind delegation.
 _help_answer() {
-    echo -e "${BOLD}loki answer${NC} - Resume a BLOCKED run with an answer"
+    echo -e "${BOLD}loki answer${NC} - Start a follow-up run from a BLOCKED run with your answer"
     echo ""
     echo "Usage: loki answer [<run-id>] [--text \"...\"]"
     echo ""

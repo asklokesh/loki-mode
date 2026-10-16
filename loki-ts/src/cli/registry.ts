@@ -174,7 +174,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("undo", "KEEP-MODERN", "bun", "Plan or apply an undo of a run", "UNDO-1/2: --plan is read-only, apply behind LOKI_UNDO=1", { flags: [bool("--plan", "Read-only plan"), bool("--json", "JSON plan (with --plan)"), bool("--allow-unsigned", "Accept an unsigned receipt (with --plan)"), bool("--yes", "Skip the confirm prompt"), bool("--close-pr", "Also close the PR")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("verify-pr", "KEEP-MODERN", "bun", "Verify a PR against its linked issue in a sandbox", "VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1", { flags: [{ name: "--out", type: "path", desc: "Result directory" }], positionals: [{ name: "pr", type: "string" }] }),
-  cmd("answer", "KEEP-MODERN", "bun", "Resume a BLOCKED run with an answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
+  cmd("answer", "KEEP-MODERN", "bun", "Start a follow-up run from a BLOCKED run with your answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {
     subcommands: [sub("run", "Run the v10 engine"), sub("status", "v10 status"), sub("verify", "v10 verify"), sub("keys", "v10 keys"), sub("dashboard", "v10 dashboard"), sub("modernize", "v10 modernize")],
   }),

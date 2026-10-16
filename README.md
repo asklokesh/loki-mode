@@ -102,7 +102,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 | `loki agents list\|new\|show\|export --claude` | Custom child agents in `.loki/agents/*.md` |
 | `loki status [run-id]` | Status of the latest run, or of a given run |
 | `loki verify [run-id]` | Check a receipt's hash, signature and event log |
-| `loki answer [run-id]` | Resume a BLOCKED run with your answer (`--text "..."`) |
+| `loki answer [run-id]` | Start a follow-up run from a BLOCKED run with your answer (`--text "..."`) |
 | `loki doctor [--fix] [--json]` | Check prerequisites, providers and login; `--fix` applies safe fixes |
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
@@ -139,7 +139,7 @@ Required:
 
 - Claude Code (`claude`), installed and logged in: the default provider and the only one with every feature. The bundled Agent SDK with `ANTHROPIC_API_KEY` can stand in on the main `loki start` path, but `loki edit` and `loki chat` call the `claude` CLI.
 - Python 3.8+ (`python3`)
-- Node.js 18+ (`node`; 20+ recommended)
+- Node.js 20+ (`node`; 22 LTS is the CI target)
 - `jq`
 - Git 2.x (`git`)
 - `curl`
