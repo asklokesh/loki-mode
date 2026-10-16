@@ -238,18 +238,25 @@ is the better option if you inject secrets as files rather than env vars.
 
 ---
 
+## Issue comment steering and author gate
+
+The `issue_comment` event steers a live run. A newly created comment on an issue
+that has a live Loki run (matched by `owner/repo#N`) is written to that run with
+`loki steer`, only when the comment's `author_association` is OWNER, MEMBER or
+COLLABORATOR. Bot comments, edits and deletions are ignored, the body is cut to
+one line of at most 1000 characters, and an unauthorized comment or an issue with
+no live run is skipped with nothing written. Subscribe the webhook to "Issue
+comments" to use it. The `issues` `opened` trigger applies the same author gate;
+set `LOKI_TRIGGER_ALLOW_ANY_ISSUE_AUTHOR=1` to let any author start a build.
+
 ## Triggers that do not exist yet
 
 Documented so you do not go looking for them:
 
 - **Issue labelled** (add a `loki` label to start a build). Not implemented.
   The `issues` handler acts on `opened` only.
-- **Issue comment commands** (`/loki build`). Not implemented. The receiver has
-  no `issue_comment` handler; GitHub will deliver the event and get back
-  `unsupported event: issue_comment`.
 
-Both are reasonable and neither exists in this release. Path 2 covers the same
-ground manually today.
+Not implemented in this release. Path 2 covers the same ground manually today.
 
 ---
 

@@ -83,7 +83,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
     def test_issue_opened_uses_start_with_ref(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 99},
+            "issue": {"number": 99, "author_association": "OWNER"},
             "repository": {"full_name": "myorg/myrepo"},
         }
         summary, status = ts.handle_issues_event(payload, dry_run=False)
@@ -121,7 +121,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
         self.assertIn("--detach", args)
 
     def test_issue_closed_skipped_no_dispatch(self):
-        payload = {"action": "closed", "issue": {"number": 1}, "repository": {}}
+        payload = {"action": "closed", "issue": {"number": 1, "author_association": "OWNER"}, "repository": {}}
         _, status = ts.handle_issues_event(payload, dry_run=False)
         self.assertIn("skipped", status)
         self.mock_run.assert_not_called()
@@ -175,7 +175,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_issue_flag_injection_rejected_no_dispatch(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 5},
+            "issue": {"number": 5, "author_association": "OWNER"},
             "repository": {"full_name": "--config=/etc/x"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -195,7 +195,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_non_int_issue_number_rejected(self):
         payload = {
             "action": "opened",
-            "issue": {"number": "5; rm -rf /"},
+            "issue": {"number": "5; rm -rf /", "author_association": "OWNER"},
             "repository": {"full_name": "owner/repo"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -205,7 +205,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_normal_issue_still_dispatches_clean_ref(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 5},
+            "issue": {"number": 5, "author_association": "OWNER"},
             "repository": {"full_name": "owner/repo"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -357,6 +357,64 @@ class TestChildReaping(unittest.TestCase):
 class TestDeliveryDedup(unittest.TestCase):
     """Idempotency: a redelivered X-GitHub-Delivery must not re-dispatch."""
 
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self.orig_cwd)
+
+    def test_delivery_dedup_survives_restart(self):
+        d1 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            self.assertFalse(d1.seen_delivery("restart-1"))
+        finally:
+            d1.shutdown()
+        d2 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            self.assertTrue(d2.seen_delivery("restart-1"))
+            self.assertFalse(d2.seen_delivery("restart-2"))
+        finally:
+            d2.shutdown()
+
+    def _issue_payload(self, action="opened", number=7, sha=None):
+        p = {"action": action, "issue": {"number": number},
+             "repository": {"full_name": "o/r"}}
+        if sha:
+            p["pull_request"] = {"number": number, "head": {"sha": sha}}
+        return p
+
+    def test_intake_key_dup_only_while_run_live(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value=None):
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload()))
+            # same issue, new delivery id, run live -> duplicate
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertTrue(disp.seen_intake("issues", self._issue_payload()))
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload(number=8)))
+            # run finished -> re-dispatch allowed
+            with patch.object(ts, "find_live_run", return_value=None):
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload()))
+        finally:
+            disp.shutdown()
+
+    def test_intake_key_survives_restart_and_head_sha_distinguishes(self):
+        d1 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertFalse(d1.seen_intake("pull_request", self._issue_payload("synchronize", sha="aaa")))
+        finally:
+            d1.shutdown()
+        d2 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertTrue(d2.seen_intake("pull_request", self._issue_payload("synchronize", sha="aaa")))
+                self.assertFalse(d2.seen_intake("pull_request", self._issue_payload("synchronize", sha="bbb")))
+        finally:
+            d2.shutdown()
+
     def test_seen_delivery_dedups(self):
         disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
         try:
@@ -460,7 +518,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret="", dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -487,7 +545,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 7},
+                body = json.dumps({"action": "opened", "issue": {"number": 7, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -519,7 +577,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 7},
+                body = json.dumps({"action": "opened", "issue": {"number": 7, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
@@ -547,7 +605,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -582,7 +640,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=4, queue_size=16, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
@@ -678,7 +736,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=1, queue_size=1, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
@@ -903,14 +961,35 @@ class TestSlackLinearDelegation(unittest.TestCase):
         self.orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
         patch.object(ts, "send_notification").start()
+        patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": "*"}).start()
 
     def tearDown(self):
         patch.stopall()
         os.chdir(self.orig_cwd)
 
-    def _slack_form(self, text="fix owner/repo#12", hook=HOOK):
+    def _slack_form(self, text="fix owner/repo#12", hook=HOOK, user_id="U1"):
         return urllib.parse.urlencode(
-            {"command": "/loki", "text": text, "response_url": hook}).encode()
+            {"command": "/loki", "text": text, "response_url": hook,
+             "user_id": user_id}).encode()
+
+    def test_slack_user_allowlist_fails_closed(self):
+        body = self._slack_form(user_id="U9")
+        cases = [("", "U9"), ("U1,U2", "U9")]
+        for allowed, uid in cases:
+            body = self._slack_form(user_id=uid)
+            with patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": allowed}):
+                (status, data), seen, posts = self._run(
+                    lambda s, b=body: s.raw("/slack", b, self._slack_headers(b)))
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["response_type"], "ephemeral")
+            self.assertNotIn("Queued", json.loads(data)["text"])
+            self.assertEqual(seen, [])
+            self.assertEqual(posts, [])
+        with patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": "U1,U9"}):
+            (status, data), seen, _ = self._run(
+                lambda s: s.raw("/slack", body, self._slack_headers(body)))
+        self.assertIn("Queued", json.loads(data)["text"])
+        self.assertEqual(len(seen), 1)
 
     def _slack_headers(self, body, secret="slacksecret", ts_s=None, sig=True):
         ts_s = str(int(time.time())) if ts_s is None else ts_s
@@ -1306,6 +1385,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         c = self._teams_body(conv="c", service_url="https://s2/", tenant="t1")
         _, seen = self._teams_twice(a, b)
         self.assertEqual(len(seen), 2)
+        os.chdir(tempfile.mkdtemp())  # dedup keys persist per working dir
         _, seen = self._teams_twice(a, c)
         self.assertEqual(len(seen), 2)
 

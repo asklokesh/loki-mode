@@ -506,12 +506,93 @@ def run_loki_command(args, dry_run=False):
     )
 
 
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")  # same set as verify_pr.ts
+STEER_NOTE_MAX = 1000
+
+
+def _process_start_time(pid):
+    """`ps -o lstart=` for pid, whitespace-normalized like run_pid.ts processStartTime; None if gone."""
+    if not isinstance(pid, int) or pid <= 1:
+        return None
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5, env={**os.environ, "LC_ALL": "C"}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return " ".join(out.split()) or None
+
+
+def find_live_run(ref):
+    """Return the id of a live run for issue ref "owner/repo#N", else None.
+
+    Scans .loki/runs/*/events.jsonl for a run.started whose issue_ref matches and
+    whose run.pid names a live process. Mirrors runOwnerAlive: the recorded
+    start time and run_id must match, so a recycled pid does not read as live.
+    """
+    runs = Path(".loki") / "runs"
+    try:
+        dirs = sorted(runs.iterdir())
+    except OSError:
+        return None
+    for d in dirs:
+        try:
+            with open(d / "events.jsonl", "r", encoding="utf-8", errors="replace") as fh:
+                first = json.loads(fh.readline() or "{}")
+            if first.get("type") != "run.started" or (first.get("data") or {}).get("issue_ref") != ref:
+                continue
+            rec = json.loads((d / "run.pid").read_text())
+            pid = int(rec.get("pid", 0))
+            start = rec.get("start")
+            if pid > 1 and isinstance(start, str) and rec.get("run_id") == d.name \
+                    and _process_start_time(pid) == " ".join(start.split()):
+                return d.name
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return None
+
+
+def handle_issue_comment_event(payload, dry_run=False):
+    """Handle issue_comment: an authorized new comment steers the issue's live run."""
+    action = payload.get("action", "")
+    if action != "created":
+        return None, "skipped (action=%s)" % action
+    comment = payload.get("comment") or {}
+    if comment.get("author_association") not in TRUSTED_ASSOCIATIONS:
+        return None, "skipped (comment author not authorized)"
+    user = comment.get("user") or {}
+    login = str(user.get("login", ""))
+    if user.get("type") == "Bot" or login.endswith("[bot]"):
+        return None, "skipped (bot comment)"
+    number = (payload.get("issue") or {}).get("number")
+    repo_full_name = (payload.get("repository") or {}).get("full_name", "")
+    if number is None or not valid_issue_number(number):
+        return None, "rejected (invalid issue number)"
+    if not valid_repo_full_name(repo_full_name):
+        return None, "rejected (invalid repository full_name)"
+    ref = "%s#%s" % (repo_full_name, number)
+    if find_live_run(ref) is None:
+        return None, "skipped (no live run for %s)" % ref
+    body = re.sub(r"[\x00-\x1f\x7f\s]+", " ", str(comment.get("body", ""))).strip()[:STEER_NOTE_MAX]
+    if not body:
+        return None, "skipped (empty comment)"
+    login = re.sub(r"[^A-Za-z0-9-]", "", login)[:39]
+    note = "GitHub comment from %s: %s" % (login or "unknown", body)
+    summary = "steer %s from comment" % ref
+    success = run_loki_command(["steer", note], dry_run=dry_run)
+    if success:
+        send_notification("Trigger fired: %s" % summary)
+    return summary, "fired" if success else "error"
+
+
 def handle_issues_event(payload, dry_run=False):
     """Handle issues event: opened -> loki start <issue-ref> --pr --detach."""
     action = payload.get("action", "")
     if action != "opened":
         return None, "skipped (action=%s)" % action
     issue = payload.get("issue", {})
+    if (issue.get("author_association") not in TRUSTED_ASSOCIATIONS
+            and os.environ.get("LOKI_TRIGGER_ALLOW_ANY_ISSUE_AUTHOR", "") not in ("1", "true")):
+        return None, "skipped (issue author not authorized)"
     issue_number = issue.get("number")
     repo = payload.get("repository", {})
     repo_full_name = repo.get("full_name", "")
@@ -988,6 +1069,7 @@ def handle_sentry_event(payload, dry_run=False):
 # explicitly refused on the /webhook path.
 EVENT_HANDLERS = {
     "issues": handle_issues_event,
+    "issue_comment": handle_issue_comment_event,
     "pull_request": handle_pull_request_event,
     "workflow_run": handle_workflow_run_event,
     JOB_EVENT: handle_job_event,
@@ -1053,6 +1135,8 @@ class Dispatcher:
         self._dedup_max = max(1, dedup_size)
         self._seen_deliveries = collections.OrderedDict()
         self._dedup_lock = threading.Lock()
+        self._seen_path = get_loki_dir() / "seen-deliveries.jsonl"
+        self._load_seen()
         self._threads = []
         self._stop = threading.Event()
         for i in range(max(1, workers)):
@@ -1063,6 +1147,64 @@ class Dispatcher:
             )
             t.start()
             self._threads.append(t)
+
+    def _load_seen(self):
+        """Reload the last dedup_max accepted keys so a restart keeps dedup."""
+        try:
+            lines = self._seen_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        keys = []
+        for line in lines:
+            try:
+                k = json.loads(line).get("k")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(k, str) and k:
+                keys.append(k)
+        keys = keys[-self._dedup_max:]
+        for k in keys:
+            self._seen_deliveries[k] = True
+        if len(lines) > 2 * self._dedup_max:
+            try:
+                self._seen_path.write_text(
+                    "".join(json.dumps({"k": k}) + "\n" for k in keys), encoding="utf-8")
+            except OSError:
+                pass
+
+    def _remember(self, key):
+        """Record key (caller holds _dedup_lock); append to the JSONL, best effort."""
+        self._seen_deliveries[key] = True
+        while len(self._seen_deliveries) > self._dedup_max:
+            self._seen_deliveries.popitem(last=False)
+        try:
+            with open(self._seen_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"k": key}) + "\n")
+        except OSError:
+            pass
+
+    def seen_intake(self, event_type, payload):
+        """True if the same repo#N + action + head sha was accepted and its run is live.
+
+        Catches a redelivery under a new delivery id or after a restart. Once the
+        run is no longer live the same key may dispatch again. Only issues and
+        pull_request events carry an intake key.
+        """
+        if event_type not in ("issues", "pull_request"):
+            return False
+        number = (payload.get("issue") or payload.get("pull_request") or {}).get("number")
+        repo = (payload.get("repository") or {}).get("full_name", "")
+        if number is None or not repo:
+            return False
+        sha = ((payload.get("pull_request") or {}).get("head") or {}).get("sha", "")
+        key = "intake:%s:%s#%s:%s:%s" % (event_type, repo, number, payload.get("action", ""), sha)
+        ref = "%s#%s" % (repo, number)
+        with self._dedup_lock:
+            if key in self._seen_deliveries and find_live_run(ref) is not None:
+                return True
+            if key not in self._seen_deliveries:
+                self._remember(key)
+            return False
 
     def seen_delivery(self, delivery_id):
         """Return True if this delivery_id was already accepted (idempotency).
@@ -1082,9 +1224,7 @@ class Dispatcher:
                 # Insertion order is the eviction policy; duplicates leave it
                 # unchanged.
                 return True
-            self._seen_deliveries[delivery_id] = True
-            while len(self._seen_deliveries) > self._dedup_max:
-                self._seen_deliveries.popitem(last=False)
+            self._remember(delivery_id)
             return False
 
     def _begin_proof_window(self, job_id=None):
@@ -1662,6 +1802,13 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "unsupported slack payload"})
             return
         form = urllib.parse.parse_qs(body.decode("utf-8", errors="replace"))
+        allowed = {u.strip() for u in os.environ.get("LOKI_SLACK_ALLOWED_USERS", "").split(",") if u.strip()}
+        user_id = (form.get("user_id") or [""])[0]
+        if "*" not in allowed and user_id not in allowed:
+            log_event(JOB_EVENT, "", "", "rejected (slack user not allowed)")
+            self._send_json(200, {"response_type": "ephemeral",
+                                  "text": "You are not allowed to start runs from Slack."})
+            return
         text = (form.get("text") or [""])[0]
         if not valid_spec(text):
             log_event(JOB_EVENT, "", "", "rejected (invalid slack spec)")
@@ -1962,6 +2109,14 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             )
             return
 
+        if self.dispatcher.seen_intake(event_type, payload):
+            log_event(event_type, action, "", "duplicate (live run for same intake key)")
+            self._send_json(
+                200,
+                {"event": event_type, "action": action, "status": "duplicate"},
+            )
+            return
+
         # Hand off to the bounded worker queue so the listener never blocks.
         accepted = self.dispatcher.submit(event_type, payload)
         if not accepted:
@@ -2138,6 +2293,11 @@ def main():
         logging.warning(
             "No Slack signing secret configured: POST /slack is rejected with "
             "503. Set SLACK_SIGNING_SECRET."
+        )
+    elif not os.environ.get("LOKI_SLACK_ALLOWED_USERS", "").strip():
+        logging.warning(
+            "LOKI_SLACK_ALLOWED_USERS is not set: every /slack command is "
+            "rejected. Set Slack user IDs, or * to allow anyone."
         )
     if not linear_secret:
         logging.warning(
