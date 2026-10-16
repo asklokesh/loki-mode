@@ -4,14 +4,16 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
-type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo" | "yaml"; interface Spec { re: RegExp; shared?: Sections }
+type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo" | "pnpmws" | "yarnrc"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
   { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.(cjs|mjs))$/ },
-  { re: /(^|\/)package\.json$/, shared: PKG_KEYS }, { re: /(^|\/)(pnpm-workspace\.yaml|\.yarnrc\.yml)$/, shared: "yaml" },
+  { re: /(^|\/)package\.json$/, shared: PKG_KEYS },
+  { re: /(^|\/)pnpm-workspace\.yaml$/, shared: "pnpmws" },
+  { re: /(^|\/)\.yarnrc\.yml$/, shared: "yarnrc" },
   { re: /(^|\/)pyproject\.toml$/, shared: /^\[tool\.pytest/ },
   { re: /(^|\/)setup\.cfg$/, shared: /^\[tool:pytest\]/ },
   { re: /(^|\/)go\.(mod|work)$/, shared: "go" },
@@ -35,9 +37,20 @@ function cargoStmts(text: string): string[] { const out: string[] = []; let buf 
 const DT = /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?/;
 function tomlLeaves(path: string, s: string): [string, string][] { const o: [string, string][] = []; let i = 0; const ws = (): void => { while (i < s.length && /[\s,]/.test(s[i]!)) i++; }; const val = (p: string): void => { ws(); const c = s[i]; if (c === "{" || c === "[") { i++; for (;;) { ws(); if (i >= s.length) throw new Error("toml open"); if (s[i] === (c === "{" ? "}" : "]")) { i++; return; } if (c === "{") { const [k, j] = tomlKey2(s, i); i = j; val(p + "." + k); } else val(p); } } const t = s.startsWith('"""', i) || s.startsWith("'''", i) ? s.slice(i, i + 3) : s[i] === '"' || s[i] === "'" ? s[i]! : "", from = i; if (t) { i += t.length; while (i < s.length && !s.startsWith(t, i)) i += s[i] === "\\" && t[0] === '"' ? 2 : 1; if (i >= s.length) throw new Error("toml string"); i += t.length; if (t.length === 3) while (s[i] === t[0]) i++; } else if (DT.test(s.slice(i))) i += DT.exec(s.slice(i))![0].length; else while (i < s.length && !/[\s,\]}]/.test(s[i]!)) i++; if (i === from) throw new Error("toml value"); o.push([p, s.slice(from, i)]); }; val(path); ws(); if (i < s.length) throw new Error("toml trailing"); return o;
 }
-const jsonc = (t: string): unknown => JSON.parse(t.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "$1").replace(/,(\s*[}\]])/g, "$1")); /** Top-level YAML keys whose whole block (comments and blanks dropped) is compared: a dependency override or extension can redirect code under test. pnpm-workspace.yaml: overrides, packageExtensions; .yarnrc.yml: packageExtensions (an overrides key there is inert, so capping it is harmless). */ const yamlBlocks = (text: string): string => { let on = false; return text.split("\n").map((r) => { let l = r.replace(/\r$/, ""), q = ""; for (let i = 0; i < l.length; i++) { const c = l[i]!; if (q) { if (c === q) q = ""; } else if (c === '"' || c === "'") q = c; else if (c === "#" && (i === 0 || /\s/.test(l[i - 1]!))) { l = l.slice(0, i); break; } } if (!l.trim()) return ""; if (!/^\s/.test(l) && !l.startsWith("-")) { const m = /^(?:"([^"]+)"|'([^']+)'|([^\s:"'][^:]*?))\s*:(\s|$)/.exec(l); on = !!m && /^(overrides|packageExtensions)$/.test((m[1] ?? m[2] ?? m[3])!); } return on ? l.trimEnd() : ""; }).filter(Boolean).join("\n"); };
+const jsonc = (t: string): unknown => JSON.parse(t.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "$1").replace(/,(\s*[}\]])/g, "$1"));
+/** Top-level YAML keys that can redirect or extend the code under test. Compared as parsed values, so anchors, merge keys, flow maps, escaped or explicit keys, BOM and CR endings cannot hide an edit. */
+const YAML_KEYS = {
+  pnpmws: ["overrides", "packageExtensions", "patchedDependencies", "catalog", "catalogs"],
+  yarnrc: ["packageExtensions", "yarnPath", "plugins"],
+} as const;
+function yamlKeys(keys: readonly string[], text: string): string {
+  const doc = (Bun as unknown as { YAML: { parse(t: string): unknown } }).YAML.parse(text.replace(/^\uFEFF/, "")) ?? {};
+  if (typeof doc !== "object" || Array.isArray(doc)) throw new Error("yaml root");
+  return JSON.stringify(keys.map((k) => (doc as Record<string, unknown>)[k] ?? null));
+}
 /** The runner-relevant part of a shared file as a comparable string. Throws on malformed input: the caller fails closed. */
-function relevant(shared: Sections, text: string): string { if (shared === "yaml") return yamlBlocks(text);
+function relevant(shared: Sections, text: string): string {
+  if (shared === "pnpmws" || shared === "yarnrc") return yamlKeys(YAML_KEYS[shared], text);
   if (shared === "go") { // replace and (go.work) use directives, single-line or in a block
     let blk = false;
     return lines(text).map((l) => l.replace(/\s*\/\/.*$/, "")).filter(Boolean).filter((l) => { if (blk) { if (l === ")") blk = false; return true; } if (/^(replace|use)\s*\($/.test(l)) { blk = true; return true; } return /^(replace|use)\s/.test(l); }).join("\n");

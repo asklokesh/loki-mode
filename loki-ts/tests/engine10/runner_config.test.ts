@@ -498,6 +498,27 @@ describe("FC-09u pnpm-workspace and yarnrc key-level caps", () => {
     expect(capsOn("pnpm-workspace.yaml", PNPM, "# note\n" + PNPM.replace("foo: 1.0.0", "foo: 1.0.0 # pin"))).toEqual([]);
     expect(capsOn(".yarnrc.yml", YARN, YARN.replace("node-modules", "pnp"))).toEqual([]);
   });
+  test.each([
+    ["explicit key", "packages: [a]\n? overrides\n: {foo: 1.0.0}\n", "packages: [a]\n? overrides\n: {foo: link:../fake}\n"],
+    ["BOM", "\uFEFFoverrides:\n  foo: 1.0.0\n", "\uFEFFoverrides:\n  foo: link:../fake\n"],
+    ["escaped key", '"overrides":\n  foo: 1.0.0\n', '"overrides":\n  foo: link:../fake\n'],
+    ["escaped unicode key", '"\\u006fverrides":\n  foo: 1.0.0\n', '"\\u006fverrides":\n  foo: link:../fake\n'],
+    ["flow map", "{packages: [a], overrides: {foo: 1.0.0}}\n", "{packages: [a], overrides: {foo: link:../fake}}\n"],
+    ["anchor body", "x-base: &o {foo: 1.0.0}\noverrides: *o\n", "x-base: &o {foo: link:../fake}\noverrides: *o\n"],
+    ["merge key", "x-base: &o {foo: 1.0.0}\noverrides:\n  <<: *o\n", "x-base: &o {foo: link:../fake}\noverrides:\n  <<: *o\n"],
+    ["bare CR", "packages: [a]\roverrides:\r  foo: 1.0.0\r", "packages: [a]\roverrides:\r  foo: link:../fake\r"],
+  ])("pnpm-workspace.yaml bypass caps: %s", (_n, a, b) => {
+    expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test("malformed YAML that changed fails closed", () => {
+    expect(capsOn("pnpm-workspace.yaml", "packages: [a]\n", "packages: [a\noverrides: {\n")).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test.each([["patchedDependencies", "a@1: p.patch"], ["catalog", "a: 1"], ["catalogs", "x: {a: 1}"]])("pnpm-workspace.yaml %s edit caps", (k, v) => {
+    expect(capsOn("pnpm-workspace.yaml", "packages: [a]\n", `packages: [a]\n${k}:\n  ${v}\n`)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test.each([["yarnPath", ".yarn/releases/fake.cjs"], ["plugins", "[./fake.cjs]"]])(".yarnrc.yml %s edit caps", (k, v) => {
+    expect(capsOn(".yarnrc.yml", YARN, `${YARN}${k}: ${v}\n`)).toEqual([".yarnrc.yml"]);
+  });
   test("runnerConfigNotes caps an overrides edit and ignores packages", () => {
     const r = repo({ "pnpm-workspace.yaml": PNPM });
     r.edit("pnpm-workspace.yaml", PNPM.replace("foo: 1.0.0", "foo: 2.0.0")); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "c"]);
