@@ -708,6 +708,21 @@ def arm_auth(min_valid_s):
     return {"CLAUDE_CODE_OAUTH_TOKEN": token}, "keychain:claudeAiOauth.accessToken"
 
 
+def resolve_source(src):
+    """Map a task's repo.source onto this checkout when it names a path in the
+    founder's main checkout that does not exist here (CI, worktrees, clones).
+
+    Tasks pin fixtures like <main-checkout>/eval/loki10/fixtures/... as an
+    absolute path; the same file is tracked in this repo under HERE.
+    """
+    marker = "/eval/loki10/"
+    if src.startswith("/") and not os.path.exists(src) and marker in src:
+        local = os.path.join(HERE, src.split(marker, 1)[1])
+        if os.path.exists(local):
+            return local
+    return src
+
+
 def prepare_checkout(task, rundir, env, log):
     """Fresh clone at repo.ref with only that history; origin -> local bare repo.
 
@@ -719,7 +734,7 @@ def prepare_checkout(task, rundir, env, log):
     work = os.path.join(rundir, "work")
     remote = os.path.join(rundir, "remote.git")
     seed = os.path.join(rundir, "seed.git")
-    src, ref = task["repo"]["source"], task["repo"]["ref"]
+    src, ref = resolve_source(task["repo"]["source"]), task["repo"]["ref"]
     steps = [
         (["clone", "--bare", "--no-local", "--no-tags", "-q", src, seed], rundir),
         (["clone", "--no-local", "--no-tags", "-q", seed, work], rundir),
