@@ -8,14 +8,16 @@ Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI 
 
 Loki Mode supports five active AI providers with different capability levels, plus historical/upcoming entries:
 
-| Provider | Status | Task Tool | Parallel | MCP | Context |
-|----------|--------|-----------|----------|-----|---------|
-| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes | Yes | 200K |
-| **Cline** | Experimental (Tier 2) - community-tested | No | No | No | varies |
-| **Codex** | Experimental (Tier 3) - community-tested | No | No | No | 128K |
-| **Aider** | Experimental (Tier 3) - community-tested | No | No | No | varies |
-| **opencode** | Experimental (model-agnostic) | No | No | Yes | varies |
-| **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- |
+| Provider | Status | Task Tool | Parallel | MCP | Context | Degraded |
+|----------|--------|-----------|----------|-----|---------|----------|
+| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes | Yes | 1M | No |
+| **Cline** | Experimental (Tier 2) - community-tested | No | No | Yes | 200K | No |
+| **Codex** | Experimental (Tier 3) - community-tested | No | Yes (max 2) | Yes | 400K | Yes |
+| **Aider** | Experimental (Tier 3) - community-tested | No | No | No | 200K | Yes |
+| **opencode** | Experimental (model-agnostic) | No | No | Yes | varies | No |
+| **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- | -- |
+
+Source: `providers/*.sh` (`PROVIDER_HAS_PARALLEL`, `PROVIDER_MAX_PARALLEL`, `PROVIDER_HAS_MCP`, `PROVIDER_CONTEXT_WINDOW`, `PROVIDER_DEGRADED`).
 
 **Status note (2026-06-09):** Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it is the only provider we E2E-verify ourselves with real spec-to-code builds. Codex, Cline, and Aider have working wiring but no end-to-end verified build on our side, so they are labeled experimental (community-tested). Codex on a fresh non-git directory previously failed with "Not inside a trusted directory"; the harness now passes `--skip-git-repo-check`.
 

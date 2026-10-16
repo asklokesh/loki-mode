@@ -107,5 +107,36 @@ hits="$(cd "$REPO_ROOT" && grep -rIl "Resume a BLOCKED" README.md autonomy/loki 
 if [ -z "$hits" ]; then pass "loki answer wording: no 'Resume a BLOCKED' left"; else fail "loki answer wording stale in: $(echo "$hits" | tr '\n' ' ')"; fi
 if grep -qi "loki answer" "$REPO_ROOT/docs/slack.md"; then pass "docs/slack.md mentions CLI loki answer"; else fail "docs/slack.md lacks CLI loki answer line"; fi
 
+# wiki/Providers.md capability rows must equal the providers/<p>.sh vars.
+prov_out="$(cd "$REPO_ROOT" && python3 - <<'PY'
+import re
+rows = {}
+for line in open("wiki/Providers.md", encoding="utf-8"):
+    if line.startswith("| **") and line.count("|") >= 8:
+        c = [x.strip() for x in line.strip().strip("|").split("|")]
+        rows[re.sub(r"[* ]", "", c[0]).lower()] = c
+def var(p, k):
+    m = re.search(r"^%s=(\S+)" % k, open("providers/%s.sh" % p, encoding="utf-8").read(), re.M)
+    return m.group(1).split("#")[0] if m else None
+def ctx(v):
+    return "varies" if v is None else ("%dM" % (int(v) // 1000000) if int(v) % 1000000 == 0 else "%dK" % (int(v) // 1000))
+bad = []
+for p in ("claude", "cline", "codex", "aider", "opencode"):
+    c = rows.get(p)
+    if not c or len(c) < 7:
+        bad.append("%s: row or Degraded column missing" % p); continue
+    par = var(p, "PROVIDER_HAS_PARALLEL") == "true"
+    mx = var(p, "PROVIDER_MAX_PARALLEL")
+    want_par = ("Yes (max %s)" % mx) if par and mx != "1" and p == "codex" else ("Yes" if par else "No")
+    want = {3: want_par, 4: "Yes" if var(p, "PROVIDER_HAS_MCP") == "true" else "No", 5: ctx(var(p, "PROVIDER_CONTEXT_WINDOW")), 6: "Yes" if var(p, "PROVIDER_DEGRADED") == "true" else "No"}
+    for i, w in want.items():
+        if c[i] != w:
+            bad.append("%s col %d: doc '%s' != providers/%s.sh '%s'" % (p, i, c[i], p, w))
+print("\n".join(bad))
+PY
+)"
+if [ -z "$prov_out" ]; then pass "wiki/Providers.md matches providers/*.sh"; else fail "wiki/Providers.md drift: $(echo "$prov_out" | tr '\n' ';')"; fi
+grep -q "providers/\*.sh" "$REPO_ROOT/wiki/Providers.md" && pass "Providers.md cites its source" || fail "Providers.md lacks source note"
+
 echo "  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
