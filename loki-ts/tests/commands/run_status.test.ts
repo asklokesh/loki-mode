@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog } from "../../src/engine10/events.ts";
+import { workItemState } from "../../src/util/run_outputs.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { NO_RUN_HINT, runIntentShow, runModernStatus } from "../../src/commands/run_status.ts";
 
 let dir: string;
@@ -119,6 +121,38 @@ describe("loki status (Loki 10)", () => {
       const out = await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: "1" }, []);
       expect(out).not.toContain("Control Plane:");
     });
+  });
+});
+
+describe("work-item state (one vocabulary)", () => {
+  const mk = (...rows: [string, string | null, Record<string, unknown>?][]): EventEnvelope[] =>
+    rows.map(([type, stage, data], seq) => ({ v: 1, seq, ts: "2026-10-15T00:00:00Z", run: "e10-x", type, stage, data: data ?? {} }));
+  const S = (t: string, st: string) => [t, st] as [string, string];
+  const cases: [string, EventEnvelope[], string][] = [
+    ["received", mk(["run.started", null]), "received"],
+    ["prepared", mk(["run.started", null], ["stage.completed", "intake"]), "prepared"],
+    ["planned", mk(["run.started", null], ["stage.completed", "intake"], ["stage.completed", "plan"]), "planned"],
+    ["executing", mk(["run.started", null], ["stage.completed", "plan"], ["stage.started", "implement"]), "executing"],
+    ["validating", mk(["run.started", null], ["stage.completed", "implement"], S("stage.started", "verify")), "validating"],
+    ["ready_to_ship", mk(["run.started", null], ["stage.completed", "implement"], ["receipt.sealed", "seal"]), "ready_to_ship"],
+    ["completed", mk(["run.started", null], ["run.completed", null, { verdict: "VERIFIED" }]), "completed"],
+    ["waiting_for_input", mk(["run.started", null], ["run.completed", null, { verdict: "SPEC_CONFLICT" }]), "waiting_for_input"],
+    ["budget_stopped", mk(["run.started", null], ["cap.hit", null], ["run.completed", null, { verdict: "PARTIAL" }]), "budget_stopped"],
+    ["failed", mk(["run.started", null], ["run.completed", null, { verdict: "FAILED" }]), "failed"],
+    ["cancelled", mk(["run.started", null], ["run.completed", null, { cancelled: true }]), "cancelled"],
+  ];
+  for (const [name, ev, want] of cases) test(name, () => expect(workItemState(ev)).toBe(want));
+  test("stalled only with a clock and 30m of silence", () => {
+    const ev = mk(["run.started", null], ["stage.started", "implement"]);
+    expect(workItemState(ev)).toBe("executing");
+    expect(workItemState(ev, Date.parse("2026-10-15T00:31:00Z"))).toBe("stalled");
+    expect(workItemState(ev, Date.parse("2026-10-15T00:10:00Z"))).toBe("executing");
+  });
+  test("loki status --json emits state", async () => {
+    writeRun("e10-20261003T000000Z-dddd", { done: true });
+    expect(JSON.parse((await run(["--json"])).out).state).toBe("completed");
+    writeRun("e10-20261003T000001Z-eeee", { done: false });
+    expect(JSON.parse((await run(["--json", "e10-20261003T000001Z-eeee"])).out).state).toBe("executing");
   });
 });
 

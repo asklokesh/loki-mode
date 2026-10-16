@@ -56,16 +56,49 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
   return out;
 }
 
+/** Work-item state (docs/v10/ENGINE.md "Work-item state"); lives here, not in engine10/events.ts, to keep the core line budget. */
+export type WorkItemState =
+  | "received" | "prepared" | "planned" | "executing" | "validating" | "ready_to_ship" | "completed"
+  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled";
+export const STALE_S = 30 * 60;
+
+/** The one work-item vocabulary (docs/v10/ENGINE.md "Work-item state"). Pure over the event log. Terminal states come only from run.completed;
+ *  `nowMs` (optional) enables "stalled" for an unfinished run with no events for STALE_S. */
+export function workItemState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
+  const done = events.findLast((e) => e.type === "run.completed");
+  if (done) {
+    const v = done.data.verdict;
+    if (done.data.cancelled === true) return "cancelled";
+    if (v === "SPEC_CONFLICT") return "waiting_for_input";
+    if (v === "FAILED" || v === "PARTIAL") return events.some((e) => e.type === "cap.hit") ? "budget_stopped" : v === "FAILED" ? "failed" : "completed";
+    return "completed";
+  }
+  if (nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) return "stalled";
+  const seen = new Set<string>(), finished = new Set<string>();
+  for (const e of events) {
+    if (e.stage === null) continue;
+    seen.add(e.stage);
+    if (e.type === "stage.completed") finished.add(e.stage);
+  }
+  if (events.some((e) => e.type === "receipt.sealed")) return "ready_to_ship";
+  if (finished.has("implement") || ["verify", "fix", "commit", "seal", "pr", "deep"].some((s) => seen.has(s))) return "validating";
+  if (seen.has("implement")) return "executing";
+  if (finished.has("plan") || seen.has("wall")) return "planned";
+  if (finished.has("intake")) return "prepared";
+  return "received";
+}
+
 // RECOVERY: find an interrupted engine10 run, name the phase it died in, and resume the publish phase without
 // duplicating a side effect (design: docs/v10/ENGINE.md "Recovery of an interrupted run").
 export type Phase = "implement" | "verify" | "publish" | "done";
 
 /** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
 export function phaseOf(events: readonly EventEnvelope[]): Phase {
-  if (events.some((e) => e.type === "run.completed" || e.type === "pr.opened")) return "done";
-  if (events.some((e) => e.type === "receipt.sealed")) return "publish";
-  const completed = new Set(events.filter((e) => e.type === "stage.completed").map((e) => String(e.stage)));
-  return completed.has("implement") ? "verify" : "implement";
+  if (events.some((e) => e.type === "pr.opened")) return "done";
+  const s = workItemState(events);
+  if (s === "ready_to_ship") return "publish";
+  if (s === "validating") return "verify";
+  return s === "received" || s === "prepared" || s === "planned" || s === "executing" ? "implement" : "done";
 }
 
 export interface Interrupted { runId: string; phase: Phase; events: EventEnvelope[]; task: string | null }
