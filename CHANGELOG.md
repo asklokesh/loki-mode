@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.12.1 (2026-10-16)
+
+v11.12.0 was tagged in the changelog but never published: its CI run failed three guards on Linux. This patch carries all of v11.12.0 plus the fixes below, so upgrade straight from v11.10.1 to v11.12.1.
+
+### Fixed
+- The modernize unit runner no longer hands GitHub tokens to repository code. Its pytest run and its Python import probe now start from the token-free environment every other agent child uses, so a test file in the repo being modernized cannot read GITHUB_TOKEN or similar secrets.
+- When a modernize run refuses a change because a sealed conformance file was added, changed or removed, the reason now names the same file on every platform. Before, Linux and macOS could name different files for the same change, because directory listing order differs.
+
 ## v11.12.0 (2026-10-15)
 
 The legacy modernization unit runner (M-15). `loki start` with Claude remains the primary path; this is a building block for the modernize program and is not yet wired to a user command.
