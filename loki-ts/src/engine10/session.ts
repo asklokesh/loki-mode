@@ -78,14 +78,14 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   }
   return env;
 }
-function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
-  try {
-    const out = safeGit(cwd ?? process.cwd(), ["diff", "--shortstat"]).trim();
-    const files = /(\d+) files? changed/.exec(out);
-    const ins = /(\d+) insertions?\(\+\)/.exec(out);
-    const del = /(\d+) deletions?\(-\)/.exec(out);
-    return { files: files ? Number(files[1]) : 0, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
-  } catch { return { files: 0, insertions: 0, deletions: 0 }; }
+export function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
+  const dir = cwd ?? process.cwd(), o = { timeout: 10_000 }; // P12-12: bounded, since the heartbeat runs this synchronously every 30s
+  let out = "";
+  try { out = safeGit(dir, ["diff", "--shortstat"], o).trim(); } catch { /* unreadable: counts stay zero */ }
+  let untracked = 0; // --shortstat misses untracked files: count them (without reading content) so an add-only stage is not zero change
+  try { untracked = safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o).split("\0").filter(Boolean).length; } catch { /* keep the tracked stat */ }
+  const files = /(\d+) files? changed/.exec(out), ins = /(\d+) insertions?\(\+\)/.exec(out), del = /(\d+) deletions?\(-\)/.exec(out);
+  return { files: (files ? Number(files[1]) : 0) + untracked, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
 }
 function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.

@@ -12,11 +12,12 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
+import { classifyExitCause, createSessionRunner, diffShortstat, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
+import { execFileSync } from "node:child_process";
 
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -521,5 +522,31 @@ describe("engine10 session", () => {
       expect(result.killed).toBe(true);
       expect(events).toContain("guard.budget_stop");
     }, 20000);
+  });
+});
+
+describe("P12-12 diffShortstat counts untracked files", () => {
+  const g = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, encoding: "utf8" });
+  test("a stage that only adds new files reads as nonzero, .loki and the real index untouched", () => {
+    const d = mkdtempSync(join(tmpdir(), "p12-12-"));
+    try {
+      g(d, "init", "-q"); writeFileSync(join(d, "a.txt"), "one\n"); g(d, "add", "a.txt"); g(d, "commit", "-qm", "init");
+      expect(diffShortstat(d)).toEqual({ files: 0, insertions: 0, deletions: 0 });
+      writeFileSync(join(d, "new1.txt"), "x\ny\nz\n"); writeFileSync(join(d, "new 2.txt"), "q\n"); mkdirSync(join(d, ".loki")); writeFileSync(join(d, ".loki", "s.json"), "{}\n");
+      expect(diffShortstat(d)).toEqual({ files: 2, insertions: 0, deletions: 0 });
+      expect(g(d, "status", "--porcelain", "-uall")).toContain("?? new1.txt");
+      expect(g(d, "diff", "--cached", "--name-only").trim()).toBe("");
+      writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+      expect(diffShortstat(d)).toEqual({ files: 3, insertions: 1, deletions: 0 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("an untracked nested repo with no commits never drops the tracked change", () => {
+    const d = mkdtempSync(join(tmpdir(), "p12-12-"));
+    try {
+      g(d, "init", "-q"); writeFileSync(join(d, "a.txt"), "one\n"); g(d, "add", "a.txt"); g(d, "commit", "-qm", "init");
+      mkdirSync(join(d, "sub")); g(join(d, "sub"), "init", "-q"); writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+      const r = diffShortstat(d);
+      expect(r.files).toBeGreaterThanOrEqual(1); expect(r.insertions).toBe(1);
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

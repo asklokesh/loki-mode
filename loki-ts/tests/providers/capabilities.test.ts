@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { CAPABILITIES, COLUMNS, PROVIDERS, beginGuard, capability, disclosureLine, finishGuard, isGuarded, matrixText, providerSandboxFlags } from "../../src/providers/provider_guard.ts";
+import { CAPABILITIES, COLUMNS, PROVIDERS, beginGuard, capability, disclosureLine, finishGuard, isGuarded, scanGuard, matrixText, providerSandboxFlags } from "../../src/providers/provider_guard.ts";
 import { runProviderInfoJson } from "../../src/commands/provider.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 
@@ -118,4 +118,54 @@ describe("per-provider isolation matrix", () => {
       });
     });
   }
+});
+
+describe("P12-25 guard parses git status -z", () => {
+  const g = (d: string, ...a: string[]) => spawnSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+  const weird = ["sp ace.txt", 'qu"ote.txt', "new\nline.txt", "caf\u00e9.txt", "a..b.txt"];
+  test("paths with spaces, quotes, newlines and unicode are deleted-detected and restored exactly", () => {
+    const { dir, backup } = makeRepo();
+    try {
+      for (const w of weird) { writeFileSync(join(dir, w), "w\n"); }
+      g(dir, "add", "-A"); g(dir, "commit", "-q", "-m", "weird");
+      const snap = beginGuard(dir, backup)!;
+      for (let i = 0; i < 10; i++) rmSync(join(dir, `f${i}.txt`));
+      for (const w of weird) rmSync(join(dir, w));
+      const scan = scanGuard(snap);
+      expect(new Set(scan.deletedPaths)).toEqual(new Set([...weird, ...Array.from({ length: 10 }, (_, i) => `f${i}.txt`)]));
+      expect(scan.violations.map((v) => v.kind)).toEqual(["repo-deleted"]);
+      finishGuard(snap);
+      for (const w of weird) expect(existsSync(join(dir, w))).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
+  });
+  test("a staged rename is one record: the old path is not scanned as its own change", () => {
+    const { dir, backup } = makeRepo();
+    try {
+      writeFileSync(join(dir, "old..name.txt"), "r\n"); g(dir, "add", "-A"); g(dir, "commit", "-q", "-m", "r");
+      const snap = beginGuard(dir, backup)!;
+      g(dir, "mv", "old..name.txt", "renamed file.txt");
+      const scan = scanGuard(snap);
+      expect(scan.violations).toEqual([]);
+      expect(scan.deletedPaths).toEqual([]);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
+  });
+  test("an escaping symlink whose name ends in a space is the last -z record and is still found", () => {
+    const { dir, backup } = makeRepo();
+    try {
+      const snap = beginGuard(dir, backup)!;
+      symlinkSync("/etc", join(dir, "zz esc "));
+      expect(scanGuard(snap).escapingLinks).toEqual(["zz esc "]);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
+  });
+  test("an escaping symlink with a space and a quote in its name is found and removed", () => {
+    const { dir, backup } = makeRepo();
+    try {
+      const snap = beginGuard(dir, backup)!;
+      symlinkSync("/etc", join(dir, 'my "esc" link'));
+      const scan = scanGuard(snap);
+      expect(scan.escapingLinks).toEqual(['my "esc" link']);
+      finishGuard(snap);
+      expect(existsSync(join(dir, 'my "esc" link'))).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
+  });
 });
