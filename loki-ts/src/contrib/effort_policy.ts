@@ -1,7 +1,8 @@
-// ER-01: per-stage reasoning effort. Pure; off by default (LOKI_E10_EFFORT_POLICY=rerun turns it on).
+// ER-01 / COST-1: per-stage reasoning effort. Pure; on by default (LOKI_E10_EFFORT_POLICY=off|0|false|legacy opts out).
 // implement and wall run at medium, fix round 1 at high, fix round 2+ at xhigh only for a code-owned failure.
 export function effortPolicyOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env["LOKI_E10_EFFORT_POLICY"] === "rerun";
+  const v = (env["LOKI_E10_EFFORT_POLICY"] ?? "").trim().toLowerCase();
+  return !(v === "off" || v === "0" || v === "false" || v === "legacy");
 }
 
 /** Effort for stages that need only the stage name; undefined when the policy is off or the stage is not covered. */

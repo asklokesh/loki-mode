@@ -33,9 +33,17 @@ describe("pure policy", () => {
     expect(fixEffort(2, false, ON)).toBe("high");
     expect(fixEffort(3, true, ON)).toBe("xhigh");
   });
-  test("flag off yields nothing", () => {
-    expect(stageEffort("implement", {})).toBeUndefined();
-    expect(fixEffort(2, true, {})).toBeUndefined();
+  test("default on: unset env applies the policy", () => {
+    expect(stageEffort("implement", {})).toBe("medium");
+    expect(stageEffort("wall", {})).toBe("medium");
+    expect(fixEffort(1, false, {})).toBe("high");
+    expect(fixEffort(2, true, {})).toBe("xhigh");
+  });
+  test("opt-out yields nothing", () => {
+    for (const v of ["off", "0", "false", "legacy"]) {
+      expect(stageEffort("implement", { LOKI_E10_EFFORT_POLICY: v })).toBeUndefined();
+      expect(fixEffort(2, true, { LOKI_E10_EFFORT_POLICY: v })).toBeUndefined();
+    }
   });
   test("precedence: user env, then opts, then policy", () => {
     expect(resolveEffort("implement", "high", { ...ON, LOKI_E10_EFFORT: "low" })).toBe("low");
@@ -45,8 +53,7 @@ describe("pure policy", () => {
 });
 
 describe("child env", () => {
-  test("policy on: implement and wall medium, fix uses the passed effort", async () => {
-    process.env["LOKI_E10_EFFORT_POLICY"] = "rerun";
+  test("policy default on: implement and wall medium, fix uses the passed effort", async () => {
     expect(effortLine(await envFor("implement"))).toBe("medium");
     expect(effortLine(await envFor("wall"))).toBe("medium");
     expect(effortLine(await envFor("fix", { effort: "xhigh" }))).toBe("xhigh");
@@ -58,7 +65,8 @@ describe("child env", () => {
     for (const s of ["implement", "wall", "plan"]) expect(effortLine(await envFor(s))).toBe("low");
     expect(effortLine(await envFor("fix", { effort: "xhigh" }))).toBe("low");
   });
-  test("flag off: no env gains LOKI_E10_EFFORT", async () => {
+  test("opt-out: no env gains LOKI_E10_EFFORT", async () => {
+    process.env["LOKI_E10_EFFORT_POLICY"] = "off";
     for (const s of ["implement", "wall", "fix"]) expect(effortLine(await envFor(s))).toBeUndefined();
   });
 });
