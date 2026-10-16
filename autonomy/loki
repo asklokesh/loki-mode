@@ -5078,8 +5078,12 @@ cmd_pause() {
 # (default: git user.name, then $USER) and LOKI_STEER_SOURCE (cli, chat or an
 # https comment URL; default cli). Both are reduced to a safe character set.
 cmd_steer() {
-    case "${1:-}" in
-        --help|-h|help|"")
+    # "--" ends options so guidance beginning with "-" is data, not a flag
+    local _eoo=0
+    if [ "${1:-}" = "--" ]; then _eoo=1; shift; fi
+    case "$_eoo:${1:-}" in
+        1:?*) ;;
+        *:--help|*:-h|*:help|*:"")
             echo -e "${BOLD}Loki Mode -- steer the running build${NC}"
             echo ""
             echo "Usage: loki steer \"<guidance>\""
