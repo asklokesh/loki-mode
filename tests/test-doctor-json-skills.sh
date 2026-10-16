@@ -59,7 +59,7 @@ FAKE_BIN="$TMPROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat > "$FAKE_BIN/claude" <<'SH'
 #!/bin/sh
-echo "2.0.0 (fake, for test-doctor-json-skills.sh)"
+echo "2.1.200 (fake, for test-doctor-json-skills.sh)"
 SH
 chmod +x "$FAKE_BIN/claude"
 export PATH="$FAKE_BIN:$PATH"
