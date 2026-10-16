@@ -147,5 +147,12 @@ for f in README.md docs/INSTALLATION.md wiki/Installation.md; do
 done
 if [ -z "$node_bad" ]; then pass "documented Node floor equals package.json engines (${node_min})"; else fail "Node floor != ${node_min} in:$node_bad"; fi
 
+# wiki pages must be stamped with the current VERSION, and CLI-Reference carries no legacy banner.
+cur_ver="$(tr -d '\n' <"$REPO_ROOT/VERSION")"
+stale_stamps="$(grep -lE 'still ships in [0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT"/wiki/*.md | while read -r f; do grep -qE "still ships in ${cur_ver//./\\.}( |\\.|,)" "$f" || basename "$f"; done | tr '\n' ' ')"
+if [ -z "$stale_stamps" ]; then pass "wiki version stamps equal VERSION ${cur_ver}"; else fail "wiki stamps != ${cur_ver}: ${stale_stamps}"; fi
+if grep -q "Legacy engine note" "$REPO_ROOT/wiki/CLI-Reference.md"; then fail "wiki/CLI-Reference.md still has the legacy engine banner"; else pass "wiki/CLI-Reference.md has no legacy banner"; fi
+if grep -q 'wiki/\*.md' "$REPO_ROOT/scripts/generate-stale-zero.sh"; then pass "generate-stale-zero.sh stamps wiki pages"; else fail "generate-stale-zero.sh does not stamp wiki pages"; fi
+
 echo "  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
