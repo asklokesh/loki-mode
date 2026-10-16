@@ -839,7 +839,10 @@ describe("repo baseline profile (REPOMEM)", () => {
       sessions: { run() { throw new Error("no session"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] }, cost: {}, clock: { now: () => Date.now() }, outputs: () => ({}) }) as unknown as RunContext;
     test("intake writes the profile on the untouched tree and a second intake reuses it; LOKI_REPO_BASELINE=0 skips it", async () => {
       const d = repo(NODE);
-      expect((await runIntake(ictx(d), new AbortController().signal, { taskText: "t" })).status).toBe("completed");
+      const errs: string[] = [], we = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((s: string) => (errs.push(String(s)), true)) as typeof process.stderr.write;
+      try { expect((await runIntake(ictx(d), new AbortController().signal, { taskText: "t" })).status).toBe("completed"); } finally { process.stderr.write = we; }
+      expect(errs.join("")).toMatch(/Readiness: \d+\/100 \([A-F]\)/); // FV-readiness-env-3: loki start surfaces the score
       const p = loadProfile(d)!;
       expect(p.baseline.failing_ids).toContain("old bug");
       expect(git(d, ["status", "--porcelain", "--untracked-files=no"])).toBe("");

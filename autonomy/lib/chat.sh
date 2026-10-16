@@ -53,6 +53,7 @@ Loki chat commands:
   /provider <name>   switch provider (claude, codex, cline, aider, opencode)
   /cost              loki cost
   /diff              git diff --stat plus diff
+  /doctor [--json]   loki doctor --repo: repo readiness score and fixes (alias /ready)
   /undo [args]       loki undo
   /help, /exit
 Attached mode (loki chat --attach or /attach): /status /steer <msg> /diff /verify /receipt /stop
@@ -357,6 +358,8 @@ Question: $line" || true
             /cost) _chat_do "$loki" cost ;;
             /undo) # shellcheck disable=SC2086
                 _chat_do "$loki" undo $rest ;;
+            /doctor|/ready) # shellcheck disable=SC2086
+                _chat_do "$loki" doctor --repo $rest ;;
             /diff) _chat_do git diff --stat; _chat_do git diff ;;
             /model)
                 if [ -n "$rest" ]; then _CHAT_MODEL="$rest"; echo "model: $rest"; else echo "model: ${_CHAT_MODEL:-default}"; fi ;;
