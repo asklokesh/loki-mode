@@ -88,12 +88,12 @@ export async function launchInThread(state: InboundState, deps: InboundDeps, cha
   }
   const rec: ThreadRun = { runId: h.runId, task, state: "running" };
   state.threads.set(key, rec);
-  const started = await deps.post(channel, threadTs, `Started run ${h.runId}.`);
+  const started = await deps.post(channel, threadTs, `Started run ${slackSafe(h.runId)}.`);
   if (typeof started === "string") rec.statusTs = started;
   void h.done.then(async (r) => {
-    if (r.code !== 4 && rec.statusTs && deps.update && await deps.update(channel, rec.statusTs, `Run ${h.runId} finished (exit ${r.code}).`).catch(() => false)) { rec.state = "done"; return; }
-    if (r.code === 4) { rec.state = "blocked"; rec.question = r.question; await deps.post(channel, threadTs, `Run ${h.runId} is BLOCKED: ${r.question ?? "see the receipt"}\nReply in this thread to answer.`); }
-    else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${h.runId} finished (exit ${r.code}).`); }
+    if (r.code !== 4 && rec.statusTs && deps.update && await deps.update(channel, rec.statusTs, `Run ${slackSafe(h.runId)} finished (exit ${r.code}).`).catch(() => false)) { rec.state = "done"; return; }
+    if (r.code === 4) { rec.state = "blocked"; rec.question = r.question; await deps.post(channel, threadTs, `Run ${slackSafe(h.runId)} is BLOCKED: ${r.question === undefined ? "see the receipt" : slackSafe(r.question)}\nReply in this thread to answer.`); }
+    else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${slackSafe(h.runId)} finished (exit ${r.code}).`); }
   }).catch(() => { rec.state = "done"; });
 }
 /** Handles one verified Slack Events API payload. Returns the HTTP response; work continues in the background. */
@@ -207,7 +207,7 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
       const m = /Steer rev (\d+) received/.exec(out);
       if (m) return `Steer rev ${m[1]} received: applies at next plan/implement stage.`;
       const first = out.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "no confirmation from loki steer";
-      return `Steer not confirmed: ${slackSafe(first.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 120))}`;
+      return `Steer not confirmed: ${slackSafe(first.replace(/[\x00-\x1f\x7f]+/g, " ")).slice(0, 120)}`;
     },
   };
 }

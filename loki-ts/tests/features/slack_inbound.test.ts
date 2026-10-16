@@ -69,6 +69,16 @@ describe("thread mapping", () => {
     (p.event as Record<string, unknown>).bot_id = "B1";
     expect((await handleSlackEvent(st, f.deps, p)).body).toBe("ignored");
   });
+  test("BLOCKED question is redacted and escaped before posting", async () => {
+    const st = openState(), f = fake(4, "<!channel> a&b ghp_" + "A".repeat(30) + " <https://evil.example|click>");
+    await handleSlackEvent(st, f.deps, mention("E3x", "<@UB> build it", "201.1"));
+    await tick();
+    const p = f.posts.find((x) => x.includes("BLOCKED")) ?? "";
+    expect(p).toContain("&lt;!channel&gt;");
+    expect(p).toContain("a&amp;b");
+    expect(p).toContain("[REDACTED:GITHUB_TOKEN]");
+    expect(p).not.toMatch(/ghp_|<!channel>|<https/);
+  });
   test("BLOCKED posts the question in-thread and a thread reply becomes the answer", async () => {
     const st = openState(), f = fake(4, "which db?");
     await handleSlackEvent(st, f.deps, mention("E3", "<@UB> build it", "200.1"));
@@ -283,7 +293,7 @@ describe("hardening (D63-C6-F)", () => {
 describe("P12-17 thread steer, live allowlist, revoked actors, durable dedup", () => {
   const msg = (id: string, user: string | undefined, text: string, ts: string, thread: string) => ({ type: "event_callback", event_id: id, event: { type: "message", channel: "C1", user, text, ts, thread_ts: thread } });
   const hang = () => {
-    const posts: string[] = [], steers: { runId: string; actor: string; text: string }[] = [], tasks: string[] = [];
+    const posts: string[] = [], steers: { actor: string; text: string }[] = [], tasks: string[] = [];
     const deps: InboundDeps = {
       async startRun(t) { tasks.push(t); return { runId: "e10-9", done: new Promise(() => {}) }; },
       async post(_c, _t, x) { posts.push(x); },
