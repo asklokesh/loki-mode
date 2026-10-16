@@ -149,6 +149,14 @@ describe("P12-25 guard parses git status -z", () => {
       expect(scan.deletedPaths).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
   });
+  test("an escaping symlink whose name ends in a space is the last -z record and is still found", () => {
+    const { dir, backup } = makeRepo();
+    try {
+      const snap = beginGuard(dir, backup)!;
+      symlinkSync("/etc", join(dir, "zz esc "));
+      expect(scanGuard(snap).escapingLinks).toEqual(["zz esc "]);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); }
+  });
   test("an escaping symlink with a space and a quote in its name is found and removed", () => {
     const { dir, backup } = makeRepo();
     try {

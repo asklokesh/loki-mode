@@ -67,7 +67,7 @@ export function scanGuard(s: GuardSnapshot): { violations: Violation[]; deletedP
   const violations: Violation[] = [];
   const gd = gitDir(s.cwd);
   // P12-25: -z gives raw NUL-terminated records; a rename or copy (R/C in either column) carries a second record, its source path.
-  const rec = gitRaw(s.cwd, ["status", "--porcelain=v1", "-z", "-uall"]).split("\0").filter(Boolean), status: string[] = [];
+  const rec = (() => { try { return safeGit(s.cwd, ["status", "--porcelain=v1", "-z", "-uall"]); } catch { return ""; } })().split("\0").filter(Boolean), status: string[] = [];
   for (let i = 0; i < rec.length; i++) { status.push(rec[i]!); if (/^.[RC]|^[RC]/.test(rec[i]!)) i++; }
   const deletedPaths = status.filter((l) => /^( D|D )/.test(l)).map((l) => l.slice(3));
   if (isRepoDeletion(deletedPaths.length, s.tracked)) violations.push({ kind: "repo-deleted", detail: `${deletedPaths.length} of ${s.tracked} tracked files deleted` });

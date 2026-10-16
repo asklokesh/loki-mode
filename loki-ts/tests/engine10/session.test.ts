@@ -533,9 +533,20 @@ describe("P12-12 diffShortstat counts untracked files", () => {
       g(d, "init", "-q"); writeFileSync(join(d, "a.txt"), "one\n"); g(d, "add", "a.txt"); g(d, "commit", "-qm", "init");
       expect(diffShortstat(d)).toEqual({ files: 0, insertions: 0, deletions: 0 });
       writeFileSync(join(d, "new1.txt"), "x\ny\nz\n"); writeFileSync(join(d, "new 2.txt"), "q\n"); mkdirSync(join(d, ".loki")); writeFileSync(join(d, ".loki", "s.json"), "{}\n");
-      expect(diffShortstat(d)).toEqual({ files: 2, insertions: 4, deletions: 0 });
+      expect(diffShortstat(d)).toEqual({ files: 2, insertions: 0, deletions: 0 });
       expect(g(d, "status", "--porcelain", "-uall")).toContain("?? new1.txt");
       expect(g(d, "diff", "--cached", "--name-only").trim()).toBe("");
+      writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+      expect(diffShortstat(d)).toEqual({ files: 3, insertions: 1, deletions: 0 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("an untracked nested repo with no commits never drops the tracked change", () => {
+    const d = mkdtempSync(join(tmpdir(), "p12-12-"));
+    try {
+      g(d, "init", "-q"); writeFileSync(join(d, "a.txt"), "one\n"); g(d, "add", "a.txt"); g(d, "commit", "-qm", "init");
+      mkdirSync(join(d, "sub")); g(join(d, "sub"), "init", "-q"); writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+      const r = diffShortstat(d);
+      expect(r.files).toBeGreaterThanOrEqual(1); expect(r.insertions).toBe(1);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
