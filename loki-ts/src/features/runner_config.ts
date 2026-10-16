@@ -81,29 +81,33 @@ function referenced(cfg: string, text: string): string[] {
   if (explicit) roots.push("", ...(explicit[1] ? [join(dir, explicit[1])] : []));
   return raw.flatMap((r) => r.startsWith("/") ? [normalize(r.slice(1))] : roots.map((root) => normalize(join(root, r.replace(/^<rootDir>\/?/, "")))));
 }
-const gitOut = (dir: string, args: string[], signal?: AbortSignal): string => safeGit(dir, args, { timeout: 20000, maxBuffer: 64 << 20, ...(signal ? { signal } : {}) });
+const gitOut = (dir: string, args: string[], signal?: AbortSignal): string => safeGit(dir, args, { timeout: 20000, maxBuffer: 64 << 20, ...(signal ? { signal } : {}) }); const NON_SOURCE = /(^|\/)(tests?|__tests__|spec|\.loki)\/|\.(test|spec)\.[\w.]+$|(^|\/)test_[^/]*\.py$|_test\.(go|py)$/;
 /** FC-09 seal side: NOT PROVEN lines for every runner config, and every file one loads, that the run added, changed or deleted between base and head
- *  (`changed` = repo-relative paths from the base..head diff). Shared files count only when their runner section differs. An unchanged broken config never caps. */
+ *  (`changed` = repo-relative paths from the base..head diff). Shared files count only when their runner section differs. A config whose git blob is identical on both sides is read and parsed once. An unparseable config loads an unknown set, so it caps when it changed or when any non-test file in its directory tree did. */
 export function runnerConfigNotes(repoDir: string, baseSha: string, head: string, changed: string[], signal?: AbortSignal): string[] {
   const notes = new Set<string>(), ch = new Set(changed.map((c) => normalize(c)));
   for (const c of ch) if (/(^|\/)__mocks__\//.test(c)) notes.add(`runner setup file changed: ${c} (jest/vitest manual mock)`);
-  const trees = new Map<string, Set<string>>();
-  try { for (const rev of [baseSha, head]) trees.set(rev, new Set(gitOut(repoDir, ["ls-tree", "-r", "--name-only", rev], signal).split("\n").filter(Boolean))); } catch { if (ch.size) notes.add("runner config not inspected: tree listing failed"); return [...notes]; }
+  const trees = new Map<string, Map<string, string>>();
+  try { for (const rev of [baseSha, head]) trees.set(rev, new Map(gitOut(repoDir, ["ls-tree", "-r", rev], signal).split("\n").filter(Boolean).map((l): [string, string] => { const t = l.indexOf("\t"); return [l.slice(t + 1), l.slice(0, t).split(" ")[2] ?? ""]; }))); } catch { if (ch.size) notes.add("runner config not inspected: tree listing failed"); return [...notes]; }
   const cfgs = new Set<string>();
-  for (const tree of trees.values()) for (const f of tree) if (RUNNER_CONFIGS.some((s) => s.re.test(f))) cfgs.add(f);
+  for (const tree of trees.values()) for (const f of tree.keys()) if (RUNNER_CONFIGS.some((s) => s.re.test(f))) cfgs.add(f);
   for (const cfg of [...cfgs].sort()) {
-    const spec = RUNNER_CONFIGS.find((s) => s.re.test(cfg))!, refs = new Set<string>(), texts: string[] = [];
-    let changedHere = false;
+    const spec = RUNNER_CONFIGS.find((s) => s.re.test(cfg))!, refs = new Set<string>(), texts: string[] = [], bo = trees.get(baseSha)!.get(cfg), same = bo !== undefined && bo === trees.get(head)!.get(cfg);
+    let changedHere = false, bad = false;
     try {
-      for (const rev of [baseSha, head]) {
+      for (const rev of same ? [head] : [baseSha, head]) {
         const tree = trees.get(rev)!, t = tree.has(cfg) ? gitOut(repoDir, ["show", `${rev}:${cfg}`], signal) : "";
         texts.push(t);
-        if (spec.shared && t) relevant(spec.shared, t); // throws when this side is malformed: fail closed below
+        if (spec.shared && t) try { relevant(spec.shared, t); } catch { bad = true; } // this side is malformed: fail closed below
         for (const c of referenced(cfg, t)) refs.add(EXT.map((e) => c + e).find((p) => tree.has(p)) ?? c);
       }
       const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
-      changedHere = !spec.shared || /conftest\.py$/.test(cfg) || relevant(spec.shared, texts[0] || e) !== relevant(spec.shared, texts[1] || e);
-    } catch { if (ch.has(cfg)) notes.add(`runner config unparseable, trust capped: ${cfg}`); continue; }
+      if (!bad && !same) changedHere = !spec.shared || /conftest\.py$/.test(cfg) || relevant(spec.shared, texts[0] || e) !== relevant(spec.shared, texts[1] || e);
+    } catch { bad = true; }
+    if (bad) {
+      const dir = dirname(cfg), loaded = [...ch].find((c) => c !== cfg && (dir === "." || c.startsWith(dir + "/")) && !NON_SOURCE.test(c));
+      if (ch.has(cfg) || loaded) notes.add(`runner config unparseable, trust capped: ${cfg}${loaded ? ` (${loaded} changed and may be loaded by it)` : ""}`);
+    }
     if (ch.has(cfg) && changedHere) notes.add(`runner config changed: ${cfg} (the run could mock the code under test)`);
     for (const r of [...refs].sort()) if (ch.has(r)) notes.add(`runner setup file changed: ${r} (loaded by ${cfg} as a preload, setup or mapper target)`);
   }
