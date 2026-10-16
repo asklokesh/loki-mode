@@ -196,10 +196,11 @@ def make_run(rid, mode, status, units_total, units_proven, units_first_pass, sou
     }
 
 
-def count_lines(root, exts):
+def count_lines(root, exts, skip_dirs=()):
     total = 0
+    skip = (".git", "node_modules", ".loki") + tuple(skip_dirs)
     for dp, dn, fn in os.walk(root):
-        dn[:] = [d for d in dn if d not in (".git", "node_modules", ".loki")]
+        dn[:] = [d for d in dn if d not in skip]
         for f in fn:
             if f.endswith(exts):
                 try:

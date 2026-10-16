@@ -301,5 +301,76 @@ PY
 rc=$?
 if [ "$rc" -eq 0 ]; then pass "unmeasured cost charges the full allowance for failed and incomplete runs"; else fail "charge_spend"; fi
 
+# 7. M-28 scale.py: dry run first, refusal rules, Calibre fallback. No network, no model:
+#    sources are local stub trees, loki is a fake that answers --dry-run and otherwise delegates to FAKE.
+SCALE="$HERE/scale.py"
+SFAKE="$T/scale-fake-loki"
+cat >"$SFAKE" <<'SFAKE_EOF'
+#!/usr/bin/env bash
+case " $* " in
+    *" --dry-run "*)
+        echo "$2" >>"$SFAKE_DRYCALLS"
+        printf 'units: 12\nwaves: 3\ncost: $9.50\nwall time: 600s\nrisk: 1 high, 11 normal\n'
+        exit 0 ;;
+esac
+exec "$FAKE" "$@"
+SFAKE_EOF
+chmod +x "$SFAKE"
+export FAKE SFAKE_DRYCALLS="$T/drycalls.txt"
+mkstub() {
+    mkdir -p "$1/pkg" "$1/vendor"
+    python3 -c '
+import sys
+d = sys.argv[1]
+open(d + "/pkg/a.py", "w").write("x = 1\n" * 50)
+open(d + "/pkg/b.c", "w").write("int y;\n" * 20)
+open(d + "/vendor/v.py", "w").write("z = 1\n" * 900)
+open(d + "/fake-id", "w").write("scale-stub")
+open(d + "/fake-mode", "w").write("ok")' "$1"
+}
+mkstub "$T/hg-src"
+mkstub "$T/calibre-src"
+: >"$FAKE_CALLS"; : >"$SFAKE_DRYCALLS"
+
+# 7a. dry run: plan printed, rc 0, zero spend (no paid call, no results written)
+python3 "$SCALE" --target hg --dry-run-first --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-dry" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$T/s-dry" ] && [ ! -s "$FAKE_CALLS" ] && [ -s "$SFAKE_DRYCALLS" ] \
+    && resj "$T/out.txt" 'd["selected_target"]=="hg" and d["fallback_used"] is False and d["lines_by_language"]["python"]==50 and d["lines_by_language"]["c"]==20 and d["total_lines"]==70 and d["units"]==12 and d["waves"]==3 and d["estimated_cost_usd"]==9.5 and d["spend_cap_usd"] is None and d["unit_line_cap"]==1500 and d["model_spend_usd"]==0 and d["paid_run"]=="not started"'; then
+    pass "scale dry run prints measured plan, rc 0, zero spend, vendored lines excluded"
+else fail "scale dry run rc=$rc $(cat "$T/err.txt") $(head -c 400 "$T/out.txt")"; fi
+
+# 7b. default mode is the dry run even without --dry-run-first
+python3 "$SCALE" --target hg --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-dry" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$T/s-dry" ] && [ ! -s "$FAKE_CALLS" ]; then pass "scale defaults to the dry run"; else fail "scale default mode rc=$rc"; fi
+
+# 7c. refusals: --execute without --budget-usd, with budget 0, budget without --execute (red-first leg)
+python3 "$SCALE" --target hg --execute --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-exec" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "budget-usd" "$T/err.txt" && [ ! -e "$T/s-exec" ] && [ ! -s "$FAKE_CALLS" ]; then pass "scale --execute without --budget-usd refused non-zero, no spend"; else fail "scale execute w/o budget rc=$rc"; fi
+python3 "$SCALE" --target hg --execute --budget-usd 0 --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-exec" >/dev/null 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && [ ! -e "$T/s-exec" ] && [ ! -s "$FAKE_CALLS" ]; then pass "scale --execute with --budget-usd 0 refused"; else fail "scale execute budget 0 rc=$rc"; fi
+python3 "$SCALE" --target hg --budget-usd 5 --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" >/dev/null 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && [ ! -s "$FAKE_CALLS" ]; then pass "scale --budget-usd without --execute refused"; else fail "scale budget w/o execute rc=$rc"; fi
+
+# 7d. fallback: hg source missing selects Calibre and logs it
+python3 "$SCALE" --target hg --source "$T/no-such-hg" --fallback-source "$T/calibre-src" --min-lines 50 --loki-bin "$SFAKE" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "falling back to calibre" "$T/err.txt" \
+    && resj "$T/out.txt" 'd["selected_target"]=="calibre" and d["fallback_used"] is True and any("hg" in x and "unavailable" in x for x in d["selection_log"])'; then
+    pass "scale falls back to Calibre when the hg source is unavailable, and logs it"
+else fail "scale fallback rc=$rc $(cat "$T/err.txt")"; fi
+
+# 7e. fallback on the 200K floor: hg under --min-lines falls back too
+python3 "$SCALE" --target hg --source "$T/hg-src" --fallback-source "$T/calibre-src" --min-lines 71 --loki-bin "$SFAKE" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "below the 71 line floor" "$T/err.txt"; then pass "scale refuses when no candidate meets the line floor"; else fail "scale floor rc=$rc $(cat "$T/err.txt")"; fi
+python3 "$SCALE" --target hg --source "$T/hg-src" --fallback-source "$T/calibre-src" --min-lines 60 --loki-bin "$SFAKE" >"$T/out.txt" 2>/dev/null; rc=$?
+if [ "$rc" -eq 0 ] && resj "$T/out.txt" 'd["selected_target"]=="hg"'; then pass "scale keeps hg when it meets the floor"; else fail "scale floor ok rc=$rc"; fi
+
+# 7f. explicit execute with budget runs the fake paid path through pilot.execute_repo and writes results
+python3 "$SCALE" --target hg --execute --budget-usd 3 --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-exec" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+RES="$(find "$T/s-exec" -name 'pilot-scale-*.json' 2>/dev/null | head -1)"
+if [ "$rc" -eq 0 ] && [ -n "$RES" ] && [ "$(wc -l <"$FAKE_CALLS" | tr -d ' ')" = "1" ] \
+    && resj "$RES" 'd["runs"][0]["id"]=="scale-hg" and d["runs"][0]["status"]=="ok" and d["runs"][0]["units_total"]==1'; then
+    pass "scale --execute --budget-usd runs one fake paid call and writes results"
+else fail "scale execute rc=$rc res=$RES out=$(cat "$T/out.txt") run=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runs"][0])' "$RES" 2>&1)"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

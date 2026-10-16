@@ -338,6 +338,11 @@ The report never states more than the equivalence data proves. It is sealed and 
   - the license (GPL) allows running it.
 - Why: it is a real Python 2 codebase with a large suite of its own (`run-tests.py`), and upstream later completed the Python 3 port, so a human reference exists.
 - The line count is UNVERIFIED offline. M-28 measures it first with `--dry-run` inventory and `cloc`. If the count is under 200K or the suite is unbounded, the named fallback is Calibre before its Python 3 port, and the choice is recorded again.
+- Operator notes (`eval/modernize/scale.py`, M-28; extends pilot.py, no separate SCALE.md):
+  - `python3 eval/modernize/scale.py --target hg --dry-run-first [--source PATH] [--fallback-source PATH]` is the default and spends nothing. It resolves the source (a local `--source` is read in place and copied for the estimate; otherwise it clones Mercurial 4.9.1 with `hg` or Calibre v3.48.0 with the Git CLI; both refs UNVERIFIED offline), counts lines per language excluding vendored directories, runs `loki modernize --to python3 --dry-run`, and prints JSON: planned units, waves, estimated cost, the unit line cap (pilot manifest `cap.start_lines`), the spend cap (null until `--budget-usd`), and a suggested budget of 1.5x the estimate.
+  - Selection: hg unavailable (no `hg`, clone failure, bad `--source`) or under `--min-lines` (default 200000) falls back to Calibre. Each step is logged to stderr and to `selection_log`. If no candidate meets the floor the run exits 2.
+  - The paid run needs `--execute` AND `--budget-usd` greater than 0, else exit 2 before any clone or spend. It runs through `pilot.execute_repo`, so cost, status and calibration follow the M-27b rules (cost is a lower bound; unmeasured spend is charged at the full budget). Results: `eval/modernize/results/pilot-scale-<ts>.json`.
+  - Known limit: `source_lines` in the paid result comes from pilot's counter and includes vendored code, so cost per 1K lines is understated against the measured plan figure.
 
 **3. 1M lines (M-29)**
 - Chosen candidate: Apache Hadoop 2.x (Java 8 to 21). It is Java 8, multi-module, and has an extensive JUnit suite.
@@ -387,7 +392,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 | M-25 | Final report and verdict (COMPLETE only if all proven), sealed | mod/report.ts, T/report.test.ts | HIGH | Wb T/report.test.ts | M-13, M-21 |
 | M-26 | End-to-end: py2 fixture repo modernized with stub provider | T/e2e.test.ts, T/fixtures/e2e_py2/ | MEDIUM | Wb T/e2e.test.ts | M-08, M-22, M-25 |
 | M-27 | Legacy-Bench pilot harness; confirm public set; calibrate cap | eval/modernize/pilot.py, eval/modernize/test-pilot.sh | HIGH | bash eval/modernize/test-pilot.sh | M-26 |
-| M-28 | 200K scale run (Mercurial 4.x, measured first, fallback Calibre) | eval/modernize/scale.py, eval/modernize/SCALE.md | HIGH | python3 eval/modernize/scale.py --target hg --dry-run-first | M-27 |
+| M-28 | 200K scale run (Mercurial 4.x, measured first, fallback Calibre) | eval/modernize/scale.py (notes in section 12) | HIGH | python3 eval/modernize/scale.py --target hg --dry-run-first | M-27 |
 | M-29 | 1M scale run (Hadoop 2.x Java 8 to 21, measured first) | eval/modernize/scale_1m.py, eval/modernize/SCALE-1M.md | HIGH | python3 eval/modernize/scale_1m.py --dry-run-first | M-28, M-11 |
 | M-30 | User docs for loki modernize, no dashes, commands match USAGE | docs/v10/GUIDE-MODERNIZE.md, tests/test-modernize-docs.sh | LOW | bash tests/test-modernize-docs.sh | M-07 |
 
