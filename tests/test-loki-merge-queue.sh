@@ -50,7 +50,7 @@ grep -q "^pr merge 13 " "$STUB_LOG" && ok "PR 13 merged after rebase" || bad "13
 # Gated single-PR merge (the --ship path): checks, draft and verdict all block.
 mkdir -p .loki/proofs/p1 .loki/state
 echo p1 > .loki/state/last-proof-id.txt
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-red --require-verified --delete-branch 2>&1)"; RC=$?
 grep -q "^pr merge feat-red" "$STUB_LOG" && bad "red-check ship PR merged" || ok "ship: failing checks never merge"
@@ -59,12 +59,12 @@ grep -q "^pr merge feat-red" "$STUB_LOG" && bad "red-check ship PR merged" || ok
 OUT="$(bash "$LOKI" merge pr feat-draft --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-draft" "$STUB_LOG" && bad "draft PR merged" || ok "ship: draft PR never merges"
 [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: draft" && ok "ship: message names the draft gate" || bad "draft msg: $OUT"
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-ok --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-ok" "$STUB_LOG" && bad "non-VERIFIED run merged" || ok "ship: non-VERIFIED verdict never merges"
 echo "$OUT" | grep -q "gate: verdict" && ok "ship: message names the verdict gate" || bad "verdict msg: $OUT"
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 bash "$LOKI" merge pr feat-ok --require-verified --delete-branch >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && grep -q "^pr merge feat-ok --squash --delete-branch" "$STUB_LOG" && ok "ship: green VERIFIED PR merges" || bad "green ship rc=$RC: $(cat "$STUB_LOG")"
@@ -76,15 +76,15 @@ grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "stale-proof PR merged" || ok 
 [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: head" && ok "ship: message names the head gate" || bad "head msg rc=$RC: $OUT"
 # A matching proof is found by head even when last-proof-id points at a stale one.
 mkdir -p .loki/proofs/p2
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
 : > "$STUB_LOG"
 bash "$LOKI" merge pr feat-moved --require-verified >/dev/null 2>&1
 grep -q "^pr merge feat-moved --squash --match-head-commit $STUB_HEAD2\$" "$STUB_LOG" && ok "ship: proof resolved by PR head, not last-proof-id" || bad "head-resolved proof: $(cat "$STUB_LOG")"
 rm -rf .loki/proofs/p2
 # Older VERIFIED must not override a newer NOT_PROVEN for the same head (disagreement refuses).
 mkdir -p .loki/proofs/p3 .loki/proofs/p2
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"NOT_PROVEN"}}' "$STUB_HEAD2" > .loki/proofs/p3/proof.json
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"NOT_PROVEN"}}' "$STUB_HEAD2" > .loki/proofs/p3/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "conflicting proofs merged" || ok "ship: VERIFIED + NOT_PROVEN for one head never merges"
@@ -97,7 +97,63 @@ printf '{"facts":{"git":{"head_sha":"%s","dirty":true}},"honesty":{"headline":"V
 OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "dirty proof merged" || ok "ship: dirty-tree proof never merges"
 echo "$OUT" | grep -q "gate: head" && ok "ship: dirty proof names the head gate" || bad "dirty msg: $OUT"
+echo "$OUT" | grep -q "dirty (1), dirty-unknown (0)" && ! echo "$OUT" | grep -q "unknown dirty state" && ok "ship: explicit dirty proof counted as dirty, not unknown" || bad "dirty count msg: $OUT"
 rm -r .loki/proofs/p4
+# P12-03b: a proof with dirty missing or null counts as dirty (fail closed).
+for _variant in 'missing:{"head_sha":"%s"}' 'null:{"head_sha":"%s","dirty":null}'; do
+  _vn="${_variant%%:*}"; _vj="${_variant#*:}"
+  mkdir -p .loki/proofs/p5
+  # shellcheck disable=SC2059
+  printf '{"facts":{"git":'"$_vj"'},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p5/proof.json
+  : > "$STUB_LOG"
+  OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
+  grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "dirty-$_vn proof merged" || ok "ship: proof with dirty $_vn never merges"
+  echo "$OUT" | grep -q "gate: head" && ok "ship: dirty $_vn names the head gate" || bad "dirty $_vn msg: $OUT"
+  echo "$OUT" | grep -q "dirty-unknown (1)" && echo "$OUT" | grep -q "re-run 'loki start" && echo "$OUT" | grep -q "predates the dirty flag" && ok "ship: dirty $_vn names unknown state and next step" || bad "dirty $_vn unknown msg: $OUT"
+  rm -r .loki/proofs/p5
+done
+# P12-03b: the shared proof writer marks an untracked-only tree dirty, even when
+# git config hides untracked files from status.
+GD_REPO="$WORK/gdrepo"; mkdir -p "$GD_REPO"
+git -C "$GD_REPO" init -q
+git -C "$GD_REPO" config user.email t@t
+git -C "$GD_REPO" config user.name t
+git -C "$GD_REPO" config status.showUntrackedFiles no
+echo a > "$GD_REPO/a"
+git -C "$GD_REPO" add a
+git -C "$GD_REPO" commit -qm init
+gd() { python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$GD_REPO"; }
+[ "$(gd)" = "False" ] && ok "writer: clean tree is not dirty" || bad "writer clean: $(gd)"
+echo x > "$GD_REPO/untracked.txt"
+[ "$(gd)" = "True" ] && ok "writer: untracked-only tree is dirty" || bad "writer untracked: $(gd)"
+rm "$GD_REPO/untracked.txt"
+mkdir -p "$GD_REPO/.loki"; echo y > "$GD_REPO/.loki/x"
+[ "$(gd)" = "False" ] && ok "writer: .loki/ untracked stays clean" || bad "writer .loki: $(gd)"
+# P12-03b: a rename out of .loki/ must not hide the dirty destination.
+echo s > "$GD_REPO/.loki/src.js"
+git -C "$GD_REPO" add -f .loki/src.js
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm loki-src
+[ "$(gd)" = "False" ] && ok "writer: committed .loki/ file is clean" || bad "writer loki commit: $(gd)"
+git -C "$GD_REPO" mv .loki/src.js src.js
+[ "$(gd)" = "True" ] && ok "writer: rename out of .loki/ is dirty" || bad "writer rename: $(gd)"
+git -C "$GD_REPO" mv src.js app.js
+echo edit >> "$GD_REPO/app.js"
+[ "$(gd)" = "True" ] && ok "writer: rename plus edit is dirty" || bad "writer rename+edit: $(gd)"
+git -C "$GD_REPO" reset -q --hard
+git -C "$GD_REPO" clean -fdq -e .loki
+# P12-03b: a committed ignore=all submodule setting must not hide a modified submodule.
+SUB_REPO="$WORK/subrepo"; mkdir -p "$SUB_REPO"
+git -C "$SUB_REPO" init -q
+echo 1 > "$SUB_REPO/f"
+git -C "$SUB_REPO" add f
+git -C "$SUB_REPO" -c user.name=t -c user.email=t@t commit -qm sub
+git -C "$GD_REPO" -c protocol.file.allow=always submodule add -q "$SUB_REPO" sub >/dev/null 2>&1
+git -C "$GD_REPO" config -f .gitmodules submodule.sub.ignore all
+git -C "$GD_REPO" add .gitmodules sub
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm addsub
+[ "$(gd)" = "False" ] && ok "writer: clean submodule tree is clean" || bad "writer sub clean: $(gd)"
+echo 2 > "$GD_REPO/sub/f"
+[ "$(gd)" = "True" ] && ok "writer: modified submodule is dirty despite ignore=all" || bad "writer sub dirty: $(gd)"
 # Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
 printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
 bash "$LOKI" merge pr feat-race >/dev/null 2>&1
@@ -132,11 +188,11 @@ bash "$LOKI" merge pr feat-auth >/dev/null 2>&1
 seed feat-mfail 12 created
 bash "$LOKI" merge pr feat-mfail >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:merge" ] && [ "$(prj .merge.gate)" = "merge" ] && ok "pr.json: gh merge failure records blocked:merge" || bad "pr.json merge: $(cat .loki/state/pr.json)"
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 seed feat-ok 13 created
 bash "$LOKI" merge pr feat-ok --require-verified >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:verdict" ] && [ "$(prj .merge.gate)" = "verdict" ] && ok "pr.json: verdict gate records blocked:verdict" || bad "pr.json verdict: $(cat .loki/state/pr.json)"
-printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s","dirty":false}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 seed feat-ok 14 prepared
 BEFORE="$(cat .loki/state/pr.json)"
 bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
