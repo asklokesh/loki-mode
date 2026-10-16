@@ -206,6 +206,22 @@ if command -v bun >/dev/null 2>&1; then
         *) fail "refusal message missing: $out" ;;
     esac
     case "$out" in *STUB-ARGV*) fail "task text reached the delegate" ;; *) pass "task text never reaches the delegate" ;; esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --provider claude --budget 5 --resume 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --provider claude --budget 5 --resume reaches engine10 resume" ;;
+        *) fail "value flags around --resume were refused: $out" ;;
+    esac
+    case "$out" in *"STUB-ARGV:engine10 resume claude"*|*"resume 5"*) fail "a flag value leaked as a run id: $out" ;; *) pass "flag values are not passed as run ids" ;; esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --provider claude e10-abc --budget 5 2>&1)"
+    case "$out" in
+        *"STUB-ARGV:engine10 resume e10-abc"*) pass "run id kept when value flags surround it" ;;
+        *) fail "run id lost around value flags: $out" ;;
+    esac
+    # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
+    out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
+    mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
+    out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"; rc_resume=$?
+    if [ "$rc_start" -eq 1 ] && [ "$rc_resume" -eq 1 ]; then pass "exit 5 maps to 1 in start --resume and resume"; else fail "exit 5 parity: start=$rc_start resume=$rc_resume, expected 1 and 1"; fi
     out="$(cd "$dir" && STUB_RC=3 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
     [ "$rc" -eq 3 ] && pass "nothing to resume (3) is not turned into a new build" || fail "rc=$rc, expected 3"
 else

@@ -248,6 +248,7 @@ describe("resume review fixes (P12-07)", () => {
     expect(h).toContain("No stage is re-entered");
     expect(h).toContain("stage verify and every later stage rerun only in a new run");
     expect(h).toContain("reuses that receipt and reruns only the PR step");
+    expect(h).toContain("loki resume or loki start --resume");
     expect(h).not.toContain("Resuming a stopped run is not available");
   });
   test("wall finishing before plan is accepted; resume re-enters at plan", () => {

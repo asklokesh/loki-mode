@@ -209,7 +209,11 @@ export function renderHandoff(i: HandoffInput): string {
   for (const n of notChecked.slice(0, 8)) L.push(`- ${n}`);
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");
   if (notChecked.length > 8) L.push(`- +${notChecked.length - 8} more`);
-  if (i.resumeFrom) L.push("", `Stopped before stage ${clip(i.resumeFrom, 20)} completed (run ${i.runId}). No stage is re-entered, so stage ${clip(i.resumeFrom, 20)} and every later stage rerun only in a new run: loki start. Only a run stopped after its receipt was sealed (publish phase) resumes: loki resume reuses that receipt and reruns only the PR step.`);
+  if (i.resumeFrom) {
+    L.push("", `Stopped before stage ${clip(i.resumeFrom, 20)} completed (run ${i.runId}).`);
+    L.push(`No stage is re-entered, so stage ${clip(i.resumeFrom, 20)} and every later stage rerun only in a new run: loki start.`);
+    L.push("Only a run stopped after its receipt was sealed (publish phase) resumes, with loki resume or loki start --resume: it reuses that receipt and reruns only the PR step.");
+  }
   L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
   if (i.prUrl) L.push(`Merge: ${mergeText(i.merge)}`);
   return `${L.join("\n")}\n`;
