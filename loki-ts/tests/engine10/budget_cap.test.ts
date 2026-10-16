@@ -4,13 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { capMeter, capNote, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { capMeter, capNote, perAttemptCap, runnerBudget, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
 import { childEnv } from "../../src/engine10/session.ts";
 import { watchBudget } from "../../src/providers/provider_guard.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { USAGE } from "../../src/engine10/cli.ts";
-import { START_USAGE } from "../../src/commands/start.ts";
+import { engineArgv, START_USAGE, type ParsedStartOpts } from "../../src/commands/start.ts";
 import { buildProviderCost } from "../../src/providers/provider_cost.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
 
@@ -211,5 +211,31 @@ describe("live in-session cap", () => {
     await new Promise((r) => setTimeout(r, 20)); expect(killed).toBe("");
     hit = true; await new Promise((r) => setTimeout(r, 30));
     stop(); expect(killed).toBe("budget");
+  });
+});
+
+describe("every start mode honors the one cap", () => {
+  const base = { prdPath: "spec.md" } as ParsedStartOpts;
+  test("spec-first argv carries --max-cost", () => {
+    const a = engineArgv({ ...base, specFirst: true, budgetLimit: 3 }, "do it", false);
+    expect(a.slice(a.indexOf("--max-cost"))).toEqual(["--max-cost", "3"]);
+    expect(a).toContain("plan");
+  });
+  test("plain engine argv still carries --max-cost", () => {
+    expect(engineArgv({ ...base, budgetLimit: 2 }, "t", true)).toEqual([expect.anything(), "engine10", "t", "--no-pr", "--max-cost", "2"]);
+  });
+  test("runner default: explicit wins; API key gives the default; subscription gives none", () => {
+    expect(runnerBudget(4, "/nonexistent", {}).usd).toBe(4);
+    expect(runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x" } as NodeJS.ProcessEnv)).toEqual({ usd: DEFAULT_MAX_COST_USD, note: capNote(DEFAULT_MAX_COST_USD, "default") });
+    expect(runnerBudget(undefined, "/nonexistent", {} as NodeJS.ProcessEnv)).toEqual({ usd: undefined, note: null });
+  });
+  test("attempts split the total: 3 attempts on a $3 cap get $1 each", () => {
+    expect(perAttemptCap(3, 3)).toBe(1);
+    expect(perAttemptCap(1, 3)).toBe(0.33);
+    expect(perAttemptCap(0.01, 5)).toBe(0.01);
+    expect(perAttemptCap(5, 1)).toBe(5);
+    expect(perAttemptCap(undefined, 3)).toBeUndefined();
+    const a = engineArgv({ ...base, budgetLimit: perAttemptCap(3, 3) }, "t", true);
+    expect(a.slice(a.indexOf("--max-cost"))).toEqual(["--max-cost", "1"]);
   });
 });

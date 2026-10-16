@@ -43,3 +43,13 @@ export function costMeter(capUsd: number): { add(usd: unknown): void; over(): bo
 }
 /** LOKI_BUDGET_LIMIT for one session child: what is left of the cap, floored so a spent cap still reads as a (tiny) limit. null = no dollar cap. */
 export function childBudgetLimit(remaining: number | null): string | null { return remaining === null ? null : String(Math.round(Math.max(remaining, 0.01) * 100) / 100); }
+/** Legacy runner default: an explicit limit wins, else the same resolveCap answer engine10 uses (env, loki.yaml, $100 with an API key); undefined = no dollar cap. */
+export function runnerBudget(explicit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number | undefined; note: string | null } {
+  if (explicit !== undefined) return { usd: explicit, note: null };
+  const c = resolveCap(null, repoDir, env);
+  return "error" in c || c.usd <= 0 ? { usd: undefined, note: null } : { usd: c.usd, note: capNote(c.usd, c.source) };
+}
+/** `--attempts N` shares one total: each attempt gets total/N (cents, min 0.01). undefined = no dollar cap to divide. */
+export function perAttemptCap(totalUsd: number | undefined, n: number): number | undefined {
+  return totalUsd === undefined || totalUsd <= 0 || n <= 1 ? totalUsd : Math.max(Math.floor((totalUsd / n) * 100) / 100, 0.01);
+}

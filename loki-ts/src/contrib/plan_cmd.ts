@@ -1,20 +1,22 @@
 // `loki plan <task> --spec` (SPEC-FIRST-INTENT): one model session writes the intent card's criteria as schema-checked JSON;
 // the harness renders .loki/specs/<slug>.md for the user to edit, then `loki start --spec <file>` runs against it.
 import { relative } from "node:path";
+import { capMeter, capNote, resolveCap } from "../e10ext/budget_cap.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { generateSpec } from "../util/spec_file.ts";
 import { createSessionRunner, resolveModel, type EmitFn } from "../engine10/session.ts";
 import type { SessionRunner } from "../engine10/types.ts";
 
-export const PLAN_USAGE = "usage: loki plan <task> --spec [--force] [--provider <name>]\n  writes the acceptance criteria to .loki/specs/<slug>.md; edit it, then run: loki start --spec .loki/specs/<slug>.md\n";
+export const PLAN_USAGE = "usage: loki plan <task> --spec [--force] [--provider <name>] [--max-cost <usd>]\n  writes the acceptance criteria to .loki/specs/<slug>.md; edit it, then run: loki start --spec .loki/specs/<slug>.md\n";
 
 export async function main(args: string[], sessions?: SessionRunner): Promise<number> {
   const words: string[] = [];
-  let spec = false, force = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let spec = false, force = false, maxCost: string | null = null, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--spec") spec = true;
     else if (a === "--force") force = true;
+    else if (a === "--max-cost") maxCost = args[++i] ?? "";
     else if (a === "--provider") provider = args[++i] ?? provider;
     else words.push(a);
   }
@@ -22,7 +24,11 @@ export async function main(args: string[], sessions?: SessionRunner): Promise<nu
   if (!spec || !task) { process.stderr.write(PLAN_USAGE); return 2; }
   let repoDir: string;
   try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
-  const runner = sessions ?? createSessionRunner({ provider, model: resolveModel(provider), emit: ((): void => {}) as EmitFn, lokiRoot: `${repoDir}/.loki` });
+  const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
+  if (cap.usd > 0) process.env.LOKI_E10_MAX_COST_USD = String(cap.usd); // the session watcher and the meter below read the one cap
+  const meter = capMeter(((): void => {}) as EmitFn, process.env);
+  process.stdout.write(`${capNote(cap.usd, cap.source)}\n`);
+  const runner = sessions ?? createSessionRunner({ provider, model: resolveModel(provider), emit: meter.emit, remaining: meter.remaining, lokiRoot: `${repoDir}/.loki` });
   try {
     const r = await generateSpec({ task, repoDir, sessions: runner, force });
     const rel = relative(repoDir, r.path);
