@@ -796,6 +796,84 @@ def render_markdown(result: Dict[str, Any]) -> str:
     return "\n".join(L) + "\n"
 
 
+COST_TARGET_FRACTION = 0.5
+COST_FLOORS = ("raw-configured", "raw-bare")
+
+
+def _result_rows(out_dir: str) -> List[Dict[str, Any]]:
+    """Rows of every attribution-<stamp>.json in out_dir. Each row's spend is the
+    larger of the reported cost and the child-session ledger kept in the matching
+    evidence dir, when that ledger exists. Unmeasured stays None, never zero."""
+    rows: List[Dict[str, Any]] = []
+    try:
+        names = sorted(os.listdir(out_dir))
+    except OSError:
+        return rows
+    for name in names:
+        if not (name.startswith("attribution-") and name.endswith(".json")):
+            continue
+        try:
+            with open(os.path.join(out_dir, name)) as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        stamp = name[len("attribution-"):-len(".json")]
+        for r in data.get("rows", []) if isinstance(data, dict) else []:
+            r = dict(r)
+            ev = os.path.join(out_dir, "evidence-%s" % stamp,
+                              "%s-%s-%d" % (r.get("task"), r.get("arm"), r.get("repeat", 1)))
+            led = ledger_spend(ev)
+            vals = [v for v in (r.get("cost_usd"), r.get("true_cost_usd"), led)
+                    if v is not None]
+            r["cost_usd"] = float(max(vals)) if vals else None
+            rows.append(r)
+    return rows
+
+
+def render_cost_table(out_dir: str, arms: Tuple[str, ...] = ARMS) -> str:
+    """Cost per accepted task per arm from existing result files. No model call.
+    Ratios are against both raw floors; 'target' is COST_TARGET_FRACTION of the floor."""
+    rows = _result_rows(out_dir)
+    L = ["cost per accepted task (from existing results in %s)" % out_dir]
+    if not rows:
+        L.append("  no result files found; nothing measured")
+        return "\n".join(L) + "\n"
+    met = {a: compute_metrics([r for r in rows if r.get("arm") == a]) for a in arms}
+
+    def per_acc(a: str) -> Optional[float]:
+        return met[a]["cost_per_accepted_usd"]
+
+    def ratio(num: Optional[float], den: Optional[float], scale: float = 1.0) -> str:
+        if num is None or not den:
+            return "unmeasured"
+        return "%.2fx" % (num / (den * scale))
+
+    L.append("| Arm | Accepted | Total USD | USD per accepted | vs raw-configured | "
+             "vs raw-bare | vs %.1fx target (raw-configured) | vs %.1fx target (raw-bare) |"
+             % (COST_TARGET_FRACTION, COST_TARGET_FRACTION))
+    L.append("|---|---|---|---|---|---|---|---|")
+    for a in arms:
+        m = met[a]
+        if m["assigned"] == 0 or m["unmeasured_runs"] == m["assigned"]:
+            L.append("| %s | unmeasured | unmeasured | unmeasured | unmeasured | "
+                     "unmeasured | unmeasured | unmeasured |" % a)
+            continue
+        if m["cost_status"] == "undefined_no_accepted":
+            usd = "undefined (none accepted)"
+        elif m["cost_status"] == "measured":
+            usd = _fmt(m["cost_per_accepted_usd"], usd=True)
+        else:
+            usd = _cost_cell(m)
+        cells = [ratio(per_acc(a), per_acc(f)) for f in COST_FLOORS]
+        cells += [ratio(per_acc(a), per_acc(f), COST_TARGET_FRACTION) for f in COST_FLOORS]
+        L.append("| %s | %d | %s | %s | %s |" % (
+            a, m["accepted"], _fmt(m["spend_measured_usd"], usd=True), usd,
+            " | ".join(cells)))
+    L.append("Ratios are arm / floor cost per accepted; target ratio is arm / (%.1f * floor), "
+             "so <= 1.00x meets the target. Both floors are always shown." % COST_TARGET_FRACTION)
+    return "\n".join(L) + "\n"
+
+
 def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -> None:
     print("attribution plan (DRY RUN: no model call is made)")
     print("  model (claude arms): %s" % plan["model"])
@@ -877,6 +955,8 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
     env = pin_environment(probe=execute, runner=runner, model=args.model)
     if not execute:
         print_plan(plan, env, warnings)
+        if args.dry_run:
+            print(render_cost_table(args.out_dir), end="")
         if not args.dry_run:
             print("  pass --execute to run these cells for real (spends API budget)")
         return 0

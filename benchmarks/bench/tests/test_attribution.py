@@ -760,5 +760,78 @@ class LokiBinaryPinTest(unittest.TestCase):
         self.assertEqual(A.pin_environment(False)["loki_bin"], self.L.loki_bin())
 
 
+class CostTableTest(unittest.TestCase):
+    """--dry-run prints cost per accepted from existing result files; no spend."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="costtable-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def _write(self, rows, stamp="20260101T000000Z"):
+        import json
+        with open(os.path.join(self.d, "attribution-%s.json" % stamp), "w") as fh:
+            json.dump({"rows": rows}, fh)
+
+    def _ledger(self, task, arm, usd, stamp="20260101T000000Z", rep=1):
+        import json
+        mdir = os.path.join(self.d, "evidence-%s" % stamp,
+                            "%s-%s-%d" % (task, arm, rep), ".loki", "metrics")
+        os.makedirs(mdir)
+        with open(os.path.join(mdir, "child-sessions.jsonl"), "w") as fh:
+            fh.write(json.dumps({"usd": usd}) + "\n")
+
+    def _table(self):
+        return A.render_cost_table(self.d)
+
+    def _line(self, text, arm):
+        return [ln for ln in text.splitlines() if ln.startswith("| %s " % arm)][0]
+
+    def test_ratios_against_both_floors_and_target(self):
+        self._write([
+            row("raw-configured", True, cost=4.0), row("raw-bare", True, cost=2.0),
+            row("loki", True, cost=1.0)])
+        text = self._table()
+        loki = self._line(text, "loki")
+        self.assertIn("$1.0000", loki)
+        self.assertIn("0.25x", loki)   # vs raw-configured 4.0
+        self.assertIn("0.50x", loki)   # vs raw-bare 2.0
+        self.assertIn("1.00x", loki)   # 1.0 / (0.5 * raw-bare 2.0)
+
+    def test_missing_arm_prints_unmeasured_not_zero(self):
+        self._write([row("raw-configured", True, cost=4.0), row("loki", True, cost=1.0)])
+        text = self._table()
+        self.assertIn("unmeasured", self._line(text, "raw-bare"))
+        loki = self._line(text, "loki")
+        self.assertIn("unmeasured", loki)  # ratio vs absent raw-bare floor
+        self.assertNotIn("0.00x", text)
+
+    def test_none_accepted_has_no_ratio(self):
+        self._write([row("raw-configured", True, cost=4.0), row("loki", False, cost=1.0)])
+        loki = self._line(self._table(), "loki")
+        self.assertIn("undefined", loki)
+
+    def test_child_session_ledger_included(self):
+        r = row("loki", True, cost=1.0)
+        r["task"] = "tk"
+        self._write([row("raw-configured", True, cost=4.0), r])
+        self._ledger("tk", "loki", 3.0)
+        loki = self._line(self._table(), "loki")
+        self.assertIn("$3.0000", loki)  # larger of reported and ledger
+
+    def test_no_result_files(self):
+        text = self._table()
+        self.assertIn("no result files", text)
+
+    def test_dry_run_prints_table_without_model_call(self):
+        self._write([row("raw-configured", True, cost=4.0), row("loki", True, cost=1.0)])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = A.main(["--dry-run", "--out-dir", self.d],
+                        runner=lambda *a, **k: 1 / 0)
+        self.assertEqual(rc, 0)
+        self.assertIn("cost per accepted", out.getvalue())
+        self.assertIn("DRY RUN", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
