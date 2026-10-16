@@ -19,6 +19,7 @@
 //
 // Pure functions over strings, so no fixtures and no tmpdir are needed.
 
+import { rerunOnQuota, sessionKind } from "../../src/runner/retry_class.ts";
 import { describe, expect, it } from "bun:test";
 import { classifyFailure, shouldStopRetrying } from "../../src/runner/retry_class.ts";
 
@@ -145,5 +146,23 @@ describe("shouldStopRetrying: LOKI_SMART_RETRY=0 restores retry-everything", () 
   it("is on by default when the knob is unset", () => {
     const d = classifyFailure("Error: invalid x-api-key");
     expect(shouldStopRetrying(d, {})).toBe(true);
+  });
+});
+
+describe("P12-09b rerunOnQuota bounds", () => {
+  const quota = { exit: 1, stderrTail: "insufficient_quota" };
+  const kindOf = (r: { exit: number; stderrTail?: string }) => sessionKind(r);
+  it("a timer that fires 1 ms early still returns at or after the deadline", async () => {
+    let now = 0;
+    const clock = { now: () => now, sleep: async (ms: number) => { now += ms > 1 ? ms - 1 : ms; } };
+    await rerunOnQuota(async () => quota, kindOf, clock, undefined, 100_000);
+    expect(now).toBeGreaterThanOrEqual(100_000);
+  });
+  it("a stop predicate (dollar cap) ends the wait between attempts", async () => {
+    let now = 0, calls = 0, over = false;
+    const clock = { now: () => now, sleep: async (ms: number) => { now += ms; over = true; } };
+    const r = await rerunOnQuota(async () => { calls++; return quota; }, kindOf, clock, undefined, 10_000_000, () => over);
+    expect(calls).toBe(1);
+    expect(r.exit).toBe(1);
   });
 });

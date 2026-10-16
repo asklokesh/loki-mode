@@ -5,7 +5,7 @@
 //   1. provider-reported dollars (aider "Cost: $X session"): estimated=false
 //   2. provider-reported tokens (codex, aider, cline), priced from the table: estimated=true
 //   3. prompt/response sizes, priced from the table: estimated=true
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CostResult } from "../engine10/cost.ts";
 import { estimateTokens, priceFor, usdFor } from "../providers/price_table.ts";
@@ -172,4 +172,33 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
   }
   writeFileSync(join(dir, `iteration-${n}.json`), JSON.stringify(rec));
   return n;
+}
+
+// P12-09b: a quota rerun reuses its iterationId, and the result-cost file is keyed by it. Kept here (outside the engine10 core line budget).
+const costFile = (lokiRoot: string, id: string): string => join(lokiRoot, "metrics", `result-cost-${id}.json`);
+/** Moves the earlier attempt's result-cost aside (-q<k>) so the rerun cannot overwrite it. */
+export function archivePriorCost(lokiRoot: string, id: string): void {
+  if (!existsSync(costFile(lokiRoot, id))) return;
+  let k = 1; while (existsSync(costFile(lokiRoot, `${id}-q${k}`))) k++;
+  renameSync(costFile(lokiRoot, id), costFile(lokiRoot, `${id}-q${k}`));
+}
+/** Archives the earlier attempt's cost in the session's own .loki and in lokiRoot (they differ for a wall temp dir). */
+export function archivePriorCosts(lokiRoot: string | undefined, cwd: string | undefined, id: string): void {
+  if (lokiRoot) for (const root of new Set([join(cwd ?? process.cwd(), ".loki"), lokiRoot])) archivePriorCost(root, id);
+}
+/** ids plus every archived earlier attempt of them, so a sum counts each attempt once. */
+export function withArchivedCosts(lokiRoot: string, ids: string[], keep: (archivedId: string) => boolean = () => true): string[] {
+  let files: string[] = []; try { files = readdirSync(join(lokiRoot, "metrics")); } catch { /* none yet */ }
+  return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)).filter(keep))])];
+}
+/** E-69 "never ran" shape of a result-cost file: a quota error result is always exactly $0, with all four usage counts 0 and source not the unmetered marker. Unreadable or any other shape is not it (an unknown cost must stay in the sum, flagged partial). */
+export function neverRan(path: string, unmeteredMarker: string): boolean {
+  try {
+    const r = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>, n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    return r["total_cost_usd"] === 0 && r["source"] !== unmeteredMarker && ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"].every((k) => n(r[k]) === 0);
+  } catch { return false; }
+}
+/** Sum ids for a run: ids plus archived earlier quota attempts, minus archives that never ran. Follow-up (telemetry only): seal.ts's router sum ignores archived ids. */
+export function liveArchivedCosts(lokiRoot: string, ids: string[], unmeteredMarker: string): string[] {
+  return withArchivedCosts(lokiRoot, ids, (id) => !neverRan(join(lokiRoot, "metrics", `result-cost-${id}.json`), unmeteredMarker));
 }

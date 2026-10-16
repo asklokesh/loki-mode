@@ -174,7 +174,7 @@ export function readResultCost(lokiRoot: string, iteration: string): CostResult 
 }
 
 // E-06b efficiency record writers live in providers/provider_cost.ts (engine10 core line budget); re-exported for existing callers.
-export { type EfficiencySessionInfo, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
+export { type EfficiencySessionInfo, liveArchivedCosts, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 import { type EfficiencySessionInfo, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 
 // What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
