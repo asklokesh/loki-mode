@@ -135,7 +135,7 @@ export function detectWaveCommands(inv: InventoryResult, target: string): Record
   if (system === "maven") {
     // failsafe binds ITs to verify; surefire-only projects run IT-named classes through test; neither fails closed (null).
     const integration: StepCommand | null = text().includes("maven-failsafe-plugin") ? { argv: ["mvn", "-B", "verify"] }
-      : inv.files.some((f) => /(IT|ITCase|IntegrationTest)\.java$/.test(f)) ? { argv: ["mvn", "-B", "test", "-Dtest=*IT,*ITCase,*IntegrationTest", "-Dsurefire.failIfNoSpecifiedTests=false"] } : null;
+      : inv.files.some((f) => ["IT.java", "ITCase.java", "IntegrationTest.java"].some((x) => f.endsWith(x))) ? { argv: ["mvn", "-B", "test", "-Dtest=*IT,*ITCase,*IntegrationTest", "-Dsurefire.failIfNoSpecifiedTests=false"] } : null;
     return { build: { argv: ["mvn", "-B", "-q", "compile"] }, integration, original_suite: { argv: ["mvn", "-B", "test"] } };
   }
   if (system === "gradle") {
