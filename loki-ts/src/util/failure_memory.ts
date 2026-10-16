@@ -100,10 +100,6 @@ export function readFingerprints(dir: string): FingerprintRow[] {
     return [];
   }
 }
-/** The HEAD tree hash of a checkout, or "" when it cannot be read; never throws. */
-export function headTree(repoDir: string): string {
-  try { return safeGit(repoDir, ["rev-parse", "HEAD^{tree}"]).trim(); } catch { return ""; }
-}
 /** Appends one row per string name; never throws. Returns the accepted names. */
 export function recordFingerprints(dir: string, runId: string, cls: string, names: unknown, tree = ""): string[] {
   const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === "string" && n !== "") : [];
@@ -125,6 +121,13 @@ export function recordFingerprints(dir: string, runId: string, cls: string, name
   return list;
 }
 /** P12-11b: rerun evidence for decideRecovery. Only a flaky row recorded against THIS tree id counts (verify reruns on one tree, so the row's tree is both the failing and passing tree). Rows without a tree, or from another tree, prove nothing. */
+export function cleanTreeId(cwd: string): string {
+  try {
+    const st = safeGit(cwd, ["status", "--porcelain", "--untracked-files=all"]);
+    if (st.split("\n").some((l) => l.trim() !== "" && !/^.. "?\.loki\//.test(l))) return "";
+    return safeGit(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
+  } catch { return ""; }
+}
 export function flakyRerunSignal(dir: string, tree: string): { test: string; failTree: string; passTree: string } | undefined {
   if (tree === "") return undefined;
   const row = readFingerprints(dir).findLast((r) => r.cls === "flaky" && r.tree === tree);

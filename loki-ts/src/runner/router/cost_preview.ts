@@ -99,9 +99,10 @@ export function outcomeFor(shape: string, model: string, verdict: string, usd: n
   return null;
 }
 
-/** The model the implement stage actually ran: the routed model, else its recorded model, else the run model. History is keyed on this, not the run model (reader/writer key contract). */
-export function ranModel(implement: Record<string, unknown> | undefined, runModel: string): string {
-  const m = implement?.["route_model"] ?? implement?.["model"];
+/** The model the run ended on: the last fix round's model (the final rung), else implement's routed model, else its recorded model, else the run model. History is keyed on this, not the run model, so an escalated run records once under its final rung (reader/writer key contract). */
+export function ranModel(implement: Record<string, unknown> | undefined, runModel: string, fix?: Record<string, unknown>): string {
+  const f = fix?.["model"];
+  const m = typeof f === "string" && f.length > 0 ? f : implement?.["route_model"] ?? implement?.["model"];
   return typeof m === "string" && m.length > 0 ? m : runModel;
 }
 
