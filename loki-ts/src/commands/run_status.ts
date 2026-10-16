@@ -94,7 +94,7 @@ export function pickRun(root: string, nowMs: number): { id: string; events: Even
 export function render(s: ModernStatus): string {
   const cost = s.cost_usd === null ? "cost not measured" : `$${s.cost_usd.toFixed(2)}`;
   const lines = [
-    `Loki 10 run ${s.run_id}: ${s.outcome}${s.stage ? `, ${s.stage}` : ""}`,
+    `Loki 10 run ${s.run_id}: ${s.state}${s.outcome !== s.state && /^[A-Z_]+$/.test(s.outcome) ? ` (${s.outcome})` : ""}${s.stage ? `, ${s.stage}` : ""}`,
     `  ${s.ref ?? "text task"}, ${formatDuration(s.elapsed_s ?? 0)} elapsed, ${cost}`,
     `  PR: ${s.pr_url ?? "none"}, receipt: ${s.receipt_path ?? "not sealed yet"}`,
   ];

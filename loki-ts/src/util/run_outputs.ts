@@ -233,8 +233,9 @@ export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: st
 export type StatusExtra = { prUrl?: string | null; outcome?: string | null; reason?: string | null };
 /** Projector for the issue status comment: each call re-reads the run's events, renders the body and upserts it through `issue-comment --update`.
  *  Calls are serialised (two in flight would both see no comment and create twice) and an unchanged body is not re-posted. */
-export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv; repoDir: string; runDir: string; runId: string; issueRef: string; eventsPath: string }): (x?: StatusExtra) => Promise<{ argv: string[]; ok: boolean } | null> {
+export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv; origin?: string | null; repoDir: string; runDir: string; runId: string; issueRef: string; eventsPath: string }): (x?: StatusExtra) => Promise<{ argv: string[]; ok: boolean } | null> {
   let chain: Promise<unknown> = Promise.resolve(), last = "";
+  const env = o.origin ? { ...o.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: o.origin } : o.env; // engine10-push.sh refuses an unpinned origin
   const argvOf = (bodyFile: string): string[] => ["issue-comment", "--update", o.issueRef, bodyFile];
   const once = async (x: StatusExtra): Promise<{ argv: string[]; ok: boolean } | null> => {
     const events = readEvents(o.eventsPath), since = Date.parse(events[0]?.ts ?? "") || 0;
@@ -243,7 +244,7 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
     const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
     if (body === last) return { argv, ok: true };
     mkdirSync(o.runDir, { recursive: true }); writeFileSync(bodyFile, body);
-    const ok = await new Promise<boolean>((res) => { execFile("bash", [o.pushSh, ...argv], { env: o.env }, (err) => res(!err)); });
+    const ok = await new Promise<boolean>((res) => { execFile("bash", [o.pushSh, ...argv], { env }, (err) => res(!err)); });
     if (ok) last = body;
     return { argv, ok };
   };

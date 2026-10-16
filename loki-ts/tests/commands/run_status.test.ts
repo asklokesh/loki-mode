@@ -1,12 +1,13 @@
 // CLI-MODERN-2: `loki status` shows Loki 10 runs and never the legacy box.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
-import { NO_RUN_HINT, runIntentShow, runModernStatus } from "../../src/commands/run_status.ts";
+import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
+import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "e10-modern-status-")); });
@@ -51,7 +52,7 @@ describe("loki status (Loki 10)", () => {
   test("a live run is preferred over a newer-named completed one and shows its stage", async () => {
     writeRun("e10-20261003T000000Z-aaaa", { done: false });
     const { out } = await run([]);
-    expect(out).toContain("running, implement");
+    expect(out).toContain("executing, implement");
   });
 
   test("only a stale STATUS.txt: no legacy box, one hint line", async () => {
@@ -147,6 +148,22 @@ describe("work-item state (one vocabulary)", () => {
     expect(workItemState(ev)).toBe("executing");
     expect(workItemState(ev, Date.parse("2026-10-15T00:31:00Z"))).toBe("stalled");
     expect(workItemState(ev, Date.parse("2026-10-15T00:10:00Z"))).toBe("executing");
+  });
+  test("text status renders the state; the verdict stays detail", () => {
+    const first = (ev: EventEnvelope[]): string => render({ ...summarize("e10-x", ev, dir, Date.now()), control_plane_url: null } as never).split("\n")[0]!;
+    expect(first(mk(["run.started", null], ["run.completed", null, { verdict: "SPEC_CONFLICT" }]))).toMatch(/^Loki 10 run e10-x: waiting_for_input/);
+    expect(first(mk(["run.started", null], ["cap.hit", null], ["run.completed", null, { verdict: "PARTIAL" }]))).toMatch(/^Loki 10 run e10-x: budget_stopped/);
+  });
+  test("the projector reaches the real push script only with the pinned origin (main() env has no pin)", async () => {
+    const bin = join(dir, "bin"), ghLog = join(dir, "gh.log"); mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${ghLog}"\nexit 0\n`); chmodSync(join(bin, "gh"), 0o755);
+    const runDir = join(dir, ".loki", "runs", "r3"), eventsPath = join(runDir, "events.jsonl");
+    new EventLog(eventsPath, "r3").append("run.started", null, {});
+    const base = { ...process.env, PATH: `${bin}:${process.env.PATH}` }; delete base._LOKI_ORIGIN_PINNED; delete base._LOKI_PINNED_ORIGIN;
+    const o = { pushSh: DEFAULT_PUSH_SH, env: base, repoDir: dir, runDir, runId: "r3", issueRef: "octocat/hello#9", eventsPath };
+    expect((await issueStatusProjector(o)())!.ok).toBe(false);
+    expect((await issueStatusProjector({ ...o, origin: "https://github.com/octocat/hello.git" })())!.ok).toBe(true);
+    expect(readFileSync(ghLog, "utf8")).toContain("octocat/hello");
   });
   test("loki status --json emits state", async () => {
     writeRun("e10-20261003T000000Z-dddd", { done: true });
