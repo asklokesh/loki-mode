@@ -26110,14 +26110,14 @@ _merge_pr_gated() {
         if command -v jq >/dev/null 2>&1; then
             # Every clean proof for this head must agree: an older VERIFIED
             # never overrides a newer NOT_PROVEN. A proof taken on a dirty tree
-            # (facts.git.dirty true; .loki/ is excluded from that flag) judged
+            # (facts.git.dirty anything but literal false, incl. missing/null; .loki/ is excluded from that flag) judged
             # bytes other than the commit and is ignored.
             local hl="" disagree=false
             for pj in "${cands[@]}"; do
                 [ -f "$pj" ] || continue
                 ph="$(jq -r '.facts.git.head_sha // empty' "$pj" 2>/dev/null)"
                 [ "$ph" = "$head" ] || continue
-                if [ "$(jq -r '.facts.git.dirty // false' "$pj" 2>/dev/null)" = "true" ]; then
+                if [ "$(jq -r 'if .facts.git.dirty == false then "false" else "true" end' "$pj" 2>/dev/null)" != "false" ]; then
                     dirty_n=$((dirty_n + 1)); continue
                 fi
                 hl="$(jq -r '.honesty.headline // empty' "$pj" 2>/dev/null)"
