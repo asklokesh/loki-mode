@@ -349,6 +349,18 @@ describe("P12-17 thread steer, live allowlist, revoked actors, durable dedup", (
     expect(seen!.env.SLACK_BOT_TOKEN).toBeUndefined();
     await expect(spawnRunDeps("/nope", {}, "/x/loki", undefined, exec as never).steer!("e10-1", "U1", "-rf")).rejects.toThrow();
   });
+  test("steer never claims success without a parsed rev (prompt injection off), and refuses bare help", async () => {
+    const off = (_c: string, _a: string[], _o: unknown, cb: (e: Error | null, out: string, err?: string) => void) => cb(null, "Steering note (rev 2) written to .loki/HUMAN_INPUT.md\nNote: LOKI_PROMPT_INJECTION is off, so the run will NOT read this.\n", "");
+    const ack = await spawnRunDeps("/nope", {}, "/x/loki", undefined, off as never).steer!("e10-1", "U1", "go left");
+    expect(ack.startsWith("Steer not confirmed: Steering note")).toBe(true);
+    expect(ack).not.toContain("received");
+    const none = (_c: string, _a: string[], _o: unknown, cb: (e: Error | null, out: string, err?: string) => void) => cb(null, "", "");
+    expect(await spawnRunDeps("/nope", {}, "/x/loki", undefined, none as never).steer!("e10-1", "U1", "go left")).toBe("Steer not confirmed: no confirmation from loki steer");
+    let called = 0;
+    const spy = (_c: string, _a: string[], _o: unknown, cb: (e: Error | null, out: string) => void) => { called++; cb(null, "usage: loki steer <text>\n"); };
+    for (const t of ["help", "HELP", " -h "]) await expect(spawnRunDeps("/nope", {}, "/x/loki", undefined, spy as never).steer!("e10-1", "U1", t)).rejects.toThrow();
+    expect(called).toBe(0);
+  });
   test("dedup file is trimmed to the last 1000 lines once it passes 2000", async () => {
     const d = mkdtempSync(join(tmpdir(), "slk-")), file = join(d, "seen");
     try {

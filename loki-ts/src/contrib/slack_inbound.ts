@@ -174,7 +174,7 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; stdio: "ignore" }) => ReturnType<typeof spawn>;
 /** Default run launcher: spawns REPO_ROOT/bin/loki "<task>" (never argv[1]) and discovers the run dir it creates. */
-type ExecFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }, cb: (err: Error | null, stdout: string) => void) => unknown;
+type ExecFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }, cb: (err: Error | null, stdout: string, stderr?: string) => void) => unknown;
 export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = join(REPO_ROOT, "bin", "loki"), spawnFn: SpawnFn = spawn as SpawnFn, execFn: ExecFn = execFile as unknown as ExecFn): Pick<InboundDeps, "startRun" | "steer"> {
   const runsDir = join(repoDir, ".loki", "runs");
   const list = (): string[] => (existsSync(runsDir) ? readdirSync(runsDir) : []);
@@ -196,12 +196,14 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
     },
     async steer(_runId, actor, text) {
       const note = text.replace(/[\r\n]+/g, " ").trim();
-      if (!note || note.startsWith("-")) throw new Error("invalid steer text");
+      if (!note || note.startsWith("-") || /^(help|h)$/i.test(note)) throw new Error("invalid steer text");
       const out = await new Promise<string>((res, rej) => {
-        execFn(cliPath, ["steer", note], { cwd: repoDir, env: { ...childEnv(env), LOKI_STEER_SOURCE: "slack", LOKI_STEER_ACTOR: `slack-${actor.replace(/[^A-Za-z0-9]/g, "")}` }, timeout: 30_000 }, (err, stdout) => (err ? rej(err) : res(String(stdout))));
+        execFn(cliPath, ["steer", note], { cwd: repoDir, env: { ...childEnv(env), LOKI_STEER_SOURCE: "slack", LOKI_STEER_ACTOR: `slack-${actor.replace(/[^A-Za-z0-9]/g, "")}` }, timeout: 30_000 }, (err, stdout, stderr) => (err ? rej(err) : res(String(stdout) + "\n" + String(stderr ?? ""))));
       });
       const m = /Steer rev (\d+) received/.exec(out);
-      return m ? `Steer rev ${m[1]} received: applies at next plan/implement stage.` : "Steer received: applies at next plan/implement stage.";
+      if (m) return `Steer rev ${m[1]} received: applies at next plan/implement stage.`;
+      const first = out.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "no confirmation from loki steer";
+      return `Steer not confirmed: ${first.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 120)}`;
     },
   };
 }
