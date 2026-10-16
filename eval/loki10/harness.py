@@ -220,8 +220,8 @@ def validate_task(task_dir):
         errs.append("repo must be an object")
     else:
         src = repo.get("source")
-        if not isinstance(src, str) or not (src.startswith("/") or "://" in src or src.startswith("git@")):
-            errs.append("repo.source must be a git url or absolute path")
+        if not isinstance(src, str) or not src.strip() or ".." in src.replace("\\", "/").split("/"):
+            errs.append("repo.source must be a git url, an absolute path, or a path relative to eval/loki10 without '..'")
         if not isinstance(repo.get("ref"), str) or not re.fullmatch(r"[0-9a-f]{7,40}", repo["ref"]):
             errs.append("repo.ref must be a commit sha (7-40 lowercase hex)")
     if t.get("setup") is not None and not isinstance(t.get("setup"), str):
@@ -709,18 +709,11 @@ def arm_auth(min_valid_s):
 
 
 def resolve_source(src):
-    """Map a task's repo.source onto this checkout when it names a path in the
-    founder's main checkout that does not exist here (CI, worktrees, clones).
-
-    Tasks pin fixtures like <main-checkout>/eval/loki10/fixtures/... as an
-    absolute path; the same file is tracked in this repo under HERE.
-    """
-    marker = "/eval/loki10/"
-    if src.startswith("/") and not os.path.exists(src) and marker in src:
-        local = os.path.join(HERE, src.split(marker, 1)[1])
-        if os.path.exists(local):
-            return local
-    return src
+    """A repo.source that is neither a URL nor absolute is a path relative to
+    this directory (HERE), so tracked fixtures stay portable across checkouts."""
+    if src.startswith("/") or "://" in src or src.startswith("git@"):
+        return src
+    return os.path.normpath(os.path.join(HERE, src))
 
 
 def prepare_checkout(task, rundir, env, log):
