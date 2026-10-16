@@ -538,6 +538,36 @@ def run_case(func, args, kwargs):
 # CLI
 # --------------------------------------------------------------------------
 
+def _stub_unit_functions(namespace, unit_path):
+    """No-op ablation: every plain function defined in the unit file becomes a
+    stub returning None. runpy.run_path returns a copy of the module globals, so
+    only the entry's own stub matters here; functions called internally still
+    see the real module. __wrapped__ keeps the original signature visible to the
+    boundary check on Python 3 (inspect.signature follows it). Returns the set of
+    names replaced; an entry outside it (imported function, bound-method alias,
+    functools.partial, callable instance) was NOT stubbed."""
+    import types
+    want = os.path.realpath(unit_path)
+    replaced = set()
+    for name in list(namespace.keys()):
+        func = namespace[name]
+        if not isinstance(func, types.FunctionType):
+            continue
+        if os.path.realpath(func.__code__.co_filename) != want:
+            continue
+        namespace[name] = _make_stub(func)
+        replaced.add(name)
+    return replaced
+
+
+def _make_stub(original):
+    def stub(*_args, **_kwargs):
+        return None
+    stub.__name__ = original.__name__
+    stub.__wrapped__ = original
+    return stub
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Python 2/3 capture tracer (Loki Modernize M-09)")
     parser.add_argument("--unit", required=True, help="path to the unit's .py source")
@@ -545,6 +575,8 @@ def main(argv=None):
     parser.add_argument("--out", required=True, help="output cases.jsonl path")
     parser.add_argument("--coverage", help="output coverage.json path")
     parser.add_argument("--boundaries", help="JSON file of declared text/bytes boundaries")
+    parser.add_argument("--stub", action="store_true",
+                        help="no-op ablation: replace every function defined in the unit file with a stub returning None")
     args = parser.parse_args(argv)
 
     unit_path = os.path.abspath(args.unit)
@@ -566,6 +598,10 @@ def main(argv=None):
         sys.stderr.write("py_capture: failed to load unit %s: %s\n" % (args.unit, exc))
         return 2
 
+    stubbed = None
+    if args.stub:
+        stubbed = _stub_unit_functions(namespace, unit_path)
+
     with open(args.cases, "r") as fh:
         case_lines = [line for line in fh if line.strip()]
 
@@ -575,6 +611,9 @@ def main(argv=None):
         spec = json.loads(line)
         entry = spec["entry"]
         entries_used.add(entry)
+        if stubbed is not None and entry not in stubbed:
+            sys.stderr.write("py_capture: --stub could not stub entry %s\n" % entry)
+            return 2
         func = namespace.get(entry)
         if func is None or not callable(func):
             sys.stderr.write("py_capture: entry not found or not callable: %s\n" % entry)
