@@ -457,6 +457,21 @@ describe("active human seconds (P12-31)", () => {
     expect(JSON.parse(readFileSync(ivPath, "utf8")).active_s).toBe(60);
   });
 
+  it("a malformed active_s is dropped by handlePause and by recordActiveSeconds, never coerced to 0", async () => {
+    const stateDir = join(dir, "state");
+    mkdirSync(stateDir, { recursive: true });
+    const ivPath = join(stateDir, "interventions.json");
+    for (const bad of [12.5, -3, "7"]) {
+      writeFileSync(ivPath, JSON.stringify({ count: 1, by_type: {}, waited_s: 0, active_s: bad }));
+      touch(join(dir, "PAUSE"));
+      await handlePause({ lokiDirOverride: dir, pollIntervalMs: 5, maxWaitMs: 20, isTTY: false });
+      expect("active_s" in JSON.parse(readFileSync(ivPath, "utf8"))).toBe(false);
+      writeFileSync(ivPath, JSON.stringify({ count: 1, active_s: bad }));
+      recordActiveSeconds(30, { lokiDirOverride: dir });
+      expect("active_s" in JSON.parse(readFileSync(ivPath, "utf8"))).toBe(false);
+    }
+  });
+
   it("no recorded active time leaves active_s absent after a pause", async () => {
     touch(join(dir, "PAUSE"));
     await handlePause({ lokiDirOverride: dir, pollIntervalMs: 5, maxWaitMs: 20, isTTY: false });

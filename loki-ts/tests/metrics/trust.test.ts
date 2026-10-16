@@ -414,6 +414,16 @@ describe("computeTrajectory: outcome effort", () => {
     expect(formatTrajectoryHuman(computeTrajectory(td))).toContain("Active minutes per accepted: n/a (not measured)");
   });
 
+  it("a malformed active_s (float, negative) is unmeasured, not 0", () => {
+    for (const [i, bad] of [1.5, -1].entries()) {
+      raw(`r${i + 1}`, {
+        verdict: "VERIFIED",
+        interventions_detail: { by_type: { steer: 0, input: 1, authorization: 0, repair: 0 }, waited_s: 60, active_s: bad },
+      });
+    }
+    expect(computeTrajectory(td).outcome_effort.active_min_per_accepted).toBeNull();
+  });
+
   it("cost per accepted is total spend over all attempts / accepted", () => {
     raw("r1", { verdict: "VERIFIED", cost: { usd: 1 } });
     raw("r2", { verdict: "FAILED", cost: { usd: 3 } });

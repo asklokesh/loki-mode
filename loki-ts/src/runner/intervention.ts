@@ -412,6 +412,10 @@ function readIv(ivPath: string): Record<string, unknown> {
 
 const IV_TYPES: InterventionType[] = ["steer", "input", "authorization", "repair"];
 
+function isNonNegInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
 function nonNegInt(v: unknown): number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0;
 }
@@ -449,11 +453,14 @@ export function recordActiveSeconds(seconds: number, opts: { lokiDirOverride?: s
     const stateDir = join(resolveLokiDir(opts.lokiDirOverride), "state");
     mkdirSync(stateDir, { recursive: true });
     const ivPath = join(stateDir, "interventions.json");
-    const cur = readIv(ivPath);
-    atomicWriteFileSync(
-      ivPath,
-      JSON.stringify({ ...cur, active_s: nonNegInt(cur["active_s"]) + Math.round(seconds) }) + "\n",
-    );
+    const { active_s: prior, ...rest } = readIv(ivPath);
+    // A malformed prior active_s is dropped (unmeasured), never coerced to 0
+    // and then topped up into a total that looks measured.
+    if (prior !== undefined && !isNonNegInt(prior)) {
+      atomicWriteFileSync(ivPath, JSON.stringify(rest) + "\n");
+      return;
+    }
+    atomicWriteFileSync(ivPath, JSON.stringify({ ...rest, active_s: (prior ?? 0) + Math.round(seconds) }) + "\n");
   } catch {
     // Non-fatal.
   }
@@ -523,7 +530,7 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
         waited_s: nonNegInt(prev["waited_s"]),
         // active_s is written only by recordActiveSeconds; carry it forward
         // when present, never invent a 0 for an unmeasured value.
-        ...(typeof prev["active_s"] === "number" ? { active_s: nonNegInt(prev["active_s"]) } : {}),
+        ...(isNonNegInt(prev["active_s"]) ? { active_s: prev["active_s"] } : {}),
       }) + "\n",
     );
   } catch {

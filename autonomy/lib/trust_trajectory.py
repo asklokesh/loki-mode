@@ -199,7 +199,7 @@ def _intervention_detail(proof):
     w = d.get("waited_s")
     ws = w if isinstance(w, (int, float)) and not isinstance(w, bool) and w >= 0 else None
     a = d.get("active_s")
-    act = a if isinstance(a, (int, float)) and not isinstance(a, bool) and a >= 0 else None
+    act = a if isinstance(a, int) and not isinstance(a, bool) and a >= 0 else None
     return (out if any_key else None), ws, act
 
 

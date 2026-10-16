@@ -250,6 +250,14 @@ class TestRobustness(unittest.TestCase):
 
 
 class TestNoPII(unittest.TestCase):
+    def test_malformed_active_s_is_unmeasured(self):
+        self.assertEqual(
+            tt._intervention_detail({"interventions_detail": {"active_s": 1.5}})[2], None)
+        self.assertEqual(
+            tt._intervention_detail({"interventions_detail": {"active_s": -1}})[2], None)
+        self.assertEqual(
+            tt._intervention_detail({"interventions_detail": {"active_s": 90}})[2], 90)
+
     def test_only_derived_fields_leave_the_function(self):
         # A proof carrying a secret-looking spec/diff must NOT surface that
         # text anywhere in the trajectory output. Only run_id, timestamps, and

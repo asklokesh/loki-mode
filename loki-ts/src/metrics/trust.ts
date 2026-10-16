@@ -251,7 +251,7 @@ function interventionDetail(proof: Record<string, unknown>): { by_type: Interven
   const w = d["waited_s"];
   const ws = typeof w === "number" && Number.isFinite(w) && w >= 0 ? w : null;
   const a = d["active_s"];
-  const as = typeof a === "number" && Number.isFinite(a) && a >= 0 ? a : null;
+  const as = typeof a === "number" && Number.isInteger(a) && a >= 0 ? a : null;
   return { by_type: any ? out : null, waited_s: ws, active_s: as };
 }
 
