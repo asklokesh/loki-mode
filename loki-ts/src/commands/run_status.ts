@@ -6,7 +6,7 @@ import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
-import { STALE_S, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
+import { STALE_S, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { writeRunControl, type RunControlAction } from "../util/run_control.ts";
 import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
@@ -27,6 +27,9 @@ export interface ModernStatus {
   pr_url: string | null;
   receipt_path: string | null;
   control_plane_url: string | null;
+  last_event_ago_s: number | null;
+  last_event_seq: number | null;
+  control_plane_run_url?: string | null;
 }
 
 export function runsRoot(env: NodeJS.ProcessEnv, repoDir: string): string {
@@ -51,7 +54,7 @@ export function eventsPath(root: string, runId: string): string {
 const lastTs = (ev: EventEnvelope[]): number => (ev.length ? Date.parse(ev[ev.length - 1]!.ts) : 0);
 
 /** Pure: the status record for one run's events. */
-export function summarize(runId: string, events: EventEnvelope[], root: string, nowMs: number): Omit<ModernStatus, "control_plane_url"> {
+export function summarize(runId: string, events: EventEnvelope[], root: string, nowMs: number): Omit<ModernStatus, "control_plane_url" | "control_plane_run_url"> {
   const f = fold(events);
   const done = f.run.completed !== null;
   const startMs = f.run.started ? Date.parse(f.run.started.ts) : (events[0] ? Date.parse(events[0].ts) : nowMs);
@@ -79,6 +82,8 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
     cost_usd: f.cost.usd,
     outcome: state === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : state === "stalled" ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
+    last_event_ago_s: events.length && Number.isFinite(lastTs(events)) ? Math.max(0, Math.round((nowMs - lastTs(events)) / 1000)) : null,
+    last_event_seq: events.length ? events[events.length - 1]!.seq : null,
     receipt_path: typeof sealed === "string" && sealed ? sealed : existsSync(receipt) ? receipt : null,
   };
 }
@@ -103,8 +108,10 @@ export function render(s: ModernStatus): string {
     `  ${s.ref ?? "text task"}, ${formatDuration(s.elapsed_s ?? 0)} elapsed, ${cost}`,
     `  PR: ${s.pr_url ?? "none"}, receipt: ${s.receipt_path ?? "not sealed yet"}`,
   ];
+  if (s.last_event_seq !== null && s.last_event_ago_s !== null) lines.push(`  last event ${s.last_event_ago_s}s ago (seq ${s.last_event_seq})`);
   if (s.blockers.length) lines.push(`  Blockers: ${s.blockers.join("; ")}`);
   if (s.control_plane_url) lines.push(`  Control Plane: ${s.control_plane_url}`);
+  if (s.control_plane_run_url) lines.push(`  Control Plane run: ${s.control_plane_run_url}`);
   return lines.join("\n");
 }
 
@@ -145,11 +152,11 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   if (cp === null) cp = await probeConfiguredControl(env);
   if (!hit) {
     process.stdout.write(json
-      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, hint: NO_RUN_HINT })}\n`
+      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, last_event_ago_s: null, last_event_seq: null, control_plane_run_url: null, hint: NO_RUN_HINT })}\n`
       : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }
-  const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp };
+  const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp, control_plane_run_url: controlRunLink(cp, repoDir, hit.id) };
   process.stdout.write(json ? `${JSON.stringify(s)}\n` : `${render(s)}\n`);
   return 0;
 }

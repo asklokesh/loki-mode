@@ -24,6 +24,12 @@ describe("LiveLine (D82)", () => {
     const n = out.length; l.tick(); l.onEvent(ev("stage.started", "verify"));
     expect(out.length).toBe(n);
   });
+  test("the URL becomes a per-run deep link once an event names the run (P12-19)", () => {
+    const { l, out } = rig(true);
+    l.setUrl("http://127.0.0.1:57374/");
+    l.onEvent({ ...ev("stage.started", "plan"), run: "e10-x" });
+    expect(out.at(-1)).toMatch(/http:\/\/127\.0\.0\.1:57374\/#\/runs\/[0-9a-f]{16}\/e10-x/);
+  });
   test("non-TTY prints one plain line per slow stage, none for fast stages, no CR", () => {
     const { l, out, adv } = rig(false);
     l.onEvent(ev("stage.started", "intake")); adv(1); l.onEvent(ev("stage.completed", "intake", { duration_s: 1 }));

@@ -17,6 +17,7 @@ import { safeGit } from "./safe_git.ts";
 import { currentBranch } from "../e10ext/stop_restore.ts";
 import type { Outcome } from "../engine10/output.ts";
 import { noteOf } from "./base_guard.ts";
+import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
@@ -377,11 +378,19 @@ export const STATUS_MARKER = "<!-- loki-status -->";
 const plain = (t: string): string => t.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/[<>`@]/g, " ").slice(0, 500); // a reason can echo worker text: no markup, no mentions
 /** The single status comment an issue run keeps current (FV-gh-steer-3). Built only from harness-owned event fields and the PR url; the only worker-derived text is the
  *  blocked/failed reason, flattened by `plain`. `steerRevs` counts operator revisions consumed since this run started. */
-export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: string; steerRevs: number; prUrl?: string | null; outcome?: string | null; reason?: string | null }): string {
+/** P12-19 (D06): the Control Plane page for one run, `<base>/#/runs/<sourceId>/<runId>`. null unless base is an http(s) url. */
+export function controlRunLink(base: string | null | undefined, repoDir: string, runId: string): string | null {
+  if (!base || !/^https?:\/\//.test(base) || !runId) return null;
+  return `${base.replace(/\/+$/, "")}/#/runs/${encodeURIComponent(sourceId(repoDir))}/${encodeURIComponent(runId)}`;
+}
+export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: string; steerRevs: number; prUrl?: string | null; outcome?: string | null; reason?: string | null; controlUrl?: string | null }): string {
   const planned = events.some((e) => e.type === "stage.completed" && e.stage === "plan");
   const lines = [STATUS_MARKER, `Loki run \`${o.runId.replace(/[^A-Za-z0-9._-]/g, "")}\``, "", `State: ${o.outcome ?? workItemState(events)}`, `Plan: ${planned ? "ready" : "pending"}`];
   if (o.steerRevs > 0) lines.push(`Operator steers applied: ${o.steerRevs}`);
   if (o.prUrl) lines.push(`Pull request: ${o.prUrl}`);
+  if (o.controlUrl) lines.push(`Control Plane: ${o.controlUrl}`);
+  const last = events[events.length - 1]; // seq only: a relative age would change the body every call and defeat the unchanged-body skip
+  if (last) lines.push(`Last event: seq ${last.seq}`);
   if (o.reason) lines.push("", `${o.outcome === "BLOCKED" ? "Question" : "Reason"}: ${plain(o.reason)}`);
   return `${lines.join("\n")}\n`;
 }
@@ -395,7 +404,7 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
   const once = async (x: StatusExtra): Promise<{ argv: string[]; ok: boolean } | null> => {
     const events = readEvents(o.eventsPath), since = Date.parse(events[0]?.ts ?? "") || 0;
     const revs = readIntentRevisions(o.repoDir, since).length;
-    const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
+    const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, controlUrl: controlRunLink(o.env.LOKI_CONTROL_PLANE_URL || o.env.LOKI_CONTROL_URL, o.repoDir, o.runId), ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
     if (body === last) return { argv, ok: true };
     mkdirSync(o.runDir, { recursive: true }); writeFileSync(bodyFile, body);
     const ok = await new Promise<boolean>((res) => { execFile("bash", [o.pushSh, ...argv], { env }, (err) => res(!err)); });

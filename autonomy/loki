@@ -6666,6 +6666,22 @@ cmd_status() {
         fi
     fi
 
+    # P12-19 (D04): freshness of the newest Loki 10 run, same wording as the Bun route
+    # ("last event Ns ago (seq N)"). Display-only; silent when there is no run or no parseable event.
+    local _e10_last _e10_ev _e10_seq _e10_ts _e10_epoch
+    _e10_last=$(ls -d "$LOKI_DIR"/runs/e10-*/ 2>/dev/null | sort | tail -1) || _e10_last=""
+    _e10_ev="${_e10_last%/}/events.jsonl"
+    if [ -n "$_e10_last" ] && [ -s "$_e10_ev" ]; then
+        _e10_seq=$(tail -n 1 "$_e10_ev" | jq -r '.seq // empty' 2>/dev/null) || _e10_seq=""
+        _e10_ts=$(tail -n 1 "$_e10_ev" | jq -r '.ts // empty' 2>/dev/null) || _e10_ts=""
+        _e10_epoch=$(python3 -c "import sys,datetime; print(int(datetime.datetime.fromisoformat(sys.argv[1].replace('Z','+00:00')).timestamp()))" "$_e10_ts" 2>/dev/null) || _e10_epoch=""
+        if [ -n "$_e10_seq" ] && [ -n "$_e10_epoch" ]; then
+            local _e10_age=$(( $(date +%s) - _e10_epoch ))
+            [ "$_e10_age" -lt 0 ] && _e10_age=0
+            echo -e "${CYAN}Freshness:${NC} last event ${_e10_age}s ago (seq ${_e10_seq})"
+        fi
+    fi
+
     # v7.82: surface the single most valuable, most shareable fact -- where the
     # built app is running -- when the app runner reports a live app. Display-only
     # read of .loki/app-runner/state.json (same shape build_completion_summary
