@@ -830,7 +830,8 @@ EOF
         OUT15C="$(run_h "$D15C" --execute --health-url "http://127.0.0.1:$HS_PORT/recover" --auto-rollback)"; RC15C=$?
         R15C="$(last_record "$D15C")"
         if [ "$RC15C" -eq 4 ] && [ "$(rec_field "$R15C" health_status)" = "FAILED_HEALTH" ] \
-           && [ "$(rec_field "$R15C" post_rollback_health)" = "healthy" ]; then
+           && [ "$(rec_field "$R15C" post_rollback_health)" = "healthy" ] \
+           && [ "$(rec_field "$R15C" health_http_code)" = "500" ]; then
             ok "15c. a rollback that restores service records post_rollback_health healthy"
         else
             bad "15c. recovered rollback mis-recorded" "rc=$RC15C rec=$R15C $(printf '%s' "$OUT15C" | tail -4)"

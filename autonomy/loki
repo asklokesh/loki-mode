@@ -10108,7 +10108,7 @@ _deploy_try_execute() {
 
     local rc=0 started_at finished_at purl="" canary_out=""
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    local health_status="unchecked" rb_attempted=false rb_exit="" hcode="" post_rb="unchecked"
+    local health_status="unchecked" rb_attempted=false rb_exit="" hcode="" rb_hcode="" post_rb="unchecked"
     if [ "$canary_kind" = vercel ]; then
         # Staged: a preview deploy (no --prod), probe the preview URL, promote only if healthy.
         # Nothing reaches production before the probe, so there is nothing to roll back.
@@ -10157,12 +10157,12 @@ _deploy_try_execute() {
             ( cd "$dir" && eval "$rb_cmd" ) || rb_exit=$?
             if [ "$rb_exit" -eq 0 ]; then
                 echo "Rollback command exited 0. Re-checking health: ${health_url}" >&2
-                if hcode="$(_deploy_probe_health "$health_url")"; then
+                if rb_hcode="$(_deploy_probe_health "$health_url")"; then
                     post_rb="healthy"
-                    echo -e "${GREEN}Rolled-back service is healthy${NC} (HTTP ${hcode})." >&2
+                    echo -e "${GREEN}Rolled-back service is healthy${NC} (HTTP ${rb_hcode})." >&2
                 else
                     post_rb="FAILED_HEALTH"
-                    echo -e "${RED}Rolled-back service is STILL unhealthy (last status ${hcode:-000}).${NC}" >&2
+                    echo -e "${RED}Rolled-back service is STILL unhealthy (last status ${rb_hcode:-000}).${NC}" >&2
                 fi
             else
                 echo -e "${RED}Rollback command exited ${rb_exit}.${NC}" >&2
