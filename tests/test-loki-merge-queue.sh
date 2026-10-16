@@ -154,6 +154,18 @@ git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm addsub
 [ "$(gd)" = "False" ] && ok "writer: clean submodule tree is clean" || bad "writer sub clean: $(gd)"
 echo 2 > "$GD_REPO/sub/f"
 [ "$(gd)" = "True" ] && ok "writer: modified submodule is dirty despite ignore=all" || bad "writer sub dirty: $(gd)"
+# P12-03c: skip-worktree and assume-unchanged flags must not hide a modified file.
+echo 1 > "$GD_REPO/sub/f"
+[ "$(gd)" = "False" ] && ok "writer: restored submodule is clean again" || bad "writer sub restore: $(gd)"
+for _flag in skip-worktree assume-unchanged; do
+  git -C "$GD_REPO" update-index "--$_flag" a
+  echo "edit-$_flag" >> "$GD_REPO/a"
+  [ "$(gd 2>/dev/null)" = "True" ] && ok "writer: $_flag-hidden edit is dirty" || bad "writer $_flag: $(gd 2>&1)"
+  gd 2>&1 >/dev/null | grep -q "a is flagged $_flag.*update-index --no-$_flag -- a" && ok "writer: $_flag reason names path and fix" || bad "writer $_flag reason: $(gd 2>&1)"
+  git -C "$GD_REPO" update-index "--no-$_flag" a
+  git -C "$GD_REPO" checkout -q -- a
+  [ "$(gd)" = "False" ] && ok "writer: cleared $_flag is clean" || bad "writer $_flag cleared: $(gd)"
+done
 # Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
 printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
 bash "$LOKI" merge pr feat-race >/dev/null 2>&1

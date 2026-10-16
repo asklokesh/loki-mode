@@ -1186,6 +1186,21 @@ def git_dirty(repo):
             path = path.strip('"')
         if not (path.startswith(".loki/") or path == ".loki"):
             return True
+    # A skip-worktree (S/s) or assume-unchanged (lowercase tag) flag hides edits
+    # from status; treat any flagged tracked path as dirty.
+    flagged = _vr_git_args(repo, ["ls-files", "-v", "-z"])
+    if flagged is None:
+        return None
+    for ent in flagged.split("\0"):
+        tag, path = ent[:1], ent[2:]
+        if not path or path.startswith(".loki/"):
+            continue
+        if tag in ("S", "s") or tag.islower():
+            kind, fix = (("skip-worktree", "--no-skip-worktree") if tag in ("S", "s")
+                         else ("assume-unchanged", "--no-assume-unchanged"))
+            sys.stderr.write("dirty: %s is flagged %s, which hides edits from the proof. "
+                             "Run: git update-index %s -- %s\n" % (path, kind, fix, path))
+            return True
     return False
 
 
