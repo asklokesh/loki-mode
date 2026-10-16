@@ -58,7 +58,8 @@
 --repo-fast | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --repo-full | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --sandbox | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
---session-model | bun-only real divergence: bash cmd_start has no --session-model label; follow-up to add it on bash
+--max-cost | bash-only bash cmd_start skips it in the workspace-start preparse (P12-10 route) and bin/loki forwards it; Bun parseStartArgs does not parse it
+--session-model | both
 --ship | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --simple | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --skip-memory | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it

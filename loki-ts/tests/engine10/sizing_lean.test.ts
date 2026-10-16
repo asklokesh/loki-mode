@@ -1,6 +1,7 @@
 // D61-03: lean eligibility without a named file; fail-safe to Wall.
 import { afterEach, describe, expect, it } from "bun:test";
-import { selectRelevantFiles, selectSpecificFiles } from "../../src/engine10/relevant_files.ts";
+import { selectRelevantFiles } from "../../src/engine10/relevant_files.ts";
+import { selectSpecificFiles } from "../../src/features/speed/lean_select.ts";
 import { hasRelevantTests, smallTaskPath, sizeTask } from "../../src/engine10/sizing.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type { TestMap, TestRef } from "../../src/engine10/types.ts";
