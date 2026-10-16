@@ -290,7 +290,7 @@ class TestNoPII(unittest.TestCase):
             allowed = {"run_id", "generated_at", "council_pass_rate",
                        "gate_pass_rate", "iterations", "interventions",
                        "verdict", "false_verified", "cost_usd",
-                       "interventions_by_type", "waited_s"}
+                       "interventions_by_type", "waited_s", "active_s"}
             for row in traj["series"]:
                 self.assertTrue(set(row.keys()).issubset(allowed),
                                 "series row leaked extra keys: %s" % set(row.keys()))
