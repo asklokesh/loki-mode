@@ -455,12 +455,23 @@ test_validate_bash_temp_root_and_glob_denied() {
         '//tmp' '/tmp//' '/private//tmp/' '/tmp' '/tmp/' '/private/tmp' '/var/tmp/'
         '/tmp/*' '/tmp/.*' '/tmp//*' '/tmp/./*' '/private/tmp/*' '/var//tmp/*' '/tmp/?'
         '"$TMPDIR"/*' '$TMPDIR/*' '${TMPDIR}/*' '"$TMPDIR"' '$TMPDIR//'
+        '/tmp/[a-z]*' '/tmp/[[:alpha:]]*' '/tmp/*[a-z]' '/tmp/[!x]*' '/tmp/[a]'
+        '$TMPDIR*' '"$TMPDIR"*' '${TMPDIR}*' '/tmp/x/../*' '/var/../tmp'
+        '/tmp/{*,}' '/tmp/*{,}' '/t{m,}p' '/{tmp,}'
+        '\/tmp' '/t\mp' '/tmp\/' '/tmp>/dev/null'
     )
     for t in "${targets[@]}"; do
-        c=$(printf '%s %s' "$rmcmd" "$t")
-        got=$(run_hook_case "$c" "")
-        [ "$got" = "2:deny" ] || { fail "temp root/glob not denied: $c (got $got)"; return; }
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "")
+            [ "$got" = "2:deny" ] || { fail "temp root/glob not denied: $c (got $got)"; return; }
+        done
     done
+    for c in '/bin/rm -r /tmp/*' '\rm -r /tmp' '"rm" -r /tmp/*' "'rm' -rf /tmp"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "rm token variant not denied: $c (got $got)"; return; }
+    done
+    rmcmd="rm -rf"
     c=$(printf 'FOO=1 %s /tmp/a /tmp/*' "$rmcmd")
     got=$(run_hook_case "$c" "")
     [ "$got" = "2:deny" ] || { fail "temp glob after a named target not denied (got $got)"; return; }
@@ -470,11 +481,14 @@ test_validate_bash_temp_root_and_glob_denied() {
     local ok=(
         '/tmp/loki-run.abc123' '/tmp/loki-run.abc123/' '/tmp//loki-run.abc123'
         '/tmp/foo*' '/tmp/foo/*' '$TMPDIR/loki-run.abc123' '"$TMPDIR"/foo'
+        '"$TMPDIR"/loki-run.abc'
     )
     for t in "${ok[@]}"; do
-        c=$(printf '%s %s' "$rmcmd" "$t")
-        got=$(run_hook_case "$c" "")
-        [ "$got" = "0:allow" ] || { fail "named temp subdir wrongly blocked: $c (got $got)"; return; }
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "")
+            [ "$got" = "0:allow" ] || { fail "named temp subdir wrongly blocked: $c (got $got)"; return; }
+        done
     done
     pass "temp roots and bare temp globs denied; named subdirectories still allowed"
 }

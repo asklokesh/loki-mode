@@ -439,23 +439,74 @@ _blocked_hits_all_safe() {
 
 # A recursive rm whose target IS a temp root, or a bare glob directly under
 # one, wipes every tenant of the temp dir. The target is normalized first
-# (quotes dropped, repeated and trailing slashes and `/./` collapsed) so
-# `//tmp`, `/tmp//`, `/private//tmp/` and `"$TMPDIR"/*` cannot hide. A named
-# child (`/tmp/loki-run.abc123`, `/tmp/foo*`) is not a bare glob and stays ok.
+# (quotes and backslashes dropped, a glued trailing redirect cut, repeated and
+# trailing slashes and `/./` collapsed, `..` resolved lexically) so `//tmp`,
+# `/tmp/x/../*`, `/t\mp` and `"$TMPDIR"/*` cannot hide. Single-level brace
+# alternatives are expanded and every alternative is checked. A named child
+# (`/tmp/loki-run.abc123`, `/tmp/foo*`) is not a bare glob and stays ok.
 _normalize_rm_target() {
-    local t="${1//[\"\']/}" prev=""
+    local t="${1%%[<>]*}" prev="" comp joined=""
+    local -a parts=() stack=()
+    t="${t//[\"\'\\]/}"
     while [ "$t" != "$prev" ]; do
         prev="$t"
         t="${t//\/\//\/}"
         t="${t//\/.\//\/}"
     done
+    if [[ "$t" == */* ]]; then
+        IFS=/ read -r -a parts <<< "$t"
+        for comp in ${parts[@]+"${parts[@]}"}; do
+            case "$comp" in
+                ''|.) ;;
+                ..)
+                    # never pop the first component of a $TMPDIR-relative path
+                    if [ "${#stack[@]}" -gt 1 ] || { [ "${#stack[@]}" -eq 1 ] && [[ "$t" == /* ]]; }; then
+                        unset 'stack[${#stack[@]}-1]'
+                    fi
+                    ;;
+                *) stack+=("$comp") ;;
+            esac
+        done
+        for comp in ${stack[@]+"${stack[@]}"}; do joined="${joined}/${comp}"; done
+        if [[ "$t" == /* ]]; then
+            t="${joined:-/}"
+        else
+            t="${joined#/}"
+        fi
+    fi
     while [[ "$t" == */. && "$t" != "/." ]]; do t="${t%/.}"; done
     while [[ "$t" == */ && "$t" != "/" ]]; do t="${t%/}"; done
     printf '%s' "$t"
 }
 
-_GLOB_ONLY='^[]*?.[]+$'
-_rm_target_is_temp_root_or_glob() {
+# Print each alternative of the first comma brace group, recursively. A
+# target with no comma brace group is printed unchanged.
+_expand_braces() {
+    local s="$1" i rest body pre post b alt
+    for ((i = 0; i < ${#s}; i++)); do
+        [ "${s:i:1}" = "{" ] || continue
+        rest="${s:i+1}"
+        [[ "$rest" == *"}"* ]] || continue
+        body="${rest%%\}*}"
+        [[ "$body" == *,* ]] || continue
+        pre="${s:0:i}"
+        post="${rest#*\}}"
+        b="$body"
+        while :; do
+            alt="${b%%,*}"
+            _expand_braces "${pre}${alt}${post}"
+            [[ "$b" == *,* ]] || break
+            b="${b#*,}"
+        done
+        return 0
+    done
+    printf '%s\n' "$s"
+}
+
+# Glob-only text: `*`, `?`, `.` and bracket expressions with any contents
+# (`[a-z]`, `[!x]`, `[[:alpha:]]`).
+_GLOB_ONLY='^([*?.]|\[(\[:[a-z]+:\]|[^]])+\])+$'
+_temp_target_is_root_or_glob() {
     local t rest
     t=$(_normalize_rm_target "$1")
     case "$t" in
@@ -466,11 +517,34 @@ _rm_target_is_temp_root_or_glob() {
         /tmp/*) rest="${t#/tmp/}" ;;
         '$TMPDIR'/*) rest="${t#\$TMPDIR/}" ;;
         '${TMPDIR}'/*) rest="${t#\$\{TMPDIR\}/}" ;;
+        /private/var/tmp*) rest="${t#/private/var/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        /private/tmp*) rest="${t#/private/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        /var/tmp*) rest="${t#/var/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        /tmp*) rest="${t#/tmp}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        '$TMPDIR'*) rest="${t#\$TMPDIR}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
+        '${TMPDIR}'*) rest="${t#\$\{TMPDIR\}}"; [[ "$rest" =~ $_GLOB_ONLY ]]; return ;;
         *) return 1 ;;
     esac
-    # first component made only of glob characters and dots: `*`, `.*`, `?`, `[a]`
+    # first component made only of glob characters, dots and bracket expressions
     [[ "${rest%%/*}" =~ $_GLOB_ONLY ]] && return 0
     return 1
+}
+
+_rm_target_is_temp_root_or_glob() {
+    local alt
+    if [[ "$1" == *"{"* && "$1" == *,* ]]; then
+        while IFS= read -r alt; do
+            _temp_target_is_root_or_glob "$alt" && return 0
+        done < <(_expand_braces "$1")
+        return 1
+    fi
+    _temp_target_is_root_or_glob "$1"
+}
+
+# `rm`, `/bin/rm`, `\rm`, `"rm"` all name rm.
+_is_rm_token() {
+    local x="${1//[\"\'\\]/}"
+    [ "${x##*/}" = "rm" ]
 }
 
 _segment_rm_hits_temp_root() {
@@ -479,7 +553,7 @@ _segment_rm_hits_temp_root() {
     read -r -a words <<< "$seg"
     for tok in "${words[@]}"; do
         if ! $seen_rm; then
-            [ "$tok" = "rm" ] && seen_rm=true
+            _is_rm_token "$tok" && seen_rm=true
             continue
         fi
         case "$tok" in
@@ -491,7 +565,7 @@ _segment_rm_hits_temp_root() {
     seen_rm=false
     for tok in "${words[@]}"; do
         if ! $seen_rm; then
-            [ "$tok" = "rm" ] && seen_rm=true
+            _is_rm_token "$tok" && seen_rm=true
             continue
         fi
         case "$tok" in -*) continue ;; esac
