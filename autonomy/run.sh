@@ -29157,6 +29157,10 @@ main() {
 
     # Show provider info
     log_info "Provider: ${PROVIDER_DISPLAY_NAME:-Claude Code} (${PROVIDER_NAME:-claude})"
+    # C-C2: one line naming the active permission policy (claude provider only).
+    if [ "${PROVIDER_NAME:-claude}" = "claude" ] && declare -F loki_permission_policy_banner >/dev/null 2>&1; then
+        log_info "$(loki_permission_policy_banner)"
+    fi
     if [ "${PROVIDER_DEGRADED:-false}" = "true" ]; then
         # Report what is ACTUALLY missing, read from the capability flags, rather
         # than asserting a fixed pair. The old wording hardcoded "Parallel agents

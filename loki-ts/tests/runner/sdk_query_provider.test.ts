@@ -329,7 +329,14 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
   it("sets the fully-autonomous permission options (bypass + companion flag)", async () => {
     stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
-    await sdkQueryProvider().invoke(call());
+    const prevPolicy = process.env["LOKI_PERMISSION_POLICY"];
+    process.env["LOKI_PERMISSION_POLICY"] = "legacy"; // C-C2: bypass is the legacy escape hatch
+    try {
+      await sdkQueryProvider().invoke(call());
+    } finally {
+      if (prevPolicy === undefined) delete process.env["LOKI_PERMISSION_POLICY"];
+      else process.env["LOKI_PERMISSION_POLICY"] = prevPolicy;
+    }
     const opts = lastQueryArgs?.options ?? {};
     expect(opts["permissionMode"]).toBe("bypassPermissions");
     expect(opts["allowDangerouslySkipPermissions"]).toBe(true);

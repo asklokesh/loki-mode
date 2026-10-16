@@ -28,6 +28,7 @@ PROVIDER_DISPLAY_NAME="Claude Code"
 PROVIDER_CLI="claude"
 
 # CLI Invocation
+# Legacy flag only: compiled (C-C2) applies by default only when an operator policy exists; LOKI_PERMISSION_POLICY=legacy forces this flag.
 PROVIDER_AUTONOMOUS_FLAG="--dangerously-skip-permissions"
 PROVIDER_PROMPT_FLAG="-p"
 PROVIDER_PROMPT_POSITIONAL=false

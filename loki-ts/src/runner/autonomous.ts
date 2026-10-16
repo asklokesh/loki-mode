@@ -27,7 +27,7 @@ import {
 } from "./types.ts";
 import { run as shellRun } from "../util/shell.ts";
 import { maybeGenerateProof } from "./proof.ts";
-import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
+import { cavemanCaptureUserMode, permissionPolicyBanner } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
 import { withholdGithubTokens } from "./github_token.ts";
 import { decideRecovery } from "./recovery_policy.ts";
@@ -512,6 +512,7 @@ async function runAutonomousCore(
   log("[runner] Starting autonomous execution");
   log(`[runner] PRD: ${ctx.prdPath ?? "Codebase Analysis Mode"}`);
   log(`[runner] provider=${ctx.provider} mode=${ctx.autonomyMode} model=${ctx.sessionModel}`);
+  if (ctx.provider === "claude") log(permissionPolicyBanner());
   log(`[runner] max_retries=${ctx.maxRetries} max_iterations=${ctx.maxIterations}`);
 
   ensureLokiDirs(ctx);

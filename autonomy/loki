@@ -134,15 +134,15 @@ _loki_caveman_narration_level() {
 
 # P12-26b: permission flags for the migrate/doc/heal claude launches. Lazily sources
 # claude-flags.sh (like the caveman wrapper above) and fills _LOKI_PERM_ARGV; unset
-# LOKI_PERMISSION_POLICY keeps --dangerously-skip-permissions byte-identically.
+# LOKI_PERMISSION_POLICY=legacy keeps --dangerously-skip-permissions byte-identically.
 _loki_perm_argv_for() {
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
-    # Unset policy: return before sourcing anything (claude-flags.sh exports caveman vars).
-    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    # Legacy policy: return before sourcing anything (claude-flags.sh exports caveman vars).
+    [ "${LOKI_PERMISSION_POLICY:-}" = "legacy" ] && return 0
     _LOKI_PERM_ARGV=(--permission-mode plan)
     local _pa_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" _pa_out _pa_a
     if [ ! -f "$_pa_lib" ]; then
-        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: helper missing; using most restrictive mode (plan)" >&2
+        echo "[loki] WARNING: compiled permission policy: helper missing; using most restrictive mode (plan)" >&2
         return 0
     fi
     # Subshell so the helper's top-level exports never leak into this shell.

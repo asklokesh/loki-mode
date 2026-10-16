@@ -28,12 +28,23 @@ case "${LOKI_HOST_GUARD:-0}" in
     1|true|yes|on) HOST_GUARD=true ;;
 esac
 
-# P12-26d: under LOKI_PERMISSION_POLICY=compiled the compiled allow/deny list
+# P12-26d: when the resolved policy is compiled (explicit compiled, or unset with an
+# operator claude_permissions policy present) the compiled allow/deny list
 # and permission mode decide. An explicit hook "allow" skips the permission
 # prompt for every command that passes the blocklist, which would widen the
 # compiled policy, so the hook never emits one and fails closed on bad input.
 COMPILED_POLICY=false
-[ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] && COMPILED_POLICY=true
+case "${LOKI_PERMISSION_POLICY:-}" in
+    legacy) ;;
+    "")
+        _vb_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/src/policies/claude_permissions.js"
+        if command -v node >/dev/null 2>&1 && [ -f "$_vb_helper" ] \
+            && [ "$(node "$_vb_helper" --has-operator-policy 2>/dev/null)" = "1" ]; then
+            COMPILED_POLICY=true
+        fi
+        ;;
+    *) COMPILED_POLICY=true ;;
+esac
 
 if ! command -v python3 >/dev/null 2>&1; then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: python3 is unavailable, so the Bash command cannot be inspected safely."

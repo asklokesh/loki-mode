@@ -309,10 +309,16 @@ describe("codexProvider invocation", () => {
 });
 
 describe("claudeProvider invocation", () => {
-  it("passes --dangerously-skip-permissions, --model, and -p", async () => {
+  it("passes --dangerously-skip-permissions (legacy), --model, and -p", async () => {
     const argvLog = writeStub({ stdout: "ok" });
     const p = claudeProvider();
-    const r = await p.invoke(makeCall({ tier: "development", prompt: "build x" }));
+    process.env["LOKI_PERMISSION_POLICY"] = "legacy"; // C-C2: compiled is the default
+    let r;
+    try {
+      r = await p.invoke(makeCall({ tier: "development", prompt: "build x" }));
+    } finally {
+      delete process.env["LOKI_PERMISSION_POLICY"];
+    }
     expect(r.exitCode).toBe(0);
     const argv = readArgv(argvLog);
     // v7.104.0: default (no LOKI_ALLOW_HAIKU) development tier maps to sonnet

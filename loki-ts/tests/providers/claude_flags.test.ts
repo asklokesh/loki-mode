@@ -19,6 +19,9 @@ import {
   claudeFlagSupported,
   buildAutoFlags,
   permissionArgv,
+  permissionPolicyMode,
+  permissionPolicyBanner,
+  resetPermissionPolicyWarning,
   sdkPermissionOptions,
   claudeSessionUuid,
   claudeIterationSessionUuid,
@@ -750,10 +753,102 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
   beforeEach(() => { repo = mkdtempSync(join(tmpdir(), "perm-pol-")); });
   afterEach(() => { rmSync(repo, { recursive: true, force: true }); });
 
-  it("default (flag unset) keeps skip-permissions on both routes", () => {
-    const env = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+  it("C-C2: unset + operator policy present selects compiled on both routes", () => {
+    writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"] } }); // HOME=repo, so repo/.loki is the operator dir
+    const env: NodeJS.ProcessEnv = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    expect(permissionPolicyMode(env)).toBe("compiled");
+    const ts = permissionArgv(repo, env, () => {});
+    expect(ts).not.toEqual(SKIP);
+    expect(ts[0]).toBe("--permission-mode");
+    expect(bashArgv(env)).toEqual(ts);
+    delete env["LOKI_PERMISSION_POLICY"];
+    expect(permissionPolicyMode(env)).toBe("compiled");
+  });
+
+  it("C-C2: unset + no operator policy resolves legacy on both routes, with the legacy banner", () => {
+    const unsetEnv: NodeJS.ProcessEnv = noManaged();
+    delete unsetEnv["LOKI_PERMISSION_POLICY"];
+    for (const env of [{ ...noManaged(), LOKI_PERMISSION_POLICY: "" }, unsetEnv]) {
+      expect(permissionPolicyMode(env)).toBe("legacy");
+      expect(permissionArgv(repo, env, () => {})).toEqual(SKIP);
+      expect(bashArgv(env)).toEqual(SKIP);
+      expect(permissionPolicyBanner(env)).toBe("Permission policy: legacy (no operator policy found; add one to use compiled)");
+    }
+  });
+
+  it("C-C2: unset + yaml-only policy file without claude_permissions resolves legacy on both routes", () => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.yaml"), "policies:\n  cost:\n    max: 5\n");
+    const env = noManaged();
+    delete env["LOKI_PERMISSION_POLICY"];
+    expect(permissionPolicyMode(env)).toBe("legacy");
+    expect(permissionArgv(repo, env, () => {})).toEqual(SKIP);
+    expect(bashArgv(env)).toEqual(SKIP);
+  });
+
+  it("C-C2: unset + yaml-only policy file with a claude_permissions key resolves compiled (plan, yaml unsupported)", () => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.yaml"), "policies:\n  claude_permissions:\n    mode: default\n");
+    const env = noManaged();
+    delete env["LOKI_PERMISSION_POLICY"];
+    expect(permissionPolicyMode(env)).toBe("compiled");
+    expect(permissionArgv(repo, env, () => {})).toEqual(["--permission-mode", "plan"]);
+    expect(bashArgv(env)).toEqual(["--permission-mode", "plan"]);
+  });
+
+  it("C-C2: explicit compiled + no operator policy keeps fail-closed acceptEdits", () => {
+    const env = noManaged();
+    expect(permissionPolicyMode(env)).toBe("compiled");
+    expect(permissionArgv(repo, env, () => {})).toEqual(["--permission-mode", "acceptEdits"]);
+    expect(bashArgv(env)).toEqual(["--permission-mode", "acceptEdits"]);
+  });
+
+  it("C-C2: the unknown-value warning prints once per process", () => {
+    resetPermissionPolicyWarning();
+    const warns: string[] = [];
+    const env = noManaged({ LOKI_PERMISSION_POLICY: "bogus" });
+    permissionPolicyMode(env, (m) => warns.push(m));
+    permissionPolicyMode(env, (m) => warns.push(m));
+    expect(warns.length).toBe(1);
+  });
+
+  it("C-C2: legacy restores skip-permissions byte-identically on both routes", () => {
+    const env = noManaged({ LOKI_PERMISSION_POLICY: "legacy" });
+    expect(permissionPolicyMode(env)).toBe("legacy");
     expect(permissionArgv(repo, env)).toEqual(SKIP);
     expect(bashArgv(env)).toEqual(SKIP);
+  });
+
+  it("C-C2: unknown value fails closed to compiled with a warning on both routes", () => {
+    writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"] } });
+    const env = noManaged({ LOKI_PERMISSION_POLICY: "bogus" });
+    const warns: string[] = [];
+    resetPermissionPolicyWarning();
+    expect(permissionPolicyMode(env, (m) => warns.push(m))).toBe("compiled");
+    expect(warns.some((w) => w.includes("unknown value"))).toBe(true);
+    const ts = permissionArgv(repo, env, () => {});
+    expect(ts).not.toEqual(SKIP);
+    expect(bashArgv(env)).toEqual(ts);
+  });
+
+  it("C-C2: start banner names the active mode on both routes", () => {
+    const root = join(import.meta.dir, "../../..");
+    const bashBanner = (policy: string): string =>
+      Bun.spawnSync(
+        ["bash", "-c", `source "${root}/providers/claude.sh" 2>/dev/null; loki_permission_policy_banner`],
+        { env: { PATH: process.env["PATH"], HOME: repo, LOKI_PERMISSION_POLICY: policy } },
+      ).stdout.toString().trim();
+    const compiled = "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)";
+    const noPol = "Permission policy: legacy (no operator policy found; add one to use compiled)";
+    const envHome = { HOME: repo };
+    expect(permissionPolicyBanner({ ...envHome, LOKI_PERMISSION_POLICY: "compiled" })).toBe(compiled);
+    expect(permissionPolicyBanner(envHome)).toBe(noPol);
+    expect(bashBanner("")).toBe(noPol);
+    writePolicy({ claude_permissions: { mode: "acceptEdits" } });
+    expect(permissionPolicyBanner(envHome)).toBe(compiled);
+    expect(bashBanner("")).toBe(compiled);
+    expect(permissionPolicyBanner({ LOKI_PERMISSION_POLICY: "legacy" })).toBe(bashBanner("legacy"));
+    expect(permissionPolicyBanner({ LOKI_PERMISSION_POLICY: "legacy" })).toContain("legacy");
   });
 
   it("compiled: mode + allow/deny lists, identical on both routes", () => {
@@ -921,8 +1016,8 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
   });
 
   it("P12-26c: SDK path maps the policy to permissionMode via the same resolver", () => {
-    // unset: today's default, byte-identical
-    const unset = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    // legacy: the old default, byte-identical
+    const unset = { ...noManaged(), LOKI_PERMISSION_POLICY: "legacy" };
     expect(sdkPermissionOptions(repo, unset)).toEqual({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
     // compiled restrictive policy
     writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"], deny: ["Bash(rm:*)"] } });

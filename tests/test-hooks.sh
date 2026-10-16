@@ -6,6 +6,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 TEST_DIR=$(mktemp -d)
+# C-C2: compiled is the default policy; the blocklist-behaviour tests below pin the legacy hook.
+export LOKI_PERMISSION_POLICY=legacy
 TESTS_PASSED=0
 TESTS_FAILED=0
 
@@ -388,12 +390,14 @@ test_simple_web_guard_bounds_model_commands() {
 
 # Test 18: P12-26d validate-bash.sh cannot widen the compiled permission policy
 run_hook_case() {
-    local command_text="$1" policy="${2:-}" raw="${3:-}" run_tmp="${4:-}" payload out rc
+    local command_text="$1" policy="${2:-}" raw="${3:-}" run_tmp="${4:-}" payload out rc default_policy=""
+    # policy "default" runs with LOKI_PERMISSION_POLICY unset (C-C2: selects compiled)
+    if [ "$policy" = "default" ]; then policy=""; default_policy=1; fi
     if [ -n "$raw" ]; then payload="$raw"; else
         payload=$(printf '%s' "$command_text" | python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.stdin.read()},"cwd":sys.argv[1]}))' "$TEST_DIR")
     fi
     mkdir -p "$TEST_DIR/.loki/logs"
-    out=$(printf '%s' "$payload" | env -u LOKI_RUN_TMP ${run_tmp:+LOKI_RUN_TMP=$run_tmp} ${policy:+LOKI_PERMISSION_POLICY=$policy} "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    out=$(printf '%s' "$payload" | env -u LOKI_RUN_TMP ${run_tmp:+LOKI_RUN_TMP=$run_tmp} ${policy:+LOKI_PERMISSION_POLICY=$policy} ${default_policy:+-u LOKI_PERMISSION_POLICY} "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
     rc=$?
     case "$out" in
         *'"permissionDecision":'*'allow"'*) printf '%s:allow' "$rc" ;;
@@ -408,13 +412,20 @@ test_validate_bash_compiled_policy_not_widened() {
     local got
     got=$(run_hook_case "ls -la" compiled)
     [ "$got" = "0:none" ] || { fail "compiled: ordinary command must defer, got $got"; return; }
-    got=$(run_hook_case "ls -la" "")
-    [ "$got" = "0:allow" ] || { fail "unset policy must keep the explicit allow, got $got"; return; }
+    local nopol_dir="$TEST_DIR/op-none" pol_dir="$TEST_DIR/op-policy"
+    mkdir -p "$nopol_dir" "$pol_dir"
+    printf '%s' '{"claude_permissions":{"mode":"default","allow":["Bash(ls:*)"]}}' > "$pol_dir/policies.json"
+    got=$(LOKI_DATA_DIR="$nopol_dir" run_hook_case "ls -la" default)
+    [ "$got" = "0:allow" ] || { fail "C-C2: unset policy with no operator policy resolves legacy (keeps allow), got $got"; return; }
+    got=$(LOKI_DATA_DIR="$pol_dir" run_hook_case "ls -la" default)
+    [ "$got" = "0:none" ] || { fail "C-C2: unset policy with an operator policy resolves compiled (no allow), got $got"; return; }
+    got=$(run_hook_case "ls -la" legacy)
+    [ "$got" = "0:allow" ] || { fail "legacy policy must keep the explicit allow, got $got"; return; }
     got=$(run_hook_case "" compiled '{"tool_input":{}}')
     [ "$got" = "2:deny" ] || { fail "compiled: malformed input must deny, got $got"; return; }
-    got=$(run_hook_case "" "" '{"tool_input":{}}')
-    [ "$got" = "0:allow" ] || { fail "unset policy: malformed input behaviour changed, got $got"; return; }
-    pass "compiled policy: no hook allow, malformed input denied; unset unchanged"
+    got=$(run_hook_case "" legacy '{"tool_input":{}}')
+    [ "$got" = "0:allow" ] || { fail "legacy policy: malformed input behaviour changed, got $got"; return; }
+    pass "compiled (and default with operator policy) policy: no hook allow, malformed input denied; legacy unchanged"
 }
 
 test_validate_bash_safe_override_is_anchored() {

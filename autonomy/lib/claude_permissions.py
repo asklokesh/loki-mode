@@ -2,8 +2,9 @@
 
 New file: the python launch sites (dashboard, magic) need the same argv as the
 bash and TS routes; this is a thin caller of src/policies/claude_permissions.js
-(the single compiler), not a second implementation. Unset LOKI_PERMISSION_POLICY
-returns the legacy flag byte-identically.
+(the single compiler), not a second implementation. LOKI_PERMISSION_POLICY=legacy returns
+the legacy flag byte-identically; unset resolves to compiled only when an operator
+claude_permissions policy exists (asked of the same js helper), else legacy (C-C2).
 """
 from __future__ import annotations
 
@@ -15,16 +16,35 @@ from pathlib import Path
 
 _LEGACY = ["--dangerously-skip-permissions"]
 _FAIL_CLOSED = ["--permission-mode", "plan"]
+_unknown_warned = False
+
+
+def _has_operator_policy(node: str | None, helper: Path, env: dict) -> bool:
+    if node is None or not helper.is_file():
+        return False
+    try:
+        done = subprocess.run([node, str(helper), "--has-operator-policy"], capture_output=True,
+                              text=True, timeout=30, env=dict(env), check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.stdout.strip() == "1"
 
 
 def claude_permission_argv(project_dir: str | None = None, env: dict | None = None) -> list:
     env = os.environ if env is None else env
-    if env.get("LOKI_PERMISSION_POLICY", "") != "compiled":
+    mode = env.get("LOKI_PERMISSION_POLICY", "")
+    if mode == "legacy":
         return list(_LEGACY)
+    global _unknown_warned
     helper = Path(__file__).resolve().parents[2] / "src" / "policies" / "claude_permissions.js"
     node = shutil.which("node")
+    if mode == "" and not _has_operator_policy(node, helper, env):
+        return list(_LEGACY)
+    if mode not in ("", "compiled") and not _unknown_warned:
+        _unknown_warned = True
+        print(f"[loki] WARNING: LOKI_PERMISSION_POLICY={mode}: unknown value; using compiled", file=sys.stderr)
     if node is None or not helper.is_file():
-        print("[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: compiler unavailable; using most restrictive mode (plan)", file=sys.stderr)
+        print("[loki] WARNING: compiled permission policy: compiler unavailable; using most restrictive mode (plan)", file=sys.stderr)
         return list(_FAIL_CLOSED)
     target = project_dir or env.get("LOKI_PROJECT_DIR") or os.getcwd()
     try:
