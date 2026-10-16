@@ -4,7 +4,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { capNote, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { capMeter, capNote, childBudgetLimit, costMeter, groupEnv, DEFAULT_MAX_COST_USD, hasApiKey, SUBSCRIPTION_NOTE, parseCapUsd, resolveCap, yamlPerRun } from "../../src/e10ext/budget_cap.ts";
+import { childEnv } from "../../src/engine10/session.ts";
+import { watchBudget } from "../../src/providers/provider_guard.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { USAGE } from "../../src/engine10/cli.ts";
@@ -172,5 +174,42 @@ describe("group env carries the resolved cap to unit children", () => {
   });
   test("supervisor hands the group the capped env, not process.env", () => {
     expect(readFileSync(resolve(ROOT, "loki-ts/src/engine10/supervisor.ts"), "utf8")).toContain("maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd)");
+  });
+});
+
+describe("live in-session cap", () => {
+  test("meter reports what is left and null without a cap", () => {
+    const m = costMeter(5); m.add(1.5); m.add(null);
+    expect(m.remaining()).toBe(3.5);
+    m.add(10);
+    expect(m.remaining()).toBe(0);
+    expect(costMeter(0).remaining()).toBeNull();
+  });
+  test("capMeter exposes remaining from LOKI_E10_MAX_COST_USD", () => {
+    const { emit, remaining } = capMeter((() => {}) as (t: never, s: never, d: Record<string, unknown>) => void, { LOKI_E10_MAX_COST_USD: "2" } as NodeJS.ProcessEnv);
+    (emit as unknown as (t: string, s: null, d: Record<string, unknown>) => void)("cost", null, { usd: 0.5 });
+    expect(remaining()).toBe(1.5);
+  });
+  test("childBudgetLimit floors a spent cap at 0.01 and passes null through", () => {
+    expect(childBudgetLimit(1.5)).toBe("1.5");
+    expect(childBudgetLimit(0)).toBe("0.01");
+    expect(childBudgetLimit(null)).toBeNull();
+  });
+  test("a session child env carries LOKI_BUDGET_LIMIT <= the cap", () => {
+    const opts = { stage: "implement", brief: "b", tier: "dev", iterationId: "i", limitS: 1, signal: new AbortController().signal } as never;
+    const saved = process.env.LOKI_BUDGET_LIMIT; delete process.env.LOKI_BUDGET_LIMIT;
+    try {
+      const m = costMeter(2); m.add(0.5);
+      expect(Number(childEnv(opts, { provider: "codex", remaining: m.remaining }).LOKI_BUDGET_LIMIT)).toBeLessThanOrEqual(2);
+      expect(childEnv(opts, { provider: "codex", remaining: m.remaining }).LOKI_BUDGET_LIMIT).toBe("1.5");
+      expect(childEnv(opts, { provider: "codex" }).LOKI_BUDGET_LIMIT).toBeUndefined();
+    } finally { if (saved !== undefined) process.env.LOKI_BUDGET_LIMIT = saved; }
+  });
+  test("watchBudget kills once a fake exceeded() turns true", async () => {
+    let hit = false, killed = "";
+    const stop = watchBudget(() => hit, (c) => { killed = c; }, 5);
+    await new Promise((r) => setTimeout(r, 20)); expect(killed).toBe("");
+    hit = true; await new Promise((r) => setTimeout(r, 30));
+    stop(); expect(killed).toBe("budget");
   });
 });

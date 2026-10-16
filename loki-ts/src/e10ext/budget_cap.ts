@@ -31,13 +31,15 @@ export function capNote(usd: number, source: CapSource): string {
 /** Env for group/unit children: the resolved run cap becomes their LOKI_BUDGET_LIMIT, so a flag cap cannot be re-defaulted per unit. */
 export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number): NodeJS.ProcessEnv { return capUsd > 0 ? { ...env, LOKI_BUDGET_LIMIT: String(capUsd) } : env; }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
-export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean } {
+export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
   const m = costMeter(parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0);
   const emit = ((type: string, stage: never, data: Record<string, unknown>) => { if (type === "cost") m.add(data.usd); (raw as unknown as (...a: unknown[]) => void)(type, stage, data); }) as unknown as E;
-  return { emit, over: m.over };
+  return { emit, over: m.over, remaining: m.remaining };
 }
 /** Running priced total for the worker; call with each emitted cost event's usd. */
-export function costMeter(capUsd: number): { add(usd: unknown): void; over(): boolean } {
+export function costMeter(capUsd: number): { add(usd: unknown): void; over(): boolean; remaining(): number | null } {
   let sum = 0;
-  return { add: (u) => { if (typeof u === "number" && Number.isFinite(u) && u > 0) sum += u; }, over: () => capUsd > 0 && sum >= capUsd };
+  return { add: (u) => { if (typeof u === "number" && Number.isFinite(u) && u > 0) sum += u; }, over: () => capUsd > 0 && sum >= capUsd, remaining: () => (capUsd > 0 ? Math.max(capUsd - sum, 0) : null) };
 }
+/** LOKI_BUDGET_LIMIT for one session child: what is left of the cap, floored so a spent cap still reads as a (tiny) limit. null = no dollar cap. */
+export function childBudgetLimit(remaining: number | null): string | null { return remaining === null ? null : String(Math.round(Math.max(remaining, 0.01) * 100) / 100); }
