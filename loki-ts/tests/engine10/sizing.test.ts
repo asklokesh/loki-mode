@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallTaskPath, wallModel } from "../../src/engine10/sizing.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -130,6 +130,17 @@ describe("engine10 E-45 sizing", () => {
     const many = sizeTask("touch a.ts b.ts c.ts", { files: ["a.ts", "b.ts", "c.ts"], entries: [], truncated: false }, TM);
     expect(many.size).toBe("normal");
     expect(many.reasons.join()).toContain("names 3 files");
+  });
+
+  it("P12-46: a task naming more than 8 files sizes large, never lean, and keeps the normal Wall cap", () => {
+    const names = Array.from({ length: 9 }, (_, i) => `f${i}.ts`);
+    const big = sizeTask(`touch ${names.join(" ")}`, { files: names, entries: [], truncated: false }, TM);
+    expect(big.size).toBe("large");
+    expect(big.reasons.join()).toContain("decompose");
+    expect(smallTaskPath(big.size, true)).toBe("wall");
+    expect(wallLimitS("large")).toBe(180);
+    const eight = sizeTask(`touch ${names.slice(0, 8).join(" ")}`, { files: names, entries: [], truncated: false }, TM);
+    expect(eight.size).toBe("normal");
   });
 
   it("a truncated repo map sizes normal, since buildRepoMap caps files at 2000 and the >3000 rule alone never fires", () => {
