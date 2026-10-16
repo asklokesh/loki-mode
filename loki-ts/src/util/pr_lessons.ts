@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { atomicWriteJson } from "./atomic.ts";
+import { safeGit } from "./safe_git.ts";
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 /** Injected in tests. A spawn failure (gh not installed) must resolve with code 127, never throw. */
@@ -293,4 +294,64 @@ export function formatLessonList(ls: Lesson[]): string {
     if (st.decided > 0) out.push(`    VERIFIED ${st.verified}/${st.decided}${isDemoted(l) ? " (demoted: no longer injected into briefs)" : ""}`);
   }
   return out.join("\n") + "\n";
+}
+
+export interface OpenComment { id: number; body: string; path: string; line: number | null; url: string }
+export interface RespondDeps {
+  gh?: GhClient;
+  /** Runs the VCS in the repo and returns stdout; throws on failure. Default: safeGit (push alone may use credentials). */
+  git?: (args: string[]) => string;
+  /** Edits the working tree for one comment. Returns false when it could not attempt a fix. */
+  fix: (c: OpenComment) => Promise<boolean>;
+  max?: number;
+}
+export interface RespondResult { fixed: number; skipped: number; shas: string[] }
+export const RESPOND_MARK = "<!-- loki-respond -->";
+export const MAX_RESPOND = 5;
+
+/** Database ids of the first comment of every RESOLVED review thread. Fails closed: an unreadable thread state throws. */
+async function resolvedRoots(gh: GhClient, repo: string, num: number): Promise<Set<number>> {
+  const [owner, name] = repo.split("/") as [string, string];
+  const q = "query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{databaseId}}}}}}}";
+  const j = JSON.parse(await ghText(gh, ["api", "graphql", "-f", `query=${q}`, "-f", `o=${owner}`, "-f", `n=${name}`, "-F", `p=${num}`])) as any;
+  const nodes: any[] = j?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+  return new Set(nodes.filter((t) => t?.isResolved).map((t) => Number(t?.comments?.nodes?.[0]?.databaseId)).filter(Number.isFinite));
+}
+
+/** Open review threads of a PR: top-level comments in an unresolved thread with no earlier Loki reply, in comment order. */
+export async function openReviewComments(gh: GhClient, repo: string, num: number): Promise<{ open: OpenComment[]; skipped: number }> {
+  const all = parsePages(await ghText(gh, ["api", "--paginate", `repos/${repo}/pulls/${num}/comments`]));
+  const resolved = await resolvedRoots(gh, repo, num);
+  const answered = new Set(all.filter((c) => c.in_reply_to_id && String(c.body ?? "").includes(RESPOND_MARK)).map((c) => Number(c.in_reply_to_id)));
+  const roots = all.filter((c) => !c.in_reply_to_id && Number.isInteger(c.id));
+  const open = roots.filter((c) => String(c.body ?? "").trim() !== "" && !resolved.has(c.id) && !answered.has(c.id))
+    .map((c) => ({ id: c.id as number, body: String(c.body), path: String(c.path ?? ""), line: Number.isInteger(c.line) ? (c.line as number) : null, url: String(c.html_url ?? "") }));
+  return { open, skipped: roots.length - open.length };
+}
+
+/** `loki verify-pr respond`: one fix commit per open review comment (bounded by max), one push, then a reply per fixed
+ *  comment citing its commit sha. A comment whose fix edits nothing gets no commit and no reply. Threads are never resolved. */
+export async function respondToReview(repoDir: string, ref: string, deps: RespondDeps): Promise<RespondResult> {
+  const pr = parsePrRef(ref);
+  if (!pr) throw new GhError(`Invalid PR reference '${ref}'. Expected owner/repo#123.`);
+  const gh = deps.gh ?? defaultGh;
+  const vcs = deps.git ?? ((a: string[]) => safeGit(repoDir, a, { allowToken: a[0] === "push" }));
+  const max = deps.max ?? Number(process.env["LOKI_PR_RESPOND_MAX"] ?? MAX_RESPOND);
+  const { open, skipped } = await openReviewComments(gh, pr.repo, pr.num);
+  const done: Array<{ c: OpenComment; sha: string }> = [];
+  for (const c of open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
+    if (!(await deps.fix(c))) continue;
+    const files = vcs(["status", "--porcelain"]).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, ""));
+    if (files.length === 0) continue;
+    vcs(["add", "--", ...files]);
+    vcs(["commit", "-m", `Address review comment on ${c.path || "PR"}\n\nReview-Comment: ${c.url}`]);
+    done.push({ c, sha: vcs(["rev-parse", "HEAD"]).trim() });
+  }
+  if (done.length > 0) {
+    vcs(["push"]);
+    for (const { c, sha } of done) {
+      await ghText(gh, ["api", "-X", "POST", `repos/${pr.repo}/pulls/${pr.num}/comments/${c.id}/replies`, "-f", `body=Addressed in ${sha.slice(0, 12)}.\n${RESPOND_MARK}`]);
+    }
+  }
+  return { fixed: done.length, skipped, shas: done.map((d) => d.sha) };
 }

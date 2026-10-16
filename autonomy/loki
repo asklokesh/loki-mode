@@ -1711,6 +1711,8 @@ _help_verify_pr() {
     echo -e "${BOLD}loki verify-pr${NC} - Verify a PR against its linked issue (experimental, LOKI_VERIFY_PR=1)"
     echo ""
     echo "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]"
+    echo "       loki verify-pr respond <o/r#N>   fix open review comments (one commit each, on the PR"
+    echo "                                        branch), push, reply with the sha; never resolves threads"
     echo ""
     echo "Derives a check from the PR's linked issue (Check: \`cmd\` or a loki-check fence)."
     echo "VERIFIED only if the check fails on the PR base, passes on its head, and the"

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -450,5 +450,61 @@ describe("learnRecent (R15-E1)", () => {
   it("refuses N outside 1..20", async () => {
     await expect(learnRecent(mk(), "o/r", 21, gh)).rejects.toThrow(RangeError);
     await expect(learnRecent(mk(), "o/r", 0, gh)).rejects.toThrow(RangeError);
+  });
+});
+
+describe("respondToReview", () => {
+  const C = (id: number, body: string, extra: Record<string, unknown> = {}) => ({ id, body, path: `src/f${id}.ts`, line: id, html_url: `https://github.com/o/r/pull/7#discussion_r${id}`, user: { login: "rev" }, ...extra });
+  const mkEnv = (comments: unknown[], resolvedIds: number[] = []) => {
+    const calls: string[][] = [];
+    const gh: GhClient = async (args) => {
+      calls.push(args);
+      if (args.includes("graphql")) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: resolvedIds.map((id) => ({ isResolved: true, comments: { nodes: [{ databaseId: id }] } })) } } } } }), stderr: "" };
+      if (args[args.length - 1]!.endsWith("/comments")) return { code: 0, stdout: JSON.stringify(comments), stderr: "" };
+      return { code: 0, stdout: "{}", stderr: "" };
+    };
+    const gitCalls: string[][] = [];
+    let n = 0, dirty = false;
+    const vcs = (args: string[]): string => {
+      gitCalls.push(args);
+      if (args[0] === "status") return dirty ? ` M src/f${n + 1}.ts\n` : "";
+      if (args[0] === "rev-parse") return `sha${n}\n`;
+      if (args[0] === "commit") { n++; dirty = false; }
+      return "";
+    };
+    const edit = async (): Promise<boolean> => { dirty = true; return true; };
+    return { gh, vcs, calls, gitCalls, edit };
+  };
+  const replies = (calls: string[][]) => calls.filter((a) => a.some((x) => /\/replies$/.test(x)));
+
+  it("one commit and one sha-citing reply per open comment; resolved threads are skipped and never resolved", async () => {
+    const e = mkEnv([C(1, "Rename this variable."), C(2, "Handle the null case."), C(3, "Old nit.")], [3]);
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });
+    expect(r.fixed).toBe(2);
+    expect(r.skipped).toBe(1);
+    expect(e.gitCalls.filter((a) => a[0] === "commit").length).toBe(2);
+    expect(e.gitCalls.filter((a) => a[0] === "push").length).toBe(1);
+    const rp = replies(e.calls);
+    expect(rp.length).toBe(2);
+    expect(rp[0]!.join(" ")).toContain("sha1");
+    expect(rp[1]!.join(" ")).toContain("sha2");
+    expect(e.calls.some((a) => a.join(" ").includes("resolveReviewThread"))).toBe(false);
+  });
+
+  it("a fix that edits nothing gets no commit and no reply; max bounds the work", async () => {
+    const e = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
+    const none = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: async () => false });
+    expect(none.fixed).toBe(0);
+    expect(replies(e.calls).length).toBe(0);
+    const e2 = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
+    const r = await respondToReview(mk(), "o/r#7", { gh: e2.gh, git: e2.vcs, fix: e2.edit, max: 1 });
+    expect(r.fixed).toBe(1);
+    expect(replies(e2.calls).length).toBe(1);
+  });
+
+  it("skips replies and already-answered threads", async () => {
+    const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });
+    expect(r.fixed).toBe(1);
   });
 });
