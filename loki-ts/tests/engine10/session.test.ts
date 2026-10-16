@@ -13,8 +13,9 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
-import { archivedCostIds, resultCostPath, sumResultCosts } from "../../src/engine10/cost.ts";
-import { withArchivedCosts } from "../../src/providers/provider_cost.ts";
+import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
+import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
+const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
@@ -116,6 +117,14 @@ describe("engine10 session", () => {
       expect(ids).toContain("r-1-q1"); // the archive is counted, not dropped
       const c = sumResultCosts(lokiRoot, ids);
       expect(ambiguous ? c.partialUsd >= 2.5 : c.usd === null && c.missing.includes("r-1-q1")).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+  test("P12-09b regression I: an archived $0.80 zero-usage attempt is counted, only a $0 one never ran", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-i-"));
+    try {
+      const lokiRoot = join(dir, ".loki"), sh = (body: string) => ["bash", ["-c", `mkdir -p .loki/metrics; echo '${body}' > .loki/metrics/result-cost-$LOKI_ITERATION.json; exit 1`]] as [string, string[]];
+      for (const body of ['{"total_cost_usd":0.8,"input_tokens":0,"output_tokens":0,"model":"m"}', '{"total_cost_usd":2.5,"input_tokens":5,"output_tokens":5,"model":"m"}']) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: sh(body) }).run(baseOpts({ cwd: dir, iterationId: "i-1", limitS: 20 }));
+      expect(archivedCostIds(lokiRoot, ["i-1"])).toContain("i-1-q1");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 20_000);
   test("P12-09b: the unmetered stub record (B) is counted, not dropped as never-ran", async () => {
