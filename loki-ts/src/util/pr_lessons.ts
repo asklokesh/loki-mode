@@ -2,11 +2,15 @@
 // Stored in the existing per-repo memory tree (.loki/memory/semantic/pr-lessons.json). Lesson text is
 // the comment body verbatim; nothing is paraphrased. Each lesson carries its source (PR + comment URL)
 // and use tags (run id + that run's final verdict) so the list can show whether a lesson helps.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { atomicWriteJson } from "./atomic.ts";
 import { safeGit } from "./safe_git.ts";
+import { spawnSync } from "node:child_process";
+import { DEFAULT_PUSH_SH } from "../engine10/stages/pr.ts";
+import { pushArgv } from "../engine10/types.ts";
+import { readOriginUrl } from "./engine_origin.ts";
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 /** Injected in tests. A spawn failure (gh not installed) must resolve with code 127, never throw. */
@@ -299,8 +303,10 @@ export function formatLessonList(ls: Lesson[]): string {
 export interface OpenComment { id: number; body: string; path: string; line: number | null; url: string }
 export interface RespondDeps {
   gh?: GhClient;
-  /** Runs the VCS in the repo and returns stdout; throws on failure. Default: safeGit (push alone may use credentials). */
+  /** Runs the VCS in the repo and returns stdout; throws on failure. Default: token-free safeGit (never pushes). */
   git?: (args: string[]) => string;
+  /** Pushes the local PR head branch. Default: engine10-push.sh push-pr (the only credentialed push path); throws on failure. */
+  push?: (headRef: string) => void;
   /** Edits the working tree for one comment. Returns false when it could not attempt a fix. */
   fix: (c: OpenComment) => Promise<boolean>;
   max?: number;
@@ -329,13 +335,27 @@ export async function openReviewComments(gh: GhClient, repo: string, num: number
   return { open, skipped: roots.length - open.length };
 }
 
+/** Pushes through engine10-push.sh push-pr. It must find the open PR ("reused"); "created" means the PR is gone, so throw. */
+export function defaultRespondPush(repoDir: string, headRef: string, pushSh: string = DEFAULT_PUSH_SH): void {
+  const dir = join(repoDir, ".loki");
+  mkdirSync(dir, { recursive: true });
+  const bodyFile = join(dir, "respond-push-body.md");
+  writeFileSync(bodyFile, `Loki verify-pr respond push to ${headRef}. Not a new PR.\n`);
+  const origin = readOriginUrl(repoDir);
+  const argv = pushArgv({ cmd: "push-pr", repoDir, branch: headRef, title: `respond: ${headRef}`, bodyFile, draft: false });
+  const r = spawnSync("bash", [pushSh, ...argv], { env: origin ? { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : process.env, encoding: "utf8" });
+  if (r.status !== 0) throw new GhError(`push failed for ${headRef}: ${String(r.stderr ?? "").trim() || `exit ${r.status}`}`);
+  if (String(r.stdout ?? "").split("\n").some((l) => l.trim() === "created")) throw new GhError(`the PR for ${headRef} is no longer open; pushed but no reply posted`);
+}
+
 /** `loki verify-pr respond`: one fix commit per open review comment (bounded by max), one push, then a reply per fixed
  *  comment citing its commit sha. A comment whose fix edits nothing gets no commit and no reply. Threads are never resolved. */
 export async function respondToReview(repoDir: string, ref: string, deps: RespondDeps): Promise<RespondResult> {
   const pr = parsePrRef(ref);
   if (!pr) throw new GhError(`Invalid PR reference '${ref}'. Expected owner/repo#123.`);
   const gh = deps.gh ?? defaultGh;
-  const vcs = deps.git ?? ((a: string[]) => safeGit(repoDir, a, { allowToken: a[0] === "push" }));
+  const vcs = deps.git ?? ((a: string[]) => safeGit(repoDir, a));
+  const push = deps.push ?? ((h: string) => defaultRespondPush(repoDir, h));
   const max = deps.max ?? Number(process.env["LOKI_PR_RESPOND_MAX"] ?? MAX_RESPOND);
   let headRef = "";
   try { headRef = String(JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`]))?.head?.ref ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
@@ -354,7 +374,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
     done.push({ c, sha: vcs(["rev-parse", "HEAD"]).trim() });
   }
   if (done.length > 0) {
-    vcs(["push", "origin", `HEAD:refs/heads/${headRef}`]);
+    push(headRef);
     for (const { c, sha } of done) {
       await ghText(gh, ["api", "-X", "POST", `repos/${pr.repo}/pulls/${pr.num}/comments/${c.id}/replies`, "-f", `body=Addressed in ${sha.slice(0, 12)}.\n${RESPOND_MARK}`]);
     }
