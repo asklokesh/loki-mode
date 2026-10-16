@@ -1187,20 +1187,67 @@ def git_dirty(repo):
         if not (path.startswith(".loki/") or path == ".loki"):
             return True
     # A skip-worktree (S/s) or assume-unchanged (lowercase tag) flag hides edits
-    # from status; treat any flagged tracked path as dirty.
+    # from status. A flagged path is dirty only when its content differs from
+    # the index; a skip-worktree path absent on disk is sparse-excluded (clean).
     flagged = _vr_git_args(repo, ["ls-files", "-v", "-z"])
     if flagged is None:
         return None
+    cand = []
     for ent in flagged.split("\0"):
         tag, path = ent[:1], ent[2:]
         if not path or path.startswith(".loki/"):
             continue
         if tag in ("S", "s") or tag.islower():
-            kind, fix = (("skip-worktree", "--no-skip-worktree") if tag in ("S", "s")
-                         else ("assume-unchanged", "--no-assume-unchanged"))
-            sys.stderr.write("dirty: %s is flagged %s, which hides edits from the proof. "
-                             "Run: git update-index %s -- %s\n" % (path, kind, fix, path))
-            return True
+            cand.append((tag in ("S", "s"), path))
+    if not cand:
+        return False
+    staged = _vr_git_args(repo, ["ls-files", "-s", "-z"])
+    if staged is None:
+        return None
+    blobs = {}
+    for ent in staged.split("\0"):
+        meta, _, p = ent.partition("\t")
+        f = meta.split()
+        if len(f) == 3 and f[2] == "0":
+            blobs[p] = (f[0], f[1])
+    root = repo or "."
+    bad = None
+    todo = []
+    for skip, path in cand:
+        full = os.path.join(root, path)
+        mode, want = blobs.get(path, ("", ""))
+        if not os.path.lexists(full):
+            if skip:
+                continue
+            bad = (skip, path)
+            break
+        if mode == "160000":
+            continue
+        if os.path.islink(full):
+            data = os.readlink(full).encode("utf-8", "surrogateescape")
+            if hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() != want:
+                bad = (skip, path)
+                break
+            continue
+        todo.append((skip, path))
+    for i in range(0, len(todo), 200):
+        if bad:
+            break
+        chunk = todo[i:i + 200]
+        out = _vr_git_args(repo, ["hash-object", "--"] + [p for _, p in chunk])
+        if out is None:
+            return None
+        for (skip, path), h in zip(chunk, out.split()):
+            if h != blobs.get(path, ("", ""))[1]:
+                bad = (skip, path)
+                break
+    if bad:
+        skip, path = bad
+        kind, fix = (("skip-worktree", "--no-skip-worktree") if skip
+                     else ("assume-unchanged", "--no-assume-unchanged"))
+        sys.stderr.write("dirty: %s is flagged %s and differs from the index, which hides edits from the proof. "
+                         "Run: git update-index %s -- %s\n" % (path, kind, fix, path))
+        return True
     return False
 
 

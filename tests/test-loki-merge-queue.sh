@@ -166,6 +166,22 @@ for _flag in skip-worktree assume-unchanged; do
   git -C "$GD_REPO" checkout -q -- a
   [ "$(gd)" = "False" ] && ok "writer: cleared $_flag is clean" || bad "writer $_flag cleared: $(gd)"
 done
+# P12-03c: a flagged but unmodified file, and a sparse-excluded (absent) skip-worktree file, are clean.
+for _flag in skip-worktree assume-unchanged; do
+  git -C "$GD_REPO" update-index "--$_flag" a
+  [ "$(gd)" = "False" ] && ok "writer: $_flag on an unmodified file is clean" || bad "writer $_flag unmodified: $(gd)"
+  git -C "$GD_REPO" update-index "--no-$_flag" a
+done
+git -C "$GD_REPO" update-index --skip-worktree a
+rm "$GD_REPO/a"
+[ "$(gd)" = "False" ] && ok "writer: sparse-excluded skip-worktree file is clean" || bad "writer sparse: $(gd)"
+git -C "$GD_REPO" update-index --no-skip-worktree a
+git -C "$GD_REPO" checkout -q -- a
+git -C "$GD_REPO" update-index --assume-unchanged a
+rm "$GD_REPO/a"
+[ "$(gd 2>/dev/null)" = "True" ] && ok "writer: assume-unchanged file deleted on disk is dirty" || bad "writer assume deleted: $(gd 2>&1)"
+git -C "$GD_REPO" update-index --no-assume-unchanged a
+git -C "$GD_REPO" checkout -q -- a
 # Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
 printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
 bash "$LOKI" merge pr feat-race >/dev/null 2>&1
