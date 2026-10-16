@@ -55,8 +55,9 @@ echo ""
 WIKI_LIB="$WORKROOT/auto-wiki-lib.sh"
 awk '
     /^_auto_wiki_regen\(\) \{/ { p=1 }
+    /^_auto_wiki_regen_once\(\) \{/ { p=1 }
     p { print }
-    p && /^}/ { exit }
+    p && /^}/ { p=0 }
 ' "$RUN_SH" > "$WIKI_LIB"
 
 if ! grep -q '^_auto_wiki_regen() {' "$WIKI_LIB"; then
@@ -199,6 +200,47 @@ assert "diagram" in arch and arch["diagram"].startswith("flowchart"), "no arch d
 PY
 ) && pass "E1/E5: real generator builds wiki.json with diagram + caches hash" \
    || fail "E1/E5: real generator builds wiki.json with diagram + caches hash"
+
+# -----------------------------------------------------------------------------
+# Case S5: _auto_wiki_regen_once runs the generator at most once per run, on
+# every tier, even when the structure changes between iterations. A 2-iteration
+# fixture where iteration 1 fails (defer) and iteration 2 succeeds fires once;
+# a fixture where both iterations succeed also fires once.
+# -----------------------------------------------------------------------------
+if grep -q '^_auto_wiki_regen_once() {' "$WIKI_LIB"; then
+(
+    SCRIPT_DIR="$(make_stub_generator 0)"
+    TARGET_DIR="$(make_project once)"
+    COUNTER="$WORKROOT/counter-once"; : > "$COUNTER"
+    export WIKI_STUB_COUNTER="$COUNTER"
+    LOKI_WIKI_AUTO=1
+    _harness
+    _auto_wiki_regen_once 1 2 1 || exit 7
+    [ "$(wc -c < "$COUNTER" | tr -d ' ')" = "0" ] || { echo "ran on a failed non-final iteration" >&2; exit 1; }
+    sleep 1; printf 'x\n' > "$TARGET_DIR/src/c.ts"
+    _auto_wiki_regen_once 2 2 0 || exit 7
+    [ "$(wc -c < "$COUNTER" | tr -d ' ')" = "1" ] || { echo "did not run on final iteration" >&2; exit 1; }
+    sleep 1; printf 'y\n' > "$TARGET_DIR/src/d.ts"
+    _auto_wiki_regen_once 3 2 0 || exit 7
+    [ "$(wc -c < "$COUNTER" | tr -d ' ')" = "1" ] || { echo "ran a second time in one run" >&2; exit 1; }
+) && pass "S5: wiki regen runs at most once per run (2-iteration fixture)" \
+   || fail "S5: wiki regen runs at most once per run (2-iteration fixture)"
+(
+    SCRIPT_DIR="$(make_stub_generator 0)"
+    TARGET_DIR="$(make_project once2)"
+    COUNTER="$WORKROOT/counter-once2"; : > "$COUNTER"
+    export WIKI_STUB_COUNTER="$COUNTER"
+    LOKI_WIKI_AUTO=1
+    _harness
+    _auto_wiki_regen_once 1 2 0 || exit 7
+    sleep 1; printf 'y\n' > "$TARGET_DIR/src/d.ts"
+    _auto_wiki_regen_once 2 2 0 || exit 7
+    [ "$(wc -c < "$COUNTER" | tr -d ' ')" = "1" ] || { echo "ran twice across 2 successful iterations" >&2; exit 1; }
+) && pass "S5: two successful iterations still run the wiki once" \
+   || fail "S5: two successful iterations still run the wiki once"
+else
+    fail "S5: _auto_wiki_regen_once exists in run.sh"
+fi
 
 echo ""
 echo "Results: $PASS/$TOTAL passed"

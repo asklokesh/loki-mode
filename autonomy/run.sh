@@ -789,7 +789,83 @@ loki_apply_scoped_change_profile() {
     export LOKI_SCOPED_CHANGE_ACTIVE=1
 }
 
+# Small-task fast path (cost S5). Applied AFTER detect_complexity, because the
+# tier is not known when this file is sourced. Trigger: DETECTED_COMPLEXITY is
+# simple and, for a scoped change in an existing repo, the working-tree diff
+# fits LOKI_SMALL_DIFF_BUDGET changed lines (default 400). LOKI_SMALL_PROFILE=0
+# opts out. It never overrides another explicit profile.
+#
+# What this NEVER touches: the deterministic gates, holdout and Seal. It only
+# drops model-bearing orchestration that has no reader on a small task. Every
+# knob uses ":=" so explicit user env always beats the profile.
+loki_small_profile_eligible() {
+    [ "${LOKI_SMALL_PROFILE:-1}" != "0" ] || return 1
+    [ "${DETECTED_COMPLEXITY:-}" = "simple" ] || return 1
+    case "${LOKI_BUILD_PROFILE:-}" in
+        ""|small) ;;
+        *) return 1 ;;
+    esac
+    if [ "${LOKI_SCOPED_CHANGE_ACTIVE:-0}" = "1" ]; then
+        local changed budget="${LOKI_SMALL_DIFF_BUDGET:-400}"
+        changed="$(git -C "${TARGET_DIR:-.}" diff --numstat HEAD 2>/dev/null \
+            | awk '{ if ($1 ~ /^[0-9]+$/) n += $1; if ($2 ~ /^[0-9]+$/) n += $2 } END { print n + 0 }')"
+        [ "${changed:-0}" -le "$budget" ] 2>/dev/null || return 1
+    fi
+    return 0
+}
+
+loki_apply_small_profile() {
+    : "${LOKI_SPEC_GRILL:=0}"
+    : "${LOKI_PRD_ENRICH:=0}"
+    : "${LOKI_WIKI_AUTO:=0}"
+    : "${LOKI_AUTO_DOCS:=false}"
+    : "${LOKI_GATE_DEVILS_ADVOCATE:=false}"
+    : "${LOKI_REVIEW_REQUIREMENTS_ONLY:=1}"
+    : "${LOKI_COUNCIL_MODEL_VOTERS:=0}"
+    : "${LOKI_ADVISOR_MODEL:=haiku}"
+    : "${LOKI_SIMPLE:=1}"
+    : "${LOKI_DOCS_TIER:=small}"
+    export LOKI_SPEC_GRILL LOKI_PRD_ENRICH LOKI_WIKI_AUTO LOKI_AUTO_DOCS
+    export LOKI_GATE_DEVILS_ADVOCATE LOKI_REVIEW_REQUIREMENTS_ONLY
+    export LOKI_COUNCIL_MODEL_VOTERS LOKI_ADVISOR_MODEL LOKI_SIMPLE LOKI_DOCS_TIER
+    LOKI_SMALL_PROFILE_ACTIVE=1
+    export LOKI_SMALL_PROFILE_ACTIVE
+}
+
+# Main-session lean flags, small profile only. Fills _LOKI_SMALL_MAIN_ARGV from
+# loki_lean_child_flags (one argument per line) and widens the OAuth-host
+# "--setting-sources project" to "project,local" so project-local settings
+# still apply. Returns 1 (array empty) on any other profile, so the caller
+# keeps its existing "user,project,local" pin. LOKI_SMALL_LEAN_MAIN=0 opts out.
+loki_small_main_session_flags() {
+    _LOKI_SMALL_MAIN_ARGV=()
+    [ "${LOKI_SMALL_PROFILE_ACTIVE:-0}" = "1" ] || return 1
+    [ "${LOKI_SMALL_LEAN_MAIN:-1}" != "0" ] || return 1
+    type loki_lean_child_flags >/dev/null 2>&1 || return 1
+    local _line _prev=""
+    while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        if [ "$_prev" = "--setting-sources" ] && [ "$_line" = "project" ]; then
+            _line="project,local"
+        fi
+        _LOKI_SMALL_MAIN_ARGV+=("$_line")
+        _prev="$_line"
+    done < <(loki_lean_child_flags main)
+    [ "${#_LOKI_SMALL_MAIN_ARGV[@]}" -gt 0 ]
+}
+
+loki_maybe_apply_small_profile() {
+    loki_small_profile_eligible || return 0
+    LOKI_BUILD_PROFILE=small
+    export LOKI_BUILD_PROFILE
+    loki_apply_build_profile
+}
+
 loki_apply_build_profile() {
+    if [ "${LOKI_BUILD_PROFILE:-}" = "small" ]; then
+        loki_apply_small_profile
+        return 0
+    fi
     [ "${LOKI_BUILD_PROFILE:-}" = "simple-web" ] || return 0
     : "${LOKI_PHASE_API_TESTS:=false}"
     : "${LOKI_PHASE_INTEGRATION:=false}"
@@ -21544,6 +21620,20 @@ PY
     return 0
 }
 
+# At most one wiki regeneration per run, on every tier (cost S5). Args:
+# iteration, max iterations, iteration exit code. A failed non-final iteration
+# defers; the first successful iteration, or the final one, spends the single
+# run. The flag lives in the caller's shell, so call this without a subshell.
+_auto_wiki_regen_once() {
+    [ "${_LOKI_WIKI_REGEN_DONE:-0}" = "1" ] && return 0
+    local iter="${1:-0}" max="${2:-0}" rc="${3:-1}"
+    if [ "$rc" != "0" ]; then
+        [ "$max" -gt 0 ] 2>/dev/null && [ "$iter" -ge "$max" ] 2>/dev/null || return 0
+    fi
+    _LOKI_WIKI_REGEN_DONE=1
+    _auto_wiki_regen
+}
+
 
 # Magic Modules COMPOUND: record successful component patterns (v6.77.0)
 # Called at end of each iteration to capture generated/updated components
@@ -24751,6 +24841,13 @@ except Exception:
     fi
 
     log_info "PRD: ${prd_path:-Codebase Analysis Mode}"
+    # Complexity is detected once, here, so the small-task profile can take
+    # effect before spec grill, PRD enrich and the first prompt. The later
+    # detect_complexity guard sees the cached value.
+    if [ -z "${DETECTED_COMPLEXITY:-}" ]; then
+        detect_complexity "$prd_path"
+    fi
+    loki_maybe_apply_small_profile
     log_info "Max retries: $MAX_RETRIES"
     log_info "Max iterations: $MAX_ITERATIONS"
     log_info "Completion promise: $COMPLETION_PROMISE"
@@ -25623,7 +25720,9 @@ except Exception as exc:
         # default. Behavior-neutral (these are the standard sources). Gated +
         # falls back to the implicit default when unsupported. Opt out with
         # LOKI_SETTING_SOURCES=off.
-        if ! loki_is_supervised_simple_web \
+        if loki_small_main_session_flags; then
+            _loki_claude_argv+=("${_LOKI_SMALL_MAIN_ARGV[@]}")
+        elif ! loki_is_supervised_simple_web \
            && [ "${LOKI_SETTING_SOURCES:-on}" != "off" ] \
            && type loki_claude_flag_supported >/dev/null 2>&1 \
            && loki_claude_flag_supported "--setting-sources"; then
@@ -27286,7 +27385,7 @@ EOF
         # structure changed). Default-on; opt out LOKI_WIKI_AUTO=0. The `|| true`
         # is belt-and-suspenders -- the function already returns 0 on every path.
         if ! loki_is_supervised_simple_web; then
-            _auto_wiki_regen 2>/dev/null || true
+            _auto_wiki_regen_once "$ITERATION_COUNT" "$MAX_ITERATIONS" "$exit_code" 2>/dev/null || true
         fi
 
         # BUG-QG-008: Track iteration for convergence regardless of exit code
