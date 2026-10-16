@@ -79,3 +79,8 @@ export function cancelSessions(waitMs = 8000): Promise<void> {
   if (liveSessions.size === 0) return Promise.resolve();
   return new Promise<void>((resolve) => { idleWaiters.push(resolve); setTimeout(resolve, waitMs).unref(); });
 }
+
+/** P12-07n: <run dir>/alive, one overwritten epoch-ms line the supervisor refreshes during quiet stages so resume can tell time spent running from time spent killed. */
+export const aliveBeatPath = (runDir: string): string => join(runDir, "alive");
+export function writeAliveBeat(runDir: string, now: number = Date.now()): void { try { writeFileSync(aliveBeatPath(runDir), `${now}\n`); } catch { /* best effort: without it resume counts the whole gap as downtime */ } }
+export function readAliveBeat(runDir: string): number | null { try { const n = Number(readFileSync(aliveBeatPath(runDir), "utf8").trim()); return Number.isFinite(n) && n > 0 ? n : null; } catch { return null; } }
