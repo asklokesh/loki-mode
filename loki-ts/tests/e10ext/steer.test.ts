@@ -1,11 +1,12 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, utimesSync, lstatSync, linkSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleAtSeal, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleAtSeal, staleReason, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -68,17 +69,270 @@ describe("engine10 steer", () => {
       expect(archived(d)).toEqual([]);
     }
   });
-  test("the content comes from the opened fd: a path swapped to a symlink between open and read is not followed", () => {
+  test("the content comes from the opened fd: the claimed path swapped to a symlink after the open is not followed", () => {
     const d = repo("REAL");
-    const f = join(d, ".loki", "HUMAN_INPUT.md");
     writeFileSync(join(d, "secret.md"), "SECRET");
     let swapped = false;
-    const now = (): Date => { // first call happens after the open and fstat, before the read
-      if (!swapped) { swapped = true; renameSync(f, join(d, "moved.md")); symlinkSync(join(d, "secret.md"), f); }
-      return new Date();
-    };
-    expect(consumeSteer(d, {}, now)).toBe("REAL");
+    const afterOpen = (c: string): void => { swapped = true; renameSync(c, join(d, "moved.md")); symlinkSync(join(d, "secret.md"), c); };
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterOpen })).toBe("REAL");
     expect(swapped).toBe(true);
+  });
+  test("a steer written between the read and the archive is not lost: it becomes a fresh inbox file consumed next", () => {
+    const d = repo("FIRST");
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    let wrote = false;
+    const afterClaim = (): void => { wrote = true; writeFileSync(f, "SECOND"); };
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterClaim })).toBe("FIRST");
+    expect(wrote).toBe(true);
+    expect(readFileSync(f, "utf8")).toBe("SECOND");
+    expect(consumeSteer(d)).toBe("SECOND");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).length).toBe(2);
+  });
+  test("content appended after the open (size changed since any fstat) is read to EOF, not truncated", () => {
+    const d = repo("A".repeat(10));
+    const extra = "B".repeat(200000);
+    const afterOpen = (c: string): void => appendFileSync(c, extra);
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterOpen })).toBe("A".repeat(10) + extra);
+  });
+  test("growth past 1 MiB after the open is still quarantined as oversize with an unapplied record", () => {
+    const d = repo("x");
+    const sink: IntentRevision[] = [];
+    const afterOpen = (c: string): void => appendFileSync(c, "y".repeat(1024 * 1024 + 5));
+    expect(consumeSteer(d, {}, () => new Date(), sink, { afterOpen })).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "over 1 MiB"]]);
+  });
+  test("two consumers choosing the same archive name never replace an earlier archive", () => {
+    const d = repo("MINE");
+    const fixed = new Date("2026-10-16T01:02:03.000Z");
+    const taken = join(d, ".loki", "logs", "human-input-20261016T010203.md");
+    const afterOpen = (): void => { mkdirSync(join(d, ".loki", "logs"), { recursive: true }); writeFileSync(taken, "OTHER"); };
+    expect(consumeSteer(d, {}, () => fixed, undefined, { afterOpen })).toBe("MINE");
+    expect(readFileSync(taken, "utf8")).toBe("OTHER");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).map((n) => readFileSync(join(d, ".loki", "logs", n), "utf8")).sort()).toEqual(["MINE", "OTHER"]);
+  });
+  test("a non-file steer restored in place never replaces a fresh steer written meanwhile", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    const sink: IntentRevision[] = [];
+    const beforeRestore = (): void => writeFileSync(f, "FRESH");
+    expect(consumeSteer(d, {}, () => new Date(), sink, { beforeRestore })).toBeNull();
+    expect(readFileSync(f, "utf8")).toBe("FRESH");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
+    expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-NOTFILE-"))).toBe(true);
+    expect(consumeSteer(d)).toBe("FRESH");
+  });
+  test("a hard-link failure (no-hardlink filesystem) never renames over a fresh steer: the non-file entry is quarantined", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    const sink: IntentRevision[] = [];
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "EPERM" }); }) as unknown as typeof linkSync;
+    expect(consumeSteer(d, {}, () => new Date(), sink, { beforeRestore: () => writeFileSync(f, "FRESH"), link })).toBeNull();
+    expect(readFileSync(f, "utf8")).toBe("FRESH");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
+    expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-NOTFILE-"))).toBe(true);
+  });
+  const deadPid = (): number => spawnSync("true").pid!;
+  test("a claim orphaned by a dead consumer is archived and reported unapplied; a live pid's claim is left alone", () => {
+    const d = repo();
+    mkdirSync(join(d, ".loki", "logs"));
+    const gone = `.claim-${deadPid()}-abc123`, live = `.claim-${process.ppid}-abc123`;
+    writeFileSync(join(d, ".loki", "logs", gone), "LOST");
+    writeFileSync(join(d, ".loki", "logs", live), "BUSY");
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    const names = archived(d);
+    expect(names).toContain(live);
+    expect(names).not.toContain(gone);
+    const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
+    expect(readFileSync(join(d, ".loki", "logs", o), "utf8")).toBe("LOST");
+  });
+  test("a stale claim is orphaned even when its pid answers (recycled pid); a fresh one is left alone", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    const stale = `.claim-${process.ppid}-aaaaaa`, fresh = `.claim-${process.ppid}-bbbbbb`;
+    writeFileSync(join(logs, stale), "OLD"); writeFileSync(join(logs, fresh), "NEW");
+    const old = new Date(Date.now() - 11 * 60 * 1000); utimesSync(join(logs, stale), old, old);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    const names = archived(d);
+    expect(names).not.toContain(stale);
+    expect(names).toContain(fresh);
+    const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
+    expect(readFileSync(join(logs, o), "utf8")).toBe("OLD");
+  });
+  test("an orphan sharing an inode with an ORPHAN archive (unlink failed after link) is removed without a new archive or record", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), "LOST");
+    linkSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), join(logs, `.claim-${deadPid()}-abc123`));
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink).toEqual([]);
+    expect(archived(d)).toEqual(["human-input-ORPHAN-20200101T000000.md"]);
+  });
+  test("an orphan hard-linked to a NORMAL archive WITH an applied marker (unlink failed after record) is only removed: no ORPHAN archive, no record", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-20200101T000000.md"), "APPLIED");
+    writeFileSync(join(logs, ".applied-human-input-20200101T000000.md"), "done\n");
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    linkSync(join(logs, "human-input-20200101T000000.md"), claim);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink).toEqual([]);
+    expect(existsSync(claim)).toBe(false);
+    expect(archived(d).filter((n) => n.startsWith("human-input-"))).toEqual(["human-input-20200101T000000.md"]);
+  });
+  test("P12-02g: a consumer killed after the link and before the revision record leaves a claim on a NORMAL archive with no marker: reported unapplied, Seal refuses", () => {
+    const d = repo("KILLED");
+    const logs = join(d, ".loki", "logs");
+    // Real consume, stopped (simulated kill) inside the link-to-unlink window: afterArchive throws, then we rebuild the post-kill disk state.
+    const sink0: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink0, { afterArchive: () => { throw new Error("killed"); } });
+    const normal = readdirSync(logs).find((n) => /^human-input-\d/.test(n))!;
+    for (const n of readdirSync(logs)) if (n.startsWith(".applied-")) rmSync(join(logs, n));
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    linkSync(join(logs, normal), claim);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    expect(existsSync(claim)).toBe(false);
+    expect(readdirSync(logs).some((n) => n.startsWith("human-input-ORPHAN-"))).toBe(true);
+    expect(staleReason(sink)).toContain("could not be applied");
+    expect(staleWallRevisions(sink, undefined).length).toBe(1);
+  });
+  test("P12-02g: a normal consume writes the applied marker and the revision record before the claim is unlinked", () => {
+    const d = repo("## Operator directive rev 1 (t) actor=a source=cli\nbody\n");
+    const logs = join(d, ".loki", "logs");
+    let seenClaim = false;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { afterArchive: () => { seenClaim = readdirSync(logs).some((n) => n.startsWith(".claim-")); } });
+    expect(seenClaim).toBe(true);
+    const normal = readdirSync(logs).find((n) => /^human-input-\d/.test(n))!;
+    expect(existsSync(join(logs, `.applied-${normal}`))).toBe(true);
+    expect(readdirSync(logs).some((n) => n.startsWith(".claim-"))).toBe(false);
+    expect(sink.length).toBe(1);
+  });
+  test("a claim another sweeper removes mid-sweep (ENOENT) is not reported stranded", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    writeFileSync(claim, "RACE");
+    const link = ((): never => { rmSync(claim); throw Object.assign(new Error("gone"), { code: "ENOENT" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { link });
+    expect(sink).toEqual([]);
+  });
+  test("a new orphan repeating an old archive's text is still archived and reported", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), "SAME");
+    writeFileSync(join(logs, `.claim-${deadPid()}-abc123`), "SAME");
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(sink.map((r) => r.reason)).toEqual(["orphaned claim"]);
+    expect(archived(d).filter((n) => n.startsWith("human-input-ORPHAN-")).length).toBe(2);
+  });
+  test("a FIFO orphan does not hang the sweep", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    execFileSync("mkfifo", [join(logs, `.claim-${deadPid()}-abc123`)]);
+    const t0 = Date.now();
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(sink.length).toBe(1);
+  });
+  test("a directory orphan is archived", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(join(logs, `.claim-${deadPid()}-abc123`), { recursive: true });
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink);
+    expect(sink.map((r) => r.reason)).toEqual(["orphaned claim"]);
+    expect(archived(d).some((n) => n.startsWith("human-input-ORPHAN-"))).toBe(true);
+    expect(archived(d).some((n) => n.startsWith(".claim-"))).toBe(false);
+  });
+  test("a steer written 20 minutes before its claim is not swept while the consumer is live", () => {
+    const d = repo("OLD STEER");
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    const old = new Date(Date.now() - 20 * 60 * 1000); utimesSync(f, old, old);
+    const other = join(d, ".loki", "logs", `.claim-${process.ppid}-ffffff`);
+    let survived = false, nestedSink: IntentRevision[] = [];
+    const out = consumeSteer(d, {}, () => new Date(), undefined, { afterClaim: (c) => {
+      // another consumer with a live pid sweeping right now must see a freshly stamped claim
+      linkSync(c, other);
+      consumeSteer(d, {}, () => new Date(), nestedSink);
+      survived = existsSync(other); rmSync(other, { force: true });
+    } });
+    expect(out).toBe("OLD STEER");
+    expect(survived).toBe(true);
+    expect(nestedSink).toEqual([]);
+  });
+  test("an orphan that cannot be archived is reported with its stranded path and a distinct remedy", () => {
+    const d = repo();
+    mkdirSync(join(d, ".loki", "logs"));
+    const gone = `.claim-${deadPid()}-abc123`;
+    writeFileSync(join(d, ".loki", "logs", gone), "LOST");
+    const link = ((): never => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { link });
+    expect(sink[0]).toMatchObject({ unapplied: true, reason: `steer stranded at .loki/logs/${gone}` });
+    expect(staleReason(sink)).toContain("Recover or delete the stranded file");
+    expect(existsSync(join(d, ".loki", "logs", gone))).toBe(true);
+  });
+  test("a failure after the archive (revision record) still yields an unapplied record, and the steer text is not dropped", () => {
+    const d = repo("KEEP");
+    const sink: IntentRevision[] = [];
+    const afterArchive = (): void => { throw new Error("record boom"); };
+    expect(consumeSteer(d, {}, () => new Date(), sink, { afterArchive })).toBe("KEEP");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "steer applied but its revision record failed"]]);
+  });
+  test("a hard-link failure while archiving falls back to a collision-proof rename and keeps the steer", () => {
+    const d = repo("TXT");
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "ENOTSUP" }); }) as unknown as typeof linkSync;
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { link })).toBe("TXT");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).length).toBe(1);
+    expect(archived(d).some((n) => n.startsWith(".claim-"))).toBe(false);
+  });
+  test("P12-02g: a no-hardlink filesystem (EPERM) still records the revision and writes the applied marker", () => {
+    const d = repo("## Operator directive rev 1 (t) actor=a source=cli\nbody\n");
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "EPERM" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink, { link })).toContain("body");
+    expect(sink.map((r) => [r.rev, r.unapplied])).toEqual([[1, undefined]]);
+    const logs = join(d, ".loki", "logs");
+    const normal = readdirSync(logs).find((n) => /^human-input-.*\.md$/.test(n))!;
+    expect(existsSync(join(logs, `.applied-${normal}`))).toBe(true);
+    expect(readFileSync(join(d, ".loki", "intent-revisions.jsonl"), "utf8")).toContain('"rev":1');
+  });
+  test("P12-02g: a sweep prunes an .applied- marker whose archive is gone and keeps one whose archive exists", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-20200101T000000.md"), "X");
+    writeFileSync(join(logs, ".applied-human-input-20200101T000000.md"), "d");
+    writeFileSync(join(logs, ".applied-human-input-19990101T000000.md"), "d");
+    consumeSteer(d, {}, () => new Date(), []);
+    expect(existsSync(join(logs, ".applied-human-input-20200101T000000.md"))).toBe(true);
+    expect(existsSync(join(logs, ".applied-human-input-19990101T000000.md"))).toBe(false);
+  });
+  test("a non-file steer with no fresh steer is restored in place", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    expect(consumeSteer(d)).toBeNull();
+    expect(lstatSync(f).isFIFO()).toBe(true);
   });
   test("a unix socket at the steer path refuses as not a regular file", async () => {
     const d = repo();
