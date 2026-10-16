@@ -55,9 +55,7 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
   if (bound === createHash("sha256").digest("hex")) { // P12-01b: the empty-log hash is honest only for a receipt that records zero events and stages (a real run writes run.started first); --allow-unsigned never waives this
     const st = (receipt["time"] as { stages?: unknown } | null | undefined)?.stages;
     const claims = st !== null && typeof st === "object" && Object.keys(st as object).length > 0;
-    const p = join(dirname(receiptPath), "events.jsonl");
-    const empty = !existsSync(p) || readFileSync(p, "utf8").trim() === "";
-    return claims && empty ? "events.jsonl is missing or empty but the receipt records stages; the receipt is forged or its log was removed. Restore events.jsonl from the original run directory, or re-run the task to produce a fresh receipt" : null;
+    return claims ? "the receipt records stages but binds the empty-log hash, so no events.jsonl can back it (missing, empty or non-empty); the receipt is forged or was sealed without a log. Re-run the task to produce a fresh receipt" : null;
   }
   const path = join(dirname(receiptPath), "events.jsonl");
   if (!existsSync(path)) return "events.jsonl is missing";

@@ -613,10 +613,15 @@ describe("main() UNSIGNED policy (D47)", () => {
       const r = await runMain(["forged1", "--allow-unsigned"], join(dir, "runs"));
       expect(r.code).toBe(1);
       expect(r.out).toContain("verdict: TAMPERED");
-      expect(r.out).toContain("events.jsonl is missing or empty");
-      expect(r.out).toContain("re-run the task");
+      expect(r.out).toContain("records stages but binds the empty-log hash");
+      expect(r.out).toContain("Re-run the task");
       writeFileSync(join(dir, "runs", "forged1", "events.jsonl"), "");
       expect((await runMain(["forged1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(1);
+      writeFileSync(join(dir, "runs", "forged1", "events.jsonl"), JSON.stringify({ seq: 0, type: "run.started", data: {} }) + "\n");
+      const r2 = await runMain(["forged1", "--allow-unsigned"], join(dir, "runs")); // empty hash + stages + non-empty log: still forged
+      expect(r2.code).toBe(1);
+      expect(r2.out).toContain("records stages but binds the empty-log hash");
+      expect(r2.out).toContain("Re-run the task");
       writeUnsignedReceipt(dir, "zero1"); // truly zero events and stages: still accepted
       expect((await runMain(["zero1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
