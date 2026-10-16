@@ -852,7 +852,7 @@ loki_small_main_session_flags() {
         fi
         _LOKI_SMALL_MAIN_ARGV+=("$_line")
         _prev="$_line"
-    done < <(loki_lean_child_flags main)
+    done <<<"$(loki_lean_child_flags main)"
     [ "${#_LOKI_SMALL_MAIN_ARGV[@]}" -gt 0 ]
 }
 

@@ -666,7 +666,7 @@ EOF'
         'echo "done" # see cat <<EOF
 rm -rf "$TMPDIR"'
         'echo "a <<EOF b"
-rm -rf "$TMPDIR"/''*
+rm -rf "$TMPDIR"/'"*"'
 EOF'
         'echo "<<EOF"
 rm -rf ..'
