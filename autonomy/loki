@@ -11492,7 +11492,7 @@ fi
 # Post-completion: auto-merge if requested
 if [[ "$LOKI_AUTO_MERGE" == "true" ]]; then
     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
+    if "$LOKI_CMD" merge pr "$branch_current" --require-verified --delete-branch; then
         # A brief run carries a synthetic ref (b<epoch>), not a real issue: close only numeric refs.
         if [[ "${LOKI_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
             gh issue close "$LOKI_ISSUE_NUMBER" --comment "Resolved by Loki Mode" 2>/dev/null || true
@@ -11744,7 +11744,7 @@ ${_gh_receipt}"
                 github|brief)
                     local branch_current
                     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-                    if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
+                    if _merge_pr_gated "$branch_current" --require-verified --delete-branch; then
                         echo -e "${GREEN}PR merged and branch deleted${NC}"
                         if [[ "${number:-}" =~ ^[0-9]+$ ]]; then
                             gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
@@ -25882,6 +25882,56 @@ SHOW_EOF
     esac
 }
 
+# Shared merge gate. One PR (number or branch) merges only when it is not a
+# draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
+# --require-verified, this run's proof headline is VERIFIED (missing proof or
+# an unreadable headline is never VERIFIED). On refusal it prints the exact
+# blocking gate ("gate: draft|verdict|checks") and leaves the PR open.
+# Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
+_merge_pr_gated() {
+    local pr="$1" need_verified=false margs=(--squash) rc i d
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --require-verified) need_verified=true ;;
+            --delete-branch) margs+=(--delete-branch) ;;
+        esac
+        shift
+    done
+    command -v gh >/dev/null 2>&1 || { echo "$pr: not merged, gate: gh (gh CLI is required)" >&2; return 1; }
+    d="$(gh pr view "$pr" --json isDraft -q .isDraft 2>/dev/null)" || d=""
+    if [ "$d" != "false" ]; then
+        echo "$pr: not merged, gate: draft (PR is a draft or its state is unreadable); PR left open" >&2
+        return 1
+    fi
+    if $need_verified; then
+        local pid="" headline=""
+        [ -f .loki/state/last-proof-id.txt ] && pid="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
+        if [ -n "$pid" ] && [ -f ".loki/proofs/${pid}/proof.json" ] && command -v jq >/dev/null 2>&1; then
+            headline="$(jq -r '.honesty.headline // empty' ".loki/proofs/${pid}/proof.json" 2>/dev/null)"
+        fi
+        if [ "$headline" != "VERIFIED" ]; then
+            echo "$pr: not merged, gate: verdict (run verdict is '${headline:-missing}', need VERIFIED); PR left open" >&2
+            return 1
+        fi
+    fi
+    local poll="${LOKI_MERGE_POLL_S:-20}" tries="${LOKI_MERGE_MAX_POLLS:-90}"
+    rc=8; i=0
+    while [ "$rc" = "8" ] && [ "$i" -lt "$tries" ]; do
+        rc=0; gh pr checks "$pr" >/dev/null 2>&1 || rc=$?
+        [ "$rc" = "8" ] && { sleep "$poll"; i=$((i+1)); }
+    done
+    if [ "$rc" != "0" ]; then
+        echo "$pr: not merged, gate: checks (gh pr checks rc=$rc); PR left open" >&2
+        return 1
+    fi
+    if ! gh pr merge "$pr" "${margs[@]}" >/dev/null 2>&1; then
+        echo "$pr: not merged, gate: merge (gh pr merge failed); PR left open" >&2
+        return 1
+    fi
+    return 0
+}
+
 # loki merge: serial PR merge queue. Queue lives in .loki/merge-queue (one PR
 # number per line). A PR merges only when `gh pr checks` exits 0 (all green);
 # after each merge the next PR is rebased onto the new base (gh pr update-branch
@@ -25916,8 +25966,7 @@ cmd_merge() {
             [ "${1:-}" = "--dry-run" ] && dry=true
             if [ ! -s "$qfile" ]; then echo "Merge queue is empty"; return 0; fi
             command -v gh >/dev/null 2>&1 || { echo "gh CLI is required" >&2; return 1; }
-            local poll="${LOKI_MERGE_POLL_S:-20}" tries="${LOKI_MERGE_MAX_POLLS:-90}"
-            local first=true n rc i remaining="" merged=0 blocked=0
+            local first=true n rc remaining="" merged=0 blocked=0
             while IFS= read -r n; do
                 [ -n "$n" ] || continue
                 if $dry; then
@@ -25936,29 +25985,27 @@ cmd_merge() {
                         || { echo "#$n: rebase onto new base failed, left in queue"; remaining="$remaining$n"$'\n'; blocked=$((blocked+1)); continue; }
                     echo "#$n: rebased onto new base"
                 fi
-                rc=8; i=0
-                while [ "$rc" = "8" ] && [ "$i" -lt "$tries" ]; do
-                    rc=0; gh pr checks "$n" >/dev/null 2>&1 || rc=$?
-                    [ "$rc" = "8" ] && { sleep "$poll"; i=$((i+1)); }
-                done
-                if [ "$rc" != "0" ]; then
-                    echo "#$n: checks not green (rc=$rc), left in queue, not merged"
-                    remaining="$remaining$n"$'\n'; blocked=$((blocked+1)); continue
-                fi
-                if gh pr merge "$n" --squash >/dev/null 2>&1; then
+                if _merge_pr_gated "$n" 2>"$qfile.err"; then
                     echo "#$n: merged"; merged=$((merged+1)); first=false
                 else
-                    echo "#$n: merge failed, left in queue"
+                    sed 's/^/#/' "$qfile.err"; echo "#$n: left in queue"
                     remaining="$remaining$n"$'\n'; blocked=$((blocked+1))
                 fi
             done < "$qfile"
             if $dry; then echo "Dry run: nothing changed"; return 0; fi
+            rm -f "$qfile.err"
             printf '%s' "$remaining" > "$qfile"
             echo "Merged: $merged, left in queue: $blocked"
             [ "$blocked" -eq 0 ]
             ;;
+        pr)
+            [ $# -gt 0 ] || { echo "Usage: loki merge pr <pr-or-branch> [--require-verified] [--delete-branch]" >&2; return 2; }
+            _merge_pr_gated "$@" && echo "$1: merged"
+            ;;
         help|--help|-h|*)
-            echo "Usage: loki merge <add|list|run|clear>"
+            echo "Usage: loki merge <add|list|run|pr|clear>"
+            echo "  pr <pr|branch>     Merge one PR through the same gate (not draft, checks green;"
+            echo "                     --require-verified also needs a VERIFIED run verdict)."
             echo "  add <pr>...        Queue pull requests"
             echo "  list               Show the queue"
             echo "  run [--dry-run]    Merge one at a time, only when checks are green;"

@@ -14,7 +14,8 @@ cat > "$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
 case "$1 $2" in
-  "pr checks") [ "$3" = "12" ] && exit 1; exit 0 ;;
+  "pr checks") [ "$3" = "12" ] && exit 1; [ "$3" = "feat-red" ] && exit 1; exit 0 ;;
+  "pr view") [ "$3" = "feat-draft" ] && echo true || echo false; exit 0 ;;
 esac
 exit 0
 STUB
@@ -36,6 +37,29 @@ grep -q "^pr merge 12" "$STUB_LOG" && bad "red PR 12 merged" || ok "red PR 12 ne
 grep -q "^pr update-branch 12 --rebase" "$STUB_LOG" && ok "next PR rebased after merge" || bad "no rebase"
 grep -q "^pr merge 13 " "$STUB_LOG" && ok "PR 13 merged after rebase" || bad "13 not merged"
 [ "$RC" -ne 0 ] && [ "$(cat .loki/merge-queue)" = "12" ] && ok "red PR left in queue, nonzero exit" || bad "queue/rc: rc=$RC"
+
+# Gated single-PR merge (the --ship path): checks, draft and verdict all block.
+mkdir -p .loki/proofs/p1 .loki/state
+echo p1 > .loki/state/last-proof-id.txt
+printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-red --require-verified --delete-branch 2>&1)"; RC=$?
+grep -q "^pr merge feat-red" "$STUB_LOG" && bad "red-check ship PR merged" || ok "ship: failing checks never merge"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: checks" && ok "ship: message names the checks gate" || bad "checks msg rc=$RC: $OUT"
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-draft --require-verified 2>&1)"; RC=$?
+grep -q "^pr merge feat-draft" "$STUB_LOG" && bad "draft PR merged" || ok "ship: draft PR never merges"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: draft" && ok "ship: message names the draft gate" || bad "draft msg: $OUT"
+printf '{"honesty":{"headline":"PARTIAL"}}' > .loki/proofs/p1/proof.json
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-ok --require-verified 2>&1)"; RC=$?
+grep -q "^pr merge feat-ok" "$STUB_LOG" && bad "non-VERIFIED run merged" || ok "ship: non-VERIFIED verdict never merges"
+echo "$OUT" | grep -q "gate: verdict" && ok "ship: message names the verdict gate" || bad "verdict msg: $OUT"
+printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
+: > "$STUB_LOG"
+bash "$LOKI" merge pr feat-ok --require-verified --delete-branch >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^pr merge feat-ok --squash --delete-branch" "$STUB_LOG" && ok "ship: green VERIFIED PR merges" || bad "green ship rc=$RC: $(cat "$STUB_LOG")"
+grep -q 'gh pr merge "$branch_current"' "$LOKI" && bad "inline ungated gh pr merge still present" || ok "no inline ungated gh pr merge of the branch"
 
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
