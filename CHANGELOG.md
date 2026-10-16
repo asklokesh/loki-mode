@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.5 (2026-10-16)
+
+v11.17.4 never published: its Tests run was red because `loki grill` returned "provider returned no output" when the provider CLI ignored `--output-format json`. This release ships the v11.17.4 content plus the fix.
+
+### Fixed
+- `loki grill` and PRD enrich keep plain-text provider output when the CLI does not return JSON, so the lean JSON unwrap from v11.17.4 no longer empties the reply.
+
 ## v11.17.4 (2026-10-16)
 
 v11.17.3 was written into this changelog but never published to npm: its required CI failed on line budgets, process substitution in `run.sh`, and a ShellCheck warning. This release publishes everything listed under v11.17.3 plus the changes below. `loki start` with Claude remains the primary path.
