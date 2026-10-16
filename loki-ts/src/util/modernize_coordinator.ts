@@ -71,6 +71,14 @@ function shipUnitOf(d: WaveDeps, unit: string, o: UnitOutcome | undefined): Ship
   };
 }
 
+/** M-27F: a python compileall build step compiles only this wave's existing .py files (the whole repo fails multi-wave py2 repos); the -x excludes stay. Any other command, or a wave with no .py file, is unchanged. */
+export function scopeBuildToWave(cmd: StepCommand | null | undefined, repoDir: string, units: readonly Unit[]): StepCommand | null | undefined {
+  const x = cmd?.argv.indexOf("-x") ?? -1;
+  if (!cmd || !cmd.argv.includes("compileall") || x < 0) return cmd;
+  const files = [...new Set(units.flatMap((u) => u.nodes))].filter((n) => n.endsWith(".py") && isSafeUnitId(n) && existsSync(join(repoDir, n)));
+  return files.length ? { ...cmd, argv: [...cmd.argv.slice(0, x + 2), ...files] } : cmd;
+}
+
 export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesResult> {
   const waves: WaveReport[] = [];
   const verdicts: WaveVerdict[] = [];
@@ -117,7 +125,7 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
     }
     for (const id of ids) if (unready.has(id)) outcomes.push({ unit: id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: unready.get(id)! });
     const byUnit = new Map(outcomes.map((o) => [o.unit, o]));
-    const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: d.waveCommands, log: d.log, ...(d.optionalSteps ? { optional: d.optionalSteps } : {}), ...(d.stepRunner ? { run: d.stepRunner } : {}) });
+    const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: { ...d.waveCommands, build: scopeBuildToWave(d.waveCommands.build, d.repoDir, sub.units) }, log: d.log, ...(d.optionalSteps ? { optional: d.optionalSteps } : {}), ...(d.stepRunner ? { run: d.stepRunner } : {}) });
     verdicts.push(verdict);
     let url: string | null = null, reason: string | null = null, didShip = false;
     if (d.ship && !shipped.has(n)) {

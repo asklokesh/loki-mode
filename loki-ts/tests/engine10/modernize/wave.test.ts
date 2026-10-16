@@ -149,7 +149,7 @@ describe("detectWaveCommands (M-27D)", () => {
 
   it("python with pytest evidence: build and suite set, integration null, verifyWave blocks on integration", () => {
     const c = detectWaveCommands(mkInv("setuptools", "setup.py", ["setup.py", "pkg/a.py"], { pytest: "tests/test_a.py" }), "/nonexistent");
-    expect(c.build).toEqual({ argv: ["python3", "-m", "compileall", "-q", "-x", "/\\.loki/", "."] });
+    expect(c.build).toEqual({ argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] });
     expect(c.original_suite).toEqual({ argv: ["python3", "-m", "pytest", "-q"] });
     expect(c.integration).toBeNull();
     const ran: string[] = [];

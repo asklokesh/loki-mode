@@ -2,7 +2,7 @@
 // and the capture executor (runCapture) are both stubbed, per section 13 "Tests deterministic
 // with a stub provider" -- no python or py_capture.py dependency here.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -314,6 +314,27 @@ describe.skipIf(!PYTHON3)("captureUnitOracle (M-27A)", () => {
     expect(readFileSync(join(dir, "cases.jsonl"), "utf8")).toBe("SENTINEL");
   });
 
+  it("a cases.jsonl appearing between the existence check and linkSync gives ok:false and is never overwritten (M-27A-b)", () => {
+    const dir = oracleDir(repoDir, mid, "branch");
+    const link = ((src: string, dst: string) => { writeFileSync(dst, "SENTINEL"); return linkSync(src, dst); }) as typeof linkSync;
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), link });
+    expect(r.ok).toBe(false);
+    expect(readFileSync(join(dir, "cases.jsonl"), "utf8")).toBe("SENTINEL");
+    expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("a failed link removes the empty parent dirs it created, but never a pre-existing one (M-27A-b)", () => {
+    const boom = (() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }) as unknown as typeof linkSync;
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), link: boom });
+    expect(r.ok).toBe(false);
+    expect(existsSync(join(repoDir, ".loki"))).toBe(false);
+    const keep = join(repoDir, ".loki");
+    mkdirSync(keep, { recursive: true });
+    captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), link: boom });
+    expect(existsSync(keep)).toBe(true);
+    expect(readdirSync(keep)).toEqual([]);
+  });
+
   it("a failed replay leaves no oracle dir", () => {
     const failing: CaptureRunner = (u, c, out) => (out ? { branchesTotal: -1, branchesTaken: -1, branchPct: 0, missing: [], error: "replay boom" } : realCaptureRunner(u, c));
     const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), runCapture: failing });
@@ -341,5 +362,28 @@ describe.skipIf(!PYTHON3)("captureUnitOracle (M-27A)", () => {
     expect(seen).toBeDefined();
     expect(seen!.cwd.startsWith(repoDir)).toBe(false);
     expect(seen!.token === undefined || seen!.token !== "ghp_secret").toBe(true);
+  });
+});
+
+describe("realCaptureRunner isolation (M-27F)", () => {
+  it("spawns the old runtime token-free in a temp cwd that is removed afterwards", () => {
+    const d = mkdtempSync(join(tmpdir(), "m27f-"));
+    const fake = join(d, "fakepy"), dump = join(d, "dump.txt");
+    writeFileSync(fake, `#!/bin/sh\n[ "$1" = "--version" ] && exit 0\nprintf '%s|%s' "$GITHUB_TOKEN" "$PWD" > "${dump}"\nexit 1\n`, { mode: 0o755 });
+    const prev = { rt: process.env["LOKI_MOD_OLD_RUNTIME"], tok: process.env["GITHUB_TOKEN"] };
+    process.env["LOKI_MOD_OLD_RUNTIME"] = fake;
+    process.env["GITHUB_TOKEN"] = "ghp_secret";
+    try {
+      const r = realCaptureRunner(FIXTURE_UNIT, []);
+      expect(r.error).toContain("py_capture.py exit 1");
+      const [tok, cwd] = readFileSync(dump, "utf8").split("|");
+      expect(tok).not.toBe("ghp_secret");
+      expect(cwd!.startsWith(process.cwd())).toBe(false);
+      expect(existsSync(cwd!)).toBe(false);
+    } finally {
+      if (prev.rt === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"]; else process.env["LOKI_MOD_OLD_RUNTIME"] = prev.rt;
+      if (prev.tok === undefined) delete process.env["GITHUB_TOKEN"]; else process.env["GITHUB_TOKEN"] = prev.tok;
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

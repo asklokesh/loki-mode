@@ -144,5 +144,5 @@ export function detectWaveCommands(inv: InventoryResult, target: string): Record
   const pytest = "pytest" in inv.tests.evidence;
   const integration: StepCommand | null = system === "tox" && text().includes("[testenv:integration") ? { argv: ["tox", "-e", "integration"] }
     : itDir && pytest ? { argv: ["python3", "-m", "pytest", "-q", itDir] } : null;
-  return { build: { argv: ["python3", "-m", "compileall", "-q", "-x", "/\\.loki/", "."] }, integration, original_suite: pytest ? { argv: ["python3", "-m", "pytest", "-q"] } : null };
+  return { build: { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] }, integration, original_suite: pytest ? { argv: ["python3", "-m", "pytest", "-q"] } : null };
 }
