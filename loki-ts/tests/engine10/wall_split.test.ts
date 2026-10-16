@@ -105,5 +105,16 @@ describe("WC-01a wall split", () => {
     rmSync(repoDir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true }); rmSync(base, { recursive: true, force: true });
   });
 
+  test("installWall sets ctx.wallSealed (P12-13c)", async () => {
+    const { repoDir, runDir, ctx } = fixture();
+    const a = await wallAuthor(ctx, new AbortController().signal);
+    if (a.kind !== "authored") throw new Error("expected authored");
+    expect(ctx.wallSealed).toBeUndefined();
+    const base = mkdtempSync(join(tmpdir(), "loki-p1213c-base-"));
+    installWall(ctx, a, base, { baseRunner: new PerFileRunner() });
+    expect(ctx.wallSealed).toBe(true);
+    rmSync(repoDir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true }); rmSync(base, { recursive: true, force: true });
+  });
+
   test("wallStage is exported unchanged in shape", () => { expect(wallStage.name).toBe("wall"); });
 });

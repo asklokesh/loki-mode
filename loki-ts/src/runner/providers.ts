@@ -304,14 +304,22 @@ function hostGuardRequired(cwd: string): boolean {
   });
 }
 
-function hostGuardSettingsJson(): string {
+// Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh
+// (same env var, same default, same validation); parity test: tests/runner/hook_timeout_parity.test.ts.
+export const HOOK_TIMEOUT_DEFAULT_S = 30;
+export function hookTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env["LOKI_HOOK_TIMEOUT"] ?? "";
+  return /^[1-9][0-9]{0,4}$/.test(raw) ? Number(raw) : HOOK_TIMEOUT_DEFAULT_S;
+}
+
+export function hostGuardSettingsJson(): string {
   const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
   if (!existsSync(hookPath)) throw new Error(`host command guard hook is missing: ${hookPath}`);
   return JSON.stringify({
     hooks: {
       PreToolUse: [{
         matcher: "Bash",
-        hooks: [{ type: "command", command: `bash ${shellQuote(hookPath)}` }],
+        hooks: [{ type: "command", command: `bash ${shellQuote(hookPath)}`, timeout: hookTimeoutSeconds() }],
       }],
     },
   });
@@ -601,6 +609,7 @@ export interface SdkLoopExtraOptions {
   settings?: { advisorModel: string; autoCompactWindow?: number };
   noAppend?: boolean;
   systemPrompt?: string;
+  excludeDynamic?: boolean;
 }
 // E-65: engine10 sessions (LOKI_E10_STAGE is set only by engine10/session.ts) run lean. Measured "OK" prefix on
 // sonnet: 20,413 tokens with the full preset tool set + loki append vs 7,136 with these 6 tools, paid on every turn.
@@ -637,6 +646,9 @@ export function buildSdkLoopOptions(args: {
     // claude_code preset so every stage/task shares a byte-identical leading
     // block (cache-stable prefix, D41 item 2). Flag off: unchanged preset below.
     if (process.env["LOKI_E10_PREFIX"] === "lean") out.systemPrompt = LEAN_PREFIX;
+    // CP-01 (D99): cwd, repo status and memory leave the system prompt (moved to the first user message) so the
+    // leading block is byte-identical across stages and runs. ON by default; LOKI_E10_STABLE_PREFIX=0 opts out.
+    if (process.env["LOKI_E10_STABLE_PREFIX"] !== "0") out.excludeDynamic = true;
   }
 
   // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +
@@ -694,8 +706,9 @@ export function buildSdkLoopOptions(args: {
 // without loading the Agent SDK.
 export function resolveSystemPrompt(
   extra: SdkLoopExtraOptions,
-): string | { type: "preset"; preset: "claude_code"; append?: string } {
+): string | { type: "preset"; preset: "claude_code"; append?: string; excludeDynamicSections?: boolean } {
   if (extra.systemPrompt) return extra.systemPrompt;
+  if (extra.excludeDynamic) return { type: "preset", preset: "claude_code", excludeDynamicSections: true };
   return autonomyAppendEnabled() && !extra.noAppend
     ? { type: "preset", preset: "claude_code", append: autonomyAppendText() }
     : { type: "preset", preset: "claude_code" };
@@ -726,12 +739,19 @@ async function runSdkHostGuard(input: unknown, cwd: string) {
       stdout: "pipe",
       stderr: "ignore",
     });
+    // Fail closed on timeout: kill the hook and deny (same budget as the CLI route).
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; proc.kill(9); }, hookTimeoutSeconds() * 1000);
     proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
-    const [stdout, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
+    let stdout: string;
+    let exitCode: number;
+    try {
+      [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (timedOut) return hostGuardDecision("LOKI_HOST_GUARD: hook timed out, so the Bash command was denied.");
     const parsed = JSON.parse(stdout) as {
       hookSpecificOutput?: { permissionDecision?: string };
     };

@@ -228,6 +228,7 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
     sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
+  ctx.wallSealed = true;
   ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }, notRunFiles: { file: string; reason: string }[] = []; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {

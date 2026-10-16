@@ -174,3 +174,89 @@ describe("engine10 SIGINT cancellation (stub provider that sleeps)", () => {
     expect(out).not.toMatch(/Cost:\s+\$0\.00/);
   }, 120_000);
 });
+
+// P12-10b: a cancel honoured at a stage boundary (control-request.json) ends the run CANCELLED with run.completed cancelled:true, no PR.
+describe("supervisor request cancel", () => {
+  test("cancel_effective from the worker completes the run as cancelled", async () => {
+    const base = mkdtempSync(join(tmpdir(), "e10-rcancel-"));
+    roots.push(base);
+    const dir = join(base, "repo");
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "base\n");
+    git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+    writeFileSync(join(base, "worker.js"), `
+console.log(JSON.stringify({ type: "cancel_requested", stage: null, data: {} }));
+console.log(JSON.stringify({ type: "cancel_effective", stage: null, data: {} }));
+console.log(JSON.stringify({ type: "escalated", stage: null, data: { stop: "cancelled by request" } }));
+`);
+    writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
+const r = await runSupervisor({ runId: "e10-rc", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
+console.log("OUTCOME=" + r.outcome);`);
+    const r = Bun.spawnSync([process.execPath, join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" } });
+    expect(r.stdout.toString()).toContain("OUTCOME=CANCELLED");
+    const marker = JSON.parse(readFileSync(join(dir, ".loki", "engine.json"), "utf8")) as { events: string };
+    const evs = readFileSync(join(dir, marker.events), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { type: string; data: Record<string, unknown> });
+    const done = evs.findLast((e) => e.type === "run.completed");
+    expect(done?.data.cancelled).toBe(true);
+    expect(done?.data.outcome).toBe("CANCELLED");
+    expect(evs.some((e) => e.type === "pr.opened")).toBe(false);
+  }, 30_000);
+});
+
+// P12-10b smoke: `loki cancel` against a LIVE run (stub provider held in the implement stage) is honoured at the next stage boundary and the run completes CANCELLED.
+describe("loki cancel on a live run", () => {
+  test("cancel written while a stage is running completes the run as cancelled with no PR", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-cancel-live-"));
+    roots.push(tmp);
+    const repo = join(tmp, "repo");
+    cpSync(join(FIX, "repo"), repo, { recursive: true });
+    gitRun(repo, "init", "-q", "-b", "main");
+    gitRun(repo, "config", "user.name", "e2e");
+    gitRun(repo, "config", "user.email", "e2e@example.invalid");
+    gitRun(repo, "add", "calc.ts", "calc.test.ts", "bunfig.toml");
+    gitRun(repo, "commit", "-q", "-m", "base");
+    const hangDir = join(tmp, "hang");
+    mkdirSync(hangDir);
+    const hang = join(hangDir, "hang-implement");
+    writeFileSync(hang, "");
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      LOKI_TS_ENTRY: ENTRY,
+      LOKI_E10_INVOKER: "cli",
+      LOKI_CLAUDE_CLI: join(FIX, "bin", "claude"),
+      ISSUE_REF_STUB_HANG_DIR: hangDir,
+      PATH: `${join(FIX, "bin")}:${process.env.PATH ?? ""}`,
+      LOKI_NO_BROWSER: "1",
+      LOKI_RECEIPT_SIGNING_KEY_FILE: join(tmp, "k.pem"),
+    };
+    delete env.LOKI_LEGACY_BASH;
+    delete env.LOKI_MODEL_OVERRIDE;
+    delete env.LOKI_RECEIPT_SIGNING_KEY;
+    const proc = Bun.spawn(["bash", BIN_LOKI, "add a subtract function to calc.ts", "--no-pr"], { cwd: repo, env, stdout: "pipe", stderr: "pipe" });
+    const outP = new Response(proc.stdout).text();
+    const errP = new Response(proc.stderr).text();
+    const pidFile = join(hangDir, "pid");
+    for (let i = 0; i < 400 && !existsSync(pidFile) && proc.exitCode === null; i++) await sleep(150);
+    if (!existsSync(pidFile)) { proc.kill("SIGKILL"); throw new Error(`stub never reached implement: ${(await outP) + (await errP)}`); }
+    try {
+      expect(existsSync(pidFile)).toBe(true);
+      const c = Bun.spawnSync(["bash", BIN_LOKI, "cancel"], { cwd: repo, env });
+      expect(c.exitCode).toBe(0);
+    } finally { rmSync(hang, { force: true }); } // release the stub whatever happened
+    const rc = await Promise.race([proc.exited, sleep(90_000).then(() => -1)]);
+    const out = await outP;
+    if (rc === -1) proc.kill("SIGKILL");
+    expect(rc).not.toBe(-1);
+    const marker = JSON.parse(readFileSync(join(repo, ".loki", "engine.json"), "utf8")) as { events: string };
+    const events = readFileSync(join(repo, marker.events), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Ev);
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("cancel_requested")).toBeGreaterThanOrEqual(0);
+    expect(types.indexOf("cancel_effective")).toBe(types.indexOf("cancel_requested") + 1);
+    const done = events.findLast((e) => e.type === "run.completed");
+    expect(done?.data.cancelled).toBe(true);
+    expect(done?.data.outcome).toBe("CANCELLED");
+    expect(types).not.toContain("pr.opened");
+    expect(out).toContain("CANCELLED");
+  }, 150_000);
+});

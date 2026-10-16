@@ -9672,6 +9672,15 @@ _loki_host_guard_required() {
     LOKI_AUTO_GIT_INIT=0 _loki_workspace_is_engine_owned
 }
 
+# Host-guard hook timeout, seconds. Mirrors hookTimeoutSeconds in
+# loki-ts/src/runner/providers.ts (same env var, default 30, positive int <= 99999).
+_loki_hook_timeout() {
+    case "${LOKI_HOOK_TIMEOUT:-}" in
+        [1-9] | [1-9][0-9] | [1-9][0-9][0-9] | [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) printf '%s\n' "$LOKI_HOOK_TIMEOUT" ;;
+        *) printf '%s\n' 30 ;;
+    esac
+}
+
 _loki_prepare_host_guard() {
     _loki_host_guard_required || return 0
 
@@ -9696,12 +9705,12 @@ _loki_prepare_host_guard() {
     fi
 
     local settings_json
-    settings_json=$(_LOKI_HOST_GUARD_HOOK="$hook_path" python3 -c '
+    settings_json=$(_LOKI_HOST_GUARD_HOOK="$hook_path" _LOKI_HOOK_TIMEOUT="$(_loki_hook_timeout)" python3 -c '
 import json, os, shlex
 command = "bash " + shlex.quote(os.environ["_LOKI_HOST_GUARD_HOOK"])
 print(json.dumps({"hooks": {"PreToolUse": [{
     "matcher": "Bash",
-    "hooks": [{"type": "command", "command": command}],
+    "hooks": [{"type": "command", "command": command, "timeout": int(os.environ["_LOKI_HOOK_TIMEOUT"])}],
 }]}}))
 ' 2>/dev/null) || settings_json=""
     if [ -z "$settings_json" ]; then

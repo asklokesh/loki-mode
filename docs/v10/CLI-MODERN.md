@@ -6,12 +6,12 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 73
+- KEEP-MODERN: 74
 - UPDATE: 22
 - DROP-LEGACY: 31
 - DELETE: 14
-- Total rows: 140
-- Registry paths (commands and nested subcommands): 196
+- Total rows: 141
+- Registry paths (commands and nested subcommands): 197
 
 ## Commands
 
@@ -65,8 +65,9 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | mcp | autonomy/loki | KEEP-MODERN | Engine-neutral |
 | acp | autonomy/loki | KEEP-MODERN | Engine-neutral |
 | stop | autonomy/loki | KEEP-MODERN | Session control |
-| pause | autonomy/loki | KEEP-MODERN | Session control |
-| resume | autonomy/loki | KEEP-MODERN | Session control |
+| pause | bun route, bash fallthrough | KEEP-MODERN | Session control; Bun writes the Loki 10 run request, bash keeps the legacy PAUSE file |
+| resume | bun route, bash fallthrough | KEEP-MODERN | Session control; Bun clears a Loki 10 pause, bash keeps the legacy resume |
+| cancel | bun route, bash fallthrough | KEEP-MODERN | Session control; Loki 10 only |
 | why | autonomy/loki | KEEP-MODERN | Outcome explainer |
 | next | autonomy/loki | KEEP-MODERN | Guided flow |
 | logs | autonomy/loki | KEEP-MODERN | Engine-neutral |

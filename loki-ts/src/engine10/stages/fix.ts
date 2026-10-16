@@ -7,14 +7,13 @@ import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
-import { HOLDOUT_GROUP } from "../../util/holdout.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
-import { buildFixResumeBrief, runFixSession } from "../../runner/session_resume.ts";
+import { buildFixResumeBrief, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean {
-  return !g.signature.startsWith("lint:") && g.signature !== "select-tests" && g.signature !== HOLDOUT_GROUP; // C-C4b-c: a held-out red never escalates
+  return !g.signature.startsWith("lint:") && g.signature !== "select-tests";
 }
 
 export function buildFixBrief(
@@ -25,6 +24,7 @@ export function buildFixBrief(
   diffStat: string | null,
   repoMap = "",
   escalation?: { priorDiagnosis: string | null },
+  holdoutFailed = 0,
 ): string {
   const base = buildImplementBrief(task, plan, impactedTests, repoMap);
   const groupsText = groups.length
@@ -35,6 +35,7 @@ export function buildFixBrief(
     base,
     "The previous Fast verify run failed. Fix these grouped failures:",
     groupsText,
+    ...holdoutNote(holdoutFailed),
     `Diff so far:\n${diffText}`,
     ...(escalation ? [`ESCALATED ROUND: the same failure repeated after your previous fix. Re-read the full failure output above, find the root cause, and do not repeat the earlier approach.\nYour previous diagnosis: ${escalation.priorDiagnosis ?? "(none was recorded)"}`] : []),
   ].join("\n\n");
@@ -57,6 +58,7 @@ export const fixStage: Stage = {
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
+    const holdoutFailed = (prior.verify?.holdout_failed as number | undefined) ?? 0;
     const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
     const repoMap = briefCtx(ctx);
     // L1: escalation only goes up: a repeated test failure gets the strongest model (never below the run's) plus the prior diagnosis, before STALLED.
@@ -77,7 +79,7 @@ export const fixStage: Stage = {
       ...(pinnedModel ? { model: pinnedModel } : {}),
       ...(routedPin ? { model: routedPin } : {}) },
       `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel,
-      buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat, repoMap, repeated ? { priorDiagnosis: prevDiag } : undefined), buildFixResumeBrief(groups, diffStat, prevDiag));
+      buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat, repoMap, repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed), buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed));
     ctx.emit("fix.round", "fix", {
       round,
       groups: groups.map((g) => ({ signature: g.signature, count: g.count, sample: g.sample })),

@@ -24,6 +24,9 @@ export function holdoutSplit(seed: string, ids: string[], opts: { ratio: number;
   return ids.filter((id) => held.has(id));
 }
 
+/** A verify check that runs a held-out test (holdout:N) or reports a bad store (holdout:store). Its text, name and command must never reach fix-stage input. */
+export const isHoldoutCheck = (name: string): boolean => name.startsWith("holdout:");
+
 /** The one exact store path for a run (never a glob). */
 export const holdoutDirFor = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-holdout-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
 /** Run-end cleanup: removes only this run's store. */
@@ -49,9 +52,6 @@ export function stashHoldout(o: { runId: string; repoDir: string; srcDir: string
   writeFileSync(join(dir, MANIFEST), JSON.stringify({ targetDir: o.targetDir, files } satisfies HoldoutManifest));
   return { dir, names: new Set(held) };
 }
-
-/** C-C4b-c: the only signature a held-out failure reaches the fixer under; never a code-owned failure, so it never escalates a rung. */
-export const HOLDOUT_GROUP = "held-out checks";
 
 /** Verify time only: copies the held files into the Wall target dir under neutral names and returns their TestRefs. A missing dir, manifest or file, or a sha mismatch, yields a `missing` entry so the caller fails closed. */
 export function stageHoldout(dir: string, repoDir: string): { tests: { runner: string; path: string }[]; missing: string[]; cleanup: () => void } {

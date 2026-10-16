@@ -27,11 +27,31 @@ export function readRunControl(runDir: string): RunControlAction | null {
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Called at a stage boundary. Blocks while paused; returns true when the run must stop (cancel), emitting the lifecycle events in order. */
-export async function runControlBoundary(runDir: string, emit: (type: string) => void, sleep: () => Promise<void> = () => wait(1000)): Promise<boolean> {
-  let a = readRunControl(runDir);
-  while (a === "pause") { await sleep(); a = readRunControl(runDir); }
-  if (a !== "cancel") return false;
+export const PAUSE_TIMEOUT_DEFAULT_S = 3600;
+const PARENT_PID = process.ppid;
+/** True while the process that started this worker is still the parent and alive; a dead supervisor must not leave a paused worker polling forever. */
+function parentAlive(): boolean {
+  if (process.ppid !== PARENT_PID) return false;
+  try { process.kill(PARENT_PID, 0); return true; } catch { return false; }
+}
+export interface BoundaryOpts { sleep?: () => Promise<void>; alive?: () => boolean; timeoutMs?: number; now?: () => number }
+/** Pause timeout in ms: LOKI_PAUSE_TIMEOUT_S (seconds, 0 = unlimited), default one hour. */
+export function pauseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.LOKI_PAUSE_TIMEOUT_S, n = Number(raw);
+  return (raw !== undefined && raw !== "" && Number.isFinite(n) && n >= 0 ? n : PAUSE_TIMEOUT_DEFAULT_S) * 1000;
+}
+
+/** Called at a stage boundary. Blocks while paused; returns true when the run must stop (cancel, or a pause that outlived its timeout or its run), emitting the lifecycle events in order. */
+export async function runControlBoundary(runDir: string, emit: (type: string) => void, o: BoundaryOpts | (() => Promise<void>) = {}): Promise<boolean> {
+  const opts: BoundaryOpts = typeof o === "function" ? { sleep: o } : o;
+  const sleep = opts.sleep ?? (() => wait(1000)), alive = opts.alive ?? parentAlive, now = opts.now ?? Date.now, limit = opts.timeoutMs ?? pauseTimeoutMs();
+  const t0 = now();
+  let a = readRunControl(runDir), abandoned = false;
+  while (a === "pause") {
+    if (!alive() || (limit > 0 && now() - t0 >= limit)) { abandoned = true; break; }
+    await sleep(); a = readRunControl(runDir);
+  }
+  if (a !== "cancel" && !abandoned) return false;
   emit("cancel_requested"); emit("cancel_effective");
   return true;
 }

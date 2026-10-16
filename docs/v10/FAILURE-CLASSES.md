@@ -149,6 +149,9 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the equivalents for other runners: vitest.config setupFiles, jest setupFiles and moduleNameMapper, pytest conftest.py, and go test flags in Makefiles.
 - Mechanism: one runner-config registry for each runner. Any added or changed file that it names (configs, preloads, setup files, conftest) caps the verdict below VERIFIED, with NOT PROVEN naming the file.
 - Fixture: a stub-provider repro for each runner (bun preload, vitest setupFiles, jest moduleNameMapper, pytest conftest).
+- Status (FC-09r): mechanism in `loki-ts/src/features/runner_config.ts`, read by verify.ts (testConfigChanged, base vs working tree) and seal.ts (runnerConfigNotes, base vs head, adds a NOT PROVEN line so the verdict cannot be VERIFIED). Fixtures: `loki-ts/tests/engine10/runner_config.test.ts` (real commit + seal stages).
+- Covered: bunfig.toml; vitest, vite, jest config and vitest.workspace; .mocharc; pytest.ini, tox.ini, conftest.py; pyproject.toml and setup.cfg pytest sections; .cargo/config.toml; preload, setupFiles, globalSetup and exact-file moduleNameMapper targets (jest rootDir resolved, explicit rootDir fails closed); `__mocks__/`; package.json scripts and resolution redirects; go.mod and go.work replace; Cargo.toml patch and replace; tsconfig paths; a changed config that fails to parse is capped, an unchanged broken one is not.
+- Deferred: transitive imports of setup files, pytest `-p` plugins and `pytest_plugins`, .mocharc `require`/`spec` targets, setupFiles given as identifiers or globs, Makefile go test flags.
 
 ## FC-10 Live line truncated to ~20 columns on a pty with no size
 - User saw: on a pty with no column size (script -q, CI, tmux before a resize, IDE terminals) the quiet-mode live status line was cut to about 20 characters, for example "[implement] implemen". Raw: the stage events were complete; only the rendering was wrong.
@@ -852,11 +855,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: loki-ts/tests/runner/harness_intelligence.test.ts "P12-11 recovery classes (FC-REQ)" (classifier table, fingerprints across two runs, bound).
 - Known limits: protocolError and conflictingRequirements have no producer wired yet (callers must set them from structured signals); fingerprints are recorded for flaky only and not yet read back by a policy rule; verify's flaky list is not yet fed to decideRecovery as a rerun signal (follow-up); engine10 renderMainOutput still passes flaky: [] (names reach the user via seal notProven); the bounding rewrite is best effort and a concurrent append can lose a row.
 
-## FC-P12-32 Router cost objective is built but dark in production
+## FC-P12-32 Router cost objective is built but dark in production (RESOLVED by P12-32b)
 - User-visible vs raw: no route decision changes today; the expected accepted-outcome cost ranking (history.ts routeScore, rankExecutorsByCost, haikuFloorExecutor) has no production caller.
 - Law broken: a control nobody reads is theatre (reader without a live caller).
 - Cause (measured): grep of loki-ts/src finds zero callers of resolveExecutor (decision.ts) and none that sets its historyFloor input, so haikuFloorExecutor is unreachable outside tests.
 - Siblings swept: decision.ts envOverride, model_rank.ts nextState and issues_epic.ts are the only decision.ts importers; none builds a ResolveInput.
 - Mechanism: seal.ts recordRun now also records FAILED as a code-owned loss (cost_preview.ts outcomeFor), so acceptance is measured; the remaining step is a caller that builds ResolveInput with historyFloor = haikuFloorExecutor(...) when the router resolves the stage executor.
 - Fixture: loki-ts/tests/runner/cost_preview.test.ts "P12-32 outcomeFor", router_history.test.ts P12-32 cases.
-- Known limits: objective is DARK until resolveExecutor has a caller; acceptance counts only VERIFIED and FAILED; PARTIAL runs are not recorded.
+- Resolved (P12-32b): implement_route.ts routeStart passes a lazy repoHistoryFloor to unit_model.ts routeRecord, which applies history.ts historyRaisedRoute (through resolveExecutor) to a valid cheapest-tier route; history only raises, and no history, below-floor history or corrupt history gives today's routing. Fixture: router_history.test.ts "P12-32b live cost routing".
+- Known limits: acceptance counts only VERIFIED and FAILED; PARTIAL runs are not recorded; history never selects a cheaper unproven model, by design.

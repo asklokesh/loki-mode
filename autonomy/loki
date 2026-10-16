@@ -1825,6 +1825,7 @@ show_help_all() {
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume a paused or interrupted run (after Ctrl-C or a crash)"
+    echo "  cancel           Cancel the active Loki 10 run at its next stage boundary"
     echo "  steer \"<note>\"    Nudge a running build (Loki 10 engine; legacy loop needs LOKI_PROMPT_INJECTION=true)"
     echo ""
     echo "Verify / trust:"
@@ -1957,7 +1958,7 @@ show_help_all() {
     echo ""
     echo "All commands:"
     echo "  agents chat diff edit models route"
-    echo "  acp agent analyze api assets audit backlog backup bench checkpoint (cp) ci cleanup"
+    echo "  acp agent analyze api assets audit backlog backup bench cancel checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
@@ -5118,6 +5119,39 @@ cmd_cleanup() {
     fi
 }
 
+# P12-10b: Loki 10 run control. True when the newest engine10 run has no run.completed yet. A pending request
+# ("$1" = pause) additionally requires control-request.json to hold that action.
+_loki_e10_active_run() {
+    local last="" d
+    for d in "$LOKI_DIR"/runs/e10-*; do [ -d "$d" ] && last="$d"; done
+    [ -n "$last" ] && [ -f "$last/events.jsonl" ] || return 1
+    ! grep -q '"type":"run.completed"' "$last/events.jsonl" 2>/dev/null || return 1
+    [ -z "${1:-}" ] || grep -q "\"action\":\"$1\"" "$last/control-request.json" 2>/dev/null
+}
+
+# loki cancel: asks the active Loki 10 run to stop at its next stage boundary; the run ends CANCELLED with no PR.
+cmd_cancel() {
+    case "${1:-}" in
+        --help|-h)
+            echo -e "${BOLD}Loki Mode -- cancel the active Loki 10 run${NC}"
+            echo ""
+            echo "Usage: loki cancel"
+            echo ""
+            echo "Writes a cancel request that the engine reads at the next stage boundary."
+            echo "The run then completes as CANCELLED (run.completed with cancelled:true)."
+            echo ""
+            echo "See also: loki pause, loki resume, loki stop"
+            return 0
+            ;;
+    esac
+    if _loki_e10_active_run; then
+        ( LOKI_DIR="$LOKI_DIR" _loki_bun_delegate cancel )
+        return $?
+    fi
+    echo -e "${YELLOW}No active Loki 10 run to cancel.${NC}"
+    return 1
+}
+
 # Pause after current session
 cmd_pause() {
     # v7.6.2 B-13 fix: --help must print help, not act on session state.
@@ -5141,6 +5175,13 @@ cmd_pause() {
         echo -e "${YELLOW}No .loki directory found.${NC}"
         echo "No active session to pause."
         exit 0
+    fi
+
+    # P12-10b: an active Loki 10 run takes a stage-boundary request; anything else keeps the legacy PAUSE file.
+    if _loki_e10_active_run; then
+        local _pz_rc=0
+        ( LOKI_DIR="$LOKI_DIR" _loki_bun_delegate pause ) || _pz_rc=$?
+        [ "$_pz_rc" -ne 0 ] || return 0
     fi
 
     if is_session_running; then
@@ -5397,6 +5438,13 @@ cmd_resume() {
         echo -e "${YELLOW}No .loki directory found.${NC}"
         echo "No session to resume. Start a session with: loki start"
         exit 0
+    fi
+
+    # P12-10b: a Loki 10 run paused by `loki pause` is released by clearing its request.
+    if _loki_e10_active_run pause; then
+        local _rz_rc=0
+        ( LOKI_DIR="$LOKI_DIR" _loki_bun_delegate resume ) || _rz_rc=$?
+        [ "$_rz_rc" -ne 0 ] || return 0
     fi
 
     # RECOVERY: an interrupted engine10 run is resumed at its phase by loki-ts/src/util/run_outputs.ts
@@ -21736,6 +21784,9 @@ main() {
             ;;
         steer)
             cmd_steer "$@"
+            ;;
+        cancel)
+            cmd_cancel "$@"
             ;;
         resume)
             cmd_resume "$@"

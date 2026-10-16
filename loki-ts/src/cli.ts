@@ -23,6 +23,7 @@ Bun-native commands:
   version                Print Loki Mode version
   status [--json]        Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
+  pause | resume | cancel  Ask the active Loki 10 run to pause, resume or cancel at the next stage boundary
   intent show <run>      Print a past run's intent card and answer
   provider show [name]   Show current provider
   provider list          List available providers and install status
@@ -99,6 +100,13 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "intent": {
       const { runIntentShow } = await import("./commands/run_status.ts");
       return runIntentShow(rest);
+    }
+
+    case "pause":
+    case "resume":
+    case "cancel": {
+      const { runControlVerb } = await import("./commands/run_status.ts");
+      return runControlVerb(cmd, process.env);
     }
 
     case "stats": {

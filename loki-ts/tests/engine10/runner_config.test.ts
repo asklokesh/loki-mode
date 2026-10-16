@@ -1,10 +1,12 @@
 // D86 FC-09r: runner-config changes cap the verdict; shared manifests are compared base vs head by section.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { testConfigChanged } from "../../src/features/runner_config.ts";
+import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
+import { runnerConfigNotes, testConfigChanged } from "../../src/features/runner_config.ts";
+import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -361,5 +363,115 @@ describe("FC-09t r5 target keys and dependency sources", () => {
     expect(capsOn(B, B.replace('name = "a"', 'name = "c"'))).toEqual([]);
     expect(capsOn(CARGO, CARGO.replace('name = "x"', 'name = "x"\ndescription = "d"\nkeywords = ["k"]'))).toEqual([]);
     expect(capsOn(CARGO, CARGO + '\n[features]\nf = []\n')).toEqual([]);
+  });
+});
+
+// FC-09 seal side: a run that edits a runner config, or a file one loads, cannot seal VERIFIED. Real commit + seal stages on a temp repo.
+const SBASE = { "calc.ts": "export const add = (a: number, b: number) => a + b;\n", "calc.test.ts": "import { add } from './calc';\n" };
+function sealRepo(baseFiles: Record<string, string>, edits: Record<string, string>): { repo: string; base: string } {
+  const repo = mkdtempSync(join(tmpdir(), "rcs-")); dirs.push(repo);
+  const put = (files: Record<string, string>): void => { for (const [f, t] of Object.entries(files)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), t); } };
+  sh(repo, ["init", "-q", "-b", "main"]); put({ ...SBASE, ...baseFiles });
+  sh(repo, ["add", "."]); sh(repo, ["commit", "-qm", "base"]);
+  const base = sh(repo, ["rev-parse", "HEAD"]);
+  put({ "calc.ts": "export const add = (a: number, b: number) => a - b;\n", ...edits });
+  put({ ".loki/runs/r1/events.jsonl": JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: "r1", type: "run.started", stage: null, data: {} }) + "\n" });
+  return { repo, base };
+}
+function sealCtx(repo: string, base: string): RunContext {
+  const outputs: Partial<Record<StageName, Record<string, unknown>>> = {
+    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "fix", resumed: false },
+    wall: { files: [] },
+    implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
+    verify: { checks: [{ name: "bun test", cmd: "bun test", result: "pass", duration_s: 1, n: 1 }], flaky: [], wall_passed: true, duration_s: 2 },
+  };
+  return {
+    runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha: base, branch: "loki/r1", provider: "claude", model: "m", deep: false, capS: 900,
+    emit: (_t: EventType) => {}, sessions: { run: async () => { throw new Error("none"); } },
+    tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+    cost: { read: () => ({ usd: null, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 }) }, clock: { now: () => 0 }, outputs: () => outputs,
+  };
+}
+async function sealRun(baseFiles: Record<string, string>, edits: Record<string, string>): Promise<Receipt> {
+  process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(tmpdir(), "rcs-nokey", "k.pem");
+  const { repo, base } = sealRepo(baseFiles, edits), ctx = sealCtx(repo, base);
+  await commitStage.run(ctx, new AbortController().signal);
+  const s = await sealStage.run(ctx, new AbortController().signal);
+  return JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
+}
+const cappedOn = (r: Receipt, file: string): void => {
+  expect(["PARTIAL", "NOT PROVEN"]).toContain(r.verdict);
+  expect(r.not_proven.some((n) => n.includes(file) && /runner (config|setup file)/.test(n))).toBe(true);
+};
+describe("FC-09 seal caps a run that touches runner config", () => {
+  test("control: a clean run still seals VERIFIED", async () => {
+    const r = await sealRun({ "bunfig.toml": "[test]\n" }, { "notes.txt": "x\n" });
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.not_proven.some((n) => /runner (config|setup file)/.test(n))).toBe(false);
+  }, 30000);
+  test("bun: bunfig.toml preloads a new setup.ts", async () => {
+    const r = await sealRun({ "bunfig.toml": "[test]\n" }, { "bunfig.toml": '[test]\npreload = ["./setup.ts"]\n', "setup.ts": "// mock\n" });
+    cappedOn(r, "bunfig.toml"); cappedOn(r, "setup.ts");
+  }, 30000);
+  test("vitest: an already-listed setupFiles entry is edited", async () => {
+    cappedOn(await sealRun({ "vitest.config.ts": "export default { test: { setupFiles: ['./test/setup.ts'] } };\n", "test/setup.ts": "// empty\n" }, { "test/setup.ts": "vi.mock('../calc');\n" }), "test/setup.ts");
+  }, 30000);
+  test("jest: moduleNameMapper retargets at a new stub", async () => {
+    const r = await sealRun({ "package.json": '{"name":"x","jest":{"testEnvironment":"node"}}\n' }, { "package.json": '{"name":"x","jest":{"testEnvironment":"node","moduleNameMapper":{"^./calc$":"<rootDir>/stub.js"}}}\n', "stub.js": "module.exports = {};\n" });
+    cappedOn(r, "package.json"); cappedOn(r, "stub.js");
+  }, 30000);
+  test("jest: <rootDir> is the config folder in a monorepo package", async () => {
+    cappedOn(await sealRun({ "packages/foo/jest.config.js": "module.exports = { setupFiles: ['<rootDir>/setup.js'] };\n", "packages/foo/setup.js": "// e\n" }, { "packages/foo/setup.js": "jest.mock('x');\n" }), "packages/foo/setup.js");
+  }, 30000);
+  test("jest: explicit rootDir fails closed", async () => {
+    cappedOn(await sealRun({ "cfg/jest.config.js": "module.exports = { rootDir: '..', setupFiles: ['<rootDir>/setup.js'] };\n", "setup.js": "// e\n" }, { "setup.js": "jest.mock('./calc');\n" }), "setup.js");
+  }, 30000);
+  test("pytest: a new conftest.py caps", async () => {
+    cappedOn(await sealRun({}, { "tests/conftest.py": "import calc\n" }), "tests/conftest.py");
+  }, 30000);
+  test("__mocks__: added and edited mocks cap", async () => {
+    cappedOn(await sealRun({}, { "src/__mocks__/calc.ts": "export const add = () => 3;\n" }), "src/__mocks__/calc.ts");
+    cappedOn(await sealRun({ "src/__mocks__/calc.ts": "export const add = () => 1;\n" }, { "src/__mocks__/calc.ts": "export const add = () => 3;\n" }), "src/__mocks__/calc.ts");
+  }, 60000);
+  test("vitest.workspace: inline setupFiles in an added workspace caps", async () => {
+    cappedOn(await sealRun({}, { "vitest.workspace.ts": "export default [{ test: { setupFiles: ['./setup.ts'] } }];\n", "setup.ts": "//\n" }), "vitest.workspace.ts");
+  }, 30000);
+  test("package.json pretest edit caps the seal verdict", async () => {
+    const pk = (s: Record<string, string>): string => JSON.stringify({ name: "x", scripts: s }) + "\n";
+    cappedOn(await sealRun({ "package.json": pk({ test: "bun test" }) }, { "package.json": pk({ test: "bun test", pretest: "node mock.js" }) }), "package.json");
+  }, 30000);
+  test("an unchanged malformed package.json does not cap; a changed one is reported unparseable", async () => {
+    const r = await sealRun({ "fixtures/bad/package.json": "{ not json" }, { "notes.txt": "x\n" });
+    expect(r.verdict).toBe("VERIFIED");
+    const { repo, base } = sealRepo({ "package.json": "{ not json" }, { "package.json": "{ still not json" });
+    sh(repo, ["add", "package.json"]); sh(repo, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["package.json"]).join("\n")).toContain("unparseable");
+  }, 30000);
+  test("LOST-1b: an unchanged unparseable config caps when a non-test file in its tree changed", () => {
+    const { repo, base } = sealRepo({ "package.json": "{ not json" }, { "src/helper.ts": "export {};\n", "calc.test.ts": "// t\n" });
+    sh(repo, ["add", "src/helper.ts", "calc.test.ts", "calc.ts"]); sh(repo, ["commit", "-qm", "c"]);
+    const head = sh(repo, ["rev-parse", "HEAD"]);
+    expect(runnerConfigNotes(repo, base, head, ["src/helper.ts"]).join("\n")).toContain("runner config unparseable");
+    expect(runnerConfigNotes(repo, base, head, ["calc.test.ts"])).toEqual([]);
+  }, 30000);
+  test("LOST-1b: an unchanged unparseable config in a subtree ignores changes elsewhere", () => {
+    const { repo, base } = sealRepo({ "fixtures/bad/package.json": "{ not json" }, { "src/helper.ts": "export {};\n" });
+    sh(repo, ["add", "src/helper.ts"]); sh(repo, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["src/helper.ts"])).toEqual([]);
+  }, 30000);
+  test("LOST-1b: an unchanged config blob is read once, not twice", () => {
+    const { repo, base } = sealRepo({ "bunfig.toml": "[test]\n" }, { "notes.txt": "x\n" });
+    sh(repo, ["add", "notes.txt"]); sh(repo, ["commit", "-qm", "c"]);
+    const bin = mkdtempSync(join(tmpdir(), "rcbin-")); dirs.push(bin);
+    const log = join(bin, "log"), real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${log}\nexec ${real} "$@"\n`, { mode: 0o755 });
+    const old = process.env["PATH"]; process.env["PATH"] = `${bin}:${old}`;
+    try { runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["notes.txt"]); } finally { process.env["PATH"] = old; }
+    expect((readFileSync(log, "utf8").match(/show .*:bunfig\.toml/g) ?? []).length).toBe(1);
+  }, 30000);
+  test("a package.json change outside runner sections is not runner config", () => {
+    const { repo, base } = sealRepo({ "package.json": '{"name":"x","jest":{}}\n' }, { "package.json": '{"name":"x","version":"2","jest":{}}\n' });
+    sh(repo, ["add", "package.json"]); sh(repo, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["package.json"])).toEqual([]);
   });
 });

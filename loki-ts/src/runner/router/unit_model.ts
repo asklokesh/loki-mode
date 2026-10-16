@@ -1,11 +1,11 @@
 // ROUTER-1: every model decision the engine10 stages make under LOKI_ROUTER=1 lives here, outside the engine10 line budget.
 // Invariant (L1, tested semantically in tests/engine10/route_matrix.test.ts): a session is never started below the run's model
 // unless a VALID Opus route record (plan.units: every unit executor "haiku" with a reason, nothing NOT PROVEN) names haiku.
-import { HOLDOUT_GROUP } from "../../util/holdout.ts";
 import { resolveModelAlias } from "../../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
 import { routerEnabled } from "./flag.ts";
+import { historyRaisedRoute, type RunExecutor } from "./history.ts";
 import { climb, modelRank, type UnitEscalation } from "../model_rank.ts";
 
 export type StageOutputs = Partial<Record<string, Record<string, unknown> | undefined>>;
@@ -33,8 +33,10 @@ export const routerPinsAllowed = (env: Record<string, string | undefined> = proc
 export const routerActive = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) && routerPinsAllowed(env);
 
 /** The route record for the single "run" unit: haiku only with a valid record, otherwise the run floor. Callers gate on routerActive(). */
-export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined): RouteRecord {
+export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined, historyFloor?: () => RunExecutor): RouteRecord {
   const v = validHaikuRoute(plan);
+  const h = v && historyFloor ? historyRaisedRoute(v.reason, historyFloor()) : null; // P12-32b: history is read only when the cheapest tier is on the table, and can only raise
+  if (h) return { model: resolveModelAlias(h.model), source: "history", reason: h.reason, valid: true };
   return v ? { model: resolveModelAlias("haiku"), source: "opus-plan", reason: v.reason, valid: true } : { model: runFloor(runModel), source: "default", reason: "no valid haiku route record", valid: false };
 }
 
@@ -44,7 +46,7 @@ export function routedFix(runModel: string, out: StageOutputs, o: { repeated: bo
   const carried = String(out["fix"]?.["model"] ?? out["implement"]?.["route_model"] ?? rec.model);
   const floor = runFloor(runModel);
   const cur = !rec.valid && modelRank(carried) < modelRank(floor) ? floor : carried; // a below-run model carries only with a valid route record
-  const tests = o.groups.filter((g) => !g.signature.startsWith("lint:") && g.signature !== "select-tests" && g.signature !== HOLDOUT_GROUP).length; // C-C4b-c: held-out red is not code-owned evidence
+  const tests = o.groups.filter((g) => !g.signature.startsWith("lint:") && g.signature !== "select-tests").length;
   const redo = unitRedo(isHaiku(cur) ? "haiku" : "sonnet", tests > 0 ? "code" : "harness") === "redo-sonnet"; // B4: a haiku unit with a code-owned failure is redone on sonnet
   const climbed = tests > 0 && (o.repeated || o.stall || redo) ? climb("run", cur, o.stall ? "stall" : "code_fail", o.reason) : null;
   return { pin: climbed?.to ?? (cur !== runModel ? cur : undefined), climbed };

@@ -26,7 +26,7 @@ import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
-import { recordFingerprints } from "../util/failure_memory.ts";
+import { cleanTreeId, recordFingerprints } from "../util/failure_memory.ts";
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
@@ -177,7 +177,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const v = sealedData?.verdict;
   const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
-  if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN); const cancelled = worker.cancelled ?? null; if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
+  if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN); const cancelled: string | null = worker.cancelled ?? (readEvents(log.path).some((e) => e.type === "cancel_effective") ? "request" : null); /* P12-10b: a loki cancel honoured at a stage boundary completes as cancelled too */ if (cancelled) notProven.push(`run cancelled by ${cancelled}`); // SIGINT/SIGTERM: usage so far is kept, no PR or backstop commit
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
@@ -223,7 +223,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   log.sealLog();
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered),
-    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
+    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
@@ -376,7 +376,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const pc = partialCost(events, res.tampered), usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
-    verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: [],
+    verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: ((f.stages["verify"]?.data.flaky as unknown[] | undefined) ?? []).filter((n): n is string => typeof n === "string"),
     cost: {
       usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && cli && (usd === null || events.some((e) => e.type === "cost" && e.data.source === "cli-invoker-unmetered")) ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,

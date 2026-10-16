@@ -388,12 +388,12 @@ test_simple_web_guard_bounds_model_commands() {
 
 # Test 18: P12-26d validate-bash.sh cannot widen the compiled permission policy
 run_hook_case() {
-    local command_text="$1" policy="${2:-}" raw="${3:-}" payload out rc
+    local command_text="$1" policy="${2:-}" raw="${3:-}" run_tmp="${4:-}" payload out rc
     if [ -n "$raw" ]; then payload="$raw"; else
         payload=$(printf '%s' "$command_text" | python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.stdin.read()},"cwd":sys.argv[1]}))' "$TEST_DIR")
     fi
     mkdir -p "$TEST_DIR/.loki/logs"
-    out=$(printf '%s' "$payload" | env ${policy:+LOKI_PERMISSION_POLICY=$policy} "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    out=$(printf '%s' "$payload" | env -u LOKI_RUN_TMP ${run_tmp:+LOKI_RUN_TMP=$run_tmp} ${policy:+LOKI_PERMISSION_POLICY=$policy} "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
     rc=$?
     case "$out" in
         *'"permissionDecision":'*'allow"'*) printf '%s:allow' "$rc" ;;
@@ -507,7 +507,7 @@ test_validate_bash_temp_root_and_glob_denied() {
     )
     for t in "${ok_r[@]}"; do
         c=$(printf 'rm -r %s' "$t")
-        got=$(run_hook_case "$c" "")
+        got=$(run_hook_case "$c" "" "" "/tmp/loki-run.abc123")
         [ "$got" = "0:allow" ] || { fail "non-temp or named brace target wrongly blocked: $c (got $got)"; return; }
     done
     for t in "${ok[@]}"; do
@@ -518,6 +518,79 @@ test_validate_bash_temp_root_and_glob_denied() {
         done
     done
     pass "temp roots and bare temp globs denied; named subdirectories still allowed"
+}
+
+# P12-26g-c: residual rm guard gaps (name boundary, dotdot, glued vars, empty
+# variable lead, home/relative climbing, glob roots). Probes live in test data.
+test_validate_bash_residual_rm_gaps_denied() {
+    log_test "validate-bash.sh: residual rm guard gaps fail closed, lookalike allows stay allowed"
+    local c got t rmcmd rt="/tmp/loki-run.abc123"
+    # shellcheck disable=SC2088 # tilde targets are literal string data for the hook
+    local deny_set=(
+        '"$LOKI_RUN_TMPX"/{a,*}' '"$LOKI_RUN_TMPX"/x' '"$LOKI_RUN_TMP_OLD"/x' '$LOKI_RUN_TMPX/{a,*}'
+        '"$LOKI_RUN_TMP".bak' '"${LOKI_RUN_TMP:-/tmp}"/x'
+        '"$LOKI_RUN_TMP"/..' '${LOKI_RUN_TMP}/../{a,*}' '"$LOKI_RUN_TMP"/{..,x}' '"$LOKI_RUN_TMP"/../../tmp'
+        '${LOKI_RUN_TMP}${TMPDIR}/x'
+        '~/../../tmp' '$HOME/../../tmp' '${HOME}/../../tmp' '~/../other'
+        '../../../../../../../tmp' 'a/{.,x}./{.,x}./tmp' '../x'
+        '"$X"/*' '"$X"/{a,*}' '$X/{a,*}' '"$X"/' '$X/../y'
+        '/t?p' '/t?p/*' '/[t]mp/{a,*}' '/?mp/{a,*}' '/var/t?p/x' '/private/t*/x'
+        '/private/var/t?p' '/private/var/t?p/*' '/private/var/t*/x'
+        '"$X"/tmp/*' '$X/tmp/*' '"$X"/t?p' '"$X"/t?p/*' '"$X"/{tmp,a}' '"$X"/{tmp,a}/*'
+        '"$X"/var/tmp/*' '"$X"/.*'
+        '$X/tmp' '"$X"/var'
+        '"$LOKI_RUN_TMP"/..$X/*' '"$LOKI_RUN_TMP"/..${X}/*' 'x/..$X/..$X/..$X/..$X/..$X/tmp'
+        '$HOME/..$X/..$X/tmp' '$X$Y/tmp/*' '"$X""$Y"/tmp/*' '${X}${Y}/*' '$X$Y/tmp'
+        '${X:-/}tmp/*' '${X:-/tmp}' '${X-/tmp}' '${X:=/tmp}' '"${X:-/tmp}"' '${X:+/tmp}'
+        '/var/../t?p' '/private/../t?p' '/private/var/../var/t?p/*'
+        '.?/.?/.?/.?/.?/tmp' '..*/..*/..*/..*/..*/tmp' '.[.]/.[.]/.[.]/.[.]/.[.]/tmp'
+        '~/.[.]/.[.]/tmp' '$HOME/.[.]/.[.]/tmp' '"$HOME"/.?/.?/tmp' '"$LOKI_RUN_TMP"/.?/*'
+        '~-/*' '~+/../../../../../../../tmp'
+    )
+    # Over-cap brace groups hiding a dotdot alternative (bash expands them).
+    local big="" i
+    for i in $(seq 0 69); do big="${big},p${i}"; done
+    deny_set+=(
+        "\"\$LOKI_RUN_TMP\"/{..${big}}/*"
+        "x/{..${big}}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/tmp"
+        "\"\$LOKI_RUN_TMP\"/{..\$X${big}}/*" "\"\$LOKI_RUN_TMP\"/{..\${X}${big}}/*"
+        "x/{..\$X${big}}/..\$X/..\$X/..\$X/..\$X/..\$X/tmp" "\"\$LOKI_RUN_TMP\"/{.?${big}}/*"
+    )
+    for t in "${deny_set[@]}"; do
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "" "" "$rt")
+            [ "$got" = "2:deny" ] || { fail "residual gap not denied: $c (got $got)"; return; }
+        done
+    done
+    got=$(run_hook_case 'rm -r "$LOKI_RUN_TMP"/x' "" "" "")
+    [ "$got" = "2:deny" ] || { fail "unset LOKI_RUN_TMP not denied (got $got)"; return; }
+    got=$(run_hook_case 'rm -r "$LOKI_RUN_TMP"/x' "" "" "/tmp/notarun")
+    [ "$got" = "2:deny" ] || { fail "invalid LOKI_RUN_TMP not denied (got $got)"; return; }
+    local ok_set=(
+        'out/{1..3}' 'build/{a,{b,c}}' 'tests/fixtures/{1..3}' '"$LOKI_RUN_TMP"/shard{1..4}'
+        '"${LOKI_RUN_TMP}"/{a,b}' '"${TMPDIR:-/tmp}/loki-run.abc"' '/tmp/x{,.bak}' '"$BUILD_DIR"/shard{1..4}'
+        '"$LOKI_RUN_TMP"' '$HOME/proj/build' 'a/b/../c' '/tmp/foo*' '/tmp/foo/*'
+    )
+    for t in "${ok_set[@]}"; do
+        c=$(printf 'rm -r %s' "$t")
+        got=$(run_hook_case "$c" "" "" "$rt")
+        [ "$got" = "0:allow" ] || { fail "legit target wrongly denied: $c (got $got)"; return; }
+    done
+    pass "residual rm gaps denied; legit run-dir, range and named targets allowed"
+}
+
+# P12-26g-c: a slow analysis must fail closed before the hook timeout.
+test_validate_bash_rm_analysis_budget_fails_closed() {
+    log_test "validate-bash.sh: rm analysis over its time budget denies instead of timing out"
+    local c="" i got
+    for i in 1 2 3 4 5 6 7 8; do c="${c}rm -r x/{a,b,c,d,e,f,g,h}/y${i} z/{a,b,c,d,e,f,g,h}/w${i} ; "; done
+    c="${c}rm -r build/ok"
+    got=$(LOKI_RM_GUARD_BUDGET_SECS=0 run_hook_case "$c" "")
+    [ "$got" = "2:deny" ] || { fail "budget exhausted must deny (got $got)"; return; }
+    got=$(run_hook_case "$c" "")
+    [ "$got" = "0:allow" ] || { fail "default budget must allow benign rm (got $got)"; return; }
+    pass "rm analysis budget fails closed"
 }
 
 test_validate_bash_safe_patterns_locale_independent() {
@@ -671,6 +744,8 @@ test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
 test_validate_bash_temp_root_and_glob_denied
+test_validate_bash_residual_rm_gaps_denied
+test_validate_bash_rm_analysis_budget_fails_closed
 test_validate_bash_safe_patterns_locale_independent
 test_validate_bash_safe_override_rejects_risky_env
 test_validate_bash_safe_override_rejects_earlier_segment_taint

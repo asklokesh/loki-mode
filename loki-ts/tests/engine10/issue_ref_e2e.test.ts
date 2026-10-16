@@ -263,12 +263,28 @@ describe("engine10 issue-ref vertical slice: kill -9, comment steer, resume, PR,
     expect(receipt.verdict).toBe("VERIFIED");
     expect(receipt.intent_revisions).toEqual([expect.objectContaining({ rev: 1, source: COMMENT, actor: "octocat" })]);
   }, 120_000);
+
+  test("a completed Wall, then kill -9, then a late comment steer: the resumed run is refused at Seal, not VERIFIED (P12-13c)", async () => {
+    const p = prep(true, { LOKI_E10_PLAN: "always" }); // forces a real Wall on this small task
+    await startAndKill9(p, "acme/widgets#101", "implement");
+    const killed = readRun(p);
+    expect(stageDone(killed.events, "wall")).toBeDefined();
+    expect(killed.events.some((e) => e.type === "wall.sealed")).toBe(true);
+    expect((await steerFromComment(p, "STEER-AFTER-WALL-77c1 also add multiply")).code).toBe(0);
+    const res = await resume(p);
+    expect(res.code).not.toBe(0);
+    const { events, runDir } = readRun(p);
+    const sealFail = events.find((e) => e.type === "stage.failed" && e.stage === "seal");
+    expect(String(sealFail?.data.reason)).toContain("arrived after the Wall was frozen");
+    const receiptPath = join(runDir, "receipt.json");
+    if (existsSync(receiptPath)) expect(JSON.parse(readFileSync(receiptPath, "utf8")).verdict).not.toBe("VERIFIED");
+  }, 180_000);
 });
 
 // U1-U8 user journeys (docs/v10/PLAN-V12.md S13/N4 name them without a table, so these are the eight this file pins):
 // U1 issue ref to verified, U2 issue URL, U3 closed issue not proven (the three cases above), U4 kill -9 then resume,
-// U5 comment steer during an outage, U6 steer queued before the run (the vertical slice block), U7 unknown issue, U8 nothing to resume.
-describe("engine10 issue-ref user journeys U7-U8 (recorded fixtures, no paid models)", () => {
+// U5 comment steer during an outage, U6 steer queued before the run (the vertical slice block), U7 unknown issue, U8 nothing to resume, U9 PR updated.
+describe("engine10 issue-ref user journeys U7-U9 (recorded fixtures, no paid models)", () => {
   test("U7: an issue with no fixture fails before any model session and leaves no PR or run branch", async () => {
     const p = prep(true);
     const r = await exec(p, ["bash", BIN_LOKI, "acme/widgets#999"]);
@@ -284,4 +300,34 @@ describe("engine10 issue-ref user journeys U7-U8 (recorded fixtures, no paid mod
     expect(r.code).toBe(3);
     expect(r.out).toContain("no interrupted engine10 run");
   }, 120_000);
+
+  test("U9: PR updated: pr-ready edits the body then readies, and comment posts, as recorded stub gh calls", async () => {
+    const p = prep(true);
+    const calls = join(p.tmp, "gh-calls.tsv");
+    const prUrl = "https://github.com/acme/widgets/pull/7";
+    const body = join(p.tmp, "body.md");
+    writeFileSync(body, "updated PR body\n");
+    const push = resolve(LOKI_TS, "../autonomy/lib/engine10-push.sh");
+    const pinned = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: "https://github.com/acme/widgets.git", ISSUE_REF_GH_CALLS: calls, ISSUE_REF_GH_PR_URL: prUrl };
+    const ready = await exec(p, ["bash", push, "pr-ready", p.repo, "loki/issue-101", body, prUrl], pinned);
+    expect(ready.code).toBe(0);
+    const cmt = await exec(p, ["bash", push, "comment", "7", body], pinned);
+    expect(cmt.code).toBe(0);
+    const rec = slurp(calls).trim().split("\n").map((l) => l.split("\t"));
+    const pr = rec.filter((a) => a[0] === "pr");
+    expect(pr.map((a) => a[1])).toEqual(["list", "edit", "ready", "comment"]);
+    expect(pr[1]).toEqual(["pr", "edit", prUrl, "--repo", "acme/widgets", "--body-file", body]);
+    expect(pr[2]).toEqual(["pr", "ready", prUrl, "--repo", "acme/widgets"]);
+    expect(pr[3]).toEqual(["pr", "comment", "7", "--repo", "acme/widgets", "--body-file", body]);
+  }, 60_000);
+
+  test("U9b: the stub gh records argv for pr create the same way as pr edit and comment (P12-13b)", async () => {
+    const p = prep(true);
+    const calls = join(p.tmp, "gh-calls.tsv");
+    const prUrl = "https://github.com/acme/widgets/pull/7";
+    const r = await exec(p, ["gh", "pr", "create", "--repo", "acme/widgets", "--head", "loki/issue-101", "--title", "T", "--body-file", "b.md", "--draft"], { ISSUE_REF_GH_CALLS: calls, ISSUE_REF_GH_PR_URL: prUrl });
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe(prUrl);
+    expect(slurp(calls).trim().split("\n").map((l) => l.split("\t"))).toEqual([["pr", "create", "--repo", "acme/widgets", "--head", "loki/issue-101", "--title", "T", "--body-file", "b.md", "--draft"]]);
+  }, 60_000);
 });
