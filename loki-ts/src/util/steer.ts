@@ -62,7 +62,8 @@ function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) =
   let names: string[];
   try { names = readdirSync(logs); } catch { return; }
   // Bound marker growth: a marker whose archive is gone proves nothing and is dropped.
-  for (const n of names) if (n.startsWith(".applied-") && !names.includes(n.slice(".applied-".length))) { try { unlinkSync(join(logs, n)); } catch { /* best effort */ } }
+  const present = new Set(names);
+  for (const n of names) if (n.startsWith(".applied-") && !present.has(n.slice(".applied-".length))) { try { unlinkSync(join(logs, n)); } catch { /* best effort */ } }
   for (const n of names) {
     const m = /^\.claim-(\d+)-[0-9a-f]+$/.exec(n);
     if (!m || Number(m[1]) === process.pid) continue;
