@@ -91,10 +91,20 @@ class TestEventRouting(unittest.TestCase):
     def tearDown(self):
         patch.stopall()
 
-    def _make_issues_payload(self, action, number=42, repo="owner/repo"):
+    def _make_issues_payload(self, action, number=42, repo="owner/repo", assoc="OWNER"):
+        return {
+            "action": action,
+            "issue": {"number": number, "title": "Test issue", "author_association": assoc},
+            "repository": {"full_name": repo},
+        }
+
+    def _make_comment_payload(self, assoc="MEMBER", action="created", body="focus on auth",
+                              repo="owner/repo", number=42, login="alice", user_type="User"):
         return {
             "action": action,
             "issue": {"number": number, "title": "Test issue"},
+            "comment": {"body": body, "author_association": assoc,
+                        "user": {"login": login, "type": user_type}},
             "repository": {"full_name": repo},
         }
 
@@ -125,6 +135,88 @@ class TestEventRouting(unittest.TestCase):
         self.assertEqual(call_args[0], "start")
         self.assertIn("--pr", call_args)
         self.assertIn("--detach", call_args)
+
+    def test_issues_opened_from_stranger_skipped(self):
+        for assoc in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
+            summary, status = ts.handle_issues_event(self._make_issues_payload("opened", assoc=assoc))
+            self.assertIn("skipped", status)
+        self.mock_run.assert_not_called()
+
+    def test_issues_opened_stranger_allowed_with_optout_env(self):
+        with patch.dict(os.environ, {"LOKI_TRIGGER_ALLOW_ANY_ISSUE_AUTHOR": "1"}):
+            _, status = ts.handle_issues_event(self._make_issues_payload("opened", assoc="NONE"))
+        self.assertEqual(status, "fired")
+
+    # issue_comment steering
+
+    def test_issue_comment_registered(self):
+        self.assertIn("issue_comment", ts.EVENT_HANDLERS)
+
+    def test_issue_comment_member_steers_known_run(self):
+        with patch("trigger_server.find_live_run", return_value="run-1") as f:
+            summary, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
+        f.assert_called_once_with("owner/repo#42")
+        self.assertEqual(status, "fired")
+        args = self.mock_run.call_args[0][0]
+        self.assertEqual(args[0], "steer")
+        self.assertEqual(len(args), 2)
+        self.assertIn("focus on auth", args[1])
+        self.assertFalse(args[1].startswith("-"))
+
+    def test_issue_comment_unauthorized_skipped_no_write(self):
+        for assoc in ("NONE", "CONTRIBUTOR", "FIRST_TIMER", None):
+            with patch("trigger_server.find_live_run", return_value="run-1"):
+                _, status = ts.handle_issue_comment_event(self._make_comment_payload(assoc))
+            self.assertIn("skipped", status)
+        self.mock_run.assert_not_called()
+
+    def test_issue_comment_bot_edited_deleted_skipped(self):
+        cases = [self._make_comment_payload(user_type="Bot"),
+                 self._make_comment_payload(login="loki[bot]"),
+                 self._make_comment_payload(action="edited"),
+                 self._make_comment_payload(action="deleted")]
+        for payload in cases:
+            with patch("trigger_server.find_live_run", return_value="run-1"):
+                _, status = ts.handle_issue_comment_event(payload)
+            self.assertIn("skipped", status)
+        self.mock_run.assert_not_called()
+
+    def test_issue_comment_no_run_skipped(self):
+        with patch("trigger_server.find_live_run", return_value=None):
+            _, status = ts.handle_issue_comment_event(self._make_comment_payload("OWNER"))
+        self.assertIn("skipped", status)
+        self.mock_run.assert_not_called()
+
+    def test_issue_comment_forged_repo_rejected(self):
+        with patch("trigger_server.find_live_run", return_value="run-1"):
+            _, status = ts.handle_issue_comment_event(self._make_comment_payload("OWNER", repo="--evil"))
+        self.assertIn("rejected", status)
+        self.mock_run.assert_not_called()
+
+    def test_issue_comment_body_bounded_to_one_line(self):
+        body = "line one\nline two\n" + "x" * 5000
+        with patch("trigger_server.find_live_run", return_value="run-1"):
+            ts.handle_issue_comment_event(self._make_comment_payload("OWNER", body=body))
+        note = self.mock_run.call_args[0][0][1]
+        self.assertNotIn("\n", note)
+        self.assertLessEqual(len(note), 1100)
+
+    def test_find_live_run_matches_issue_ref_with_pid(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            for rid, ref, pid in (("r-old", "owner/repo#42", False), ("r-live", "owner/repo#42", True), ("r-other", "owner/repo#7", True)):
+                rd = Path(".loki/runs") / rid
+                rd.mkdir(parents=True)
+                (rd / "events.jsonl").write_text(json.dumps({"type": "run.started", "data": {"issue_ref": ref}}) + "\n")
+                if pid:
+                    (rd / "run.pid").write_text(json.dumps({"pid": os.getpid()}))
+            self.assertEqual(ts.find_live_run("owner/repo#42"), "r-live")
+            self.assertIsNone(ts.find_live_run("owner/repo#99"))
+        finally:
+            os.chdir(cwd)
 
     def test_issues_closed_skipped(self):
         payload = self._make_issues_payload("closed")

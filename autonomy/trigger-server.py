@@ -506,12 +506,78 @@ def run_loki_command(args, dry_run=False):
     )
 
 
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")  # same set as verify_pr.ts
+STEER_NOTE_MAX = 1000
+
+
+def find_live_run(ref):
+    """Return the id of a live run for issue ref "owner/repo#N", else None.
+
+    Scans .loki/runs/*/events.jsonl for a run.started whose issue_ref matches and
+    whose run.pid names a live process.
+    """
+    runs = Path(".loki") / "runs"
+    try:
+        dirs = sorted(runs.iterdir())
+    except OSError:
+        return None
+    for d in dirs:
+        try:
+            with open(d / "events.jsonl", "r", encoding="utf-8", errors="replace") as fh:
+                first = json.loads(fh.readline() or "{}")
+            if first.get("type") != "run.started" or (first.get("data") or {}).get("issue_ref") != ref:
+                continue
+            pid = int(json.loads((d / "run.pid").read_text()).get("pid", 0))
+            if pid > 1:
+                os.kill(pid, 0)
+                return d.name
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return None
+
+
+def handle_issue_comment_event(payload, dry_run=False):
+    """Handle issue_comment: an authorized new comment steers the issue's live run."""
+    action = payload.get("action", "")
+    if action != "created":
+        return None, "skipped (action=%s)" % action
+    comment = payload.get("comment") or {}
+    if comment.get("author_association") not in TRUSTED_ASSOCIATIONS:
+        return None, "skipped (comment author not authorized)"
+    user = comment.get("user") or {}
+    login = str(user.get("login", ""))
+    if user.get("type") == "Bot" or login.endswith("[bot]"):
+        return None, "skipped (bot comment)"
+    number = (payload.get("issue") or {}).get("number")
+    repo_full_name = (payload.get("repository") or {}).get("full_name", "")
+    if number is None or not valid_issue_number(number):
+        return None, "rejected (invalid issue number)"
+    if not valid_repo_full_name(repo_full_name):
+        return None, "rejected (invalid repository full_name)"
+    ref = "%s#%s" % (repo_full_name, number)
+    if find_live_run(ref) is None:
+        return None, "skipped (no live run for %s)" % ref
+    body = re.sub(r"[\x00-\x1f\x7f\s]+", " ", str(comment.get("body", ""))).strip()[:STEER_NOTE_MAX]
+    if not body:
+        return None, "skipped (empty comment)"
+    login = re.sub(r"[^A-Za-z0-9-]", "", login)[:39]
+    note = "GitHub comment from %s: %s" % (login or "unknown", body)
+    summary = "steer %s from comment" % ref
+    success = run_loki_command(["steer", note], dry_run=dry_run)
+    if success:
+        send_notification("Trigger fired: %s" % summary)
+    return summary, "fired" if success else "error"
+
+
 def handle_issues_event(payload, dry_run=False):
     """Handle issues event: opened -> loki start <issue-ref> --pr --detach."""
     action = payload.get("action", "")
     if action != "opened":
         return None, "skipped (action=%s)" % action
     issue = payload.get("issue", {})
+    if (issue.get("author_association") not in TRUSTED_ASSOCIATIONS
+            and os.environ.get("LOKI_TRIGGER_ALLOW_ANY_ISSUE_AUTHOR", "") not in ("1", "true")):
+        return None, "skipped (issue author not authorized)"
     issue_number = issue.get("number")
     repo = payload.get("repository", {})
     repo_full_name = repo.get("full_name", "")
@@ -988,6 +1054,7 @@ def handle_sentry_event(payload, dry_run=False):
 # explicitly refused on the /webhook path.
 EVENT_HANDLERS = {
     "issues": handle_issues_event,
+    "issue_comment": handle_issue_comment_event,
     "pull_request": handle_pull_request_event,
     "workflow_run": handle_workflow_run_event,
     JOB_EVENT: handle_job_event,

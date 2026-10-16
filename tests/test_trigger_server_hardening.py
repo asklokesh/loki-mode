@@ -83,7 +83,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
     def test_issue_opened_uses_start_with_ref(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 99},
+            "issue": {"number": 99, "author_association": "OWNER"},
             "repository": {"full_name": "myorg/myrepo"},
         }
         summary, status = ts.handle_issues_event(payload, dry_run=False)
@@ -121,7 +121,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
         self.assertIn("--detach", args)
 
     def test_issue_closed_skipped_no_dispatch(self):
-        payload = {"action": "closed", "issue": {"number": 1}, "repository": {}}
+        payload = {"action": "closed", "issue": {"number": 1, "author_association": "OWNER"}, "repository": {}}
         _, status = ts.handle_issues_event(payload, dry_run=False)
         self.assertIn("skipped", status)
         self.mock_run.assert_not_called()
@@ -175,7 +175,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_issue_flag_injection_rejected_no_dispatch(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 5},
+            "issue": {"number": 5, "author_association": "OWNER"},
             "repository": {"full_name": "--config=/etc/x"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -195,7 +195,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_non_int_issue_number_rejected(self):
         payload = {
             "action": "opened",
-            "issue": {"number": "5; rm -rf /"},
+            "issue": {"number": "5; rm -rf /", "author_association": "OWNER"},
             "repository": {"full_name": "owner/repo"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -205,7 +205,7 @@ class TestRefFlagInjection(unittest.TestCase):
     def test_normal_issue_still_dispatches_clean_ref(self):
         payload = {
             "action": "opened",
-            "issue": {"number": 5},
+            "issue": {"number": 5, "author_association": "OWNER"},
             "repository": {"full_name": "owner/repo"},
         }
         _, status = ts.handle_issues_event(payload, dry_run=False)
@@ -460,7 +460,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret="", dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -487,7 +487,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 7},
+                body = json.dumps({"action": "opened", "issue": {"number": 7, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -519,7 +519,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 7},
+                body = json.dumps({"action": "opened", "issue": {"number": 7, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
@@ -547,7 +547,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 status, _ = srv.post(body, {
                     "Content-Type": "application/json",
@@ -582,7 +582,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=4, queue_size=16, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
@@ -678,7 +678,7 @@ class TestHttpEndToEnd(unittest.TestCase):
             disp = ts.Dispatcher(workers=1, queue_size=1, dry_run=False)
             srv = _ServerFixture(secret=secret, dispatcher=disp)
             try:
-                body = json.dumps({"action": "opened", "issue": {"number": 1},
+                body = json.dumps({"action": "opened", "issue": {"number": 1, "author_association": "OWNER"},
                                    "repository": {"full_name": "o/r"}}).encode()
                 headers = {
                     "Content-Type": "application/json",
