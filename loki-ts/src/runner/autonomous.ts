@@ -31,7 +31,7 @@ import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
 import { withholdGithubTokens } from "./github_token.ts";
 import { decideRecovery } from "./recovery_policy.ts";
-import { flakyRerunSignal } from "../util/failure_memory.ts";
+import { cleanTreeId, flakyRerunSignal } from "../util/failure_memory.ts";
 import { spawnSync } from "node:child_process";
 import {
   checkpointedStateCorrupt,
@@ -1036,7 +1036,7 @@ async function runAutonomousCore(
             treeCorrupt: checkpointedStateCorrupt(ctx.lokiDir),
             providerUnavailable,
             // P12-11b: same-tree fail-then-pass evidence from verify's flaky fingerprints; the row must match the current tree id.
-            rerun: flakyRerunSignal(resolve(ctx.cwd, ".loki", "state"), spawnSync("git", ["-C", ctx.cwd, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).stdout?.trim() ?? ""),
+            rerun: flakyRerunSignal(resolve(ctx.cwd, ".loki", "state"), cleanTreeId(ctx.cwd)),
           },
           { env: process.env as NodeJS.ProcessEnv },
         );
