@@ -10,6 +10,7 @@ import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { STEER_MAX_BYTES, withSteer } from "../../src/util/steer.ts";
+import { intentRevisionsBlock } from "../../src/util/run_outputs.ts";
 import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -1420,7 +1421,7 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
   }, 30000);
   // Unconsumable steers must fail closed: an unwritable logs dir or an oversize file leaves no revision record by the old path.
   const HDR = "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\n";
-  const refuses = async (ctx: RunContext, why: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); fix it and re-run`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
+  const refuses = async (ctx: RunContext, why: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); it keeps blocking until the run is restarted or the steer is withdrawn`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
   test("logs path is a regular file: a steer at implement refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-impl", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
@@ -1446,6 +1447,15 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     rmSync(join(ctx.repoDir, ".loki/logs"), { recursive: true, force: true });
     await refuses(ctx, "over 1 MiB");
   }, 30000);
+  test("a symlinked steer file refuses the seal with a truthful reason", async () => {
+    const ctx = withRevs("rev-symlink", []);
+    symlinkSync("/dev/null", join(ctx.repoDir, ".loki/HUMAN_INPUT.md"));
+    await refuses(ctx, "symlink");
+  }, 30000);
+  test("intentRevisionsBlock omits unapplied records", () => {
+    expect(intentRevisionsBlock([rv(1, 1), { ...rv(0, 2), unapplied: true, reason: "x" }]).intent_revisions?.map((r) => r.rev)).toEqual([1]);
+    expect(intentRevisionsBlock([{ ...rv(0, 2), unapplied: true, reason: "x" }])).toEqual({});
+  });
   test("receipt lists revisions", async () => {
     const ctx = withRevs("rev-receipt", [rv(1, 1800), rv(2, 1900)]);
     await commitStage.run(ctx, new AbortController().signal);

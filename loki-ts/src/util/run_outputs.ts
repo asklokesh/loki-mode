@@ -21,7 +21,7 @@ import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
 export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
-  const r = (revs ?? []).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
+  const r = (revs ?? []).filter((r) => r.unapplied !== true).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
   return r.length ? { intent_revisions: r } : {};
 }
 

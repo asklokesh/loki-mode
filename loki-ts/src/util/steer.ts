@@ -22,7 +22,7 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
   try {
     const st = lstatSync(f, { throwIfNoEntry: false });
     if (!st) return null;
-    if (st.isSymbolicLink()) { rmSync(f, { force: true }); return null; }
+    if (st.isSymbolicLink()) { rmSync(f, { force: true }); unapplied("symlink"); return null; }
     if (!st.isFile()) { unapplied("not a regular file"); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
@@ -84,12 +84,10 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-/** Seal gate: consumes a steer still pending in HUMAN_INPUT.md (sent after the last implement session, so no work reflects it) into ctx.intentRevisions and counts it stale
- *  whatever the Wall timeline says; otherwise the revisions that postdate the Wall start. */
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
-  if (bad.length) return `a steer in .loki/HUMAN_INPUT.md could not be applied (${[...new Set(bad.map((r) => r.reason ?? "unknown"))].join("; ")}); fix it and re-run`;
+  if (bad.length) return `a steer in .loki/HUMAN_INPUT.md could not be applied (${[...new Set(bad.map((r) => r.reason ?? "unknown"))].join("; ")}); it keeps blocking until the run is restarted or the steer is withdrawn`;
   return `operator steer rev ${late.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"`;
 }
 
