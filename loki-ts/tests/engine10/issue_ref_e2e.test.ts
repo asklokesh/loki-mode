@@ -320,4 +320,14 @@ describe("engine10 issue-ref user journeys U7-U9 (recorded fixtures, no paid mod
     expect(pr[2]).toEqual(["pr", "ready", prUrl, "--repo", "acme/widgets"]);
     expect(pr[3]).toEqual(["pr", "comment", "7", "--repo", "acme/widgets", "--body-file", body]);
   }, 60_000);
+
+  test("U9b: the stub gh records argv for pr create the same way as pr edit and comment (P12-13b)", async () => {
+    const p = prep(true);
+    const calls = join(p.tmp, "gh-calls.tsv");
+    const prUrl = "https://github.com/acme/widgets/pull/7";
+    const r = await exec(p, ["gh", "pr", "create", "--repo", "acme/widgets", "--head", "loki/issue-101", "--title", "T", "--body-file", "b.md", "--draft"], { ISSUE_REF_GH_CALLS: calls, ISSUE_REF_GH_PR_URL: prUrl });
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe(prUrl);
+    expect(slurp(calls).trim().split("\n").map((l) => l.split("\t"))).toEqual([["pr", "create", "--repo", "acme/widgets", "--head", "loki/issue-101", "--title", "T", "--body-file", "b.md", "--draft"]]);
+  }, 60_000);
 });
