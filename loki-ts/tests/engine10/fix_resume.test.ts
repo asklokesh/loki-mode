@@ -174,7 +174,8 @@ import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { workerCapS } from "../../src/engine10/worker.ts";
 import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
-import { applyCapEnv, SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { applyCapEnv, runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { readAliveBeat, writeAliveBeat } from "../../src/util/run_pid.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
@@ -496,6 +497,58 @@ describe("resume from stage (P12-07)", () => {
       expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
       expect(seen[1]!.capS).toBe(900 - 110); // the 5h downtime gap is not counted
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07n: a gap ending in run.resumed counts up to last_alive_ts as active; only the rest is downtime", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207n-")), cwd = process.cwd();
+    try {
+      const g = gitRepo(dir);
+      g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i"); g("checkout", "-q", "-b", `loki/${RID}`);
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const at = (i: number, sec: number, t: string, s: string | null, d: Record<string, unknown> = {}) => makeEvent(RID, i, t, s as never, d, new Date(Date.UTC(2026, 0, 1) + sec * 1000).toISOString());
+      const iso = (sec: number): string => new Date(Date.UTC(2026, 0, 1) + sec * 1000).toISOString();
+      const evFile = join(dir, ".loki", "runs", RID, "events.jsonl");
+      process.chdir(dir);
+      const seen: { capS?: number }[] = [], supervise = (async (o: never) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never;
+      // verify starts at 100, the process is killed mid-verify at 700 (last heartbeat, no event), resumed 5h later
+      const evs = [at(0, 0, "run.started", null, { provider: "claude", model: "m", cap_s: 900 }), at(1, 10, "stage.completed", "intake", { base_sha: "abc", task: "t" }), at(2, 20, "stage.completed", "plan"), at(3, 30, "stage.completed", "wall"), at(4, 40, "stage.completed", "implement"), at(5, 100, "stage.started", "verify")];
+      const resumed = (alive: Record<string, unknown>) => [at(6, 100 + 18000, "run.resumed", null, alive), at(7, 100 + 18010, "stage.started", "verify")];
+      writeFileSync(evFile, text(evs.concat(resumed({ last_alive_ts: iso(700) }))));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[0]!.capS).toBe(900 - (110 + 600)); // 100 + 10 normal gaps, plus 600s up to the heartbeat
+      writeFileSync(evFile, text(evs.concat(resumed({}))));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[1]!.capS).toBe(900 - 110); // no heartbeat recorded: the whole gap is downtime
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07n: a resumed supervisor records the previous heartbeat in run.resumed and refreshes it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207n-s-"));
+    try {
+      const g = gitRepo(dir);
+      g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i");
+      const runDir = join(dir, ".loki", "runs", RID); mkdirSync(runDir, { recursive: true });
+      const old = Date.UTC(2026, 0, 1, 12);
+      writeAliveBeat(runDir, old);
+      await runSupervisor({ runId: RID, repoDir: dir, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, capS: 600, resume: true, workerArgv: [process.execPath, "-e", "process.exit(0)"], started: {} });
+      const resumedEv = readEvents(join(runDir, "events.jsonl")).find((e) => e.type === "run.resumed");
+      expect(resumedEv?.data["last_alive_ts"]).toBe(new Date(old).toISOString());
+      expect(readAliveBeat(runDir)).toBeGreaterThan(old);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07n: a garbage alive file is no heartbeat and never stops the resume", async () => {
+    for (const junk of ["1e20", "-5", "abc", "", String(Date.now() + 3_600_000)]) {
+      const dir = mkdtempSync(join(tmpdir(), "loki-p1207n-g-"));
+      try {
+        const g = gitRepo(dir);
+        g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i");
+        const runDir = join(dir, ".loki", "runs", RID); mkdirSync(runDir, { recursive: true });
+        writeFileSync(join(runDir, "alive"), junk + "\n");
+        expect(readAliveBeat(runDir)).toBeNull();
+        await runSupervisor({ runId: RID, repoDir: dir, env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, capS: 600, resume: true, workerArgv: [process.execPath, "-e", "process.exit(0)"], started: {} });
+        const ev = readEvents(join(runDir, "events.jsonl")).find((e) => e.type === "run.resumed");
+        expect(ev).toBeDefined();
+        expect(ev!.data["last_alive_ts"]).toBeUndefined();
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
   });
   test("P12-07l: the deep worker honors LOKI_E10_CAP_S (remaining cap on resume) and falls back to its full cap", () => {
     expect(workerCapS(true, { LOKI_E10_CAP_S: "260" })).toBe(260);
