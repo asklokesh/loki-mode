@@ -451,6 +451,7 @@ test_validate_bash_temp_root_and_glob_denied() {
     log_test "validate-bash.sh: recursive rm of a temp root or bare temp glob is denied after slash normalization"
     local c got t
     local rmcmd="rm -rf"
+    # shellcheck disable=SC2088 # tilde targets are literal string data for the hook, never expanded here
     local targets=(
         '//tmp' '/tmp//' '/private//tmp/' '/tmp' '/tmp/' '/private/tmp' '/var/tmp/'
         '/tmp/*' '/tmp/.*' '/tmp//*' '/tmp/./*' '/private/tmp/*' '/var//tmp/*' '/tmp/?'
