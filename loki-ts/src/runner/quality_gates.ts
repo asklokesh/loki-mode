@@ -58,6 +58,7 @@ import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { stripAnsi } from "../util/check_result.ts";
 import { safeGitRun } from "../util/safe_git.ts";
+import { hasPythonTests, ranZeroTests, runPythonTests } from "../util/python_build_check.ts";
 import { runSkillChecks } from "../util/skill_checks.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
@@ -601,6 +602,20 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
     ? `stale test-results.json (.test-results.iter is not iteration ${ctx?.iterationCount ?? "unknown"})`
     : "no readable test-results.json";
   const cwd = ctx?.cwd ?? process.cwd();
+  if (!existsSync(join(cwd, "package.json")) && hasPythonTests(cwd)) {
+    // S4: mirror run.sh enforce_test_coverage python arm (python3 -m pytest, unittest fallback on exit 5).
+    const py = await runPythonTests(cwd);
+    const pyTail = py.output.trim().split(/\r?\n/).slice(-5).join(" | ");
+    if (py.exitCode === 124) return { passed: false, detail: `test_coverage: ${py.runner} TIMED OUT -- ${pyTail}` };
+    if (py.exitCode === 5) {
+      if (ranZeroTests(py.output)) {
+        return { passed: true, inconclusive: true, detail: "test_coverage: python tests ran zero tests -- INCONCLUSIVE, not a pass" };
+      }
+      return { passed: false, detail: `test_coverage: ${py.runner} exit 5 -- ${pyTail}` };
+    }
+    if (py.exitCode !== 0) return { passed: false, detail: `test_coverage: ${py.runner} exit ${py.exitCode} -- ${pyTail}` };
+    return { passed: true, detail: `test_coverage: ${py.runner} exit 0` };
+  }
   if (!existsSync(join(cwd, "package.json"))) {
     return {
       passed: true,
