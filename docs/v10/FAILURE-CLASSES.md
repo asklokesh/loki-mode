@@ -864,3 +864,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: loki-ts/tests/runner/cost_preview.test.ts "P12-32 outcomeFor", router_history.test.ts P12-32 cases.
 - Resolved (P12-32b): implement_route.ts routeStart passes a lazy repoHistoryFloor to unit_model.ts routeRecord, which applies history.ts historyRaisedRoute (through resolveExecutor) to a valid cheapest-tier route; history only raises, and no history, below-floor history or corrupt history gives today's routing. Fixture: router_history.test.ts "P12-32b live cost routing".
 - Known limits: acceptance counts only VERIFIED and FAILED; PARTIAL runs are not recorded; history never selects a cheaper unproven model, by design.
+
+## FC-M25W Modernize final report and reslice event are built but never written in production (MODERNIZE-REPORT-DARK)
+- User-visible vs raw: a real `loki modernize` run leaves no `.loki/modernize/<mid>/report.json`, so no sealed COMPLETE or NOT PROVEN verdict reaches the user or the M-27 pilot; units re-sliced is never recorded.
+- Law broken: a control nobody reads is theatre (writer without a live caller; event declared with no producer).
+- Cause (measured 2026-10-16, M-27 HIGH review): `git grep writeReport -- loki-ts/src` finds only its definition at report.ts:106; `git grep unit.resliced -- loki-ts/src` finds only the declaration at types.ts:10 (reslice.ts never appends it).
+- Siblings to sweep: every name in the modernize types.ts event list must have at least one producer in loki-ts/src; cost has no per-unit producer either (only budget.hit spent_usd at scheduler.ts:203).
+- Mechanism: the coordinator (loki-ts/src/util/modernize_coordinator.ts) calls writeReport once at the end of a run; reslice.ts appends unit.resliced; a guard test asserts every declared event name has a producer.
+- Fixture: loki-ts/tests/engine10/modernize/e2e.test.ts asserts report.json exists after the stub run; a new producer-coverage case in the existing modernize test file.
