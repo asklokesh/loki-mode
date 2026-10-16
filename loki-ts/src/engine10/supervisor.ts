@@ -223,7 +223,7 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -235,10 +235,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--provider") provider = args[++i] ?? provider;
     else if (a === "--spec") specFile = args[++i] ?? "";
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
-    else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
+    else if (a === "--resume") resume = true;
     else words.push(a);
   }
-  let task = words.join(" ").trim();
+  let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
   let spec: LoadedSpec | null = null;
   if (specFile !== null) { // SPEC-FIRST-INTENT: refuse a spec that does not parse (exit 2, with the line) before any run state exists
     try { spec = loadSpecFile(resolve(specFile)); } catch (e) { process.stderr.write(`engine10: ${(e as Error).message}\n`); return 2; }
