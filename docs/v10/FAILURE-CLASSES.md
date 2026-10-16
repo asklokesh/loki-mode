@@ -855,11 +855,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: loki-ts/tests/runner/harness_intelligence.test.ts "P12-11 recovery classes (FC-REQ)" (classifier table, fingerprints across two runs, bound).
 - Known limits: protocolError and conflictingRequirements have no producer wired yet (callers must set them from structured signals); fingerprints are recorded for flaky only and not yet read back by a policy rule; verify's flaky list is not yet fed to decideRecovery as a rerun signal (follow-up); engine10 renderMainOutput still passes flaky: [] (names reach the user via seal notProven); the bounding rewrite is best effort and a concurrent append can lose a row.
 
-## FC-P12-32 Router cost objective is built but dark in production
+## FC-P12-32 Router cost objective is built but dark in production (RESOLVED by P12-32b)
 - User-visible vs raw: no route decision changes today; the expected accepted-outcome cost ranking (history.ts routeScore, rankExecutorsByCost, haikuFloorExecutor) has no production caller.
 - Law broken: a control nobody reads is theatre (reader without a live caller).
 - Cause (measured): grep of loki-ts/src finds zero callers of resolveExecutor (decision.ts) and none that sets its historyFloor input, so haikuFloorExecutor is unreachable outside tests.
 - Siblings swept: decision.ts envOverride, model_rank.ts nextState and issues_epic.ts are the only decision.ts importers; none builds a ResolveInput.
 - Mechanism: seal.ts recordRun now also records FAILED as a code-owned loss (cost_preview.ts outcomeFor), so acceptance is measured; the remaining step is a caller that builds ResolveInput with historyFloor = haikuFloorExecutor(...) when the router resolves the stage executor.
 - Fixture: loki-ts/tests/runner/cost_preview.test.ts "P12-32 outcomeFor", router_history.test.ts P12-32 cases.
-- Known limits: objective is DARK until resolveExecutor has a caller; acceptance counts only VERIFIED and FAILED; PARTIAL runs are not recorded.
+- Resolved (P12-32b): implement_route.ts routeStart passes a lazy repoHistoryFloor to unit_model.ts routeRecord, which applies history.ts historyRaisedRoute (through resolveExecutor) to a valid cheapest-tier route; history only raises, and no history, below-floor history or corrupt history gives today's routing. Fixture: router_history.test.ts "P12-32b live cost routing".
+- Known limits: acceptance counts only VERIFIED and FAILED; PARTIAL runs are not recorded; history never selects a cheaper unproven model, by design.

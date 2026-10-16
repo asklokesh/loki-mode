@@ -3,13 +3,14 @@
 import type { RunContext, SessionResult, SessionRunOptions } from "../../engine10/types.ts";
 import { climb, type UnitEscalation } from "../model_rank.ts";
 import { routeRecord } from "./unit_model.ts";
+import { repoHistoryFloor } from "./history.ts";
 
 export interface UnitRoute { current: string; escalations: UnitEscalation[] }
 const UNIT = "run";
 
 /** Start model for the single "run" unit from the plan's route record; pins it on the first call and emits the route event. */
 export function routeStart(ctx: RunContext, first: SessionRunOptions, plan: Record<string, unknown> | undefined): UnitRoute {
-  const rr = routeRecord(ctx.model, plan);
+  const rr = routeRecord(ctx.model, plan, () => repoHistoryFloor(ctx.repoDir));
   first.model = rr.model;
   ctx.emit("route", "implement", { unit: UNIT, model: rr.model, source: rr.source, reason: rr.reason });
   return { current: rr.model, escalations: [] };
