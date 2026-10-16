@@ -1,0 +1,36 @@
+{
+  "schema": "loki.modernize.pilot-manifest/1",
+  "public_set": {
+    "checked_on": "2026-10-16",
+    "name": "Legacy-Bench (Factory)",
+    "url": "https://github.com/factory-ai/legacy-bench",
+    "docs_url": "https://docs.factory.com/benchmarks/legacy-bench",
+    "license": "Apache-2.0",
+    "commit_checked": "12fa7cf969b7a253183388040d566fb353a1ab31",
+    "public_task_count": 10,
+    "finding": "A public set exists but is only 10 open sample tasks (COBOL, Java 7, C89, Fortran, Assembly) out of hundreds; the full set is not public. The samples are agent repair and migration tasks with hidden tests, not repo-level modernization targets, and none is Python 2. Too small and the wrong shape to calibrate unit sizing.",
+    "path_taken": "fallback"
+  },
+  "fallback": "10 public py2 and Java repos under 20K source lines, each with a test suite, pinned by URL and commit (MODERNIZE.md section 12 item 1). The Java repos target Java 6/7 source level and build on JDK 8; the java21 route is the modernization target. loc_verified and suite_verified are false: the line counts and suites are not yet confirmed. A --execute run counts source lines after fetching and skips a repo over max_loc; the suite commands are unverified guesses.",
+  "cap": {
+    "start_lines": 1500,
+    "min_lines": 300,
+    "max_lines": 6000,
+    "raise_factor": 1.25,
+    "lower_factor": 0.75,
+    "raise_threshold": 0.9,
+    "round_to": 50
+  },
+  "repos": [
+    {"id": "py-requests-0.14.2", "url": "https://github.com/psf/requests", "commit": "63243b1e3b435c7736acf1e51c0f6fa6666d861d", "ref": "v0.14.2", "language": "py2", "target": "python3", "suite": "python -m pytest test_requests.py", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "py-jinja2-2.5.5", "url": "https://github.com/pallets/jinja", "commit": "1116573c1159abb18e36ea96d8fbbde3cad23974", "ref": "2.5.5", "language": "py2", "target": "python3", "suite": "python -m pytest jinja2/testsuite", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "py-werkzeug-0.6.2", "url": "https://github.com/pallets/werkzeug", "commit": "d902d2c05a2cb3d7d1f5414fe9c678273f5ffa05", "ref": "0.6.2", "language": "py2", "target": "python3", "suite": "python -m pytest tests", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "py-itsdangerous-0.24", "url": "https://github.com/pallets/itsdangerous", "commit": "4c3923561fd7d3aa53013b0b6b27bb3221bd473a", "ref": "0.24", "language": "py2", "target": "python3", "suite": "python -m pytest tests.py", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "py-markupsafe-0.15", "url": "https://github.com/pallets/markupsafe", "commit": "98caea1496846935dd60a0e170c401e91ce9029a", "ref": "0.15", "language": "py2", "target": "python3", "suite": "python -m pytest markupsafe/tests.py", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "py-simplejson-2.6.2", "url": "https://github.com/simplejson/simplejson", "commit": "57d980277f8d1d6324904edd43e1a730572b64b6", "ref": "v2.6.2", "language": "py2", "target": "python3", "suite": "python -m pytest simplejson/tests", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "java-disklrucache-2.0.2", "url": "https://github.com/JakeWharton/DiskLruCache", "commit": "c25de9c0a01974c41c75a41ba1bc4be8b3a1513a", "ref": "disklrucache-2.0.2", "language": "java8", "target": "java21", "suite": "mvn -q test", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "java-tape-1.2.3", "url": "https://github.com/square/tape", "commit": "714da1597b90924c31ead723847d45bd81e859e3", "ref": "tape-parent-1.2.3", "language": "java8", "target": "java21", "suite": "mvn -q test", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "java-otto-1.3.8", "url": "https://github.com/square/otto", "commit": "fe42ae36b310a3790f173bb8da40c2f559f4aa9b", "ref": "otto-parent-1.3.8", "language": "java8", "target": "java21", "suite": "mvn -q test", "max_loc": 20000, "loc_verified": false, "suite_verified": false},
+    {"id": "java-jsoup-1.8.3", "url": "https://github.com/jhy/jsoup", "commit": "99ef54acdea15d339f3616d1a5aa70dca29e65bb", "ref": "jsoup-1.8.3", "language": "java8", "target": "java21", "suite": "mvn -q test", "max_loc": 20000, "loc_verified": false, "suite_verified": false}
+  ]
+}

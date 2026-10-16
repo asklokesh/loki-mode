@@ -327,6 +327,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 - V10-RESEARCH cites Legacy-Bench only through a vendor report.
 - The slice first confirms that a public task set exists and records its URL and license. If none exists, the pilot uses 10 public py2 and Java 8 repos under 20K lines, each with a suite, and says so.
 - Gate: the equivalence rate on the pilot is published, and the sizing cap is calibrated from it.
+- Calibration factors (eval/modernize/pilot-manifest.json): raise x1.25 at 90% or higher, lower x0.75 below, clamp 300-6000 lines, round to 50; hold when any run failed or was skipped.
 
 **2. 200K-line scale test (M-28)**
 - Chosen candidate: Mercurial at its last Python 2 only release, 4.x (py2 to 3).

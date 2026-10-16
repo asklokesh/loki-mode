@@ -1646,6 +1646,7 @@ run_test "Loki 10 gate publish script (EV-6)" "$SCRIPT_DIR/../eval/loki10/test-p
 run_test "Loki 10 user docs match USAGE and the default marker (E-34)" "$SCRIPT_DIR/test-engine10-docs.sh"
 run_test "Loki modernize py2/3 capture tracer (M-09)" "$SCRIPT_DIR/test-modernize-py-capture.sh"
 run_test "Loki modernize user guide matches cli.ts flags (M-30)" "$SCRIPT_DIR/test-modernize-docs.sh"
+run_test "Loki modernize Legacy-Bench pilot harness (M-27)" "$SCRIPT_DIR/../eval/modernize/test-pilot.sh"
 run_test "Docs name only CLI commands, flags and versions on main (DOC-02)" "$SCRIPT_DIR/test-docs-cli-drift.sh"
 run_test "docs/ROUTING-EVIDENCE.md exists and providers cite it (issue 210)" "$SCRIPT_DIR/test-routing-evidence-doc.sh"
 run_test "Docs carry no stale commands, dead env vars or old versions (SZ-03, advisory)" "timeout -k 10 120 bash $SCRIPT_DIR/test-no-stale-facts.sh"
