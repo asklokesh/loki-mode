@@ -254,7 +254,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
   const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), pc = partialCost(it.events), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
   if (it.events.some((e) => e.type === "cap.hit")) { out(`engine10: --resume refused: run ${it.runId} already hit its cost or time cap\n`); return 2; }
-  let activeS = 0; for (let i = 1; i < it.events.length; i++) { const g = (Date.parse(it.events[i]!.ts) - Date.parse(it.events[i - 1]!.ts)) / 1000; if (g > 0 && g <= 120) activeS += g; } // active time: gaps over 2 min are downtime, not run time
+  let activeS = 0; for (let i = 1; i < it.events.length; i++) { const g = (Date.parse(it.events[i]!.ts) - Date.parse(it.events[i - 1]!.ts)) / 1000; if (g > 0 && (g <= 120 || it.events[i]!.type !== "run.resumed")) activeS += g; } // P12-07l: a long gap is downtime only when it ends in run.resumed; a long verify (or any quiet running stage) that ends in its own event counts in full
   const capS = Number(st0["cap_s"]) > 0 ? Number(st0["cap_s"]) - activeS : undefined, ceilS = Number(st0["cap_ceiling_s"]) > 0 ? Number(st0["cap_ceiling_s"]) - activeS : undefined;
   if (capS !== undefined && capS < 60) { out(`engine10: --resume refused: run ${it.runId} has under 60s of its time cap left\n`); return 2; }
   if (rp.skip.includes("intake") && origBranch !== br) {

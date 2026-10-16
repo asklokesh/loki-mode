@@ -37,6 +37,9 @@ export async function runWorker(
   const write = opts.write ?? ((line: string) => { process.stdout.write(line); });
   await drive((type, stage, data) => write(JSON.stringify({ type, stage, data }) + "\n"));
 }
+/** P12-07l: deep honors the same cap env as fast (remaining cap on resume; the supervisor sets the full cap otherwise). */
+export function workerCapS(deep: boolean, env: NodeJS.ProcessEnv): number { const e = Number(env.LOKI_E10_CAP_S); return e > 0 ? e : deep ? DEEP_CAP_S : DEFAULT_CAP_S; }
+
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;
@@ -60,7 +63,7 @@ export async function main(args: string[]): Promise<number> {
     const ctx: RunContext = {
       runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
       baseSha: safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
-      capS: deep ? DEEP_CAP_S : Number(process.env.LOKI_E10_CAP_S) || DEFAULT_CAP_S,
+      capS: workerCapS(deep, process.env),
       emit, overCap: over,
       sessions: { run: (o) => { started.add(o.iterationId); return sessions.run(o); } }, failovers: () => failovers,
       tests: new RealTestMapProvider(),

@@ -171,6 +171,8 @@ describe("fix resume trust and mutation (MW-2)", () => {
 // P12-07: per-stage checkpoints and resume-from-stage. Resume fails closed on any torn or inconsistent log.
 import { execFileSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
+import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
+import { workerCapS } from "../../src/engine10/worker.ts";
 import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -473,6 +475,33 @@ describe("resume from stage (P12-07)", () => {
       expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
       expect(seen[1]!.env["LOKI_E10_SPENT_USD"]).toBe("9");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07l: a long quiet stage counts in full toward active time; only a gap ending in run.resumed is downtime", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207l-")), cwd = process.cwd();
+    try {
+      const g = gitRepo(dir);
+      g("init", "-q"); g("commit", "-q", "--allow-empty", "-m", "i"); g("checkout", "-q", "-b", `loki/${RID}`);
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const at = (i: number, sec: number, t: string, s: string | null, d: Record<string, unknown> = {}) => makeEvent(RID, i, t, s as never, d, new Date(Date.UTC(2026, 0, 1) + sec * 1000).toISOString());
+      const evFile = join(dir, ".loki", "runs", RID, "events.jsonl");
+      process.chdir(dir);
+      const seen: { capS?: number; env: Record<string, string | undefined> }[] = [], supervise = (async (o: never) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never;
+      // verify runs 600s with no event in between, then the run is killed; a 5h gap then ends in run.resumed (downtime)
+      const evs = [at(0, 0, "run.started", null, { provider: "claude", model: "m", cap_s: 900 }), at(1, 10, "stage.completed", "intake", { base_sha: "abc", task: "t" }), at(2, 20, "stage.completed", "plan"), at(3, 30, "stage.completed", "wall"), at(4, 40, "stage.completed", "implement"), at(5, 640, "stage.started", "verify"), at(6, 640 + 18000, "run.resumed", null)];
+      writeFileSync(evFile, text(evs.slice(0, 6)));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[0]!.capS).toBe(Math.floor(900 - 640)); // the 600s quiet gap before verify's first event counts
+      expect(seen[0]!.env["LOKI_E10_CAP_S"]).toBe("260");
+      writeFileSync(evFile, text(evs.slice(0, 5).concat([at(5, 100, "stage.started", "verify"), at(6, 100 + 18000, "run.resumed", null), at(7, 100 + 18010, "stage.started", "verify")])));
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[1]!.capS).toBe(900 - 110); // the 5h downtime gap is not counted
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07l: the deep worker honors LOKI_E10_CAP_S (remaining cap on resume) and falls back to its full cap", () => {
+    expect(workerCapS(true, { LOKI_E10_CAP_S: "260" })).toBe(260);
+    expect(workerCapS(true, {})).toBe(DEEP_CAP_S);
+    expect(workerCapS(false, { LOKI_E10_CAP_S: "260" })).toBe(260);
+    expect(workerCapS(false, {})).toBe(DEFAULT_CAP_S);
   });
   test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {
     const { ctx } = fakeCtx();
