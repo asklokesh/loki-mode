@@ -2658,6 +2658,10 @@ cmd_start() {
             case "$_ps_a" in
                 --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
                 --brief) _ps_skip=2 ;;
+                # bin/loki turns --model into --session-model and forwards --max-cost on
+                # the legacy route; a workspace start ignores both. Skip them and their value.
+                --session-model|--max-cost) _ps_skip=1 ;;
+                --session-model=*|--max-cost=*) ;;
                 # Every value-taking cmd_start flag: its value is never brief text.
                 -*) _loki_start_flag_kind "$_ps_a" || _loki_start_unknown_flag "$_ps_a"
                     if [ "$_LOKI_START_FLAG_KIND" = value ]; then _ps_skip=1; elif [ "$_LOKI_START_FLAG_KIND" = optional ]; then _ps_skip=3; fi ;;
