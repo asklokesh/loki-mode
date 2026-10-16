@@ -47,6 +47,20 @@ describe("verifyWave", () => {
     expect(s.reason).toBe("wave 1 blocked: build was killed by a signal");
   });
 
+  it("exit 0 with timedOut set still blocks (timeout flag is not ignored)", () => {
+    const v = verifyWave({ repoDir: "/x", wave: 3, commands: { ...all, build: { argv: ["b"], timeoutMs: 70 } }, run: () => res(0, { timedOut: true }) });
+    expect(v.verified).toBe(false);
+    expect(v.failedStep).toBe("build");
+    expect(v.reason).toBe("wave 3 blocked: build timed out after 70ms");
+  });
+
+  it("exit 0 with a runner error still blocks (error is not ignored)", () => {
+    const v = verifyWave({ repoDir: "/x", wave: 3, commands: all, run: () => res(0, { error: "EIO" }) });
+    expect(v.verified).toBe(false);
+    expect(v.failedStep).toBe("build");
+    expect(v.reason).toBe("wave 3 blocked: build could not run");
+  });
+
   it("a missing or malformed command fails that step and never passes silently", () => {
     const missing = verifyWave({ repoDir: "/x", wave: 1, commands: { build: all.build, integration: null, original_suite: all.original_suite }, run: ok });
     expect(missing.verified).toBe(false);
