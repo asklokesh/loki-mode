@@ -824,12 +824,14 @@ _qs_classify_invoke() {
     local to=""
     if command -v timeout >/dev/null 2>&1; then to="timeout"
     elif command -v gtimeout >/dev/null 2>&1; then to="gtimeout"; fi
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     if [ -n "$to" ]; then
         out=$(CAVEMAN_DEFAULT_MODE=off "$to" "${LOKI_QUICKSTART_CLASSIFY_TIMEOUT}" \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
         out=$(CAVEMAN_DEFAULT_MODE=off \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     fi
     [ "$rc" -ne 0 ] && return 1
     [ -z "$out" ] && return 1

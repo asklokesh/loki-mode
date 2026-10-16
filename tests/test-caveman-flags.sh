@@ -417,7 +417,7 @@ while IFS= read -r line; do
   # Activation bare-branch fallback: a plain `claude ...` that is the else of an
   # activation branch (inherits tree-wide off; documented at the two activation
   # sites in run.sh: worktree stream ~3067 and main RARV loop ~13121).
-  if [ "$file" = "$RUN_SH" ] && printf '%s' "$code" | grep -qE 'claude "\$\{_loki_claude_argv\[@\]\}"|claude --dangerously-skip-permissions \\'; then
+  if [ "$file" = "$RUN_SH" ] && printf '%s' "$code" | grep -qE 'claude "\$\{_loki_claude_argv\[@\]\}"|claude --dangerously-skip-permissions \\|claude "\$\{_LOKI_PERM_ARGV\[@\]\}" \\'; then
     continue
   fi
   # Anything left is an UNSUPPRESSED, UNNAMED parsed claude subcall -> moat leak.

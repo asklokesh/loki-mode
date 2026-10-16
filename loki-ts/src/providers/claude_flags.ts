@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -782,4 +783,39 @@ export function cavemanSuppressEnv(): string {
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
   _claudeHelpCache = text;
+}
+
+// ---------------------------------------------------------------------------
+// P12-26 -- LOKI_PERMISSION_POLICY=compiled
+//
+// Permission argv for the Claude CLI. Unset (default): the historical
+// --dangerously-skip-permissions, byte-identical. "compiled": the shared rule in
+// src/policies/claude_permissions.js (also invoked by providers/claude.sh) emits
+// --permission-mode plus --allowedTools/--disallowedTools from the task policy.
+// ---------------------------------------------------------------------------
+export function permissionArgv(
+  repoDir: string = process.env["LOKI_PROJECT_DIR"] || process.cwd(),
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
+): string[] {
+  if (env["LOKI_PERMISSION_POLICY"] !== "compiled") return ["--dangerously-skip-permissions"];
+  try {
+    const req = createRequire(import.meta.url);
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    // src/providers and dist sit at different depths below the repo root (same as designArchetypesText).
+    const modPath = [
+      resolvePath(moduleDir, "..", "..", "..", "src", "policies", "claude_permissions.js"), // src/providers -> repo root
+      resolvePath(moduleDir, "..", "..", "src", "policies", "claude_permissions.js"), // dist -> repo root
+    ].find((p) => existsSync(p));
+    if (!modPath) throw new Error("claude_permissions.js not found");
+    const mod = req(modPath) as {
+      compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
+    };
+    const r = mod.compile(repoDir, env);
+    r.warnings.forEach(warn);
+    return r.args;
+  } catch (e) {
+    warn(`LOKI_PERMISSION_POLICY=compiled: compiler unavailable (${(e as Error).message}); using most restrictive mode (plan)`);
+    return ["--permission-mode", "plan"];
+  }
 }

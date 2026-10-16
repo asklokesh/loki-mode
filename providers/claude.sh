@@ -391,7 +391,8 @@ provider_invoke() {
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
     # nothing when unset/empty and preserves spaced elements otherwise.
     loki_model_route_prefix
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    _loki_claude_permission_argv
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -434,9 +435,10 @@ provider_invoke_argv() {
     # is base -> route -> clamp -> alt-provider in one call; keep both paths on it.
     model="$(resolve_model_for_tier "$tier" 2>/dev/null || provider_get_tier_param "$tier")"
     loki_model_route_prefix
+    _loki_claude_permission_argv
     _LOKI_INVOKE_ARGV=(
         "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}"
-        claude --dangerously-skip-permissions
+        claude "${_LOKI_PERM_ARGV[@]}"
         "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
     )
     [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
@@ -670,5 +672,6 @@ provider_invoke_with_tier() {
     # "${arr[@]}" on an empty array aborts with "unbound variable". ${arr[@]+...}
     # expands to nothing when empty and preserves spaced elements otherwise.
     loki_model_route_prefix
-    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    _loki_claude_permission_argv
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude "${_LOKI_PERM_ARGV[@]}" --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }

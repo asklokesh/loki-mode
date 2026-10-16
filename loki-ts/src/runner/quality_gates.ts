@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { claudeFlagSupported, ensureClaudeHelpCache } from "../providers/claude_flags.ts";
+import { claudeFlagSupported, ensureClaudeHelpCache, permissionArgv } from "../providers/claude_flags.ts";
 import { judgeJson, sdkJudgeAvailable } from "./sdk_invoker.ts";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
@@ -1610,7 +1610,7 @@ export function rematerializeCodeReview(rawJson: string): string | null {
 }
 
 export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
-  const argv = ["claude", "--dangerously-skip-permissions"];
+  const argv = ["claude", ...permissionArgv()];
   // OPT-IN advisor pin (LOKI_ADVISOR_MODEL): default no --model (account
   // default); haiku|sonnet|opus honored; fable refused (see comment above).
   const advisor = (process.env["LOKI_ADVISOR_MODEL"] ?? "").trim().toLowerCase();
