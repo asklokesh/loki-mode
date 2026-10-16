@@ -42,6 +42,7 @@ import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult, Pytest
 import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
 import { checkEquivalence } from "./equiv.ts";
+import { tokenFreeEnv } from "../../util/safe_git.ts";
 import { oracleDir } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
 
@@ -218,7 +219,7 @@ function spawnPytest(pythonBin: string, repoDir: string, timeoutMs: number, extr
     const res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider", "--rootdir", root, "--confcutdir", root,
       "-c", pytestConfigFor(root), "-o", "xfail_strict=true", "-rX", ...(withJunit ? [`--junitxml=${junit}`] : []), ...extra], {
       cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
+      env: { ...tokenFreeEnv(), PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
     });
     if (withJunit) { try { junitXml = readFileSync(junit, "utf8"); } catch { junitXml = undefined; } }
     return { res, junitXml };
@@ -375,7 +376,7 @@ export function conformanceHashes(dir: string): Record<string, string> {
 function importableOutsideRepo(target: string, names: string[]): Set<string> {
   if (names.length === 0) return new Set();
   const code = "import sys,importlib.util as u\nfor n in sys.argv[1:]:\n    try:\n        if n in sys.stdlib_module_names or u.find_spec(n): print(n)\n    except Exception: print(n)\n";
-  const r = spawnSync(target, ["-I", "-c", code, ...names], { cwd: tmpdir(), encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync(target, ["-I", "-c", code, ...names], { cwd: tmpdir(), encoding: "utf8", timeout: 30_000, env: tokenFreeEnv() });
   // fail closed: if the probe cannot run, every name counts as shadowing
   return r.status === 0 ? new Set(r.stdout.split("\n").filter(Boolean)) : new Set(names);
 }
