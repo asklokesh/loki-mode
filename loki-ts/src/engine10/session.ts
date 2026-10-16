@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeProviderCost } from "../providers/provider_cost.ts";
+import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
@@ -161,14 +161,14 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
+      archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
         // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.
         [import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
       ];
       const sessionId = opts.iterationId;
-      // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained
-      // via the "data" listener below so a full pipe can never stall the child.
+      // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained via the "data" listener below so a full pipe can never stall the child.
       const guardSnap = isGuarded(cfg.provider) && cfg.lokiRoot ? beginGuard(opts.cwd ?? process.cwd(), cfg.lokiRoot) : null; // PARITY-ENFORCE
       const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const pgid = child.pid;

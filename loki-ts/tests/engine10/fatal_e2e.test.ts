@@ -2,7 +2,7 @@
 // (1) The provider child's own stderr reaches the fatal classifier; the same text on stdout never does.
 // (2) A crashed verify is not a repeat of the previous failure signature (a preload replaces only verify's run).
 import { afterAll, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -56,7 +56,7 @@ function run(env: Record<string, string>) {
   const out = r.stdout.toString();
   const line = out.trim().split("\n").filter((l) => l.startsWith("{")).pop();
   if (!line) throw new Error(`no --json line: ${out}${r.stderr.toString()}`);
-  return { json: JSON.parse(line) as { outcome: string; stop: string | null }, code: r.exitCode };
+  return { json: JSON.parse(line) as { outcome: string; stop: string | null; run_id: string }, code: r.exitCode, repo };
 }
 
 describe("A-113b fatal classification through the CLI invoker", () => {
@@ -74,6 +74,18 @@ describe("A-113b fatal classification through the CLI invoker", () => {
   test("a detached rewriter of the sidecar path is never classified (race guard, repeated)", () => {
     for (let i = 0; i < 3; i++) expect(run({ STUB_REWRITE: "1", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
   }, 300_000);
+});
+
+describe("P12-09b quota that never recovers, real CLI invoker and worker", () => {
+  test("stderr quota with a small LOKI_E10_CAP_S ends budget_stopped via cap.hit (not fatal) and not hung", () => {
+    const t0 = Date.now(), r = run({ STUB_ERR: "Your credit balance is too low to access the API", STUB_EXIT: "1", LOKI_E10_CAP_S: "60" });
+    expect(r.json.stop ?? "").not.toMatch(/^fatal/); // the cap ends the wait: stop is the cap, never fatal:quota_exhausted
+    expect(r.json.stop).toBe("cap");
+    const ev = readFileSync(join(r.repo, ".loki", "runs", r.json.run_id, "events.jsonl"), "utf8"); // the work-item state budget_stopped is derived from cap.hit
+    expect(ev).toContain('"type":"cap.hit"');
+    expect(ev).not.toContain("quota_exhausted\"");
+    expect(Date.now() - t0).toBeLessThan(80_000);
+  }, 120_000);
 });
 
 describe("A-113b crashed verify is not a stall repeat", () => {
