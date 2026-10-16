@@ -1539,6 +1539,84 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertEqual(ts.resolve_delegation_secrets(e, []), ("", ""))
 
 
+class TestTrackerCommentSteer(unittest.TestCase):
+    """P12-18: allowed Jira/Linear comments steer the live run (recorded payload fixtures)."""
+    FIX = Path(__file__).parent / "fixtures" / "tracker-comments"
+
+    def _fx(self, name):
+        return json.loads((self.FIX / name).read_text())
+
+    def _steer(self, kind, payload, env, live=True):
+        seen = []
+
+        def fake_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
+            seen.append((args, extra_env))
+            return "passed"
+
+        with patch.object(ts, "run_loki_outcome", side_effect=fake_outcome), \
+                patch.dict(os.environ, env):
+            res = ts.tracker_comment_steer(kind, payload, lambda ident: live)
+        return res, seen
+
+    def test_jira_comment_from_allowed_actor_becomes_steer(self):
+        (summary, status), seen = self._steer(
+            "jira", self._fx("jira-comment-created.json"), {"LOKI_JIRA_STEER_ACTORS": "acc-allowed"})
+        self.assertEqual(status, "fired")
+        args, env = seen[0]
+        self.assertEqual(args[0], "steer")
+        self.assertIn("regression test", args[1])
+        self.assertEqual(env, {"LOKI_STEER_SOURCE": "jira", "LOKI_STEER_ACTOR": "acc-allowed"})
+
+    def test_linear_comment_from_allowed_actor_becomes_steer(self):
+        (summary, status), seen = self._steer(
+            "linear", self._fx("linear-comment-create.json"), {"LOKI_LINEAR_STEER_ACTORS": "user-allowed"})
+        self.assertEqual(status, "fired")
+        args, env = seen[0]
+        self.assertIn("retry helper", args[1])
+        self.assertEqual(env["LOKI_STEER_SOURCE"], "linear")
+        self.assertEqual(env["LOKI_STEER_ACTOR"], "user-allowed")
+
+    def test_unknown_actor_and_unset_allowlist_ignored(self):
+        for kind, name, var in (("jira", "jira-comment-created.json", "LOKI_JIRA_STEER_ACTORS"),
+                                ("linear", "linear-comment-create.json", "LOKI_LINEAR_STEER_ACTORS")):
+            for value in ("someone-else", ""):
+                (summary, status), seen = self._steer(kind, self._fx(name), {var: value})
+                self.assertIsNone(summary)
+                self.assertTrue(status.startswith("skipped"), status)
+                self.assertEqual(seen, [])
+
+    def test_no_live_run_and_loki_authored_comment_ignored(self):
+        env = {"LOKI_JIRA_STEER_ACTORS": "acc-allowed"}
+        (_, status), seen = self._steer("jira", self._fx("jira-comment-created.json"), env, live=False)
+        self.assertTrue(status.startswith("skipped"))
+        p = self._fx("jira-comment-created.json")
+        p["comment"]["body"] = "<!-- loki-steer-ack --> ack"
+        (_, status), seen2 = self._steer("jira", p, env)
+        self.assertTrue(status.startswith("skipped"))
+        self.assertEqual(seen + seen2, [])
+
+    def test_jira_route_steers_only_with_live_reply_target(self):
+        body = (self.FIX / "jira-comment-created.json").read_bytes()
+        h = {"X-Atlassian-Webhook-Identifier": "c1",
+             "X-Hub-Signature": "sha256=" + hmac.new(b"jirasecret", body, hashlib.sha256).hexdigest()}
+        for live in (False, True):
+            seen = []
+            with patch.object(ts, "run_loki_outcome",
+                              side_effect=lambda a, dry_run=False, stdout_sink=None, extra_env=None: seen.append(a) or "passed"), \
+                    patch.dict(os.environ, {"LOKI_JIRA_STEER_ACTORS": "acc-allowed"}):
+                disp = ts.Dispatcher(workers=1, queue_size=8, dry_run=False)
+                if live:
+                    disp.set_reply_target("j1", {"kind": "jira", "key": "ENG-7"})
+                srv = _ChatFixture(disp)
+                try:
+                    status, data = srv.raw("/jira", body, dict(h, **{"X-Atlassian-Webhook-Identifier": "c%s" % live}))
+                finally:
+                    srv.close()
+                    disp.shutdown()
+            self.assertEqual(status, 200)
+            self.assertEqual(len(seen), 1 if live else 0)
+
+
 class TestBriefPrReachesWorktreePath(unittest.TestCase):
     """The argv the server enqueues must really produce a worktree + PR run.
 

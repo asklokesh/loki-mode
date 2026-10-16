@@ -63,4 +63,28 @@ describe("writeback phases", () => {
     await writeBack({ ...base, phase: "done" }, { ...both, LOKI_WRITEBACK_KIND: "jira" });
     expect(calls.map((c) => c.url)).toEqual(["https://j.x/rest/api/3/issue/ENG-42/comment"]);
   });
+  it("transition calls per lifecycle state (Jira)", async () => {
+    const env = { ...jiraEnv, LOKI_JIRA_STARTED_TRANSITION: "11", LOKI_JIRA_BLOCKED_TRANSITION: "21", LOKI_JIRA_DONE_TRANSITION: "31" };
+    const seen: Record<string, string[]> = {};
+    for (const phase of ["started", "blocked", "done", "failed"] as const) {
+      calls = [];
+      await writeBack({ ...base, phase, origin: { kind: "jira", ref: "PROJ-1" } }, env);
+      seen[phase] = calls.filter((c) => c.url.endsWith("/transitions")).map((c) => JSON.parse(c.body).transition.id);
+    }
+    expect(seen).toEqual({ started: ["11"], blocked: ["21"], done: ["31"], failed: [] });
+  });
+  it("transition calls per lifecycle state (Linear)", async () => {
+    const env = { LINEAR_API_KEY: "k", LOKI_LINEAR_STARTED_STATE: "s-1", LOKI_LINEAR_BLOCKED_STATE: "s-2", LOKI_LINEAR_DONE_STATE: "s-3" };
+    const seen: Record<string, string[]> = {};
+    for (const phase of ["started", "blocked", "done", "failed"] as const) {
+      calls = [];
+      await writeBack({ ...base, phase, origin: { kind: "linear", ref: "ENG-42" } }, env);
+      seen[phase] = calls.filter((c) => c.body.includes("issueUpdate")).map((c) => JSON.parse(c.body).variables.stateId);
+    }
+    expect(seen).toEqual({ started: ["s-1"], blocked: ["s-2"], done: ["s-3"], failed: [] });
+  });
+  it("no transition env means comment only for started", async () => {
+    await writeBack({ ...base, phase: "started", origin: { kind: "jira", ref: "PROJ-1" } }, jiraEnv);
+    expect(calls.length).toBe(1);
+  });
 });

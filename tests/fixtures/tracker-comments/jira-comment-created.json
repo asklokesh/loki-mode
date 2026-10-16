@@ -1,0 +1,11 @@
+{
+  "timestamp": 1760000000000,
+  "webhookEvent": "comment_created",
+  "comment": {
+    "id": "10042",
+    "author": {"accountId": "acc-allowed", "displayName": "Dana Operator", "emailAddress": "dana@acme.test"},
+    "body": "Please keep the public API unchanged and add a regression test.",
+    "created": "2026-10-16T12:00:00.000+0000"
+  },
+  "issue": {"id": "10001", "key": "ENG-7", "fields": {"summary": "Crash on save"}}
+}

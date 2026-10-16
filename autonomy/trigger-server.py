@@ -726,6 +726,57 @@ def handle_issue_comment_event(payload, dry_run=False):
     return summary, "fired" if success else "error"
 
 
+def _adf_text(node):
+    """Plain text of a Jira comment body: a string as-is, an ADF document flattened."""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, dict):
+        if isinstance(node.get("text"), str):
+            return node["text"]
+        return " ".join(_adf_text(c) for c in node.get("content") or [])
+    return ""
+
+
+def tracker_comment_steer(kind, payload, is_live, dry_run=False):
+    """A Jira/Linear comment from an allowed actor becomes a `loki steer` (source=jira|linear).
+
+    Allowlist is LOKI_JIRA_STEER_ACTORS (accountIds) or LOKI_LINEAR_STEER_ACTORS (user ids); unset
+    rejects everyone. is_live(ident) must confirm a run this server dispatched for the issue is
+    still in flight. Returns (summary, status) like handle_issue_comment_event.
+    """
+    if kind == "jira":
+        comment = payload.get("comment") or {}
+        who = comment.get("author") or {}
+        actor, ident = str(who.get("accountId", "")), str((payload.get("issue") or {}).get("key", ""))
+        body, id_ok = _adf_text(comment.get("body")), bool(JIRA_KEY_RE.match(ident))
+        allow_var = "LOKI_JIRA_STEER_ACTORS"
+    else:
+        data = payload.get("data") or {}
+        actor = str(data.get("userId") or (data.get("user") or {}).get("id") or "")
+        ident = str(data.get("issueId") or (data.get("issue") or {}).get("id") or "")
+        body, id_ok, allow_var = _adf_text(data.get("body")), bool(ident), "LOKI_LINEAR_STEER_ACTORS"
+    allowed = {a.strip() for a in os.environ.get(allow_var, "").split(",") if a.strip()}
+    if not actor or actor not in allowed:
+        return None, "skipped (comment author not authorized)"
+    if not id_ok:
+        return None, "rejected (invalid issue id)"
+    if LOKI_COMMENT_MARKER in body:
+        return None, "skipped (loki-authored comment)"
+    body = re.sub(r"[\x00-\x1f\x7f\s]+", " ", body).strip()[:STEER_NOTE_MAX]
+    if not body:
+        return None, "skipped (empty comment)"
+    if not is_live(ident):
+        return None, "skipped (no live run for %s)" % ident
+    clean = re.sub(r"[^A-Za-z0-9-]", "", actor)[:39] or "unknown"
+    outcome = run_loki_outcome(["steer", "%s comment from %s: %s" % (kind.capitalize(), clean, body)], dry_run=dry_run,
+                               extra_env={"LOKI_STEER_SOURCE": kind, "LOKI_STEER_ACTOR": clean})
+    summary = "steer %s from %s comment" % (ident, kind)
+    if outcome == OUTCOME_PASSED:
+        send_notification("Trigger fired: %s" % summary)
+        return summary, "fired"
+    return summary, OUTCOME_UNKNOWN if outcome == OUTCOME_UNKNOWN else "error"
+
+
 def handle_issues_event(payload, dry_run=False):
     """Handle issues event: opened -> loki start <issue-ref> --pr --detach."""
     action = payload.get("action", "")
@@ -1569,6 +1620,12 @@ class Dispatcher:
             while len(self._reply_targets) > self._job_max:
                 self._reply_targets.popitem(last=False)
 
+    def has_reply_target(self, kind, ident):
+        """True while a job this server dispatched for that Jira key / Linear issue id is in flight (targets are popped on completion)."""
+        field = "key" if kind == "jira" else "issue_id"
+        with self._jobs_lock:
+            return any(isinstance(t, dict) and t.get("kind") == kind and t.get(field) == ident for t in self._reply_targets.values())
+
     def pop_reply_target(self, job_id):
         with self._jobs_lock:
             return self._reply_targets.pop(job_id, None)
@@ -2123,6 +2180,11 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(401, {"error": "stale or missing webhookTimestamp"})
             return
         data = payload.get("data")
+        if payload.get("type") == "Comment" and payload.get("action") == "create":
+            summary, status = tracker_comment_steer(
+                "linear", payload, lambda i: self.dispatcher.has_reply_target("linear", i), self.dry_run)
+            self._send_json(200, {"status": status if summary is None else "steered" if status == "fired" else status})
+            return
         if (payload.get("type") != "Issue" or payload.get("action") != "create"
                 or not isinstance(data, dict)):
             self._send_json(200, {"status": "skipped"})
@@ -2168,6 +2230,12 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+        if payload.get("webhookEvent") == "comment_created":
+            summary, status = tracker_comment_steer(
+                "jira", payload,
+                lambda i: self.dispatcher.has_reply_target("jira", i), self.dry_run)
+            self._send_json(200, {"status": status if summary is None else "steered" if status == "fired" else status})
             return
         if (payload.get("webhookEvent") not in JIRA_EVENTS
                 or not jira_trigger_matches(
