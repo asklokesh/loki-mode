@@ -139,7 +139,7 @@ Required:
 
 - Claude Code (`claude`), installed and logged in: the default provider and the only one with every feature. The bundled Agent SDK with `ANTHROPIC_API_KEY` can stand in on the main `loki start` path, but `loki edit` and `loki chat` call the `claude` CLI.
 - Python 3.8+ (`python3`)
-- Node.js 18+ (`node`; 20+ recommended)
+- Node.js 20+ (`node`; 22 LTS is the CI target)
 - `jq`
 - Git 2.x (`git`)
 - `curl`

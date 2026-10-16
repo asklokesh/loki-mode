@@ -57,7 +57,7 @@ Required (`loki doctor` fails without them):
 
 | Tool | Minimum |
 |------|---------|
-| Node.js | 18 (20+ recommended, 22 LTS is the CI target) |
+| Node.js | 20+ (22 LTS is the CI target) |
 | Python 3 | 3.8 |
 | git | any recent version |
 | jq | any |

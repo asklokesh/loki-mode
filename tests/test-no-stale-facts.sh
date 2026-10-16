@@ -138,5 +138,14 @@ PY
 if [ -z "$prov_out" ]; then pass "wiki/Providers.md matches providers/*.sh"; else fail "wiki/Providers.md drift: $(echo "$prov_out" | tr '\n' ';')"; fi
 grep -q "providers/\*.sh" "$REPO_ROOT/wiki/Providers.md" && pass "Providers.md cites its source" || fail "Providers.md lacks source note"
 
+# Documented minimum Node must equal package.json engines.node.
+node_min="$(cd "$REPO_ROOT" && python3 -c 'import json,re;print(re.search(r"(\d+)",json.load(open("package.json"))["engines"]["node"]).group(1))')"
+node_bad=""
+for f in README.md docs/INSTALLATION.md wiki/Installation.md; do
+    docs_min="$(grep -E '^- \*{0,2}Node|^- Node|^\| Node' "$REPO_ROOT/$f" | grep -oE '[0-9]+' | head -1 || true)"
+    [ "$docs_min" = "$node_min" ] || node_bad="$node_bad $f($docs_min)"
+done
+if [ -z "$node_bad" ]; then pass "documented Node floor equals package.json engines (${node_min})"; else fail "Node floor != ${node_min} in:$node_bad"; fi
+
 echo "  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
