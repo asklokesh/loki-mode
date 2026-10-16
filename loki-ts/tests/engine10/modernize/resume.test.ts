@@ -415,7 +415,8 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
       let seen: NodeJS.ProcessEnv = {};
       const r = makeUnitRunners({ target: "python3", session: (_b, _c, env) => { seen = env; return { status: 0 }; } });
       r.implement({ unit: "u", repoDir: tmpdir(), mid: MID, target: "python3", normalizers: { float_tolerance: 0, unordered_fields: [], skip_fields: [] } });
-      expect(JSON.stringify(seen)).not.toContain("ghp_secret");
+      // Boolean only: a failing toContain on the env would print every variable (secrets) into the log.
+      expect(Object.values(seen ?? {}).some((v) => String(v).includes("ghp_secret"))).toBe(false);
       expect(seen["GH_TOKEN"]).not.toBe("ghp_secret_one");
       expect(seen["GITHUB_TOKEN"]).not.toBe("ghp_secret_two");
     } finally {
