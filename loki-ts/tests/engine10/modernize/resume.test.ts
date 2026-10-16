@@ -1,16 +1,19 @@
 // M-22 wall: unit-level resume after a coordinator crash (docs/v10/MODERNIZE.md sections 3.7 and 5).
 import { describe, expect, it } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "../../../src/engine10/modernize/cluster.ts";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import { loadResumeState, mergeOnce, planResume, resumeSchedule } from "../../../src/engine10/modernize/resume.ts";
 import type { MergeOps } from "../../../src/engine10/modernize/resume.ts";
-import { schedule } from "../../../src/engine10/modernize/scheduler.ts";
+import { gitWorktrees, schedule } from "../../../src/engine10/modernize/scheduler.ts";
+import { buildInventory } from "../../../src/engine10/modernize/inventory.ts";
+import { safeGit } from "../../../src/util/safe_git.ts";
+import type { runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
-import { runWaves } from "../../../src/util/modernize_coordinator.ts";
+import { makeAttemptRunner, makeUnitPrep, productionWaveDeps, runWaves } from "../../../src/util/modernize_coordinator.ts";
 import type { WaveDeps } from "../../../src/util/modernize_coordinator.ts";
 import type { StepRunner } from "../../../src/engine10/modernize/wave.ts";
 import { makeUnitRunners } from "../../../src/util/modernize_unit.ts";
@@ -462,5 +465,119 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
     const bad = makeUnitRunners({ target: "java21", session: () => ({ status: 3 }) });
     expect(() => bad.implement({ unit: "u", repoDir: tmpdir(), mid: MID, target: "java21", normalizers: { float_tolerance: 0, unordered_fields: [], skip_fields: [] } })).toThrow("exited 3");
     expect(() => bad.runNew("u", tmpdir(), {} as never)).toThrow("no new-tree runner for target java21");
+  });
+});
+
+describe("M-27E coordinator wiring", () => {
+  const ST: StepRunner = () => ({ status: 0, timedOut: false, error: null, tail: "" });
+  const gitRepo = (files: string[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "m27e-"));
+    safeGit(dir, ["init", "-q", "-b", "main"]);
+    for (const f of files) writeFileSync(join(dir, f), "x = 1\n");
+    safeGit(dir, ["add", "."]);
+    safeGit(dir, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
+    return dir;
+  };
+  const unit1 = (id: string, nodes: string[]): Unit => ({ id, nodes, lines: 1, highRisk: false });
+
+  it("makeAttemptRunner: runUnit gets the base repo, the worktree as newTreeDir, the unit files and a stub runner", () => {
+    const f = fx();
+    const calls: unknown[][] = [];
+    const fake = ((...a: unknown[]) => { calls.push(a); return proven("u-1"); }) as unknown as typeof runUnit;
+    const runners = makeUnitRunners({ target: "python3", session: () => ({ status: 0 }) });
+    const unit = unit1("u-1", ["pkg/a.py"]);
+    const run = makeAttemptRunner({ mid: MID, target: "python3", log: f.log, repoDir: "/base/repo", units: [unit], runners, runUnit: fake });
+    run({ unit, model: "sonnet", variant: 0, worker: 1, worktree: "/wt/u-1", baseSha: "abc123" });
+    const card = calls[0]![0] as Record<string, unknown>;
+    expect(card["repoDir"]).toBe("/base/repo");
+    expect(card["newTreeDir"]).toBe("/wt/u-1");
+    expect(card["baseSha"]).toBe("abc123");
+    expect(card["files"]).toEqual(["pkg/a.py"]);
+    expect(typeof calls[0]![5]).toBe("function");
+    expect(calls[0]![5]).toBe(runners.runStub);
+    f.done();
+  });
+
+  it("two waves with real merge ops: wave 2 worktree is based on HEAD after wave 1's merge", async () => {
+    const repo = gitRepo(["a.py", "b.py"]);
+    const f = fx();
+    try {
+      const plan = planOf([[unit1("a.py", ["a.py"])], [unit1("b.py", ["b.py"])]]);
+      const built = productionWaveDeps({ repoDir: repo, mid: MID, target: "python3", workers: 1, budgetUsd: null, resume: false, noPr: true, inv: buildInventory(repo), plan, log: f.log });
+      if (!built.ok) throw new Error(built.reason);
+      const seen: Array<{ unit: string; base: string; head: string; sawA: boolean }> = [];
+      const run = (ctx: AttemptCtx): AttemptOutcome => {
+        seen.push({ unit: ctx.unit.id, base: ctx.baseSha, head: safeGit(ctx.worktree, ["rev-parse", "HEAD"]).trim(), sawA: readFileSync(join(ctx.worktree, "a.py"), "utf8").includes("changed") });
+        writeFileSync(join(ctx.worktree, ctx.unit.id), "x = 1  # changed\n");
+        return { result: proven(ctx.unit.id), costUsd: 0 };
+      };
+      const r = await runWaves(plan, { ...built.deps, run, prepare: () => null, stepRunner: ST, waveCommands: { build: { argv: ["true"] }, integration: { argv: ["true"] }, original_suite: { argv: ["true"] } }, worktrees: gitWorktrees });
+      expect(r.blocked).toBeNull();
+      const headAfterOne = safeGit(repo, ["log", "--format=%H", "-n", "2"]).trim().split("\n")[1]!;
+      expect(seen[1]!.base).toBe(headAfterOne);
+      expect(seen[1]!.base).not.toBe(seen[0]!.base);
+      expect(seen[1]!.head).toBe(headAfterOne);
+      expect(seen[1]!.sawA).toBe(true);
+    } finally { f.done(); rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  it("a unit whose capture fails is NOT_PROVEN with that reason and never reaches the runner", async () => {
+    const f = fx();
+    try {
+      const ran: string[] = [];
+      const merged = new Set<string>();
+      const deps: WaveDeps = {
+        repoDir: f.dir, mid: MID, baseSha: "base", workers: 1, budgetUsd: null, unitEstimateUsd: null, log: f.log,
+        run: (c) => { ran.push(c.unit.id); return { result: proven(c.unit.id), costUsd: 0 }; },
+        merge: { isMerged: (x) => merged.has(x), merge: (x) => { merged.add(x); } },
+        worktrees: f.worktrees, resume: false, waveCommands: { build: { argv: ["true"] } }, stepRunner: ST, ship: false, pinnedOrigin: "",
+        prepare: (x) => (x.id === "a" ? "old runtime unavailable" : null),
+      };
+      const r = await runWaves(planOf([[u("a"), u("b")]]), deps);
+      expect(ran).toEqual(["b"]);
+      expect(r.ok).toBe(false);
+      expect(r.blocked).toContain("unit a NOT_PROVEN");
+      expect(r.blocked).toContain("old runtime unavailable");
+      const ev = readModernizeEvents(f.dir, MID).find((e) => e.type === "unit.not_proven" && e.data["unit"] === "a");
+      expect(JSON.stringify(ev?.data)).toContain("old runtime unavailable");
+    } finally { f.done(); }
+  });
+
+  it("a 2-node unit is NOT_PROVEN as multi-file and capture is never attempted", () => {
+    const f = fx();
+    try {
+      let called = 0;
+      const prep = makeUnitPrep({ repoDir: f.dir, mid: MID, propose: () => [], runtimeOk: () => true, capture: (() => { called++; return { ok: true }; }) as never });
+      expect(prep(unit1("u-1", ["a.py", "b.py"]))).toContain("multi-file unit");
+      expect(prep(unit1("u-2", ["Main.java"]))).toContain("multi-file unit");
+      expect(called).toBe(0);
+      expect(prep(unit1("u-3", ["a.py"]))).toBeNull();
+      expect(called).toBe(1);
+      const failing = makeUnitPrep({ repoDir: f.dir, mid: MID, propose: () => [], runtimeOk: () => true, capture: (() => ({ ok: false, reason: "no cases captured" })) as never });
+      expect(failing(unit1("u-4", ["a.py"]))).toBe("no cases captured");
+      const noRuntime = makeUnitPrep({ repoDir: f.dir, mid: MID, propose: () => [], runtimeOk: () => false, capture: (() => { called++; return { ok: true }; }) as never });
+      expect(noRuntime(unit1("u-5", ["a.py"]))).toBe("old runtime unavailable");
+      expect(noRuntime(unit1("u-6", ["a.py", "b.py"]))).toBe("old runtime unavailable");
+    } finally { f.done(); }
+  });
+
+  it("productionWaveDeps on a tmp repo with --no-pr is ok and merges through gitMergeOps without a seam", () => {
+    const repo = gitRepo(["a.py"]);
+    const f = fx();
+    try {
+      const plan = planOf([[unit1("a.py", ["a.py"])]]);
+      const built = productionWaveDeps({ repoDir: repo, mid: MID, target: "python3", workers: 2, budgetUsd: null, resume: false, noPr: true, inv: buildInventory(repo), plan, log: f.log });
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      expect(built.deps.ship).toBe(false);
+      expect(built.deps.merge.isMerged("a.py")).toBe(false);
+      expect(built.deps.optionalSteps).toEqual(["integration"]);
+      expect(built.deps.baseSha).toBe(safeGit(repo, ["rev-parse", "HEAD"]).trim());
+      const src = readFileSync(join(import.meta.dir, "..", "..", "..", "src", "util", "modernize_coordinator.ts"), "utf8");
+      expect(src).toContain("gitMergeOps(o.repoDir, o.mid)");
+      expect(src).not.toMatch(/gitMergeOps\([^)]*isMerged/);
+      const noRepo = productionWaveDeps({ repoDir: f.dir, mid: MID, target: "python3", workers: 2, budgetUsd: null, resume: false, noPr: true, inv: buildInventory(f.dir), plan, log: f.log });
+      expect(noRepo.ok).toBe(false);
+    } finally { f.done(); rmSync(repo, { recursive: true, force: true }); }
   });
 });

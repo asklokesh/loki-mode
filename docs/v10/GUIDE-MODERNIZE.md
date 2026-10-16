@@ -79,10 +79,15 @@ loki modernize ./legacy-service --to python3 --resume mod-20260928T143022Z-ab12c
 
 - Only `python3` and `java21` targets exist. Passing anything else fails
   with exit 2.
-- Oracle capture, planning and execution beyond the dry-run estimate are
-  still landing; a non-dry-run invocation today stops after printing the
-  estimate and reports that oracle capture and execution are not built
-  yet.
+- A non-dry run captures each unit's oracle, runs the waves, merges, verifies
+  and ships. Capture needs `python2.7` (or `python2`) or `LOKI_MOD_OLD_RUNTIME`;
+  without it every unit is NOT PROVEN ("old runtime unavailable") and the run
+  exits 1.
+- Multi-file units (and any unit that is not a single `.py` file) are NOT
+  PROVEN for now: oracle capture reads one source file.
+- A wave whose repo has no integration tests is verified with a warning
+  ("integration not detected: warned"). A missing build or original-suite
+  command still blocks the wave.
 - The Java target's dependency graph builder is not wired in yet; a
   `java21` run reports that gap honestly instead of clustering on an
   empty graph.

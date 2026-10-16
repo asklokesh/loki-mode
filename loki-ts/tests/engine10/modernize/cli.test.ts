@@ -1,7 +1,7 @@
 // select: not-src-walker (its "src" is a tmp git fixture dir, not loki-ts/src)
 // M-07: `loki modernize` CLI and flag parsing; TABLE route in engine10/cli.ts.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route, runEngine10 } from "../../../src/engine10/cli.ts";
@@ -210,15 +210,20 @@ describe("main", () => {
     expect(types).toEqual(["modernize.started", "inventory.completed", "estimate.printed"]);
   });
 
-  it("python3 without --dry-run prints the estimate then fails closed naming each unbuilt dependency", async () => {
+  it("python3 without --dry-run prints the estimate then fails closed naming the missing repo prerequisite", async () => {
     const mid = "mod-20260928T000000Z-000003";
+    // A throwaway git repo with no origin: the fixture dir sits inside this checkout, whose origin must never be pinned by a test.
+    cpSync(PY_FIXTURE, repoDir, { recursive: true });
+    safeGit(repoDir, ["init", "-q", "-b", "main"]);
+    safeGit(repoDir, ["add", "."]);
+    safeGit(repoDir, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fixture"]);
     const cap = captureStd();
-    const code = await main([PY_FIXTURE, "--to", "python3"], { makeId: () => mid });
+    const code = await main([repoDir, "--to", "python3"], { makeId: () => mid });
     cap.restore();
     expect(code).toBe(2);
     expect(cap.out).toContain("units:"); // the estimate is real work already done, not withheld
-    expect(cap.err).toMatch(/not built|remote\.origin\.url|base commit/);
-    if (/not built/.test(cap.err)) for (const name of ["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]) expect(cap.err).toContain(name);
+    expect(cap.err).toMatch(/remote\.origin\.url|base commit/);
+    for (const name of ["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]) expect(cap.err).not.toContain(name);
   });
 
   it("--resume reuses the given modernization id instead of minting a new one", async () => {

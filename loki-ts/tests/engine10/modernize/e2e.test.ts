@@ -146,17 +146,20 @@ describe("loki modernize e2e on the py2 fixture", () => {
     expect(types).toEqual(["modernize.started", "inventory.completed", "estimate.printed"]);
   }, T);
 
-  it.skipIf(SKIP_REASON !== "")("full-repo run exits 2 naming every unbuilt piece, converts nothing, claims no success", async () => {
+  it.skipIf(SKIP_REASON !== "")("full-repo run with no old runtime exits 1 naming it, converts nothing, claims no success", async () => {
     const before = readFileSync(join(repo, UNIT_FILE), "utf8");
     const cap = captureStd();
+    const saved = process.env["LOKI_MOD_OLD_RUNTIME"];
+    process.env["LOKI_MOD_OLD_RUNTIME"] = join(root, "no-such-python2");
     let code: number;
-    try { code = await main([repo, "--to", "python3", "--no-pr"], { makeId: () => MID }); } finally { cap.restore(); }
-    expect(code).toBe(2);
-    expect(cap.err).toContain("modernize: cannot run units yet, not built:");
-    const listed = /not built: ([^\n]*?)(?:\.? ?use --dry-run|\n|$)/.exec(cap.err)![1]!.split("; ").map((x) => x.replace(/ \(.*$/, ""));
-    expect(listed).toEqual(["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]);
-    expect(cap.err).toContain("use --dry-run");
-    expect(cap.out).not.toMatch(/verified|shipped|PROVEN/);
+    try { code = await main([repo, "--to", "python3", "--no-pr"], { makeId: () => MID }); } finally {
+      cap.restore();
+      if (saved === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"]; else process.env["LOKI_MOD_OLD_RUNTIME"] = saved;
+    }
+    expect(code).toBe(1);
+    expect(cap.err).toContain("old runtime unavailable");
+    expect(cap.err).not.toContain("not built");
+    expect(cap.out).not.toMatch(/PROVEN|shipped/);
     expect(readFileSync(join(repo, UNIT_FILE), "utf8")).toBe(before);
   }, T);
 

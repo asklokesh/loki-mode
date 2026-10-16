@@ -52,6 +52,8 @@ export interface VerifyWaveOpts {
   commands: Partial<Record<WaveStep, StepCommand | null>>;
   log?: ModernizeLog;
   run?: StepRunner;
+  /** Steps whose command may be null: skipped with ran:false instead of blocking (M-27E, D2). */
+  optional?: readonly WaveStep[];
 }
 
 function clampTimeout(ms: number | undefined): number {
@@ -86,6 +88,7 @@ export function verifyWave(opts: VerifyWaveOpts): WaveVerdict {
   const steps: StepResult[] = [];
   let failedStep: WaveStep | null = null;
   let reason: string | null = null;
+  const skipped: WaveStep[] = [];
   const block = (step: WaveStep, why: string): void => {
     failedStep = step;
     reason = `wave ${opts.wave} blocked: ${step} ${why}`;
@@ -94,6 +97,7 @@ export function verifyWave(opts: VerifyWaveOpts): WaveVerdict {
   for (const step of WAVE_STEPS) {
     if (failedStep !== null) { steps.push({ step, ran: false, passed: false, exit: null, tail: "" }); continue; }
     const cmd = opts.commands[step];
+    if (cmd == null && opts.optional?.includes(step)) { skipped.push(step); steps.push({ step, ran: false, passed: false, exit: null, tail: "" }); continue; }
     if (!validArgv(cmd)) {
       steps.push({ step, ran: false, passed: false, exit: null, tail: "" });
       block(step, "has no command configured");
@@ -112,7 +116,7 @@ export function verifyWave(opts: VerifyWaveOpts): WaveVerdict {
   const verdict: WaveVerdict = { wave: opts.wave, verified: failedStep === null, failedStep, reason, steps };
   opts.log?.append("wave.verified", {
     wave: opts.wave, verified: verdict.verified, failed_step: failedStep, reason,
-    steps: steps.map((s) => ({ step: s.step, ran: s.ran, passed: s.passed, exit: s.exit })),
+    steps: steps.map((s) => ({ step: s.step, ran: s.ran, passed: s.passed, exit: s.exit })), skipped,
   });
   return verdict;
 }
