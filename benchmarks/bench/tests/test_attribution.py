@@ -432,7 +432,7 @@ class LokiLedgerRowTest(unittest.TestCase):
         open(pf, "w").write("x")
 
         def fake(cmd, **kw):
-            if cmd[:2] == ["loki", "start"]:
+            if cmd[1:2] == ["start"]:
                 populate(os.path.join(d, ".loki"), _json)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -549,6 +549,84 @@ class TaskSetTest(unittest.TestCase):
             self.assertTrue(A.grade(t, wd)["passed"])
         finally:
             shutil.rmtree(wd, ignore_errors=True)
+
+
+class LokiBinaryPinTest(unittest.TestCase):
+    """The loki arm must run the repo bin/loki and refuse a stale-version binary."""
+
+    def setUp(self):
+        from adapters import loki as L
+        self.L = L
+        self._saved = {k: os.environ.pop(k, None) for k in (
+            "LOKI_BENCH_LOKI_BIN", "LOKI_BENCH_ALLOW_VERSION_MISMATCH")}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _fake(self, version_text):
+        cmds = []
+
+        def fake(cmd, **kw):
+            cmds.append(cmd)
+            out = version_text if cmd[1:2] == ["version"] else "claude 1.0.0"
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        fake.cmds = cmds
+        return fake
+
+    def _repo_ver(self):
+        return self.L.repo_version()
+
+    def test_default_is_repo_bin_loki(self):
+        expect = os.path.join(self.L.REPO_ROOT, "bin", "loki")
+        self.assertEqual(self.L.loki_bin(), expect)
+        self.assertTrue(os.path.isfile(expect))
+        fake = self._fake("Loki Mode v%s" % self._repo_ver())
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            self.L.run(d, "p.md", runner=fake, timeout=5)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertTrue(fake.cmds)
+        for c in fake.cmds:
+            self.assertEqual(c[0], expect)
+
+    def test_override_env_honored(self):
+        os.environ["LOKI_BENCH_LOKI_BIN"] = "/opt/custom/loki"
+        self.assertEqual(self.L.loki_bin(), "/opt/custom/loki")
+        fake = self._fake("Loki Mode v1.0.0")
+        self.L._detect_loki_version(runner=fake)
+        self.assertEqual(fake.cmds[0][0], "/opt/custom/loki")
+
+    def test_mismatch_refuses_execute(self):
+        fake = self._fake("Loki Mode v0.0.1")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = A.main(["--execute"], runner=fake)
+        self.assertEqual(rc, 2)
+        self.assertIn("refusing", err.getvalue())
+        self.assertFalse([c for c in fake.cmds if c[1:2] == ["start"]])
+
+    def test_mismatch_waiver_env(self):
+        os.environ["LOKI_BENCH_ALLOW_VERSION_MISMATCH"] = "1"
+        self.assertIsNone(self.L.version_mismatch_error("Loki Mode v0.0.1"))
+
+    def test_match_passes_and_unparseable_refuses(self):
+        self.assertIsNone(self.L.version_mismatch_error(
+            "Loki Mode v%s" % self._repo_ver()))
+        self.assertIsNotNone(self.L.version_mismatch_error(None))
+        self.assertIsNotNone(self.L.version_mismatch_error("garbage"))
+
+    def test_metadata_records_path_and_version(self):
+        fake = self._fake("Loki Mode v%s" % self._repo_ver())
+        env = A.pin_environment(True, runner=fake, model="x")
+        self.assertEqual(env["loki_bin"], self.L.loki_bin())
+        self.assertEqual(env["loki_version"], "Loki Mode v%s" % self._repo_ver())
+        self.assertIn("loki_repo_sha", env)
+        self.assertEqual(A.pin_environment(False)["loki_bin"], self.L.loki_bin())
 
 
 if __name__ == "__main__":

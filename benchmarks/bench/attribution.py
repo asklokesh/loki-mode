@@ -209,6 +209,7 @@ def pin_environment(probe: bool, runner: Optional[Callable] = None,
     """Tool versions and commit SHAs. probe=False records them as not probed."""
     if not probe:
         return {"probed": False, "claude_version": None, "loki_version": None,
+                "loki_bin": _loki_adapter.loki_bin(),
                 "loki_repo_sha": None, "python_version": sys.version.split()[0],
                 "loki_session_model_effective": model,
                 "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL")}
@@ -216,6 +217,7 @@ def pin_environment(probe: bool, runner: Optional[Callable] = None,
         "probed": True,
         "claude_version": _claude_adapter._detect_claude_version(runner=runner),
         "loki_version": _loki_adapter._detect_loki_version(runner=runner),
+        "loki_bin": _loki_adapter.loki_bin(),
         "loki_repo_sha": _git_sha(REPO_ROOT),
         "python_version": sys.version.split()[0],
         "loki_session_model_effective": model,
@@ -818,6 +820,11 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         if not args.dry_run:
             print("  pass --execute to run these cells for real (spends API budget)")
         return 0
+    if "loki" in arms:
+        mismatch = _loki_adapter.version_mismatch_error(env.get("loki_version"))
+        if mismatch:
+            print(mismatch, file=sys.stderr)
+            return 2
     if set(arms) & set(MODEL_PINNED_ARMS) and not env.get("claude_version"):
         print("claude CLI not found or not runnable; cannot run the benchmark", file=sys.stderr)
         return 2
