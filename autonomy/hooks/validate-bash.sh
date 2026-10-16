@@ -499,12 +499,27 @@ _expand_braces() {
     local -a work=("$s")
     local temp=false
     _ALTS=()
-    # Fail-closed rules (nested braces, ranges, cap, residual groups) apply
-    # only when the raw target mentions a temp root; over-matching is fine.
-    [[ "$s" == *tmp* || "$s" == *TMPDIR* || "$s" == */var/folders* || "$s" == */private* \
-        || "$s" =~ (^|/)t[^/]*\{ || "$s" == /\{* || "$s" == \{* ]] && temp=true
-    if $temp && { [[ "$s" =~ \{[^\}]*\{ ]] || [[ "$s" =~ \{[^\}]*\.\.[^\}]*\} ]]; }; then
-        return 1
+    # Fail-closed rules (nested braces, ranges, cap, residual groups) apply to
+    # every target except a plain relative path (no leading / ~ $ {, no `..`
+    # component). The run-owned LOKI_RUN_TMP variable is also exempt.
+    local q="${s//[\"\'\\]/}" stripped
+    temp=true
+    case "$q" in
+        '$LOKI_RUN_TMP'*|'${LOKI_RUN_TMP}'*) temp=false ;;
+        /*|'~'*|'$'*|'{'*) ;;
+        *)
+            if [[ "/${q}/" != *"/../"* ]]; then temp=false; fi
+            ;;
+    esac
+    if $temp; then
+        # Drop parameter expansions (innermost first) so `${A:-${B}}` is not nesting.
+        stripped="$s"
+        while [[ "$stripped" =~ \$\{[^\{\}]*\} ]]; do
+            stripped="${stripped/"${BASH_REMATCH[0]}"/}"
+        done
+        if [[ "$stripped" =~ \{[^\}]*\{ ]] || [[ "$stripped" =~ \{[^\}]*\.\.[^\}]*\} ]]; then
+            return 1
+        fi
     fi
     while [ "${#work[@]}" -gt 0 ]; do
         cur="${work[0]}"

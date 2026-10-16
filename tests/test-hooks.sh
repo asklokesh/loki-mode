@@ -463,6 +463,9 @@ test_validate_bash_temp_root_and_glob_denied() {
         '/tmp/[!]]*' '/tmp/[]a]*' '/tmp/[![=a=]]*' '/tmp/[![.a.]]*'
         '/tmp/{a,{b,*}}' '/{a,{tmp,b}}' '/tm{o..p}' '/tm{p..p}'
         '${TMPDIR}/{a,*}' '"${TMPDIR}"/{a,*}' '${TMPDIR}/{,}' '${TMPDIR}{,/*}'
+        '//{s..u}mp' '/./{s..u}mp' '/usr/../{s..u}mp' '~/../../{s..u}mp'
+        '//{a,{t,b}}mp' '/usr/../{a,{t,b}}mp' '//{s..u}mp/{a,*}' '//{a,{t,b}}mp/*'
+        '//{a,}{a,}{a,}{a,}{a,}{a,}{x,t}mp'
     )
     for t in "${targets[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -498,7 +501,7 @@ test_validate_bash_temp_root_and_glob_denied() {
     # so only the plain recursive form isolates this rule.
     local ok_r=(
         '"${LOKI_RUN_TMP}"/{a,b}' '/tmp/x{,.bak}' '"$LOKI_RUN_TMP"/shard{1..4}'
-        'out/{1..3}' 'build/{a,{b,c}}' '"${dir:-../x}"' '"${A:-${B}}"'
+        'out/{1..3}' 'tests/fixtures/{1..3}' 'build/{a,{b,c}}' '"${dir:-../x}"' '"${A:-${B}}"'
         'build/{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{a,b}'
     )
     for t in "${ok_r[@]}"; do
