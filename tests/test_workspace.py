@@ -241,7 +241,8 @@ class WorkspaceTest(unittest.TestCase):
         self.assertEqual(ev["exit_code"], 0)
         self.assertEqual(set(ev["heads"]), {"acme/api", "acme/web"})
         self.assertEqual(len(ev["log_sha256"]), 64)
-        self.assertFalse(ev["seal"])
+        self.assertNotIn("seal", ev)
+        self.assertNotIn("note", ev)
         self.assertIn(".loki/workspaces/shop/", ev_path)
 
     def test_failed_predecessor_skips_dependent(self):

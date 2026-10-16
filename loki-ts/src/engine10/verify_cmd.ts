@@ -11,7 +11,7 @@ import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
-import { composeComposite, compositeHash, isComposite, verifyComposite, verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
+import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult { verdict: Verdict; reasons: string[]; receiptSha256?: string }
 /** The hash seal writes into receipt.json; receiptSha256 strips `verification` and `receipt_sha256` itself. */
@@ -129,7 +129,7 @@ function sealCompositeCmd(runDir: string): number {
   const hash = compositeHash(body as unknown as Record<string, unknown>), sig = signReceipt(body.run_id, hash);
   const out = { ...body, composite_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } }, path = join(runDir, "composite.json");
   writeFileSync(`${path}.tmp`, JSON.stringify(out, null, 2) + "\n"); renameSync(`${path}.tmp`, path);
-  process.stdout.write(`composite: ${path}\nverdict: ${body.verdict}\nchildren: ${body.children.length}\nsignature: ${sig.jwt ? "signed" : "UNSIGNED (no signing key)"}\n`);
+  process.stdout.write(`composite: ${path}\nverdict: ${body.verdict}\nchildren: ${body.children.length}\nsignature: ${sig.jwt ? "signed" : "UNSIGNED (no signing key)"}\n${compositeLines(out).join("\n")}\n`);
   return sig.jwt ? 0 : EXIT_BY_VERDICT.UNSIGNED;
 }
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
@@ -169,6 +169,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
+  if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); } catch { /* unreadable: the verdict above already says so */ }
   if (result.verdict === "UNSIGNED") {
     if (deps.pubkey) { process.stdout.write("attestation: UNSIGNED, but --pubkey asked for a signature check; refusing\n"); return EXIT_BY_VERDICT.UNSIGNED; }
     process.stdout.write(allowUnsigned ? "attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n" : "attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)\n");
