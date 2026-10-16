@@ -19,6 +19,7 @@ const REGISTRY: Record<string, Entry> = {
   "e10ext/discard.ts|reset": { count: 1, cls: "trust", why: "already-satisfied discard moves HEAD and index back to base after the staged paths were handled" },
   "e10ext/commit_filter.ts|reset": { count: 1, cls: "trust", why: "backstop commit unstages paths outside the commit scope (index only, working files untouched)" },
   "engine10/stages/seal.ts|reset": { count: 1, cls: "trust", why: "commit stage unstages dropped paths (index only, working files untouched), literal pathspecs" },
+  "engine10/modernize/scheduler.ts|reset": { count: 3, cls: "trust", why: "gitMergeOps: two resets squash and unstage excluded paths inside the unit worktree (never the user checkout); the third rolls back repoDir only after a clean-tree precheck, a successful own cherry-pick and HEAD^ == pre-merge sha, with --keep so it refuses rather than overwrite edits" },
   "e10ext/treeswap.ts|checkout": { count: 1, cls: "trust", why: "tree swap restores paths from the base commit while merging a chosen attempt tree into the run's own worktree" },
   "e10ext/treeswap.ts|rm": { count: 1, cls: "trust", why: "tree swap drops files the losing attempt added, inside the run's own worktree" },
   "engine10/stages/intake.ts|checkout": { count: 2, cls: "trust", why: "creates or enters the run branch; plain checkout refuses to overwrite edits" },
