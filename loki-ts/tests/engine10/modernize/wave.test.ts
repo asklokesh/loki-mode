@@ -176,3 +176,29 @@ describe("detectWaveCommands (M-27D)", () => {
     expect(verifyWave({ repoDir: "/x", wave: 3, commands: c, run: never }).reason).toBe("wave 3 blocked: build has no command configured");
   });
 });
+
+describe("verifyWave optional steps (M-27E, D2)", () => {
+  it("a null integration step marked optional is skipped and the wave verifies, recording skipped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "m27e-wave-"));
+    try {
+      const log = new ModernizeLog(dir, MID);
+      const seen: string[] = [];
+      const run: StepRunner = (step) => { seen.push(step); return res(0); };
+      const v = verifyWave({ repoDir: dir, wave: 1, commands: { ...all, integration: null }, optional: ["integration"], log, run });
+      expect(v.verified).toBe(true);
+      expect(seen).toEqual(["build", "original_suite"]);
+      expect(v.steps.find((s) => s.step === "integration")!.ran).toBe(false);
+      const ev = readModernizeEvents(dir, MID).find((e) => e.type === "wave.verified")!;
+      expect(ev.data["skipped"]).toEqual(["integration"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("without the optional marker a null integration still blocks; a null build blocks even when integration is optional", () => {
+    const a = verifyWave({ repoDir: "/x", wave: 1, commands: { ...all, integration: null }, run: ok });
+    expect(a.verified).toBe(false);
+    expect(a.reason).toBe("wave 1 blocked: integration has no command configured");
+    const b = verifyWave({ repoDir: "/x", wave: 1, commands: { ...all, build: null }, optional: ["integration"], run: ok });
+    expect(b.verified).toBe(false);
+    expect(b.failedStep).toBe("build");
+  });
+});

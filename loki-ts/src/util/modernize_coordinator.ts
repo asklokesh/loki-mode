@@ -2,27 +2,30 @@
 // Lives in util/ because engine10/modernize/ is at its D33 line cap (like modernize_unit.ts). No existing file owns wave orchestration: cli.ts parses args; ship.ts, resume.ts, scheduler.ts and wave.ts each own one step.
 // Per wave: schedule (or resumeSchedule after a crash), verifyWave (M-20), nextWaveGate, shipWave (M-21). Every dependency is injected.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ClusterResult } from "../engine10/modernize/cluster.ts";
-import { DEFAULT_NORMALIZERS } from "../engine10/modernize/oracle/seal.ts";
+import type { ClusterResult, Unit } from "../engine10/modernize/cluster.ts";
+import type { InventoryResult } from "../engine10/modernize/inventory.ts";
+import { captureUnitOracle, makeProposeInputs, realCaptureRunner } from "../engine10/modernize/oracle/search.ts";
+import type { ProposeInputs } from "../engine10/modernize/oracle/search.ts";
+import { alreadySealedInLog, DEFAULT_NORMALIZERS } from "../engine10/modernize/oracle/seal.ts";
 import { loadResumeState, resumeSchedule } from "../engine10/modernize/resume.ts";
-import { schedule } from "../engine10/modernize/scheduler.ts";
+import { gitMergeOps, schedule } from "../engine10/modernize/scheduler.ts";
 import type { AttemptRunner, MergeOps, SchedulerOpts, UnitOutcome, WorktreeOps } from "../engine10/modernize/scheduler.ts";
 import { shipWave } from "../engine10/modernize/ship.ts";
 import type { PushRunner, ShipUnit } from "../engine10/modernize/ship.ts";
 import type { ModernizeLog } from "../engine10/modernize/log.ts";
 import { readModernizeEvents } from "../engine10/modernize/log.ts";
-import { oracleDir } from "../engine10/modernize/types.ts";
+import { isSafeUnitId, oracleDir } from "../engine10/modernize/types.ts";
 import type { ModernizeTarget } from "../engine10/modernize/types.ts";
 import { runUnit } from "../engine10/modernize/unit.ts";
-import { nextWaveGate, verifyWave } from "../engine10/modernize/wave.ts";
+import { detectWaveCommands, nextWaveGate, verifyWave } from "../engine10/modernize/wave.ts";
 import type { StepCommand, StepRunner, WaveStep, WaveVerdict } from "../engine10/modernize/wave.ts";
-import { makeUnitRunners } from "./modernize_unit.ts";
+import { childEnv } from "../engine10/session.ts";
+import { defaultUnitFile, makeSessionRunner, makeUnitRunners } from "./modernize_unit.ts";
 import { makePytestBaseRunner, makePytestCollector } from "./python.ts";
-import { safeGit } from "./safe_git.ts";
-import type { NewCaseRunner } from "../engine10/modernize/equiv.ts";
-import type { Implementer } from "../engine10/modernize/unit.ts";
+import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 
 export interface WaveDeps {
   repoDir: string;
@@ -44,6 +47,12 @@ export interface WaveDeps {
   pinnedOrigin: string;
   branchFor?: (wave: number) => string;
   push?: PushRunner;
+  /** Current base commit of repoDir; runWaves re-reads it after each wave's merges so the next wave starts from the merged tree (F4). */
+  headSha?: () => string;
+  /** Before wave 1, once per unit: returns a NOT_PROVEN reason (the unit is then never scheduled) or null when the oracle is ready (F8). */
+  prepare?: (unit: Unit) => string | null;
+  /** Steps whose missing command warns instead of blocking (D2). */
+  optionalSteps?: readonly WaveStep[];
 }
 export interface WaveReport { wave: number; verdict: WaveVerdict; shipped: boolean; url: string | null; reason: string | null }
 export type WavesResult = { ok: boolean; waves: WaveReport[]; blocked: string | null; spentUsd: number };
@@ -67,14 +76,27 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
   const verdicts: WaveVerdict[] = [];
   let spent = 0;
   const shipped = new Set(readModernizeEvents(d.repoDir, d.mid).filter((e) => e.type === "wave.shipped").map((e) => e.data["wave"]));
+  const unready = new Map<string, string>();
+  // F8: on resume a unit already settled in the log is never re-captured (the tree has changed since).
+  const settled = new Set<string>();
+  if (d.resume) { const st = loadResumeState(d.repoDir, d.mid); if (st.ok) for (const id of [...st.state.completed, ...st.state.notProven]) settled.add(id); }
+  for (const u of plan.units) {
+    if (settled.has(u.id)) continue;
+    const why = d.prepare?.(u) ?? null;
+    if (why === null) continue;
+    unready.set(u.id, why);
+    d.log.append("unit.not_proven", { unit: u.id, reasons: [why] });
+  }
+  let baseSha = d.baseSha;
   for (let i = 0; i < plan.waves.length; i++) {
     const n = i + 1;
     const gate = nextWaveGate(verdicts);
     if (!gate.allowed) return { ok: false, waves, blocked: gate.reason, spentUsd: spent };
+    if (i > 0 && d.headSha) baseSha = d.headSha();
     const ids = plan.waves[i]!;
-    const sub: ClusterResult = { units: plan.units.filter((u) => ids.includes(u.id)), waves: [ids] };
+    const sub: ClusterResult = { units: plan.units.filter((u) => ids.includes(u.id) && !unready.has(u.id)), waves: [ids.filter((id) => !unready.has(id))] };
     const opts: SchedulerOpts = {
-      repoDir: d.repoDir, mid: d.mid, baseSha: d.baseSha, workers: d.workers, budgetUsd: d.budgetUsd,
+      repoDir: d.repoDir, mid: d.mid, baseSha, workers: d.workers, budgetUsd: d.budgetUsd,
       unitEstimateUsd: d.unitEstimateUsd, log: d.log, run: d.run, merge: d.merge, ...(d.worktrees ? { worktrees: d.worktrees } : {}),
     };
     let outcomes: UnitOutcome[];
@@ -85,7 +107,7 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
       // Units skipped on resume have no outcome: carry them from the log. Logged unit.not_proven stays NOT_PROVEN; only a logged unit.completed is PROVEN.
       const st = loadResumeState(d.repoDir, d.mid);
       for (const id of ids) {
-        if (outcomes.some((o) => o.unit === id)) continue;
+        if (outcomes.some((o) => o.unit === id) || unready.has(id)) continue;
         const done = st.ok && st.state.completed.has(id) && !st.state.notProven.has(id);
         outcomes.push({ unit: id, status: done ? "PROVEN" : "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, ...(done ? {} : { reason: "logged not proven, or no outcome" }) });
       }
@@ -93,8 +115,9 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
       const r = await schedule(sub, opts);
       outcomes = r.outcomes; spent += r.spentUsd;
     }
+    for (const id of ids) if (unready.has(id)) outcomes.push({ unit: id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: unready.get(id)! });
     const byUnit = new Map(outcomes.map((o) => [o.unit, o]));
-    const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: d.waveCommands, log: d.log, ...(d.stepRunner ? { run: d.stepRunner } : {}) });
+    const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: d.waveCommands, log: d.log, ...(d.optionalSteps ? { optional: d.optionalSteps } : {}), ...(d.stepRunner ? { run: d.stepRunner } : {}) });
     verdicts.push(verdict);
     let url: string | null = null, reason: string | null = null, didShip = false;
     if (d.ship && !shipped.has(n)) {
@@ -106,34 +129,90 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
     }
     waves.push({ wave: n, verdict, shipped: didShip, url, reason });
     const bad = outcomes.find((o) => o.status !== "PROVEN");
-    if (bad) return { ok: false, waves, blocked: `wave ${n} blocked: unit ${bad.unit} ${bad.status}`, spentUsd: spent };
+    if (bad) return { ok: false, waves, blocked: `wave ${n} blocked: unit ${bad.unit} ${bad.status}${bad.reason ? ` (${bad.reason})` : ""}`, spentUsd: spent };
   }
   return { ok: waves.every((w) => w.verdict.verified), waves, blocked: null, spentUsd: spent };
 }
 
-export interface ProductionWaveOpts { repoDir: string; mid: string; target: ModernizeTarget; workers: number; budgetUsd: number | null; resume: boolean; noPr: boolean }
+export interface ProductionWaveOpts {
+  repoDir: string; mid: string; target: ModernizeTarget; workers: number; budgetUsd: number | null; resume: boolean; noPr: boolean;
+  inv: InventoryResult; plan: ClusterResult; log: ModernizeLog;
+}
 
-/** The real per-attempt runner: runUnit (M-15) in the attempt worktree with the shared implementer and new-tree runner (makeUnitRunners). */
-export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log: ModernizeLog; runners?: { implement: Implementer; runNew: NewCaseRunner } }): AttemptRunner {
-  const runners = o.runners ?? makeUnitRunners({ target: o.target });
+/** The real per-attempt runner: runUnit (M-15) in the attempt worktree with the shared implementer and new-tree runner (makeUnitRunners).
+ *  The oracle and log live in the base tree (repoDir); only the implement session and the new-tree replay see the worktree (newTreeDir). */
+export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log: ModernizeLog; repoDir: string; units: readonly Unit[]; runners?: ReturnType<typeof makeUnitRunners>; runUnit?: typeof runUnit }): AttemptRunner {
+  const nodesOf = new Map(o.units.map((u) => [u.id, u.nodes]));
+  // Unit ids are "u-N", not paths: a single-file unit is located by its one node; a multi-file unit has no single source (NOT_PROVEN, D1).
+  const unitFile = (id: string, tree: string): string | null => { const n = nodesOf.get(id); return n && n.length === 1 ? defaultUnitFile(n[0]!, tree) : null; };
+  const runners = o.runners ?? makeUnitRunners({ target: o.target, unitFile });
+  const run = o.runUnit ?? runUnit;
   return (ctx) => ({
-    result: runUnit({ unit: ctx.unit.id, repoDir: ctx.worktree, mid: o.mid, target: o.target, normalizers: DEFAULT_NORMALIZERS, baseSha: ctx.baseSha },
-      o.log, makePytestBaseRunner(), runners.implement, runners.runNew, undefined, makePytestCollector()),
+    result: run({ unit: ctx.unit.id, repoDir: o.repoDir, newTreeDir: ctx.worktree, mid: o.mid, target: o.target, normalizers: DEFAULT_NORMALIZERS, baseSha: ctx.baseSha, files: ctx.unit.nodes },
+      o.log, makePytestBaseRunner(), runners.implement, runners.runNew, runners.runStub, makePytestCollector()),
     costUsd: NaN, // unmetered here: the scheduler treats a non-finite cost as budget-unknown (charged at the estimate, or stops under --budget)
   });
 }
 
-/** Builds the real dependencies, or names every piece that does not exist yet. Never substitutes a fake. */
+/** Founder default D1: capture reads one .py file. Anything else is NOT_PROVEN, never guessed at. */
+export const MULTI_FILE_REASON = "multi-file unit: capture not supported (founder default)";
+
+/** Oracle capture for one unit (F8): null when the oracle exists or was captured, else the NOT_PROVEN reason. Captures once, never retried on a changed tree. */
+export function makeUnitPrep(o: { repoDir: string; mid: string; propose: ProposeInputs; capture?: typeof captureUnitOracle; runtimeOk?: () => boolean }): (unit: Unit) => string | null {
+  // Probe the old runtime once: realCaptureRunner reports "old runtime unavailable" before it reads the unit, so every unit gets the same honest reason.
+  const runtimeOk = o.runtimeOk ?? ((): boolean => {
+    // Probe a path inside a fresh temp dir, never a file in the user's repo.
+    const dir = mkdtempSync(join(tmpdir(), "loki-probe-"));
+    try { return realCaptureRunner(join(dir, "probe.py"), []).error !== "old runtime unavailable"; } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  let runtime: boolean | null = null;
+  return (unit) => {
+    if (existsSync(join(oracleDir(o.repoDir, o.mid, unit.id), "cases.jsonl")) || alreadySealedInLog(o.repoDir, o.mid, unit.id)) return null;
+    runtime ??= runtimeOk();
+    if (!runtime) return "old runtime unavailable";
+    const node = unit.nodes.length === 1 ? unit.nodes[0]! : "";
+    if (!node.endsWith(".py") || !isSafeUnitId(node)) return MULTI_FILE_REASON;
+    const r = (o.capture ?? captureUnitOracle)({ repoDir: o.repoDir, mid: o.mid, unit: unit.id, unitPath: join(o.repoDir, node), propose: o.propose });
+    return r.ok ? null : r.reason;
+  };
+}
+
+/** Read-only model session for case proposals: the implement session's env (token-free), cwd = the temp dir holding a copy of the unit. Never runs in repoDir. */
+export function makeProposeSession(o: { mid: string; provider?: string; session?: Parameters<typeof makeSessionRunner>[0]["session"] }): NonNullable<Parameters<typeof makeProposeInputs>[0]> {
+  const provider = o.provider ?? process.env["LOKI_E10_PROVIDER"] ?? "claude";
+  const session = makeSessionRunner({ ...(o.session ? { session: o.session } : {}) });
+  return (a) => {
+    const brief = [
+      `Read ${a.unitFile} (legacy code, round ${a.round}). Propose test inputs that reach its uncovered branches.`,
+      `Uncovered: ${JSON.stringify(a.missing)}`,
+      'Write proposals.jsonl in this directory: one JSON object per line, {"entry": <function name>, "args": [...], "kwargs": {...}}.',
+      "Write only proposals.jsonl. Do not edit the unit file.",
+    ].join("\n");
+    const env = tokenFreeEnv(childEnv({ stage: "implement", brief, tier: "development", iterationId: `modernize-${o.mid}-capture-${a.round}`, limitS: 600, signal: new AbortController().signal, cwd: a.cwd }, { provider }));
+    const r = session(brief, a.cwd, env);
+    if (r.status !== 0) throw new Error(`propose session exited ${r.status}`);
+  };
+}
+
+/** Builds the real dependencies. Fails closed (exit 2 upstream) when the repo has no readable HEAD, or no origin to pin without --no-pr. Never substitutes a fake. */
 export function productionWaveDeps(o: ProductionWaveOpts): { ok: true; deps: WaveDeps } | { ok: false; reason: string } {
   let pinnedOrigin = "";
-  try { safeGit(o.repoDir, ["rev-parse", "HEAD"]); } catch { return { ok: false, reason: "modernize: cannot read the base commit (HEAD) of the repo" }; }
+  let baseSha = "";
+  const head = (): string => safeGit(o.repoDir, ["rev-parse", "HEAD"]).trim();
+  try { baseSha = head(); } catch { return { ok: false, reason: "modernize: cannot read the base commit (HEAD) of the repo" }; }
   try { pinnedOrigin = safeGit(o.repoDir, ["config", "--get", "remote.origin.url"]).trim(); } catch { /* empty: refused below */ }
   if (!o.noPr && pinnedOrigin === "") return { ok: false, reason: "modernize: no remote.origin.url to pin for the wave PR (use --no-pr to skip shipping)" };
-  const missing = [
-    "oracle capture (nothing produces a unit's cases.jsonl)",
-    "unit merge ops (no MergeOps implementation)",
-    "ablation stub runner (runUnit cannot return PROVEN without one)",
-    "wave verify commands (no build, integration or original-suite detection)",
-  ];
-  return { ok: false, reason: `modernize: cannot run units yet, not built: ${missing.join("; ")}` };
+  // detectWaveCommands' second parameter is named `target` but is read as a directory: pass the repo dir, never the ModernizeTarget string.
+  const waveCommands = detectWaveCommands(o.inv, o.repoDir);
+  return {
+    ok: true,
+    deps: {
+      repoDir: o.repoDir, mid: o.mid, baseSha, workers: o.workers, budgetUsd: o.budgetUsd, unitEstimateUsd: null, log: o.log,
+      run: makeAttemptRunner({ mid: o.mid, target: o.target, log: o.log, repoDir: o.repoDir, units: o.plan.units }),
+      merge: gitMergeOps(o.repoDir, o.mid), resume: o.resume, waveCommands,
+      optionalSteps: waveCommands.integration === null ? ["integration"] : [],
+      ship: !o.noPr, pinnedOrigin, headSha: head,
+      prepare: makeUnitPrep({ repoDir: o.repoDir, mid: o.mid, propose: makeProposeInputs(makeProposeSession({ mid: o.mid })) }),
+    },
+  };
 }
