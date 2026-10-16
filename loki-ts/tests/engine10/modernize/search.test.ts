@@ -2,7 +2,7 @@
 // and the capture executor (runCapture) are both stubbed, per section 13 "Tests deterministic
 // with a stub provider" -- no python or py_capture.py dependency here.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -292,12 +292,39 @@ describe.skipIf(!PYTHON3)("captureUnitOracle (M-27A)", () => {
     expect(existsSync(join(oracleDir(repoDir, mid, "branch"), "coverage.json"))).toBe(false);
   });
 
-  it("refuses a second capture; a throwing propose plateaus instead of crashing", () => {
+  it("refuses a second capture; a throwing propose captures nothing and writes nothing", () => {
     const throwing = () => { throw new Error("session died"); };
-    const first = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: throwing });
-    expect(first.ok).toBe(true); // seed has no cases, branch.py is below floor but still written and flagged by seal
+    const none = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: throwing });
+    expect(none).toEqual({ ok: false, reason: "no cases captured" });
+    expect(existsSync(oracleDir(repoDir, mid, "branch"))).toBe(false);
+    const first = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)) });
+    expect(first.ok).toBe(true);
     const again = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)) });
     expect(again.ok).toBe(false);
+  });
+
+  it("never overwrites a cases.jsonl that appears during replay", () => {
+    const dir = oracleDir(repoDir, mid, "branch");
+    const racing: CaptureRunner = (u, c, out) => {
+      if (out) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "cases.jsonl"), "SENTINEL"); }
+      return realCaptureRunner(u, c, out);
+    };
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), runCapture: racing });
+    expect(r.ok).toBe(false);
+    expect(readFileSync(join(dir, "cases.jsonl"), "utf8")).toBe("SENTINEL");
+  });
+
+  it("a failed replay leaves no oracle dir", () => {
+    const failing: CaptureRunner = (u, c, out) => (out ? { branchesTotal: -1, branchesTaken: -1, branchPct: 0, missing: [], error: "replay boom" } : realCaptureRunner(u, c));
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)), runCapture: failing });
+    expect(r).toEqual({ ok: false, reason: "replay boom" });
+    expect(existsSync(oracleDir(repoDir, mid, "branch"))).toBe(false);
+  });
+
+  it("the extra round under 80% sees a later round number", () => {
+    const rounds: number[] = [];
+    captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: (_u, _m, rd) => { rounds.push(rd); return []; } });
+    expect(rounds).toEqual([1, 2, 3]);
   });
 
   it("runs the propose session outside repoDir with a token-free env", () => {

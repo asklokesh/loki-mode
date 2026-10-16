@@ -8,7 +8,7 @@
 // with a stub provider (section 13). `realCaptureRunner` shells out to M-09's py_capture.py. Wiring
 // a real ProposeInputs (a read-only model session) is the oracle-capture orchestrator's job.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { REPO_ROOT } from "../../../util/paths.ts";
@@ -240,10 +240,17 @@ export function captureUnitOracle(a: {
   const safe: ProposeInputs = (...p) => { try { return a.propose(...p); } catch { return []; } };
   let r = search(a.unitPath, [], safe, run, a.opts);
   if (r.stoppedReason === "capture_failed") return { ok: false, reason: r.reason ?? "capture failed" };
-  if (r.coverage.branchPct < 80) r = search(a.unitPath, r.cases, safe, run, { ...a.opts, maxRounds: 1 });
-  mkdirSync(dir, { recursive: true });
-  const [t1, t2, tc] = ["cases", "replay", "coverage"].map((n) => join(dir, `.${n}.${process.pid}.tmp`));
+  if (r.coverage.branchPct < 80) {
+    const first = r.rounds.length;
+    r = search(a.unitPath, r.cases, (u, m, rd) => safe(u, m, rd + first), run, { ...a.opts, maxRounds: 1 });
+  }
+  if (r.cases.length === 0) return { ok: false, reason: "no cases captured" };
+  const scratch = mkdtempSync(join(tmpdir(), "m27-replay-"));
+  const t1 = join(scratch, "cases"), t2 = join(scratch, "replay");
+  const dirExisted = existsSync(dir);
   const read = (p: string): Rec[] => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Rec);
+  const tmpCases = join(dir, `.cases.${process.pid}.tmp`);
+  const tmpCov = join(dir, `.coverage.${process.pid}.tmp`);
   try {
     const cov = run(a.unitPath, r.cases, t1);
     const cov2 = run(a.unitPath, r.cases, t2);
@@ -255,17 +262,22 @@ export function captureUnitOracle(a: {
         if (JSON.stringify(rec[f]) !== JSON.stringify(again[i]![f])) rec.not_proven = [...(rec.not_proven ?? []), `nondeterministic field ${f}`];
       }
     });
-    writeFileSync(t1, recs.map((x) => JSON.stringify(x)).join("\n") + "\n");
-    writeFileSync(tc, JSON.stringify({
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(tmpCases, recs.map((x) => JSON.stringify(x)).join("\n") + "\n");
+    writeFileSync(tmpCov, JSON.stringify({
       unit: a.unit, entries: [...new Set(r.cases.map((c) => c.entry))], cases: r.cases.length,
       branches_total: cov.branchesTotal, branches_taken: cov.branchesTaken, branch_pct: cov.branchPct, missing: cov.missing,
     }));
-    renameSync(t1, join(dir, "cases.jsonl"));
-    renameSync(tc, join(dir, "coverage.json"));
+    // cases.jsonl is the write-once marker: coverage first, then a non-overwriting link, so a crash between stays retryable.
+    if (existsSync(join(dir, "cases.jsonl"))) return { ok: false, reason: "oracle already captured (write-once)" };
+    renameSync(tmpCov, join(dir, "coverage.json"));
+    linkSync(tmpCases, join(dir, "cases.jsonl"));
     return { ok: true, cases: r.cases.length, branchPct: cov.branchPct, stoppedReason: r.stoppedReason };
   } catch (e) {
     return { ok: false, reason: `capture error: ${e instanceof Error ? e.message : String(e)}` };
   } finally {
-    for (const t of [t1, t2, tc]) rmSync(t!, { force: true });
+    rmSync(scratch, { recursive: true, force: true });
+    for (const t of [tmpCases, tmpCov]) rmSync(t, { force: true });
+    if (!dirExisted) { try { rmdirSync(dir); } catch { /* not empty or absent */ } }
   }
 }
