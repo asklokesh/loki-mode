@@ -183,7 +183,7 @@ export function archivePriorCost(lokiRoot: string, id: string): void {
   renameSync(costFile(lokiRoot, id), costFile(lokiRoot, `${id}-q${k}`));
 }
 /** ids plus every archived earlier attempt of them, so a sum counts each attempt once. */
-export function withArchivedCosts(lokiRoot: string, ids: string[]): string[] {
+export function withArchivedCosts(lokiRoot: string, ids: string[], keep: (archivedId: string) => boolean = () => true): string[] {
   let files: string[] = []; try { files = readdirSync(join(lokiRoot, "metrics")); } catch { /* none yet */ }
-  return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)))])];
+  return [...new Set([...ids, ...ids.flatMap((id) => files.filter((f) => f.startsWith(`result-cost-${id}-q`) && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)).filter(keep))])];
 }

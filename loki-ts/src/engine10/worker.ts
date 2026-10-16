@@ -3,7 +3,7 @@
 // stamps seq and appends. Its own diagnostics go to stderr.
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
-import { costTotalsOf, sumResultCosts } from "./cost.ts"; import { withArchivedCosts } from "../providers/provider_cost.ts";
+import { archivedCostIds, costTotalsOf, sumResultCosts } from "./cost.ts";
 import { capMeter } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
@@ -64,7 +64,7 @@ export async function main(args: string[]): Promise<number> {
       cost: {
         // Union with every session started: a killed stage's output (and its ids) is dropped by the machine.
         read(dir, ids) {
-          const c = sumResultCosts(join(dir, ".loki"), withArchivedCosts(join(dir, ".loki"), [...new Set([...ids, ...started])]));
+          const c = sumResultCosts(join(dir, ".loki"), archivedCostIds(join(dir, ".loki"), [...new Set([...ids, ...started])]));
           return costTotalsOf(c);
         },
       },

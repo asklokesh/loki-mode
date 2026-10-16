@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
-import { resultCostPath, sumResultCosts } from "../../src/engine10/cost.ts";
+import { archivedCostIds, resultCostPath, sumResultCosts } from "../../src/engine10/cost.ts";
 import { withArchivedCosts } from "../../src/providers/provider_cost.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -88,6 +88,18 @@ describe("engine10 session", () => {
       for (const usd of [1, 2]) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: child(usd) }).run(baseOpts({ cwd: dir, iterationId: "q-1", limitS: 20 }));
       expect(existsSync(resultCostPath(lokiRoot, "q-1"))).toBe(true);
       expect(sumResultCosts(lokiRoot, withArchivedCosts(lokiRoot, ["q-1"])).usd).toBe(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+
+  test("P12-09b: a zero-usage is_error record from a quota attempt does not blank the run's cost (E-69 stays honest)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-zero-"));
+    try {
+      const lokiRoot = join(dir, ".loki");
+      const rec = (usd: number, tok: number) => ["bash", ["-c", `mkdir -p .loki/metrics; echo '{"total_cost_usd":${usd},"input_tokens":${tok},"output_tokens":${tok},"model":"m"}' > .loki/metrics/result-cost-$LOKI_ITERATION.json; exit ${usd === 0 ? 1 : 0}`]] as [string, string[]];
+      for (const [usd, tok] of [[0, 0], [2.5, 5]] as const) await createSessionRunner({ provider: "claude", lokiRoot, childCommand: rec(usd, tok) }).run(baseOpts({ cwd: dir, iterationId: "z-1", limitS: 20 }));
+      const c = sumResultCosts(lokiRoot, archivedCostIds(lokiRoot, ["z-1"]));
+      expect(c.usd).toBe(2.5);
+      expect(c.missing).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 20_000);
 
