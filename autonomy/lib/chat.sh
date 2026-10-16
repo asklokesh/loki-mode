@@ -113,7 +113,7 @@ _chat_sleep_ms() {
 # that was not live before). A start that exits first reports its real error and the log path.
 # Returns non-zero when the start is not proven.
 _chat_run_launch() {
-    local loki="$1" input="$2" root="${LOKI_DIR:-.loki}" log pid rc=0 start_ms deadline_ms now_ms rem_ms iter=0 max_iter before_dir before_state
+    local loki="$1" input="$2" root="${LOKI_DIR:-.loki}" log pid rc=0 start_ms deadline_ms now_ms rem_ms iter=0 clock_failed=0 max_iter before_dir before_state
     log="$root/chat-run.log"
     mkdir -p "$root"
     _chat_clock_pick
@@ -151,14 +151,19 @@ _chat_run_launch() {
             return "$rc"
         fi
         # A failed or non-numeric clock read (perl fork EAGAIN) counts as the deadline: never mix clock bases.
-        now_ms="$(_chat_now_ms)" || break
-        case "$now_ms" in ''|*[!0-9]*) break ;; esac
+        # No $SECONDS fallback here: switching sources mid-launch would mix bases with start_ms.
+        now_ms="$(_chat_now_ms)" || { clock_failed=1; break; }
+        case "$now_ms" in ''|*[!0-9]*) clock_failed=1; break ;; esac
         rem_ms=$(( deadline_ms - now_ms ))
         [ "$rem_ms" -gt 0 ] || break
         [ "$iter" -lt "$max_iter" ] || break
         [ "$rem_ms" -le 200 ] || rem_ms=200
         _chat_sleep_ms "$rem_ms"
     done
+    if [ "$clock_failed" = 1 ]; then
+        echo "Run start unproven (clock read failed while waiting; launcher pid $pid still running). Log: $log" >&2
+        return 1
+    fi
     echo "Run start not confirmed after ${wait_s}s (no live run state; launcher pid $pid still running). Log: $log" >&2
     return 1
 }
