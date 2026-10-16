@@ -10,7 +10,7 @@
 // with the provider/model/emit bound on the factory instead.
 import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
@@ -422,4 +422,36 @@ describe("engine10 session", () => {
     expect(dumped).toContain("LOKI_HOST_GUARD=1");
     rmSync(dir, { recursive: true, force: true });
   }, 10_000);
+  describe("live budget watcher", () => {
+    const runWatch = async (prior: number, script: string, limitS: number) => {
+      const dir = mkdtempSync(join(tmpdir(), "loki-e10-bw-"));
+      const eff = join(dir, ".loki", "metrics", "efficiency");
+      mkdirSync(eff, { recursive: true });
+      writeFileSync(join(eff, "iteration-1.json"), JSON.stringify({ cost_usd: prior }));
+      const events: string[] = [];
+      const prev = process.env["LOKI_E10_MAX_COST_USD"];
+      process.env["LOKI_E10_MAX_COST_USD"] = "5";
+      try {
+        const runner = createSessionRunner({
+          provider: "codex", lokiRoot: join(dir, ".loki"), remaining: () => 5,
+          emit: (t: string) => { events.push(t); }, childCommand: ["bash", ["-c", script.replace("EFF", eff)]],
+        } as never);
+        const result = await runner.run(baseOpts({ limitS, cwd: dir }));
+        return { result, events };
+      } finally {
+        if (prev === undefined) delete process.env["LOKI_E10_MAX_COST_USD"]; else process.env["LOKI_E10_MAX_COST_USD"] = prev;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    test("spend from earlier runs over the cap does not kill a fresh session", async () => {
+      const { result, events } = await runWatch(6, "sleep 6; echo done", 30);
+      expect(result.killed).toBe(false);
+      expect(events).not.toContain("guard.budget_stop");
+    }, 20000);
+    test("spend added during this session over the cap kills it", async () => {
+      const { result, events } = await runWatch(6, `echo '{"cost_usd": 6}' > EFF/iteration-2.json; sleep 30`, 60);
+      expect(result.killed).toBe(true);
+      expect(events).toContain("guard.budget_stop");
+    }, 20000);
+  });
 });
