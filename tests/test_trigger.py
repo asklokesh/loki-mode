@@ -174,14 +174,48 @@ class TestEventRouting(unittest.TestCase):
         self.assertIn("rev 3", text)
         self.assertIn("applies at next plan/implement stage", text)
 
-    def test_issue_comment_unauthorized_or_failed_steer_posts_no_ack(self):
+    def test_issue_comment_unauthorized_posts_no_ack(self):
         with patch("trigger_server.find_live_run", return_value="run-1"), \
+             patch("trigger_server._pending_steer_rev", return_value=3), \
              patch("trigger_server.post_steer_ack") as ack:
             ts.handle_issue_comment_event(self._make_comment_payload("NONE"))
-            self.mock_run.return_value = False
+        ack.assert_not_called()
+
+    def test_issue_comment_failed_steer_posts_no_ack(self):
+        self.mock_run.return_value = False
+        with patch("trigger_server.find_live_run", return_value="run-1"), \
+             patch("trigger_server._pending_steer_rev", return_value=3), \
+             patch("trigger_server.post_steer_ack") as ack:
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         self.assertEqual(status, "error")
         ack.assert_not_called()
+
+    def test_issue_comment_prompt_injection_off_posts_no_ack(self):
+        with patch.dict(os.environ, {"LOKI_PROMPT_INJECTION": "0"}), \
+             patch("trigger_server.find_live_run", return_value="run-1"), \
+             patch("trigger_server._pending_steer_rev", return_value=3), \
+             patch("trigger_server.post_steer_ack") as ack:
+            ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
+        ack.assert_not_called()
+
+    def test_loki_authored_comments_never_steer(self):
+        bodies = [ts.STEER_ACK_MARKER + "\n" + ts.steer_ack_text(3),
+                  "<!-- loki-status -->\nrun state"]
+        for b in bodies:
+            with patch("trigger_server.find_live_run", return_value="run-1"):
+                _, status = ts.handle_issue_comment_event(
+                    self._make_comment_payload("OWNER", body=b))
+            self.assertIn("skipped", status)
+        self.mock_run.assert_not_called()
+
+    def test_post_steer_ack_body_carries_marker(self):
+        seen = {}
+        def fake(argv, **kw):
+            seen["body"] = Path(argv[-1]).read_text()
+            return MagicMock(returncode=0, stderr="")
+        with patch("trigger_server.subprocess.run", side_effect=fake):
+            ts.post_steer_ack("owner/repo#42", "owner/repo", 2)
+        self.assertIn(ts.STEER_ACK_MARKER, seen["body"])
 
     def test_post_steer_ack_invokes_issue_comment_with_pinned_origin(self):
         with patch("trigger_server.subprocess.run") as run:
