@@ -157,6 +157,18 @@ describe("verifyReceipt: unrecognized schema (P12-01d)", () => {
       }
     });
   }
+  test("a seal-shaped receipt renamed to group/1 with no group section, events_sha256 and time removed, is TAMPERED and exits non-zero", async () => {
+    const dir = tmpDir();
+    try {
+      const path = writeUnsignedReceipt(dir, "e10-group-bypass", (r) => { r["schema"] = "loki.v10.group/1"; delete r["events_sha256"]; delete r["time"]; rehash(r); });
+      const result = await verifyReceipt(path);
+      expect(result.verdict).toBe("TAMPERED");
+      expect(result.reasons.join(" ")).toContain("no group section");
+      expect(await main(["e10-group-bypass", "--allow-unsigned"], { runsRoot: join(dir, "runs") })).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test("the recognized loki.v10.receipt/1 schema still reads UNSIGNED", async () => {
     const dir = tmpDir();
     try {

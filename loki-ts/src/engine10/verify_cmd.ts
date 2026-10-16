@@ -96,6 +96,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   const computed = computeReceiptHash(receipt);
   if (typeof recorded !== "string" || recorded !== computed) return { verdict: "TAMPERED", reasons: [`receipt_sha256 mismatch: recorded ${JSON.stringify(recorded)}, computed ${computed}`] };
   if (receipt["schema"] !== "loki.v10.receipt/1" && receipt["schema"] !== "loki.v10.group/1") return { verdict: "TAMPERED", reasons: [`unrecognized receipt schema ${JSON.stringify(receipt["schema"] ?? null)}; a renamed or removed schema would downgrade the receipt past its checks`] }; // P12-01d
+  if (receipt["schema"] === "loki.v10.group/1" && !isPlain(receipt["group"])) return { verdict: "TAMPERED", reasons: ["a loki.v10.group/1 receipt has no group section, which composeGroupReceipt always writes; it was edited or renamed from another schema"] }; // P12-01d
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
   const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); // D61-13
