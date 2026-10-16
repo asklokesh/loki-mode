@@ -414,6 +414,9 @@ describe("resume from stage (P12-07)", () => {
       expect(seen[0]!.env["LOKI_E10_SPENT_USD"]).toBe("3");
       expect(seen[0]!.env["LOKI_E10_MAX_COST_USD"]).toBe("5");
       expect(seen[0]!.capS).toBeLessThanOrEqual(900);
+      writeFileSync(evFile, text(mk([...pre.slice(0, 4), ["cost", "implement", { session_id: "s1", usd: 9 }], ["cost", "implement", { session_id: "s2", usd: null }]]))); // R6: one unmetered session must not null the metered spend
+      expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
+      expect(seen[1]!.env["LOKI_E10_SPENT_USD"]).toBe("9");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
   });
   test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {

@@ -10,7 +10,7 @@ import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fold, readEvents } from "../engine10/events.ts";
+import { fold, partialCost, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
@@ -248,7 +248,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
-  const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), f = fold(it.events), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
+  const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), pc = partialCost(it.events), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
   if (it.events.some((e) => e.type === "cap.hit")) { out(`engine10: --resume refused: run ${it.runId} already hit its cost or time cap\n`); return 2; }
   let activeS = 0; for (let i = 1; i < it.events.length; i++) { const g = (Date.parse(it.events[i]!.ts) - Date.parse(it.events[i - 1]!.ts)) / 1000; if (g > 0 && g <= 120) activeS += g; } // active time: gaps over 2 min are downtime, not run time
   const capS = Number(st0["cap_s"]) > 0 ? Number(st0["cap_s"]) - activeS : undefined, ceilS = Number(st0["cap_ceiling_s"]) > 0 ? Number(st0["cap_ceiling_s"]) - activeS : undefined;
@@ -259,7 +259,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
     try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; }
   }
   const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;
-  const env: NodeJS.ProcessEnv = { ...process.env, ...(capS !== undefined ? { LOKI_E10_CAP_S: String(Math.floor(capS)) } : {}), ...(f.cost.usd !== null && f.cost.usd > 0 ? { LOKI_E10_SPENT_USD: String(f.cost.usd) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(capS !== undefined ? { LOKI_E10_CAP_S: String(Math.floor(capS)) } : {}), ...(pc.usd > 0 ? { LOKI_E10_SPENT_USD: String(pc.usd) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
   const runDir = join(repoDir, ".loki", "runs", it.runId), eventsPath = join(repoDir, eventsRelPath(it.runId));
   const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
     const gate = prGate(repoDir);
