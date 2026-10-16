@@ -16,7 +16,11 @@ function bashFlags(): Set<string> {
     const m = l.match(/^\s+(-[-a-zA-Z0-9|=*]+)\)/);
     const labels = m?.[1];
     if (!labels) continue;
-    for (const alt of labels.split("|")) out.add(alt.replace(/=\*$/, ""));
+    for (const alt of labels.split("|")) {
+      const flag = alt.replace(/=\*$/, "");
+      // Glob arms (-*, --*=*) are catch-alls, not flags.
+      if (!flag.includes("*")) out.add(flag);
+    }
   }
   return out;
 }
