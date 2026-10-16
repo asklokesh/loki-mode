@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.1 (2026-10-16)
+
+v11.17.0 was never published to npm. Its release failed required CI because the changelog named `loki start --resume` while the start help and bash completion did not. This release fixes that, and it is the first to publish everything listed under v11.17.0 and v11.16.0, plus the fixes below. `loki start` with Claude remains the primary path, and every change here applies to it.
+
+### Fixed
+- `loki start --resume` is listed in the start help and in bash completion.
+- `loki verify` reports a group/1 receipt with no group section as TAMPERED. A receipt with an unrecognized schema also verifies as TAMPERED, and the MCP verify test now fails on a real verdict (P12-01d).
+- Resume uses the earliest Wall start, caps a claimed start at its event timestamp, and keeps the latest entry per revision. This closes Wall-start and revision-squat forgeries (P12-07h).
+- The Seal router's cost sum counts archived quota attempts once, and the quota rerun loop stays bounded under a frozen clock (P12-09c).
+- The heartbeat diff stat counts untracked files, and is split into two timed git calls. The guard scan parses `git status -z` without trimming, records rename sources, and matches exact `..` segments (P12-12, P12-25).
+- The watchdog counts streamed output or a diff change as progress. The diff signature includes the size and mtime of each changed file, uses cwd-relative paths for both lists, and has a per-list stat budget (P12-12c, P12-12d).
+- Bash hook: under the compiled permission policy it cannot widen the policy, and it denies when python3 is missing or the input is malformed. The `rm -rf` safe-path override is checked per segment and refuses `..` and dot-glob path segments by default. It also refuses newline, CR and `;` bypasses (P12-26d).
+- Chat `/run` waits for the start against a deadline, uses one monotonic clock per launch, and caps its iterations. A failed clock read ends the wait at the deadline. If the clock read fails at launch, chat reports a clock failure instead of a false timeout (P12-16c, P12-16d, P12-16e).
+- Eval task fixtures are relative to `eval/loki10` and resolve against the harness directory, with no founder-path heuristic (P12-30b).
+
+- The session.ts model-output regex guard baseline is lowered from 6 to 4 after P12-12d removed two matches.
+
 ## v11.17.0 (2026-10-16)
 
 v11.16.0 was written into this changelog but never published to npm: its release failed required CI on four guard checks. This release fixes those checks and is the first to publish everything listed under v11.16.0, plus the engine-plan slices below. `loki start` with Claude remains the primary path, and every change here applies to it; chat and Slack route through the same commands.
