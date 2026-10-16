@@ -222,7 +222,9 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
           } catch (e) {
             wt.remove(opts.repoDir, path);
             const msg = e instanceof Error ? e.message : String(e);
-            return { unit: unit.id, status: "NOT_PROVEN", attempts, costUsd: unitCost, result: last, worktree: null, needsReslice: false, reason: `merge failed: ${msg}` };
+            let landed = false;
+            try { landed = opts.merge.isMerged(unit.id); } catch { /* unknown: report a plain merge failure */ }
+            return { unit: unit.id, status: "NOT_PROVEN", attempts, costUsd: unitCost, result: last, worktree: null, needsReslice: false, reason: landed ? `merge landed, log append failed: ${msg}` : `merge failed: ${msg}` };
           }
         }
         return { unit: unit.id, status: "PROVEN", attempts, costUsd: unitCost, result: last, worktree: path, needsReslice: false };

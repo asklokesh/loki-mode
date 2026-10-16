@@ -1,11 +1,8 @@
 // loki-ts/src/engine10/modernize/resume.ts -- M-22: unit-level resume after a coordinator crash
-// (docs/v10/MODERNIZE.md sections 3.7 and 5, D30). Everything is recovered by folding the modernize
-// log (the only durable record). Units with unit.completed or unit.not_proven are skipped; a unit
-// that started but never finished resumes through its recorded run id (E-39, `loki --resume`) or
-// restarts cleanly; a unit that never started is dispatched fresh. A merge that landed before the
-// coordinator wrote unit.completed is adopted, never repeated. A corrupt log or plan.json fails
-// closed with a reason: the append-side reader (events.ts readEvents) silently skips bad lines,
-// which is right for append but wrong for deciding what NOT to run again.
+// (docs/v10/MODERNIZE.md sections 3.7 and 5, D30). State is recovered by folding the modernize log.
+// Completed and not-proven units are skipped; in-flight units resume via their run id (E-39) or restart
+// cleanly; a merge that landed before unit.completed was written is adopted, never repeated. A corrupt
+// log or plan.json fails closed (readEvents silently skips bad lines, wrong for deciding what NOT to run).
 import { existsSync, readFileSync } from "node:fs";
 import type { EventEnvelope } from "../types.ts";
 import { validateEnvelope } from "../events.ts";
@@ -51,22 +48,24 @@ export function loadResumeState(repoDir: string, mid: string): ResumeLoad {
     }
   }
   const lines = text.split("\n");
-  const tornTail = !text.endsWith("\n");
+  // The last non-empty line may be torn; the EventLog ctor newline-terminates it, so a missing trailing "\n" proves nothing.
+  let lastIdx = lines.length - 1;
+  while (lastIdx >= 0 && lines[lastIdx]!.trim() === "") lastIdx--;
   const events: EventEnvelope[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (line.trim() === "") continue;
-    const last = i === lines.length - 1;
+    const last = i === lastIdx;
     let x: unknown;
     try {
       x = JSON.parse(line);
     } catch {
-      if (last && tornTail) continue;
+      if (last) continue;
       return { ok: false, reason: `modernize log line ${i + 1} is not valid JSON` };
     }
     const bad = validateEnvelope(x);
     if (bad !== null) {
-      if (last && tornTail) continue;
+      if (last) continue;
       return { ok: false, reason: `modernize log line ${i + 1} is invalid: ${bad}` };
     }
     const e = x as EventEnvelope;
@@ -103,10 +102,8 @@ export type ResumeAction =
   | { unit: string; action: "restart" }
   | { unit: string; action: "fresh" };
 export interface ResumePlan {
-  /** Units not dispatched again (completed or not proven). */
-  skipped: string[];
+  skipped: string[]; // completed or not proven: not dispatched again
   actions: ResumeAction[];
-  /** The input plan with skipped units removed; wave order is kept, empty waves are dropped. */
   plan: ClusterResult;
 }
 

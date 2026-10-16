@@ -51,6 +51,20 @@ describe("loadResumeState", () => {
     f.done();
   });
 
+  it("resumes a torn-tail log even after the writer constructor newline-terminated the tail", async () => {
+    const f = fx();
+    f.log.append("unit.completed", { unit: "a" });
+    appendFileSync(modernizeEventsPath(f.dir, MID), '{"v":1,"seq":1,"ty');
+    const log2 = new ModernizeLog(f.dir, MID); // terminates the torn line, as the real flow does
+    expect(loadResumeState(f.dir, MID).ok).toBe(true);
+    const r = await resumeSchedule(planOf([[u("a"), u("b")]]), {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees,
+      log: log2, run: async (c) => ({ result: proven(c.unit.id), costUsd: 0 }),
+    });
+    expect(r.ok).toBe(true);
+    f.done();
+  });
+
   it("fails closed on a corrupt middle line", () => {
     const f = fx();
     f.log.append("unit.completed", { unit: "a" });
@@ -224,6 +238,20 @@ describe("scheduler merge path end to end", () => {
     expect(evs.filter((e) => e.type === "unit.completed").map((e) => e.data.unit)).toEqual(["a", "b", "c"]);
     const seqs = evs.map((e) => e.seq);
     expect(seqs.every((x, i) => i === 0 || x > seqs[i - 1]!)).toBe(true);
+    f.done();
+  });
+
+  it("a merge that landed but whose log append failed says so", async () => {
+    const f = fx();
+    const merged = new Set<string>();
+    const merge: MergeOps = { isMerged: (x) => merged.has(x), merge: (x) => { merged.add(x); } };
+    const badLog = { append: (t: string, d: Record<string, unknown>) => { if (t === "unit.completed") throw new Error("disk full"); return f.log.append(t, d); } } as unknown as ModernizeLog;
+    const r = await schedule(planOf([[u("a")]]), {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge,
+      log: badLog, run: async (c) => ({ result: proven(c.unit.id), costUsd: 0 }),
+    });
+    expect(r.outcomes[0]!.status).toBe("NOT_PROVEN");
+    expect(r.outcomes[0]!.reason).toMatch(/merge landed, log append failed: disk full/);
     f.done();
   });
 
