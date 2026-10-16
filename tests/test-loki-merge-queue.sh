@@ -108,6 +108,15 @@ mkdir -p "$WORK/jqonly"; ln -sf "$(command -v jq)" "$WORK/jqonly/jq"
 seed feat-ok 16 created
 PATH="$WORK/jqonly:/usr/bin:/bin" bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:gh" ] && ok "pr.json: missing gh records blocked:gh" || bad "pr.json gh: $(cat .loki/state/pr.json)"
+seed feat-ok 17 created
+bash "$LOKI" merge pr https://github.com/o/r/pull/17 >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "merged" ] && ok "pr.json: URL arg matches by number" || bad "pr.json url arg: $(cat .loki/state/pr.json)"
+seed feat-ok 18 created
+bash "$LOKI" merge pr '#18' >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "merged" ] && ok "pr.json: #N arg matches by number" || bad "pr.json hash arg: $(cat .loki/state/pr.json)"
+seed feat-ok 19 created
+bash "$LOKI" merge pr . >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "waiting" ] && ok "pr.json: a '.' arg is not a regex wildcard" || bad "pr.json dot: $(cat .loki/state/pr.json)"
 rm -f .loki/state/pr.json
 bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
 [ ! -e .loki/state/pr.json ] && ok "pr.json never invented when absent" || bad "pr.json invented"

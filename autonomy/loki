@@ -26011,12 +26011,14 @@ _merge_pr_watch() {
 # the same PR (pr arg matches .branch or the number at the end of .url); any
 # other record is left untouched. Never invents one. File mode is preserved.
 _pr_record_merge() {
-    local pr="$1" outcome="$2" gate="${3:-}" checks="${4:-not recorded}" f=".loki/state/pr.json" t
+    local pr="$1" outcome="$2" gate="${3:-}" checks="${4:-not recorded}" f=".loki/state/pr.json" t n
+    n="${pr#\#}"
+    case "$n" in */pull/*) n="${n%/}"; n="${n##*/}" ;; esac
     [ -f "$f" ] && command -v jq >/dev/null 2>&1 || return 0
     t="$(mktemp "$f.XXXXXX" 2>/dev/null)" || return 0
     cp -p "$f" "$t" 2>/dev/null || { rm -f "$t"; return 0; }
-    if jq --arg p "$pr" --arg o "$outcome" --arg g "$gate" --arg c "$checks" \
-        'select(.state=="created" and (.branch==$p or ((.url // "") | test("/pull/" + $p + "/?$")))) | .merge={outcome:$o, gate:(if $g=="" then null else $g end), checks:$c}' "$f" > "$t" 2>/dev/null && [ -s "$t" ]; then
+    if jq --arg p "$pr" --arg n "$n" --arg o "$outcome" --arg g "$gate" --arg c "$checks" \
+        'select(.state=="created" and (.branch==$p or ((.url // "") | (endswith("/pull/" + $n) or endswith("/pull/" + $n + "/"))))) | .merge={outcome:$o, gate:(if $g=="" then null else $g end), checks:$c}' "$f" > "$t" 2>/dev/null && [ -s "$t" ]; then
         mv "$t" "$f"
     else
         rm -f "$t"
