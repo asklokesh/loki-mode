@@ -594,6 +594,8 @@ test_validate_bash_rm_allow_grammar() {
         '${TMPDIR^^}/x' '${X/a/b}/c' '${X:1}/c' '"${X%/}"/y' '$TMPDIR' '$TMPDIR/*' '$TMPDIR/..'
         '*' '*.log' '*/x' '?x' '[a]x' '.' './' 'a/..' '.*' '../x' '/$X' '$X/' '$X/..' '$X*'
         '~root/x' '~' '$HOME' '~/..' '$HOME/../x' '/home/*' '/*' '/x/*/y' '$(echo /tmp)' '`echo /tmp`'
+        '${HOME:-x}' '${HOME-x}' '${tmp:-$HOME}' '${tmp:-$TMPDIR}' '"$tmp"/..' '"$tmp/.."' '"$LOKI_RUN_TMP"/..' './..'
+        '"${TMPDIR:?}"' '"${HOME:?}"' '"${dir:?}/.."' '"$dir/$TMPDIR"' '"$dir/$HOME"' '"$dir/$name/.."' '"$dir/*"'
     )
     for t in "${deny_set[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -608,7 +610,9 @@ test_validate_bash_rm_allow_grammar() {
         '/home/u/proj/build' '/tmp/foo*' '/tmp/foo/bar' '"$LOKI_RUN_TMP"' '"$LOKI_RUN_TMP"/x/*'
         '"${LOKI_RUN_TMP}"/a' '$TMPDIR/foo' '"${TMPDIR}"/foo/bar' '$HOME/proj/build' '~/proj/x'
         '"$BUILD_DIR"/out' '${BUILD_DIR}/out' '"$BUILD_DIR"/shard{1..4}'
-        '"$tmp"' '"$dir"' '"${dir}"' '"$WT"' '-- "$target"' '$X' './*' './*.log' '{}' '{} +' '{} \;'
+        '"$tmp"' '"$dir"' '"${dir}"' '"$WT"' '"${dir:?}"' '"${BUILD_DIR:?}"/out' '-- "${tmp:?}"' '"${dir:?}/sub"' '"${dir:?msg}/sub"'
+        '"$dir/$name"' '"$tmp/$f"' '"$OUT_DIR/$CASE"' '"$dir"/"$name"' '"$ROOT/$sub/build"' '"/tmp/foo-$$"'
+        '-- "$target"' '$X' './*' './*.log' '{}' '{} +' '{} \;'
     )
     for t in "${ok_set[@]}"; do
         c=$(printf 'rm -r %s' "$t")

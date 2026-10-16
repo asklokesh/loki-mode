@@ -890,6 +890,25 @@ _g_expand() {
     return 0
 }
 
+# After the first variable, a component that is exactly $name or ${name}
+# (not TMPDIR or HOME) is folded to a plain word; the glob and dotdot checks
+# then judge the folded path.
+_g_fold_vars() {
+    local rest="$1" c out="" n
+    local -a p=()
+    [[ "$rest" == /* ]] || { printf '%s' "$rest"; return; }
+    IFS=/ read -r -a p <<< "${rest#/}"
+    for c in ${p[@]+"${p[@]}"}; do
+        if [[ "$c" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
+            n="${BASH_REMATCH[1]}"
+            case "$n" in TMPDIR|HOME) ;; *) c="v" ;; esac
+        fi
+        out="${out}/${c}"
+    done
+    [[ "$rest" == */ ]] && out="${out}/"
+    printf '%s' "$out"
+}
+
 # Rest after a variable: "/" then a non-glob first component, and no
 # dotdot-capable component anywhere.
 _g_named_rest_deny() {
@@ -971,9 +990,12 @@ _g_alt_deny() {
     # relative word with no leading glob, or an allowed absolute path.
     if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)(:-|-)(.*)\}$ ]]; then
         name="${BASH_REMATCH[1]}"; w="${BASH_REMATCH[3]}"
-        [ "$name" != "TMPDIR" ] || return 0
+        [ "$name" != "TMPDIR" ] && [ "$name" != "HOME" ] || return 0
         [ -n "$w" ] || return 0
-        if [[ "$w" =~ ^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$ ]]; then return 1; fi
+        if [[ "$w" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
+            [ "${BASH_REMATCH[1]}" != "TMPDIR" ] && [ "${BASH_REMATCH[1]}" != "HOME" ] || return 0
+            return 1
+        fi
         [[ "$w" == *'$'* || "$w" == *'{'* || "$w" == *'}'* ]] && return 0
         if [[ "$w" == /* ]]; then _g_abs_deny "$w"; return; fi
         case "$w" in [\*\?\[]*) return 0 ;; esac
@@ -990,6 +1012,10 @@ _g_alt_deny() {
         _g_named_rest_deny "$rest"
         return
     fi
+    # ${N:?} and ${N:?msg} guards behave exactly like a bare ${N}.
+    if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^\}\$\{]*\}(.*)$ ]]; then
+        a="\${${BASH_REMATCH[1]}}${BASH_REMATCH[2]}"
+    fi
     # shellcheck disable=SC2088 # literal tilde in a string being inspected
     case "$a" in
         '$'*)
@@ -998,6 +1024,10 @@ _g_alt_deny() {
             else
                 return 0
             fi
+            case "$name" in
+                LOKI_RUN_TMP|HOME|TMPDIR) ;;
+                *) rest=$(_g_fold_vars "$rest") ;;
+            esac
             [[ "$rest" == *'$'* || "$rest" == *'{'* || "$rest" == *'}'* ]] && return 0
             [ -z "$rest" ] || [[ "$rest" == /* ]] || return 0
             case "$name" in
@@ -1035,7 +1065,8 @@ _g_alt_deny() {
 _rm_grammar_deny() {
     local t="${1%%[<>]*}" q alt rc=0
     [ -n "$t" ] || return 1
-    [[ "$t" == *'$'\'* || "$t" == *'$"'* ]] && return 0
+    # $' and $" open ANSI-C / locale quoting; a $$ before the quote is a PID.
+    [[ "$t" =~ (^|[^$])\$[\'\"] ]] && return 0
     q="${t//[\"\'\\]/}"
     # find -exec rm -r {} + / \; : a bare {} is find's placeholder, not a brace.
     [ "$q" = "{}" ] && return 1
