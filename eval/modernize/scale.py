@@ -15,6 +15,7 @@ or measures below the line floor. Every selection step is logged to stderr and t
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -80,12 +81,40 @@ def resolve_source(target, source, tmp):
     return dest, True
 
 
-def run_estimate(src, is_clone, tmp, loki_bin):
-    """`loki modernize --dry-run` on a scratch copy so a local --source is never written to."""
-    work = src
-    if not is_clone:
-        work = os.path.join(tmp, "estimate-copy")
-        shutil.copytree(src, work, ignore=COPY_IGNORE)
+def scratch_repo(src, dest):
+    """Throwaway VCS-initialised copy of src. loki modernize lists files only through the Git file
+    listing, and an hg checkout has none, so the copy is initialised, staged and committed under a
+    fixed identity with prompts disabled."""
+    shutil.copytree(src, dest, ignore=COPY_IGNORE)
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_AUTHOR_NAME="scale", GIT_AUTHOR_EMAIL="scale@localhost",
+               GIT_COMMITTER_NAME="scale", GIT_COMMITTER_EMAIL="scale@localhost")
+    for cmd in (["init", "-q"], ["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "scale scratch"]):
+        p = subprocess.run(["git", "-C", dest] + cmd, capture_output=True, text=True, env=env, timeout=1800)
+        if p.returncode != 0:
+            raise ScaleError("scratch copy step %s failed: %s" % (cmd[-1], p.stderr.strip()[-200:]))
+    return dest
+
+
+def inventory_truncated(work):
+    """The inventory.completed event carries the repomap 2000-file cap flag; None when unreadable."""
+    try:
+        _, mdir = pilot.find_mid(work)
+        with open(os.path.join(mdir, "events.jsonl"), encoding="utf8") as fh:
+            for ln in fh:
+                try:
+                    e = json.loads(ln)
+                except ValueError:
+                    continue
+                if e.get("type") == "inventory.completed":
+                    return bool((e.get("data") or {}).get("truncated"))
+    except (pilot.PilotError, OSError):
+        pass
+    return None
+
+
+def run_estimate(src, tmp, loki_bin):
+    """`loki modernize --dry-run` on a scratch copy so --source is never written to."""
+    work = scratch_repo(src, os.path.join(tmp, "estimate-copy"))
     p = subprocess.run([loki_bin, "modernize", work, "--to", "python3", "--dry-run"],
                        capture_output=True, text=True, timeout=3600)
     if p.returncode != 0:
@@ -103,7 +132,7 @@ def run_estimate(src, is_clone, tmp, loki_bin):
     m = re.match(r"^\$([0-9]+(?:\.[0-9]+)?)$", out.get("cost", ""))
     if m:
         cost = float(m.group(1))
-    return {"units": units, "waves": waves, "estimated_cost_usd": cost,
+    return {"units": units, "waves": waves, "truncated": inventory_truncated(work), "estimated_cost_usd": cost,
             "wall_time": out.get("wall time"), "risk": out.get("risk")}
 
 
@@ -135,17 +164,15 @@ def paid_run(target, path, budget, loki_bin, results_dir, tmp):
     stage = os.path.join(tmp, "stage-" + target)
     os.makedirs(stage, exist_ok=True)
     rid = "scale-" + target
-    link = os.path.join(stage, rid)
-    if not os.path.lexists(link):
-        os.symlink(path, link)
+    scratch_repo(path, os.path.join(stage, rid))
     r = {"id": rid, "url": TARGETS[target]["url"], "commit": TARGETS[target]["ref"], "language": "py2",
          "target": "python3", "max_loc": 10 ** 9}
     run = pilot.execute_repo(r, budget, loki_bin, source_dir=stage)
-    pilot.charge_spend(run, budget)
+    charged = pilot.charge_spend(run, budget)
     manifest = pilot.load_manifest(pilot.DEFAULT_MANIFEST)
     calibration = pilot.calibrate_cap([run], manifest["cap"])
     out = pilot.write_results(results_dir, "scale", [run], calibration, pilot.DEFAULT_MANIFEST)
-    return run, calibration, out
+    return run, calibration, out, charged
 
 
 def main(argv=None):
@@ -161,6 +188,9 @@ def main(argv=None):
     ap.add_argument("--results-dir", default=None)
     a = ap.parse_args(argv)
 
+    if a.budget_usd is not None and not math.isfinite(a.budget_usd):
+        print("error: --budget-usd must be a finite number", file=sys.stderr)
+        return 2
     if a.execute and (a.budget_usd is None or not a.budget_usd > 0):
         print("error: --execute requires --budget-usd greater than 0 (a paid run needs an explicit cap)", file=sys.stderr)
         return 2
@@ -173,12 +203,16 @@ def main(argv=None):
     try:
         manifest = pilot.load_manifest(pilot.DEFAULT_MANIFEST)
         target, path, is_clone, by_lang, total, fb = select(a.target, a.source, a.fallback_source, a.min_lines, tmp, sel_log)
-        est = run_estimate(path, is_clone, tmp, a.loki_bin)
+        est = run_estimate(path, tmp, a.loki_bin)
+        if est["units"] == 0:
+            raise ScaleError("the estimate planned 0 units for %d measured lines: the inventory saw no files" % total)
+        if a.execute and est["truncated"] is not False:
+            raise ScaleError("refusing the paid run: the inventory hit the file cap or was unreadable (truncated=%r)" % est["truncated"])
         plan = {
             "requested_target": a.target, "selected_target": target, "fallback_used": fb,
             "target_name": TARGETS[target]["name"], "selection_log": sel_log,
             "source": "clone" if is_clone else "local", "lines_by_language": by_lang, "total_lines": total,
-            "units": est["units"], "waves": est["waves"], "estimated_cost_usd": est["estimated_cost_usd"],
+            "inventory_truncated": est["truncated"], "units": est["units"], "waves": est["waves"], "estimated_cost_usd": est["estimated_cost_usd"],
             "wall_time": est["wall_time"], "risk": est["risk"],
             "unit_line_cap": manifest["cap"]["start_lines"],
             "spend_cap_usd": a.budget_usd,
@@ -189,10 +223,11 @@ def main(argv=None):
             print(json.dumps(plan, indent=2))
             return 0
         print(json.dumps(plan, indent=2), file=sys.stderr)
-        run, calibration, out = paid_run(target, path, a.budget_usd, a.loki_bin, a.results_dir or pilot.DEFAULT_RESULTS, tmp)
+        run, calibration, out, charged = paid_run(target, path, a.budget_usd, a.loki_bin, a.results_dir or pilot.DEFAULT_RESULTS, tmp)
         print("status: %s; units %s/%s proven; cost %s" % (
             run["status"], run["units_proven"], run["units_total"],
             "%.2f USD (lower bound)" % run["cost_usd"] if run["cost_usd"] is not None else "not measured"))
+        print("charged against the cap: %.2f USD" % charged)
         print("results: %s" % out)
         print("calibration: %s" % calibration["reason"])
         return 0 if run["status"] == "ok" else 1

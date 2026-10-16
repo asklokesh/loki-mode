@@ -382,7 +382,7 @@ def read_modernize_artifacts(repo_dir):
 
 def fetch_repo(url, commit, dest, source_dir=None, rid=None):
     if source_dir:
-        shutil.copytree(os.path.join(source_dir, rid), dest)
+        shutil.copytree(os.path.join(source_dir, rid), dest, ignore=shutil.ignore_patterns(".hg", ".loki", "__pycache__"))
         return
     subprocess.run(["git", "init", "-q", dest], check=True)
     subprocess.run(["git", "-C", dest, "fetch", "-q", "--depth", "1", url, commit], check=True, timeout=600)

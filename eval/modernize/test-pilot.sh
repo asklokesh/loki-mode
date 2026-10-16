@@ -310,6 +310,8 @@ cat >"$SFAKE" <<'SFAKE_EOF'
 case " $* " in
     *" --dry-run "*)
         echo "$2" >>"$SFAKE_DRYCALLS"
+        mkdir -p "$2/.loki/modernize/mod-sfake"
+        printf '{"v":1,"seq":1,"ts":"2026-10-16T00:00:01Z","run":"mod-sfake","type":"modernize.started","stage":null,"data":{}}\n{"v":1,"seq":2,"ts":"2026-10-16T00:00:02Z","run":"mod-sfake","type":"inventory.completed","stage":null,"data":{"files":3,"truncated":%s}}\n' "${SFAKE_TRUNC:-false}" >"$2/.loki/modernize/mod-sfake/events.jsonl"
         printf 'units: 12\nwaves: 3\ncost: $9.50\nwall time: 600s\nrisk: 1 high, 11 normal\n'
         exit 0 ;;
 esac
@@ -371,6 +373,38 @@ if [ "$rc" -eq 0 ] && [ -n "$RES" ] && [ "$(wc -l <"$FAKE_CALLS" | tr -d ' ')" =
     && resj "$RES" 'd["runs"][0]["id"]=="scale-hg" and d["runs"][0]["status"]=="ok" and d["runs"][0]["units_total"]==1'; then
     pass "scale --execute --budget-usd runs one fake paid call and writes results"
 else fail "scale execute rc=$rc res=$RES out=$(cat "$T/out.txt") run=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runs"][0])' "$RES" 2>&1)"; fi
+
+# 7g. B1: the REAL bin/loki modernize --dry-run on a tree with no VCS metadata (an hg checkout) must see files
+if command -v bun >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && [ -d "$REPO/loki-ts/dist" ]; then
+    mkdir -p "$T/nogit-src"
+    for i in 1 2 3; do printf 'def f%s(x):\n    print x\n' "$i" >"$T/nogit-src/m$i.py"; done
+    python3 "$SCALE" --target hg --source "$T/nogit-src" --min-lines 1 --loki-bin "$REPO/bin/loki" >"$T/out.txt" 2>"$T/err.txt"; rc=$?
+    if [ "$rc" -eq 0 ] && resj "$T/out.txt" 'd["units"]>0 and d["inventory_truncated"] is False' && [ ! -e "$T/nogit-src/.git" ] && [ ! -e "$T/nogit-src/.loki" ]; then
+        pass "real bin/loki dry run on a no-VCS tree plans units > 0 and leaves the source untouched"
+    else fail "real loki dry run rc=$rc $(cat "$T/err.txt") $(head -c 300 "$T/out.txt")"; fi
+else pass "real bin/loki leg skipped (bun, git or loki-ts/dist missing)"; fi
+
+# 7h. units 0 on a tree over the floor is refused; non-finite budgets refused before any clone
+ZFAKE="$T/zero-fake-loki"
+printf '#!/usr/bin/env bash\nprintf "units: 0\\nwaves: 0\\ncost: not measured\\n"\n' >"$ZFAKE"; chmod +x "$ZFAKE"
+python3 "$SCALE" --target hg --source "$T/hg-src" --min-lines 50 --loki-bin "$ZFAKE" >/dev/null 2>"$T/err.txt"; rc=$?
+if [ "$rc" -eq 2 ] && grep -q "0 units" "$T/err.txt"; then pass "scale refuses rc 2 when units == 0 over the line floor"; else fail "zero units rc=$rc"; fi
+for b in inf nan; do
+    python3 "$SCALE" --target hg --execute --budget-usd "$b" --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-inf" >/dev/null 2>&1; rc=$?
+    if [ "$rc" -eq 2 ] && [ ! -e "$T/s-inf" ]; then pass "scale --budget-usd $b refused rc 2"; else fail "budget $b rc=$rc"; fi
+done
+
+# 7i. truncated inventory: reported in the dry run, refuses the paid run
+SFAKE_TRUNC=true python3 "$SCALE" --target hg --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" >"$T/out.txt" 2>/dev/null; rc=$?
+if [ "$rc" -eq 0 ] && resj "$T/out.txt" 'd["inventory_truncated"] is True'; then pass "dry run surfaces inventory_truncated"; else fail "truncated surfaced rc=$rc"; fi
+: >"$FAKE_CALLS"
+SFAKE_TRUNC=true python3 "$SCALE" --target hg --execute --budget-usd 3 --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-trunc" >/dev/null 2>"$T/err.txt"; rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$FAKE_CALLS" ] && [ ! -e "$T/s-trunc" ]; then pass "paid run refused when the inventory is truncated"; else fail "truncated paid rc=$rc"; fi
+
+# 7j. N1: charged amount recorded (an .hg dir in the source is never copied into the stage)
+mkdir -p "$T/hg-src/.hg"; echo x >"$T/hg-src/.hg/store"
+python3 "$SCALE" --target hg --execute --budget-usd 3 --source "$T/hg-src" --min-lines 50 --loki-bin "$SFAKE" --results-dir "$T/s-chg" >"$T/out.txt" 2>/dev/null; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "charged against the cap: 3.00 USD" "$T/out.txt"; then pass "paid run reports the amount charged against the cap"; else fail "charged line rc=$rc $(cat "$T/out.txt")"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
