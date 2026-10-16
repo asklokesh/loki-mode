@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.4 (2026-10-16)
+
+v11.17.3 was written into this changelog but never published to npm: its required CI failed on line budgets, process substitution in `run.sh`, and a ShellCheck warning. This release publishes everything listed under v11.17.3 plus the changes below. `loki start` with Claude remains the primary path.
+
+### Changed
+- Completion council voters run with lean child flags, use haiku on the small and standard tiers (complex tier unchanged), receive the PRD path so they no longer report "No PRD was provided", and write one child-session cost ledger line per vote. Missing evidence still never approves (cost S7).
+- Grill and PRD enrich call Claude through the lean child flags and write cost ledger lines; PRD enrich no longer loads user-scope settings (cost S8).
+
+### Fixed
+- The small-tier main session argument builder in `run.sh` reads the lean flags from a here-string instead of process substitution, so it stays inside the hard deadline confinement rule.
+- The engine10 core is back under its 5,000-line budget.
+
 ## v11.17.3 (2026-10-16)
 
 v11.17.2 was written into this changelog but never published to npm: its required CI failed on help drift. This release publishes everything listed under v11.17.2 plus the changes below. `loki start` with Claude remains the primary path.
