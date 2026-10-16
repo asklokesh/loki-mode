@@ -154,7 +154,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   // P0: a caller-built env (tests pass a minimal one) that omits LOKI_CONTROL inherits the process-level off switch the test preload sets.
   if ((env.LOKI_CONTROL ?? process.env.LOKI_CONTROL) !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
   const aliveDir = join(opts.repoDir, ".loki", "runs", opts.runId), lastAlive = opts.resume ? readAliveBeat(aliveDir) : null; // P12-07n: read before the first fresh beat overwrites it
-  log.append(opts.resume ? "run.resumed" : "run.started", null, { ...opts.started, ...(opts.resume ? { phase: "stage", ...(lastAlive ? { last_alive_ts: new Date(lastAlive).toISOString() } : {}) } : {}), origin_repo: githubRepoFromUrl(origin) });
+  log.append(opts.resume ? "run.resumed" : "run.started", null, { ...opts.started, ...(opts.resume ? { phase: "stage", ...(lastAlive ? { last_alive_ts: new Date(lastAlive).toISOString() } : {}) } : {}), origin_repo: githubRepoFromUrl(origin) }); if (!opts.resume) void import("../integrations/writeback.ts").then((m) => m.writeBack({ phase: "started", verdict: "", prUrl: null, receiptSha256: null, task: "" }, env)); // P12-18: opt-in tracker "started" comment + transition, never throws
   writeAliveBeat(aliveDir); const beat = setInterval(() => writeAliveBeat(aliveDir), ALIVE_BEAT_MS); beat.unref(); // cheap heartbeat for quiet stages (a long verify emits no events)
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";

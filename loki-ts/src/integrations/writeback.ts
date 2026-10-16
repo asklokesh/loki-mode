@@ -1,5 +1,5 @@
 // B6: opt-in Jira / Linear write-back. One shared call serves every intake origin and phase (started, blocked, done, failed): a comment with the outcome,
-// plus an optional status move on done (LOKI_JIRA_DONE_TRANSITION id, LOKI_LINEAR_DONE_STATE state id).
+// plus an optional status move on started, blocked or done (LOKI_JIRA_{STARTED,BLOCKED,DONE}_TRANSITION ids, LOKI_LINEAR_{STARTED,BLOCKED,DONE}_STATE state ids).
 // Off unless the env config is complete (no network call otherwise). Failures warn on stderr and never change a verdict or exit code. Tokens are never logged.
 export type WritebackPhase = "started" | "blocked" | "done" | "failed";
 export interface WritebackInput {
@@ -47,14 +47,15 @@ export async function writeBack(i: WritebackInput, env: Env = process.env): Prom
     if (!key) return;
     const envKind = env.LOKI_WRITEBACK_KIND, kind = i.origin?.kind ?? (envKind === "jira" || envKind === "linear" ? envKind : undefined); // LOKI_WRITEBACK_KIND carries the intake source when no origin is passed
     const text = commentText(i);
-    const done = (i.phase ?? "done") === "done";
+    const P = (i.phase ?? "done").toUpperCase(), moves = P === "STARTED" || P === "BLOCKED" || P === "DONE"; // lifecycle states that move the ticket
     if (jiraOn && kind !== "linear" && kind !== "github") {
       const base = `${jira!.replace(/\/+$/, "")}/rest/api/3/issue/${encodeURIComponent(key)}`;
       const headers = { "content-type": "application/json", accept: "application/json", authorization: `Basic ${Buffer.from(`${je}:${jt}`).toString("base64")}` };
       const body = { body: { type: "doc", version: 1, content: text.split("\n").map((l) => ({ type: "paragraph", content: [{ type: "text", text: l }] })) } };
       await post(`${base}/comment`, { method: "POST", headers, body: JSON.stringify(body) }, "Jira");
-      if (done && env.LOKI_JIRA_DONE_TRANSITION) {
-        await post(`${base}/transitions`, { method: "POST", headers, body: JSON.stringify({ transition: { id: env.LOKI_JIRA_DONE_TRANSITION } }) }, "Jira", "transition");
+      const tid = moves ? env[`LOKI_JIRA_${P}_TRANSITION`] : undefined;
+      if (tid) {
+        await post(`${base}/transitions`, { method: "POST", headers, body: JSON.stringify({ transition: { id: tid } }) }, "Jira", "transition");
       }
     }
     if (linearOn && kind !== "jira" && kind !== "github") {
@@ -62,9 +63,10 @@ export async function writeBack(i: WritebackInput, env: Env = process.env): Prom
       const headers = { "content-type": "application/json", authorization: lt! };
       const query = "mutation($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }";
       await post(url, { method: "POST", headers, body: JSON.stringify({ query, variables: { issueId: key, body: text } }) }, "Linear");
-      if (done && env.LOKI_LINEAR_DONE_STATE) {
+      const sid = moves ? env[`LOKI_LINEAR_${P}_STATE`] : undefined;
+      if (sid) {
         const q = "mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }";
-        await post(url, { method: "POST", headers, body: JSON.stringify({ query: q, variables: { id: key, stateId: env.LOKI_LINEAR_DONE_STATE } }) }, "Linear", "state change");
+        await post(url, { method: "POST", headers, body: JSON.stringify({ query: q, variables: { id: key, stateId: sid } }) }, "Linear", "state change");
       }
     }
   } catch {

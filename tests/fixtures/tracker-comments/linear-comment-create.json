@@ -1,0 +1,13 @@
+{
+  "action": "create",
+  "type": "Comment",
+  "webhookTimestamp": 1760000000000,
+  "data": {
+    "id": "c-1",
+    "body": "Prefer the existing retry helper instead of a new one.",
+    "issueId": "uuid-1",
+    "userId": "user-allowed",
+    "user": {"id": "user-allowed", "name": "Dana Operator"},
+    "issue": {"id": "uuid-1", "identifier": "ENG-42"}
+  }
+}

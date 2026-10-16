@@ -36,3 +36,9 @@ Optional status moves happen only on done: `LOKI_JIRA_DONE_TRANSITION` (a Jira t
 ## Safety
 
 Issue text is untrusted input. It is passed to the run as data and never grants tool authority.
+
+## Inbound comments and transitions
+
+Transitions: LOKI_JIRA_{STARTED,BLOCKED,DONE}_TRANSITION (transition ids) and LOKI_LINEAR_{STARTED,BLOCKED,DONE}_STATE (state ids) move the ticket when the run starts, blocks or finishes.
+
+Steer from comments: the trigger server turns a Jira `comment_created` (POST /jira) or Linear `Comment` create (POST /linear) into `loki steer` (source=jira|linear, actor recorded) when the author is listed in LOKI_JIRA_STEER_ACTORS (accountIds) or LOKI_LINEAR_STEER_ACTORS (user ids) and a run this server dispatched for that issue is in flight. Unset lists reject everyone.
