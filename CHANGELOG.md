@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.12.0 (2026-10-15)
+
+The legacy modernization unit runner (M-15). `loki start` with Claude remains the primary path; this is a building block for the modernize program and is not yet wired to a user command.
+
+### Added
+- The modernize unit runner takes one unit card through a v10 run against a sealed oracle Wall and an equivalence check. The oracle is sealed with the card normalizers before implement runs, the failing module is derived from the traceback path under the target runtime, and the pre-sealed Wall and its seal are verified before the Wall is trusted.
+- A unit is PROVEN only when every sealed test, identified by its own pytest node id, passes after the change. Runs that exit early, skip, mark tests xfail, print a footer without a matching junit report, or add new passing test ids do not count. Every file and bytecode under the unit, including symlinks, conftest variants and pytest config files (pyproject.toml, setup.cfg, tox.ini, pytest.ini, pytest.toml, .pytest.toml), is bound to the Wall seal, and any drift is refused.
+- Known limit, stated in the result: PROVEN carries conformance { trust: "runner_reported", limit: "FC-24" } and a unit.conformance_passed log event. The pytest process runs the unit code, so code that deliberately forges pytest's own report from inside that process is not detected (docs/v10/FAILURE-CLASSES.md FC-24). Tests document the two reproduced forgeries as this limit.
+- The modernize scheduler (M-17) runs a plan wave by wave with N workers (1 to 32, default 4). Each attempt gets a fresh git worktree created through the hardened safeGit helper, so a hook planted in the shared git directory by one unit never runs in the coordinator. Units start on sonnet (high-risk units go straight to opus); a failed check gets two fresh opus variants, and a unit that fails all three attempts is reported for re-slicing, never force-passed. A --budget stops dispatch when spent plus in-flight estimates would exceed it, and also once spend passes the budget when no estimate exists. Not yet wired to a user command.
+
+### Changed
+- Verify caps the verdict to NOT PROVEN for more edits that can steer how tests run: Cargo.toml top-level dotted patch and replace keys, [[test]] harness = false and dev-dependencies with path =; go.work replace directives; and babel.config.*, .babelrc and .pnpmfile.cjs. A plain dependency version bump still does not cap.
+
+### Fixed
+- v11.11.0 was committed to main but its CI failed, so it was never tagged or published to npm; this release carries all of its changes. The cause was help and completion drift: `loki memory learn --recent` was missing from `loki help`, and `--recent`, `--repo` and `--explain-match` were missing from the bash completions. All three are now listed, and `loki quickstart` has its own flag completions.
+
 ## v11.11.0 (2026-10-15)
 
 Four new operator commands and options. `loki start` with Claude remains the primary path.

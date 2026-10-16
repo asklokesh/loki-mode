@@ -294,7 +294,7 @@ export function purgePycache(dir: string): void {
 const LINK = "symlink:";
 // Only VCS and run state are fully skipped. Everything else, SKIP_DIRS included, is recorded (a norecursedirs
 // override or a link makes pytest walk node_modules/venv/.tox): sealed names by content, links by target, other
-// entries by name and type. __pycache__ and .pytest_cache hold only purged/disabled caches and are not recorded.
+// entries by name and type. __pycache__ and .pytest_cache hold only purged/disabled caches and are skipped.
 const FULL_SKIP = new Set([".git", ".loki"]);
 const CACHE_DIRS = new Set(["__pycache__", ".pytest_cache"]);
 

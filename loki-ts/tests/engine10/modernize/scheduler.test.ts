@@ -90,10 +90,10 @@ describe("scheduler", () => {
 
   it("a PROVEN result keeps its FC-24 runner_reported conformance unchanged", async () => {
     const f = fixture();
-    const conformance = { trust: "runner_reported", limit: "FC-24" } as unknown as UnitRunResult["conformance"];
+    const conformance: UnitRunResult["conformance"] = { trust: "runner_reported", limit: "FC-24", tests: 3 };
     const run = (c: AttemptCtx): AttemptOutcome => ({ result: { ...res(c.unit.id, "PROVEN"), conformance }, costUsd: 0 });
     const r = await schedule(planOf([[u("a")]]), { ...f.base, run });
-    expect(r.outcomes[0]!.result!.conformance).toEqual({ trust: "runner_reported", limit: "FC-24" });
+    expect(r.outcomes[0]!.result!.conformance).toEqual({ trust: "runner_reported", limit: "FC-24", tests: 3 });
     f.done();
   });
 

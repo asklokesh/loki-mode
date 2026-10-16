@@ -1905,6 +1905,7 @@ show_help_all() {
     echo "  loki memory list              # All learnings"
     echo "  loki memory search <query>    # Search across learnings"
     echo "  loki memory consolidate       # Run episodic-to-semantic pipeline"
+    echo "  loki memory learn --recent N  # Learn from the newest N merged PRs"
     echo ""
     echo "  # Config + dashboard"
     echo "  loki config set maxTier sonnet   # Cap model cost"

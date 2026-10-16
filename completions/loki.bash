@@ -59,7 +59,7 @@ _loki_completion() {
         memory)
             local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn forget episode pattern skill vectors brief help"
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--task --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--task --recent --repo --help" -- "$cur") )
                 return 0
             fi
             COMPREPLY=( $(compgen -W "${memory_cmds}" -- "$cur") )
@@ -222,6 +222,13 @@ _loki_completion() {
         export)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--sarif --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        quickstart)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--dry-run --explain-match --from-preview --verify-preview --json --list-templates --template --yes --help" -- "$cur") )
                 return 0
             fi
             ;;
