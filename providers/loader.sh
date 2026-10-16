@@ -22,6 +22,8 @@ LOKI_OTEL_PASSTHROUGH_VARS=(
 
 # Export each passthrough var that is SET, with its value untouched. Never
 # invents a value: an unset var stays unset.
+# The child inherits exported env anyway, so this is a documented guarantee
+# for shell-local (non-exported) values rather than new behavior.
 loki_otel_passthrough_export() {
     local v
     for v in "${LOKI_OTEL_PASSTHROUGH_VARS[@]}"; do

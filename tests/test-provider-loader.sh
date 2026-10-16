@@ -375,9 +375,12 @@ fi
 # Test 16: P12-27 OTel passthrough (set vars only, unchanged, never invented)
 echo ""
 echo "Test 16: OTel passthrough and gateway lane label (P12-27)"
+# Vars are set NON-exported inside the shell so only the loader export helper can
+# hand them to the child (an exported prefix would be inherited regardless).
 _ot_out=$(env -u OTEL_SERVICE_NAME -u OTEL_RESOURCE_ATTRIBUTES -u OTEL_EXPORTER_OTLP_HEADERS \
-    OTEL_EXPORTER_OTLP_ENDPOINT="http://c:4318" CLAUDE_CODE_ENABLE_TELEMETRY=1 \
-    bash -c 'source "$1/providers/loader.sh"; load_provider claude >/dev/null 2>&1
+    -u OTEL_EXPORTER_OTLP_ENDPOINT -u CLAUDE_CODE_ENABLE_TELEMETRY \
+    bash -c 'OTEL_EXPORTER_OTLP_ENDPOINT="http://c:4318"; CLAUDE_CODE_ENABLE_TELEMETRY=1
+      source "$1/providers/loader.sh"; load_provider claude >/dev/null 2>&1
       bash "$1/providers/model_route_exec.sh" env | grep -E "^(OTEL_|CLAUDE_CODE_ENABLE_TELEMETRY)" | sort | tr "\n" "|"' _ "$PROVIDERS_DIR/..")
 if [ "$_ot_out" = "CLAUDE_CODE_ENABLE_TELEMETRY=1|OTEL_EXPORTER_OTLP_ENDPOINT=http://c:4318|" ]; then
     log_pass "OTel vars reach the child unchanged; unset ones are not invented"

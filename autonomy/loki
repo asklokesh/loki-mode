@@ -14720,6 +14720,7 @@ cmd_doctor() {
         echo "loki doctor: the Bun doctor is unavailable, so only this minimal report can run."
         echo "Fix: ${_LOKI_DELEGATE_FIX}"
         echo "${_LOKI_DELEGATE_WHY}"
+        ( source "$SKILL_DIR/providers/model_routes.sh" 2>/dev/null && loki_model_route_lane_report ) || true
     fi
     return 1
 }

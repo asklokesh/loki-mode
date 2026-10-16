@@ -100,7 +100,11 @@ export function gatewayLaneLabel(env: Env = process.env): string | null {
   return base && !isClaudeModelId(env["LOKI_MODEL_OVERRIDE"] ?? "") ? GATEWAY_LANE_LABEL : null;
 }
 
-/** OTel variables handed to the provider child unchanged; only those set, never invented. */
+/**
+ * OTel variables handed to the provider child unchanged; only those set, never invented.
+ * Both TS routes already inherit process.env, so this is an explicit, documented
+ * no-op that pins the contract (and survives any future env scrubbing).
+ */
 export const OTEL_PASSTHROUGH_VARS = [
   "OTEL_EXPORTER_OTLP_ENDPOINT",
   "OTEL_EXPORTER_OTLP_HEADERS",
