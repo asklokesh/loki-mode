@@ -43,7 +43,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { claudeFlagSupported, ensureClaudeHelpCache, permissionArgv } from "../providers/claude_flags.ts";
+import {
+  claudeFlagSupported,
+  ensureClaudeHelpCache,
+  leanReviewerFlags,
+  permissionArgv,
+  reviewerModelForTier,
+} from "../providers/claude_flags.ts";
 import { judgeJson, sdkJudgeAvailable } from "./sdk_invoker.ts";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
@@ -1611,13 +1617,20 @@ export function rematerializeCodeReview(rawJson: string): string | null {
   return lines.join("\n") + "\n";
 }
 
-export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
+export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
   const argv = ["claude", ...permissionArgv()];
-  // OPT-IN advisor pin (LOKI_ADVISOR_MODEL): default no --model (account
-  // default); haiku|sonnet|opus honored; fable refused (see comment above).
-  const advisor = (process.env["LOKI_ADVISOR_MODEL"] ?? "").trim().toLowerCase();
-  if (advisor === "haiku" || advisor === "sonnet" || advisor === "opus") {
-    argv.push("--model", advisor);
+  // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
+  // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
+  // HIGH-tier changes and moat reviewers keep the account default.
+  await ensureClaudeHelpCache();
+  const model = reviewerModelForTier({
+    tier: process.env["DETECTED_COMPLEXITY"] || "standard",
+    reviewer: rv.name,
+    highTier: (process.env["LOKI_CHANGE_TIER"] ?? "").trim().toLowerCase() === "high",
+  });
+  if (model !== null) {
+    argv.push("--model", model);
+    if (process.env["LOKI_LEAN_CHILDREN"] !== "0" && !process.env["LOKI_ADVISOR_MODEL"]) argv.push(...leanReviewerFlags());
   }
   if (process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0") {
     argv.push("--disallowedTools", REVIEW_GUARD_DENYLIST);

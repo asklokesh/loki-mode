@@ -306,6 +306,48 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
   return out;
 }
 
+// Specialist reviewer routing (cost program S9). simple and standard tiers run
+// haiku with lean flags. Complex or unknown tier, HIGH-tier changes and the moat
+// reviewers keep today's behavior. LOKI_ADVISOR_MODEL (haiku|sonnet|opus) always
+// wins; fable is refused (its classifiers can end a reviewer turn with no VERDICT).
+const REVIEWER_MOAT = ["security-sentinel", "devils-advocate"];
+
+export function reviewerModelForTier(opts: {
+  tier?: string;
+  reviewer: string;
+  highTier?: boolean;
+  env?: Record<string, string | undefined>;
+}): string | null {
+  const env = opts.env ?? process.env;
+  const advisor = (env["LOKI_ADVISOR_MODEL"] ?? "").trim().toLowerCase();
+  if (advisor === "haiku" || advisor === "sonnet" || advisor === "opus") return advisor;
+  if (env["LOKI_REVIEWER_TIER_ROUTING"] === "0") return null;
+  if (opts.highTier === true || REVIEWER_MOAT.includes(opts.reviewer)) return null;
+  const tier = (opts.tier ?? "").trim().toLowerCase();
+  return tier === "simple" || tier === "standard" ? "haiku" : null;
+}
+
+// Lean child flags for a text-only reviewer. `--tools=` MUST stay one argument:
+// the option is variadic, so `--tools ""` swallows the trailing prompt.
+export function leanReviewerFlags(opts: {
+  env?: Record<string, string | undefined>;
+  flagSupported?: (flag: string) => boolean;
+} = {}): string[] {
+  const env = opts.env ?? process.env;
+  if (env["LOKI_LEAN_CHILDREN"] === "0") return [];
+  const ok = opts.flagSupported ?? ((f: string) => claudeFlagSupported(f));
+  const out: string[] = [];
+  if (env["LOKI_BARE_SUBCALLS"] !== "0" && (env["ANTHROPIC_API_KEY"] ?? "").trim() !== "" && ok("--bare")) {
+    out.push("--bare");
+  } else {
+    if (ok("--setting-sources")) out.push("--setting-sources", "project");
+    if (ok("--strict-mcp-config")) out.push("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}');
+    if (ok("--disable-slash-commands")) out.push("--disable-slash-commands");
+  }
+  if (ok("--tools")) out.push("--tools=");
+  return out;
+}
+
 // autonomyAppendText: the exact system-prompt append both routes send.
 //
 // EXTRACTED so the SDK route can reach it. This composition used to live inline
