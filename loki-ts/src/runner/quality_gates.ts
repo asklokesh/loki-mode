@@ -605,7 +605,7 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
     return {
       passed: true,
       inconclusive: true,
-      detail: `test_coverage: ${why} and no package.json -- skipping, nothing measured`,
+      detail: `test_coverage: ${why} and no package.json at ${cwd} (the repo root; sub-package manifests are not searched) -- skipping, nothing measured`,
     };
   }
 

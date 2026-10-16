@@ -236,6 +236,15 @@ test("no token and legacy auth off: a non-loopback or unknown socket peer is 403
   sqlite.close();
 });
 
+test("legacy GET council routes refuse a non-loopback Host, like the control POSTs and /v1", async () => {
+  const { app, sqlite } = seeded();
+  for (const p of ["/api/council/state", "/api/council/verdicts", "/api/council/convergence", "/api/council/report", "/api/council/transcripts"]) {
+    expect([p, (await get(app, p, { host: "evil.example:57374" })).status]).toEqual([p, 403]);
+    expect([p, (await get(app, p, { host: "127.0.0.1:57374" })).status]).not.toBe(403);
+  }
+  sqlite.close();
+});
+
 test("/v1/audit carries its own guard: legacy auth on with no token is 401 even without the /v1 middleware", async () => {
   const { app, sqlite } = mk({ env: { LOKI_ENTERPRISE_AUTH: "true" } });
   expect((await get(app, "/v1/audit")).status).toBe(401);
