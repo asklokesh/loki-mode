@@ -247,7 +247,7 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   });
 });
 
-// D66: features/ is the home for new modules, with its own 3,000-line cap. It may not import
+// D66: features/ is the home for new modules, with its own 3,300-line cap. It may not import
 // stages/ or seal/verify/wall/verify_cmd except as a whole-statement `import type`.
 const FEATURES_ROOT = join(import.meta.dir, "..", "..", "src", "features");
 

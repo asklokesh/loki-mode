@@ -38,14 +38,28 @@ const DT = /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?/;
 function tomlLeaves(path: string, s: string): [string, string][] { const o: [string, string][] = []; let i = 0; const ws = (): void => { while (i < s.length && /[\s,]/.test(s[i]!)) i++; }; const val = (p: string): void => { ws(); const c = s[i]; if (c === "{" || c === "[") { i++; for (;;) { ws(); if (i >= s.length) throw new Error("toml open"); if (s[i] === (c === "{" ? "}" : "]")) { i++; return; } if (c === "{") { const [k, j] = tomlKey2(s, i); i = j; val(p + "." + k); } else val(p); } } const t = s.startsWith('"""', i) || s.startsWith("'''", i) ? s.slice(i, i + 3) : s[i] === '"' || s[i] === "'" ? s[i]! : "", from = i; if (t) { i += t.length; while (i < s.length && !s.startsWith(t, i)) i += s[i] === "\\" && t[0] === '"' ? 2 : 1; if (i >= s.length) throw new Error("toml string"); i += t.length; if (t.length === 3) while (s[i] === t[0]) i++; } else if (DT.test(s.slice(i))) i += DT.exec(s.slice(i))![0].length; else while (i < s.length && !/[\s,\]}]/.test(s[i]!)) i++; if (i === from) throw new Error("toml value"); o.push([p, s.slice(from, i)]); }; val(path); ws(); if (i < s.length) throw new Error("toml trailing"); return o;
 }
 const jsonc = (t: string): unknown => JSON.parse(t.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "$1").replace(/,(\s*[}\]])/g, "$1"));
-/** Top-level YAML keys that can redirect or extend the code under test. Compared as parsed values, so anchors, merge keys, flow maps, escaped or explicit keys, BOM and CR endings cannot hide an edit. */
+/** Top-level YAML keys that can redirect or extend the code under test. Bun.YAML and the js-yaml 4 that pnpm uses disagree on BOMs, explicit keys and merge keys, so a parsed comparison is trusted
+ *  only for a strict plain subset (YAML_OUTSIDE). Anything outside it throws YamlOutside, and the caller caps on any byte change to the file. */
 const YAML_KEYS = {
   pnpmws: ["overrides", "packageExtensions", "patchedDependencies", "catalog", "catalogs"],
   yarnrc: ["packageExtensions", "yarnPath", "plugins"],
 } as const;
+class YamlOutside extends Error {}
+const YAML_OUTSIDE = [
+  /[\uFEFF\r\t\u0000-\u0008\u000B\u000C\u000E-\u001F]/, // BOM, CR, tab and control characters: parsers disagree on how many to strip or how to fold them
+  /^[\s-]*\?(\s|$)|[{,]\s*\?(\s|$)/m, // explicit collection keys
+  /<</, // merge key, quoted or not
+  /(^|[\s[{,:-])[&*!]/m, // anchor, alias or tag starting a token
+  /^(%|---|\.\.\.)/m, // directive or document marker
+  /^\s*(?:-\s+)*(?:true|false|null|~|[-+.]?\d[\w.+-]*)\s*:(\s|$)/im, // plain non-string key
+];
+/** True when any mapping key, at any depth, is not a plain string (a collection key stringifies to "[object ..."). */
+const badKeys = (v: unknown): boolean => !!v && typeof v === "object" && Object.entries(v).some(([k, x]) => k.includes("[object") || badKeys(x));
 function yamlKeys(keys: readonly string[], text: string): string {
-  const doc = (Bun as unknown as { YAML: { parse(t: string): unknown } }).YAML.parse(text.replace(/^\uFEFF/, "")) ?? {};
-  if (typeof doc !== "object" || Array.isArray(doc)) throw new Error("yaml root");
+  if (YAML_OUTSIDE.some((re) => re.test(text))) throw new YamlOutside("yaml outside the strict subset");
+  const doc = (Bun as unknown as { YAML: { parse(t: string): unknown } }).YAML.parse(text) ?? {};
+  if (typeof doc !== "object" || Array.isArray(doc)) throw new YamlOutside("yaml root");
+  if (badKeys(doc)) throw new YamlOutside("yaml key");
   return JSON.stringify(keys.map((k) => (doc as Record<string, unknown>)[k] ?? null));
 }
 /** The runner-relevant part of a shared file as a comparable string. Throws on malformed input: the caller fails closed. */
@@ -111,7 +125,7 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
       for (const rev of same ? [head] : [baseSha, head]) {
         const tree = trees.get(rev)!, t = tree.has(cfg) ? gitOut(repoDir, ["show", `${rev}:${cfg}`], signal) : "";
         texts.push(t);
-        if (spec.shared && t) try { relevant(spec.shared, t); } catch { bad = true; } // this side is malformed: fail closed below
+        if (spec.shared && t) try { relevant(spec.shared, t); } catch (x) { bad = !(same && x instanceof YamlOutside); } // this side is malformed: fail closed below
         for (const c of referenced(cfg, t)) refs.add(EXT.map((e) => c + e).find((p) => tree.has(p)) ?? c);
       }
       const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";

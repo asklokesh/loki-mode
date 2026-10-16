@@ -510,6 +510,22 @@ describe("FC-09u pnpm-workspace and yarnrc key-level caps", () => {
   ])("pnpm-workspace.yaml bypass caps: %s", (_n, a, b) => {
     expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
   });
+  test.each([
+    ["double BOM", "\uFEFF\uFEFFoverrides:\n  foo: 1.0.0\n", "\uFEFF\uFEFFoverrides:\n  foo: link:./fake\n"],
+    ["collection key", "packages: [a]\n? [foo]\n: 1.0.0\n", "packages: [a]\n? [foo]\n: link:./fake\n"],
+    ["quoted merge key", 'x: &o {foo: 1.0.0}\noverrides:\n  "<<": *o\n', 'x: &o {foo: link:./fake}\noverrides:\n  "<<": *o\n'],
+    ["alias in overrides", "x: &o 1.0.0\noverrides:\n  foo: *o\n", "x: &o link:./fake\noverrides:\n  foo: *o\n"],
+    ["CR only", "overrides:\r  foo: 1.0.0\r", "overrides:\r  foo: link:./fake\r"],
+    ["tab", "packages: [a]\toverrides: {foo: 1.0.0}\n", "packages: [a]\toverrides: {foo: link:./fake}\n"],
+    ["tag", "overrides: !!map\n  foo: 1.0.0\n", "overrides: !!map\n  foo: link:./fake\n"],
+    ["document marker", "---\noverrides:\n  foo: 1.0.0\n", "---\noverrides:\n  foo: link:./fake\n"],
+  ])("FC-09v pnpm-workspace.yaml outside the strict subset caps: %s", (_n, a, b) => {
+    expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test("FC-09v an unrelated edit inside the strict subset does not cap", () => {
+    expect(capsOn("pnpm-workspace.yaml", PNPM, PNPM.replace('"pkgs/*"', '"other/*"') + "packages2:\n  - x\n")).toEqual([]);
+    expect(capsOn("pnpm-workspace.yaml", "packages:\n  - a\n", "packages:\n  - a\n  - b\n")).toEqual([]);
+  });
   test("malformed YAML that changed fails closed", () => {
     expect(capsOn("pnpm-workspace.yaml", "packages: [a]\n", "packages: [a\noverrides: {\n")).toEqual(["pnpm-workspace.yaml"]);
   });
