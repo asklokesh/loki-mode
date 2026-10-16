@@ -148,6 +148,11 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBeNull();
   }, 10_000);
 
+  test("the issue backstop comment body starts with the loki-backstop marker so the steer webhook ignores it", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
+    expect(src).toContain("writeFileSync(bodyFile, `<!-- loki-backstop -->\\nLoki 10 run ${runId}");
+  });
+
   test("worker exits non-zero (not a hang) with a diff and a remote: still gets a draft PR, not silently dropped", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
