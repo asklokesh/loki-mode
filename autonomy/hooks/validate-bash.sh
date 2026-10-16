@@ -997,9 +997,8 @@ _g_alt_deny() {
             return 1
         fi
         [[ "$w" == *'$'* || "$w" == *'{'* || "$w" == *'}'* ]] && return 0
-        if [[ "$w" == /* ]]; then _g_abs_deny "$w"; return; fi
-        case "$w" in [\*\?\[]*) return 0 ;; esac
-        return 1
+        _g_alt_deny "$w"
+        return
     fi
     # ${TMPDIR:-<temp root>}/<named child>
     if [[ "$a" =~ ^\$\{TMPDIR:-(/[^\}\$]*)\}(/.*)$ ]]; then
@@ -1103,6 +1102,7 @@ _segment_rm_hits_temp_root() {
     local seg="$1" tok recursive=false seen_rm=false
     local -a words
     # Command substitution and grouping open a new command word: split on them.
+    [[ "$seg" == *'`'* ]] && seg="${seg//\`/ \$( }"
     seg="${seg//[()\`]/ }"
     read -r -a words <<< "$seg"
     for tok in "${words[@]}"; do
@@ -1158,7 +1158,8 @@ def emit(text):
 
 
 # Any construct that can turn data into code disables masking entirely.
-if re.search(r"`|\$\(|<\(|>\(", cmd) or RISKY_WORD.search(cmd) or DOT_CMD.search(cmd):
+# ANSI-C / locale quoting ($' $") hides quote boundaries from this walker.
+if re.search(r"`|\$\(|<\(|>\(|\$['\"]", cmd) or RISKY_WORD.search(cmd) or DOT_CMD.search(cmd):
     emit(cmd)
 
 n = len(cmd)
@@ -1188,6 +1189,7 @@ i = 0
 unit_start = 0
 spans = []
 pending = []  # (delimiter, strip_tabs, mask_body)
+unit_hd = []  # heredocs opened by an unquoted << in the current unit
 
 
 def end_unit(end, piped):
@@ -1195,9 +1197,8 @@ def end_unit(end, piped):
     if data:
         for s, e in spans:
             mask(s, e)
-    for m in HEREDOC.finditer(cmd[unit_start:end]):
-        strip = cmd[unit_start:end][m.start():].startswith("<<-")
-        pending.append((m.group(2), strip, data))
+    for delim, strip in unit_hd:
+        pending.append((delim, strip, data))
 
 
 while i < n:
@@ -1205,6 +1206,16 @@ while i < n:
     if c == "\\":
         i += 2
         continue
+    if c == "#" and (i == 0 or cmd[i - 1] in " \t;&|()\n"):
+        j = cmd.find("\n", i)
+        i = n if j < 0 else j
+        continue
+    if c == "<" and cmd.startswith("<<", i):
+        m = HEREDOC.match(cmd, i)
+        if m:
+            unit_hd.append((m.group(2), cmd.startswith("<<-", i)))
+            i = m.end()
+            continue
     if c == "'":
         j = cmd.find("'", i + 1)
         if j < 0:
@@ -1225,6 +1236,7 @@ while i < n:
         piped = c == "|" and cmd[i + 1:i + 2] != "|"
         end_unit(i, piped)
         spans = []
+        unit_hd = []
         if c == "\n" and pending:
             pos = i + 1
             for delim, strip, do_mask in pending:

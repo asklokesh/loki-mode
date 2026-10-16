@@ -502,7 +502,7 @@ test_validate_bash_temp_root_and_glob_denied() {
     # so only the plain recursive form isolates this rule.
     local ok_r=(
         '"${LOKI_RUN_TMP}"/{a,b}' '/tmp/x{,.bak}' '"$LOKI_RUN_TMP"/shard{1..4}'
-        'out/{1..3}' 'tests/fixtures/{1..3}' 'build/{a,{b,c}}' '"${dir:-../x}"' '"${A:-${B}}"'
+        'out/{1..3}' 'tests/fixtures/{1..3}' 'build/{a,{b,c}}' '"${dir:-out/x}"' '"${A:-${B}}"'
         'build/{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{a,b}'
     )
     for t in "${ok_r[@]}"; do
@@ -596,6 +596,7 @@ test_validate_bash_rm_allow_grammar() {
         '~root/x' '~' '$HOME' '~/..' '$HOME/../x' '/home/*' '/*' '/x/*/y' '$(echo /tmp)' '`echo /tmp`'
         '${HOME:-x}' '${HOME-x}' '${tmp:-$HOME}' '${tmp:-$TMPDIR}' '"$tmp"/..' '"$tmp/.."' '"$LOKI_RUN_TMP"/..' './..'
         '"${TMPDIR:?}"' '"${HOME:?}"' '"${dir:?}/.."' '"$dir/$TMPDIR"' '"$dir/$HOME"' '"$dir/$name/.."' '"$dir/*"'
+        '${a:-~}' '${a-~}' '${a:-~/x/../..}' '${a:-..}' '${a:-x/../..}' '`dirname ~/x`'
     )
     for t in "${deny_set[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -648,6 +649,17 @@ test_validate_bash_rm_allow_grammar() {
         "eval \"rm -r /tmp\"" "echo \"\$(rm -r /tmp)\"" "cat <<EOF | sh
 rm -r /tmp
 EOF" "printf x && rm -r /tmp/*"
+        'echo "<<EOF"
+rm -rf "$TMPDIR"
+EOF'
+        'echo "done" # see cat <<EOF
+rm -rf "$TMPDIR"'
+        'echo "a <<EOF b"
+rm -rf "$TMPDIR"/*
+EOF'
+        'echo "<<EOF"
+rm -rf ..'
+        "echo \$'\\''; rm -rf \"\$TMPDIR\"; echo \"'\" #"
     )
     for c in "${still_deny[@]}"; do
         got=$(run_hook_case "$c" "")
