@@ -416,6 +416,49 @@ function nonNegInt(v: unknown): number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0;
 }
 
+// --- active human time -----------------------------------------------------
+
+// One measured stretch of a person working on an intervention (steer, answer,
+// approval or repair). Both timestamps must come from a real clock reading.
+export interface ActiveEvent {
+  type: string;
+  startMs: number;
+  endMs: number;
+}
+
+// Sum of measured active seconds, or null when nothing was measured. A single
+// unmeasured event (unknown class, non-finite or reversed timestamps) makes
+// the total null: a partial sum is not a total, and 0 would claim "no effort".
+export function activeSecondsFromEvents(events: ActiveEvent[]): number | null {
+  if (events.length === 0) return null;
+  let ms = 0;
+  for (const e of events) {
+    if (!(IV_TYPES as string[]).includes(e.type)) return null;
+    if (!Number.isFinite(e.startMs) || !Number.isFinite(e.endMs) || e.endMs < e.startMs) return null;
+    ms += e.endMs - e.startMs;
+  }
+  return Math.round(ms / 1000);
+}
+
+// Add measured active seconds to .loki/state/interventions.json (active_s).
+// Best-effort, like the counter it extends. Non-finite or negative input is
+// ignored so the field stays absent (unmeasured) rather than becoming 0.
+export function recordActiveSeconds(seconds: number, opts: { lokiDirOverride?: string } = {}): void {
+  if (!Number.isFinite(seconds) || seconds < 0) return;
+  try {
+    const stateDir = join(resolveLokiDir(opts.lokiDirOverride), "state");
+    mkdirSync(stateDir, { recursive: true });
+    const ivPath = join(stateDir, "interventions.json");
+    const cur = readIv(ivPath);
+    atomicWriteFileSync(
+      ivPath,
+      JSON.stringify({ ...cur, active_s: nonNegInt(cur["active_s"]) + Math.round(seconds) }) + "\n",
+    );
+  } catch {
+    // Non-fatal.
+  }
+}
+
 // Async loop equivalent of handle_pause (run.sh:11259-11326). Writes
 // .loki/PAUSED.md, then polls until either PAUSE is removed (resume) or
 // STOP appears (stop). Does NOT read stdin -- the caller is expected to
@@ -478,6 +521,9 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
         basis: "blocking pauses that waited on a human",
         by_type,
         waited_s: nonNegInt(prev["waited_s"]),
+        // active_s is written only by recordActiveSeconds; carry it forward
+        // when present, never invent a 0 for an unmeasured value.
+        ...(typeof prev["active_s"] === "number" ? { active_s: nonNegInt(prev["active_s"]) } : {}),
       }) + "\n",
     );
   } catch {
