@@ -235,6 +235,12 @@ for f in $FILES; do
     mkdir -p "$REPO2/$(dirname "$f")"
     cp "$REPO_ROOT/$f" "$REPO2/$f"
 done
+# Guard-row fixtures (REL-GUARD): the real runner and selector, a stub row list.
+mkdir -p "$REPO2/eval/loki10" "$REPO2/tests"
+cp "$REPO_ROOT/scripts/impacted-gate.sh" "$REPO_ROOT/scripts/select-tests.sh" "$REPO2/scripts/"
+cp "$REPO_ROOT/eval/loki10/lib-tmp.sh" "$REPO2/eval/loki10/"
+printf 'shell_test\ttests/stub-guard.sh\n' > "$REPO2/scripts/global-guards.tsv"
+printf '#!/usr/bin/env bash\nexit "${GUARD_STUB_RC:-0}"\n' > "$REPO2/tests/stub-guard.sh"
 echo "0.0.1" > "$REPO2/loki-ts/dist/loki.js"
 # Pin a known baseline so `patch` produces a predictable, hardcodable new
 # version regardless of this real repo's current VERSION.
@@ -361,6 +367,30 @@ fi
 grep -qi "SKIPPING the green-CI release gate" "$WORK2/case.log" \
     && ok "escape hatch prints a loud warning" \
     || bad "escape hatch did not print the expected warning: $(cat "$WORK2/case.log")"
+
+echo
+echo "T12 -- ALLOW_RED still runs the global guard rows (REL-GUARD)"
+run_gate_case tests_red "LOKI_RELEASE_ALLOW_RED=1 GUARD_STUB_RC=1"
+rc12=$?
+[ "$rc12" -eq 3 ] && ok "red guard row aborts the release (exit 3)" || bad "expected exit 3, got $rc12 ($(tail -8 "$WORK2/case.log"))"
+grep -q "tests/stub-guard.sh" "$WORK2/case.log" \
+    && ok "red guard row is named in the output" || bad "row not named: $(tail -5 "$WORK2/case.log")"
+[ "$(snapshot2)" = "$CONTENT_BEFORE" ] && ok "red guard: VERSION and files untouched" || bad "red guard: files were modified"
+
+if run_gate_case tests_red "LOKI_RELEASE_ALLOW_RED=1 GUARD_STUB_RC=0"; then
+    ok "green guard row proceeds to the bump"
+else
+    bad "expected exit 0 with a green guard row, got $? ($(tail -3 "$WORK2/case.log"))"
+fi
+grep -q "1.2.4" "$REPO2/VERSION" && ok "green guard: VERSION bumped" || bad "green guard: VERSION not bumped"
+
+if run_gate_case tests_red "LOKI_RELEASE_ALLOW_RED=1 LOKI_RELEASE_SKIP_GUARDS=1 GUARD_STUB_RC=1"; then
+    ok "SKIP_GUARDS=1 proceeds despite a red row"
+else
+    bad "expected exit 0 with SKIP_GUARDS=1, got $?"
+fi
+grep -q "SKIPPING the global guard rows" "$WORK2/case.log" \
+    && ok "SKIP_GUARDS prints a loud warning" || bad "no skip warning"
 
 echo
 echo "==============================================================="
