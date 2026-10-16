@@ -20,6 +20,12 @@ case "$prompt" in
   *) stage=other ;;
 esac
 if [ -n "${ISSUE_REF_STUB_LOG:-}" ]; then echo "$stage" >> "$ISSUE_REF_STUB_LOG"; fi
+# Journey seam: while $ISSUE_REF_STUB_HANG_DIR/hang-<stage> exists, announce this process and block (the test kill -9s the run here).
+if [ -n "${ISSUE_REF_STUB_HANG_DIR:-}" ] && [ -f "${ISSUE_REF_STUB_HANG_DIR}/hang-${stage}" ]; then
+  echo "$$" > "${ISSUE_REF_STUB_HANG_DIR}/pid"
+  while [ -f "${ISSUE_REF_STUB_HANG_DIR}/hang-${stage}" ]; do sleep 0.2; done
+fi
+if [ "$stage" = "plan" ] && [ -n "${ISSUE_REF_STUB_PLAN_BRIEF_LOG:-}" ]; then printf '%s' "$prompt" > "$ISSUE_REF_STUB_PLAN_BRIEF_LOG"; fi
 if [ -n "${ISSUE_REF_STUB_ENV_LOG:-}" ]; then
   echo "$stage GH_TOKEN=${GH_TOKEN:-}" >> "$ISSUE_REF_STUB_ENV_LOG"
 fi

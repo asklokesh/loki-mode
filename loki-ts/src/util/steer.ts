@@ -207,11 +207,13 @@ export function staleReason(stale: readonly IntentRevision[]): string {
   return `operator steer rev ${late.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"`;
 }
 
-export function staleAtSeal(repoDir: string, ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: string; startMs: number }[] }): IntentRevision[] {
+export function staleAtSeal(repoDir: string, ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: string; startMs: number }[]; outputs?: () => { wall?: unknown } }): IntentRevision[] {
   const late: IntentRevision[] = [];
   consumeSteer(repoDir, process.env, () => new Date(), late);
   (ctx.intentRevisions ??= []).push(...late);
-  return [...new Set([...staleWallRevisions(ctx.intentRevisions, ctx.timeline), ...late])];
+  // P12-13: only a Wall that completed froze tests. A skipped or failed Wall (trivial tier) has none to go stale, so only unapplied steers refuse; ctx without outputs() keeps the timeline rule.
+  const frozen = ctx.outputs === undefined || ctx.outputs().wall !== undefined;
+  return [...new Set([...staleWallRevisions(ctx.intentRevisions, frozen ? ctx.timeline : []), ...late])];
 }
 
 export function steerBlock(text: string): string {
