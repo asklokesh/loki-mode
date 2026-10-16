@@ -248,6 +248,12 @@ t0=$SECONDS
 out="$(PATH="$C_DIR/pstub:$PATH" LOKI_DIR="$C_DIR/d3/.loki" LOKI_CHAT_START_WAIT=10 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-sleep" 2>&1)"
 el=$(( SECONDS - t0 ))
 if grep -q 'rc=1' <<<"$out" && grep -q 'not confirmed' <<<"$out" && [ "$el" -le 4 ]; then ok "P12-16d: a failed clock read ends the wait at once (${el}s of a 10s wait), never spinning on an empty clock"; else bad "P12-16d: clock failure waited ${el}s: $out"; fi
+# P12-16e: the initial start read fails (perl probe ok, first read exits 1): clock failure reported, not a false timeout.
+mkdir -p "$C_DIR/pstub2"
+printf '#!/bin/sh\nn=$(cat "%s/pcount2" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "%s/pcount2"\n[ "$n" -le 1 ] && exit 0\nexit 1\n' "$C_DIR" "$C_DIR" > "$C_DIR/pstub2/perl"
+chmod +x "$C_DIR/pstub2/perl"
+out="$(PATH="$C_DIR/pstub2:$PATH" LOKI_DIR="$C_DIR/d4/.loki" LOKI_CHAT_START_WAIT=10 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-sleep" 2>&1)"
+if grep -q 'rc=1' <<<"$out" && grep -q 'clock' <<<"$out" && ! grep -q 'not confirmed' <<<"$out"; then ok "P12-16e: a failed start clock read reports the clock failure, not a false timeout"; else bad "P12-16e: start clock failure output: $out"; fi
 while read -r sp; do kill "$sp" 2>/dev/null || true; done < "$C_DIR/sleep.pid"
 rm -rf "$C_DIR"
 
