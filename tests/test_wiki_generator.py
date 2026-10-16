@@ -294,5 +294,68 @@ class TestWikiGeneratorDiagramOutput(unittest.TestCase):
                              "diagram drifted across runs for " + sid)
 
 
+class TestWikiBatchedLeanCall(unittest.TestCase):
+    """S6: one (lean) model call per wiki regen, three sections out of it."""
+
+    def setUp(self):
+        self.root = _make_repo()
+        self.bin = tempfile.mkdtemp(prefix="loki-wiki-fakebin-")
+        self.log = os.path.join(self.bin, "calls.log")
+        self.reply = os.path.join(self.bin, "reply.txt")
+        fake = os.path.join(self.bin, "claude")
+        with open(fake, "w") as f:
+            f.write("#!/bin/bash\n"
+                    "if [ \"$1\" = \"--help\" ]; then\n"
+                    "  echo '--setting-sources --strict-mcp-config --mcp-config "
+                    "--disable-slash-commands --tools --bare'; exit 0; fi\n"
+                    "echo \"CALL $*\" | tr '\\n' ' ' | cut -c1-300 >> \"%s\"; echo >> \"%s\"\n"
+                    "cat \"%s\"\n" % (self.log, self.log, self.reply))
+        os.chmod(fake, 0o755)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.bin, ignore_errors=True)
+
+    def _gen(self, reply):
+        with open(self.reply, "w") as f:
+            f.write(reply)
+        env = dict(os.environ)
+        env.pop("LOKI_WIKI_LLM_STUB", None)
+        env.pop("ANTHROPIC_API_KEY", None)
+        env["LOKI_PROVIDER"] = "claude"
+        env["PATH"] = self.bin + os.pathsep + env.get("PATH", "")
+        r = subprocess.run([sys.executable, _GEN, "--root", self.root, "--quiet"],
+                           capture_output=True, text=True, env=env, cwd=self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = ([l for l in open(self.log).read().splitlines() if l.startswith("CALL")]
+                 if os.path.isfile(self.log) else [])
+        wiki = json.load(open(os.path.join(self.root, ".loki", "wiki", "wiki.json")))
+        return calls, {s["id"]: s for s in wiki["sections"]}
+
+    def test_one_call_three_sections(self):
+        calls, by_id = self._gen(
+            "=== SECTION: architecture overview ===\nOVERVIEW-TEXT\n"
+            "=== SECTION: key modules summary ===\nMODULES-TEXT\n"
+            "=== SECTION: data flow ===\nFLOW-TEXT\n")
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn("OVERVIEW-TEXT", by_id["architecture"]["body"])
+        self.assertIn("MODULES-TEXT", by_id["modules"]["body"])
+        self.assertIn("FLOW-TEXT", by_id["data-flow"]["body"])
+
+    def test_call_is_lean(self):
+        calls, _ = self._gen("=== SECTION: data flow ===\nFLOW\n")
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn("--strict-mcp-config", calls[0])
+        self.assertIn("--disable-slash-commands", calls[0])
+        self.assertNotIn("--bare", calls[0])
+
+    def test_missing_section_falls_back_without_second_call(self):
+        calls, by_id = self._gen("=== SECTION: data flow ===\nFLOW-ONLY\n")
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn("FLOW-ONLY", by_id["data-flow"]["body"])
+        self.assertIn("Entry points", by_id["architecture"]["body"])
+        self.assertEqual([s for s in by_id], ["architecture", "modules", "data-flow"])
+
+
 if __name__ == "__main__":
     unittest.main()

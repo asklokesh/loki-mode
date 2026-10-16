@@ -32694,7 +32694,32 @@ _docs_invoke_provider() {
             # not the workload that needs the top tier. Pinned to the same
             # default the review subcall uses (run.sh:13762), and overridable
             # for anyone who wants a different trade.
-            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p --model "${LOKI_DOCS_MODEL:-sonnet}" "$prompt" 2>/dev/null) || exit_code=$?
+            # S6 lean child: text-only role, so the lean flag set (from
+            # claude-flags.sh, lazily sourced) drops user hooks, MCP and tools.
+            # When the child ledger helper exists the call uses
+            # --output-format json so usage is recorded, then unwraps .result.
+            local _lean=() _lf _ledger=false
+            if ! declare -F loki_lean_child_flags >/dev/null 2>&1 \
+               && [ -f "${_LOKI_SCRIPT_DIR:-.}/lib/claude-flags.sh" ]; then
+                # shellcheck source=autonomy/lib/claude-flags.sh
+                . "${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" 2>/dev/null || true
+            fi
+            if declare -F loki_lean_child_flags >/dev/null 2>&1; then
+                while IFS= read -r _lf; do _lean+=("$_lf"); done < <(loki_lean_child_flags docs 2>/dev/null)
+            fi
+            declare -F loki_child_ledger_append >/dev/null 2>&1 && _ledger=true
+            local _fmt=()
+            [ "$_ledger" = true ] && _fmt=(--output-format json)
+            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p ${_lean[@]+"${_lean[@]}"} ${_fmt[@]+"${_fmt[@]}"} --model "${LOKI_DOCS_MODEL:-sonnet}" "$prompt" 2>/dev/null) || exit_code=$?
+            if [ "$_ledger" = true ] && [ -n "$result" ]; then
+                loki_child_ledger_append docs "$result" >/dev/null 2>&1 || true
+                result=$(printf '%s' "$result" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("result", ""))
+except Exception:
+    pass' 2>/dev/null)
+            fi
             ;;
         codex)
             result=$($t_prefix codex exec --sandbox workspace-write "$prompt" 2>/dev/null) || exit_code=$?
@@ -32762,13 +32787,19 @@ MANIFEST_EOF
 # --- loki docs generate ---
 _docs_generate() {
     local target_path="."
+    local docs_requested=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo "Usage: loki docs generate [path]"
+                echo "Usage: loki docs generate [--docs] [path]"
                 echo "Generate full documentation suite in .loki/docs/"
+                echo "  --docs   Generate even when LOKI_DOCS_TIER is small (explicit request)"
                 return 0
+                ;;
+            --docs)
+                docs_requested=true
+                shift
                 ;;
             -*)
                 log_error "Unknown option: $1"
@@ -32786,6 +32817,17 @@ _docs_generate() {
         return 1
     fi
     target_path="$(cd "$target_path" && pwd)"
+
+    # S6: a small-tier run (caller exports LOKI_DOCS_TIER) does not pay for the
+    # eight-doc suite unless docs were asked for explicitly.
+    case "${LOKI_DOCS_TIER:-}" in
+        small|simple)
+            if [ "$docs_requested" != true ]; then
+                log_info "Small tier: skipping the 8-doc suite (pass --docs to force)"
+                return 0
+            fi
+            ;;
+    esac
 
     local docs_dir="$target_path/.loki/docs"
     mkdir -p "$docs_dir"

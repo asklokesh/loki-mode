@@ -88,6 +88,50 @@ STALE_ENTRIES="$(comm -23 <(printf '%s\n' "$ALLOW_KEYS") <(printf '%s' "$USED" |
 [ -n "$STALE_ENTRIES" ] && echo "  [WARN] $(printf '%s\n' "$STALE_ENTRIES" | wc -l | tr -d ' ') allowlist entr(ies) no longer needed"
 
 echo
+echo "T4 -- S6: docs generate honors tier and lean flags"
+T4DIR="$(mktemp -d "${TMPDIR:-/tmp}/loki-docs-s6.XXXXXX")"
+trap 'rm -rf "$T4DIR"' EXIT
+mkdir -p "$T4DIR/bin" "$T4DIR/proj"
+cat > "$T4DIR/bin/claude" <<'FAKE'
+#!/bin/bash
+echo "CALL $*" >> "$T4_LOG"
+echo '{"result":"DOC-BODY","usage":{"input_tokens":1,"output_tokens":2}}'
+FAKE
+chmod +x "$T4DIR/bin/claude"
+awk '/^_docs_invoke_provider\(\) \{/{p=1} /^_docs_generate\(\) \{/{p=1} p{print} p&&/^}/{p=0}' \
+    "$REPO_ROOT/autonomy/loki" > "$T4DIR/fns.sh"
+(
+    export T4_LOG="$T4DIR/calls.log"
+    export PATH="$T4DIR/bin:$PATH"
+    export LOKI_PROVIDER=claude
+    export CYAN='' NC='' GREEN=''
+    log_info() { :; }; log_warn() { :; }; log_error() { :; }
+    _docs_scan_project() { :; }; _docs_build_context() { echo ctx; }
+    _docs_generate_template() { echo TEMPLATE; }
+    _docs_write_manifest() { :; }
+    # shellcheck disable=SC1090
+    . "$T4DIR/fns.sh"
+    cd "$T4DIR/proj" || exit 1
+    LOKI_DOCS_TIER=small _docs_generate "$T4DIR/proj" >/dev/null 2>&1
+    echo "skip_rc=$?" > "$T4DIR/out"
+    echo "skip_files=$(ls "$T4DIR/proj/.loki/docs" 2>/dev/null | wc -l | tr -d ' ')" >> "$T4DIR/out"
+    LOKI_DOCS_TIER=small _docs_generate --docs "$T4DIR/proj" >/dev/null 2>&1
+    echo "req_files=$(ls "$T4DIR/proj/.loki/docs" 2>/dev/null | wc -l | tr -d ' ')" >> "$T4DIR/out"
+    : > "$T4DIR/calls.log"
+    loki_lean_child_flags() { printf '%s\n' --strict-mcp-config --tools ""; }
+    loki_child_ledger_append() { echo "LEDGER $1 $2" >> "$T4DIR/ledger.log"; }
+    _docs_invoke_provider "hello" > "$T4DIR/invoke.out" 2>/dev/null
+)
+# shellcheck disable=SC1091,SC2154
+skip_rc=""; skip_files=""; req_files=""
+. "$T4DIR/out"
+if [ "$skip_rc" = "0" ] && [ "$skip_files" = "0" ]; then ok "small tier without --docs skips and writes nothing"; else bad "small tier did not skip (rc=$skip_rc files=$skip_files)"; fi
+if [ "${req_files:-0}" -ge 8 ]; then ok "small tier with --docs still generates the suite"; else bad "--docs produced ${req_files:-0} files"; fi
+if grep -q -- "--strict-mcp-config --tools" "$T4DIR/calls.log" 2>/dev/null; then ok "claude doc call carries lean flags"; else bad "lean flags missing: $(cat "$T4DIR/calls.log" 2>/dev/null)"; fi
+if grep -q "^DOC-BODY" "$T4DIR/invoke.out" 2>/dev/null; then ok "json result unwrapped to the doc body"; else bad "result not unwrapped: $(cat "$T4DIR/invoke.out" 2>/dev/null)"; fi
+if grep -q "^LEDGER docs " "$T4DIR/ledger.log" 2>/dev/null; then ok "ledger line appended for the docs phase"; else bad "no ledger line"; fi
+
+echo
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

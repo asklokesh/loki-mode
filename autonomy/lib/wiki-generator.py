@@ -260,8 +260,10 @@ def _data_flow_diagram(index, modules, entries):
     return "\n".join(lines)
 
 
-def _llm_prose(section, context, fallback):
-    """Get prose for a section from the LLM, or use the deterministic fallback."""
+def _llm_prose(section, context, fallback, prose=None):
+    """Prose for a section: pre-batched text if given, else the LLM, else fallback."""
+    if prose is not None:
+        return prose if prose.strip() else fallback
     prompt = (
         "You are documenting a software project for a team wiki. Write a clear, "
         "factual " + section + " section in markdown. Be concise (under 250 words). "
@@ -273,6 +275,44 @@ def _llm_prose(section, context, fallback):
     if out and out.strip():
         return out.strip()
     return fallback
+
+
+_BATCH_KEYS = ("architecture overview", "key modules summary", "data flow")
+_BATCH_MARK = "=== SECTION: "
+
+
+def _batch_prose(context):
+    """One LLM call for all three sections. Returns {key: prose}; missing keys
+    are absent so callers use their deterministic fallback (never a second call).
+    Output without any marker is taken as the overview only."""
+    prompt = (
+        "You are documenting a software project for a team wiki. Write three "
+        "clear, factual markdown sections, each under 250 words, in this exact "
+        "format. Each section starts on its own line with a marker line, then "
+        "prose:\n"
+        + "\n".join(_BATCH_MARK + k + " ===" for k in _BATCH_KEYS)
+        + "\nDo NOT use emojis. Do NOT use em dashes or en dashes. Do NOT "
+        "invent file paths. Output ONLY the three marked sections with prose "
+        "(no headings, no citations).\n\nPROJECT CONTEXT:\n" + context
+    )
+    out = invoke_llm(prompt, lean=True)
+    if not out or not out.strip():
+        return {}
+    found = {}
+    key = None
+    for line in out.splitlines():
+        t = line.strip()
+        if t.startswith(_BATCH_MARK) and t.endswith("==="):
+            name = t[len(_BATCH_MARK):-3].strip()
+            key = name if name in _BATCH_KEYS else None
+            if key:
+                found[key] = []
+        elif key:
+            found[key].append(line)
+    prose = {k: "\n".join(v).strip() for k, v in found.items() if "".join(v).strip()}
+    if not prose:
+        return {_BATCH_KEYS[0]: out.strip()}
+    return prose
 
 
 def _build_context(root, index, modules, entries):
@@ -296,14 +336,15 @@ def _build_context(root, index, modules, entries):
     return "\n".join(lines)
 
 
-def _section_overview(root, index, modules, entries, context):
+def _section_overview(root, index, modules, entries, context, batch=None):
     name = Path(root).name
     fallback = (
         "%s is a software project with %d indexed source files. "
         "Entry points: %s. The largest modules by size are listed below."
         % (name, len(index["files"]), ", ".join(entries) or "not detected")
     )
-    prose = _llm_prose("architecture overview", context, fallback)
+    prose = _llm_prose("architecture overview", context, fallback,
+                       None if batch is None else batch.get("architecture overview", ""))
     # Code-derived citations: the entry points + top modules (real files).
     citations = []
     for e in entries[:3]:
@@ -318,7 +359,7 @@ def _section_overview(root, index, modules, entries, context):
             "body": prose, "citations": citations, "diagram": diagram}
 
 
-def _section_modules(root, modules, context):
+def _section_modules(root, modules, context, batch=None):
     fallback_lines = ["The following modules carry most of the codebase:"]
     citations = []
     body_parts = []
@@ -326,6 +367,7 @@ def _section_modules(root, modules, context):
         "key modules summary",
         context,
         "Key modules of this project, with their primary definitions:",
+        None if batch is None else batch.get("key modules summary", ""),
     )
     body_parts.append(prose)
     body_parts.append("")
@@ -342,13 +384,14 @@ def _section_modules(root, modules, context):
             "body": "\n".join(body_parts), "citations": citations}
 
 
-def _section_data_flow(root, index, modules, entries, context):
+def _section_data_flow(root, index, modules, entries, context, batch=None):
     fallback = (
         "Execution begins at the entry point(s) (%s) and flows through the "
         "key modules. Trace a request from the entry file into the modules it "
         "imports to follow the data path." % (", ".join(entries) or "not detected")
     )
-    prose = _llm_prose("data flow", context, fallback)
+    prose = _llm_prose("data flow", context, fallback,
+                       None if batch is None else batch.get("data flow", ""))
     citations = [{"file": e, "line": 1} for e in entries[:4]]
     if not citations and index["files"]:
         citations = [{"file": index["files"][0], "line": 1}]
@@ -444,10 +487,11 @@ def main(argv=None):
     context = _build_context(root, index, modules, entries)
 
     log("generating sections (%d files indexed) ..." % len(index["files"]))
+    batch = _batch_prose(context)
     sections = [
-        _section_overview(root, index, modules, entries, context),
-        _section_modules(root, modules, context),
-        _section_data_flow(root, index, modules, entries, context),
+        _section_overview(root, index, modules, entries, context, batch),
+        _section_modules(root, modules, context, batch),
+        _section_data_flow(root, index, modules, entries, context, batch),
     ]
 
     # Enforce the grounding contract: validate every citation against disk.
