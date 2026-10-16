@@ -3,22 +3,34 @@
 // head drift (head_sha vs the repo HEAD). Fabricated success is TAMPERED; drift is UNCHECKED (the seal is intact but no longer describes the current state).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { readEvents } from "../engine10/events.ts";
+import type { EventEnvelope } from "../engine10/types.ts";
 
 const EMPTY_SHA = createHash("sha256").digest("hex");
 const sha = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
 export interface Drift { verdict: "TAMPERED" | "UNCHECKED"; reason: string }
 type Obj = Record<string, unknown>;
 
+/** The events the receipt hash actually covers: the line-aligned prefix of events.jsonl hashing to events_sha256 (verify_cmd checkEventLog's rule), cut at log.sealed.
+ *  Lines appended after seal are unbound and prove nothing. Null when no prefix matches (checkEventLog already reports that as TAMPERED). */
+function boundEvents(log: string, bound: string): EventEnvelope[] | null {
+  if (!existsSync(log)) return null;
+  const lines = readFileSync(log, "utf8").split("\n").filter((l) => l.trim() !== ""), h = createHash("sha256");
+  let n = -1;
+  for (let i = 0; i <= lines.length; i++) { if (h.copy().digest("hex") === bound) { n = i; break; } if (i < lines.length) h.update(lines[i] + "\n"); }
+  if (n < 0) return null;
+  const evs = lines.slice(0, n).flatMap((l) => { try { return [JSON.parse(l) as EventEnvelope]; } catch { return []; } });
+  const sealed = evs.findIndex((e) => e.type === "log.sealed");
+  return sealed >= 0 ? evs.slice(0, sealed) : evs;
+}
+
 /** A receipt whose bound log shows the verify stage ran must not claim a passing check the log never recorded as a test.result pass. Unbound receipts (no log at seal) are skipped. */
 function fabricatedPass(receiptPath: string, r: Obj): string | null {
   const bound = r["events_sha256"];
   if (typeof bound !== "string" || bound === EMPTY_SHA || !Array.isArray(r["checks"])) return null;
-  const log = join(dirname(receiptPath), "events.jsonl");
-  const events = readEvents(log);
-  if (!events.some((e) => e.stage === "verify")) return null; // the verify stage left no trace (hand-built or partial log): nothing to compare
+  const events = boundEvents(join(dirname(receiptPath), "events.jsonl"), bound);
+  if (!events || !events.some((e) => e.stage === "verify")) return null; // the verify stage left no trace (hand-built or partial log): nothing to compare
   const passed = new Set(events.filter((e) => e.type === "test.result" && e.data["result"] === "pass").map((e) => String(e.data["name"])));
   const missing = (r["checks"] as Obj[]).filter((c) => c?.["result"] === "pass" && !passed.has(String(c["name"]))).map((c) => String(c["name"]));
   return missing.length ? `receipt claims pass with no test.result pass in events.jsonl: ${missing.join(", ")}` : null;
@@ -36,7 +48,9 @@ function repoOf(receiptPath: string): string | null {
   return basename(runs) === "runs" && basename(dirname(runs)) === ".loki" ? dirname(dirname(runs)) : null;
 }
 
-export function sealDrift(receiptPath: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
+export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
+  let receiptPath = given;
+  try { receiptPath = realpathSync(given); } catch { /* keep the given path */ } // ./, ../ and symlinked dirs must not hide the .loki/runs layout
   const fab = fabricatedPass(receiptPath, r);
   if (fab) return { verdict: "TAMPERED", reason: fab };
   const task = (r["task"] ?? {}) as { source?: unknown; sha256?: unknown };

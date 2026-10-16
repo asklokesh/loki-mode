@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
 import { createHash, generateKeyPairSync, sign as nodeSign, type KeyObject } from "node:crypto";
 import { kidOf } from "../../src/engine10/stages/seal.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { computeReceiptHash, main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -954,6 +954,72 @@ describe("seal drift (P12-01)", () => {
       expect(r.out.includes("head drift")).toBe(true);
       process.env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"] = "1";
       expect((await verify(repo, "r-head")).code).toBe(0);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+});
+
+describe("seal drift review fixes (P12-01)", () => {
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  const vcs = (cwd: string, ...a: string[]): string => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd }).stdout.toString().trim();
+  let savedDrift: string | undefined;
+  beforeEach(() => { savedDrift = process.env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"]; delete process.env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"]; });
+  afterEach(() => { if (savedDrift === undefined) delete process.env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"]; else process.env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"] = savedDrift; });
+  function seal(repo: string, id: string, fields: Record<string, unknown>, log?: string): string {
+    const f: Record<string, unknown> = { ...baseReceiptFields(), run_id: id, ...fields };
+    const runDir = join(repo, ".loki", "runs", id);
+    mkdirSync(runDir, { recursive: true });
+    if (log !== undefined) { writeFileSync(join(runDir, "events.jsonl"), log); f["events_sha256"] = sha(log); }
+    writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...f, receipt_sha256: computeReceiptHash(f), verification: { jwt: null, kid: null } }));
+    return runDir;
+  }
+  async function verify(runsRoot: string, id: string): Promise<{ code: number; out: string }> {
+    const out: string[] = [], w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    try { return { code: await main([id, "--allow-unsigned"], { runsRoot }), out: out.join("") }; } finally { process.stdout.write = w; }
+  }
+  const ev = (seq: number, type: string, data: Record<string, unknown>, stage: string | null = null): string => JSON.stringify({ v: 1, seq, ts: "2026-10-15T00:00:00.000Z", run: "r", type, stage, data }) + "\n";
+  const unit = { name: "unit", cmd: "bun test", result: "pass", duration_s: 1 };
+
+  test("an honest receipt with a full-suite check and its test.result event is not TAMPERED", async () => {
+    const repo = tmpDir();
+    try {
+      const full = { name: "full suite: bun", cmd: "bun test", result: "pass", duration_s: 2 };
+      seal(repo, "r-full", { checks: [unit, full] }, ev(0, "run.started", {}) + ev(1, "test.result", unit, "verify") + ev(2, "test.result", full, "verify"));
+      expect((await verify(join(repo, ".loki", "runs"), "r-full")).code).toBe(0);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("a test.result line appended after the sealed prefix does not launder a fabricated pass", async () => {
+    const repo = tmpDir();
+    try {
+      const dir = seal(repo, "r-app", { checks: [unit] }, ev(0, "run.started", {}) + ev(1, "stage.started", {}, "verify"));
+      expect((await verify(join(repo, ".loki", "runs"), "r-app")).code).toBe(1);
+      writeFileSync(join(dir, "events.jsonl"), readFileSync(join(dir, "events.jsonl"), "utf8") + ev(2, "test.result", unit, "verify"));
+      const r = await verify(join(repo, ".loki", "runs"), "r-app");
+      expect(r.code).toBe(1);
+      expect(r.out.includes("claims pass")).toBe(true);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("a log with no verify-stage trace is not compared (the narrowing stays)", async () => {
+    const repo = tmpDir();
+    try {
+      seal(repo, "r-nov", { checks: [unit] }, ev(0, "run.started", {}));
+      expect((await verify(join(repo, ".loki", "runs"), "r-nov")).code).toBe(0);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("a ./ segment or a symlinked run dir in the receipt path still reaches the head check", async () => {
+    const repo = tmpDir();
+    try {
+      vcs(repo, "init", "-q"); writeFileSync(join(repo, "a"), "1"); vcs(repo, "add", "a"); vcs(repo, "commit", "-qm", "one");
+      const dir = seal(repo, "r-path", { head_sha: vcs(repo, "rev-parse", "HEAD") });
+      writeFileSync(join(repo, "a"), "2"); vcs(repo, "commit", "-qam", "two");
+      expect((await verify(join(repo, ".loki", "runs"), "r-path")).code).toBe(2); // control: plain path
+      expect((await verify("unused", `${repo}/.loki/./runs/r-path/receipt.json`)).code).toBe(2);
+      const lnk = join(repo, "lnk");
+      symlinkSync(dir, lnk);
+      expect((await verify("unused", join(lnk, "receipt.json"))).code).toBe(2);
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 });
