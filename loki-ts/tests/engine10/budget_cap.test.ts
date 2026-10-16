@@ -173,7 +173,7 @@ describe("group env carries the resolved cap to unit children", () => {
     expect(groupEnv({} as NodeJS.ProcessEnv, 0).LOKI_BUDGET_LIMIT).toBeUndefined();
   });
   test("supervisor hands the group the capped env, not process.env", () => {
-    expect(readFileSync(resolve(ROOT, "loki-ts/src/engine10/supervisor.ts"), "utf8")).toContain("maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd)");
+    expect(readFileSync(resolve(ROOT, "loki-ts/src/engine10/supervisor.ts"), "utf8")).toContain("maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd, repoDir)");
   });
 });
 
@@ -273,5 +273,47 @@ describe("budget stop survives a kill-and-rerun", () => {
   test("supervisor seeds the worker env and writes budget.json on BUDGET_STOP", () => {
     const src = readFileSync(resolve(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
     expect(src).toContain("LOKI_E10_SPENT_USD"); expect(src).toContain("writeBudgetStop(");
+  });
+});
+
+describe("P12-22r shared budget ledger across parallel units", () => {
+  const mk = () => mkdtempSync(join(tmpdir(), "p1222r-"));
+  const cost = (m: { emit: (t: never, s: never, d: Record<string, unknown>) => void }, usd: number) => m.emit("cost" as never, null as never, { usd });
+  test("two units sharing a ledger stop at the single cap", () => {
+    const d = mk();
+    try {
+      const env = { LOKI_E10_MAX_COST_USD: "1", LOKI_BUDGET_LEDGER: join(d, "l.ledger") } as NodeJS.ProcessEnv;
+      const a = capMeter((() => {}) as never, env), b = capMeter((() => {}) as never, env);
+      cost(a, 0.6); expect(a.over()).toBe(false); expect(b.over()).toBe(false);
+      cost(b, 0.6);
+      expect(a.over()).toBe(true); expect(b.over()).toBe(true);
+      expect(a.remaining()).toBe(0);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("without a ledger units keep private meters (unchanged)", () => {
+    const env = { LOKI_E10_MAX_COST_USD: "1" } as NodeJS.ProcessEnv;
+    const a = capMeter((() => {}) as never, env), b = capMeter((() => {}) as never, env);
+    cost(a, 0.6); cost(b, 0.6); expect(a.over()).toBe(false); expect(b.over()).toBe(false);
+  });
+  test("fail closed: unwritable ledger path stops the unit", () => {
+    const env = { LOKI_E10_MAX_COST_USD: "5", LOKI_BUDGET_LEDGER: "/nonexistent-p1222r/dir/x.ledger" } as NodeJS.ProcessEnv;
+    const m = capMeter((() => {}) as never, env);
+    expect(m.over()).toBe(true); expect(m.remaining()).toBe(0);
+  });
+  test("fail closed: ledger vanishing mid-run stops the unit", () => {
+    const d = mk();
+    try {
+      const f = join(d, "l.ledger"), m = capMeter((() => {}) as never, { LOKI_E10_MAX_COST_USD: "5", LOKI_BUDGET_LEDGER: f } as NodeJS.ProcessEnv);
+      expect(m.over()).toBe(false); rmSync(f); expect(m.over()).toBe(true);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("groupEnv exports one absolute ledger, keeps an existing one", () => {
+    const d = mk();
+    try {
+      const g = groupEnv({} as NodeJS.ProcessEnv, 5, d);
+      expect(g.LOKI_BUDGET_LEDGER && g.LOKI_BUDGET_LEDGER.startsWith(d)).toBe(true);
+      expect(groupEnv({ LOKI_BUDGET_LEDGER: "/x/y" } as NodeJS.ProcessEnv, 5, d).LOKI_BUDGET_LEDGER).toBe("/x/y");
+      expect(groupEnv({} as NodeJS.ProcessEnv, 0, d).LOKI_BUDGET_LEDGER).toBeUndefined();
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

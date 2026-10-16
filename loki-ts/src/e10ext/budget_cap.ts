@@ -4,7 +4,7 @@
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import { join } from "node:path"; import { capability } from "../providers/provider_guard.ts";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import { join, resolve } from "node:path"; import { capability } from "../providers/provider_guard.ts";
 export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default per-run cap lives in loki-ts/data/model-pricing.json, read by runner/budget.ts
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
 export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
@@ -29,13 +29,35 @@ export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.Proc
 export function capNote(usd: number, source: CapSource): string {
   if (usd <= 0) return "no dollar cap (subscription)";
   return `cap $${usd.toFixed(2)} (${source})`; }
-/** Env for group/unit children: the resolved run cap becomes their LOKI_BUDGET_LIMIT, so a flag cap cannot be re-defaulted per unit. */
-export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number): NodeJS.ProcessEnv { return capUsd > 0 ? { ...env, LOKI_BUDGET_LIMIT: String(capUsd) } : env; }
+/** Env for group/unit children: the resolved run cap becomes their LOKI_BUDGET_LIMIT, so a flag cap cannot be re-defaulted per unit.
+ *  P12-22r: with repoDir, also exports ONE absolute LOKI_BUDGET_LEDGER (kept if already set) so parallel units in separate worktrees share a single cap. */
+export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number, repoDir?: string): NodeJS.ProcessEnv {
+  if (!(capUsd > 0)) return env;
+  const out: NodeJS.ProcessEnv = { ...env, LOKI_BUDGET_LIMIT: String(capUsd) };
+  if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch { /* no ledger: units keep the per-unit cap */ } }
+  return out;
+}
+/** P12-22r: shared ledger. One JSON line per priced cost, written with a single O_APPEND write (atomic for small lines). Sum = spend of every unit. */
+export function ledgerSum(path: string): number | null {
+  try { let t = 0; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const u = (JSON.parse(l) as { usd?: unknown }).usd; if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
+}
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
 export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
-  const m = costMeter(parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0, Number(env.LOKI_E10_SPENT_USD)); // LOKI_E10_SPENT_USD: prior spend on this task, so kill-and-rerun cannot reset the cap
-  const emit = ((type: string, stage: never, data: Record<string, unknown>) => { if (type === "cost") m.add(data.usd); (raw as unknown as (...a: unknown[]) => void)(type, stage, data); }) as unknown as E;
-  return { emit, over: m.over, remaining: m.remaining };
+  const capUsd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? 0, seed = Number(env.LOKI_E10_SPENT_USD);
+  const m = costMeter(capUsd, seed); // LOKI_E10_SPENT_USD: prior spend on this task, so kill-and-rerun cannot reset the cap
+  const ledger = env.LOKI_BUDGET_LEDGER ? resolve(env.LOKI_BUDGET_LEDGER) : "";
+  let broken = false; // P12-22r: a set but unusable ledger fails closed (stop), never a private ledger
+  if (ledger) { try { appendFileSync(ledger, ""); readFileSync(ledger); } catch { broken = true; } }
+  const base = Number.isFinite(seed) && seed > 0 ? seed : 0;
+  const spent = (): number | null => { const t = ledgerSum(ledger); return t === null ? null : base + t; };
+  const emit = ((type: string, stage: never, data: Record<string, unknown>) => {
+    if (type === "cost") { m.add(data.usd); if (ledger && typeof data.usd === "number" && data.usd > 0) { try { appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: data.usd }) + "\n"); } catch { broken = true; } } }
+    (raw as unknown as (...a: unknown[]) => void)(type, stage, data);
+  }) as unknown as E;
+  if (!ledger) return { emit, over: m.over, remaining: m.remaining };
+  const over = (): boolean => { if (broken) return true; const s = spent(); if (s === null) { broken = true; return true; } return capUsd > 0 && s >= capUsd; };
+  const remaining = (): number | null => { if (capUsd <= 0) return null; const s = broken ? null : spent(); return s === null ? 0 : Math.max(capUsd - s, 0); };
+  return { emit, over, remaining };
 }
 /** Running priced total for the worker; call with each emitted cost event's usd. */
 export function costMeter(capUsd: number, seedUsd = 0): { add(usd: unknown): void; over(): boolean; remaining(): number | null } {
