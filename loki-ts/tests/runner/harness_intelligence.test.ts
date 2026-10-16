@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, type BaselineRunner } from "../../src/runner/repo_profile.ts";
+import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -761,13 +761,22 @@ describe("repo baseline profile (REPOMEM)", () => {
       expect(briefContext(ctx, { select: () => [], cmd: () => ["x", [], undefined, "."] })).toContain(brief);
       expect(profileBrief(repo({ "README.md": "x" }))).toBe("");
     }, 60_000);
-    test("loki doctor --repo prints the profile read-only, --json prints it raw; an absent profile is stated", async () => {
+    test("loki doctor --repo prints the profile, builds it on demand, --json prints it raw; --fix refreshes it", async () => {
       const d = repo(NODE), cwd = process.cwd(), chunks: string[] = [], w = process.stdout.write.bind(process.stdout);
       const cap = async (a: string[]): Promise<string> => { chunks.length = 0; process.stdout.write = ((s: string) => (chunks.push(String(s)), true)) as typeof process.stdout.write; try { await runDoctor(a); } finally { process.stdout.write = w; } return chunks.join(""); };
       try {
         process.chdir(d);
-        expect(await cap(["--repo"])).toContain("none yet");
-        ensureProfile(d);
+        process.env.LOKI_REPO_BASELINE = "0";
+        try { expect(await cap(["--repo"])).toContain("none yet"); } finally { delete process.env.LOKI_REPO_BASELINE; }
+        expect(loadProfile(d)).toBeNull();
+        const built = await cap(["--repo"]); // FV-readiness-env-2: an absent profile is built on demand
+        expect(built).toContain("npm test");
+        expect(built).toContain("Readiness:");
+        expect(loadProfile(d)!.baseline.command).toBe("npm test");
+        rmSync(commandProfilePath(d));
+        const fixed = await cap(["--repo", "--fix"]); // --fix means build/refresh the profile
+        expect(fixed).toContain("baseline:");
+        expect(loadProfile(d)).not.toBeNull();
         const before = readFileSync(commandProfilePath(d), "utf8");
         const text = await cap(["--repo"]);
         expect(text).toContain("npm test");
@@ -778,12 +787,62 @@ describe("repo baseline profile (REPOMEM)", () => {
     }, 60_000);
   });
 
+  describe("repoReadiness (FV-readiness-env-1)", () => {
+    const base = (over: Partial<CommandProfile["baseline"]> = {}): CommandProfile["baseline"] => ({ ran: true, command: "npm test", exit_code: 0, duration_s: 1, timed_out: false, failing_ids: [], attributable: true, ...over });
+    const cmd = (kind: ProfileCommand["kind"], validated: boolean | null = true): ProfileCommand => ({ kind, cmd: `run ${kind}`, source: "package.json", validated, exit_code: 0, duration_s: 1, failing_ids: [] });
+    const prof = (commands: ProfileCommand[], baseline = base()): CommandProfile => ({ version: 1, revision: "abc", manifest_hash: "h", created_at: "t", commands, baseline });
+    const all = [cmd("test"), cmd("lint"), cmd("typecheck"), cmd("build")];
+    test("clean profile scores 100; each gap costs points and carries a fix", () => {
+      expect(repoReadiness(prof(all))).toMatchObject({ score: 100, grade: "A", findings: [] });
+      const none = repoReadiness(prof([cmd("lint"), cmd("typecheck"), cmd("build")], base({ ran: false })));
+      expect(none.score).toBe(70);
+      expect(none.findings.map((f) => f.id)).toContain("no-test-command");
+      expect(none.findings.every((f) => f.fix.length > 0 && f.message.length > 0)).toBe(true);
+      const bare = repoReadiness(prof([cmd("test")]));
+      expect(bare.score).toBe(75);
+      expect(bare.findings.map((f) => f.id)).toEqual(expect.arrayContaining(["no-lint", "no-typecheck", "no-build"]));
+    });
+    test("red baseline names the failing ids; unattributable and timed-out baselines are flagged", () => {
+      const red = repoReadiness(prof(all, base({ exit_code: 1, failing_ids: ["a", "b"] })));
+      expect(red.score).toBe(80);
+      const f = red.findings.find((x) => x.id === "baseline-red")!;
+      expect(f.message).toContain("2");
+      expect(f.fix).toContain("will not blame these on your change");
+      expect(repoReadiness(prof(all, base({ timed_out: true, attributable: false }))).findings.map((x) => x.id)).toContain("baseline-unattributable");
+      expect(repoReadiness(prof([{ ...cmd("test"), validated: false }, cmd("lint"), cmd("typecheck"), cmd("build")], base({ attributable: false }))).findings.map((x) => x.id)).toContain("command-not-runnable");
+    });
+    test("host not ready caps the score and surfaces the host fix", () => {
+      const r = repoReadiness(prof(all), { firstTaskReady: false, fix: "npm install -g @anthropic-ai/claude-code" });
+      expect(r.score).toBeLessThanOrEqual(40);
+      expect(r.findings.find((x) => x.id === "host-not-ready")!.fix).toContain("claude-code");
+    });
+    test("renderProfile and doctor --repo --json carry readiness", async () => {
+      const text = renderProfile(prof([cmd("test")]));
+      expect(text).toContain("Readiness: 75/100 (C)");
+      expect(text).toContain("Fix:");
+      expect(renderProfile(prof(all))).toContain("Readiness: 100/100 (A)");
+      const d = repo(NODE), cwd = process.cwd(), chunks: string[] = [], w = process.stdout.write.bind(process.stdout);
+      try {
+        process.chdir(d); ensureProfile(d);
+        process.stdout.write = ((s: string) => (chunks.push(String(s)), true)) as typeof process.stdout.write;
+        try { await runDoctor(["--repo", "--json"]); } finally { process.stdout.write = w; }
+        const j = JSON.parse(chunks.join(""));
+        expect(j.baseline.command).toBe("npm test");
+        expect(typeof j.readiness.score).toBe("number");
+        expect(Array.isArray(j.readiness.findings)).toBe(true);
+      } finally { process.chdir(cwd); }
+    }, 60_000);
+  });
+
   describe("intake wiring", () => {
     const ictx = (d: string): RunContext => ({ runId: "e10-t", repoDir: d, runDir: join(d, ".loki", "runs", "e10-t"), baseSha: "", branch: "loki/e10-t", provider: "claude", model: "m", deep: false, capS: 900, emit: () => {},
       sessions: { run() { throw new Error("no session"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] }, cost: {}, clock: { now: () => Date.now() }, outputs: () => ({}) }) as unknown as RunContext;
     test("intake writes the profile on the untouched tree and a second intake reuses it; LOKI_REPO_BASELINE=0 skips it", async () => {
       const d = repo(NODE);
-      expect((await runIntake(ictx(d), new AbortController().signal, { taskText: "t" })).status).toBe("completed");
+      const errs: string[] = [], we = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((s: string) => (errs.push(String(s)), true)) as typeof process.stderr.write;
+      try { expect((await runIntake(ictx(d), new AbortController().signal, { taskText: "t" })).status).toBe("completed"); } finally { process.stderr.write = we; }
+      expect(errs.join("")).toMatch(/Readiness: \d+\/100 \([A-F]\)/); // FV-readiness-env-3: loki start surfaces the score
       const p = loadProfile(d)!;
       expect(p.baseline.failing_ids).toContain("old bug");
       expect(git(d, ["status", "--porcelain", "--untracked-files=no"])).toBe("");

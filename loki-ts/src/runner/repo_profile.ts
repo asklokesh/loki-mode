@@ -405,10 +405,35 @@ export function profileBrief(repoDir: string): string {
   return ["Repo commands (from the repo's manifests, do not rediscover):", ...lines, ...(base ? [base] : [])].join("\n");
 }
 
-export function renderProfile(p: CommandProfile | null): string {
-  if (!p) return "repo profile: none yet (built on the first `loki start` in this repo)\n";
+export interface ReadinessFinding { id: string; severity: "high" | "medium" | "low"; message: string; fix: string }
+export interface Readiness { score: number; grade: "A" | "B" | "C" | "D" | "F"; findings: ReadinessFinding[] }
+export interface ReadinessHost { firstTaskReady: boolean; fix?: string | null }
+
+/** Pure score of how ready a repo is for a verified run, from what the profile already recorded. 100 minus a cost per gap; a host that cannot run a first task caps it at 40. */
+export function repoReadiness(p: CommandProfile, host?: ReadinessHost): Readiness {
+  const findings: ReadinessFinding[] = [];
+  let score = 100;
+  const add = (cost: number, f: ReadinessFinding): void => { score -= cost; findings.push(f); };
+  const has = (k: CmdKind): boolean => p.commands.some((c) => c.kind === k);
+  const b = p.baseline;
+  if (!has("test")) add(30, { id: "no-test-command", severity: "high", message: "No test command found in the repo manifests.", fix: "Add a test script (for example `npm test`, `pytest`, `go test ./...`) so changes can be verified." });
+  else if (!b.ran || b.timed_out || !b.attributable) add(15, { id: "baseline-unattributable", severity: "medium", message: `Baseline test run is not usable${b.reason ? ` (${b.reason})` : b.ran ? "" : " (not run)"}.`, fix: "Make the test command runnable from the repo root and finish within the baseline timeout so failures can be attributed." });
+  else if (b.failing_ids.length > 0) add(20, { id: "baseline-red", severity: "medium", message: `Baseline is red: ${b.failing_ids.length} test(s) already fail before any change.`, fix: "Fix or quarantine them; until then `loki start` will not blame these on your change." });
+  if (!has("lint")) add(10, { id: "no-lint", severity: "low", message: "No lint command found.", fix: "Add a lint script to the manifest." });
+  if (!has("typecheck")) add(10, { id: "no-typecheck", severity: "low", message: "No typecheck command found.", fix: "Add a typecheck script (for example `tsc --noEmit`, `mypy`) to the manifest." });
+  if (!has("build")) add(5, { id: "no-build", severity: "low", message: "No build command found.", fix: "Add a build script to the manifest." });
+  for (const c of p.commands) if (c.validated === false) add(5, { id: "command-not-runnable", severity: "medium", message: `${c.kind} command \`${c.cmd}\` could not run${c.note ? ` (${c.note})` : ""}.`, fix: `Install its dependencies or correct the command in ${c.source}.` });
+  if (host && !host.firstTaskReady) { score = Math.min(score, 40); findings.push({ id: "host-not-ready", severity: "high", message: "This machine cannot run a first task yet.", fix: host.fix ?? "Run `loki doctor --requirements` and follow its fixes." }); }
+  score = Math.max(0, Math.min(100, score));
+  return { score, grade: score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 50 ? "D" : "F", findings };
+}
+
+export const readinessLines = (r: Readiness): string[] => [`  Readiness: ${r.score}/100 (${r.grade})`, ...(r.findings.length ? ["  Fix:", ...r.findings.map((f) => `    - ${f.fix}`)] : [])];
+
+export function renderProfile(p: CommandProfile | null, host?: ReadinessHost): string {
+  if (!p) return "repo profile: none yet (run `loki doctor --repo` to build it; LOKI_REPO_BASELINE=0 disables building)\n";
   const rows = p.commands.map((c) => `  ${c.kind.padEnd(9)} ${c.cmd}  [${c.source}]  ${c.validated === true ? `validated exit=${c.exit_code} ${c.duration_s}s` : c.validated === false ? `not runnable${c.note ? `: ${c.note}` : ""}` : "not executed"}`);
   const b = p.baseline;
   const bl = b.ran ? `${b.command} exit=${b.exit_code}${b.timed_out ? " (timed out)" : ""}, ${b.failing_ids.length} failing id(s)${b.attributable ? "" : `, not attributable${b.reason ? ` (${b.reason})` : ""}`}` : `not run (${b.reason ?? "unknown"})`;
-  return [".loki/state/repo-profile.json", `  revision ${p.revision.slice(0, 12)}  manifest ${p.manifest_hash.slice(0, 12)}  built ${p.created_at}`, ...rows, `  baseline: ${bl}`].join("\n") + "\n";
+  return [".loki/state/repo-profile.json", `  revision ${p.revision.slice(0, 12)}  manifest ${p.manifest_hash.slice(0, 12)}  built ${p.created_at}`, ...rows, `  baseline: ${bl}`, ...readinessLines(repoReadiness(p, host))].join("\n") + "\n";
 }

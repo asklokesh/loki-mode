@@ -146,6 +146,14 @@ else
     bad "C3: MiroFish network probe is NOT bounded with a timeout"
 fi
 
+# --- FV-readiness-env-3: loki chat reaches repo readiness -----------------------
+CHAT_SH="$REPO_ROOT/autonomy/lib/chat.sh"
+if grep -q '^  /doctor \[--json\]' "$CHAT_SH" && grep -Eq '/doctor\|/ready\)' "$CHAT_SH" && grep -q '_chat_do "\$loki" doctor --repo' "$CHAT_SH"; then
+    ok "FV-readiness-env-3: chat /doctor (alias /ready) is listed in /help and delegates to doctor --repo"
+else
+    bad "FV-readiness-env-3: chat.sh missing /doctor help line or doctor --repo delegation"
+fi
+
 # --- Cleanup ------------------------------------------------------------------
 rm -rf "$(dirname "$SANDBOX_BIN")" 2>/dev/null || true
 

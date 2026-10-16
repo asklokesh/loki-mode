@@ -7,7 +7,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | --- | --- |
 | `loki version` | Show version |
 | `loki status` | Show current run status |
-| `loki doctor` | System prerequisites health check |
+| `loki doctor` | System prerequisites health check; --json, --fix, --requirements, --repo (repo profile with a 0-100 readiness score and fixes) |
 | `loki provider` | Show, list or set the AI provider |
 | `loki provider show` | Show current provider |
 | `loki provider list` | List providers and install status |
