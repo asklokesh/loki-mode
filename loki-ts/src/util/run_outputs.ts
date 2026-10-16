@@ -6,14 +6,16 @@
 //   plan.plan / plan.relevant_files <- plan stage.completed, else plan-output.txt
 //   verify.changed_files / checks   <- verify stage.completed (the diff and the evidence)
 //   wall.files / wall.base_run      <- wall stage.completed
-import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fold, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { noteOf } from "./base_guard.ts";
+import { redactSecrets } from "./redact.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 const REVERTED = "unrelated edit reverted:";
@@ -56,16 +58,49 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
   return out;
 }
 
+/** Work-item state (docs/v10/ENGINE.md "Work-item state"); lives here, not in engine10/events.ts, to keep the core line budget. */
+export type WorkItemState =
+  | "received" | "prepared" | "planned" | "executing" | "validating" | "ready_to_ship" | "completed"
+  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled";
+export const STALE_S = 30 * 60;
+
+/** The one work-item vocabulary (docs/v10/ENGINE.md "Work-item state"). Pure over the event log. Terminal states come only from run.completed;
+ *  `nowMs` (optional) enables "stalled" for an unfinished run with no events for STALE_S. */
+export function workItemState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
+  const done = events.findLast((e) => e.type === "run.completed");
+  if (done) {
+    const v = done.data.verdict;
+    if (done.data.cancelled === true) return "cancelled";
+    if (v === "SPEC_CONFLICT") return "waiting_for_input";
+    if (v === "FAILED" || v === "PARTIAL") return events.some((e) => e.type === "cap.hit") ? "budget_stopped" : v === "FAILED" ? "failed" : "completed";
+    return "completed";
+  }
+  if (nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) return "stalled";
+  const seen = new Set<string>(), finished = new Set<string>();
+  for (const e of events) {
+    if (e.stage === null) continue;
+    seen.add(e.stage);
+    if (e.type === "stage.completed") finished.add(e.stage);
+  }
+  if (events.some((e) => e.type === "receipt.sealed")) return "ready_to_ship";
+  if (finished.has("implement") || ["verify", "fix", "commit", "seal", "pr", "deep"].some((s) => seen.has(s))) return "validating";
+  if (seen.has("implement")) return "executing";
+  if (finished.has("plan") || seen.has("wall")) return "planned";
+  if (finished.has("intake")) return "prepared";
+  return "received";
+}
+
 // RECOVERY: find an interrupted engine10 run, name the phase it died in, and resume the publish phase without
 // duplicating a side effect (design: docs/v10/ENGINE.md "Recovery of an interrupted run").
 export type Phase = "implement" | "verify" | "publish" | "done";
 
 /** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
 export function phaseOf(events: readonly EventEnvelope[]): Phase {
-  if (events.some((e) => e.type === "run.completed" || e.type === "pr.opened")) return "done";
-  if (events.some((e) => e.type === "receipt.sealed")) return "publish";
-  const completed = new Set(events.filter((e) => e.type === "stage.completed").map((e) => String(e.stage)));
-  return completed.has("implement") ? "verify" : "implement";
+  if (events.some((e) => e.type === "pr.opened")) return "done";
+  const s = workItemState(events);
+  if (s === "ready_to_ship") return "publish";
+  if (s === "validating") return "verify";
+  return s === "received" || s === "prepared" || s === "planned" || s === "executing" ? "implement" : "done";
 }
 
 export interface Interrupted { runId: string; phase: Phase; events: EventEnvelope[]; task: string | null }
@@ -123,7 +158,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   log.append("pr.opened", "pr", { url: d.pr_url, draft: d.draft === true, existing: d.existing ?? null });
   log.append("run.completed", null, { verdict, pr_url: d.pr_url, not_proven: notProven, resumed: true });
   log.sealLog();
-  out(`resumed phase: publish (run ${it.runId}); receipt reused; PR ${d.pr_url}\n`);
+  out(`resumed phase: publish (run ${it.runId}); receipt reused; PR ${d.existing === true ? "reused " : ""}${d.pr_url}\n`);
   return 0;
 }
 
@@ -165,11 +200,60 @@ export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
 }
 
 // Moved from engine10/supervisor.ts (core line budget); supervisor re-exports both.
+/** The policies file policyGate reads (first of repo .loki, then the data dir; json before yaml), or null when there is none. */
+export function policyFile(repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
+  for (const d of [join(repoDir, ".loki"), dataDir]) for (const f of ["policies.json", "policies.yaml"]) if (existsSync(join(d, f))) return join(d, f);
+  return null;
+}
+/** run.started intent record: who asked (LOKI_ACTOR, else the repo user.name), under which policy (sha256 of the policies file, null when none) and,
+ *  for `loki answer`, which BLOCKED run this run resolves (LOKI_PARENT_RUN) and the sha256 of the answer. Redacted; absent keys stay null. */
+export function runIntent(repoDir: string, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  let actor = (env.LOKI_ACTOR ?? "").trim();
+  if (!actor) { try { actor = safeGit(repoDir, ["config", "user.name"]).trim(); } catch { /* no identity configured */ } }
+  const pf = policyFile(repoDir, env);
+  let policy: string | null = null;
+  if (pf) { try { policy = createHash("sha256").update(readFileSync(pf)).digest("hex"); } catch { /* unreadable: leave null */ } }
+  const parent = /^[A-Za-z0-9._-]{1,128}$/.test(env.LOKI_PARENT_RUN ?? "") ? env.LOKI_PARENT_RUN! : null;
+  const ans = /^[0-9a-f]{64}$/.test(env.LOKI_ANSWER_SHA ?? "") ? env.LOKI_ANSWER_SHA! : null;
+  return { actor: actor ? redactSecrets(actor).slice(0, 200) : null, policy_revision: policy, parent_run: parent, answered_run: parent, answer_sha256: parent ? ans : null };
+}
+export const STATUS_MARKER = "<!-- loki-status -->";
+const plain = (t: string): string => t.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/[<>`@]/g, " ").slice(0, 500); // a reason can echo worker text: no markup, no mentions
+/** The single status comment an issue run keeps current (FV-gh-steer-3). Built only from harness-owned event fields and the PR url; the only worker-derived text is the
+ *  blocked/failed reason, flattened by `plain`. `steerRevs` counts operator revisions consumed since this run started. */
+export function issueStatusBody(events: readonly EventEnvelope[], o: { runId: string; steerRevs: number; prUrl?: string | null; outcome?: string | null; reason?: string | null }): string {
+  const planned = events.some((e) => e.type === "stage.completed" && e.stage === "plan");
+  const lines = [STATUS_MARKER, `Loki run \`${o.runId.replace(/[^A-Za-z0-9._-]/g, "")}\``, "", `State: ${o.outcome ?? workItemState(events)}`, `Plan: ${planned ? "ready" : "pending"}`];
+  if (o.steerRevs > 0) lines.push(`Operator steers applied: ${o.steerRevs}`);
+  if (o.prUrl) lines.push(`Pull request: ${o.prUrl}`);
+  if (o.reason) lines.push("", `${o.outcome === "BLOCKED" ? "Question" : "Reason"}: ${plain(o.reason)}`);
+  return `${lines.join("\n")}\n`;
+}
+export type StatusExtra = { prUrl?: string | null; outcome?: string | null; reason?: string | null };
+/** Projector for the issue status comment: each call re-reads the run's events, renders the body and upserts it through `issue-comment --update`.
+ *  Calls are serialised (two in flight would both see no comment and create twice) and an unchanged body is not re-posted. */
+export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv; origin?: string | null; repoDir: string; runDir: string; runId: string; issueRef: string; eventsPath: string }): (x?: StatusExtra) => Promise<{ argv: string[]; ok: boolean } | null> {
+  let chain: Promise<unknown> = Promise.resolve(), last = "";
+  const env = o.origin ? { ...o.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: o.origin } : o.env; // engine10-push.sh refuses an unpinned origin
+  const argvOf = (bodyFile: string): string[] => ["issue-comment", "--update", o.issueRef, bodyFile];
+  const once = async (x: StatusExtra): Promise<{ argv: string[]; ok: boolean } | null> => {
+    const events = readEvents(o.eventsPath), since = Date.parse(events[0]?.ts ?? "") || 0;
+    let revs = 0;
+    try { for (const l of readFileSync(join(o.repoDir, ".loki", "intent-revisions.jsonl"), "utf8").split("\n")) if (l) { try { if (Date.parse(String((JSON.parse(l) as { consumed_at?: unknown }).consumed_at)) >= since) revs++; } catch { /* torn line */ } } } catch { /* no steers */ }
+    const body = issueStatusBody(events, { runId: o.runId, steerRevs: revs, ...x }), bodyFile = join(o.runDir, "status-comment.md"), argv = argvOf(bodyFile);
+    if (body === last) return { argv, ok: true };
+    mkdirSync(o.runDir, { recursive: true }); writeFileSync(bodyFile, body);
+    const ok = await new Promise<boolean>((res) => { execFile("bash", [o.pushSh, ...argv], { env }, (err) => res(!err)); });
+    if (ok) last = body;
+    return { argv, ok };
+  };
+  return (x = {}) => { const r = chain.then(() => once(x), () => once(x)); chain = r.catch(() => null); return r.catch(() => null); };
+}
 export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
 /** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
 export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
-  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
-  if (![join(repoDir, ".loki"), dataDir].some((d) => existsSync(join(d, "policies.json")) || existsSync(join(d, "policies.yaml")))) return { decision: "allow", reason: "no policy file" };
+  if (policyFile(repoDir, env) === null) return { decision: "allow", reason: "no policy file" };
   if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
   if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
   const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };

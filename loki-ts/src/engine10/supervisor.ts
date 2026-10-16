@@ -31,7 +31,7 @@ import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine } from "../util/base_guard.ts";
-import { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
+import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
@@ -60,7 +60,7 @@ export type PrStep = (p: {
 }) => Promise<PrOutcome | null>;
 // Backstop fallback for a FAILED run with no PR (no diff, or no remote): on an issue run, posts a comment naming the reason instead of vanishing.
 export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string; prUrl?: string | null }) => Promise<{ argv: string[]; ok: boolean } | null>;
-
+export type StatusStep = (p: { prUrl?: string | null; outcome?: string; reason?: string }) => Promise<{ argv: string[]; ok: boolean } | null>; // FV-gh-steer-3: upserts the one status comment on the issue
 export interface SupervisorOptions {
   runId: string;
   repoDir: string;
@@ -68,7 +68,7 @@ export interface SupervisorOptions {
   env?: NodeJS.ProcessEnv; // defaults to process.env; never mutated
   started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, issue_ref, ...)
   pr?: PrStep; deepArgv?: string[]; // pr absent means no PR; deepArgv absent means no detached deep verify after pr.opened
-  comment?: CommentStep; // absent means no issue-comment fallback (a FAILED, no-diff issue run then only prints)
+  comment?: CommentStep; status?: StatusStep; // comment absent = no issue-comment fallback (a FAILED, no-diff issue run then only prints); status (issue runs) replaces it, the failure reason rides in the status comment
   capCeilingS?: number; // FC-21b: the backstop is set here (the most the worker's resized cap can reach), not at the initial cap
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
@@ -181,24 +181,25 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     if (out?.url) {
       prUrl = out.url;
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
-      await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
+      await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
       if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
   const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
-  const outcome: Outcome = cancelled ? "CANCELLED" : outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED";
+  const outcome: Outcome = cancelled ? "CANCELLED" : outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED"; let statusReason: string | undefined;
   if (blocked || (verdict === "FAILED" && prUrl === null && !cancelled)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
     const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
     if (blocked) await slackEvent(env, "blocked", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), question: reason }); // D51-A4
-    const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== "";
-    if (isIssueWithRef && opts.comment) {
+    const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== ""; if (opts.status) statusReason = reason;
+    if (isIssueWithRef && opts.comment && !opts.status) {
       const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason, prUrl });
       log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
     } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
+  if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, reason: statusReason ?? String(outcome) }); }
   log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
   log.sealLog();
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
@@ -307,12 +308,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const reqOnce = async (evs: ReturnType<typeof readEvents>): Promise<NonNullable<typeof reqMap> | null> => { if (reqMap === undefined) { const rq = await import("../features/contract.ts"); reqMap = rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, evs); } return reqMap; }; // also removes a prior run's stale map when this run has no requirements
   const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), capS = sized?.capS ?? DEEP_CAP_S;
   if (sized) { env.LOKI_E10_CAP_S = String(capS); if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; } // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
+  const statusStep = noPr || !ISSUE_RE.test(task) ? undefined : (await import("../util/run_outputs.ts")).issueStatusProjector({ pushSh: (await import("./stages/pr.ts")).DEFAULT_PUSH_SH, env, origin: readOriginUrl(repoDir), repoDir, runDir, runId, issueRef: task, eventsPath }), stopPlan = statusStep ? tail(eventsPath, (e) => { if (e.type === "stage.completed" && e.stage === "plan") void statusStep(); }, { intervalMs: 500 }) : () => {};
   const res = await runSupervisor({
     runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
-    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],
+    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model], status: statusStep,
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
-      model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
+      model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
       ...(downgrades.length ? { downgrades } : {}),
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
@@ -339,11 +341,11 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const bodyFile = join(runDir, "backstop-comment.md");
       writeFileSync(bodyFile, `Loki 10 run ${runId} ${prUrl ? `opened draft PR ${prUrl}` : "ended without a PR"}.\n\n${prUrl ? "One question" : "Reason"}: ${reason}\n`);
       const argv = pushArgv({ cmd: "issue-comment", issueRef, bodyFile });
-      const r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env, encoding: "utf8" });
+      const origin = readOriginUrl(repoDir), r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env: origin ? { ...env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : env, encoding: "utf8" }); // the push script refuses an unpinned origin
       return { argv, ok: r.status === 0 };
     },
   }).catch((e) => { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); return null; });
-  clearInterval(tailTimer);
+  clearInterval(tailTimer); stopPlan();
   if (!res) { stopTail(); liveStop(); return 2; } // preflight refused: exit 2 with the fatal line, before any run state
   await new Promise((r) => setTimeout(r, 300)); // let the tail flush the last lines
   stopTail(); liveStop();

@@ -46,6 +46,9 @@ case "\$1 \$2" in
         git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-resume 2>/dev/null ;;
     "pr list") [ -f "$W/pr.url" ] && cat "$W/pr.url" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
+    "api user") echo "loki-bot" ;;
+    "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
+    "issue comment") [ "\$3" = 9 ] && echo 555 > "$W/status.cid" ;;
 esac
 exit 0
 EOF
@@ -76,7 +79,7 @@ grep -q "token=$CANARY" "$REC" && ok "control: planted pre-push hook sees the ca
 # push-pr: push lands, hook records nothing, PR created as draft from /.
 : > "$REC"; : > "$W/remote.log"; : > "$GHLOG"
 out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" --draft 2>"$W/err")"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && ok "push-pr prints the PR URL" \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] && ok "push-pr prints the created marker then the PR URL" \
     || bad "push-pr rc=$rc out=$out err=$(tr '\n' ' ' < "$W/err")"
 [ "$(git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fix)" = "$(git -C "$A" rev-parse loki/e10-fix)" ] \
     && grep -qx "remote token=$CANARY" "$W/remote.log" && ok "push landed on the remote with the credential" \
@@ -90,7 +93,7 @@ grep -q '^cwd=/ .* pr create --repo octocat/hello --head loki/e10-fix --title E1
 
 # Second call reuses the open PR.
 out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" 2>/dev/null)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL" \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'reused\n%s' "$PRURL")" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL and prints the reused marker" \
     || bad "second call rc=$rc out=$out creates=$(creates)"
 
 # MASS-2: a stacked slice PR targets its parent slice's branch (--base, either order with --draft).
@@ -146,6 +149,20 @@ p4 "$LIB" issue-comment "octocat/hello#9" "$W/body.md" >/dev/null 2>&1 \
 p4 "$LIB" issue-comment "42" "$W/body.md" >/dev/null 2>&1 \
     && grep -q '^cwd=/ .* issue comment 42 --repo octocat/hello --body-file ' "$GHLOG" \
     && ok "issue-comment mode accepts a bare issue number" || bad "issue-comment bare number ($(tr '\n' '|' < "$GHLOG"))"
+# FV-gh-steer-3: issue-comment --update upserts ONE marker-tagged comment: create when absent, edit in place after.
+printf '<!-- loki-status -->\nstate: planned\n' > "$W/status.md"
+rm -f "$W/status.cid"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>&1 \
+    && grep -q ' issue comment 9 --repo octocat/hello --body-file ' "$GHLOG" \
+    && ! grep -q 'X PATCH' "$GHLOG" \
+    && ok "issue-comment --update creates the status comment when none carries the marker" || bad "issue-comment --update create ($(tr '\n' '|' < "$GHLOG"))"
+: > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>&1 \
+    && grep -q ' api -X PATCH repos/octocat/hello/issues/comments/555 -F body=@' "$GHLOG" \
+    && ! grep -q ' issue comment ' "$GHLOG" \
+    && ok "issue-comment --update edits the existing status comment, no duplicate" || bad "issue-comment --update edit ($(tr '\n' '|' < "$GHLOG"))"
+printf 'no marker here\n' > "$W/nomark.md"
+refused "issue-comment --update refuses a body without the marker" "must carry" p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/nomark.md"
 refused "issue-comment rejects a ref with no number" "cannot extract issue number" p4 "$LIB" issue-comment "octocat/hello" "$W/body.md"
 p4 "$LIB" status "$SHA" pending "deep verify running" >/dev/null 2>&1 \
     && grep -q "^cwd=/ .* api repos/octocat/hello/statuses/$SHA -f state=pending -f context=loki/deep-verify -f description=deep verify running$" "$GHLOG" \
@@ -292,10 +309,10 @@ git -C "$A" push -q "$BARE" loki/e10-resume:refs/heads/loki/e10-resume
 rm -f "$W/pr.url"; : > "$GHLOG"; : > "$W/remote.log"
 pushes() { wc -l < "$W/remote.log" | tr -d ' '; }
 out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>"$W/err")"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(pushes)" = "0" ] && grep -q "push skipped" "$W/err" && [ "$(creates)" = "1" ] \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] && [ "$(pushes)" = "0" ] && grep -q "push skipped" "$W/err" && [ "$(creates)" = "1" ] \
     && ok "recovery A: resume after push skips the push and opens one PR" || bad "recovery A: rc=$rc out=$out pushes=$(pushes) creates=$(creates)"
 out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>/dev/null)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && [ "$(pushes)" = "0" ] \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'reused\n%s' "$PRURL")" ] && [ "$(creates)" = "1" ] && [ "$(pushes)" = "0" ] \
     && ok "recovery B: rerun reuses the PR, no second PR, no second push" || bad "recovery B: rc=$rc creates=$(creates) pushes=$(pushes)"
 git -C "$A" checkout -q loki/e10-resume
 git -C "$A" commit -q --allow-empty -m second

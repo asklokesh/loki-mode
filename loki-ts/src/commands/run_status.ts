@@ -6,16 +6,17 @@ import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
+import { STALE_S, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
-const STALE_S = 30 * 60;
 const TERMINAL = new Set(["stage.completed", "stage.failed", "stage.skipped"]);
 
 export interface ModernStatus {
   engine: "loki10";
   run_id: string | null;
   ref: string | null;
+  state: WorkItemState;
   stage: string | null;
   elapsed_s: number | null;
   cost_usd: number | null;
@@ -62,15 +63,16 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
   const pr = events.findLast((e) => e.type === "pr.opened")?.data.url ?? f.run.completed?.data.pr_url;
   const sealed = events.findLast((e) => e.type === "receipt.sealed")?.data.path;
   const receipt = join(root, runId, "receipt.json");
-  const stale = !done && nowMs - lastTs(events) > STALE_S * 1000;
+  const state = workItemState(events, nowMs);
   return {
     engine: "loki10",
     run_id: runId,
     ref: typeof issue === "string" && issue ? issue : null,
+    state,
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
     cost_usd: f.cost.usd,
-    outcome: f.run.completed?.data.cancelled === true ? "cancelled" : f.run.verdict ?? (done ? "completed" : stale ? "stalled (no events for 30m+)" : "running"),
+    outcome: state === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : state === "stalled" ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
     receipt_path: typeof sealed === "string" && sealed ? sealed : existsSync(receipt) ? receipt : null,
   };
@@ -92,7 +94,7 @@ export function pickRun(root: string, nowMs: number): { id: string; events: Even
 export function render(s: ModernStatus): string {
   const cost = s.cost_usd === null ? "cost not measured" : `$${s.cost_usd.toFixed(2)}`;
   const lines = [
-    `Loki 10 run ${s.run_id}: ${s.outcome}${s.stage ? `, ${s.stage}` : ""}`,
+    `Loki 10 run ${s.run_id}: ${s.state}${s.outcome !== s.state && /^[A-Z_]+$/.test(s.outcome) ? ` (${s.outcome})` : ""}${s.stage ? `, ${s.stage}` : ""}`,
     `  ${s.ref ?? "text task"}, ${formatDuration(s.elapsed_s ?? 0)} elapsed, ${cost}`,
     `  PR: ${s.pr_url ?? "none"}, receipt: ${s.receipt_path ?? "not sealed yet"}`,
   ];
@@ -137,7 +139,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   if (cp === null) cp = await probeConfiguredControl(env);
   if (!hit) {
     process.stdout.write(json
-      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, hint: NO_RUN_HINT })}\n`
+      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, hint: NO_RUN_HINT })}\n`
       : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }

@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { runIntent } from "../../src/util/run_outputs.ts";
 import { answerEnv, readAnswerFile, readBlocked, runAnswer, type AnswerDeps } from "../../src/features/blocked_answer.ts";
 
 const FIX = join(import.meta.dir, "../../../packages/control-plane/test/fixtures/runs");
@@ -52,6 +54,27 @@ describe("loki answer", () => {
     expect(env.LOKI_CONTROL_TOKEN).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
     expect(answerEnv({ SLACK_X: "1" }).SLACK_X).toBeUndefined();
+  });
+  test("the fresh run is told its parent run and the answer sha", async () => {
+    const t = deps(repoWith("blocked"), join(root, "none"));
+    await runAnswer([BLOCKED, "--text", "use a param"], t.d);
+    const env = t.calls[0]!.env;
+    expect(env.LOKI_PARENT_RUN).toBe(BLOCKED);
+    expect(env.LOKI_ANSWER_SHA).toBe(createHash("sha256").update("use a param").digest("hex"));
+  });
+  test("runIntent records actor, policy sha and parent run (redacted, validated)", () => {
+    const repo = mkdtempSync(join(root, "intent-"));
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.json"), "{}");
+    const sha = createHash("sha256").update("use a param").digest("hex");
+    const i = runIntent(repo, { LOKI_ACTOR: "ci-bot ghp_abcdefghijklmnopqrstuvwxyz0123456789", LOKI_PARENT_RUN: BLOCKED, LOKI_ANSWER_SHA: sha, HOME: repo });
+    expect(String(i.actor)).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(i.policy_revision).toBe(createHash("sha256").update("{}").digest("hex"));
+    expect(i.parent_run).toBe(BLOCKED);
+    expect(i.answered_run).toBe(BLOCKED);
+    expect(i.answer_sha256).toBe(sha);
+    const bad = runIntent(repo, { LOKI_ACTOR: "x", LOKI_PARENT_RUN: "../etc", LOKI_ANSWER_SHA: "nothex", HOME: repo });
+    expect([bad.parent_run, bad.answered_run, bad.answer_sha256]).toEqual([null, null, null]);
   });
   test("a non-BLOCKED run exits 2 with the reason and launches nothing", async () => {
     const repo = repoWith("verified"), t = deps(repo, join(root, "none"));

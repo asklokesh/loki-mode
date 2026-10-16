@@ -72,7 +72,7 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
   const answer = (text ?? readAnswerFile(d.answerDir, id) ?? "").trim();
   if (!answer) { d.err(`loki answer: no answer for ${id}; pass --text "..." or answer it in the Control Plane`); return 2; }
   const task = `${b.task}\n\nClarification answering "${b.question}": ${answer}`;
-  const r = await d.launch([d.binPath, task], answerEnv(d.env), d.repoDir);
+  const r = await d.launch([d.binPath, task], { ...answerEnv(d.env), LOKI_PARENT_RUN: id, LOKI_ANSWER_SHA: new Bun.CryptoHasher("sha256").update(answer).digest("hex") }, d.repoDir); // run.started records answered_run + answer sha
   d.out(`new run ${r.runId} (exit ${r.code})`);
   return r.code;
 }

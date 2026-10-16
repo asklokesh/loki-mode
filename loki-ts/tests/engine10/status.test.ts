@@ -118,8 +118,8 @@ describe("summarize (pure, folded events only)", () => {
   test("render names the run, the stage while running and the verdict once done", () => {
     writeRun(runId).append("run.started", null, {});
     const running = { ...sum(Date.now()), control_plane_url: null };
-    expect(render({ ...running, stage: "intake", outcome: "running" })).toContain("running, intake");
-    expect(render({ ...running, stage: null, outcome: "PARTIAL" })).toContain("PARTIAL");
+    expect(render({ ...running, stage: "intake", state: "executing", outcome: "running" })).toContain("executing, intake");
+    expect(render({ ...running, stage: null, state: "budget_stopped", outcome: "PARTIAL" })).toContain("budget_stopped (PARTIAL)");
     expect(render(running)).toContain(runId);
   });
 });

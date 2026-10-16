@@ -1,9 +1,8 @@
 // E-11 (TS half): PR stage (ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0), never the
 // worker: the only stage touching GitHub credentials, only through the credentialed push child
 // engine10-push.sh (P4); no LLM, no untrusted text read here. Supervisor calls runPr after the
-// worker exits, passing pinnedOrigin (section 6). Contract gap: pushArgv ends push-pr in "1"/"0"
-// while the script takes "--draft" (translated below); it cannot say whether the PR already
-// existed, so `existing` is null, never fabricated.
+// worker exits, passing pinnedOrigin (section 6). push-pr prints a "reused" or "created" marker line before the
+// PR URL; `existing` is true/false from it, and null when the script printed none (local origin, older script).
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,7 +47,7 @@ function lastNonEmptyLine(s: string): string {
 }
 /** pushArgv's push-pr shape ends "...,"1"|"0"". engine10-push.sh instead
  *  wants only an optional literal "--draft" (4 or 5 total args). Translate
- *  rather than edit either file (see the contract-gap note above). */
+ *  rather than edit either file (see the header note). */
 function toPushShellArgs(args: PushArgs): string[] {
   const built = pushArgv(args);
   const flag = built.pop();
@@ -116,14 +115,14 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
     return { status: "failed", data: {}, reason: `engine10-push.sh push-pr failed (exit ${pushResult.status}): ${(pushResult.stderr ?? "").trim()}` };
   }
   const url = lastNonEmptyLine(pushResult.stdout ?? "");
+  const markers = (pushResult.stdout ?? "").split("\n").map((l) => l.trim());
   // E-41: for a local bare origin (the eval harness) push-pr prints exactly
   // local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
   const localOk = pinnedOrigin.startsWith("/") && !pinnedOrigin.includes(":") && url === `local://${pinnedOrigin}#${ctx.branch}`;
   if (!localOk && !PR_URL_RE.test(url)) {
     return { status: "failed", data: {}, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
   }
-  // Unknown, not fabricated: see the contract-gap note above.
-  const existing: boolean | null = null;
+  const existing: boolean | null = markers.includes("reused") ? true : markers.includes("created") ? false : null; // null = unknown, never fabricated
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
   const notProvenOut: string[] = [];

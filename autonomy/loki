@@ -5066,11 +5066,14 @@ cmd_pause() {
 }
 
 # RUN-25 iter 22 (Wave D #3): `loki steer "<note>"` writes an operator directive
-# the running loop actually reads (.loki/HUMAN_INPUT.md), replacing the dead
-# steering.md hint the cockpit used to advertise (nothing read it). The loop only
-# INJECTS the note when LOKI_PROMPT_INJECTION=1 (default off, for safety), so we
-# write the note and tell the operator the exact flag -- honest: the control now
-# genuinely persists the directive instead of silently no-op'ing.
+# to .loki/HUMAN_INPUT.md. engine10 reads it before the next plan or implement
+# session (default on; only LOKI_PROMPT_INJECTION=0/false opts out, steer.ts).
+# The legacy loop injects it only when LOKI_PROMPT_INJECTION=1.
+# Each steer is a numbered revision: `## Operator directive rev N (ts) actor=A source=S`.
+# engine10 (util/steer.ts) archives the file and appends the revisions to
+# .loki/intent-revisions.jsonl. Actor and source come from LOKI_STEER_ACTOR
+# (default: git user.name, then $USER) and LOKI_STEER_SOURCE (cli, chat or an
+# https comment URL; default cli). Both are reduced to a safe character set.
 cmd_steer() {
     case "${1:-}" in
         --help|-h|help|"")
@@ -5078,13 +5081,14 @@ cmd_steer() {
             echo ""
             echo "Usage: loki steer \"<guidance>\""
             echo ""
-            echo "Writes your guidance to .loki/HUMAN_INPUT.md, which the running"
-            echo "loop reads at the next iteration boundary (when LOKI_PROMPT_INJECTION=1)."
+            echo "Writes your guidance to .loki/HUMAN_INPUT.md as a numbered revision"
+            echo "(rev N, actor, source). The Loki 10 engine applies it once, before the"
+            echo "next plan or implement session, and records it in .loki/intent-revisions.jsonl."
             echo ""
             echo "  loki steer \"focus on the auth flow, skip the docs for now\""
             echo ""
-            echo "The loop injects the note only when prompt injection is enabled:"
-            echo "  LOKI_PROMPT_INJECTION=1 loki start ...   (or export it before starting)"
+            echo "Opt out with LOKI_PROMPT_INJECTION=0. The legacy loop reads the note"
+            echo "only when LOKI_PROMPT_INJECTION=1."
             [ -z "${1:-}" ] && return 2
             return 0
             ;;
@@ -5094,20 +5098,32 @@ cmd_steer() {
         return 1
     fi
     local note="$*"
-    # Append with a timestamp so multiple steers accumulate; the reader consumes
-    # and clears the file each iteration, so this is the pending-directive buffer.
+    local actor source rev pending archived
+    actor="${LOKI_STEER_ACTOR:-$(git config user.name 2>/dev/null || true)}"
+    actor="${actor:-${USER:-unknown}}"
+    actor="$(printf '%s' "$actor" | tr -c 'A-Za-z0-9._@-' '-' | cut -c1-64)"
+    source="$(printf '%s' "${LOKI_STEER_SOURCE:-cli}" | tr -c 'A-Za-z0-9:/._#?=&%-' '-' | cut -c1-300)"
+    # rev = consumed revisions + steers still pending in the buffer + 1
+    archived=0; pending=0
+    [ -f "$LOKI_DIR/intent-revisions.jsonl" ] && archived="$(wc -l < "$LOKI_DIR/intent-revisions.jsonl" | tr -d ' ')"
+    [ -f "$LOKI_DIR/HUMAN_INPUT.md" ] && pending="$(grep -c '^## Operator directive rev ' "$LOKI_DIR/HUMAN_INPUT.md" 2>/dev/null || true)"
+    rev=$(( ${archived:-0} + ${pending:-0} + 1 ))
+    # Append so multiple steers accumulate; the reader consumes and clears the
+    # file, so this is the pending-directive buffer.
     {
-        printf '## Operator directive (%s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '## Operator directive rev %s (%s) actor=%s source=%s\n' "$rev" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$actor" "$source"
         printf '%s\n\n' "$note"
     } >> "$LOKI_DIR/HUMAN_INPUT.md"
     emit_event session cli steer "chars=${#note}" 2>/dev/null || true
-    echo -e "${GREEN}Steering note written to .loki/HUMAN_INPUT.md${NC}"
-    if [ "${LOKI_PROMPT_INJECTION:-false}" != "1" ] && [ "${LOKI_PROMPT_INJECTION:-false}" != "true" ]; then
-        echo -e "${YELLOW}Note: prompt injection is OFF, so the loop will NOT read this yet.${NC}"
-        echo -e "${DIM}Enable it: export LOKI_PROMPT_INJECTION=1 (then the next iteration ingests the note).${NC}"
-    else
-        echo -e "${DIM}The next iteration will read and apply it.${NC}"
-    fi
+    echo -e "${GREEN}Steering note (rev $rev) written to .loki/HUMAN_INPUT.md${NC}"
+    case "${LOKI_PROMPT_INJECTION:-}" in
+        0|false|FALSE|False)
+            echo -e "${YELLOW}Note: LOKI_PROMPT_INJECTION is off, so the run will NOT read this.${NC}"
+            ;;
+        *)
+            echo -e "${DIM}The Loki 10 engine applies it before the next plan or implement session.${NC}"
+            ;;
+    esac
     return 0
 }
 
