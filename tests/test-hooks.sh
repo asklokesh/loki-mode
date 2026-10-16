@@ -462,6 +462,7 @@ test_validate_bash_temp_root_and_glob_denied() {
         '$TMPDIR/../T' '"$TMPDIR"/../T' '$TMPDIR/../T*' '${TMPDIR}/../T'
         '/tmp/[!]]*' '/tmp/[]a]*' '/tmp/[![=a=]]*' '/tmp/[![.a.]]*'
         '/tmp/{a,{b,*}}' '/{a,{tmp,b}}' '/tm{o..p}' '/tm{p..p}'
+        '${TMPDIR}/{a,*}' '"${TMPDIR}"/{a,*}' '${TMPDIR}/{,}' '${TMPDIR}{,/*}'
     )
     for t in "${targets[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -491,8 +492,20 @@ test_validate_bash_temp_root_and_glob_denied() {
     local ok=(
         '/tmp/loki-run.abc123' '/tmp/loki-run.abc123/' '/tmp//loki-run.abc123'
         '/tmp/foo*' '/tmp/foo/*' '$TMPDIR/loki-run.abc123' '"$TMPDIR"/foo'
-        '"$TMPDIR"/loki-run.abc'
+        '"$TMPDIR"/loki-run.abc' '"${TMPDIR:-/tmp}/loki-run.abc"'
     )
+    # Brace forms: `rm -rf` is left to the pre-existing blocked-pattern check,
+    # so only the plain recursive form isolates this rule.
+    local ok_r=(
+        '"${LOKI_RUN_TMP}"/{a,b}' '/tmp/x{,.bak}' '"$LOKI_RUN_TMP"/shard{1..4}'
+        'out/{1..3}' 'build/{a,{b,c}}' '"${dir:-../x}"' '"${A:-${B}}"'
+        'build/{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{a,b}'
+    )
+    for t in "${ok_r[@]}"; do
+        c=$(printf 'rm -r %s' "$t")
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "non-temp or named brace target wrongly blocked: $c (got $got)"; return; }
+    done
     for t in "${ok[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
             c=$(printf '%s %s' "$rmcmd" "$t")

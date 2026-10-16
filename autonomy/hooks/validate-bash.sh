@@ -497,15 +497,20 @@ _BRACE_CAP=64
 _expand_braces() {
     local s="$1" cur pre body post b alt
     local -a work=("$s")
+    local temp=false
     _ALTS=()
-    if [[ "$s" =~ \{[^\}]*\{ || "$s" =~ \{[^\}]*\.\.[^\}]*\} ]]; then
+    # Fail-closed rules (nested braces, ranges, cap, residual groups) apply
+    # only when the raw target mentions a temp root; over-matching is fine.
+    [[ "$s" == *tmp* || "$s" == *TMPDIR* || "$s" == */var/folders* || "$s" == */private* \
+        || "$s" =~ (^|/)t[^/]*\{ || "$s" == /\{* || "$s" == \{* ]] && temp=true
+    if $temp && { [[ "$s" =~ \{[^\}]*\{ ]] || [[ "$s" =~ \{[^\}]*\.\.[^\}]*\} ]]; }; then
         return 1
     fi
     while [ "${#work[@]}" -gt 0 ]; do
         cur="${work[0]}"
         work=("${work[@]:1}")
-        if [[ "$cur" =~ ^([^\{]*)\{([^\}]*,[^\}]*)\}(.*)$ ]]; then
-            pre="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"; post="${BASH_REMATCH[3]}"
+        if [[ "$cur" =~ ^((\$\{[^\}]*\}|[^\{])*)\{([^\}]*,[^\}]*)\}(.*)$ ]]; then
+            pre="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[3]}"; post="${BASH_REMATCH[4]}"
             b="$body"
             while :; do
                 alt="${b%%,*}"
@@ -513,10 +518,14 @@ _expand_braces() {
                 [[ "$b" == *,* ]] || break
                 b="${b#*,}"
             done
-            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || return 1
+            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || { $temp && return 1; return 2; }
         else
+            # A comma group the regex could not peel off stays unexpanded.
+            if $temp && [[ "$cur" =~ \{[^\}]*,[^\}]*\} ]]; then
+                return 1
+            fi
             _ALTS+=("$cur")
-            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || return 1
+            [ $(( ${#work[@]} + ${#_ALTS[@]} )) -le "$_BRACE_CAP" ] || { $temp && return 1; return 2; }
         fi
     done
     return 0
@@ -561,7 +570,11 @@ _temp_target_is_root_or_glob() {
 _rm_target_is_temp_root_or_glob() {
     local alt
     if [[ "$1" == *"{"* ]]; then
-        _expand_braces "$1" || return 0
+        _expand_braces "$1" || {
+            # 1 = fail closed (temp target); 2 = over cap on a non-temp target
+            [ "$?" -eq 2 ] && return 1
+            return 0
+        }
         for alt in ${_ALTS[@]+"${_ALTS[@]}"}; do
             _temp_target_is_root_or_glob "$alt" && return 0
         done
