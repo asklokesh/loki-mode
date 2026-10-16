@@ -8,9 +8,7 @@
 // E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which
 // always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import type { CostRecords, CostTotals } from "./types.ts";
-import { hooks } from "./hooks.ts";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"; import type { CostRecords, CostTotals } from "./types.ts"; import { hooks } from "./hooks.ts"; import { type CostBreakdown, costBreakdown } from "../util/cost_breakdown.ts";
 import { join } from "node:path"; import { routerEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
@@ -46,6 +44,7 @@ export interface CostResult {
   tokens_measured?: { k: number; n: number }; // set only when k < n: sessions whose tokens went into the sums
   records?: CostRecords; // COST-RECORDS / FIX-RESUME: per-model, scope, turns, resume verdict; absent when no file was read
   duration_ms?: number; // sum of the SDK result line duration_ms over the files that carried one; absent when none did
+  breakdown?: CostBreakdown; // P12-21: per-stage and retry attribution; usd null exactly when the run's is
   // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over
   // 100K prompt tokens, so a caller can apply the pricing over_100k tier (budget.ts); not applied here.
   // Optional so other CostResult producers (budget.ts) need no change; sumResultCosts always sets it.
@@ -166,6 +165,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     out.records = r;
   }
   if (iterations.length > 0 && out.missing.length === 0) out.usd = usd;
+  if (recs.length > 0) out.breakdown = costBreakdown(recs, out.missing);
   return out;
 }
 
