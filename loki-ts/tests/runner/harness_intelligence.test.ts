@@ -900,6 +900,17 @@ describe("P12-11 recovery classes (FC-REQ)", () => {
     const d = decideRecovery({ output: "invalid_api_key", rerun: { test: "t", failTree: T, passTree: T } }, { env: E, history: [] });
     expect(d.action).toBe("stop");
   });
+  it("Q17-03: flaky check alone reruns, a different real failing check still takes a fix round", () => {
+    const rerun = { test: "a", failTree: T, passTree: T };
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: ["a"] }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: ["a", "b"] }, { env: E, history: [] })).toMatchObject({ action: "revise", reason: "build_failed" });
+  });
+  it("Q17-03: absent or malformed failedChecks behaves exactly as before (flaky still wins)", () => {
+    const rerun = { test: "a", failTree: T, passTree: T };
+    for (const failedChecks of [undefined, "b", 7, null, [1, 2]] as unknown[]) {
+      expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: failedChecks as never }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
+    }
+  });
   it("fingerprints persist across two runs and are bounded", () => {
     const dir = tmp();
     expect(recordFingerprints(dir, "run1", "flaky", ["a", "b"])).toEqual(["a", "b"]);
