@@ -66,6 +66,19 @@ bash "$LOKI" merge pr feat-ok --require-verified --delete-branch >/dev/null 2>&1
 [ "$RC" -eq 0 ] && grep -q "^pr merge feat-ok --squash --delete-branch" "$STUB_LOG" && ok "ship: green VERIFIED PR merges" || bad "green ship rc=$RC: $(cat "$STUB_LOG")"
 grep -q 'gh pr merge "$branch_current"' "$LOKI" && bad "inline ungated gh pr merge still present" || ok "no inline ungated gh pr merge of the branch"
 
+# FV-pr-loop-4: the gate's own result lands in pr.json; blocked never reads merged.
+prj() { jq -r "$1" .loki/state/pr.json; }
+printf '{"state":"created","url":"u","branch":"feat-red","merge":{"outcome":"waiting","gate":"human_review","checks":"not recorded"}}' > .loki/state/pr.json
+bash "$LOKI" merge pr feat-red >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "blocked:checks" ] && [ "$(prj .merge.gate)" = "checks" ] && [ "$(prj .state)" = "created" ] && ok "pr.json: red checks record blocked:checks" || bad "pr.json red: $(cat .loki/state/pr.json)"
+bash "$LOKI" merge pr feat-draft >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "blocked:draft" ] && ok "pr.json: draft records blocked:draft" || bad "pr.json draft: $(cat .loki/state/pr.json)"
+bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
+[ "$(prj .merge.outcome)" = "merged" ] && ok "pr.json: green merge records merged" || bad "pr.json merged: $(cat .loki/state/pr.json)"
+rm -f .loki/state/pr.json
+bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
+[ ! -e .loki/state/pr.json ] && ok "pr.json never invented when absent" || bad "pr.json invented"
+
 # CI repair loop: loki merge watch.
 git init -q -b feat-w . && git config user.email t@t && git config user.name t
 git commit -q --allow-empty -m base
