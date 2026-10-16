@@ -19,7 +19,7 @@ case "$1 $2" in
                [ "$3" = "22" ] && exit 1
                [ "$3" = "feat-pend" ] && exit 8; [ "$3" = "feat-auth" ] && exit 4
                exit 0 ;;
-  "pr view") case "$*" in *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
+  "pr view") case "$*" in *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
   "pr merge") [ "$3" = "feat-mfail" ] && exit 1; exit 0 ;;
   "run list") echo 99; exit 0 ;;
   "run view") echo "FAILED: boom in test_x"; exit 0 ;;
@@ -27,6 +27,7 @@ esac
 exit 0
 STUB
 chmod +x "$WORK/bin/gh"
+export STUB_HEAD=1111111111111111111111111111111111111111 STUB_HEAD2=2222222222222222222222222222222222222222
 export STUB_WORK="$WORK" STUB_LOG="$WORK/calls.log"; : > "$STUB_LOG"
 export PATH="$WORK/bin:$PATH" LOKI_MERGE_POLL_S=0
 cd "$WORK/repo" || exit 1
@@ -48,7 +49,7 @@ grep -q "^pr merge 13 " "$STUB_LOG" && ok "PR 13 merged after rebase" || bad "13
 # Gated single-PR merge (the --ship path): checks, draft and verdict all block.
 mkdir -p .loki/proofs/p1 .loki/state
 echo p1 > .loki/state/last-proof-id.txt
-printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-red --require-verified --delete-branch 2>&1)"; RC=$?
 grep -q "^pr merge feat-red" "$STUB_LOG" && bad "red-check ship PR merged" || ok "ship: failing checks never merge"
@@ -57,15 +58,32 @@ grep -q "^pr merge feat-red" "$STUB_LOG" && bad "red-check ship PR merged" || ok
 OUT="$(bash "$LOKI" merge pr feat-draft --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-draft" "$STUB_LOG" && bad "draft PR merged" || ok "ship: draft PR never merges"
 [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: draft" && ok "ship: message names the draft gate" || bad "draft msg: $OUT"
-printf '{"honesty":{"headline":"PARTIAL"}}' > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-ok --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-ok" "$STUB_LOG" && bad "non-VERIFIED run merged" || ok "ship: non-VERIFIED verdict never merges"
 echo "$OUT" | grep -q "gate: verdict" && ok "ship: message names the verdict gate" || bad "verdict msg: $OUT"
-printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 : > "$STUB_LOG"
 bash "$LOKI" merge pr feat-ok --require-verified --delete-branch >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && grep -q "^pr merge feat-ok --squash --delete-branch" "$STUB_LOG" && ok "ship: green VERIFIED PR merges" || bad "green ship rc=$RC: $(cat "$STUB_LOG")"
+grep -q "^pr merge feat-ok --squash --delete-branch --match-head-commit $STUB_HEAD\$" "$STUB_LOG" && ok "ship: merge pinned with --match-head-commit <proof head>" || bad "merge not head-pinned: $(cat "$STUB_LOG")"
+# Stale proof: the PR head moved after the proof, so the VERIFIED proof is for another commit.
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
+grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "stale-proof PR merged" || ok "ship: stale proof (head moved) never merges"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: head" && ok "ship: message names the head gate" || bad "head msg rc=$RC: $OUT"
+# A matching proof is found by head even when last-proof-id points at a stale one.
+mkdir -p .loki/proofs/p2
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
+: > "$STUB_LOG"
+bash "$LOKI" merge pr feat-moved --require-verified >/dev/null 2>&1
+grep -q "^pr merge feat-moved --squash --match-head-commit $STUB_HEAD2\$" "$STUB_LOG" && ok "ship: proof resolved by PR head, not last-proof-id" || bad "head-resolved proof: $(cat "$STUB_LOG")"
+rm -rf .loki/proofs/p2
+# Unreadable PR head fails closed, even without --require-verified.
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-nohead 2>&1)"; RC=$?
+grep -q "^pr merge feat-nohead" "$STUB_LOG" && bad "unreadable head merged" || ok "unreadable PR head never merges"
 grep -q 'gh pr merge "$branch_current"' "$LOKI" && bad "inline ungated gh pr merge still present" || ok "no inline ungated gh pr merge of the branch"
 
 # FV-pr-loop-4: the gate's own result lands in pr.json for the SAME PR only.
@@ -91,11 +109,11 @@ bash "$LOKI" merge pr feat-auth >/dev/null 2>&1
 seed feat-mfail 12 created
 bash "$LOKI" merge pr feat-mfail >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:merge" ] && [ "$(prj .merge.gate)" = "merge" ] && ok "pr.json: gh merge failure records blocked:merge" || bad "pr.json merge: $(cat .loki/state/pr.json)"
-printf '{"honesty":{"headline":"PARTIAL"}}' > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"PARTIAL"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 seed feat-ok 13 created
 bash "$LOKI" merge pr feat-ok --require-verified >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:verdict" ] && [ "$(prj .merge.gate)" = "verdict" ] && ok "pr.json: verdict gate records blocked:verdict" || bad "pr.json verdict: $(cat .loki/state/pr.json)"
-printf '{"honesty":{"headline":"VERIFIED"}}' > .loki/proofs/p1/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD" > .loki/proofs/p1/proof.json
 seed feat-ok 14 prepared
 BEFORE="$(cat .loki/state/pr.json)"
 bash "$LOKI" merge pr feat-ok >/dev/null 2>&1

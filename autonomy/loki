@@ -26031,9 +26031,11 @@ _pr_record_merge() {
 
 # Shared merge gate. One PR (number or branch) merges only when it is not a
 # draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
-# --require-verified, this run's proof headline is VERIFIED (missing proof or
-# an unreadable headline is never VERIFIED). On refusal it prints the exact
-# blocking gate ("gate: draft|verdict|checks") and leaves the PR open.
+# --require-verified, the proof recorded for the PR's exact head commit
+# (facts.git.head_sha == headRefOid) says VERIFIED; a stale or missing proof
+# refuses ("gate: head"). The merge passes --match-head-commit so a push after
+# the gate cannot land unjudged. On refusal it prints the exact blocking gate
+# ("gate: draft|head|verdict|checks") and leaves the PR open.
 # Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
 _merge_pr_gated() {
     local pr="$1" need_verified=false margs=(--squash) rc d
@@ -26052,14 +26054,41 @@ _merge_pr_gated() {
         _pr_record_merge "$pr" "blocked:draft" "draft"
         return 1
     fi
+    # Pin the merge to the exact head the checks and proof are about to judge.
+    local head=""
+    head="$(gh pr view "$pr" --json headRefOid -q .headRefOid 2>/dev/null)" || head=""
+    case "$head" in
+        *[!0-9a-f]*) head="" ;;
+    esac
+    if [ "${#head}" != "40" ] && [ "${#head}" != "64" ]; then
+        echo "$pr: not merged, gate: head (PR head commit is unreadable); PR left open" >&2
+        _pr_record_merge "$pr" "blocked:head" "head"
+        return 1
+    fi
     if $need_verified; then
-        local pid="" headline=""
+        local pid="" headline="" pj="" ph="" cands=()
+        # Resolve the proof recorded for THIS head: the run pointer first, then
+        # any proof in .loki/proofs whose facts.git.head_sha equals the PR head.
         [ -f .loki/state/last-proof-id.txt ] && pid="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
-        if [ -n "$pid" ] && [ -f ".loki/proofs/${pid}/proof.json" ] && command -v jq >/dev/null 2>&1; then
-            headline="$(jq -r '.honesty.headline // empty' ".loki/proofs/${pid}/proof.json" 2>/dev/null)"
+        [ -z "$pid" ] || cands+=(".loki/proofs/${pid}/proof.json")
+        cands+=(.loki/proofs/*/proof.json)
+        if command -v jq >/dev/null 2>&1; then
+            for pj in "${cands[@]}"; do
+                [ -f "$pj" ] || continue
+                ph="$(jq -r '.facts.git.head_sha // empty' "$pj" 2>/dev/null)"
+                if [ "$ph" = "$head" ]; then
+                    headline="$(jq -r '.honesty.headline // empty' "$pj" 2>/dev/null)"
+                    break
+                fi
+            done
+        fi
+        if [ -z "$headline" ]; then
+            echo "$pr: not merged, gate: head (no proof recorded for PR head ${head:0:12}; proof is stale or missing); PR left open" >&2
+            _pr_record_merge "$pr" "blocked:head" "head"
+            return 1
         fi
         if [ "$headline" != "VERIFIED" ]; then
-            echo "$pr: not merged, gate: verdict (run verdict is '${headline:-missing}', need VERIFIED); PR left open" >&2
+            echo "$pr: not merged, gate: verdict (run verdict is '${headline}', need VERIFIED); PR left open" >&2
             _pr_record_merge "$pr" "blocked:verdict" "verdict"
             return 1
         fi
@@ -26074,7 +26103,7 @@ _merge_pr_gated() {
         esac
         return 1
     fi
-    if ! gh pr merge "$pr" "${margs[@]}" >/dev/null 2>&1; then
+    if ! gh pr merge "$pr" "${margs[@]}" --match-head-commit "$head" >/dev/null 2>&1; then
         echo "$pr: not merged, gate: merge (gh pr merge failed); PR left open" >&2
         _pr_record_merge "$pr" "blocked:merge" "merge" "passing"
         return 1
