@@ -117,6 +117,19 @@ afterEach(() => {
 });
 
 describe("engine10 seal", () => {
+  test("P12-09c: router request counts include archived quota attempts exactly once", async () => {
+    const { repo, base } = makeRepo("p1209c-router");
+    mkdirSync(join(repo, ".loki", "metrics"), { recursive: true });
+    const rec = (n: number) => JSON.stringify({ total_cost_usd: 1, input_tokens: 5, output_tokens: 5, model: "m", requests_total: n, requests_over_100k: 0 });
+    writeFileSync(join(repo, ".loki", "metrics", "result-cost-e10-r1-impl.json"), rec(5));
+    writeFileSync(join(repo, ".loki", "metrics", "result-cost-e10-r1-impl-q1.json"), rec(3));
+    const prev = process.env["LOKI_ROUTER"]; process.env["LOKI_ROUTER"] = "1";
+    try {
+      const { ctx } = ctxFor(repo, base);
+      const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+      expect((r as unknown as { route: { requests_total: number } }).route.requests_total).toBe(8);
+    } finally { if (prev === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = prev; }
+  });
   test("signed: JWT verifies through verify_attestation and the hash recomputes", async () => {
     // Fail loudly rather than skip: a skip here would be a false green.
     expect(cryptoPy).not.toBe("");

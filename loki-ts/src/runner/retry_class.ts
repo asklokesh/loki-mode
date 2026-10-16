@@ -119,10 +119,12 @@ const realSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promi
 export async function rerunOnQuota<R>(run: () => Promise<R>, kindOf: (r: R) => string | null, clock: WaitClock, signal: AbortSignal | undefined, untilMs: number, stop?: () => boolean): Promise<R> {
   const sleep = clock.sleep ?? realSleep;
   let r = await run();
+  const start = clock.now(); let slept = 0; // a clock that never advances still spends the requested waits, so the loop is bounded by untilMs
+  const nowMs = (): number => Math.max(clock.now(), start + slept);
   for (let i = 0; kindOf(r) === "quota_exhausted" && !signal?.aborted && !stop?.(); i++) {
-    const left = untilMs - clock.now(), wait = Math.min(QUOTA_WAIT_BASE_MS * 2 ** i, QUOTA_WAIT_MAX_MS);
+    const left = untilMs - nowMs(), wait = Math.min(QUOTA_WAIT_BASE_MS * 2 ** i, QUOTA_WAIT_MAX_MS);
     if (wait >= left) { for (let k = 0; k < 5 && clock.now() < untilMs && !signal?.aborted; k++) await sleep(Math.max(0, untilMs - clock.now()), signal); return r; } // a timer that fires early is re-armed, so the caller sees the deadline as reached
-    await sleep(wait, signal);
+    await sleep(wait, signal); slept += wait;
     if (signal?.aborted || stop?.()) return r; // stop: the dollar cap, checked between waits
     r = await run();
   }

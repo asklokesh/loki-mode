@@ -158,6 +158,13 @@ describe("P12-09b rerunOnQuota bounds", () => {
     await rerunOnQuota(async () => quota, kindOf, clock, undefined, 100_000);
     expect(now).toBeGreaterThanOrEqual(100_000);
   });
+  it("P12-09c: a frozen clock (now never advances, sleep instant) terminates with bounded attempts", async () => {
+    let calls = 0;
+    const clock = { now: () => 0, sleep: async () => {} };
+    const r = await rerunOnQuota(async () => { if (++calls > 1000) throw new Error("unbounded"); return quota; }, kindOf, clock, undefined, 3_000_000);
+    expect(r.exit).toBe(1);
+    expect(calls).toBeLessThanOrEqual(15); // 3,000,000 ms of requested sleep at 30s..300s waits
+  });
   it("a stop predicate (dollar cap) ends the wait between attempts", async () => {
     let now = 0, calls = 0, over = false;
     const clock = { now: () => now, sleep: async (ms: number) => { now += ms; over = true; } };
