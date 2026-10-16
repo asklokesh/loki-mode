@@ -11,7 +11,9 @@ export function controlMapped(db: Db, repoDir: string): Record<string, (c: Conte
   // State-changing legacy calls need a loopback peer AND a loopback Host, like /v1 (no JSON requirement: legacy callers send none).
   const ctl = (action: Parameters<typeof runControl>[2]) => (c: Context) => (peerIsLoopback(c) && isLoopbackHost(c.req.header("host"))
     ? runControl(db, repoDir, action, c, "legacy") : c.json({ error: "loopback only" }, 403));
-  return {
+  // Legacy GETs need a loopback Host too (DNS rebinding), the same isLoopbackHost check /v1 uses.
+  const rd = (h: (c: Context) => Response) => (c: Context) => (isLoopbackHost(c.req.header("host")) ? h(c) : c.json({ error: "loopback only" }, 403));
+  const mapped: Record<string, (c: Context) => Response> = {
     "POST /api/control/pause": ctl("pause"),
     "POST /api/control/resume": ctl("resume"),
     "POST /api/control/stop": ctl("stop"),
@@ -27,4 +29,6 @@ export function controlMapped(db: Db, repoDir: string): Record<string, (c: Conte
       return "error" in r ? c.json({ detail: r.error }, 400) : c.json(r);
     },
   };
+  for (const k of Object.keys(mapped)) if (k.startsWith("GET ")) mapped[k] = rd(mapped[k]!);
+  return mapped;
 }
