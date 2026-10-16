@@ -43,23 +43,18 @@ export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 export const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 function lastNonEmptyLine(s: string): string {
-  const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
-  return lines[lines.length - 1] ?? "";
+  const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0); return lines[lines.length - 1] ?? "";
 }
-/** pushArgv's push-pr shape ends "...,"1"|"0"". engine10-push.sh instead
- *  wants only an optional literal "--draft" (4 or 5 total args). Translate
- *  rather than edit either file (see the header note). */
+/** pushArgv's push-pr shape ends "...,"1"|"0"". engine10-push.sh instead wants only an optional literal "--draft" (4 or 5 total args). Translate rather than edit either file (see the header note). */
 function toPushShellArgs(args: PushArgs): string[] {
   const built = pushArgv(args);
-  const flag = built.pop();
-  if (flag === "1") built.push("--draft");
+  const flag = built.pop(); if (flag === "1") built.push("--draft");
   return built;
 }
 function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   if (resolvePrAuthor(repoDir) === "bot") {
-    const botToken = process.env.LOKI_PR_BOT_TOKEN;
-    if (botToken) env.GH_TOKEN = botToken; // child env only; never logged
+    const botToken = process.env.LOKI_PR_BOT_TOKEN; if (botToken) env.GH_TOKEN = botToken; // child env only; never logged
     else process.stderr.write("loki: pr.author is bot but LOKI_PR_BOT_TOKEN is not set; opening the PR as me\n");
   }
   return env;
@@ -71,8 +66,7 @@ export function runPushPr(a: { repoDir: string; branch: string; title: string; b
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
   const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, ...args], { env, encoding: "utf8" });
   if (r.status !== 0) return { ok: false, reason: `engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
-  const url = lastNonEmptyLine(r.stdout ?? "");
-  const markers = (r.stdout ?? "").split("\n").map((l) => l.trim());
+  const url = lastNonEmptyLine(r.stdout ?? ""), markers = (r.stdout ?? "").split("\n").map((l) => l.trim());
   // E-41: for a local bare origin (the eval harness) push-pr prints exactly local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
   const localOk = a.pinnedOrigin.startsWith("/") && !a.pinnedOrigin.includes(":") && url === `local://${a.pinnedOrigin}#${a.branch}`;
   if (!localOk && !PR_URL_RE.test(url)) return { ok: false, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
