@@ -824,12 +824,36 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(bashArgv(env)).toEqual(want);
   });
 
-  it("every claude spawn site routes through the permission helper", () => {
+  it("a repo policy cannot widen when there is no operator policy (acceptEdits, empty allow)", () => {
+    const empty = join(repo, "empty-operator");
+    mkdirSync(empty, { recursive: true });
+    writePolicy({ claude_permissions: { mode: "bypassPermissions", allow: ["Bash(*)"] } });
+    const env = noManaged({ HOME: empty, LOKI_DATA_DIR: empty });
+    const want = ["--permission-mode", "acceptEdits"];
+    expect(permissionArgv(repo, env, () => {})).toEqual(want);
+    expect(bashArgv(env)).toEqual(want);
+  });
+
+  it("an operator policy without allow means an empty allow list; a repo allow cannot add to it", () => {
+    const home = join(repo, "operator");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "policies.json"), JSON.stringify({ claude_permissions: { mode: "default" } }));
+    writePolicy({ claude_permissions: { allow: ["Bash(*)"] } });
+    const env = noManaged({ LOKI_DATA_DIR: home });
+    const want = ["--permission-mode", "default"];
+    expect(permissionArgv(repo, env)).toEqual(want);
+    expect(bashArgv(env)).toEqual(want);
+  });
+
+  it("every in-run-path claude spawn site routes through the permission helper (out of scope: autonomy/loki migrate/doc/heal, dashboard/build_supervisor.py, magic/core/debate.py, benchmarks, eval, scripts)", () => {
     const root = join(import.meta.dir, "../../..");
     const lit = "--dangerously-skip-permissions";
     const live = (rel: string): string[] =>
       readFileSync(join(root, rel), "utf8").split("\n").filter((l) => l.includes(lit) && !/^\s*(#|\/\/|\*)/.test(l));
     expect(live("autonomy/run.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG=") && !l.includes("_LOKI_PERM_ARGV=("))).toEqual([]);
+    for (const f of ["autonomy/lib/voter-agents.sh", "autonomy/lib/done-recognition.sh", "autonomy/lib/prd-enrich.sh", "autonomy/grill.sh", "autonomy/quickstart.sh"]) {
+      expect(live(f).filter((l) => !l.includes("_LOKI_PERM_ARGV=("))).toEqual([]);
+    }
     expect(live("loki-ts/src/runner/quality_gates.ts")).toEqual([]);
     expect(live("loki-ts/src/council/voter_agents.ts")).toEqual([]);
     expect(live("providers/claude.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG="))).toEqual([]);

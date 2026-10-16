@@ -373,8 +373,10 @@ loki_council_dispatch_agents() {
     # (completion-council.sh:2792). Fail-closed: a hung or timed-out council can
     # never become a false COMPLETE; it always degrades to the heuristic path
     # (which has its own timeout + conservative defaults).
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     response=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
-                      env CAVEMAN_DEFAULT_MODE=off claude --dangerously-skip-permissions \
+                      env CAVEMAN_DEFAULT_MODE=off claude "${_LOKI_PERM_ARGV[@]}" \
                       -p "$prompt" \
                       --agents "$agents_json" \
                       --json-schema "$schema_content" 2>"$stderr_log") || rc=$?

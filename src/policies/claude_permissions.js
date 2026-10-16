@@ -53,18 +53,23 @@ function compile(repoDir, env) {
     var mode = NO_POLICY_MODE, allow = null, deny = [];
     try {
         var dataDir = env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki');
-        // operator first, then repo: each later layer can only narrow
-        var layers = [section(dataDir), section(path.join(repoDir, '.loki'))].filter(Boolean);
-        if (!layers.length) {
-            warnings.push('LOKI_PERMISSION_POLICY=compiled: no claude_permissions policy found; using ' + NO_POLICY_MODE);
+        // The operator policy is the base (none: acceptEdits with an empty allow list; an
+        // operator policy without "allow" also means an empty allow list, not unlimited).
+        // The repo policy may only narrow it: lower mode, allow intersected, deny unioned.
+        var op = section(dataDir), repo = section(path.join(repoDir, '.loki'));
+        allow = [];
+        if (op) {
+            mode = op.mode === undefined ? 'default' : op.mode;
+            allow = op.allow || [];
+            deny = op.deny;
         } else {
-            mode = null;
-            layers.forEach(function (l) {
-                var m = l.mode === undefined ? 'default' : l.mode;
-                mode = mode === null ? m : lower(mode, m);
-                if (l.allow !== null) allow = allow === null ? l.allow : allow.filter(function (a) { return l.allow.indexOf(a) >= 0; });
-                deny = deny.concat(l.deny);
-            });
+            warnings.push('LOKI_PERMISSION_POLICY=compiled: no operator claude_permissions policy found; using ' + NO_POLICY_MODE +
+                (repo ? ' (a repo policy can only narrow it)' : ''));
+        }
+        if (repo) {
+            if (repo.mode !== undefined) mode = lower(mode, repo.mode);
+            if (repo.allow !== null) allow = allow.filter(function (a) { return repo.allow.indexOf(a) >= 0; });
+            deny = deny.concat(repo.deny);
         }
     } catch (e) {
         return failClosed('invalid policy (' + e.message + ')', warnings);
@@ -93,7 +98,7 @@ function compile(repoDir, env) {
 
     // Deny always wins over allow; drop duplicate deny entries.
     deny = deny.filter(function (d, j) { return deny.indexOf(d) === j; });
-    allow = (allow || []).filter(function (a) { return deny.indexOf(a) < 0; });
+    allow = allow.filter(function (a) { return deny.indexOf(a) < 0; });
     var args = ['--permission-mode', mode];
     if (allow.length) args.push('--allowedTools', allow.join(','));
     if (deny.length) args.push('--disallowedTools', deny.join(','));

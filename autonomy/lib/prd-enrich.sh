@@ -86,14 +86,16 @@ _loki_prd_enrich_invoke() {
     command -v claude >/dev/null 2>&1 || return 1
     local rc=0
     local out=""
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     if command -v timeout >/dev/null 2>&1; then
         out=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_PRD_ENRICH_TIMEOUT}" \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
         # No coreutils timeout (e.g. bare macOS). Run without it; the model
         # call is a one-shot and the caller still tolerates failure.
         out=$(CAVEMAN_DEFAULT_MODE=off \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     fi
     [ "$rc" -ne 0 ] && return 1
     [ -z "$out" ] && return 1

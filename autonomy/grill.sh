@@ -245,7 +245,9 @@ grill_invoke_provider() {
             #     must never mutate the tree (defense-in-depth). Deny Edit/Write/
             #     NotebookEdit + git mutations. Opt out LOKI_REVIEW_TOOL_GUARD=0.
             # Type-guarded so an environment without the helper degrades cleanly.
-            local _gr_argv=("--dangerously-skip-permissions" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
+            _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+            ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+            local _gr_argv=("${_LOKI_PERM_ARGV[@]}" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
             if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                 _gr_argv+=("--bare")
             fi
