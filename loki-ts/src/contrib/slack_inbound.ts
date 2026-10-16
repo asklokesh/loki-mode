@@ -4,8 +4,8 @@
 // resume: BLOCKED is terminal, "--resume was removed", so the answer rides along as task context).
 // Tokens come only from env (SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET); they are never logged or stored.
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEvents } from "../engine10/events.ts";
@@ -33,17 +33,38 @@ export function parseMention(text: string): string | null {
   return t === "" ? null : t;
 }
 
-export interface ThreadRun { runId: string; task: string; state: "running" | "blocked" | "done"; question?: string }
+export interface ThreadRun { runId: string; task: string; state: "running" | "blocked" | "done"; question?: string; statusTs?: string }
 export const threadKey = (channel: string, threadTs: string): string => `${channel}:${threadTs}`;
 
 export interface RunHandle { runId: string; done: Promise<{ code: number; question?: string }> }
 export interface InboundDeps {
   log?(line: string): void;
   startRun(task: string): Promise<RunHandle>;
-  post(channel: string, threadTs: string, text: string): Promise<void>;
+  /** Posts a message; may return its ts so the status line can be edited in place via update. */
+  post(channel: string, threadTs: string, text: string): Promise<void | string>;
+  /** Edits a posted message; resolves false when Slack did not accept the edit (the caller then posts a new message). */
+  update?(channel: string, ts: string, text: string): Promise<boolean>;
+  /** Re-read on every event (live allowlist); when set it replaces state.allowedUsers, so a revoked actor stops at once. */
+  allowed?(): Set<string> | undefined;
+  /** Delivers a steer through `loki steer` (source=slack); resolves the ack line to post, and throws when the CLI refuses. */
+  steer?(runId: string, actor: string, text: string): Promise<string>;
 }
-export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string>; allowedUsers?: Set<string> }
-export const newInboundState = (): InboundState => ({ threads: new Map(), seen: new Set() });
+export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string>; allowedUsers?: Set<string>; dedupFile?: string }
+/** With a dedupFile the seen event ids survive a restart (one id per line, last 1000 kept). */
+/** Appends one id; when the file passes 2000 lines it is rewritten to the last 1000 (temp file + rename). Best effort. */
+function appendDedup(file: string, id: string): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, id + "\n");
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+    if (lines.length > 2000) { const tmp = `${file}.${process.pid}.tmp`; writeFileSync(tmp, lines.slice(-1000).join("\n") + "\n"); renameSync(tmp, file); }
+  } catch { /* best effort */ }
+}
+export const newInboundState = (dedupFile?: string): InboundState => {
+  const seen = new Set<string>();
+  try { if (dedupFile) for (const l of readFileSync(dedupFile, "utf8").split("\n").slice(-1000)) if (l) seen.add(l); } catch { /* first run */ }
+  return { threads: new Map(), seen, dedupFile };
+};
 /** Task text cap in bytes; a larger argv entry risks E2BIG when spawning. */
 export const MAX_TASK_BYTES = 64 * 1024;
 export const TASK_TOO_LONG = "task too long";
@@ -66,8 +87,10 @@ export async function launchInThread(state: InboundState, deps: InboundDeps, cha
   }
   const rec: ThreadRun = { runId: h.runId, task, state: "running" };
   state.threads.set(key, rec);
-  await deps.post(channel, threadTs, `Started run ${h.runId}.`);
+  const started = await deps.post(channel, threadTs, `Started run ${h.runId}.`);
+  if (typeof started === "string") rec.statusTs = started;
   void h.done.then(async (r) => {
+    if (r.code !== 4 && rec.statusTs && deps.update && await deps.update(channel, rec.statusTs, `Run ${h.runId} finished (exit ${r.code}).`).catch(() => false)) { rec.state = "done"; return; }
     if (r.code === 4) { rec.state = "blocked"; rec.question = r.question; await deps.post(channel, threadTs, `Run ${h.runId} is BLOCKED: ${r.question ?? "see the receipt"}\nReply in this thread to answer.`); }
     else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${h.runId} finished (exit ${r.code}).`); }
   }).catch(() => { rec.state = "done"; });
@@ -79,6 +102,7 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   if (payload.event_id) {
     if (state.seen.has(payload.event_id)) return { status: 200, body: "duplicate" };
     state.seen.add(payload.event_id);
+    if (state.dedupFile) appendDedup(state.dedupFile, payload.event_id);
     if (state.seen.size > 1000) state.seen.delete(state.seen.values().next().value as string);
   }
   const ev = payload.event;
@@ -87,8 +111,9 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   if (!channel || !ts) return { status: 200, body: "ignored" };
   const existing = state.threads.get(threadKey(channel, threadTs));
   const text = parseMention(String(ev.text ?? ""));
-  const wouldAct = (ev.type === "app_mention" || (ev.type === "message" && existing?.state === "blocked" && ev.thread_ts)) && text;
-  if (wouldAct && !state.allowedUsers?.has("*") && !state.allowedUsers?.has(String(ev.user ?? ""))) {
+  const wouldAct = (ev.type === "app_mention" || (ev.type === "message" && (existing?.state === "blocked" || existing?.state === "running") && ev.thread_ts)) && text;
+  const allow = deps.allowed ? deps.allowed() : state.allowedUsers, actor = String(ev.user ?? "");
+  if (wouldAct && !(actor && (allow?.has("*") || allow?.has(actor)))) {
     await deps.post(channel, threadTs, NOT_ALLOWED);
     return { status: 200, body: "forbidden" };
   }
@@ -99,8 +124,14 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
     void launchInThread(state, deps, channel, threadTs, combined);
     return { status: 200, body: "answer" };
   }
+  if (existing?.state === "running" && text && (ev.type === "message" ? ev.thread_ts : ev.type === "app_mention")) {
+    if (!deps.steer || Buffer.byteLength(text) > MAX_TASK_BYTES) { await deps.post(channel, threadTs, deps.steer ? TASK_TOO_LONG : `Run ${existing.runId} is still running in this thread.`); return { status: 200, body: deps.steer ? "rejected" : "busy" }; }
+    let ack: string;
+    try { ack = await deps.steer(existing.runId, actor, text); } catch { await deps.post(channel, threadTs, START_FAILED); return { status: 200, body: "rejected" }; }
+    await deps.post(channel, threadTs, ack);
+    return { status: 200, body: "steered" };
+  }
   if (ev.type === "app_mention" && text) {
-    if (existing?.state === "running") { await deps.post(channel, threadTs, `Run ${existing.runId} is still running in this thread.`); return { status: 200, body: "busy" }; }
     if (Buffer.byteLength(text) > MAX_TASK_BYTES) { await deps.post(channel, threadTs, TASK_TOO_LONG); return { status: 200, body: "rejected" }; }
     if (!isValidTaskText(text)) { await deps.post(channel, threadTs, TASK_HINT); return { status: 200, body: "rejected" }; }
     void launchInThread(state, deps, channel, threadTs, text);
@@ -143,7 +174,8 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; stdio: "ignore" }) => ReturnType<typeof spawn>;
 /** Default run launcher: spawns REPO_ROOT/bin/loki "<task>" (never argv[1]) and discovers the run dir it creates. */
-export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = join(REPO_ROOT, "bin", "loki"), spawnFn: SpawnFn = spawn as SpawnFn): Pick<InboundDeps, "startRun"> {
+type ExecFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }, cb: (err: Error | null, stdout: string, stderr?: string) => void) => unknown;
+export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = join(REPO_ROOT, "bin", "loki"), spawnFn: SpawnFn = spawn as SpawnFn, execFn: ExecFn = execFile as unknown as ExecFn): Pick<InboundDeps, "startRun" | "steer"> {
   const runsDir = join(repoDir, ".loki", "runs");
   const list = (): string[] => (existsSync(runsDir) ? readdirSync(runsDir) : []);
   return {
@@ -162,6 +194,17 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
       if (!runId) runId = `pid-${child.pid}`;
       return { runId, done: done.then((code) => ({ code, question: code === 4 ? blockedQuestion(repoDir, runId) : undefined })) };
     },
+    async steer(_runId, actor, text) {
+      const note = text.replace(/[\r\n]+/g, " ").trim();
+      if (!note || note.startsWith("-") || /^(help|h)$/i.test(note)) throw new Error("invalid steer text");
+      const out = await new Promise<string>((res, rej) => {
+        execFn(cliPath, ["steer", note], { cwd: repoDir, env: { ...childEnv(env), LOKI_STEER_SOURCE: "slack", LOKI_STEER_ACTOR: `slack-${actor.replace(/[^A-Za-z0-9]/g, "")}` }, timeout: 30_000 }, (err, stdout, stderr) => (err ? rej(err) : res(String(stdout) + "\n" + String(stderr ?? ""))));
+      });
+      const m = /Steer rev (\d+) received/.exec(out);
+      if (m) return `Steer rev ${m[1]} received: applies at next plan/implement stage.`;
+      const first = out.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "no confirmation from loki steer";
+      return `Steer not confirmed: ${first.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 120)}`;
+    },
   };
 }
 
@@ -171,9 +214,21 @@ export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (
     try {
       const r = await fetchFn("https://slack.com/api/chat.postMessage", { method: "POST", headers: { "content-type": "application/json; charset=utf-8", authorization: `Bearer ${token}` }, body: JSON.stringify({ channel, thread_ts: threadTs, text }) });
       if (!r.ok) { fail(`HTTP ${r.status}`); return; }
-      const j = await r.json().catch(() => undefined) as { ok?: boolean; error?: string } | undefined;
+      const j = await r.json().catch(() => undefined) as { ok?: boolean; error?: string; ts?: string } | undefined;
       if (j && j.ok === false) fail(`slack error: ${j.error ?? "unknown"}`);
+      else if (typeof j?.ts === "string") return j.ts;
     } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
+  };
+}
+/** chat.update: edits the run status message in place instead of posting a new one. */
+export function slackUpdater(token: string, fetchFn: typeof fetch = fetch): NonNullable<InboundDeps["update"]> {
+  return async (channel, ts, text) => {
+    try {
+      const r = await fetchFn("https://slack.com/api/chat.update", { method: "POST", headers: { "content-type": "application/json; charset=utf-8", authorization: `Bearer ${token}` }, body: JSON.stringify({ channel, ts, text }) });
+      if (!r.ok) return false;
+      const j = await r.json().catch(() => undefined) as { ok?: boolean } | undefined;
+      return j?.ok === true;
+    } catch { return false; }
   };
 }
 /** The verified HTTP handler: POST only, raw body signature check, then the event router. */
@@ -189,6 +244,11 @@ export function makeSlackFetch(secret: string, state: InboundState, deps: Inboun
   };
 }
 
+/** LOKI_SLACK_ALLOWED_USERS_FILE (comma or whitespace separated) is re-read per event. Set but unreadable returns "" so everyone is rejected (fail closed). */
+export function readAllowFile(env: NodeJS.ProcessEnv): string | undefined {
+  if (!env.LOKI_SLACK_ALLOWED_USERS_FILE) return undefined;
+  try { return readFileSync(env.LOKI_SLACK_ALLOWED_USERS_FILE, "utf8").replace(/\s+/g, ","); } catch { return ""; }
+}
 export interface SlackCliOpts { serve?: (o: { hostname: string; port: number; fetch: (req: Request) => Promise<Response> }) => { port: number }; deps?: Partial<InboundDeps>; wait?: boolean }
 /** `loki slack serve [--port N] [--host H]`; host defaults to 127.0.0.1. */
 export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = process.env, opts: SlackCliOpts = {}): Promise<number> {
@@ -202,10 +262,10 @@ export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = proce
     else if (args[i] === "--host") host = args[++i] ?? host;
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
-  const state = newInboundState();
+  const state = newInboundState(join(process.cwd(), ".loki", "slack-seen-events"));
   state.allowedUsers = parseAllowedUsers(env.LOKI_SLACK_ALLOWED_USERS);
   if (!state.allowedUsers) process.stderr.write("slack: warning: LOKI_SLACK_ALLOWED_USERS is not set, so every mention is rejected (set user IDs, or * to allow anyone)\n");
-  const deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
+  const deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), update: slackUpdater(token), allowed: () => parseAllowedUsers(readAllowFile(env) ?? env.LOKI_SLACK_ALLOWED_USERS), ...opts.deps };
   const serve = opts.serve ?? ((o) => Bun.serve(o));
   const server = serve({ hostname: host, port, fetch: makeSlackFetch(secret, state, deps) });
   process.stdout.write(`slack: listening on http://${host}:${server.port}\n`);
