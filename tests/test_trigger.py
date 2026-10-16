@@ -163,9 +163,16 @@ class TestEventRouting(unittest.TestCase):
         self.assertIn("focus on auth", args[1])
         self.assertFalse(args[1].startswith("-"))
 
+    def _steer_stdout(self, text):
+        def fake(args, dry_run=False, stdout_sink=None):
+            if stdout_sink is not None:
+                stdout_sink.append(text)
+            return True
+        self.mock_run.side_effect = fake
+
     def test_issue_comment_authorized_steer_posts_ack_with_rev(self):
+        self._steer_stdout("Steering note (rev 3) written\nSteer rev 3 received: applies at next plan/implement stage.\n")
         with patch("trigger_server.find_live_run", return_value="run-1"), \
-             patch("trigger_server._pending_steer_rev", return_value=3), \
              patch("trigger_server.post_steer_ack") as ack:
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         self.assertEqual(status, "fired")
@@ -176,7 +183,6 @@ class TestEventRouting(unittest.TestCase):
 
     def test_issue_comment_unauthorized_posts_no_ack(self):
         with patch("trigger_server.find_live_run", return_value="run-1"), \
-             patch("trigger_server._pending_steer_rev", return_value=3), \
              patch("trigger_server.post_steer_ack") as ack:
             ts.handle_issue_comment_event(self._make_comment_payload("NONE"))
         ack.assert_not_called()
@@ -184,7 +190,6 @@ class TestEventRouting(unittest.TestCase):
     def test_issue_comment_failed_steer_posts_no_ack(self):
         self.mock_run.return_value = False
         with patch("trigger_server.find_live_run", return_value="run-1"), \
-             patch("trigger_server._pending_steer_rev", return_value=3), \
              patch("trigger_server.post_steer_ack") as ack:
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         self.assertEqual(status, "error")
@@ -193,7 +198,6 @@ class TestEventRouting(unittest.TestCase):
     def test_issue_comment_prompt_injection_off_posts_no_ack(self):
         with patch.dict(os.environ, {"LOKI_PROMPT_INJECTION": "0"}), \
              patch("trigger_server.find_live_run", return_value="run-1"), \
-             patch("trigger_server._pending_steer_rev", return_value=3), \
              patch("trigger_server.post_steer_ack") as ack:
             ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         ack.assert_not_called()
@@ -227,18 +231,33 @@ class TestEventRouting(unittest.TestCase):
         self.assertEqual(env["_LOKI_ORIGIN_PINNED"], "1")
         self.assertEqual(env["_LOKI_PINNED_ORIGIN"], "https://github.com/owner/repo.git")
 
-    def test_pending_steer_rev_reads_last_header(self):
-        d = tempfile.mkdtemp()
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            self.assertIsNone(ts._pending_steer_rev())
-            Path(".loki").mkdir()
-            Path(".loki/HUMAN_INPUT.md").write_text(
-                "## Operator directive rev 4 (t) actor=a source=cli\nx\n\n## Operator directive rev 5 (t) actor=a source=cli\ny\n")
-            self.assertEqual(ts._pending_steer_rev(), 5)
-        finally:
-            os.chdir(cwd)
+    def test_parse_steer_rev_from_stdout(self):
+        self.assertEqual(ts.parse_steer_rev("x\nSteer rev 12 received: applies at next plan/implement stage.\n"), 12)
+        self.assertEqual(ts.parse_steer_rev("\x1b[0;32mSteering note (rev 7) written to .loki/HUMAN_INPUT.md\x1b[0m\n"), 7)
+
+    def test_parse_steer_rev_unparseable_is_none(self):
+        for out in ("", None, "garbage", "Steer rev x received"):
+            self.assertIsNone(ts.parse_steer_rev(out))
+
+    def test_steer_ack_without_rev_has_no_number(self):
+        text = ts.steer_ack_text(None)
+        self.assertTrue(text.startswith("Steer received"))
+        self.assertNotRegex(text, r"\d")
+
+    def test_issue_comment_unparseable_stdout_acks_without_rev(self):
+        self._steer_stdout("nothing useful\n")
+        with patch("trigger_server.find_live_run", return_value="run-1"), \
+             patch("trigger_server.post_steer_ack") as ack:
+            ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
+        ack.assert_called_once_with("owner/repo#42", "owner/repo", None, dry_run=False)
+
+    def test_run_loki_outcome_captures_stdout(self):
+        proc = MagicMock(returncode=0)
+        proc.communicate.return_value = (b"Steer rev 9 received: x\n", b"")
+        sink = []
+        with patch("subprocess.Popen", return_value=proc):
+            ts.run_loki_outcome(["steer", "n"], stdout_sink=sink)
+        self.assertEqual(ts.parse_steer_rev("".join(sink)), 9)
 
     def test_issue_comment_unauthorized_skipped_no_write(self):
         for assoc in ("NONE", "CONTRIBUTOR", "FIRST_TIMER", None):
@@ -292,6 +311,23 @@ class TestEventRouting(unittest.TestCase):
                     (rd / "run.pid").write_text(json.dumps({"pid": os.getpid(), "start": ts._process_start_time(os.getpid()), "run_id": rid}))
             self.assertEqual(ts.find_live_run("owner/repo#42"), "r-live")
             self.assertIsNone(ts.find_live_run("owner/repo#99"))
+        finally:
+            os.chdir(cwd)
+
+    def test_find_live_run_honors_loki_dir(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            state = Path(d) / "elsewhere"
+            rd = state / "runs" / "r-env"
+            rd.mkdir(parents=True)
+            (rd / "events.jsonl").write_text(json.dumps({"type": "run.started", "data": {"issue_ref": "o/r#5"}}) + "\n")
+            (rd / "run.pid").write_text(json.dumps({"pid": os.getpid(), "start": ts._process_start_time(os.getpid()), "run_id": "r-env"}))
+            self.assertIsNone(ts.find_live_run("o/r#5"))
+            with patch.dict(os.environ, {"LOKI_DIR": str(state)}):
+                self.assertEqual(ts.find_live_run("o/r#5"), "r-env")
         finally:
             os.chdir(cwd)
 
