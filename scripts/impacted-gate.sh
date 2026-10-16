@@ -3,6 +3,7 @@
 #
 # Usage: bash scripts/impacted-gate.sh <base-ref> [head-ref]
 #        bash scripts/local-ci.sh --impacted <base-ref>
+#        bash scripts/impacted-gate.sh --guards-only   (only the R8 global guard rows; scripts/release.sh uses this)
 #
 # Selection is scripts/select-tests.sh (the one shared file-to-suite mapping).
 # Only shell_test and moat suites run here, plus the R8 global bun guards
@@ -22,7 +23,7 @@ cd "$REPO_ROOT" || exit 2
 BASE="${1:-}"
 HEAD_REF="${2:-HEAD}"
 if [ -z "$BASE" ]; then
-    echo "usage: impacted-gate.sh <base-ref> [head-ref]" >&2
+    echo "usage: impacted-gate.sh <base-ref> [head-ref] | --guards-only" >&2
     exit 2
 fi
 JOBS="${IMPACTED_JOBS:-4}"
@@ -47,7 +48,12 @@ if [ "${IMPACTED_TEST_MODE:-}" = "1" ] && [ -n "${IMPACTED_SUITES_FILE:-}" ]; th
     cp "$IMPACTED_SUITES_FILE" "$SUITES" || exit 2
 else
     SEL="$LOKI_RUN_TMP/selection.tsv"
-    bash "$SCRIPT_DIR/select-tests.sh" --base "$BASE" --head "$HEAD_REF" >"$SEL" || { echo "impacted-gate: selector failed" >&2; exit 2; }
+    if [ "$BASE" = "--guards-only" ]; then
+        SEL_ARGS=(--guards-only)
+    else
+        SEL_ARGS=(--base "$BASE" --head "$HEAD_REF")
+    fi
+    bash "$SCRIPT_DIR/select-tests.sh" "${SEL_ARGS[@]}" >"$SEL" || { echo "impacted-gate: selector failed" >&2; exit 2; }
 
     if grep -q '^R0	ALL' "$SEL"; then
         echo "impacted-gate: R0 (broad-blast-radius diff); the full run owns this, not run here:"

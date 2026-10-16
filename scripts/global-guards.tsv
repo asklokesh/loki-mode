@@ -15,3 +15,7 @@ shell_test	tests/test-sigpipe-guard.sh
 shell_test	tests/test-shard-coverage.sh
 shell_test	tests/test-workflow-no-masked-failures.sh
 shell_test	tests/test-no-dashes-tree.sh
+shell_test	tests/test-help-changelog-drift.sh
+shell_test	tests/test-no-tmp-sweep.sh
+shell_test	tests/test-hard-deadline-confinement.sh
+shell_test	tests/test-cli-commands.sh

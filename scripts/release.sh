@@ -24,7 +24,8 @@
 # "Tests" GitHub Actions workflow at HEAD's exact SHA.
 # No matching run -> refuse, exit 3 (RELEASE_ON_RED). --dry-run skips the
 # gate since it writes nothing. LOKI_RELEASE_ALLOW_RED=1 bypasses the gate
-# for tests only -- never set it for a real release.
+# for tests only -- never set it for a real release. Even then the global guard
+# rows (scripts/global-guards.tsv) still run; LOKI_RELEASE_SKIP_GUARDS=1 skips them.
 #
 # Files intentionally NOT bumped by this script (left to the Captain):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
@@ -400,6 +401,34 @@ sys.exit(1)
 ' "$json" "$sha"
 }
 
+# Cheap CI-only guards (global-guards.tsv R8 rows) that the green-CI gate
+# normally stands in for. Runs when that gate is skipped (LOKI_RELEASE_ALLOW_RED=1)
+# so a release cannot cut on a tree a guard already rejects. Same runner as the
+# impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
+# LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning.
+run_release_guard_rows() {
+    local out rc=0 started
+    if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then
+        log_warn "=============================================================="
+        log_warn "LOKI_RELEASE_SKIP_GUARDS=1: SKIPPING the global guard rows."
+        log_warn "A red CI-only guard will NOT stop this release."
+        log_warn "=============================================================="
+        return 0
+    fi
+    log_step "Running global guard rows (scripts/impacted-gate.sh --guards-only)..."
+    started="$(date +%s)"
+    out="$(IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-170}" \
+        bash "$ROOT_DIR/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
+    printf '%s\n' "$out"
+    log_info "Guard rows took $(( $(date +%s) - started ))s"
+    if [ "$rc" -ne 0 ]; then
+        log_error "RELEASE_GUARD_RED: a global guard row failed; refusing to bump."
+        printf '%s\n' "$out" | grep -E '^rc=[0-9]+ ' | grep -v '^rc=0 ' | sed 's/^/  red row: /' >&2 || true
+        exit 3
+    fi
+    log_success "Global guard rows green"
+}
+
 require_green_release_gate() {
     local sha wf missing=""
 
@@ -413,6 +442,7 @@ require_green_release_gate() {
         log_warn "LOKI_RELEASE_ALLOW_RED=1: SKIPPING the green-CI release gate."
         log_warn "TEST-ONLY ESCAPE HATCH. NEVER set this for a real release."
         log_warn "=============================================================="
+        run_release_guard_rows
         return 0
     fi
 
