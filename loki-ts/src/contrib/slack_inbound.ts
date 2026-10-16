@@ -49,7 +49,7 @@ export const MAX_TASK_BYTES = 64 * 1024;
 export const TASK_TOO_LONG = "task too long";
 export const NOT_ALLOWED = "You are not allowed to start runs from Slack.";
 export const START_FAILED = "Could not start a run (see the server log).";
-/** `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs) -> a set, or undefined when unset or blank. */
+/** `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs, or `*` for anyone) -> a set, or undefined when unset or blank (which rejects everyone). */
 export function parseAllowedUsers(raw: string | undefined): Set<string> | undefined {
   const ids = (raw ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return ids.length ? new Set(ids) : undefined;
@@ -88,7 +88,7 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   const existing = state.threads.get(threadKey(channel, threadTs));
   const text = parseMention(String(ev.text ?? ""));
   const wouldAct = (ev.type === "app_mention" || (ev.type === "message" && existing?.state === "blocked" && ev.thread_ts)) && text;
-  if (wouldAct && state.allowedUsers && !state.allowedUsers.has(String(ev.user ?? ""))) {
+  if (wouldAct && !state.allowedUsers?.has("*") && !state.allowedUsers?.has(String(ev.user ?? ""))) {
     await deps.post(channel, threadTs, NOT_ALLOWED);
     return { status: 200, body: "forbidden" };
   }
@@ -204,7 +204,7 @@ export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = proce
   if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
   const state = newInboundState();
   state.allowedUsers = parseAllowedUsers(env.LOKI_SLACK_ALLOWED_USERS);
-  if (!state.allowedUsers) process.stderr.write("slack: warning: LOKI_SLACK_ALLOWED_USERS is not set, so anyone who can mention the bot can start a run\n");
+  if (!state.allowedUsers) process.stderr.write("slack: warning: LOKI_SLACK_ALLOWED_USERS is not set, so every mention is rejected (set user IDs, or * to allow anyone)\n");
   const deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
   const serve = opts.serve ?? ((o) => Bun.serve(o));
   const server = serve({ hostname: host, port, fetch: makeSlackFetch(secret, state, deps) });

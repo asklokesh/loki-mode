@@ -21,7 +21,7 @@ Point the Slack Events API request URL at this server through a tunnel or revers
 
 ## Who can start a run
 
-Set `LOKI_SLACK_ALLOWED_USERS` to a comma-separated list of Slack user IDs (for example `U012ABC,U034DEF`). A mention or a BLOCKED-thread answer from any other user is rejected with a short thread reply and nothing is spawned. When it is unset, anyone who can mention the bot can start a run, and `loki slack serve` prints one startup line saying so.
+Set `LOKI_SLACK_ALLOWED_USERS` to a comma-separated list of Slack user IDs (for example `U012ABC,U034DEF`). A mention or a BLOCKED-thread answer from any other user is rejected with a short thread reply and nothing is spawned. When it is unset or blank, every mention is rejected (fail closed) and `loki slack serve` prints one startup line saying so. Set it to `*` to explicitly allow anyone in the workspace. The trigger server `/slack` slash command applies the same variable to the form `user_id`.
 
 Limits: task text over 64 KB is rejected with "task too long" and no run starts. If a run cannot be launched, the thread gets a generic message and the detail (which may include local paths) is logged to stderr only. `--port` must be a whole number (an empty value exits 2).
 

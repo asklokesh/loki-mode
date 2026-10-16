@@ -1662,6 +1662,13 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "unsupported slack payload"})
             return
         form = urllib.parse.parse_qs(body.decode("utf-8", errors="replace"))
+        allowed = {u.strip() for u in os.environ.get("LOKI_SLACK_ALLOWED_USERS", "").split(",") if u.strip()}
+        user_id = (form.get("user_id") or [""])[0]
+        if "*" not in allowed and user_id not in allowed:
+            log_event(JOB_EVENT, "", "", "rejected (slack user not allowed)")
+            self._send_json(200, {"response_type": "ephemeral",
+                                  "text": "You are not allowed to start runs from Slack."})
+            return
         text = (form.get("text") or [""])[0]
         if not valid_spec(text):
             log_event(JOB_EVENT, "", "", "rejected (invalid slack spec)")
@@ -2138,6 +2145,11 @@ def main():
         logging.warning(
             "No Slack signing secret configured: POST /slack is rejected with "
             "503. Set SLACK_SIGNING_SECRET."
+        )
+    elif not os.environ.get("LOKI_SLACK_ALLOWED_USERS", "").strip():
+        logging.warning(
+            "LOKI_SLACK_ALLOWED_USERS is not set: every /slack command is "
+            "rejected. Set Slack user IDs, or * to allow anyone."
         )
     if not linear_secret:
         logging.warning(

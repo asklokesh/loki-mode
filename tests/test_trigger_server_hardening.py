@@ -903,14 +903,35 @@ class TestSlackLinearDelegation(unittest.TestCase):
         self.orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
         patch.object(ts, "send_notification").start()
+        patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": "*"}).start()
 
     def tearDown(self):
         patch.stopall()
         os.chdir(self.orig_cwd)
 
-    def _slack_form(self, text="fix owner/repo#12", hook=HOOK):
+    def _slack_form(self, text="fix owner/repo#12", hook=HOOK, user_id="U1"):
         return urllib.parse.urlencode(
-            {"command": "/loki", "text": text, "response_url": hook}).encode()
+            {"command": "/loki", "text": text, "response_url": hook,
+             "user_id": user_id}).encode()
+
+    def test_slack_user_allowlist_fails_closed(self):
+        body = self._slack_form(user_id="U9")
+        cases = [("", "U9"), ("U1,U2", "U9")]
+        for allowed, uid in cases:
+            body = self._slack_form(user_id=uid)
+            with patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": allowed}):
+                (status, data), seen, posts = self._run(
+                    lambda s, b=body: s.raw("/slack", b, self._slack_headers(b)))
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["response_type"], "ephemeral")
+            self.assertNotIn("Queued", json.loads(data)["text"])
+            self.assertEqual(seen, [])
+            self.assertEqual(posts, [])
+        with patch.dict(os.environ, {"LOKI_SLACK_ALLOWED_USERS": "U1,U9"}):
+            (status, data), seen, _ = self._run(
+                lambda s: s.raw("/slack", body, self._slack_headers(body)))
+        self.assertIn("Queued", json.loads(data)["text"])
+        self.assertEqual(len(seen), 1)
 
     def _slack_headers(self, body, secret="slacksecret", ts_s=None, sig=True):
         ts_s = str(int(time.time())) if ts_s is None else ts_s
