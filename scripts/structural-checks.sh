@@ -103,6 +103,16 @@ changed_chars() {
     return $rc
 }
 
+# P12-40 (M10): an added doc line may not state a speed or cost multiple or
+# percentage without citing a measurement (METRICS, ROUTING-EVIDENCE or a
+# .loki/metrics path on the same line). Scans added *.md lines only, so the
+# patterns in this script never match themselves.
+unmeasured_claims() {
+    local base="$BASE" claim='(\b\d+(\.\d+)?x|\b\d+%) (faster|cheaper|fewer|less|lower)\b' cite='METRICS|ROUTING-EVIDENCE|\.loki/metrics'
+    { git diff "$base" -U0 -- '*.md' ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**" 2>/dev/null || true; } \
+        | perl -ne 'BEGIN{($c,$k)=@ARGV; @ARGV=()} if (/^\+(?!\+\+ )(.*)$/) { $l=$1; if ($l =~ /$c/i && $l !~ /$k/) { print "unmeasured claim: $l\n"; $bad=1 } } END{exit $bad?1:0}' "$claim" "$cite"
+}
+
 # Typecheck is ~2s with deps installed; skipped (not failed) when loki-ts has no
 # node_modules, e.g. CI before its bun install (Tier A R4 typechecks later).
 typecheck() {
@@ -117,6 +127,7 @@ check "SKILL.md version sync"   skill_version
 check "line budgets"            line_budgets
 check "readme no stale version" bash tests/test-readme-no-stale-version.sh
 check "emoji/dash on changes"   changed_chars
+check "unmeasured Nx claims"    unmeasured_claims
 check "loki-ts typecheck"       typecheck
 
 if [ "$FAILED" -gt 0 ]; then echo "structural-checks: $FAILED failed"; exit 1; fi

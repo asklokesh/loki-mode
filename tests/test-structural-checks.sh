@@ -161,6 +161,19 @@ printf 'a \342\200\224 b\n' > "$G/eval/loki10/refdiff/untracked.diff"
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
 if ! printf '%s' "$out" | grep -q "untracked: eval/loki10/refdiff"; then ok "untracked refdiff dash exempt"; else bad "untracked refdiff flagged"; fi
 
+echo "T10 -- an unmeasured multiple in a doc is caught; a cited one passes"
+git -C "$G" reset -q --hard main
+printf 'It is 3x faster than before.\n' > "$G/planted-claim.md"
+git -C "$G" add planted-claim.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m claim
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && failed_check "$out" "unmeasured Nx" >/dev/null; then ok "unmeasured 3x claim FAILs"; else bad "unmeasured claim not caught (rc=$rc)"; fi
+printf 'It is 3x faster than before (see docs/METRICS.md).\n' > "$G/planted-claim.md"
+git -C "$G" add planted-claim.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m cited
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
+if ! failed_check "$out" "unmeasured Nx" >/dev/null; then ok "cited claim passes"; else bad "cited claim flagged"; fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
