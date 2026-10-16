@@ -338,9 +338,42 @@ describe("scheduler", () => {
         git(s.repo, "config", "trailer.separators", "#");
         s.ops.merge("t", w);
         expect(s.ops.isMerged("t")).toBe(true);
-        expect(() => s.ops.merge("x\\nLoki-Modernize-Unit: " + MID + "/y", w)).toThrow("unsafe");
+        expect(() => s.ops.merge("x\nLoki-Modernize-Unit: " + MID + "/y", w)).toThrow("unsafe");
         expect(() => s.ops.isMerged("../x")).toThrow("unsafe");
         expect(() => gitMergeOps(s.repo, "bad").isMerged("a")).toThrow("unsafe");
+      } finally { s.done(); }
+    });
+
+    it("drops runner-committed excluded paths from the squash", () => {
+      const s = setup();
+      try {
+        const w = s.wt("rc");
+        mkdirSync(join(w, ".loki"), { recursive: true });
+        mkdirSync(join(w, "pkg", "__pycache__"), { recursive: true });
+        writeFileSync(join(w, ".loki", "state.json"), "{}");
+        writeFileSync(join(w, "pkg", "__pycache__", "m.pyc"), "x");
+        writeFileSync(join(w, "pkg", "m.py"), "1");
+        git(w, "add", "-f", ".");
+        git(w, "commit", "-qm", "runner", "--no-gpg-sign");
+        s.ops.merge("rc", w);
+        const files = git(s.repo, "ls-files");
+        expect(files).toContain("pkg/m.py");
+        expect(files).not.toContain(".loki");
+        expect(files).not.toContain("__pycache__");
+      } finally { s.done(); }
+    });
+
+    it("keeps the trailer under commit.cleanup=strip and core.commentChar=L", () => {
+      const s = setup();
+      try {
+        git(s.repo, "config", "commit.cleanup", "strip");
+        git(s.repo, "config", "core.commentChar", "L");
+        const w = s.wt("cl");
+        git(w, "config", "commit.cleanup", "strip");
+        git(w, "config", "core.commentChar", "L");
+        writeFileSync(join(w, "g"), "n");
+        s.ops.merge("cl", w);
+        expect(s.ops.isMerged("cl")).toBe(true);
       } finally { s.done(); }
     });
 

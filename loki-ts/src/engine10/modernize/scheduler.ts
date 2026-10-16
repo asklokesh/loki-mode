@@ -92,22 +92,26 @@ export function gitMergeOps(repoDir: string, mid: string): MergeOps {
   const piped = { stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
   const check = (unit: string) => { if (!isModernizeId(mid) || !isSafeUnitId(unit)) throw new Error(`unsafe merge ids: ${mid}/${String(unit).slice(0, 40)}`); };
   const why = (e: unknown) => String((e as { stderr?: unknown }).stderr ?? e).trim().slice(-300);
+  const merged = (unit: string) => {
+    check(unit);
+    return safeGit(repoDir, ["-c", "trailer.separators=:", "-c", "core.commentChar=#", "log", "--format=%(trailers:key=Loki-Modernize-Unit,valueonly)"]).split("\n").includes(`${mid}/${unit}`);
+  };
   return {
-    isMerged(unit) {
-      check(unit);
-      return safeGit(repoDir, ["-c", "trailer.separators=:", "log", "--format=%(trailers:key=Loki-Modernize-Unit,valueonly)"]).split("\n").includes(`${mid}/${unit}`);
-    },
+    isMerged: merged,
     merge(unit, worktree) {
       check(unit);
       if (!worktree) throw new Error(`merge of ${unit} needs a worktree`);
       try { safeGit(repoDir, ["symbolic-ref", "-q", "HEAD"]); } catch { throw new Error("repo HEAD is detached"); }
       if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"]).trim()) throw new Error("repo not clean");
       try {
-        safeGit(worktree, ["add", "-A", "--", ".", ":(exclude,glob)**/.loki/**", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**"], piped);
+        const excludes = [":(exclude,glob)**/.loki/**", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.pytest_cache/**"];
+        safeGit(worktree, ["add", "-A", "--", ".", ...excludes], piped);
         const base = safeGit(worktree, ["merge-base", safeGit(repoDir, ["rev-parse", "HEAD"]).trim(), "HEAD"], piped).trim();
         safeGit(worktree, ["reset", "--soft", base], piped); // squash: earlier runner commits ride along
-        safeGit(worktree, [...id, "commit", "-q", "--allow-empty", "-m", `modernize unit ${unit}`, "-m", `Loki-Modernize-Unit: ${mid}/${unit}`], piped);
-        safeGit(repoDir, [...id, "cherry-pick", "--allow-empty", "--keep-redundant-commits", safeGit(worktree, ["rev-parse", "HEAD"]).trim()], piped);
+        safeGit(worktree, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...excludes.map((x) => x.replace(":(exclude,glob)", ":(glob)"))], piped); // runner-committed excluded paths
+        safeGit(worktree, [...id, "commit", "-q", "--cleanup=verbatim", "--allow-empty", "-m", `modernize unit ${unit}`, "-m", `Loki-Modernize-Unit: ${mid}/${unit}`], piped);
+        safeGit(repoDir, [...id, "cherry-pick", "--cleanup=verbatim", "--allow-empty", "--keep-redundant-commits", safeGit(worktree, ["rev-parse", "HEAD"]).trim()], piped);
+        if (!merged(unit)) throw new Error("trailer missing after cherry-pick");
       } catch (e) {
         try { safeGit(repoDir, ["cherry-pick", "--abort"]); } catch { /* none in progress */ }
         throw new Error(`merge refused on ${unit}: ${why(e)}`);
