@@ -68,12 +68,38 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
 /** Work-item state (docs/v10/ENGINE.md "Work-item state"); lives here, not in engine10/events.ts, to keep the core line budget. */
 export type WorkItemState =
   | "received" | "prepared" | "planned" | "executing" | "validating" | "ready_to_ship" | "completed"
-  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled";
+  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled"
+  | "delivering" | "observing" | "waiting_for_policy" | "paused";
 export const STALE_S = 30 * 60;
 
 /** The one work-item vocabulary (docs/v10/ENGINE.md "Work-item state"). Pure over the event log. Terminal states come only from run.completed;
  *  `nowMs` (optional) enables "stalled" for an unfinished run with no events for STALE_S. */
 export function workItemState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
+  if (!events.some((e) => e.type === "run.completed")) {
+    // Non-terminal overlays (P12-08). Latest toggle wins; events are plain strings so no core event-type change is needed.
+    const on = (a: string, b: string): boolean => events.findLast((e) => e.type === a || e.type === b)?.type === a;
+    if (on("work.paused", "work.resumed")) return "paused";
+    if (on("policy.waiting", "policy.cleared")) return "waiting_for_policy";
+    if (!(nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) && events.some((e) => e.type === "pr.opened"))
+      return events.some((e) => e.type === "delivery.observing") ? "observing" : "delivering";
+  }
+  return stageState(events, nowMs);
+}
+
+/** Blockers live in their own field, never in the state string. Open policy wait or pause reason, else []. */
+export function workItemBlockers(events: readonly EventEnvelope[]): string[] {
+  const last = (a: string, b: string): EventEnvelope | undefined => { const e = events.findLast((x) => x.type === a || x.type === b); return e?.type === a ? e : undefined; };
+  return [last("work.paused", "work.resumed"), last("policy.waiting", "policy.cleared")].flatMap((e) => e ? [`${e.type}: ${String(e.data["reason"] ?? "unspecified")}`] : []);
+}
+
+/** One work item spans runs: keyed by the issue or PR ref on run.started; null for a text task. */
+export function workItemId(events: readonly EventEnvelope[]): string | null {
+  const d = events.find((e) => e.type === "run.started")?.data ?? {};
+  const k = d["issue_ref"] ?? d["pr_ref"];
+  return typeof k === "string" && k ? k : null;
+}
+
+function stageState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
   const done = events.findLast((e) => e.type === "run.completed");
   if (done) {
     const v = done.data.verdict;
@@ -104,7 +130,7 @@ export type Phase = "implement" | "verify" | "publish" | "done";
 /** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
 export function phaseOf(events: readonly EventEnvelope[]): Phase {
   if (events.some((e) => e.type === "pr.opened")) return "done";
-  const s = workItemState(events);
+  const s = stageState(events);
   if (s === "ready_to_ship") return "publish";
   if (s === "validating") return "verify";
   return s === "received" || s === "prepared" || s === "planned" || s === "executing" ? "implement" : "done";

@@ -132,6 +132,34 @@ _loki_caveman_narration_level() {
     fi
 }
 
+# P12-26b: permission flags for the migrate/doc/heal claude launches. Lazily sources
+# claude-flags.sh (like the caveman wrapper above) and fills _LOKI_PERM_ARGV; unset
+# LOKI_PERMISSION_POLICY keeps --dangerously-skip-permissions byte-identically.
+_loki_perm_argv_for() {
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    # Unset policy: return before sourcing anything (claude-flags.sh exports caveman vars).
+    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
+    _LOKI_PERM_ARGV=(--permission-mode plan)
+    local _pa_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" _pa_out _pa_a
+    if [ ! -f "$_pa_lib" ]; then
+        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: helper missing; using most restrictive mode (plan)" >&2
+        return 0
+    fi
+    # Subshell so the helper's top-level exports never leak into this shell.
+    _pa_out="$(
+        LOKI_PROJECT_DIR="${1:-${LOKI_PROJECT_DIR:-$PWD}}"
+        # shellcheck source=autonomy/lib/claude-flags.sh
+        . "$_pa_lib" >/dev/null 2>&1 || exit 1
+        declare -F _loki_claude_permission_argv >/dev/null 2>&1 || exit 1
+        _loki_claude_permission_argv
+        printf '%s\n' "${_LOKI_PERM_ARGV[@]}"
+    )" || return 0
+    [ -n "$_pa_out" ] || return 0
+    _LOKI_PERM_ARGV=()
+    while IFS= read -r _pa_a; do _LOKI_PERM_ARGV+=("$_pa_a"); done <<< "$_pa_out"
+    return 0
+}
+
 # loki edit: one-pass small change fast path (functions-only, self-guarded).
 if [ -f "$_LOKI_SCRIPT_DIR/edit.sh" ]; then
     # shellcheck source=edit.sh
@@ -5078,8 +5106,12 @@ cmd_pause() {
 # (default: git user.name, then $USER) and LOKI_STEER_SOURCE (cli, chat or an
 # https comment URL; default cli). Both are reduced to a safe character set.
 cmd_steer() {
-    case "${1:-}" in
-        --help|-h|help|"")
+    # "--" ends options so guidance beginning with "-" is data, not a flag
+    local _eoo=0
+    if [ "${1:-}" = "--" ]; then _eoo=1; shift; fi
+    case "$_eoo:${1:-}" in
+        1:?*) ;;
+        *:--help|*:-h|*:help|*:"")
             echo -e "${BOLD}Loki Mode -- steer the running build${NC}"
             echo ""
             echo "Usage: loki steer \"<guidance>\""
@@ -18014,9 +18046,10 @@ Tasks:
             # pre-caveman. No-op when caveman is absent.
             local _loki_mig_cm=""
             _loki_mig_cm="$(_loki_caveman_narration_level)"
+            _loki_perm_argv_for "$codebase_path"
             case "$provider_name" in
                 claude)
-                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                         while IFS= read -r line; do
                             # Extract text from stream-json
                             if echo "$line" | python3 -c "
@@ -18191,9 +18224,10 @@ IMPORTANT RULES:
         # branch, byte-identical to pre-caveman (empty mode is NOT inert). No-op absent.
         local _loki_doc_cm=""
         _loki_doc_cm="$(_loki_caveman_narration_level)"
+        _loki_perm_argv_for "$codebase_path"
         case "$provider_name" in
             claude)
-                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
+                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude "${_LOKI_PERM_ARGV[@]}" -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                     while IFS= read -r line; do
                         if echo "$line" | python3 -c "
 import sys, json
@@ -19256,7 +19290,8 @@ Begin healing now. Follow the RARV cycle for each action."
     _loki_heal_cm="$(_loki_caveman_narration_level)"
     case "$provider" in
         claude)
-            local run_args=(--dangerously-skip-permissions -p "$heal_prompt" --output-format stream-json --verbose)
+            _loki_perm_argv_for "$codebase_path"
+            local run_args=("${_LOKI_PERM_ARGV[@]}" -p "$heal_prompt" --output-format stream-json --verbose)
             (cd "$codebase_path" && if [ -n "$_loki_heal_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_heal_cm" claude "${run_args[@]}" 2>&1; else claude "${run_args[@]}" 2>&1; fi) | \
                 while IFS= read -r line; do
                     if echo "$line" | python3 -c "

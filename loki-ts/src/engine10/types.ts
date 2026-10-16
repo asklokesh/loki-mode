@@ -123,7 +123,7 @@ export interface CostTotals {
 export interface CostReader { // implemented by cost.ts (E-06)
   read(repoDir: string, iterationIds: string[]): CostTotals;
 }
-export interface Clock { now(): number; } // epoch ms
+export interface Clock { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void>; } // epoch ms; sleep is optional so tests can fake the quota wait
 export interface RunContext {
   timeline?: { stage: StageName; startMs: number; endMs: number }[]; // every stage the machine ran (any outcome), for the receipt's time buckets
   startedAtMs?: number; // set by the machine at run start (epoch ms); seal falls back to it for time.total_s

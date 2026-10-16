@@ -166,7 +166,7 @@ chat_ok '^  /resume' "/resume listed in /help"
 chat_ok '/resume\) _chat_do "\$loki" resume' "/resume delegates to loki resume"
 chat_ok '/run\|/start\)' "/start is an alias of /run"
 chat_ok '^  /start' "/start listed in /help"
-chat_ok '_chat_run_start "\$loki" "\$rest" < /dev/null .* &$' "/run backgrounds the run"
+chat_ok '_chat_run_start "\$loki" "\$input" < /dev/null .* &$' "/run backgrounds the run"
 chat_ok '/status /steer.*/stop' "help lists /status /steer /stop"
 chat_ok '/steer sends a mid-run directive via loki steer' "system prompt explains /steer"
 CHAT_STUB="$(mktemp -d)"
@@ -190,6 +190,39 @@ else
     bad "P12-16: /steer help guard missing: $out"
 fi
 rm -rf "$CHAT_STUB"
+
+# --- P12-16b: /run proves the start; /steer accepts text beginning with "-" ----
+B_DIR="$(mktemp -d)"; B_LOG="$B_DIR/args"
+printf '#!/bin/sh\nprintf "%%s|" "$@" > "%s"\necho "Steer rev 1 received"\n' "$B_LOG" > "$B_DIR/loki-rec"
+printf '#!/bin/sh\necho "boom: no provider" >&2\nexit 3\n' > "$B_DIR/loki-fail"
+printf '#!/bin/sh\nmkdir -p "$LOKI_DIR/runs/e10-1"; echo $$ > "$LOKI_DIR/runs/e10-1/run.pid"; sleep 4\n' > "$B_DIR/loki-ok"
+chmod +x "$B_DIR"/loki-*
+bash -c 'source "$1"; _chat_steer "$2" "-fix auth"' _ "$CHAT_SH" "$B_DIR/loki-rec" >/dev/null 2>&1
+if [ "$(cat "$B_LOG")" = "steer|--|-fix auth|" ]; then ok "P12-16b: /steer passes dash-leading text after --"; else bad "P12-16b: steer args: $(cat "$B_LOG")"; fi
+S_DIR="$B_DIR/s/.loki"; mkdir -p "$S_DIR"
+LOKI_DIR="$S_DIR" bash -c 'source "$1"; _CHAT_PROVIDER=claude; _chat_steer "$2" "-h"' _ "$CHAT_SH" "$LOKI" >/dev/null 2>&1
+if grep -q '^-h$' "$S_DIR/HUMAN_INPUT.md" 2>/dev/null; then ok "P12-16b: loki steer -- treats -h as data"; else bad "P12-16b: loki steer -- -h not recorded"; fi
+out="$(LOKI_DIR="$B_DIR/f/.loki" LOKI_CHAT_START_WAIT=3 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$B_DIR/loki-fail" 2>&1)"
+if echo "$out" | grep -q 'rc=3' && echo "$out" | grep -q 'boom: no provider' && echo "$out" | grep -q 'chat-run.log' && ! echo "$out" | grep -q 'Run started'; then ok "P12-16b: failed /run prints real error and log, never Run started"; else bad "P12-16b: failed run output: $out"; fi
+out="$(LOKI_DIR="$B_DIR/o/.loki" LOKI_CHAT_START_WAIT=3 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$B_DIR/loki-ok" 2>&1)"
+if echo "$out" | grep -q 'rc=0' && echo "$out" | grep -q 'Run started'; then ok "P12-16b: /run prints Run started once a live run exists"; else bad "P12-16b: ok run output: $out"; fi
+rm -rf "$B_DIR"
+
+# --- P12-16c: wait validation, new-dir proof, real exit code -------------------
+C_DIR="$(mktemp -d)"
+printf '#!/bin/sh\nmkdir -p "$LOKI_DIR/runs/e10-2"\nsleep 6\n' > "$C_DIR/loki-nopid"
+printf '#!/bin/sh\nexit 7\n' > "$C_DIR/loki-exit7"
+chmod +x "$C_DIR"/loki-*
+out="$(LOKI_DIR="$C_DIR/w/.loki" LOKI_CHAT_START_WAIT=1.5 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-exit7" 2>&1)"
+if echo "$out" | grep -q 'rc=7' && ! echo "$out" | grep -qi 'syntax error'; then ok "P12-16c: non-integer wait is tolerated and real exit code propagates"; else bad "P12-16c: wait/exit output: $out"; fi
+out="$(LOKI_DIR="$C_DIR/z/.loki" LOKI_CHAT_START_WAIT=0 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-exit7" 2>&1)"
+if echo "$out" | grep -q 'rc=7'; then ok "P12-16c: wait 0 clamps to 1"; else bad "P12-16c: wait 0 output: $out"; fi
+mkdir -p "$C_DIR/n/.loki/runs/e10-1"; sleep 30 & OTHER=$!
+echo "$OTHER" > "$C_DIR/n/.loki/loki.pid"
+out="$(LOKI_DIR="$C_DIR/n/.loki" LOKI_CHAT_START_WAIT=2 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-nopid" 2>&1)"
+kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
+if echo "$out" | grep -q 'rc=1' && ! echo "$out" | grep -q 'Run started' && echo "$out" | grep -q 'not confirmed'; then ok "P12-16c: new run dir without its own live run.pid is not 'Run started'"; else bad "P12-16c: new-dir output: $out"; fi
+rm -rf "$C_DIR"
 
 # --- Cleanup ------------------------------------------------------------------
 rm -rf "$(dirname "$SANDBOX_BIN")" 2>/dev/null || true
