@@ -189,6 +189,11 @@ export async function main(args: readonly string[], deps: ModernizeCliDeps = {})
     process.stdout.write(USAGE);
     return args.length === 0 ? 2 : 0;
   }
+  // --help/-h anywhere is a usage request (exit 0), not an unknown flag/argument (exit 2); USAGE lists unit too.
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
   if (args[0] === "unit") return unitMain(args.slice(1), deps);
   const parsed = parseArgs(args);
   if (!parsed.ok) {
