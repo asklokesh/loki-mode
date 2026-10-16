@@ -11,7 +11,7 @@ import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
-import { composeComposite, compositeHash, isComposite, verifyComposite, verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
+import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult { verdict: Verdict; reasons: string[]; receiptSha256?: string }
 /** The hash seal writes into receipt.json; receiptSha256 strips `verification` and `receipt_sha256` itself. */

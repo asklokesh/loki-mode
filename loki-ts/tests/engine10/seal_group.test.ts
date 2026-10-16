@@ -11,7 +11,8 @@ import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signRece
 import { computeReceiptHash, main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runGroup } from "../../src/features/speed/run_group.ts";
 import type { Dag } from "../../src/features/decompose.ts";
-import { capGroupVerdict, composeComposite, compositeHash, sealGroup } from "../../src/features/speed/seal_group.ts";
+import { capGroupVerdict, sealGroup } from "../../src/features/speed/seal_group.ts";
+import { composeComposite, compositeHash } from "../../src/util/composite_seal.ts";
 import type { EventType, Receipt, RunContext, StageName, Verdict } from "../../src/engine10/types.ts";
 
 let root = "";
@@ -402,15 +403,15 @@ describe("composite receipt", () => {
     expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
     expect(await quiet(() => verifyMain([p]))).toBe(2);
   });
-  test("head mismatch: a child head that is not the integrated head is UNCHECKED", async () => {
+  test("head mismatch: a child head that is not the integrated head is TAMPERED", async () => {
     const dir = writeWs("head", KIDS);
     const p = await seal(dir);
     const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
     i.heads.api = "f".repeat(40);
     writeFileSync(ip, JSON.stringify(i));
-    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); delete c["integration"]; });
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); c["integration"].heads.api = "f".repeat(40); });
     const r = await verdictOf(p);
-    expect(r.verdict).toBe("UNCHECKED");
+    expect(r.verdict).toBe("TAMPERED");
     expect(r.reasons.join(" ")).toContain("integrated head");
   });
   test("one PARTIAL child caps the composite at PARTIAL: integrity VERIFIED, exit 4", async () => {
@@ -455,12 +456,13 @@ describe("composite receipt", () => {
     resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
     expect((await verdictOf(p)).verdict).toBe("TAMPERED");
   });
-  test("a null integrated head is UNCHECKED, not a silent pass", async () => {
+  test("sealing refuses a null integrated head; a legacy composite without the integration section stays UNCHECKED", async () => {
     const dir = writeWs("nullhead", KIDS);
     const p = await seal(dir);
     const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
     i.heads.api = null;
     writeFileSync(ip, JSON.stringify(i));
+    expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/integrated head/);
     resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); delete c["integration"]; });
     expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
   });
@@ -488,6 +490,17 @@ describe("composite receipt", () => {
     expect((await verdictOf(p)).verdict).toBe("VERIFIED");
     resign(p, (x) => { x["integration"].status = "not_configured"; });
     expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("integration.log is pinned: a swapped log is TAMPERED, a missing or mismatched log refuses sealing", async () => {
+    const dir = writeWs("log", KIDS, {}, "real log\n");
+    const p = await seal(dir);
+    writeFileSync(join(dir, "integration.log"), "forged log\n");
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("integration.log");
+    expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/integration\.log/);
+    rmSync(join(dir, "integration.log"));
+    expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/integration\.log/);
   });
   test("sealing refuses a run dir whose name is not a valid run id", async () => {
     const dir = writeWs("badid", KIDS);
