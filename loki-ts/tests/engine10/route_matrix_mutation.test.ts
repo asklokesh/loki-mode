@@ -2,7 +2,7 @@
 // Proof that the semantic route matrix bites: each mutation edits a COPY of src/ and the matrix must report violations.
 // The first ten entries are the bypass forms that defeated the old line-regex guard; the rest are the standing mutation list.
 import { afterAll, describe, expect, it } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -64,7 +64,10 @@ const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 
 function mutatedRoot(edits: Edit[]): string {
-  const base = mkdtempSync(join(tmpdir(), "loki-rmx-")); dirs.push(base);
+  const root = mkdtempSync(join(tmpdir(), "loki-rmx-")); dirs.push(root);
+  // Mirror the repo layout: src imports reach ../../../packages, so the copy lives at <root>/loki-ts and packages/ is linked beside it.
+  symlinkSync(join(LOKI_TS, "../packages"), join(root, "packages"));
+  const base = join(root, "loki-ts"); mkdirSync(base);
   cpSync(join(LOKI_TS, "src"), join(base, "src"), { recursive: true });
   symlinkSync(join(LOKI_TS, "node_modules"), join(base, "node_modules"));
   writeFileSync(join(base, "package.json"), readFileSync(join(LOKI_TS, "package.json")));

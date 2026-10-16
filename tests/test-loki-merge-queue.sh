@@ -103,10 +103,12 @@ bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
 seed feat-ok 15 created
 chmod 644 .loki/state/pr.json
 bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
-[ "$(prj .merge.outcome)" = "merged" ] && [ "$(stat -f %Lp .loki/state/pr.json 2>/dev/null || stat -c %a .loki/state/pr.json)" = "644" ] && ok "pr.json: file mode preserved" || bad "pr.json mode: $(ls -l .loki/state/pr.json)"
+[ "$(prj .merge.outcome)" = "merged" ] && [ "$(stat -c %a .loki/state/pr.json 2>/dev/null || stat -f %Lp .loki/state/pr.json)" = "644" ] && ok "pr.json: file mode preserved" || bad "pr.json mode: $(ls -l .loki/state/pr.json)"
+# A PATH holding every system tool except gh (runners ship a real gh in /usr/bin)
 mkdir -p "$WORK/jqonly"; ln -sf "$(command -v jq)" "$WORK/jqonly/jq"
+for d in /usr/bin /bin; do for f in "$d"/*; do b="${f##*/}"; [ "$b" = gh ] || [ -e "$WORK/jqonly/$b" ] || ln -s "$f" "$WORK/jqonly/$b"; done; done
 seed feat-ok 16 created
-PATH="$WORK/jqonly:/usr/bin:/bin" bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
+PATH="$WORK/jqonly" bash "$LOKI" merge pr feat-ok >/dev/null 2>&1
 [ "$(prj .merge.outcome)" = "blocked:gh" ] && ok "pr.json: missing gh records blocked:gh" || bad "pr.json gh: $(cat .loki/state/pr.json)"
 seed feat-ok 17 created
 bash "$LOKI" merge pr https://github.com/o/r/pull/17 >/dev/null 2>&1
