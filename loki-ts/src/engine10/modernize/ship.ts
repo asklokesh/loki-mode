@@ -76,7 +76,7 @@ export function shipWave(o: ShipWaveOpts): ShipResult {
   // a ready wave replaces the old body and marks the PR ready through the script (pr-ready), else it stays a stale draft.
   if (draft && r.existing !== false) return fail("existing PR reused; draft state not applied", r.url, r.existing);
   if (!draft && r.existing !== false) {
-    const rr = (o.ready ?? runPrReady)({ repoDir: o.repoDir, branch: o.branch, bodyFile, pinnedOrigin });
+    const rr = (o.ready ?? runPrReady)({ repoDir: o.repoDir, branch: o.branch, bodyFile, url: r.url, pinnedOrigin });
     if (!rr.ok) return fail("existing PR reused; draft state not applied", r.url, r.existing);
   }
   o.log?.append("wave.shipped", { wave: o.wave, url: r.url, draft, existing: r.existing });
