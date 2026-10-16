@@ -41,6 +41,41 @@ describe("modernize report (M-25)", () => {
     expect(buildReport({ mid: MID, units: [], waves: [{ wave: 1, verdict: good(1) }] }).verdict).toBe("INCOMPLETE");
     expect(buildReport({ mid: MID, units: [], waves: [] }).verdict).toBe("INCOMPLETE");
   });
+  it("no waves is never COMPLETE (case A)", () => {
+    const r = buildReport({ mid: MID, units: [u("a")], waves: [] });
+    expect(r.verdict).toBe("INCOMPLETE");
+    expect(r.reasons.join("\n")).toContain("no waves");
+  });
+  it("a gap or duplicate in wave numbers is never COMPLETE (case B)", () => {
+    const gap = buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 1, verdict: good(1) }, { wave: 3, verdict: good(3) }] });
+    expect(gap.verdict).toBe("INCOMPLETE");
+    expect(gap.reasons.join("\n")).toContain("contiguous");
+    const dup = buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 1, verdict: good(1) }, { wave: 1, verdict: good(1) }] });
+    expect(dup.verdict).toBe("INCOMPLETE");
+    const zero = buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 0, verdict: good(0) }] });
+    expect(zero.verdict).toBe("INCOMPLETE");
+    expect(buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 2, verdict: good(2) }, { wave: 1, verdict: good(1) }] }).verdict).toBe("COMPLETE");
+  });
+  it("a PROVEN unit carrying not_proven reasons or rate below 1 is not counted PROVEN", () => {
+    const withReasons = buildReport({ mid: MID, units: [u("a", "PROVEN", ["flaky"])], waves: [{ wave: 1, verdict: good(1) }] });
+    expect(withReasons.verdict).toBe("INCOMPLETE");
+    expect(withReasons.blocking_units).toEqual(["a"]);
+    const lowRate = buildReport({ mid: MID, units: [{ ...u("b"), rate: 0.9 }], waves: [{ wave: 1, verdict: good(1) }] });
+    expect(lowRate.verdict).toBe("INCOMPLETE");
+    expect(lowRate.blocking_units).toEqual(["b"]);
+  });
+  it("a wave verified:true with failedStep set counts as unverified", () => {
+    const r = buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 1, verdict: { ...good(1), failedStep: "build" } }] });
+    expect(r.verdict).toBe("INCOMPLETE");
+    expect(r.blocking_waves).toEqual([1]);
+  });
+  it("verifyReport returns ok:false, not a throw, when the jwt is not a string", () => {
+    const s = sealReport(buildReport({ mid: MID, units: [u("a")], waves: [{ wave: 1, verdict: good(1) }] }), unsigned);
+    for (const jwt of [42, null, undefined, {}]) {
+      const bad = { ...s, signature: { jwt, kid: "k" } } as never;
+      expect(verifyReport(bad, null).ok).toBe(false);
+    }
+  });
   it("sealed unsigned report verifies; any edit fails", () => {
     const s = sealReport(buildReport({ mid: MID, units: [u("a", "NOT_PROVEN")], waves: [{ wave: 1, verdict: good(1) }] }), unsigned);
     expect(s.signature).toBeNull();

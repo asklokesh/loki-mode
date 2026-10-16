@@ -46,14 +46,18 @@ export function buildReport(o: BuildReportOpts): ReportBody {
   const units: ReportUnit[] = o.units.map((x) => ({ unit: x.unit, verdict: x.verdict, not_proven: [...x.not_proven], rate: x.rate, branchPct: x.branchPct, receiptPath: x.receiptPath, receiptSha256: x.receiptSha256 }));
   const waves: ReportWave[] = o.waves.map((w) => ({
     wave: w.wave,
-    verified: w.verdict !== null && w.verdict.verified === true,
-    reason: w.verdict === null ? "wave verify never ran" : w.verdict.verified === true ? null : (w.verdict.reason ?? `${w.verdict.failedStep} failed`),
+    verified: w.verdict !== null && w.verdict.verified === true && w.verdict.failedStep == null,
+    reason: w.verdict === null ? "wave verify never ran" : w.verdict.verified === true && w.verdict.failedStep == null ? null : (w.verdict.reason ?? `${w.verdict.failedStep ?? "verify"} failed`),
   }));
-  const blocking_units = units.filter((x) => x.verdict !== "PROVEN").map((x) => x.unit);
+  // A PROVEN label with leftover reasons or a sub-1 equivalence rate is not proof.
+  const provenOk = (x: ReportUnit): boolean => x.verdict === "PROVEN" && x.not_proven.length === 0 && !(typeof x.rate === "number" && x.rate < 1);
+  const blocking_units = units.filter((x) => !provenOk(x)).map((x) => x.unit);
   const blocking_waves = waves.filter((w) => !w.verified).map((w) => w.wave);
   const reasons: string[] = [];
   if (units.length === 0) reasons.push("no units: nothing is proven");
-  for (const x of units) if (x.verdict !== "PROVEN") reasons.push(`unit ${x.unit}: ${x.verdict}${x.not_proven.length ? ` (${x.not_proven.join("; ")})` : ""}`);
+  for (const x of units) if (!provenOk(x)) reasons.push(`unit ${x.unit}: ${x.verdict}${x.not_proven.length ? ` (${x.not_proven.join("; ")})` : ""}${x.verdict === "PROVEN" && typeof x.rate === "number" && x.rate < 1 ? ` (equivalence rate ${x.rate} below 1)` : ""}`);
+  if (waves.length === 0) reasons.push("no waves: nothing was verified");
+  else if (!waves.map((w) => w.wave).sort((a, b) => a - b).every((n, i) => n === i + 1)) reasons.push("wave numbers are not unique and contiguous from 1");
   for (const w of waves) if (!w.verified) reasons.push(`wave ${w.wave}: ${w.reason}`);
   const verdict: ReportVerdict = reasons.length === 0 ? "COMPLETE" : "INCOMPLETE";
   return { schema: "loki.modernize.report/1", mid: o.mid, verdict, blocking_units, blocking_waves, reasons, units, waves };
@@ -73,9 +77,10 @@ export interface ReportCheck { ok: boolean; signed: boolean; reason: string | nu
 export function verifyReport(r: SealedReport, key: KeyObject | null = loadSigningKey(false)): ReportCheck {
   if (hashOf(bodyOf(r)) !== r.report_sha256) return { ok: false, signed: false, reason: "report was edited: sha256 mismatch" };
   if (!r.signature) return { ok: true, signed: false, reason: null };
-  const parts = r.signature.jwt.split(".");
-  if (parts.length !== 3) return { ok: false, signed: true, reason: "malformed signature" };
   try {
+    if (typeof r.signature.jwt !== "string") return { ok: false, signed: true, reason: "malformed signature" };
+    const parts = r.signature.jwt.split(".");
+    if (parts.length !== 3) return { ok: false, signed: true, reason: "malformed signature" };
     const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as { receipt_sha256?: unknown };
     if (payload.receipt_sha256 !== r.report_sha256) return { ok: false, signed: true, reason: "signature does not bind this report" };
     if (!key) return { ok: false, signed: true, reason: "no key to verify the signature" };
