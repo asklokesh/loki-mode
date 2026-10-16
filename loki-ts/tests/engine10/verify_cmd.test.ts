@@ -141,6 +141,32 @@ describe("verifyReceipt: unsigned", () => {
   });
 });
 
+describe("verifyReceipt: unrecognized schema (P12-01d)", () => {
+  const rehash = (r: Record<string, unknown>) => { const { receipt_sha256: _h, verification: _v, ...rest } = r; r["receipt_sha256"] = computeReceiptHash(rest); };
+  for (const [name, schema] of [["renamed", "loki.v10.receipt/2"], ["removed", undefined], ["non-string", 7]] as const) {
+    test(`a correctly re-hashed unsigned receipt with a ${name} schema is TAMPERED, not UNSIGNED, and exits non-zero`, async () => {
+      const dir = tmpDir();
+      try {
+        const path = writeUnsignedReceipt(dir, "e10-schema-" + name, (r) => { if (schema === undefined) delete r["schema"]; else r["schema"] = schema; rehash(r); });
+        const result = await verifyReceipt(path);
+        expect(result.verdict).toBe("TAMPERED");
+        expect(result.reasons.join(" ")).toContain("unrecognized receipt schema");
+        expect(await main(["e10-schema-" + name, "--allow-unsigned"], { runsRoot: join(dir, "runs") })).toBe(1); // --allow-unsigned must not waive it
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+  test("the recognized loki.v10.receipt/1 schema still reads UNSIGNED", async () => {
+    const dir = tmpDir();
+    try {
+      expect((await verifyReceipt(writeUnsignedReceipt(dir, "e10-schema-ok"))).verdict).toBe("UNSIGNED");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("verifyReceipt: tamper (red before green: this is the mutation)", () => {
   test("a receipt edited after hashing fails as TAMPERED", async () => {
     const dir = tmpDir();

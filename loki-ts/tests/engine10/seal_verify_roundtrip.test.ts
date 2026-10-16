@@ -11,7 +11,8 @@ import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 const root = mkdtempSync(join(tmpdir(), "e10-roundtrip-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-function seal(body: Record<string, unknown>, dir: string): string {
+function seal(raw: Record<string, unknown>, dir: string): string {
+  const body = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", ...raw };
   const receipt = { ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } };
   mkdirSync(dir, { recursive: true });
   const p = join(dir, "receipt.json");

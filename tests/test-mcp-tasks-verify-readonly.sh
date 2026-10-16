@@ -77,7 +77,9 @@ export HOME="$WORK/home" LOKI_RECEIPT_SIGNING_KEY_FILE="$WORK/k.pem"
 sdirect="$(python3 -I "$ADAPTER" verify "" "$WORK/repo/signed")"
 case "$sdirect" in
   *'"verified": true'*) pass "positive control: direct verify of the signed receipt is VERIFIED" ;;
-  *) echo "SKIP: signed verify not runnable here (no bun / loki-ts deps): $sdirect"; sdirect="" ;;
+  # A real verdict line (TAMPERED, UNCHECKED, UNSIGNED, NOT VERIFIED) means the engine ran and refused the receipt: that is a regression, never a skip.
+  *'verdict: '*) fail "signed receipt did not verify (engine produced a verdict): $sdirect"; sdirect="" ;;
+  *) echo "SKIP: signed verify not runnable here (engine produced no verdict; no bun / loki-ts deps): $sdirect"; sdirect="" ;;
 esac
 if [ -n "$sdirect" ]; then
   stask="$(ADAPTER_ROOT="$ROOT" REPO="$WORK/repo/signed" LOKI_MCP_TASKS=1 node -e '

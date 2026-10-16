@@ -40,7 +40,7 @@ let pubText = "";
 
 describe("portable signed receipt", () => {
   test("seal under HOME A, export the public key", async () => {
-    const body = { verdict: "VERIFIED", task: "portable receipt", not_proven: ["nothing extra"] };
+    const body = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", verdict: "VERIFIED", task: "portable receipt", not_proven: ["nothing extra"] };
     const hash = receiptSha256(body as never);
     const sig = await asHome(homeA, keyA, async () => signReceipt("e10-x", hash));
     writeFileSync(receiptPath, JSON.stringify({ ...body, receipt_sha256: hash, verification: sig }, null, 2) + "\n");
