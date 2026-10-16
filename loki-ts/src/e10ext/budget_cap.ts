@@ -34,12 +34,12 @@ export function capNote(usd: number, source: CapSource): string {
 export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number, repoDir?: string): NodeJS.ProcessEnv {
   if (!(capUsd > 0)) return env;
   const out: NodeJS.ProcessEnv = { ...env, LOKI_BUDGET_LIMIT: String(capUsd) };
-  if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch { /* no ledger: units keep the per-unit cap */ } }
+  if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch (e) { out.LOKI_BUDGET_LEDGER = join(resolve(repoDir), ".loki", "runs", "unusable", "group.ledger"); process.stderr.write(`budget: cannot create the shared ledger dir (${e instanceof Error ? e.message : String(e)}); units will stop, failing closed\n`); } } // P12-22s: a path under a non-directory, so capMeter fails closed on it
   return out;
 }
 /** P12-22r: shared ledger. One JSON line per priced cost, written with a single O_APPEND write (atomic for small lines). Sum = spend of every unit. */
 export function ledgerSum(path: string): number | null {
-  try { let t = 0; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const u = (JSON.parse(l) as { usd?: unknown }).usd; if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
+  try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
 }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
 export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
@@ -49,7 +49,8 @@ export function capMeter<E extends (type: never, stage: never, data: Record<stri
   let broken = false; // P12-22r: a set but unusable ledger fails closed (stop), never a private ledger
   if (ledger) { try { appendFileSync(ledger, ""); readFileSync(ledger); } catch { broken = true; } }
   const base = Number.isFinite(seed) && seed > 0 ? seed : 0;
-  const spent = (): number | null => { const t = ledgerSum(ledger); return t === null ? null : base + t; };
+  if (ledger && !broken && base > 0) { try { if (!((ledgerSum(ledger) ?? 0) > 0)) appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: base, seed: true }) + "\n"); } catch { broken = true; } } // P12-22s: the rerun seed is recorded once in the ledger (first seed line counts), never added on top of spend it already holds
+  const spent = (): number | null => ledgerSum(ledger);
   const emit = ((type: string, stage: never, data: Record<string, unknown>) => {
     if (type === "cost") { m.add(data.usd); if (ledger && typeof data.usd === "number" && data.usd > 0) { try { appendFileSync(ledger, JSON.stringify({ pid: process.pid, usd: data.usd }) + "\n"); } catch { broken = true; } } }
     (raw as unknown as (...a: unknown[]) => void)(type, stage, data);
