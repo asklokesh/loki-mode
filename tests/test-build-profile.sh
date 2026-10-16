@@ -80,6 +80,108 @@ check "override: API_TESTS stays true" "true" "$(val "$R" PHASE_API_TESTS)"
 R="$(resolve 'export LOKI_BUILD_PROFILE=simple-web; export LOKI_PHASE_E2E_TESTS=false')"
 check "override: E2E forced false" "false" "$(val "$R" PHASE_E2E_TESTS)"
 
+# --- 4. small-task fast path (S5) ---------------------------------------------
+# small_resolve <setup>: runs the REAL profile code, then the post-detection
+# entry point, and echoes the resulting knobs.
+small_resolve() {
+    env -i bash -c "$*
+$PROFILE_CODE
+loki_maybe_apply_small_profile
+for v in LOKI_BUILD_PROFILE LOKI_SPEC_GRILL LOKI_PRD_ENRICH LOKI_WIKI_AUTO \
+         LOKI_AUTO_DOCS LOKI_GATE_DEVILS_ADVOCATE LOKI_REVIEW_REQUIREMENTS_ONLY \
+         LOKI_COUNCIL_MODEL_VOTERS LOKI_ADVISOR_MODEL LOKI_SIMPLE LOKI_DOCS_TIER \
+         LOKI_SMALL_PROFILE_ACTIVE LOKI_PHASE_UNIT_TESTS LOKI_PHASE_E2E_TESTS \
+         LOKI_PHASE_CODE_REVIEW LOKI_PHASE_SECURITY LOKI_COUNCIL_ENABLED \
+         LOKI_EVIDENCE_GATE LOKI_PROOF_GATE LOKI_PROOF LOKI_GATE_DOC_COVERAGE \
+         LOKI_BUILD_CHECK_BLOCK; do
+    echo \"\$v=\${!v-<unset>}\"
+done"
+}
+sval() { grep "^$2=" <<<"$1" | cut -d= -f2-; }
+
+R="$(small_resolve 'DETECTED_COMPLEXITY=simple')"
+check "small: profile marker"        "small" "$(sval "$R" LOKI_BUILD_PROFILE)"
+check "small: active flag"           "1"     "$(sval "$R" LOKI_SMALL_PROFILE_ACTIVE)"
+check "small: SPEC_GRILL off"        "0"     "$(sval "$R" LOKI_SPEC_GRILL)"
+check "small: PRD_ENRICH off"        "0"     "$(sval "$R" LOKI_PRD_ENRICH)"
+check "small: WIKI_AUTO off"         "0"     "$(sval "$R" LOKI_WIKI_AUTO)"
+check "small: AUTO_DOCS false"       "false" "$(sval "$R" LOKI_AUTO_DOCS)"
+check "small: DEVILS_ADVOCATE off"   "false" "$(sval "$R" LOKI_GATE_DEVILS_ADVOCATE)"
+check "small: REQUIREMENTS_ONLY not forced" "<unset>" "$(sval "$R" LOKI_REVIEW_REQUIREMENTS_ONLY)"
+check "small: council single call"   "0"     "$(sval "$R" LOKI_COUNCIL_MODEL_VOTERS)"
+check "small: reviewer model haiku"  "haiku" "$(sval "$R" LOKI_ADVISOR_MODEL)"
+check "small: SIMPLE prompt arm"     "1"     "$(sval "$R" LOKI_SIMPLE)"
+check "small: docs tier exported"    "small" "$(sval "$R" LOKI_DOCS_TIER)"
+# Wall: no deterministic gate, holdout or Seal knob is written by the profile.
+for v in LOKI_PHASE_UNIT_TESTS LOKI_PHASE_E2E_TESTS LOKI_PHASE_CODE_REVIEW \
+         LOKI_PHASE_SECURITY LOKI_COUNCIL_ENABLED LOKI_EVIDENCE_GATE \
+         LOKI_PROOF_GATE LOKI_PROOF LOKI_GATE_DOC_COVERAGE LOKI_BUILD_CHECK_BLOCK; do
+    check "small: $v untouched" "<unset>" "$(sval "$R" "$v")"
+done
+
+# Complex and standard tiers are unchanged.
+for t in standard complex ""; do
+    R="$(small_resolve "DETECTED_COMPLEXITY=$t")"
+    check "tier '$t': no small profile" "<unset>" "$(sval "$R" LOKI_BUILD_PROFILE)"
+    check "tier '$t': SPEC_GRILL untouched" "<unset>" "$(sval "$R" LOKI_SPEC_GRILL)"
+    check "tier '$t': SIMPLE untouched" "<unset>" "$(sval "$R" LOKI_SIMPLE)"
+done
+
+# Explicit user env beats the profile.
+R="$(small_resolve 'DETECTED_COMPLEXITY=simple; export LOKI_SPEC_GRILL=1 LOKI_ADVISOR_MODEL=sonnet LOKI_WIKI_AUTO=1 LOKI_AUTO_DOCS=true LOKI_SIMPLE=0')"
+check "override: SPEC_GRILL kept"   "1"      "$(sval "$R" LOKI_SPEC_GRILL)"
+check "override: reviewer kept"     "sonnet" "$(sval "$R" LOKI_ADVISOR_MODEL)"
+check "override: WIKI_AUTO kept"    "1"      "$(sval "$R" LOKI_WIKI_AUTO)"
+check "override: AUTO_DOCS kept"    "true"   "$(sval "$R" LOKI_AUTO_DOCS)"
+check "override: SIMPLE kept"       "0"      "$(sval "$R" LOKI_SIMPLE)"
+
+# Opt-out and other profiles.
+R="$(small_resolve 'DETECTED_COMPLEXITY=simple; export LOKI_SMALL_PROFILE=0')"
+check "opt-out: no small profile" "<unset>" "$(sval "$R" LOKI_BUILD_PROFILE)"
+R="$(small_resolve 'DETECTED_COMPLEXITY=simple; export LOKI_BUILD_PROFILE=simple-web')"
+check "simple-web wins over small" "simple-web" "$(sval "$R" LOKI_BUILD_PROFILE)"
+check "simple-web: SIMPLE not forced" "<unset>" "$(sval "$R" LOKI_SIMPLE)"
+
+# Scoped-change diff budget: a large dirty tree is not a small task.
+BIGREPO="$(mktemp -d "${TMPDIR:-/tmp}/loki-bp-small.XXXXXX")"
+git -C "$BIGREPO" init -q
+seq 1 50 > "$BIGREPO/a.txt"
+git -C "$BIGREPO" add a.txt
+git -C "$BIGREPO" -c user.name=t -c user.email=t@t commit -q -m a
+seq 1 900 > "$BIGREPO/a.txt"
+R="$(small_resolve "DETECTED_COMPLEXITY=simple; export LOKI_SCOPED_CHANGE_ACTIVE=1 TARGET_DIR=$BIGREPO")"
+check "scoped over diff budget: no small" "<unset>" "$(sval "$R" LOKI_BUILD_PROFILE)"
+R="$(small_resolve "DETECTED_COMPLEXITY=simple; export LOKI_SCOPED_CHANGE_ACTIVE=1 TARGET_DIR=$BIGREPO LOKI_SMALL_DIFF_BUDGET=5000")"
+check "scoped within diff budget: small" "small" "$(sval "$R" LOKI_BUILD_PROFILE)"
+rm -rf "$BIGREPO"
+
+# Main-session lean flags: small profile only, single "--tools=" never emitted
+# for the main role, setting sources widened to project,local.
+main_flags() { # main_flags <setup>
+    env -i bash -c "$*
+$PROFILE_CODE
+loki_lean_child_flags() { printf '%s\n' --setting-sources project --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'; }
+if loki_small_main_session_flags; then printf '%s|' \"\${_LOKI_SMALL_MAIN_ARGV[@]}\"; else echo NONE; fi"
+}
+check "main flags: inactive profile -> none" "NONE" "$(main_flags 'true')"
+check "main flags: small -> lean + project,local" \
+    "--setting-sources|project,local|--strict-mcp-config|--mcp-config|{\"mcpServers\":{}}|" \
+    "$(main_flags 'export LOKI_SMALL_PROFILE_ACTIVE=1')"
+# API-key host: child helper emits --bare; the main session must never get it.
+bare_flags() {
+    env -i bash -c "export LOKI_SMALL_PROFILE_ACTIVE=1
+$PROFILE_CODE
+loki_lean_child_flags() { printf '%s\n' --bare; }
+if loki_small_main_session_flags; then printf '%s|' \"\${_LOKI_SMALL_MAIN_ARGV[@]}\"; else echo NONE; fi"
+}
+check "main flags: --bare never passed to main" "NONE" "$(bare_flags)"
+check "supervised reviewer uses single --tools= arg" "1" \
+    "$(grep -c '^ *"--tools="$' "$RUN_SH")"
+check "empty reviewer list guard present" "1" \
+    "$(grep -c 'no reviewers selected; review is inconclusive' "$RUN_SH")"
+check "main flags: opt-out -> none" "NONE" \
+    "$(main_flags 'export LOKI_SMALL_PROFILE_ACTIVE=1 LOKI_SMALL_LEAN_MAIN=0')"
+
 echo "-----"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
