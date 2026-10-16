@@ -472,7 +472,7 @@ def backlog_status():
         for r in _RUNS.values():
             row = {k: r.get(k) for k in ("number", "title", "status", "pr_url", "question", "detail")}
             if r["status"] == "blocked":
-                row["resume_hint"] = ("The engine cannot resume with an answer (--resume was removed). "
+                row["resume_hint"] = ("The engine cannot resume with an answer (--resume only finishes the publish phase of a sealed run, not a blocked one). "
                                       "Answer on the issue, then re-run: loki %s#%d" % (repo, r["number"]))
             out.append(row)
     return {"repo": repo, "concurrency": _concurrency(), "issues": out}
