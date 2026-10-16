@@ -1441,6 +1441,20 @@ def _collect_journey(loki_dir):
         n = iv.get("count")
         if isinstance(n, int) and n >= 0:
             out["interventions"] = n
+        # by_type / waited_s exist only for counters written by the current
+        # handle_pause. A count-only legacy file yields no detail (unmeasured,
+        # never a fabricated zero). waited_s is wall-clock blocked seconds, an
+        # upper bound on human attention, not active time.
+        bt = iv.get("by_type")
+        ws = iv.get("waited_s")
+        if isinstance(bt, dict) and isinstance(ws, int) and not isinstance(ws, bool) and ws >= 0:
+            out["interventions_detail"] = {
+                "by_type": {
+                    k: (bt[k] if isinstance(bt.get(k), int) and not isinstance(bt.get(k), bool) and bt[k] >= 0 else 0)
+                    for k in ("steer", "input", "authorization", "repair")
+                },
+                "waited_s": ws,
+            }
 
     # PR state/URL, written by the consent-gated PR step. "prepared" means a PR
     # body exists locally and GitHub was NOT mutated.
@@ -1847,6 +1861,8 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # "unavailable" rather than showing a fabricated zero.
     if isinstance(journey, dict) and isinstance(journey.get("interventions"), int):
         proof["interventions"] = journey["interventions"]
+    if isinstance(journey, dict) and isinstance(journey.get("interventions_detail"), dict):
+        proof["interventions_detail"] = journey["interventions_detail"]
 
     return proof, run_id
 

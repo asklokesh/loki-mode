@@ -97,3 +97,45 @@ test("compose + write from events, missing files tolerated, requirements-map rea
     expect(existsSync(join(repo, ".loki", "review", "HANDOFF.md.tmp"))).toBe(false);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("FV-3: interventions come from state/interventions.json by type with waited time; absent file stays not recorded; count 0 stays 0", () => {
+  const repo = mkdtempSync(join(tmpdir(), "loki-handoff-"));
+  try {
+    const f: HandoffFacts = { repoDir: repo, runId: "e10-9", events: [], outcome: "VERIFIED", usd: null, elapsedS: 5, notProven: [], task: "t", requirements: null };
+    expect(renderHandoff(composeHandoff(f))).toContain("interventions not recorded");
+    mkdirSync(join(repo, ".loki", "state"), { recursive: true });
+    const iv = join(repo, ".loki", "state", "interventions.json");
+    writeFileSync(iv, JSON.stringify({ count: 2, basis: "x", by_type: { steer: 0, input: 1, authorization: 1, repair: 0 }, waited_s: 240 }));
+    const md = renderHandoff(composeHandoff(f));
+    expect(md).toContain("interventions 2 (input 1, authorization 1); waited 4m");
+    expect(handoffSection(f)).toContain("interventions 2 (input 1, authorization 1); waited 4m");
+    writeFileSync(iv, JSON.stringify({ count: 1, basis: "x" }));
+    expect(renderHandoff(composeHandoff(f))).toContain("interventions 1\n");
+    writeFileSync(iv, JSON.stringify({ count: 0, by_type: { steer: 0, input: 0, authorization: 0, repair: 0 }, waited_s: 0 }));
+    expect(renderHandoff(composeHandoff(f))).toContain("interventions 0");
+    expect(composeHandoff({ ...f, sinceMs: Date.now() + 60_000 }).interventions).toBeNull();
+    const withEvents = composeHandoff({ ...f, events: [ev("intervention", undefined, {})] });
+    expect(withEvents.interventions).toBe(1);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("FV-pr-loop-4: a blocked merge shows the gate and waiting at, never merged; merged and absent states read plainly", () => {
+  const repo = mkdtempSync(join(tmpdir(), "loki-handoff-"));
+  try {
+    const f: HandoffFacts = { repoDir: repo, runId: "e10-10", events: [], outcome: "VERIFIED", usd: null, elapsedS: 5, notProven: [], task: "t", requirements: null, prUrl: "https://github.com/o/r/pull/7" };
+    expect(renderHandoff(composeHandoff(f))).toContain("Merge: not recorded");
+    mkdirSync(join(repo, ".loki", "state"), { recursive: true });
+    const pj = join(repo, ".loki", "state", "pr.json");
+    writeFileSync(pj, JSON.stringify({ state: "created", url: "u", merge: { outcome: "blocked:required_checks", checks: "2 of 3 passing" } }));
+    const md = renderHandoff(composeHandoff(f));
+    expect(md).toContain("Merge: waiting at: required_checks (checks: 2 of 3 passing)");
+    expect(md).not.toContain("Merge: merged");
+    expect(handoffSection(f)).toContain("waiting at: required_checks");
+    writeFileSync(pj, JSON.stringify({ state: "created", merge: { outcome: "waiting", gate: "human_review" } }));
+    expect(renderHandoff(composeHandoff(f))).toContain("Merge: waiting at: human_review");
+    writeFileSync(pj, JSON.stringify({ state: "created", merge: { outcome: "merged", checks: "all passing" } }));
+    expect(renderHandoff(composeHandoff(f))).toContain("Merge: merged (checks: all passing)");
+    writeFileSync(pj, JSON.stringify({ state: "created", merge: { outcome: "bogus" } }));
+    expect(renderHandoff(composeHandoff(f))).toContain("Merge: not recorded");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});

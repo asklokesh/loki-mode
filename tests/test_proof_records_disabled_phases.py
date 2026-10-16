@@ -103,5 +103,43 @@ class ProofDisabledPhaseTests(unittest.TestCase):
             self.assertIn(field, result)
 
 
+class ProofInterventionDetailTests(unittest.TestCase):
+    """interventions_detail rides along only when the counter file has it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load()
+
+    def _journey(self, iv):
+        import json
+        d = tempfile.mkdtemp()
+        st = os.path.join(d, "state")
+        os.makedirs(st)
+        with open(os.path.join(st, "issue-context.json"), "w") as f:
+            json.dump({"issue": {"ref": "o/r#1"}}, f)
+        if iv is not None:
+            with open(os.path.join(st, "interventions.json"), "w") as f:
+                json.dump(iv, f)
+        return self.mod._collect_journey(d)
+
+    def test_detail_present_when_file_has_it(self):
+        out = self._journey({"count": 2, "by_type": {"input": 1, "authorization": 1},
+                             "waited_s": 240})
+        self.assertEqual(out["interventions"], 2)
+        self.assertEqual(out["interventions_detail"]["waited_s"], 240)
+        self.assertEqual(out["interventions_detail"]["by_type"],
+                         {"steer": 0, "input": 1, "authorization": 1, "repair": 0})
+
+    def test_legacy_count_only_file_has_no_detail(self):
+        out = self._journey({"count": 1})
+        self.assertEqual(out["interventions"], 1)
+        self.assertNotIn("interventions_detail", out)
+
+    def test_absent_file_is_unmeasured_not_zero(self):
+        out = self._journey(None)
+        self.assertNotIn("interventions", out)
+        self.assertNotIn("interventions_detail", out)
+
+
 if __name__ == "__main__":
     unittest.main()

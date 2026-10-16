@@ -11752,7 +11752,8 @@ ${_gh_receipt}"
                                 if command -v jq >/dev/null 2>&1; then
                                     jq -n --arg url "$(printf '%s' "$_pr_out" | grep -Eo 'https://[^[:space:]]+' | head -1)" \
                                           --arg branch "$branch_current" \
-                                        '{state:"created", url:$url, branch:$branch}' \
+                                        '{state:"created", url:$url, branch:$branch,
+                                          merge:{outcome:"waiting", gate:"human_review", checks:"not recorded"}}' \
                                         > .loki/state/pr.json 2>/dev/null || true
                                 fi
                             else

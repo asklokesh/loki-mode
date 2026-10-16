@@ -576,6 +576,8 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("")
     L.append("Generated: %s. This is a pilot; small n is not statistical proof." % result["generated_utc"])
     L.append("")
+    L.append("Metric definitions (accepted outcome, misleading completion = false_completion, cost per accepted, waited vs active minutes) are shared with `loki trust`: see \"Outcome analytics\" in docs/EVALUATING.md.")
+    L.append("")
     L.append("## Pinned conditions")
     L.append("")
     L.append("- Model id (claude arms): `%s`" % plan["model"])

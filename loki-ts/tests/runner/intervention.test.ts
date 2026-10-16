@@ -375,4 +375,52 @@ describe("handlePause", () => {
     expect(r.timedOut).toBe(true);
     expect(r.outcome).toBe("resumed");
   });
+
+  describe("interventions.json detail", () => {
+    const ivPath = () => join(dir, "state", "interventions.json");
+    const run = async (opts: Record<string, unknown> = {}) => {
+      touch(join(dir, "PAUSE"));
+      let t = 0;
+      const promise = handlePause({
+        lokiDirOverride: dir,
+        pollIntervalMs: 10,
+        maxWaitMs: 2000,
+        clockMs: () => (t += 62500),
+        ...opts,
+      });
+      setTimeout(() => rmSync(join(dir, "PAUSE")), 40);
+      await promise;
+      return JSON.parse(readFileSync(ivPath(), "utf8"));
+    };
+
+    it("records by_type and waited_s next to count", async () => {
+      const iv = await run();
+      expect(iv.count).toBe(1);
+      expect(iv.basis).toBe("blocking pauses that waited on a human");
+      expect(iv.by_type).toEqual({ steer: 0, input: 0, authorization: 1, repair: 0 });
+      expect(typeof iv.waited_s).toBe("number");
+      expect(iv.waited_s).toBeGreaterThanOrEqual(62);
+    });
+
+    it("maps signal context to enum types and accumulates", async () => {
+      mkdirSync(join(dir, "signals"), { recursive: true });
+      touch(join(dir, "signals", "BUDGET_EXCEEDED"));
+      await run();
+      rmSync(join(dir, "signals", "BUDGET_EXCEEDED"));
+      touch(join(dir, "HUMAN_INPUT.md"), "x");
+      await run();
+      rmSync(join(dir, "HUMAN_INPUT.md"));
+      const iv = await run({ interventionType: "repair" });
+      expect(iv.count).toBe(3);
+      expect(iv.by_type).toEqual({ steer: 1, input: 1, authorization: 0, repair: 1 });
+    });
+
+    it("count-only legacy file upgrades without losing the count", async () => {
+      mkdirSync(join(dir, "state"), { recursive: true });
+      writeFileSync(ivPath(), JSON.stringify({ count: 2, basis: "x" }));
+      const iv = await run();
+      expect(iv.count).toBe(3);
+      expect(iv.by_type.authorization).toBe(1);
+    });
+  });
 });
