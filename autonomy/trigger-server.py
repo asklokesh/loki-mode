@@ -510,11 +510,24 @@ TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")  # same set as verify
 STEER_NOTE_MAX = 1000
 
 
+def _process_start_time(pid):
+    """`ps -o lstart=` for pid, whitespace-normalized like run_pid.ts processStartTime; None if gone."""
+    if not isinstance(pid, int) or pid <= 1:
+        return None
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5, env={**os.environ, "LC_ALL": "C"}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return " ".join(out.split()) or None
+
+
 def find_live_run(ref):
     """Return the id of a live run for issue ref "owner/repo#N", else None.
 
     Scans .loki/runs/*/events.jsonl for a run.started whose issue_ref matches and
-    whose run.pid names a live process.
+    whose run.pid names a live process. Mirrors runOwnerAlive: the recorded
+    start time and run_id must match, so a recycled pid does not read as live.
     """
     runs = Path(".loki") / "runs"
     try:
@@ -527,9 +540,11 @@ def find_live_run(ref):
                 first = json.loads(fh.readline() or "{}")
             if first.get("type") != "run.started" or (first.get("data") or {}).get("issue_ref") != ref:
                 continue
-            pid = int(json.loads((d / "run.pid").read_text()).get("pid", 0))
-            if pid > 1:
-                os.kill(pid, 0)
+            rec = json.loads((d / "run.pid").read_text())
+            pid = int(rec.get("pid", 0))
+            start = rec.get("start")
+            if pid > 1 and isinstance(start, str) and rec.get("run_id") == d.name \
+                    and _process_start_time(pid) == " ".join(start.split()):
                 return d.name
         except (OSError, ValueError, TypeError, AttributeError):
             continue

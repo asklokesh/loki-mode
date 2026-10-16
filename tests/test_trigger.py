@@ -212,9 +212,29 @@ class TestEventRouting(unittest.TestCase):
                 rd.mkdir(parents=True)
                 (rd / "events.jsonl").write_text(json.dumps({"type": "run.started", "data": {"issue_ref": ref}}) + "\n")
                 if pid:
-                    (rd / "run.pid").write_text(json.dumps({"pid": os.getpid()}))
+                    (rd / "run.pid").write_text(json.dumps({"pid": os.getpid(), "start": ts._process_start_time(os.getpid()), "run_id": rid}))
             self.assertEqual(ts.find_live_run("owner/repo#42"), "r-live")
             self.assertIsNone(ts.find_live_run("owner/repo#99"))
+        finally:
+            os.chdir(cwd)
+
+    def test_find_live_run_rejects_recycled_pid(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            good = ts._process_start_time(os.getpid())
+            for rid, rec in (
+                ("r-stale", {"pid": os.getpid(), "start": "Thu Jan 1 00:00:00 1970", "run_id": "r-stale"}),
+                ("r-nostart", {"pid": os.getpid()}),
+                ("r-wrongid", {"pid": os.getpid(), "start": good, "run_id": "other"}),
+            ):
+                rd = Path(".loki/runs") / rid
+                rd.mkdir(parents=True)
+                (rd / "events.jsonl").write_text(json.dumps({"type": "run.started", "data": {"issue_ref": "o/r#7"}}) + "\n")
+                (rd / "run.pid").write_text(json.dumps(rec))
+            self.assertIsNone(ts.find_live_run("o/r#7"))
         finally:
             os.chdir(cwd)
 
