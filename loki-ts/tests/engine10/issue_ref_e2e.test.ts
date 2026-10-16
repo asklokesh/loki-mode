@@ -263,6 +263,22 @@ describe("engine10 issue-ref vertical slice: kill -9, comment steer, resume, PR,
     expect(receipt.verdict).toBe("VERIFIED");
     expect(receipt.intent_revisions).toEqual([expect.objectContaining({ rev: 1, source: COMMENT, actor: "octocat" })]);
   }, 120_000);
+
+  test("a completed Wall, then kill -9, then a late comment steer: the resumed run is refused at Seal, not VERIFIED (P12-13c)", async () => {
+    const p = prep(true, { LOKI_E10_PLAN: "always" }); // forces a real Wall on this small task
+    await startAndKill9(p, "acme/widgets#101", "implement");
+    const killed = readRun(p);
+    expect(stageDone(killed.events, "wall")).toBeDefined();
+    expect(killed.events.some((e) => e.type === "wall.sealed")).toBe(true);
+    expect((await steerFromComment(p, "STEER-AFTER-WALL-77c1 also add multiply")).code).toBe(0);
+    const res = await resume(p);
+    expect(res.code).not.toBe(0);
+    const { events, runDir } = readRun(p);
+    const sealFail = events.find((e) => e.type === "stage.failed" && e.stage === "seal");
+    expect(String(sealFail?.data.reason)).toContain("arrived after the Wall was frozen");
+    const receiptPath = join(runDir, "receipt.json");
+    if (existsSync(receiptPath)) expect(JSON.parse(readFileSync(receiptPath, "utf8")).verdict).not.toBe("VERIFIED");
+  }, 180_000);
 });
 
 // U1-U8 user journeys (docs/v10/PLAN-V12.md S13/N4 name them without a table, so these are the eight this file pins):
