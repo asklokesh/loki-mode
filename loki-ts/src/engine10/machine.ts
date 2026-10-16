@@ -70,14 +70,14 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let capHit = false, fatal: string | null = null;
   const startMs = opts.startedAtMs ?? ctx.clock.now();
   if (ctx.startedAtMs === undefined) ctx.startedAtMs = startMs;
-  const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [];
+  const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [], intentRevs = ctx.intentRevisions ??= [];
   let capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
-    const o = withSteer(o0, ctx.repoDir); // operator steer (.loki/HUMAN_INPUT.md), consumed once
+    const o = withSteer(o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, capAtMs); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const k = r.exit === 0 ? null : sessionKind(r as { exit: number; stderrTail?: string }); // P12-09: quota waits and reruns inside rerunOnQuota; it is fatal only if no cap ended the wait
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
@@ -186,7 +186,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS });
     const promise = st.split.author(sctx, ctl.signal); promise.catch(() => {});
-    wallJob = { snap: hooks.wall!.snapshotTree(ctx.repoDir, ctl.signal), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
+    wallJob = { snap: hooks.wall!.snapshotTree(ctx.repoDir, ctl.signal), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap }; timeline.push({ stage: "wall", startMs: wallJob.t0, endMs: wallJob.t0 });
     return true;
   };
   /** Awaits the author, then installs once against a pre-implement tree snapshot. Returns the wall result (also recorded in outputs/events). */

@@ -126,7 +126,7 @@ export interface CostReader { // implemented by cost.ts (E-06)
 export interface Clock { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void>; } // epoch ms; sleep is optional so tests can fake the quota wait
 export interface RunContext {
   timeline?: { stage: StageName; startMs: number; endMs: number }[]; // every stage the machine ran (any outcome), for the receipt's time buckets
-  startedAtMs?: number; // set by the machine at run start (epoch ms); seal falls back to it for time.total_s
+  intentRevisions?: import("../util/steer.ts").IntentRevision[]; startedAtMs?: number; // intentRevisions: P12-02, machine memory, never the repo file; startedAtMs: set by the machine at run start (epoch ms); seal falls back to it for time.total_s
   runId: string;
   repoDir: string;
   runDir: string;
@@ -165,9 +165,9 @@ export interface Receipt {
   wall: { files: { path: string; sha256: string }[]; passed: boolean | null };
   checks: ReceiptCheck[];
   not_proven: string[];
-  spec?: { path: string; sha256: string }; // SPEC-FIRST-INTENT: present only when a user spec file drove the run
+  spec?: { path: string; sha256: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run
   supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
-  route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on
+  route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
