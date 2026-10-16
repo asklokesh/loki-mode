@@ -94,6 +94,18 @@ class MetricsTest(unittest.TestCase):
                                 "environment": {}, "rows": rows, "summary": s})
         self.assertIn("unmeasured", md)
         self.assertIn("Task-level results", md)
+        # Shared metric definitions: the report points at the one doc section
+        # that also governs `loki trust`, and that section exists.
+        self.assertIn("Outcome analytics", md)
+        self.assertIn("docs/EVALUATING.md", md)
+        doc = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "..", "..", "docs", "EVALUATING.md")
+        with open(doc, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("## Outcome analytics", text)
+        for term in ("accepted outcome", "misleading completion", "cost per accepted",
+                     "waited", "active minutes"):
+            self.assertIn(term, text)
 
 
 class PlanTest(unittest.TestCase):

@@ -217,6 +217,19 @@ Not measured: human effort, recovery success, review quality. Output: `--out-dir
 
 ---
 
+## Outcome analytics
+
+One set of definitions for the effort and honesty numbers, used by the bench report (`benchmarks/bench/attribution.py`) and by real-run reports (`loki trust`, `.loki/state/interventions.json`, HANDOFF.md). It answers the Factory comparison gate "metrics include failures and measure user effort" (FACTORY_VS_LOKI section 8, P2). Failures are counted, never dropped.
+
+- Term accepted outcome: bench, a run whose held-out acceptance check passed. Real runs, a proof with verdict VERIFIED that was not later contradicted by a FAILED outcome.
+- Term misleading completion: Loki or the agent claimed done and was wrong. Bench name `false_completion` = (reported success and not accepted) / reported success. `loki trust` name `false_verified` = VERIFIED claims later FAILED / VERIFIED claims. Same idea, same denominator (claims of success). Null when nothing claimed success.
+- Term cost per accepted: total spend across ALL attempts, failures included, divided by accepted. Null when nothing was accepted, and null when any run's cost is unmeasured (a partial sum is not a total; the bench also reports a lower bound). Never zero for an unknown.
+- Interventions by type: counts of blocking pauses that waited on a person, split into `steer`, `input`, `authorization` and `repair` (a fixed enum, no free text). Written to `.loki/state/interventions.json` at the pause site; shown in `loki trust`, HANDOFF.md and the proof as `interventions_detail`. Absent means not recorded, not zero.
+- Waited versus active minutes: only `waited_s` is measured, the wall-clock seconds a run sat blocked on a person. It is an upper bound on human attention. Active minutes (time a person actually spent working) are NOT measured and are never reported. `loki trust` labels the figure "waited, upper bound".
+- Retries: iterations to completion, taken from the proof `iterations.count` (`loki trust` iterations axis). A retry is not an intervention.
+
+---
+
 ## What we do not have
 
 Stating this plainly, because you will find it out anyway and it is cheaper for
