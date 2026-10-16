@@ -433,6 +433,17 @@ describe("engine10 steer", () => {
     expect(staleAtSeal(repo(), mk(() => ({}))).map((r) => r.rev)).toEqual([]);
     expect(staleAtSeal(repo(), mk(() => ({ wall: { tests: 1 } }))).map((r) => r.rev)).toEqual([1]);
   });
+  test("staleAtSeal: wall.sealed freezes tests even when outputs().wall is unset (limit-timer race) (P12-13c)", () => {
+    const rev: IntentRevision = { rev: 1, source: "cli", actor: "a", sha: "x", at: 5000 };
+    const mk = (extra: { wallSealed?: boolean }): Parameters<typeof staleAtSeal>[1] => ({ intentRevisions: [rev], timeline: [{ stage: "wall", startMs: 4000 }], outputs: () => ({}), ...extra });
+    expect(staleAtSeal(repo(), mk({ wallSealed: true })).map((r) => r.rev)).toEqual([1]);
+    expect(staleAtSeal(repo(), mk({})).map((r) => r.rev)).toEqual([]); // explicit skipped Wall keeps the exemption
+  });
+  test("staleAtSeal fallback branch: ctx without outputs() keeps the timeline rule and refuses a late steer (P12-13c)", () => {
+    const rev: IntentRevision = { rev: 1, source: "cli", actor: "a", sha: "x", at: 5000 };
+    const ctx = { intentRevisions: [rev], timeline: [{ stage: "wall", startMs: 4000 }] };
+    expect(staleAtSeal(repo(), ctx).map((r) => r.rev)).toEqual([1]);
+  });
   test("readIntentRevisions (status comment count) skips torn lines and earlier runs", () => {
     const d = repo();
     const row = (rev: number, at: number): string => JSON.stringify({ rev, actor: "a", source: "cli", sha256: "f".repeat(64), consumed_at: new Date(at).toISOString() });

@@ -15,6 +15,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$prompt" in
+  *"Loki 10 Wall author"*) stage=wall ;;
   *"Loki 10 plan stage"*) stage=plan ;;
   *"Loki 10 implement stage"*) stage=implement ;;
   *) stage=other ;;
@@ -22,12 +23,17 @@ esac
 if [ -n "${ISSUE_REF_STUB_LOG:-}" ]; then echo "$stage" >> "$ISSUE_REF_STUB_LOG"; fi
 # Journey seam: while $ISSUE_REF_STUB_HANG_DIR/hang-<stage> exists, announce this process and block (the test kill -9s the run here).
 if [ -n "${ISSUE_REF_STUB_HANG_DIR:-}" ] && [ -f "${ISSUE_REF_STUB_HANG_DIR}/hang-${stage}" ]; then
-  echo "$$" > "${ISSUE_REF_STUB_HANG_DIR}/pid"
+  echo "$$" > "${ISSUE_REF_STUB_HANG_DIR}/pid.tmp" && mv "${ISSUE_REF_STUB_HANG_DIR}/pid.tmp" "${ISSUE_REF_STUB_HANG_DIR}/pid" # atomic: the test must never read a half-written pid
   while [ -f "${ISSUE_REF_STUB_HANG_DIR}/hang-${stage}" ]; do sleep 0.2; done
 fi
 if [ "$stage" = "plan" ] && [ -n "${ISSUE_REF_STUB_PLAN_BRIEF_LOG:-}" ]; then printf '%s' "$prompt" > "$ISSUE_REF_STUB_PLAN_BRIEF_LOG"; fi
 if [ -n "${ISSUE_REF_STUB_ENV_LOG:-}" ]; then
   echo "$stage GH_TOKEN=${GH_TOKEN:-}" >> "$ISSUE_REF_STUB_ENV_LOG"
+fi
+if [ "$stage" = "wall" ]; then
+  # Wall author (runs in its own scratch dir): one acceptance check that fails on base and passes once subtract() exists.
+  printf 'import { expect, test } from "bun:test";\nimport { subtract } from "./calc";\n\ntest("wall subtract", () => {\n  expect(subtract(5, 3)).toBe(2);\n});\n' > loki_wall_subtract.test.ts
+  echo "LOKI_DONE"
 fi
 if [ "$stage" = "implement" ]; then
   if [ -n "${ISSUE_REF_STUB_BRIEF_LOG:-}" ]; then printf '%s' "$prompt" > "$ISSUE_REF_STUB_BRIEF_LOG"; fi
