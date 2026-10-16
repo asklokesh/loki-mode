@@ -67,6 +67,12 @@ HLP
 # Run a delegate without letting a non-zero exit end the session (autonomy/loki runs under set -e).
 _chat_do() { local _rc=0; "$@" || _rc=$?; [ "$_rc" -eq 0 ] || echo "(exit $_rc)"; return 0; }
 
+# Steer from chat: record source=chat and the chat user as actor in the revision log (D02).
+_chat_steer() {
+    local loki="$1"; shift
+    LOKI_STEER_SOURCE=chat LOKI_STEER_ACTOR="${LOKI_STEER_ACTOR:-${USER:-chat}}" _chat_do "$loki" steer "$@"
+}
+
 # Newest loki start run in this repo: engine10 run dir first, then legacy session state.
 _chat_run_dir() {
     local root="${LOKI_DIR:-.loki}" d newest=""
@@ -318,7 +324,7 @@ Question: $line" || true
                 /status) _chat_do "$loki" status; continue ;;
                 /steer)
                     [ -n "$rest" ] || { echo "usage: /steer <message>"; continue; }
-                    _chat_do "$loki" steer "$rest"; continue ;;
+                    _chat_steer "$loki" "$rest"; continue ;;
                 /stop) _chat_do "$loki" stop; continue ;;
                 /detach) attached=0; echo "Detached."; continue ;;
             esac
@@ -344,7 +350,7 @@ Question: $line" || true
             /status) _chat_do "$loki" status ;;
             /steer)
                 [ -n "$rest" ] || { echo "usage: /steer <message>"; continue; }
-                _chat_do "$loki" steer "$rest" ;;
+                _chat_steer "$loki" "$rest" ;;
             /stop) _chat_do "$loki" stop ;;
             /detach) echo "Not attached." ;;
             /quick)
