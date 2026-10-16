@@ -1176,7 +1176,8 @@ def git_head(repo):
 def git_dirty(repo):
     """True/False, or None when git cannot answer. .loki/ is excluded: the
     verifier writes its own artifacts there."""
-    out = _vr_git_args(repo, ["status", "--porcelain", "--untracked-files=all"])
+    out = _vr_git_args(repo, ["status", "--porcelain", "--untracked-files=all",
+                                "--no-renames", "--ignore-submodules=none"])
     if out is None:
         return None
     for line in out.splitlines():

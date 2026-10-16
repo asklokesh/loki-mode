@@ -97,6 +97,7 @@ printf '{"facts":{"git":{"head_sha":"%s","dirty":true}},"honesty":{"headline":"V
 OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
 grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "dirty proof merged" || ok "ship: dirty-tree proof never merges"
 echo "$OUT" | grep -q "gate: head" && ok "ship: dirty proof names the head gate" || bad "dirty msg: $OUT"
+echo "$OUT" | grep -q "dirty (1), dirty-unknown (0)" && ! echo "$OUT" | grep -q "unknown dirty state" && ok "ship: explicit dirty proof counted as dirty, not unknown" || bad "dirty count msg: $OUT"
 rm -r .loki/proofs/p4
 # P12-03b: a proof with dirty missing or null counts as dirty (fail closed).
 for _variant in 'missing:{"head_sha":"%s"}' 'null:{"head_sha":"%s","dirty":null}'; do
@@ -108,6 +109,7 @@ for _variant in 'missing:{"head_sha":"%s"}' 'null:{"head_sha":"%s","dirty":null}
   OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
   grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "dirty-$_vn proof merged" || ok "ship: proof with dirty $_vn never merges"
   echo "$OUT" | grep -q "gate: head" && ok "ship: dirty $_vn names the head gate" || bad "dirty $_vn msg: $OUT"
+  echo "$OUT" | grep -q "dirty-unknown (1)" && echo "$OUT" | grep -q "re-run 'loki start" && echo "$OUT" | grep -q "predates the dirty flag" && ok "ship: dirty $_vn names unknown state and next step" || bad "dirty $_vn unknown msg: $OUT"
   rm -r .loki/proofs/p5
 done
 # P12-03b: the shared proof writer marks an untracked-only tree dirty, even when
@@ -127,6 +129,31 @@ echo x > "$GD_REPO/untracked.txt"
 rm "$GD_REPO/untracked.txt"
 mkdir -p "$GD_REPO/.loki"; echo y > "$GD_REPO/.loki/x"
 [ "$(gd)" = "False" ] && ok "writer: .loki/ untracked stays clean" || bad "writer .loki: $(gd)"
+# P12-03b: a rename out of .loki/ must not hide the dirty destination.
+echo s > "$GD_REPO/.loki/src.js"
+git -C "$GD_REPO" add -f .loki/src.js
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm loki-src
+[ "$(gd)" = "False" ] && ok "writer: committed .loki/ file is clean" || bad "writer loki commit: $(gd)"
+git -C "$GD_REPO" mv .loki/src.js src.js
+[ "$(gd)" = "True" ] && ok "writer: rename out of .loki/ is dirty" || bad "writer rename: $(gd)"
+git -C "$GD_REPO" mv src.js app.js
+echo edit >> "$GD_REPO/app.js"
+[ "$(gd)" = "True" ] && ok "writer: rename plus edit is dirty" || bad "writer rename+edit: $(gd)"
+git -C "$GD_REPO" reset -q --hard
+git -C "$GD_REPO" clean -fdq -e .loki
+# P12-03b: a committed ignore=all submodule setting must not hide a modified submodule.
+SUB_REPO="$WORK/subrepo"; mkdir -p "$SUB_REPO"
+git -C "$SUB_REPO" init -q
+echo 1 > "$SUB_REPO/f"
+git -C "$SUB_REPO" add f
+git -C "$SUB_REPO" -c user.name=t -c user.email=t@t commit -qm sub
+git -C "$GD_REPO" -c protocol.file.allow=always submodule add -q "$SUB_REPO" sub >/dev/null 2>&1
+git -C "$GD_REPO" config -f .gitmodules submodule.sub.ignore all
+git -C "$GD_REPO" add .gitmodules sub
+git -C "$GD_REPO" -c user.name=t -c user.email=t@t commit -qm addsub
+[ "$(gd)" = "False" ] && ok "writer: clean submodule tree is clean" || bad "writer sub clean: $(gd)"
+echo 2 > "$GD_REPO/sub/f"
+[ "$(gd)" = "True" ] && ok "writer: modified submodule is dirty despite ignore=all" || bad "writer sub dirty: $(gd)"
 # Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
 printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
 bash "$LOKI" merge pr feat-race >/dev/null 2>&1

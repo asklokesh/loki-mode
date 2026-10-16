@@ -26101,7 +26101,7 @@ _merge_pr_gated() {
         return 1
     fi
     if $need_verified; then
-        local pid="" headline="" pj="" ph="" cands=() dirty_n=0
+        local pid="" headline="" pj="" ph="" cands=() dirty_n=0 unknown_n=0
         # Resolve the proof recorded for THIS head: the run pointer first, then
         # any proof in .loki/proofs whose facts.git.head_sha equals the PR head.
         [ -f .loki/state/last-proof-id.txt ] && pid="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
@@ -26117,9 +26117,11 @@ _merge_pr_gated() {
                 [ -f "$pj" ] || continue
                 ph="$(jq -r '.facts.git.head_sha // empty' "$pj" 2>/dev/null)"
                 [ "$ph" = "$head" ] || continue
-                if [ "$(jq -r 'if .facts.git.dirty == false then "false" else "true" end' "$pj" 2>/dev/null)" != "false" ]; then
-                    dirty_n=$((dirty_n + 1)); continue
-                fi
+                case "$(jq -r 'if .facts.git.dirty == false then "clean" elif .facts.git.dirty == true then "dirty" else "unknown" end' "$pj" 2>/dev/null)" in
+                    clean) ;;
+                    dirty) dirty_n=$((dirty_n + 1)); continue ;;
+                    *) unknown_n=$((unknown_n + 1)); continue ;;
+                esac
                 hl="$(jq -r '.honesty.headline // empty' "$pj" 2>/dev/null)"
                 [ -n "$hl" ] || hl="UNREADABLE"
                 if [ -z "$headline" ]; then headline="$hl"; elif [ "$headline" != "$hl" ]; then disagree=true; fi
@@ -26131,7 +26133,10 @@ _merge_pr_gated() {
             fi
         fi
         if [ -z "$headline" ]; then
-            echo "$pr: not merged, gate: head (no clean proof recorded for PR head ${head:0:12}; proof is stale, dirty ($dirty_n) or missing); PR left open" >&2
+            echo "$pr: not merged, gate: head (no clean proof recorded for PR head ${head:0:12}; proof is stale, dirty ($dirty_n), dirty-unknown ($unknown_n) or missing); PR left open" >&2
+            if [ "$unknown_n" -gt 0 ]; then
+                echo "$pr: $unknown_n proof(s) for this head have an unknown dirty state (the proof predates the dirty flag, or git could not read the tree). Commit or stash local changes, then re-run 'loki start ...' on a clean tree for this head to record a clean proof." >&2
+            fi
             _pr_record_merge "$pr" "blocked:head" "head"
             return 1
         fi
