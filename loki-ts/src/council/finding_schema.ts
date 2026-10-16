@@ -40,6 +40,30 @@ export const FINDING_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze(
 const VOTE_ENUM = new Set(["APPROVE", "REJECT", "CANNOT_VALIDATE"]);
 const SEVERITY_ENUM = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
 
+// A blocking issue (CRITICAL or HIGH) from a code-reviewing role should cite a
+// file:line anchor (src/a.ts:42, a.ts:L42, a.ts#L42, a.ts (line 42), Makefile:3,
+// or an explicit "(no file)" marker). An unanchored one is downgraded to MEDIUM
+// and tagged "[unanchored]"; the finding is never rejected, so one sloppy issue
+// cannot drop the rest of the council response. Evidence-based roles whose
+// findings point at .loki/ state rather than code are exempt.
+const BLOCKING_SEVERITY = new Set(["CRITICAL", "HIGH"]);
+const ANCHOR_EXEMPT_ROLES = new Set(["requirements-verifier", "test-auditor", "convergence-voter"]);
+export const UNANCHORED_TAG = "[unanchored]";
+const NO_FILE_MARKER = /\(no file\)|\[no-file\]/i;
+const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const ANCHOR_RE = /([\w./@-]+)[`'"]?(?::L?|#L|\s*\(line\s+)([1-9]\d*)(?!\d)/g;
+const EXTENSIONLESS = /^(?:.*\/)?(?:Makefile|GNUmakefile|Dockerfile|Jenkinsfile|Rakefile|Gemfile|Procfile|Vagrantfile)$/;
+
+export function hasFileLineAnchor(desc: string): boolean {
+  if (NO_FILE_MARKER.test(desc)) return true;
+  const text = desc.replace(URL_RE, " ");
+  for (const m of text.matchAll(ANCHOR_RE)) {
+    const tok = m[1] as string;
+    if (/\.[A-Za-z][A-Za-z0-9]*$/.test(tok) || tok.includes("/") || EXTENSIONLESS.test(tok)) return true;
+  }
+  return false;
+}
+
 export type ValidationError = { error: string; path: string };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -95,6 +119,14 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
       }
       if (typeof desc !== "string" || desc.length === 0) {
         return { error: "issue.description must be a non-empty string", path: `$.issues[${i}].description` };
+      }
+      if (
+        BLOCKING_SEVERITY.has(sev) &&
+        !ANCHOR_EXEMPT_ROLES.has(obj["role"] as string) &&
+        !hasFileLineAnchor(desc)
+      ) {
+        issuesOut.push({ severity: "MEDIUM", description: `${UNANCHORED_TAG} ${desc}` });
+        continue;
       }
       issuesOut.push({ severity: sev as Severity, description: desc });
     }

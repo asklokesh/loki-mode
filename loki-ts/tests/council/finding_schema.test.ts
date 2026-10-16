@@ -13,6 +13,8 @@ import {
   FINDING_SCHEMA,
   validateFinding,
   parseMultiResponse,
+  hasFileLineAnchor,
+  UNANCHORED_TAG,
 } from "../../src/council/finding_schema.ts";
 
 describe("FINDING_SCHEMA", () => {
@@ -101,7 +103,7 @@ describe("validateFinding", () => {
       reason: "found issues",
       confidence: 0.8,
       issues: [
-        { severity: "HIGH", description: "blocking" },
+        { severity: "HIGH", description: "blocking at src/a.ts:42" },
         { severity: "LOW", description: "nit" },
       ],
     });
@@ -160,4 +162,86 @@ describe("parseMultiResponse", () => {
     });
     expect(() => parseMultiResponse(text)).toThrow(/findings\[1\]/);
   });
+
+  it("blocking finding without anchor is downgraded, not rejected", () => {
+    for (const severity of ["CRITICAL", "HIGH"]) {
+      const r = validateFinding({
+        role: "devils_advocate",
+        vote: "REJECT",
+        reason: "bad",
+        confidence: 0.8,
+        issues: [{ severity, description: "this is broken somewhere" }],
+      });
+      expect("error" in r).toBe(false);
+      if ("error" in r) return;
+      expect(r.verdict).toBe("REJECT");
+      expect(r.issues[0]?.severity).toBe("MEDIUM");
+      expect(r.issues[0]?.description.startsWith(UNANCHORED_TAG)).toBe(true);
+    }
+  });
+
+  it("anchored blocking issue and unanchored LOW keep their severity", () => {
+    const r = validateFinding({
+      role: "x",
+      vote: "REJECT",
+      reason: "bad",
+      confidence: 0.8,
+      issues: [
+        { severity: "CRITICAL", description: "null deref at loki-ts/src/foo.ts:128" },
+        { severity: "LOW", description: "nit without anchor" },
+      ],
+    });
+    if ("error" in r) throw new Error(r.error);
+    expect(r.issues.map((i) => i.severity)).toEqual(["CRITICAL", "LOW"]);
+  });
+
+  it("evidence roles are exempt from the anchor rule", () => {
+    for (const role of ["requirements-verifier", "test-auditor", "convergence-voter"]) {
+      const r = validateFinding({
+        role,
+        vote: "REJECT",
+        reason: "bad",
+        confidence: 0.8,
+        issues: [{ severity: "HIGH", description: "missing requirement" }],
+      });
+      if ("error" in r) throw new Error(r.error);
+      expect(r.issues[0]?.severity).toBe("HIGH");
+    }
+  });
+
+  it("an unanchored HIGH does not drop the other verdicts", () => {
+    const out = parseMultiResponse(
+      JSON.stringify({
+        findings: [
+          { role: "a", vote: "APPROVE", reason: "ok", confidence: 0.9 },
+          {
+            role: "b",
+            vote: "REJECT",
+            reason: "bad",
+            confidence: 0.7,
+            issues: [{ severity: "HIGH", description: "vague" }],
+          },
+        ],
+      }),
+    );
+    expect(out.length).toBe(2);
+    expect(out[1]?.verdict).toBe("REJECT");
+  });
+});
+
+describe("hasFileLineAnchor", () => {
+  const yes = [
+    "src/a.ts:42",
+    "Makefile:12",
+    "Dockerfile:3",
+    "see `a.ts`:5 here",
+    "a.ts:L42",
+    "a.ts#L42",
+    "a.ts (line 42)",
+    "x (no file)",
+    "http://x.com:80/ and src/b.py:7",
+  ];
+  const no = ["http://x.com:80/", "a.ts:0", "just words", "a.ts"];
+  for (const d of yes) it(`accepts ${d}`, () => expect(hasFileLineAnchor(d)).toBe(true));
+  for (const d of no) it(`rejects ${d}`, () => expect(hasFileLineAnchor(d)).toBe(false));
 });
