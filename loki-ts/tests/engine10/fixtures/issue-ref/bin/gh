@@ -10,7 +10,20 @@ if [ -n "${ISSUE_REF_GH_LOG:-}" ]; then
   printf 'gh %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> "${ISSUE_REF_GH_LOG}"
 fi
 
+# Arguments of every call, one tab-separated line each, so a test asserts the real argv (not a log line).
+if [ -n "${ISSUE_REF_GH_CALLS:-}" ]; then
+  (IFS=$'\t'; printf '%s\n' "$*") >> "${ISSUE_REF_GH_CALLS}"
+fi
+
 case "${1:-}" in
+  pr)
+    case "${2:-}" in
+      list) [ -n "${ISSUE_REF_GH_PR_URL:-}" ] && echo "${ISSUE_REF_GH_PR_URL}"; exit 0 ;; # the script's --jq filter is not applied here
+      edit | ready | comment) exit 0 ;;
+    esac
+    echo "stub gh: unsupported pr subcommand: $*" >&2
+    exit 1
+    ;;
   auth)
     # `gh auth status` (check_issue_provider_cli): always authenticated.
     exit 0
