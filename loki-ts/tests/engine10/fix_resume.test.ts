@@ -171,10 +171,25 @@ describe("fix resume trust and mutation (MW-2)", () => {
 // P12-07: per-stage checkpoints and resume-from-stage. Resume fails closed on any torn or inconsistent log.
 import { execFileSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
-import { firstIncompleteStage, resumeFlag, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints } from "../../src/util/run_outputs.ts";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
+import { FLOW, runMachine } from "../../src/engine10/machine.ts";
+import type { Stage } from "../../src/engine10/types.ts";
+
+const fakeCtx = (): { ctx: RunContext; events: { type: string; stage: StageName | null }[] } => {
+  const events: { type: string; stage: StageName | null }[] = [];
+  const ctx: RunContext = {
+    runId: RID, repoDir: "/nonexistent", runDir: "/nonexistent/run", baseSha: "abc", branch: `loki/${RID}`, provider: "claude", model: "fake", deep: false, capS: 900,
+    emit: (type, stage) => { events.push({ type, stage }); },
+    sessions: { run: async () => { throw new Error("no sessions"); } },
+    tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+    cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+    clock: { now: () => Date.now() }, outputs: () => ({}),
+  };
+  return { ctx, events };
+};
 
 const RID = "e10-20260101T000000Z-abcd";
 type Spec = [string, string | null, Record<string, unknown>?];
@@ -298,24 +313,55 @@ describe("resume from stage (P12-07)", () => {
     expect(h("BUDGET_STOP")).toContain("Stopped before stage verify completed");
     expect(h("VERIFIED")).not.toContain("Stopped before stage");
   });
-  test("resumeFlag: torn log exits 2 and never resumes; intact pre-publish log exits 4 naming the stage", async () => {
+  test("resumeFlag: torn log exits 2 and never resumes; intact pre-publish log re-enters under the supervisor (P12-07i)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-p1207-"));
     const cwd = process.cwd();
     try {
       execFileSync("git", ["init", "-q"], { cwd: dir });
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: dir });
+      execFileSync("git", ["branch", `loki/${RID}`], { cwd: dir });
       mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
       const p = join(dir, ".loki", "runs", RID, "events.jsonl");
       const evs = killedAfterImplement();
-      const say: string[] = [], out = (s: string): void => { say.push(s); };
+      const say: string[] = [], out = (s: string): void => { say.push(s); }, seen: { resume?: boolean; workerArgv: string[] }[] = [];
+      const supervise = async (o: { resume?: boolean; workerArgv: string[] }): Promise<{ outcome: "VERIFIED" }> => { seen.push(o); return { outcome: "VERIFIED" }; };
       process.chdir(dir);
       writeFileSync(p, text(evs));
-      expect(await resumeFlag(RID, false, { out })).toBe(4);
+      expect(await resumeFlag(RID, true, { out, supervise: supervise as never })).toBe(0);
       expect(say.join("")).toContain("resume from stage verify");
+      expect(seen.length).toBe(1);
+      expect(seen[0]!.resume).toBe(true);
+      expect(seen[0]!.workerArgv.slice(-5, -2)).toEqual(["worker", RID, "claude"]);
+      expect(execFileSync("git", ["symbolic-ref", "--short", "HEAD"], { cwd: dir, encoding: "utf8" }).trim()).toBe(`loki/${RID}`);
       writeFileSync(p, text(evs) + '{"v":1,"seq":5,"ty');
       say.length = 0;
-      expect(await resumeFlag(RID, false, { out })).toBe(2);
+      expect(await resumeFlag(RID, false, { out, supervise: supervise as never })).toBe(2);
       expect(say.join("")).toContain("refused");
+      expect(seen.length).toBe(1);
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("P12-07i: resumeMachineOpts seeds ctx, runMachine runs only unsettled stages and later stages see restored outputs", async () => {
+    const { ctx, events } = fakeCtx();
+    const evs = withSteer();
+    const ran: string[] = [];
+    let seenIntake: unknown;
+    const st = (n: StageName): Stage => ({ name: n, targetS: 1, limitS: 5, run: async (c) => { ran.push(n); if (n === "verify") seenIntake = c.outputs().intake?.["base_sha"]; return { status: "completed", data: {} }; } });
+    const r = resumeMachineOpts(ctx as never, evs, text(evs), FLOW);
+    if (!r.ok) throw new Error(r.reason);
+    expect(ctx.intentRevisions).toEqual([rev]);
+    expect(ctx.timeline?.[0]).toEqual({ stage: "wall", startMs: 1000, endMs: 1000 });
+    await runMachine(ctx, { flow: r.flow as typeof FLOW, restored: r.restored as never, load: async (n) => st(n) });
+    expect(ran).toEqual(["verify", "commit", "seal", "pr"]);
+    expect(seenIntake).toBe("abc");
+    expect(events.filter((e) => e.type === "stage.completed").map((e) => e.stage)).toEqual(["verify", "commit", "seal", "pr"]);
+  });
+  test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {
+    const { ctx } = fakeCtx();
+    const evs = killedAfterImplement();
+    const bad = resumeMachineOpts(ctx as never, evs, text(evs).trimEnd(), FLOW);
+    expect(bad.ok).toBe(false);
+    expect(ctx.intentRevisions).toBeUndefined();
+    expect(ctx.timeline).toBeUndefined();
   });
 });
 

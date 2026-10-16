@@ -36,6 +36,8 @@ export interface MachineOptions {
   resize?: () => number;
   /** Run start in epoch ms; the cap counts from here. Defaults to now. */
   startedAtMs?: number;
+  /** P12-07i: outputs of stages already settled before an interrupt; seeded so later stages see them and the flow skips them. */
+  restored?: Partial<Record<StageName, Obj>>;
 }
 export interface MachineResult {
   outputs: Partial<Record<StageName, Obj>>;
@@ -67,7 +69,7 @@ export function softCapS(capS: number): number { const plain = (capS * 14) / 15,
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
   const outputs: Partial<Record<StageName, Obj>> = {};
-  let capHit = false, fatal: string | null = null;
+  let capHit = false, fatal: string | null = null; if (opts.restored) Object.assign(outputs, opts.restored);
   const startMs = opts.startedAtMs ?? ctx.clock.now();
   if (ctx.startedAtMs === undefined) ctx.startedAtMs = startMs;
   const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [], intentRevs = ctx.intentRevisions ??= [];

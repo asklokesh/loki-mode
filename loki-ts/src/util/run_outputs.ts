@@ -14,6 +14,8 @@ import { fold, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
+import { currentBranch } from "../e10ext/stop_restore.ts";
+import type { Outcome } from "../engine10/output.ts";
 import { noteOf } from "./base_guard.ts";
 import { redactSecrets } from "./redact.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
@@ -218,8 +220,20 @@ export function seedResumeCtx(ctx: { intentRevisions?: IntentRevision[]; timelin
   ctx.intentRevisions = [...rp.intentRevisions]; ctx.timeline = [...rp.timeline];
 }
 
-/** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
- *  (stage re-entry is not wired). Exit 2 on a refusal: unreadable state is never a success. */
+/** P12-07i: the worker-side re-entry. Computes the resume point from the durable log (fail closed), seeds ctx via seedResumeCtx, and returns the
+ *  flow without settled stages plus their recorded outputs, so a restored stage never reruns and later stages still see its data. */
+export function resumeMachineOpts<F extends string>(ctx: Parameters<typeof seedResumeCtx>[0], events: readonly EventEnvelope[], raw: string | undefined, flow: readonly (F | readonly F[])[]): { ok: true; flow: (F | readonly F[])[]; restored: StageOutputs } | { ok: false; reason: string } {
+  const rp = resumePoint(events, raw);
+  if (!rp.ok) return rp;
+  seedResumeCtx(ctx, rp);
+  const done = new Set<string>(STAGE_ORDER.filter((s) => settled(events, s))), restored: StageOutputs = {};
+  for (const s of done) { const e = events.findLast((x) => x.type === "stage.completed" && x.stage === s); if (e) restored[s] = e.data; }
+  const kept = flow.map((st) => typeof st === "string" ? (done.has(st) ? [] : st) : st.filter((n) => !done.has(n))).filter((st) => st.length > 0);
+  return { ok: true, flow: kept as (F | readonly F[])[], restored };
+}
+
+/** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase re-enters the machine at the resume
+ *  point under a fresh supervisor (run.resumed, restored stages not rerun). Exit 2 on a refusal: unreadable state is never a success. */
 export async function resumeFlag(runId: string | undefined, noPr = false, deps: ResumeDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => { process.stderr.write(s); });
   let repoDir: string;
@@ -233,12 +247,29 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   if (!rp.ok) { out(`engine10: --resume refused: ${rp.reason}\n`); return 2; }
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
-  out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"}); re-entry at ${rp.stage} is not wired yet, start a new run: loki start\n`);
-  return 4;
+  out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
+  const br = `loki/${it.runId}`;
+  if (rp.skip.includes("intake") && currentBranch(repoDir) !== br) { try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; } }
+  const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(Number(st["cap_s"]) > 0 ? { LOKI_E10_CAP_S: String(st["cap_s"]) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
+  const runDir = join(repoDir, ".loki", "runs", it.runId), eventsPath = join(repoDir, eventsRelPath(it.runId));
+  const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
+    const gate = prGate(repoDir);
+    if ("deny" in gate) return { url: null, draft: false, existing: null, notProven: [gate.deny] };
+    const evs = readEvents(eventsPath), sealed: Record<string, unknown> = { ...((evs.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }, base = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    const r = await (await import("../engine10/stages/pr.ts")).runPr({ runId: it.runId, repoDir, runDir, branch: br, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, provider, model, baseSha: typeof base === "string" ? base : "", outputs: () => ({ ...loadRunOutputs(runDir, evs), seal: { ...sealed, verdict, receipt_path: sealed["path"] } }), capHit: () => evs.some((e) => e.type === "cap.hit"), draft: gate.draft, emit: () => {} } as never, new AbortController().signal);
+    const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
+    return r.status !== "completed" ? { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] } : { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
+  };
+  const supervise = deps.supervise ?? (async (o) => (await import("../engine10/supervisor.ts")).runSupervisor(o));
+  const { EXIT } = await import("../engine10/output.ts");
+  const res = await supervise({ runId: it.runId, repoDir, env, resume: true, capS: Number(st["cap_s"]) > 0 ? Number(st["cap_s"]) : undefined, capCeilingS: Number(st["cap_ceiling_s"]) > 0 ? Number(st["cap_ceiling_s"]) : undefined, workerArgv: [process.execPath, resolve(process.argv[1] ?? ""), "engine10", "worker", it.runId, provider, model, deep ? "deep" : "fast"], started: { ...st, resumed_from: rp.stage }, pr });
+  out(`engine10: resumed run ${it.runId}: ${res.outcome}\n`);
+  return EXIT[res.outcome];
 }
 
 export type RunPrFn = (ctx: Record<string, unknown>, signal: AbortSignal) => Promise<{ status: string; reason?: string; data: Record<string, unknown> }>;
-export interface ResumeDeps { runPr?: RunPrFn; out?: (s: string) => void }
+export interface ResumeDeps { runPr?: RunPrFn; out?: (s: string) => void; supervise?: (o: import("../engine10/supervisor.ts").SupervisorOptions) => Promise<{ outcome: Outcome }> }
 
 /** Resumes the publish phase. Reuses the sealed receipt; appends run.resumed, pr.opened and run.completed. */
 export async function resumePublish(repoDir: string, it: Interrupted, deps: ResumeDeps = {}): Promise<number> {

@@ -1,7 +1,10 @@
 // Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
 // events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
 // stamps seq and appends. Its own diagnostics go to stderr.
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readEvents } from "./events.ts";
+import { eventsRelPath } from "../util/engine_origin.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { costTotalsOf, liveArchivedCosts, sumResultCosts, UNMETERED } from "./cost.ts";
 import { capMeter } from "../e10ext/budget_cap.ts";
@@ -73,7 +76,13 @@ export async function main(args: string[]): Promise<number> {
     };
     // Rule of Two: pr is never loaded here; the supervisor runs it after this process exits.
     const resize = deep ? undefined : (): number => resizeCap(ctx.runDir, loadProjectApi(repoDir), !(Number(parseCapUsd(process.env.LOKI_E10_MAX_COST_USD)) > 0), Number(process.env.LOKI_E10_CAP_FIXED_S) || undefined); // FC-21b: one resize after plan||wall; the machine never shrinks the cap
-    const { stopped } = await runMachine(ctx, { flow: FLOW.filter((s) => s !== "pr"), ...(resize ? { resize } : {}) });
+    let flow = FLOW.filter((s) => s !== "pr"), restored: Partial<Record<StageName, Record<string, unknown>>> | undefined;
+    if (process.env.LOKI_E10_RESUME === "1") { // P12-07i: seed ctx from the durable log, then run only the unsettled stages; refuse (fail closed) on an invalid resume point
+      const p = join(repoDir, eventsRelPath(runId)), r = (await import("../util/run_outputs.ts")).resumeMachineOpts(ctx as never, readEvents(p), readFileSync(p, "utf8"), flow);
+      if (!r.ok) { emit("escalated", null, { stop: `resume refused: ${r.reason}` }); return; }
+      flow = r.flow as typeof flow; const rs = r.restored as NonNullable<typeof restored>; restored = rs; const b = rs.intake?.["base_sha"]; if (typeof b === "string") ctx.baseSha = b;
+    }
+    const { stopped } = await runMachine(ctx, { flow, ...(restored ? { restored } : {}), ...(resize ? { resize } : {}) });
     if (stopped) emit("escalated", null, { stop: stopped }); // A-110: the supervisor maps the stop reason to an outcome
   });
   return 0;
