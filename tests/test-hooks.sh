@@ -592,7 +592,7 @@ test_validate_bash_rm_allow_grammar() {
         '${TMPDIR:0:1}tmp/*' '/$X/tmp/*' '/tmp$X' '"/tmp"$X'
         '$*/x' '$#/x' '$?/x' '$!/x' '${1}/x' '${#X}/x' '$$/x' '${TMPDIR:-/tmp}' '${TMPDIR-/tmp}/*'
         '${TMPDIR^^}/x' '${X/a/b}/c' '${X:1}/c' '"${X%/}"/y' '$TMPDIR' '$TMPDIR/*' '$TMPDIR/..'
-        '*' '*/x' '?x' '[a]x' '.' './' 'a/..' '.*' '../x' '/$X' '$X' '$X/' '$X/..' '$X*'
+        '*' '*.log' '*/x' '?x' '[a]x' '.' './' 'a/..' '.*' '../x' '/$X' '$X/' '$X/..' '$X*'
         '~root/x' '~' '$HOME' '~/..' '$HOME/../x' '/home/*' '/*' '/x/*/y' '$(echo /tmp)' '`echo /tmp`'
     )
     for t in "${deny_set[@]}"; do
@@ -608,11 +608,23 @@ test_validate_bash_rm_allow_grammar() {
         '/home/u/proj/build' '/tmp/foo*' '/tmp/foo/bar' '"$LOKI_RUN_TMP"' '"$LOKI_RUN_TMP"/x/*'
         '"${LOKI_RUN_TMP}"/a' '$TMPDIR/foo' '"${TMPDIR}"/foo/bar' '$HOME/proj/build' '~/proj/x'
         '"$BUILD_DIR"/out' '${BUILD_DIR}/out' '"$BUILD_DIR"/shard{1..4}'
+        '"$tmp"' '"$dir"' '"${dir}"' '"$WT"' '-- "$target"' '$X' './*' './*.log' '{}' '{} +' '{} \;'
     )
     for t in "${ok_set[@]}"; do
         c=$(printf 'rm -r %s' "$t")
         got=$(HOME=/home/u run_hook_case "$c" "" "" "$rt")
         [ "$got" = "0:allow" ] || { fail "grammar shape wrongly denied: $c (got $got)"; return; }
+    done
+    # Real-world idioms: trap with a named variable, for-loop, find -exec.
+    local idioms=(
+        'tmp=$(mktemp -d); trap '"'"'rm -rf "$tmp"'"'"' EXIT'
+        'for d in a b; do rm -rf "$d"; done'
+        'find . -name x -exec rm -rf {} +'
+        'find . -name x -exec rm -rf {} \;'
+    )
+    for c in "${idioms[@]}"; do
+        got=$(HOME=/home/u run_hook_case "$c" "" "" "$rt")
+        [ "$got" = "0:allow" ] || { fail "common idiom wrongly denied: $c (got $got)"; return; }
     done
     # Quoted printf/echo data and cat heredoc bodies are not rm command words.
     local data_ok=(

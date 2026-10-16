@@ -949,7 +949,8 @@ _g_rel_deny() {
     IFS=/ read -r -a p <<< "$a"
     for c in ${p[@]+"${p[@]}"}; do
         case "$c" in
-            ''|.) continue ;;
+            '') continue ;;
+            .) seen=true; continue ;;
             ..) depth=$(( depth - 1 )); [ "$depth" -ge 0 ] || return 0; continue ;;
         esac
         _is_dotdotish "$c" && return 0
@@ -1009,7 +1010,12 @@ _g_alt_deny() {
                     ;;
                 HOME) _g_home_deny "$rest"; return ;;
                 *)
-                    [ -n "$rest" ] || return 0
+                    # A whole-target named variable (rm -r "$dir") is allowed;
+                    # TMPDIR bare names the temp root itself.
+                    if [ -z "$rest" ]; then
+                        [ "$name" != "TMPDIR" ] || return 0
+                        return 1
+                    fi
                     _g_named_rest_deny "$rest"
                     return
                     ;;
@@ -1031,6 +1037,8 @@ _rm_grammar_deny() {
     [ -n "$t" ] || return 1
     [[ "$t" == *'$'\'* || "$t" == *'$"'* ]] && return 0
     q="${t//[\"\'\\]/}"
+    # find -exec rm -r {} + / \; : a bare {} is find's placeholder, not a brace.
+    [ "$q" = "{}" ] && return 1
     [[ "$q" == *'`'* || "$q" == *'$('* ]] && return 0
     # $$ is a PID only mid-component (/tmp/test-$$); a leading $$ denies below.
     while [[ "$q" =~ ^(.*[^/\$])\$\$(.*)$ ]]; do q="${BASH_REMATCH[1]}0${BASH_REMATCH[2]}"; done
