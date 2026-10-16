@@ -357,6 +357,64 @@ class TestChildReaping(unittest.TestCase):
 class TestDeliveryDedup(unittest.TestCase):
     """Idempotency: a redelivered X-GitHub-Delivery must not re-dispatch."""
 
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self.orig_cwd)
+
+    def test_delivery_dedup_survives_restart(self):
+        d1 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            self.assertFalse(d1.seen_delivery("restart-1"))
+        finally:
+            d1.shutdown()
+        d2 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            self.assertTrue(d2.seen_delivery("restart-1"))
+            self.assertFalse(d2.seen_delivery("restart-2"))
+        finally:
+            d2.shutdown()
+
+    def _issue_payload(self, action="opened", number=7, sha=None):
+        p = {"action": action, "issue": {"number": number},
+             "repository": {"full_name": "o/r"}}
+        if sha:
+            p["pull_request"] = {"number": number, "head": {"sha": sha}}
+        return p
+
+    def test_intake_key_dup_only_while_run_live(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value=None):
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload()))
+            # same issue, new delivery id, run live -> duplicate
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertTrue(disp.seen_intake("issues", self._issue_payload()))
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload(number=8)))
+            # run finished -> re-dispatch allowed
+            with patch.object(ts, "find_live_run", return_value=None):
+                self.assertFalse(disp.seen_intake("issues", self._issue_payload()))
+        finally:
+            disp.shutdown()
+
+    def test_intake_key_survives_restart_and_head_sha_distinguishes(self):
+        d1 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertFalse(d1.seen_intake("pull_request", self._issue_payload("synchronize", sha="aaa")))
+        finally:
+            d1.shutdown()
+        d2 = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            with patch.object(ts, "find_live_run", return_value="r1"):
+                self.assertTrue(d2.seen_intake("pull_request", self._issue_payload("synchronize", sha="aaa")))
+                self.assertFalse(d2.seen_intake("pull_request", self._issue_payload("synchronize", sha="bbb")))
+        finally:
+            d2.shutdown()
+
     def test_seen_delivery_dedups(self):
         disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
         try:
@@ -1327,6 +1385,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         c = self._teams_body(conv="c", service_url="https://s2/", tenant="t1")
         _, seen = self._teams_twice(a, b)
         self.assertEqual(len(seen), 2)
+        os.chdir(tempfile.mkdtemp())  # dedup keys persist per working dir
         _, seen = self._teams_twice(a, c)
         self.assertEqual(len(seen), 2)
 

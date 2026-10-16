@@ -1120,6 +1120,8 @@ class Dispatcher:
         self._dedup_max = max(1, dedup_size)
         self._seen_deliveries = collections.OrderedDict()
         self._dedup_lock = threading.Lock()
+        self._seen_path = get_loki_dir() / "seen-deliveries.jsonl"
+        self._load_seen()
         self._threads = []
         self._stop = threading.Event()
         for i in range(max(1, workers)):
@@ -1130,6 +1132,64 @@ class Dispatcher:
             )
             t.start()
             self._threads.append(t)
+
+    def _load_seen(self):
+        """Reload the last dedup_max accepted keys so a restart keeps dedup."""
+        try:
+            lines = self._seen_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        keys = []
+        for line in lines:
+            try:
+                k = json.loads(line).get("k")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(k, str) and k:
+                keys.append(k)
+        keys = keys[-self._dedup_max:]
+        for k in keys:
+            self._seen_deliveries[k] = True
+        if len(lines) > 2 * self._dedup_max:
+            try:
+                self._seen_path.write_text(
+                    "".join(json.dumps({"k": k}) + "\n" for k in keys), encoding="utf-8")
+            except OSError:
+                pass
+
+    def _remember(self, key):
+        """Record key (caller holds _dedup_lock); append to the JSONL, best effort."""
+        self._seen_deliveries[key] = True
+        while len(self._seen_deliveries) > self._dedup_max:
+            self._seen_deliveries.popitem(last=False)
+        try:
+            with open(self._seen_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"k": key}) + "\n")
+        except OSError:
+            pass
+
+    def seen_intake(self, event_type, payload):
+        """True if the same repo#N + action + head sha was accepted and its run is live.
+
+        Catches a redelivery under a new delivery id or after a restart. Once the
+        run is no longer live the same key may dispatch again. Only issues and
+        pull_request events carry an intake key.
+        """
+        if event_type not in ("issues", "pull_request"):
+            return False
+        number = (payload.get("issue") or payload.get("pull_request") or {}).get("number")
+        repo = (payload.get("repository") or {}).get("full_name", "")
+        if number is None or not repo:
+            return False
+        sha = ((payload.get("pull_request") or {}).get("head") or {}).get("sha", "")
+        key = "intake:%s:%s#%s:%s:%s" % (event_type, repo, number, payload.get("action", ""), sha)
+        ref = "%s#%s" % (repo, number)
+        with self._dedup_lock:
+            if key in self._seen_deliveries and find_live_run(ref) is not None:
+                return True
+            if key not in self._seen_deliveries:
+                self._remember(key)
+            return False
 
     def seen_delivery(self, delivery_id):
         """Return True if this delivery_id was already accepted (idempotency).
@@ -1149,9 +1209,7 @@ class Dispatcher:
                 # Insertion order is the eviction policy; duplicates leave it
                 # unchanged.
                 return True
-            self._seen_deliveries[delivery_id] = True
-            while len(self._seen_deliveries) > self._dedup_max:
-                self._seen_deliveries.popitem(last=False)
+            self._remember(delivery_id)
             return False
 
     def _begin_proof_window(self, job_id=None):
@@ -2030,6 +2088,14 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 event_type,
             )
             log_event(event_type, action, "", "duplicate (delivery %s)" % delivery_id)
+            self._send_json(
+                200,
+                {"event": event_type, "action": action, "status": "duplicate"},
+            )
+            return
+
+        if self.dispatcher.seen_intake(event_type, payload):
+            log_event(event_type, action, "", "duplicate (live run for same intake key)")
             self._send_json(
                 200,
                 {"event": event_type, "action": action, "status": "duplicate"},
