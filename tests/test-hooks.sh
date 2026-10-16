@@ -451,16 +451,42 @@ test_validate_bash_temp_root_and_glob_denied() {
     log_test "validate-bash.sh: recursive rm of a temp root or bare temp glob is denied after slash normalization"
     local c got t
     local rmcmd="rm -rf"
+    # shellcheck disable=SC2088 # tilde targets are literal string data for the hook, never expanded here
     local targets=(
         '//tmp' '/tmp//' '/private//tmp/' '/tmp' '/tmp/' '/private/tmp' '/var/tmp/'
         '/tmp/*' '/tmp/.*' '/tmp//*' '/tmp/./*' '/private/tmp/*' '/var//tmp/*' '/tmp/?'
         '"$TMPDIR"/*' '$TMPDIR/*' '${TMPDIR}/*' '"$TMPDIR"' '$TMPDIR//'
+        '/tmp/[a-z]*' '/tmp/[[:alpha:]]*' '/tmp/*[a-z]' '/tmp/[!x]*' '/tmp/[a]'
+        '$TMPDIR*' '"$TMPDIR"*' '${TMPDIR}*' '/tmp/x/../*' '/var/../tmp'
+        '/tmp/{*,}' '/tmp/*{,}' '/t{m,}p' '/{tmp,}'
+        '\/tmp' '/t\mp' '/tmp\/' '/tmp>/dev/null'
+        '$TMPDIR/../T' '"$TMPDIR"/../T' '$TMPDIR/../T*' '${TMPDIR}/../T'
+        '/tmp/[!]]*' '/tmp/[]a]*' '/tmp/[![=a=]]*' '/tmp/[![.a.]]*'
+        '/tmp/{a,{b,*}}' '/{a,{tmp,b}}' '/tm{o..p}' '/tm{p..p}'
+        '${TMPDIR}/{a,*}' '"${TMPDIR}"/{a,*}' '${TMPDIR}/{,}' '${TMPDIR}{,/*}'
+        '//{s..u}mp' '/./{s..u}mp' '/usr/../{s..u}mp' '~/../../{s..u}mp'
+        '//{a,{t,b}}mp' '/usr/../{a,{t,b}}mp' '//{s..u}mp/{a,*}' '//{a,{t,b}}mp/*'
+        '//{a,}{a,}{a,}{a,}{a,}{a,}{x,t}mp'
     )
     for t in "${targets[@]}"; do
-        c=$(printf '%s %s' "$rmcmd" "$t")
-        got=$(run_hook_case "$c" "")
-        [ "$got" = "2:deny" ] || { fail "temp root/glob not denied: $c (got $got)"; return; }
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "")
+            [ "$got" = "2:deny" ] || { fail "temp root/glob not denied: $c (got $got)"; return; }
+        done
     done
+    for c in '/bin/rm -r /tmp/*' '\rm -r /tmp' '"rm" -r /tmp/*' "'rm' -rf /tmp"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "rm token variant not denied: $c (got $got)"; return; }
+    done
+    local big='' n start dur
+    for n in {1..16}; do big="${big}{a,b}"; done; : "$n"
+    start=$(date +%s)
+    got=$(run_hook_case "rm -r /x${big} /tmp" "")
+    dur=$(( $(date +%s) - start ))
+    [ "$got" = "2:deny" ] || { fail "16 braces not denied (got $got)"; return; }
+    [ "$dur" -lt 2 ] || { fail "16 braces took ${dur}s (limit 2s)"; return; }
+    rmcmd="rm -rf"
     c=$(printf 'FOO=1 %s /tmp/a /tmp/*' "$rmcmd")
     got=$(run_hook_case "$c" "")
     [ "$got" = "2:deny" ] || { fail "temp glob after a named target not denied (got $got)"; return; }
@@ -470,11 +496,26 @@ test_validate_bash_temp_root_and_glob_denied() {
     local ok=(
         '/tmp/loki-run.abc123' '/tmp/loki-run.abc123/' '/tmp//loki-run.abc123'
         '/tmp/foo*' '/tmp/foo/*' '$TMPDIR/loki-run.abc123' '"$TMPDIR"/foo'
+        '"$TMPDIR"/loki-run.abc' '"${TMPDIR:-/tmp}/loki-run.abc"'
     )
-    for t in "${ok[@]}"; do
-        c=$(printf '%s %s' "$rmcmd" "$t")
+    # Brace forms: `rm -rf` is left to the pre-existing blocked-pattern check,
+    # so only the plain recursive form isolates this rule.
+    local ok_r=(
+        '"${LOKI_RUN_TMP}"/{a,b}' '/tmp/x{,.bak}' '"$LOKI_RUN_TMP"/shard{1..4}'
+        'out/{1..3}' 'tests/fixtures/{1..3}' 'build/{a,{b,c}}' '"${dir:-../x}"' '"${A:-${B}}"'
+        'build/{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{a,b}'
+    )
+    for t in "${ok_r[@]}"; do
+        c=$(printf 'rm -r %s' "$t")
         got=$(run_hook_case "$c" "")
-        [ "$got" = "0:allow" ] || { fail "named temp subdir wrongly blocked: $c (got $got)"; return; }
+        [ "$got" = "0:allow" ] || { fail "non-temp or named brace target wrongly blocked: $c (got $got)"; return; }
+    done
+    for t in "${ok[@]}"; do
+        for rmcmd in "rm -rf" "rm -r"; do
+            c=$(printf '%s %s' "$rmcmd" "$t")
+            got=$(run_hook_case "$c" "")
+            [ "$got" = "0:allow" ] || { fail "named temp subdir wrongly blocked: $c (got $got)"; return; }
+        done
     done
     pass "temp roots and bare temp globs denied; named subdirectories still allowed"
 }
