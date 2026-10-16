@@ -280,6 +280,82 @@ class LokiModelPinTest(unittest.TestCase):
         self.assertEqual(env["loki_session_model_effective"], "claude-sonnet-5")
 
 
+class LokiLedgerRowTest(unittest.TestCase):
+    """S1: the loki row carries true (ledger-summed) cost, phase split, engine and honesty."""
+
+    def _run(self, populate):
+        import json as _json
+
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        pf = os.path.join(d, "p.md")
+        open(pf, "w").write("x")
+
+        def fake(cmd, **kw):
+            if cmd[:2] == ["loki", "start"]:
+                populate(os.path.join(d, ".loki"), _json)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        try:
+            return A.run_loki(d, pf, model="claude-sonnet-5", budget_usd=1.0,
+                              timeout_s=5, runner=fake)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    @staticmethod
+    def _main(loki, js, usd=0.25):
+        eff = os.path.join(loki, "metrics", "efficiency")
+        os.makedirs(eff, exist_ok=True)
+        with open(os.path.join(eff, "iteration-1.json"), "w") as f:
+            js.dump({"iteration": 1, "input_tokens": 10, "output_tokens": 5,
+                     "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                     "cost_usd": usd, "model": "sonnet"}, f)
+
+    def test_row_cost_is_main_plus_ledger_with_phase_map(self):
+        def pop(loki, js):
+            self._main(loki, js)
+            with open(os.path.join(loki, "metrics", "child-sessions.jsonl"), "w") as f:
+                for ph, u in (("reviewer", 0.1), ("grill", 0.05), ("docs", 0.2)):
+                    f.write(js.dumps({"phase": ph, "model": "sonnet", "usd": u,
+                                      "input_tokens": 1, "output_tokens": 1,
+                                      "cache_creation_tokens": 1,
+                                      "cache_read_tokens": 1, "source": "t"}) + "\n")
+        res = self._run(pop)
+        self.assertAlmostEqual(res["cost_usd"], 0.6, places=4)
+        self.assertEqual(res["ledger"], "present")
+        self.assertAlmostEqual(res["cost_by_phase"]["implement"], 0.25, places=4)
+        self.assertAlmostEqual(res["cost_by_phase"]["docs"], 0.2, places=4)
+
+    def test_absent_ledger_is_flagged_not_silent(self):
+        res = self._run(lambda loki, js: self._main(loki, js))
+        self.assertAlmostEqual(res["cost_usd"], 0.25, places=4)
+        self.assertEqual(res["ledger"], "absent")
+
+    def test_honesty_degraded_and_headline_round_trip(self):
+        def pop(loki, js):
+            pd = os.path.join(loki, "proofs", "20260101-run")
+            os.makedirs(pd)
+            with open(os.path.join(pd, "proof.json"), "w") as f:
+                js.dump({"honesty": {"headline": "VERIFIED WITH GAPS",
+                                     "degraded": [{"item": "build", "reason": "build not run"}]}}, f)
+        res = self._run(pop)
+        self.assertEqual(res["honesty"]["headline"], "VERIFIED WITH GAPS")
+        self.assertEqual(res["honesty"]["degraded"],
+                         [{"item": "build", "reason": "build not run"}])
+        self.assertEqual(res["verify_verdict"], "VERIFIED WITH GAPS")
+
+    def test_no_proof_means_honesty_none(self):
+        res = self._run(lambda loki, js: os.makedirs(loki))
+        self.assertIsNone(res["honesty"])
+
+    def test_engine_recorded_from_marker_else_legacy(self):
+        def v10(loki, js):
+            os.makedirs(loki)
+            with open(os.path.join(loki, "engine.json"), "w") as f:
+                js.dump({"engine": "v10"}, f)
+        self.assertEqual(self._run(v10)["engine"], "v10")
+        self.assertEqual(self._run(lambda loki, js: os.makedirs(loki))["engine"], "legacy")
+
+
 class TaskSetTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

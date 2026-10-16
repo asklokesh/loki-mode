@@ -438,6 +438,10 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
         "model_used": res["model_used"], "iterations": res["iterations"],
         "verify_verdict": prov.get("verify_verdict"),
         "failure_reason": prov.get("failure_reason"),
+        "honesty": prov.get("honesty"),
+        "engine": prov.get("engine"),
+        "cost_by_phase": prov.get("cost_by_phase"),
+        "ledger": prov.get("ledger"),
         "command": prov.get("command"),
     }
 

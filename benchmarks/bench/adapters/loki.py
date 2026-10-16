@@ -104,16 +104,16 @@ def _read_failure_reason(loki_dir):
     return {"error_class": cls, "brief": brief}
 
 
-def _read_verify_verdict(loki_dir):
-    """The build's HONESTY verdict, from the proof loki writes
-    (.loki/proofs/<run_id>/proof.json -> honesty.headline, e.g. "VERIFIED" /
-    "NOT VERIFIED"). This is the honesty AXIS the equivalence report reads from
-    provenance.verify_verdict -- without it the axis is not_captured.
+def _read_honesty(loki_dir):
+    """The LATEST proof's honesty block, reduced to {headline, degraded}.
 
-    A build may write several proofs across iterations; the LATEST proof dir
-    (lexicographically largest, they are timestamp-prefixed) is this run's final
-    verdict. Returns the headline string or None (no proof machinery ran).
-    Best-effort: any read/parse problem returns None."""
+    Source: .loki/proofs/<run_id>/proof.json -> honesty (run dirs are
+    timestamp-prefixed, so the lexicographically largest is this run's final
+    proof). Persisting degraded[] in the row matters because the workdir is
+    deleted after grading: without it the cause of a "VERIFIED WITH GAPS"
+    headline cannot be recovered. Returns None when no proof is readable
+    (no proof machinery ran). Best-effort: any read/parse problem returns None.
+    """
     proofs_dir = os.path.join(loki_dir, "proofs")
     try:
         run_dirs = sorted(
@@ -124,21 +124,50 @@ def _read_verify_verdict(loki_dir):
         return None
     if not run_dirs:
         return None
-    # Latest run dir = this run's final proof (timestamp-prefixed names sort).
     path = os.path.join(proofs_dir, run_dirs[-1], "proof.json")
     try:
         with open(path) as fh:
             proof = json.load(fh)
     except Exception:
         return None
-    if not isinstance(proof, dict):
+    honesty = proof.get("honesty") if isinstance(proof, dict) else None
+    if not isinstance(honesty, dict):
         return None
-    honesty = proof.get("honesty")
-    if isinstance(honesty, dict):
-        headline = honesty.get("headline")
-        if isinstance(headline, str) and headline.strip():
-            return headline.strip()
-    return None
+    headline = honesty.get("headline")
+    headline = headline.strip() if isinstance(headline, str) and headline.strip() else None
+    degraded = honesty.get("degraded")
+    if not isinstance(degraded, list):
+        degraded = None
+    if headline is None and degraded is None:
+        return None
+    return {"headline": headline, "degraded": degraded}
+
+
+def _read_verify_verdict(loki_dir):
+    """The build's HONESTY verdict (honesty.headline, e.g. "VERIFIED" /
+    "NOT VERIFIED") from the latest proof. This is the honesty AXIS the
+    equivalence report reads from provenance.verify_verdict -- without it the
+    axis is not_captured. Returns the headline string or None."""
+    honesty = _read_honesty(loki_dir)
+    return honesty["headline"] if honesty else None
+
+
+def _read_engine(loki_dir):
+    """Which engine produced this run, so rows are never compared across
+    engines. engine10 writes .loki/engine.json {"engine": "v10"} (EV-1 marker);
+    a .loki dir without the marker is the legacy autonomy/run.sh loop. None
+    when there is no .loki dir at all (nothing ran)."""
+    if not os.path.isdir(loki_dir):
+        return None
+    try:
+        with open(os.path.join(loki_dir, "engine.json")) as fh:
+            marker = json.load(fh)
+        eng = marker.get("engine") if isinstance(marker, dict) else None
+        if isinstance(eng, str) and eng.strip():
+            return eng.strip()
+    except Exception:
+        pass
+    return "legacy"
 
 
 def run(workdir, spec, *, model="claude", timeout=900, runner=None,
@@ -191,7 +220,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     loki_dir = os.path.join(workdir, ".loki")
     iterations = _read_iteration_count(loki_dir)
     failure_reason = _read_failure_reason(loki_dir)
-    verify_verdict = _read_verify_verdict(loki_dir)
+    honesty = _read_honesty(loki_dir)
+    verify_verdict = honesty["headline"] if honesty else None
+    engine = _read_engine(loki_dir)
 
     # Cost: shared with the proof generator. None usd == not recorded.
     cost = {"usd": None, "input_tokens": None, "output_tokens": None}
@@ -228,5 +259,14 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # "VERIFIED" / "NOT VERIFIED"). None when no proof ran. This feeds the
             # equivalence report's HONESTY axis (was not_captured before this).
             "verify_verdict": verify_verdict,
+            # Persisted because the workdir is deleted after grading: the
+            # gap behind a "WITH GAPS" headline must survive in the row.
+            "honesty": honesty,
+            "engine": engine,
+            # True spend split by phase, and whether the child-session ledger
+            # was read ("present") or missing ("absent"), from the shared
+            # efficiency_cost collector.
+            "cost_by_phase": cost.get("cost_by_phase"),
+            "ledger": cost.get("ledger"),
         },
     )
