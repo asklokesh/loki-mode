@@ -413,6 +413,37 @@ describe("scheduler", () => {
       } finally { s.done(); }
     });
 
+    it("keeps a base-tracked excluded path unchanged through the squash", () => {
+      const s = setup();
+      try {
+        mkdirSync(join(s.repo, "pkg", "__pycache__"), { recursive: true });
+        writeFileSync(join(s.repo, "pkg", "__pycache__", "old.pyc"), "old");
+        git(s.repo, "add", "-f", "pkg/__pycache__/old.pyc");
+        git(s.repo, "commit", "-qm", "legacy", "--no-gpg-sign");
+        const base = git(s.repo, "rev-parse", "HEAD");
+        const w = join(s.repo, "wt-leg");
+        gitWorktrees.create(s.repo, w, base);
+        writeFileSync(join(w, "n.py"), "1");
+        s.ops.merge("leg", w);
+        expect(git(s.repo, "diff", "--name-status", "-M", base, "HEAD")).toBe("A\tn.py");
+        expect(git(s.repo, "ls-files")).toContain("pkg/__pycache__/old.pyc");
+        expect(readFileSync(join(s.repo, "pkg", "__pycache__", "old.pyc"), "utf8")).toBe("old");
+      } finally { s.done(); }
+    });
+
+    it("rolls back the commit when the trailer check fails after cherry-pick", () => {
+      const s = setup();
+      try {
+        const w = s.wt("rb");
+        writeFileSync(join(w, "g"), "1");
+        const pre = git(s.repo, "rev-parse", "HEAD");
+        const ops = gitMergeOps(s.repo, MID, { isMerged: () => false });
+        expect(() => ops.merge("rb", w)).toThrow("trailer missing");
+        expect(git(s.repo, "rev-parse", "HEAD")).toBe(pre);
+        expect(existsSync(join(s.repo, "g"))).toBe(false);
+      } finally { s.done(); }
+    });
+
     it("does not run a hook planted in the common git dir", () => {
       const s = setup();
       try {
