@@ -105,6 +105,8 @@ export type TrustRun = {
   interventions_by_type: InterventionsByType | null;
   /** Wall-clock seconds blocked on a person (upper bound), or null when unmeasured. */
   waited_s: number | null;
+  /** Measured seconds a person actively worked on interventions, or null when unmeasured (never 0 for unknown). */
+  active_s: number | null;
   /** true only when proof.json records a VERIFIED verdict later contradicted by a FAILED outcome; null when no verdict evidence. */
   false_verified: boolean | null;
 };
@@ -123,6 +125,8 @@ export type OutcomeEffort = {
   interventions_per_accepted: number | null;
   /** Labelled "waited, upper bound": wall-clock blocked minutes, not active minutes. */
   waited_min_per_accepted: number | null;
+  /** Measured active human minutes per accepted run; null unless every run measured them. */
+  active_min_per_accepted: number | null;
 };
 
 export type TrustTrajectory = {
@@ -234,7 +238,7 @@ function costValue(proof: Record<string, unknown>): number | null {
 
 const IV_TYPES = ["steer", "input", "authorization", "repair"] as const;
 
-function interventionDetail(proof: Record<string, unknown>): { by_type: InterventionsByType | null; waited_s: number | null } {
+function interventionDetail(proof: Record<string, unknown>): { by_type: InterventionsByType | null; waited_s: number | null; active_s: number | null } {
   const d = obj(proof["interventions_detail"]);
   const bt = obj(d["by_type"]);
   const out = {} as InterventionsByType;
@@ -246,7 +250,9 @@ function interventionDetail(proof: Record<string, unknown>): { by_type: Interven
   }
   const w = d["waited_s"];
   const ws = typeof w === "number" && Number.isFinite(w) && w >= 0 ? w : null;
-  return { by_type: any ? out : null, waited_s: ws };
+  const a = d["active_s"];
+  const as = typeof a === "number" && Number.isInteger(a) && a >= 0 ? a : null;
+  return { by_type: any ? out : null, waited_s: ws, active_s: as };
 }
 
 function verdictEvidence(proof: Record<string, unknown>): { verdict: string | null; falseVerified: boolean | null } {
@@ -292,6 +298,7 @@ function loadRuns(lokiDir: string): TrustRun[] {
       cost_usd: costValue(proof),
       interventions_by_type: det.by_type,
       waited_s: det.waited_s,
+      active_s: det.active_s,
       verdict: ev.verdict,
       false_verified: ev.falseVerified,
       run_id: String(proof["run_id"] ?? name),
@@ -459,6 +466,7 @@ export function outcomeEffort(series: TrustRun[]): OutcomeEffort {
   }
   const allIv = series.length > 0 && series.every((r) => r.interventions !== null);
   const allWaited = series.length > 0 && series.every((r) => r.waited_s !== null);
+  const allActive = series.length > 0 && series.every((r) => r.active_s !== null);
   return {
     runs: series.length,
     accepted,
@@ -473,6 +481,10 @@ export function outcomeEffort(series: TrustRun[]): OutcomeEffort {
     waited_min_per_accepted:
       accepted > 0 && allWaited
         ? Math.round((series.reduce((s, r) => s + (r.waited_s ?? 0), 0) / 60 / accepted) * 10) / 10
+        : null,
+    active_min_per_accepted:
+      accepted > 0 && allActive
+        ? Math.round((series.reduce((s, r) => s + (r.active_s ?? 0), 0) / 60 / accepted) * 10) / 10
         : null,
   };
 }
@@ -491,7 +503,10 @@ function fmtOutcomeEffort(e: OutcomeEffort): string[] {
   );
   L.push(`  Interventions per accepted: ${e.interventions_per_accepted === null ? "n/a" : e.interventions_per_accepted}`);
   L.push(
-    `  Minutes per accepted: ${e.waited_min_per_accepted === null ? "n/a" : e.waited_min_per_accepted + " (waited, upper bound; active minutes are not measured)"}`,
+    `  Minutes per accepted: ${e.waited_min_per_accepted === null ? "n/a" : e.waited_min_per_accepted + " (waited, upper bound)"}`,
+  );
+  L.push(
+    `  Active minutes per accepted: ${e.active_min_per_accepted === null ? "n/a (not measured)" : e.active_min_per_accepted}`,
   );
   return L;
 }
@@ -508,6 +523,7 @@ export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel |
     cost_usd: r.cost_usd,
     interventions_by_type: r.interventions_by_type,
     waited_s: r.waited_s,
+    active_s: r.active_s,
     verdict: r.verdict,
     false_verified: r.false_verified,
   }));
