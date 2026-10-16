@@ -48,7 +48,14 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-ARMS = ("v10", "raw-claude", "legacy", "v10-parallel", "v10-seq")
+ARMS = ("v10", "raw-claude", "legacy", "v10-parallel", "v10-seq", "configured-claude")
+# P12-29: both claude arms run the claude binary and are scored by the same
+# claude-json rules. They differ only in the per-run CLAUDE_CONFIG_DIR:
+# raw-claude's is empty, configured-claude's is seeded from the operator-named
+# LOKI_EVAL_CONFIGURED_CC_DIR (an allowlist of CLAUDE.md, settings, hooks, skills).
+CLAUDE_ARMS = ("raw-claude", "configured-claude")
+CONFIGURED_SRC_ENV = "LOKI_EVAL_CONFIGURED_CC_DIR"
+CONFIGURED_ENTRIES = ("CLAUDE.md", "settings.json", "hooks", "skills", "agents", "commands")
 # D61 slice 17: the speed tier (D67) compares three arms. Every v10* arm runs the
 # same v10 engine (same marker, events and token accounting); only LOKI_SPEED
 # differs. v10-parallel is a STUB until the decomposer (D61 slices 8-16) lands:
@@ -597,6 +604,14 @@ def arm_env(rundir, model, alias, arm=None):
     # memory never steer any arm. Auth comes from arm_auth, not from this dir.
     cc = os.path.join(rundir, "claude-config")
     os.makedirs(cc, mode=0o700, exist_ok=True)
+    if arm == "configured-claude":
+        src = os.environ.get(CONFIGURED_SRC_ENV, "")
+        for name in CONFIGURED_ENTRIES:
+            sp, dp = os.path.join(src, name), os.path.join(cc, name)
+            if src and os.path.isdir(sp) and not os.path.islink(sp):
+                shutil.copytree(sp, dp, symlinks=False, dirs_exist_ok=True)
+            elif src and os.path.isfile(sp) and not os.path.islink(sp):
+                shutil.copyfile(sp, dp)
     env.update({
         "CLAUDE_CONFIG_DIR": cc,
         "GH_CONFIG_DIR": gh,            # gh keyring login is invisible to the arm
@@ -624,6 +639,19 @@ def arm_env(rundir, model, alias, arm=None):
         if arm in ARM_SPEED:
             env["LOKI_SPEED"] = ARM_SPEED[arm]
     return env
+
+
+def configured_config_error(arm):
+    """Why a configured-claude run cannot start, else None. Fails closed so the
+    arm can never silently measure the same stripped config as raw-claude."""
+    if arm != "configured-claude":
+        return None
+    src = os.environ.get(CONFIGURED_SRC_ENV, "")
+    if not src or not os.path.isdir(src):
+        return "%s must name a directory holding the configured Claude Code setup" % CONFIGURED_SRC_ENV
+    if not any(os.path.lexists(os.path.join(src, n)) for n in CONFIGURED_ENTRIES):
+        return "%s holds none of: %s" % (CONFIGURED_SRC_ENV, ", ".join(CONFIGURED_ENTRIES))
+    return None
 
 
 def apply_git_isolation(env):
@@ -765,7 +793,7 @@ def provider_cost(arm, stdout_path, work, events=()):
     null, never 0) -- it can genuinely be 0.0 when usd is known and every
     record priced was "provider"-sourced.
     """
-    if arm == "raw-claude":
+    if arm in CLAUDE_ARMS:
         try:
             with open(stdout_path, encoding="utf-8", errors="replace") as f:
                 text = f.read().strip()
@@ -989,7 +1017,7 @@ def claims_no_change_needed(arm, stdout_path):
             text = f.read()
     except OSError:
         return False
-    if arm == "raw-claude":
+    if arm in CLAUDE_ARMS:
         dec, results = json.JSONDecoder(), []
         for m in re.finditer(r"(?m)^[\[{]", text):
             try:
@@ -1372,7 +1400,12 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     L = row["logs"]
     env = apply_git_isolation(arm_env(rundir, cfg["model"], cfg["alias"], arm))
 
-    binary = cfg["claude_bin"] if arm == "raw-claude" else cfg["loki_bin"]
+    binary = cfg["claude_bin"] if arm in CLAUDE_ARMS else cfg["loki_bin"]
+    cfg_err = configured_config_error(arm)
+    if cfg_err:
+        row["status"] = "arm_unavailable"
+        row["unavailable_reason"] = cfg_err
+        return row
     if not shutil.which(binary):
         row["status"] = "arm_unavailable"
         row["unavailable_reason"] = "%s not found" % binary
@@ -1422,7 +1455,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         return row
 
     prompt = task["prompt"]
-    if arm == "raw-claude":
+    if arm in CLAUDE_ARMS:
         argv = [binary, "-p", prompt + PUSH_INSTRUCTION, "--output-format", "json",
                 "--dangerously-skip-permissions", "--model", cfg["model"]]
     elif arm in V10_ARMS:
@@ -1447,7 +1480,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     row.update(started=iso(started), ended=iso(time.time()), wall_s=wall, exit_code=rc, capped=capped)
     events = _v10_events(work) if arm in V10_ARMS else []
     row["cost_usd"], row["cost_source"], row["cost_partial_usd"] = provider_cost(arm, L["arm_stdout"], work, events)
-    if arm == "raw-claude":
+    if arm in CLAUDE_ARMS:
         row["tokens"] = _raw_claude_tokens(L["arm_stdout"])
     elif arm in V10_ARMS:
         row["tokens"], row["tokens_by_stage"] = _v10_tokens(events)
@@ -1601,7 +1634,7 @@ def cmd_run(args):
            # the wrong build (v9.78.0). Default to this repo's own bin/loki,
            # never a global install, unless the operator explicitly overrides.
            "loki_bin": os.environ.get("LOKI_EVAL_LOKI_BIN", os.path.join(REPO, "bin", "loki"))}
-    binary = cfg["claude_bin"] if args.arm == "raw-claude" else cfg["loki_bin"]
+    binary = cfg["claude_bin"] if args.arm in CLAUDE_ARMS else cfg["loki_bin"]
     version = ""
     if shutil.which(binary):
         r = subprocess.run([TIMEOUT_BIN, "-k", "5", "30", binary, "--version"],
@@ -1615,7 +1648,8 @@ def cmd_run(args):
                             "arm_version": version, "harness_sha": cfg["harness_sha"],
                             "arm_note": ARM_STUB_NOTE.get(args.arm), "loki_speed": ARM_SPEED.get(args.arm),
                             "agent_sdk_version": installed_agent_sdk_version(REPO),
-                            "isolation": "fresh CLAUDE_CONFIG_DIR per run", "auth_source": auth_source,
+                            "isolation": ("fresh CLAUDE_CONFIG_DIR per run, seeded from " + CONFIGURED_SRC_ENV
+                                          if args.arm == "configured-claude" else "fresh CLAUDE_CONFIG_DIR per run"), "auth_source": auth_source,
                             "tasks": [t["id"] for t, _ in tasks], "started": iso(time.time())}) + "\n")
 
     def on_signal(signum, _frame):

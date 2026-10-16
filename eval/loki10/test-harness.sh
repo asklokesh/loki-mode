@@ -1479,7 +1479,7 @@ h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
 os.environ["LOKI_SPEED"] = "operator-value"
 d = tempfile.mkdtemp()
 e = {a: h.arm_env(d, "m", "a", a) for a in ("v10", "v10-parallel", "v10-seq", "raw-claude", "legacy")}
-print(sorted(h.ARMS) == sorted(["v10", "raw-claude", "legacy", "v10-parallel", "v10-seq"]),
+print(sorted(h.ARMS) == sorted(["v10", "raw-claude", "legacy", "v10-parallel", "v10-seq", "configured-claude"]),
       e["v10-parallel"].get("LOKI_SPEED"), e["v10-seq"].get("LOKI_SPEED"),
       "LOKI_SPEED" in e["v10"], "LOKI_SPEED" in e["raw-claude"], "LOKI_SPEED" in e["legacy"])
 PY
@@ -1607,5 +1607,50 @@ assert tok is None, "a real session with no cost record must still be unknown"
 PY
 then pass "D62-VIS-F1 F2: visual-evidence pgid announcements are ignored when matching sessions to cost records"
 else fail "D62-VIS-F1 F2: group announcement counted as a provider session"; fi
+# ---- P12-29: configured-claude arm. Same claude binary and scoring as
+# raw-claude, but its per-run CLAUDE_CONFIG_DIR is seeded from an operator-named
+# source (LOKI_EVAL_CONFIGURED_CC_DIR: CLAUDE.md, settings.json, hooks, skills).
+# raw-claude stays stripped. A configured run with no source fails closed.
+mkdir -p "$T/cc-src/hooks" "$T/cc-src/skills/s1" "$T/cc-src/junk"
+echo "configured rule" > "$T/cc-src/CLAUDE.md"
+echo '{"hooks":{}}' > "$T/cc-src/settings.json"
+echo "echo hook" > "$T/cc-src/hooks/h.sh"
+echo "skill" > "$T/cc-src/skills/s1/SKILL.md"
+echo "secret" > "$T/cc-src/junk/creds.json"
+if python3 - "$HERE" "$T/cc-src" <<'PY'
+import importlib.util, os, sys, tempfile
+sp = importlib.util.spec_from_file_location("h", sys.argv[1] + "/harness.py")
+h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
+src = sys.argv[2]
+assert "configured-claude" in h.ARMS, h.ARMS
+os.environ["LOKI_EVAL_CONFIGURED_CC_DIR"] = src
+d1, d2 = tempfile.mkdtemp(), tempfile.mkdtemp()
+c = h.arm_env(d1, "m", "a", "configured-claude")
+r = h.arm_env(d2, "m", "a", "raw-claude")
+cc = c["CLAUDE_CONFIG_DIR"]
+assert cc == os.path.join(d1, "claude-config"), cc
+for rel in ("CLAUDE.md", "settings.json", "hooks/h.sh", "skills/s1/SKILL.md"):
+    assert os.path.isfile(os.path.join(cc, rel)), rel
+assert not os.path.exists(os.path.join(cc, "junk")), "non-allowlisted entry copied"
+assert os.listdir(r["CLAUDE_CONFIG_DIR"]) == [], "raw-claude config dir must stay empty"
+assert "LOKI_EVAL_CONFIGURED_CC_DIR" not in c
+assert h.configured_config_error("raw-claude") is None
+assert h.configured_config_error("configured-claude") is None
+del os.environ["LOKI_EVAL_CONFIGURED_CC_DIR"]
+assert h.configured_config_error("configured-claude"), "missing source must fail closed"
+PY
+then pass "P12-29: configured-claude seeds config from the source, raw-claude stays empty, missing source fails closed"
+else fail "P12-29: configured-claude arm config"; fi
+R="$T/out-cc-none"
+(unset LOKI_EVAL_CONFIGURED_CC_DIR; STUB_MODE=pass RUN --arm configured-claude --task fx-greet --out "$R" >/dev/null 2>&1)
+[ "$(row "$R/results.jsonl" status)" = '"arm_unavailable"' ] \
+    && pass "P12-29: configured-claude with no config source is arm_unavailable" \
+    || fail "P12-29: no-source status=$(row "$R/results.jsonl" status)"
+R="$T/out-cc-ok"
+LOKI_EVAL_CONFIGURED_CC_DIR="$T/cc-src" STUB_MODE=pass RUN --arm configured-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ -s "$R/results.jsonl" ] && [ "$(row "$R/results.jsonl" status)" != '"arm_unavailable"' ] \
+    && [ "$(row "$R/results.jsonl" completed)" = "true" ] \
+    && pass "P12-29: configured-claude runs through the claude stub with a source" \
+    || fail "P12-29: with-source row=$(cat "$R/results.jsonl" 2>/dev/null)"
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
