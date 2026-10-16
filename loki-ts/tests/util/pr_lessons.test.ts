@@ -456,15 +456,16 @@ describe("learnRecent (R15-E1)", () => {
 
 describe("respondToReview", () => {
   const C = (id: number, body: string, extra: Record<string, unknown> = {}) => ({ id, body, path: `src/f${id}.ts`, line: id, html_url: `https://github.com/o/r/pull/7#discussion_r${id}`, user: { login: "rev" }, ...extra });
-  const mkEnv = (comments: unknown[], resolvedIds: number[] = [], opts: { branch?: string; head?: string | null; preDirty?: boolean; state?: string } = {}) => {
+  const mkEnv = (comments: unknown[], resolvedIds: number[] = [], opts: { branch?: string; head?: string | null; preDirty?: boolean; state?: string; sha?: string | null; movedSha?: string } = {}) => {
     const branch = opts.branch ?? "feat";
     const head = opts.head === undefined ? "feat" : opts.head;
     const calls: string[][] = [];
+    let prFetches = 0;
     const gh: GhClient = async (args) => {
       calls.push(args);
       if (args.includes("graphql")) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: resolvedIds.map((id) => ({ isResolved: true, comments: { nodes: [{ databaseId: id }] } })) } } } } }), stderr: "" };
       if (args[args.length - 1]!.endsWith("/comments")) return { code: 0, stdout: JSON.stringify(comments), stderr: "" };
-      if (args[args.length - 1]!.endsWith("/pulls/7")) return { code: 0, stdout: JSON.stringify(head === null ? {} : { state: opts.state ?? "open", head: { ref: head } }), stderr: "" };
+      if (args[args.length - 1]!.endsWith("/pulls/7")) return { code: 0, stdout: JSON.stringify(head === null ? {} : { state: opts.state ?? "open", head: { ref: head, ...(opts.sha === null ? {} : { sha: (++prFetches > 1 && opts.movedSha) ? opts.movedSha : (opts.sha ?? "sha0") }) } }), stderr: "" };
       return { code: 0, stdout: "{}", stderr: "" };
     };
     const gitCalls: string[][] = [];
@@ -536,7 +537,7 @@ describe("respondToReview", () => {
     run(["init", "-q", "-b", "feat"]); run(["config", "user.email", "t@t.test"]); run(["config", "user.name", "t"]);
     run(["remote", "add", "origin", "https://github.com/o/r.git"]);
     writeFileSync(join(d, "a.ts"), "1\n"); run(["add", "a.ts"]); run(["commit", "-q", "-m", "base"]);
-    const e = mkEnv([C(1, "x")]);
+    const e = mkEnv([C(1, "x")], [], { sha: run(["rev-parse", "HEAD"]).trim() });
     const pushed: string[] = [];
     await expect(respondToReview(d, "o/r#7", { gh: e.gh, push: (_h, o) => { pushed.push(o); }, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); run(["remote", "set-url", "origin", evil]); return true; } })).rejects.toThrow(/origin changed during the fix/);
     expect(pushed).toEqual([]);
@@ -555,7 +556,7 @@ describe("respondToReview", () => {
 
   it("real repo: a fixer that checks out another branch throws with no push and no replies", async () => {
     const { d, run } = realRepo();
-    const e = mkEnv([C(1, "x")]);
+    const e = mkEnv([C(1, "x")], [], { sha: run(["rev-parse", "HEAD"]).trim() });
     const pushed: string[] = [];
     await expect(respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { run(["checkout", "-q", "-b", "other"]); writeFileSync(join(d, "a.ts"), "2\n"); return true; } })).rejects.toThrow(/'other'/);
     expect(pushed).toEqual([]);
@@ -565,7 +566,7 @@ describe("respondToReview", () => {
 
   it("real repo: the normal path commits on the PR branch, pushes once and replies with the real sha", async () => {
     const { d, run } = realRepo();
-    const e = mkEnv([C(1, "x")]);
+    const e = mkEnv([C(1, "x")], [], { sha: run(["rev-parse", "HEAD"]).trim() });
     const pushed: string[] = [];
     const r = await respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); return true; } });
     expect(r.fixed).toBe(1);
@@ -576,7 +577,7 @@ describe("respondToReview", () => {
 
   it("real repo: a recorded sha that left the PR branch blocks the push and the replies", async () => {
     const { d, run } = realRepo();
-    const e = mkEnv([C(1, "x"), C(2, "y")]);
+    const e = mkEnv([C(1, "x"), C(2, "y")], [], { sha: run(["rev-parse", "HEAD"]).trim() });
     const pushed: string[] = [];
     let n = 0;
     await expect(respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { n++; if (n === 2) run(["reset", "-q", "--hard", "HEAD~1"]); writeFileSync(join(d, "a.ts"), `v${n}\n`); return true; } })).rejects.toThrow(/is not on 'feat'/);
@@ -642,6 +643,26 @@ describe("respondToReview", () => {
     expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
   });
 
+  it("head moved after proof: refuses to push or reply when the PR headRefOid changed during the fixes", async () => {
+    const e = mkEnv([C(1, "x")], [], { movedSha: "sha-moved" });
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/head moved after proof/);
+    expect(e.pushes.length).toBe(0);
+    expect(replies(e.calls).length).toBe(0);
+  });
+
+  it("refuses when the local HEAD is not the PR headRefOid, before any fix runs", async () => {
+    const e = mkEnv([C(1, "x")], [], { sha: "someone-else" });
+    let fixed = false;
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/is not the PR head/);
+    expect(fixed).toBe(false);
+  });
+
+  it("refuses when the PR headRefOid is unreadable (fails closed)", async () => {
+    const e = mkEnv([C(1, "x")], [], { sha: null });
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/headRefOid/);
+    expect(e.pushes.length).toBe(0);
+  });
+
   it("refuses when the PR head branch cannot be resolved", async () => {
     const e = mkEnv([C(1, "x")], [], { head: null });
     await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/head branch/);
@@ -668,7 +689,7 @@ describe("respondToReview", () => {
     writeFileSync(join(d, "a.ts"), "1\n"); mkdirSync(join(d, "sub", ".loki"), { recursive: true }); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "u\n");
     run(["add", "-A"]); run(["commit", "-q", "-m", "base"]);
     mkdirSync(join(d, ".loki", "runs"), { recursive: true }); writeFileSync(join(d, ".loki", "runs", "x.json"), "{}");
-    const e = mkEnv([C(1, "x")]);
+    const e = mkEnv([C(1, "x")], [], { sha: run(["rev-parse", "HEAD"]).trim() });
     const vcs = (args: string[]): string => args[0] === "push" ? "" : run(args);
     const r = await respondToReview(d, "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: vcs, push: () => {}, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
     expect(r.fixed).toBe(1);

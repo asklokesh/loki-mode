@@ -353,6 +353,11 @@ export function defaultRespondPush(repoDir: string, headRef: string, pushSh: str
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
+/** Current headRefOid of a PR. Empty string when unreadable (callers treat that as moved). */
+async function fetchHeadOid(gh: GhClient, repo: string, num: number): Promise<string> {
+  try { return String(JSON.parse(await ghText(gh, ["api", `repos/${repo}/pulls/${num}`]))?.head?.sha ?? ""); } catch (e) { if (e instanceof GhError) throw e; return ""; }
+}
+
 /** `loki verify-pr respond`: one fix commit per open review comment (bounded by max), one push, then a reply per fixed
  *  comment citing its commit sha. A comment whose fix edits nothing gets no commit and no reply. Threads are never resolved. */
 export async function respondToReview(repoDir: string, ref: string, deps: RespondDeps): Promise<RespondResult> {
@@ -363,15 +368,18 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   const push = deps.push ?? ((h: string, o: string) => defaultRespondPush(repoDir, h, DEFAULT_PUSH_SH, o));
   const readOrigin = () => (deps.originUrl ? deps.originUrl() : readOriginUrl(repoDir));
   const max = deps.max ?? Number(process.env["LOKI_PR_RESPOND_MAX"] ?? MAX_RESPOND);
-  let headRef = "", state = "";
-  try { const j = JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`])); headRef = String(j?.head?.ref ?? ""); state = String(j?.state ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
+  let headRef = "", state = "", proofHead = "";
+  try { const j = JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`])); headRef = String(j?.head?.ref ?? ""); state = String(j?.state ?? ""); proofHead = String(j?.head?.sha ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
   if (!headRef) throw new GhError(`Cannot resolve the head branch of ${ref}; refusing to push.`);
+  if (!proofHead) throw new GhError(`Cannot resolve the head commit (headRefOid) of ${ref}; refusing to push.`);
   if (state !== "open") throw new GhError(`${ref} is not open (state '${state || "unknown"}'); refusing to push.`);
   const origin = readOrigin(); // read ONCE before any fix: the fixer runs in this repo and must not choose the push destination
   const originRepo = githubRepoFromUrl(origin);
   if (originRepo?.toLowerCase() !== pr.repo.toLowerCase()) throw new GhError(`Checkout origin is '${originRepo ?? "not a github.com remote"}' but the PR is in '${pr.repo}' (fork or wrong checkout); refusing to push.`);
   const current = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
   if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
+  const localHead = vcs(["rev-parse", "HEAD"]).trim();
+  if (localHead !== proofHead) throw new GhError(`Local HEAD ${localHead.slice(0, 12)} is not the PR head ${proofHead.slice(0, 12)} (headRefOid); update the checkout to the PR head first.`);
   if (vcs(STATUS_ARGS).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");
   const { open, skipped } = await openReviewComments(gh, pr.repo, pr.num);
   const done: Array<{ c: OpenComment; sha: string }> = [];
@@ -391,6 +399,8 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
       try { vcs(["merge-base", "--is-ancestor", sha, `refs/heads/${headRef}`]); } catch { throw new GhError(`commit ${sha.slice(0, 12)} is not on '${headRef}'; refusing to push or reply.`); }
     }
     if (readOrigin() !== origin) throw new GhError(`origin changed during the fix (was '${origin}'); refusing to push.`);
+    const liveHead = await fetchHeadOid(gh, pr.repo, pr.num);
+    if (liveHead !== proofHead) throw new GhError(`head moved after proof: PR head is ${liveHead.slice(0, 12) || "unknown"} but the proof head was ${proofHead.slice(0, 12)}; refusing to push or reply.`);
     push(headRef, origin!);
     for (const { c, sha } of done) {
       await ghText(gh, ["api", "-X", "POST", `repos/${pr.repo}/pulls/${pr.num}/comments/${c.id}/replies`, "-f", `body=Addressed in ${sha.slice(0, 12)}.\n${RESPOND_MARK}`]);

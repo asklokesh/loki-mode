@@ -35,7 +35,7 @@ fi
 # --- Fix #1b: bash 3.2 + set -u safe claude argv array ---------------------
 # The claude argv array must be seeded with base flags so it is never expanded
 # empty (empty "${arr[@]}" under set -u errors on bash 3.2, stock macOS shell).
-grep -q '_loki_claude_argv=("--dangerously-skip-permissions" "--model"' "$RUN" \
+grep -qF '_loki_claude_argv=("${_LOKI_PERM_ARGV[@]}" "--model"' "$RUN" \
   && ok "claude argv array seeded with base flags (bash 3.2 + set -u safe)" \
   || bad "claude argv array may be empty-expanded under set -u"
 

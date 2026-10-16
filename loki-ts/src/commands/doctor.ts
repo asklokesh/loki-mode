@@ -414,6 +414,49 @@ export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
   pyImpl.fn = fn ?? pythonImportOk;
 }
 
+// ---------- Claude CLI compatibility (P12-24) ---------------------------------
+
+export interface ClaudeCliRange {
+  min_version?: string;
+  qualified_version?: string;
+}
+export type ClaudeCliCompat = "ok" | "below_min" | "newer_unqualified" | "unknown";
+
+/** Read providers.claude.cli from the compat manifest (model_catalog.json). Null when absent. */
+export function loadClaudeCliRange(root: string = REPO_ROOT): ClaudeCliRange | null {
+  try {
+    const cat = JSON.parse(readFileSync(resolve(root, "providers/model_catalog.json"), "utf8"));
+    const cli = cat?.providers?.claude?.cli;
+    return cli && typeof cli === "object" ? (cli as ClaudeCliRange) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cmpSemver(a: string, b: string): number {
+  const x = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const y = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Pure: classify a probed claude CLI version against the qualified range. */
+export function evaluateClaudeCliCompat(version: string | null, range: ClaudeCliRange | null): ClaudeCliCompat {
+  if (!version || !range) return "unknown";
+  if (range.min_version && cmpSemver(version, range.min_version) < 0) return "below_min";
+  if (range.qualified_version && cmpSemver(version, range.qualified_version) > 0) return "newer_unqualified";
+  return "ok";
+}
+
+type ClaudeVersionProbe = () => string | null;
+const claudeVersionImpl: { fn: ClaudeVersionProbe | null } = { fn: null };
+export function _setClaudeVersionForTest(fn: ClaudeVersionProbe | null): void {
+  claudeVersionImpl.fn = fn;
+}
+
 // ---------- Router advisor (ROUTER-1 R1-20) -----------------------------------
 
 // Version of the Claude Code binary bundled with the Agent SDK. The SDK
@@ -809,6 +852,13 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   const skills = skillsForJson();
   for (const s of skills) statuses.push(s.status);
 
+  // CLAUDE CLI MINIMUM (P12-24): same single fail row the text path counts.
+  const claudeRow = checks.find((c) => c.command === "claude");
+  if (claudeRow?.found) {
+    const ver = claudeVersionImpl.fn ? claudeVersionImpl.fn() : claudeRow.version;
+    if (evaluateClaudeCliCompat(ver, loadClaudeCliRange()) === "below_min") statuses.push("fail");
+  }
+
   return {
     loki_mode_version: getVersion(),
     checks,
@@ -1069,6 +1119,23 @@ async function runText(): Promise<number> {
     }
     bump(tally, c.status);
     if (c.found) anyProvider = true;
+    if (cmd === "claude" && c.found) {
+      const range = loadClaudeCliRange();
+      const ver = claudeVersionImpl.fn ? claudeVersionImpl.fn() : c.version;
+      const compat = evaluateClaudeCliCompat(ver, range);
+      if (compat === "below_min") {
+        process.stdout.write(
+          `  ${badge("fail")}  Claude CLI ${ver} is older than the minimum ${range?.min_version}\n`,
+        );
+        process.stdout.write(`         ${YELLOW}Fix: npm install -g @anthropic-ai/claude-code${NC}\n`);
+        bump(tally, "fail");
+        tally.blockers.push(`claude CLI must be >= ${range?.min_version} (found ${ver})`);
+      } else if (compat === "newer_unqualified") {
+        process.stdout.write(
+          `  ${badge("warn")}  Claude CLI ${ver} is newer than the qualified ${range?.qualified_version}; not yet qualified\n`,
+        );
+      }
+    }
   }
   if (!anyProvider) {
     // The bundled Claude Agent SDK runs the main loop with no separate CLI, but

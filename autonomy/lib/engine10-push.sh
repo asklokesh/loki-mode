@@ -2,7 +2,8 @@
 # Loki 10 engine P4 push child (ENGINE.md sections 6 and 7).
 #
 #   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]
-#   engine10-push.sh check-origin   (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
+#   engine10-push.sh pr-ready <repo-dir> <branch> <body-file> <pr-url>   (reused open PR: replace its body, then mark it ready; <pr-url> must be the pinned-owner PR)
+#   engine10-push.sh check-origin  (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
 #   engine10-push.sh comment <pr-number> <body-file>
 #   engine10-push.sh issue-comment [--update] <issue-ref> <body-file>
 #   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
@@ -117,6 +118,16 @@ _e10_local_push() {
 
 _e10_gh() { _loki_with_github_tokens _loki_run_neutral "$_e10_repo" command gh "$@"; }
 
+# The one open-PR lookup for push-pr reuse and pr-ready. gh cannot filter --head by owner, so a stranger's fork PR with the
+# same branch name would match; select only a same-repo PR from the pinned owner. Prints the URL, or nothing.
+_e10_find_pr() {
+    local owner="${_e10_repo%%/*}"
+    case "$owner" in '' | *[!A-Za-z0-9_.-]*) return 1 ;; esac
+    _e10_gh pr list --repo "$_e10_repo" --head "$1" --state open \
+        --json url,isCrossRepository,headRepositoryOwner,headRefName,state \
+        --jq "[.[] | select(.isCrossRepository == false and .state == \"OPEN\" and (.headRepositoryOwner.login | ascii_downcase) == \"$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')\")] | .[0].url // empty"
+}
+
 mode="${1:-}"
 shift || true
 case "$mode" in
@@ -157,16 +168,30 @@ case "$mode" in
         else
             _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || die "push refused or failed (rc=$?)"
         fi
-        url="$(_e10_gh pr list --repo "$_e10_repo" --head "$branch" --state open --json url --jq '.[0].url')" \
-            || die "gh pr list failed"
+        url="$(_e10_find_pr "$branch")" || die "gh pr list failed"
         _e10_pr_state=reused
-        if [ -z "$url" ] || [ "$url" = "null" ]; then
+        if [ -z "$url" ]; then
             _e10_pr_state=created
             url="$(_e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}" "${base[@]}")" \
                 || die "gh pr create failed"
             url="$(printf '%s\n' "$url" | tail -n 1)"
         fi
         printf '%s\n' "$_e10_pr_state"  # marker line before the URL: reused (open PR found) or created
+        printf '%s\n' "$url"
+        ;;
+    pr-ready)
+        # M-21 N3: a reused wave PR whose units are all PROVEN keeps its old draft state and body; fix both, same pinned origin and tokens as push-pr.
+        [ "$#" -eq 4 ] || die "usage: pr-ready <repo-dir> <branch> <body-file> <pr-url>"
+        branch="$2" body="$3" want_url="$4"
+        [ -f "$body" ] || die "body file not found: $body"
+        git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "invalid branch: $branch"
+        case "$branch" in main | master | HEAD) die "refusing to edit a PR for default branch: $branch" ;; esac
+        [ -z "$_e10_local" ] || { log_info "local origin: no PR to mark ready (no-op)"; exit 0; }
+        url="$(_e10_find_pr "$branch")" || die "gh pr list failed"
+        [ -n "$url" ] || die "no open PR from $_e10_repo for branch: $branch"
+        [ "$url" = "$want_url" ] || die "refusing: PR $want_url is not the pinned-owner PR for $branch ($url)"
+        _e10_gh pr edit "$url" --repo "$_e10_repo" --body-file "$body" >/dev/null || die "gh pr edit failed"
+        _e10_gh pr ready "$url" --repo "$_e10_repo" >/dev/null || die "gh pr ready failed"
         printf '%s\n' "$url"
         ;;
     comment)
@@ -215,5 +240,5 @@ case "$mode" in
         _e10_gh api "repos/$_e10_repo/statuses/$1" -f "state=$2" -f context=loki/deep-verify \
             -f "description=$3" >/dev/null || die "gh api status failed"
         ;;
-    *) die "usage: engine10-push.sh push-pr|comment|issue-comment|status ..." ;;
+    *) die "usage: engine10-push.sh push-pr|pr-ready|comment|issue-comment|status ..." ;;
 esac

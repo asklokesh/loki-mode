@@ -44,6 +44,16 @@ merge (all touch trust-core or security-relevant surfaces), oldest first.
 |---|---|---|---|---|---|---|
 | PF-1 | pkill-scoping fix | main @ 9cd51d1a | autonomy/run.sh (kill_provider_child), tests/test-kill-provider-child-scoping.sh, docs/v10/DECISIONS.md (D15) | HIGH | released@2026-09-27T01:33Z | Founder-reported: every loki-mode session ending via signal (supervisor signal, double Ctrl+C, Ctrl+C in perpetual mode) ran an unscoped `pkill -f` matching ANY process on the machine by command-line substring, terminating unrelated Claude Code sessions. Fixed to scope by process group. Shipped as v9.54.1, ahead of the swarm queue. |
 | PF-2 | P7 scanner gap fix | main @ fa5de15f | tests/moat/p7-no-fabricated-data.sh | HIGH | released@2026-09-27T15:00Z | Round 5, unanimous 4/4 APPROVE under a corrected scoping rule (only a regression/false-positive/weakening introduced by the diff blocks; a pre-existing gap the diff doesn't worsen is a new slice, not a veto). Rebased onto current main, merged fa5de15f, pushed. 10 candidate follow-up slices recorded below (B-1..B-8 plus 2 more from the review). Shipped in v9.56.0 (merged before the 14:16:24Z release push of b651b98d; on npm 15:00:06Z). |
+| P12-17 | Slack thread steer | main @ 2d333d158 | loki-ts/src/contrib/slack_inbound.ts + test | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-12 | stall watchdog | main @ 4c0ee6dbf | engine10 session, runner watchdog + tests | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-16 | chat commands | main @ 6d6f69f73 | autonomy/lib/chat.sh, tests/test-doctor-ux.sh | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-24 | doctor min claude version | main @ e6754c961 | doctor, compat manifest | LOW | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-21 | per-stage cost | main @ 44c0810f2 | cost breakdown | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-31 | active human minutes | main @ 9e2604b95 | trust, proof | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-25 | provider isolation matrix | main @ 8c256963b | tests/providers, guard revert | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-03 | merge pinned to proven head | main @ b3ff4bb1d | merge, proofs | HIGH | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-06 | council file:line anchors | main @ 40ee4c1a9 | council | MEDIUM | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
+| P12-04 | respond refuses moved head | main @ 6da9172e6 | verify-pr respond | HIGH | released@2026-10-16T15:30Z | v11.16.0, reviewed and merged |
 
 ## Fixed on main already (not slices; recorded for PO context)
 

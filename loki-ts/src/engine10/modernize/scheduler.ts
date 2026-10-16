@@ -30,7 +30,7 @@ export interface AttemptCtx {
   worker: number;
   worktree: string;
   baseSha: string;
-  /** Set on a resumed unit (M-22): the recorded run id, continued via E-39 (`loki --resume <run-id>`) in the reattached worktree. */
+  /** Set on a resumed unit (M-22): the recorded run id, recorded for the E-39 resume path (`loki start --resume <run-id>`, publish phase only) in the reattached worktree. */
   resumeRunId?: string;
 }
 export interface AttemptOutcome {

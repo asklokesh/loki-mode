@@ -1455,6 +1455,11 @@ def _collect_journey(loki_dir):
                 },
                 "waited_s": ws,
             }
+            # active_s (measured active human seconds) rides along only when
+            # recorded; absent stays absent, never a fabricated 0.
+            act = iv.get("active_s")
+            if isinstance(act, int) and not isinstance(act, bool) and act >= 0:
+                out["interventions_detail"]["active_s"] = act
 
     # PR state/URL, written by the consent-gated PR step. "prepared" means a PR
     # body exists locally and GitHub was NOT mutated.

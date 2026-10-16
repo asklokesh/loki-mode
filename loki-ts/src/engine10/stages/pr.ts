@@ -72,6 +72,13 @@ export function runPushPr(a: { repoDir: string; branch: string; title: string; b
   if (!localOk && !PR_URL_RE.test(url)) return { ok: false, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
   return { ok: true, url, localOk, existing: markers.includes("reused") ? true : markers.includes("created") ? false : null }; // null = unknown, never fabricated
 }
+/** M-21 N3: replace a reused PR's body and mark it ready through engine10-push.sh pr-ready (same pinned origin and token scoping as push-pr). */
+export function runPrReady(a: { repoDir: string; branch: string; bodyFile: string; url: string; pinnedOrigin: string; scriptPath?: string; env?: NodeJS.ProcessEnv }): { ok: true } | { ok: false; reason: string } {
+  const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
+  const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, "pr-ready", a.repoDir, a.branch, a.bodyFile, a.url], { env, encoding: "utf8" });
+  if (r.status !== 0) return { ok: false, reason: `engine10-push.sh pr-ready failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
+  return { ok: true };
+}
 function briefSection(ctx: PrContext): string {
   if (!reviewerBriefEnabled()) return "";
   const o = ctx.outputs();

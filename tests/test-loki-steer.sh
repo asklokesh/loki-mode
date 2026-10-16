@@ -85,6 +85,20 @@ if [ -f "$COCKPIT" ]; then
     grep -q "HUMAN_INPUT.md" "$COCKPIT" && ok || fail "cockpit hint should name HUMAN_INPUT.md"
 fi
 
+# 6. P12-15: chat /steer records source=chat and the chat user as actor
+CHAT_SH="${CHAT_SH_OVERRIDE:-$SCRIPT_DIR/../autonomy/lib/chat.sh}"
+D6="$(mktemp -d)"
+cat > "$D6/loki" <<STUB
+#!/usr/bin/env bash
+printf 'src=%s actor=%s\n' "\${LOKI_STEER_SOURCE:-}" "\${LOKI_STEER_ACTOR:-}" > "$D6/seen"
+STUB
+chmod +x "$D6/loki"
+USER=chatuser bash -c 'source "$1" 2>/dev/null; _chat_steer "$2" "go left"' _ "$CHAT_SH" "$D6/loki" >/dev/null 2>&1
+if grep -q "^src=chat actor=chatuser$" "$D6/seen" 2>/dev/null; then ok; else fail "chat steer should export LOKI_STEER_SOURCE=chat and the user as actor (got: $(cat "$D6/seen" 2>/dev/null))"; fi
+# both /steer call sites must route through the helper
+[ "$(grep -c '_chat_steer "\$loki" "\$rest"' "$CHAT_SH")" -eq 2 ] && ok || fail "both chat /steer handlers should call _chat_steer"
+rm -rf "$D6"
+
 echo ""
 echo "test-loki-steer: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

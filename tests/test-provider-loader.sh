@@ -294,6 +294,28 @@ else
     log_fail "auto_detect_provider() should not auto-detect $detected"
 fi
 
+# ===========================================
+# Test 13: P12-26 permission policy flags (claude)
+# ===========================================
+log_test "claude permission argv: default keeps skip-permissions; compiled uses policy"
+_pp_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pp.XXXXXX")"
+mkdir -p "$_pp_dir/.loki"
+printf '%s' '{"claude_permissions":{"mode":"acceptEdits","allow":["Read","Bash(rm:*)"],"deny":["Bash(rm:*)"]}}' > "$_pp_dir/.loki/policies.json"
+# shellcheck disable=SC2016
+_pp_probe='source "$1/providers/claude.sh" 2>/dev/null; _loki_claude_permission_argv; printf "%s|" "${_LOKI_PERM_ARGV[@]}"'
+_pp_def=$(env -u LOKI_PERMISSION_POLICY LOKI_PROJECT_DIR="$_pp_dir" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/..")
+_pp_cmp=$(LOKI_PERMISSION_POLICY=compiled HOME="$_pp_dir" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/..")
+printf '%s' '{bad' > "$_pp_dir/.loki/policies.json"
+_pp_bad=$(LOKI_PERMISSION_POLICY=compiled HOME="$_pp_dir" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/.." 2>/dev/null)
+rm -rf "$_pp_dir"
+if [ "$_pp_def" = "--dangerously-skip-permissions|" ] \
+   && [ "$_pp_cmp" = "--permission-mode|acceptEdits|--allowedTools|Read|--disallowedTools|Bash(rm:*)|" ] \
+   && [ "$_pp_bad" = "--permission-mode|plan|" ]; then
+    log_pass "default unchanged, compiled deny-wins, invalid policy fails closed"
+else
+    log_fail "permission argv mismatch: def=[$_pp_def] cmp=[$_pp_cmp] bad=[$_pp_bad]"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"

@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import { renderWaveBody, shipWave } from "../../../src/engine10/modernize/ship.ts";
-import { runPushPr } from "../../../src/engine10/stages/pr.ts";
+import { runPrReady, runPushPr } from "../../../src/engine10/stages/pr.ts";
 import type { PushPrResult } from "../../../src/engine10/stages/pr.ts";
-import type { PushRunner, ShipUnit } from "../../../src/engine10/modernize/ship.ts";
+import type { PushRunner, ReadyRunner, ShipUnit } from "../../../src/engine10/modernize/ship.ts";
 import type { WaveVerdict } from "../../../src/engine10/modernize/wave.ts";
 
 const MID = "mod-20260101T000000Z-abcdef";
@@ -18,18 +18,22 @@ const u = (unit: string, verdict: ShipUnit["verdict"] = "PROVEN", not_proven: st
   ({ unit, verdict, not_proven, receiptPath: `.loki/receipts/${unit}.json`, receiptSha256: "a".repeat(64), runId: `run-${unit}`, rate: 1, branchPct: 87.5 });
 
 type Call = Parameters<PushRunner>[0];
-function setup(push: (a: Call) => PushPrResult) {
+type ReadyCall = Parameters<ReadyRunner>[0];
+const readyOk = (): ReturnType<ReadyRunner> => ({ ok: true });
+function setup(push: (a: Call) => PushPrResult, ready: (a: ReadyCall) => ReturnType<ReadyRunner> = readyOk) {
   const dir = mkdtempSync(join(tmpdir(), "ship-"));
   const calls: Call[] = [];
   const log = new ModernizeLog(dir, MID);
+  const readyCalls: { a: ReadyCall; body: string }[] = [];
+  const rdy: ReadyRunner = (a) => { readyCalls.push({ a, body: readFileSync(a.bodyFile, "utf8") }); return ready(a); };
   const run: PushRunner = (a) => { calls.push(a); return push(a); };
   const ship = (units: ShipUnit[], verdict: WaveVerdict | null, pinnedOrigin = "/o") =>
-    shipWave({ repoDir: dir, mid: MID, wave: 2, branch: "loki/wave-2", pinnedOrigin, verdict, units, log, push: run });
-  return { dir, calls, ship, done: () => rmSync(dir, { recursive: true, force: true }) };
+    shipWave({ repoDir: dir, mid: MID, wave: 2, branch: "loki/wave-2", pinnedOrigin, verdict, units, log, push: run, ready: rdy });
+  return { dir, calls, readyCalls, ship, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 const created = (): PushPrResult => ({ ok: true, url: URL, existing: false, localOk: false });
-function withSetup(push: (a: Call) => PushPrResult, fn: (s: ReturnType<typeof setup>) => void): void {
-  const s = setup(push);
+function withSetup(push: (a: Call) => PushPrResult, fn: (s: ReturnType<typeof setup>) => void, ready?: (a: ReadyCall) => ReturnType<ReadyRunner>): void {
+  const s = setup(push, ready);
   try { fn(s); } finally { s.done(); }
 }
 
@@ -66,10 +70,43 @@ describe("shipWave", () => {
     const ok = s.ship([u("a")], good);
     expect(ok).toMatchObject({ shipped: true, draft: false, existing: true });
   }));
+  it("reused PR with every unit PROVEN is marked ready with the new body through pr-ready", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
+    const r = s.ship([u("a"), u("b")], good);
+    expect(r).toEqual({ shipped: true, url: URL, draft: false, existing: true, reason: null });
+    expect(s.readyCalls.length).toBe(1);
+    expect(s.readyCalls[0]!.a).toMatchObject({ branch: "loki/wave-2", pinnedOrigin: "/o", url: URL });
+    expect(s.readyCalls[0]!.body).toContain(".loki/receipts/b.json");
+  }));
+  it("reused draft with a NOT PROVEN unit stays a draft and never calls pr-ready", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
+    const r = s.ship([u("a"), u("b", "NOT_PROVEN", ["x"])], good);
+    expect(r).toMatchObject({ shipped: false, draft: true, reason: "existing PR reused; draft state not applied" });
+    expect(s.readyCalls.length).toBe(0);
+  }));
+  it("a freshly created PR needs no pr-ready", () => withSetup(created, (s) => {
+    s.ship([u("a")], good);
+    expect(s.readyCalls.length).toBe(0);
+  }));
+  it("reports a pr-ready failure honestly", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
+    const r = s.ship([u("a")], good);
+    expect(r).toMatchObject({ shipped: false, url: URL, existing: true, reason: "existing PR reused; draft state not applied" });
+    expect(readModernizeEvents(s.dir, MID).some((e) => e.type === "wave.shipped")).toBe(false);
+  }, () => ({ ok: false, reason: "boom" })));
+  it("ends a truncated cell in ... and leaves short cells alone", () => {
+    const body = renderWaveBody(2, good, [u("u".repeat(150)), u("short")]);
+    expect(body).toContain(`| ${"u".repeat(97)}... |`);
+    expect(body).not.toContain("u".repeat(98));
+    expect(body).toContain("| short |");
+  });
   it("treats an unknown reuse state (existing null) as not applied when a draft is wanted", () => withSetup(() => ({ ok: true, url: URL, existing: null, localOk: false }), (s) => {
     const r = s.ship([u("a")], bad);
     expect(r.shipped).toBe(false);
     expect(r.reason).toBe("existing PR reused; draft state not applied");
+  }));
+  it("unknown reuse state (existing null) with every unit PROVEN still goes through pr-ready with the push URL", () => withSetup(() => ({ ok: true, url: URL, existing: null, localOk: false }), (s) => {
+    const r = s.ship([u("a"), u("b")], good);
+    expect(r).toMatchObject({ shipped: true, existing: null });
+    expect(s.readyCalls.length).toBe(1);
+    expect(s.readyCalls[0]!.a.url).toBe(URL);
   }));
   it("lists each unit with verdict, rate, coverage, run id, receipt path and sha in the body", () => {
     const body = renderWaveBody(2, good, [u("a"), { ...u("b", "NOT_PROVEN", ["no oracle"]), rate: 0.5, branchPct: null }]);
@@ -96,6 +133,20 @@ describe("shipWave", () => {
     expect(r.reason).toContain("gh: boom");
     expect(readModernizeEvents(s.dir, MID).some((e) => e.type === "wave.shipped")).toBe(false);
   }));
+});
+
+describe("runPrReady", () => {
+  it("runs the script pr-ready subcommand and reports its failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-rdy-"));
+    try {
+      const f = join(dir, "p.sh"); writeFileSync(f, 'echo "$1 $2 $3 $4 $5" > "$(dirname "$0")/argv"; [ "$1" = pr-ready ]\n');
+      const base = { repoDir: dir, branch: "loki/wave-2", bodyFile: join(dir, "b"), url: "https://github.com/o/r/pull/1", pinnedOrigin: "/o", env: {} };
+      expect(runPrReady({ ...base, scriptPath: f })).toEqual({ ok: true });
+      expect(readFileSync(join(dir, "argv"), "utf8").trim()).toBe(`pr-ready ${dir} loki/wave-2 ${join(dir, "b")} https://github.com/o/r/pull/1`);
+      const bad = join(dir, "q.sh"); writeFileSync(bad, "exit 3\n");
+      expect(runPrReady({ ...base, scriptPath: bad })).toMatchObject({ ok: false });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe("runPushPr (shared helper)", () => {

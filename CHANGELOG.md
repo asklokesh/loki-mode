@@ -5,6 +5,33 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.16.0 (2026-10-16)
+
+Engine-plan v1.2 slices, part two. `loki start` with Claude remains the primary path; chat and Slack steers now route through the same `loki steer` command and only report success when the steer's revision is confirmed.
+
+### Added
+- Doctor checks a minimum Claude CLI version against a compatibility manifest (P12-24).
+- Per-stage, retry and cache cost attribution in the cost breakdown, with honest unknowns where a cost cannot be measured (P12-21).
+- Measured active human minutes per accepted task, recorded next to waited time and mirrored into the Python trust view (P12-31).
+- Per-provider isolation matrix test (P12-25).
+- Engine progress classes and a stall watchdog that flags a run making no file progress (P12-12).
+- Slack thread steers with a live allowlist, revoked actors, durable bounded dedup and in-place status updates (P12-17).
+- Chat commands /answer, /pause, /resume and /start; /run starts in the background with output in .loki/chat-run.log (P12-16).
+- Issue-comment and chat steers record their source and actor (P12-14, P12-15).
+
+### Changed
+- Council blocking findings must cite file:line; unanchored blocking issues are downgraded instead of rejecting the run (P12-06).
+- `loki steer` help no longer claims the modern path needs LOKI_PROMPT_INJECTION; the legacy loop still does (P12-20).
+
+### Fixed
+- Bash completion for `loki deploy` now offers `--health-match`, so the completion drift guard passes again.
+- `gh pr merge` is pinned to the proven head commit; proofs for one head must agree, dirty proofs are ignored, and a moved head is recorded as blocked (P12-03).
+- verify-pr respond refuses when the PR head moved after the proof (P12-04).
+- Push and pr-ready share an owner-filtered PR lookup; pr-ready refuses a PR that is not the pinned owner's (N3, N4).
+- Modernize readies a reused all-PROVEN wave PR with the new body and marks truncated cells.
+- Chat and Slack never claim a steer that was not confirmed; bare help and flag-like text are refused.
+- The isolation guard's revert no longer loses the first deleted path (P12-25).
+
 ## v11.15.0 (2026-10-16)
 
 v11.13.0 and v11.14.0 were written into this changelog but never published to npm: both failed required CI. This release fixes those failures and is the first to publish everything listed under v11.13.0 and v11.14.0, plus the modernize work below. `loki start` with Claude remains the primary path.

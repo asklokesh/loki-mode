@@ -15,7 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 import {
+  _setClaudeVersionForTest,
   _setPythonImportOkForTest,
+  evaluateClaudeCliCompat,
+  loadClaudeCliRange,
   evaluateRequirements,
   firstTaskReady,
   loadRequirements,
@@ -962,5 +965,59 @@ describe("bash requirements evaluator (autonomy/provider-offer.sh)", () => {
     const rep = bashReport({ LOKI_SDK_LOOP: "1", LOKI_SDK_NODE_MODULES: join(REPO_ROOT, "no-such-dir") });
     const sdk = rep.paths.find((p) => p.id === "api-key-sdk")!;
     expect(sdk.items.find((i) => i.id === "sdk-mode")!.status).toBe("present");
+  });
+});
+
+// ---- P12-24: Claude CLI minimum version and compat manifest ------------------
+
+describe("doctor claude CLI compat (P12-24)", () => {
+  const range = { min_version: "2.1.0", qualified_version: "2.1.293" };
+
+  it("manifest carries a min and qualified claude CLI version", () => {
+    const r = loadClaudeCliRange();
+    expect(r?.min_version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(r?.qualified_version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("classifies versions against the range", () => {
+    expect(evaluateClaudeCliCompat("2.0.9", range)).toBe("below_min");
+    expect(evaluateClaudeCliCompat("2.1.0", range)).toBe("ok");
+    expect(evaluateClaudeCliCompat("2.1.293", range)).toBe("ok");
+    expect(evaluateClaudeCliCompat("2.1.294", range)).toBe("newer_unqualified");
+    expect(evaluateClaudeCliCompat(null, range)).toBe("unknown");
+    expect(evaluateClaudeCliCompat("1.0.0", null)).toBe("unknown");
+  });
+
+  describe("runDoctor with a stub claude on PATH", () => {
+    let dir = "";
+    let prevPath: string | undefined;
+    beforeEach(() => {
+      stubPythonImportOk();
+      dir = mkdtempSync(join(tmpdir(), "doctor-p1224-"));
+      writeFileSync(join(dir, "claude"), "#!/bin/sh\necho 2.1.293\n");
+      chmodSync(join(dir, "claude"), 0o755);
+      prevPath = process.env.PATH;
+      process.env.PATH = `${dir}:${prevPath ?? ""}`;
+    });
+    afterEach(() => {
+      restorePythonImportOk();
+      _setClaudeVersionForTest(null);
+      if (prevPath === undefined) delete process.env.PATH; else process.env.PATH = prevPath;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("fails with a blocker below the minimum", async () => {
+      _setClaudeVersionForTest(() => "1.9.0");
+      const { result, cap } = await captureStdio(() => runDoctor([]));
+      expect(result).toBe(1);
+      expect(cap.out).toContain("older than the minimum 2.1.0");
+      expect(cap.out).toContain("claude CLI must be >= 2.1.0");
+    });
+
+    it("does not fail at a qualified version", async () => {
+      _setClaudeVersionForTest(() => "2.1.293");
+      const { cap } = await captureStdio(() => runDoctor([]));
+      expect(cap.out).not.toContain("older than the minimum");
+    });
   });
 });

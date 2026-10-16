@@ -572,6 +572,9 @@ function writeResultCost(
       ...(typeof data.num_turns === "number" ? { num_turns: data.num_turns } : {}),
       ...(typeof data.session_id === "string" && data.session_id ? { session_id: data.session_id } : {}),
       ...(process.env["LOKI_E10_RESUME_SESSION"] ? { resumed_from: process.env["LOKI_E10_RESUME_SESSION"] } : {}),
+      // P12-21: the caller's stage and attempt (env, like the resume id), so cost_breakdown can attribute per stage and retry
+      ...(process.env["LOKI_E10_STAGE"] ? { stage: process.env["LOKI_E10_STAGE"] } : {}),
+      ...(Number(process.env["LOKI_E10_ATTEMPT"]) >= 1 ? { attempt: Math.floor(Number(process.env["LOKI_E10_ATTEMPT"])) } : {}),
       ...modelUsageFields(data),
       ...(model ? { model } : {}),
       ...(model && process.env["LOKI_REQUESTED_MODEL"] ? { requested_model: process.env["LOKI_REQUESTED_MODEL"], model_downgraded: modelOutcome(process.env["LOKI_REQUESTED_MODEL"], model).downgraded } : {}), // P12-23 Q3: requested vs actual, flag only when a request was recorded

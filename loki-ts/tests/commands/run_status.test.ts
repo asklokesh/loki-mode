@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
-import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
+import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
@@ -148,6 +148,43 @@ describe("work-item state (one vocabulary)", () => {
     expect(workItemState(ev)).toBe("executing");
     expect(workItemState(ev, Date.parse("2026-10-15T00:31:00Z"))).toBe("stalled");
     expect(workItemState(ev, Date.parse("2026-10-15T00:10:00Z"))).toBe("executing");
+  });
+  describe("P12-08 extended lifecycle (transition table)", () => {
+    const seqs: [string, EventEnvelope[], WorkItemState][] = [
+      ["pr opened, not observed -> delivering", mk(["run.started", null], ["stage.completed", "implement"], ["receipt.sealed", "seal"], ["pr.opened", "pr"]), "delivering"],
+      ["pr opened then observe start -> observing", mk(["run.started", null], ["pr.opened", "pr"], ["delivery.observing", "pr"]), "observing"],
+      ["policy.waiting -> waiting_for_policy", mk(["run.started", null], ["stage.started", "implement"], ["policy.waiting", null, { reason: "approval required" }]), "waiting_for_policy"],
+      ["policy.waiting then policy.cleared -> back to executing", mk(["run.started", null], ["stage.started", "implement"], ["policy.waiting", null], ["policy.cleared", null]), "executing"],
+      ["work.paused -> paused", mk(["run.started", null], ["stage.started", "implement"], ["work.paused", null, { reason: "operator" }]), "paused"],
+      ["work.paused then work.resumed -> executing", mk(["run.started", null], ["stage.started", "implement"], ["work.paused", null], ["work.resumed", null]), "executing"],
+      ["paused beats waiting_for_policy", mk(["run.started", null], ["policy.waiting", null], ["work.paused", null]), "paused"],
+      ["run.completed after pr.opened stays terminal", mk(["run.started", null], ["pr.opened", "pr"], ["run.completed", null, { verdict: "VERIFIED" }]), "completed"],
+      ["pause with no other events -> paused", mk(["run.started", null], ["work.paused", null]), "paused"],
+    ];
+    for (const [name, ev, want] of seqs) test(name, () => expect(workItemState(ev)).toBe(want));
+    test("paused and waiting_for_policy beat stalled; delivering falls to stalled after 30m silence", () => {
+      const late = Date.parse("2026-10-15T01:00:00Z");
+      expect(workItemState(seqs[4]![1], late)).toBe("paused");
+      expect(workItemState(seqs[2]![1], late)).toBe("waiting_for_policy");
+      expect(workItemState(seqs[0]![1], late)).toBe("stalled");
+    });
+    test("blockers are a separate field, never in the state string", () => {
+      const ev = seqs[2]![1];
+      expect(workItemBlockers(ev)).toEqual(["policy.waiting: approval required"]);
+      expect(workItemState(ev)).not.toContain(":");
+      expect(workItemBlockers(seqs[3]![1])).toEqual([]);
+      expect(workItemBlockers(seqs[4]![1])).toEqual(["work.paused: operator"]);
+    });
+    test("work_item_id is keyed by issue or PR ref and spans runs", () => {
+      const a = mk(["run.started", null, { issue_ref: "o/r#5" }]), b = mk(["run.started", null, { issue_ref: "o/r#5" }, ]);
+      expect(workItemId(a)).toBe("o/r#5");
+      expect(workItemId(b)).toBe(workItemId(a));
+      expect(workItemId(mk(["run.started", null, { pr_ref: "o/r!7" }]))).toBe("o/r!7");
+      expect(workItemId(mk(["run.started", null]))).toBeNull();
+    });
+    test("the existing 12 states are unchanged (11 in the table plus stalled)", () => {
+      expect(new Set(cases.map(([, , w]) => w)).size).toBe(11);
+    });
   });
   test("text status renders the state; the verdict stays detail", () => {
     const first = (ev: EventEnvelope[]): string => render({ ...summarize("e10-x", ev, dir, Date.now()), control_plane_url: null } as never).split("\n")[0]!;

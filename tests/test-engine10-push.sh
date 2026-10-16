@@ -35,6 +35,23 @@ git init -q --bare "$BARE"
 printf '#!/bin/sh\necho "remote token=${GH_TOKEN:-none}" >> "%s"\n' "$W/remote.log" > "$BARE/hooks/pre-receive"
 chmod +x "$BARE/hooks/pre-receive"
 
+# pr list stub: serves pr.url (same-repo PR by the pinned owner) and pr.fork (cross-repo PR by a stranger, same branch
+# name) as gh's JSON, then applies the caller's --jq filter with real jq, so the script's owner filter is what is under test.
+cat > "$W/prlist.sh" <<'PRL'
+#!/bin/sh
+f=""; prev=""
+for a in "$@"; do [ "$prev" = "--jq" ] && f="$a"; prev="$a"; done
+head=""; prev=""
+for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; prev="$a"; done
+{
+    [ -f "$W_PRURL" ] && jq -n --arg u "$(cat "$W_PRURL")" --arg h "$head" '{url:$u,isCrossRepository:false,headRepositoryOwner:{login:"octocat"},headRefName:$h,state:"OPEN"}'
+    [ -f "$W_PRCLOSED" ] && jq -n --arg u "https://github.com/octocat/hello/pull/5" --arg h "$head" '{url:$u,isCrossRepository:false,headRepositoryOwner:{login:"octocat"},headRefName:$h,state:"CLOSED"}'
+    # pr.fork holds the variant: cross (cross-repo flag only), owner (other owner only), both.
+    [ -f "$W_PRFORK" ] && jq -n --arg u "https://github.com/octocat/hello/pull/99" --arg h "$head" --arg v "$(cat "$W_PRFORK")" \
+        '{url:$u,isCrossRepository:($v!="owner"),headRepositoryOwner:{login:(if $v=="cross" then "octocat" else "stranger" end)},headRefName:$h,state:"OPEN"}'
+} | jq -s -r "${f:-.}"
+exit 0
+PRL
 # Stub gh: logs cwd, GH_REPO and argv; one open PR at most, kept in pr.url.
 GHLOG="$W/gh.log"
 cat > "$W/bin/gh" <<EOF
@@ -44,7 +61,7 @@ case "\$1 \$2" in
     "repo view") cat "$W/default" ;;
     "api repos/octocat/hello/git/ref/heads/loki/e10-resume")
         git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-resume 2>/dev/null ;;
-    "pr list") [ -f "$W/pr.url" ] && cat "$W/pr.url" ;;
+    "pr list") W_PRURL="$W/pr.url" W_PRFORK="$W/pr.fork" W_PRCLOSED="$W/pr.closed" sh "$W/prlist.sh" "\$@" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
     "api user") echo "loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
@@ -320,6 +337,61 @@ out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>/dev/null)"; rc=$
 [ "$rc" -eq 0 ] && [ "$(pushes)" = "1" ] && [ "$(creates)" = "1" ] \
     && [ "$(git -C "$BARE" rev-parse loki/e10-resume)" = "$(git -C "$A" rev-parse loki/e10-resume)" ] \
     && ok "recovery C: a new commit is pushed once, still one PR" || bad "recovery C: rc=$rc pushes=$(pushes) creates=$(creates)"
+
+# M-21 N3/N4: pr-ready (reused wave PR: replace body, mark ready) and the shared owner-filtered PR lookup.
+git -C "$A" branch loki/e10-ready
+editready() { grep -c " pr \(edit\|ready\) " "$GHLOG" 2>/dev/null || true; }
+echo "$PRURL" > "$W/pr.url"; rm -f "$W/pr.fork"; : > "$GHLOG"; : > "$REC"
+out="$(p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "$PRURL" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] \
+    && grep -q "^cwd=/ GH_REPO=octocat/hello .* pr edit $PRURL --repo octocat/hello --body-file $W/body.md\$" "$GHLOG" \
+    && grep -q "^cwd=/ GH_REPO=octocat/hello .* pr ready $PRURL --repo octocat/hello\$" "$GHLOG" \
+    && [ "$(grep -n ' pr edit ' "$GHLOG" | cut -d: -f1)" -lt "$(grep -n ' pr ready ' "$GHLOG" | cut -d: -f1)" ] \
+    && ok "pr-ready edits the body then marks the same-owner PR ready, neutral cwd and pinned repo" \
+    || bad "pr-ready happy path rc=$rc out=$out ($(tr '\n' '|' < "$GHLOG")) err=$(tr '\n' ' ' < "$W/err")"
+grep -q "$CANARY" "$W/err" && bad "pr-ready leaked the canary on stderr" || ok "pr-ready stderr carries no canary"
+[ ! -s "$REC" ] && ok "pr-ready ran no repo hook (no canary in the planted pre-push hook)" || bad "pr-ready triggered a repo hook"
+for b in main master HEAD; do
+    : > "$GHLOG"
+    p4 "$LIB" pr-ready "$A" "$b" "$W/body.md" "$PRURL" >/dev/null 2>"$W/err"; rc=$?
+    [ "$rc" -eq 2 ] && grep -qE "refusing to edit a PR for default branch|invalid branch" "$W/err" && [ "$(editready)" = "0" ] \
+        && ok "pr-ready refuses default branch $b, no edit or ready" || bad "pr-ready $b: rc=$rc edits=$(editready)"
+done
+# FORK: a stranger's cross-repo PR with the same branch name is never edited or readied.
+echo "$PRURL" > "$W/pr.url"; echo both > "$W/pr.fork"; : > "$GHLOG"
+p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "https://github.com/octocat/hello/pull/99" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && grep -q "refusing: PR" "$W/err" && [ "$(editready)" = "0" ] \
+    && ok "pr-ready refuses a URL that is the fork PR, never edits or readies" || bad "pr-ready fork url: rc=$rc edits=$(editready) err=$(tr '\n' ' ' < "$W/err")"
+for v in both cross owner; do
+    rm -f "$W/pr.url"; echo "$v" > "$W/pr.fork"; : > "$GHLOG"
+    p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "https://github.com/octocat/hello/pull/99" >/dev/null 2>"$W/err"; rc=$?
+    [ "$rc" -eq 2 ] && grep -q "no open PR from octocat/hello" "$W/err" && [ "$(editready)" = "0" ] \
+        && ok "pr-ready with only a fork PR ($v) finds no PR and never edits or readies" || bad "pr-ready fork only ($v): rc=$rc edits=$(editready) err=$(tr '\n' ' ' < "$W/err")"
+done
+echo both > "$W/pr.fork"
+echo "$PRURL" > "$W/pr.url"; : > "$GHLOG"
+p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "https://github.com/octocat/hello/pull/8" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && [ "$(editready)" = "0" ] && ok "pr-ready refuses when the passed URL is not the lookup result" || bad "pr-ready url mismatch: rc=$rc"
+# A closed same-owner PR is not an open PR to edit.
+rm -f "$W/pr.url" "$W/pr.fork"; echo 1 > "$W/pr.closed"; : > "$GHLOG"
+p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "https://github.com/octocat/hello/pull/5" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && [ "$(editready)" = "0" ] && ok "pr-ready ignores a non-OPEN PR" || bad "pr-ready closed: rc=$rc edits=$(editready)"
+rm -f "$W/pr.closed"
+# push-pr reuse: the fork PR is not reused; a new PR is created.
+for v in both cross owner; do
+    rm -f "$W/pr.url"; echo "$v" > "$W/pr.fork"; : > "$GHLOG"; n0="$(creates)"
+    out="$(p4 "$LIB" push-pr "$A" loki/e10-ready "E10 title" "$W/body.md" 2>"$W/err")"; rc=$?
+    [ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] && [ "$(creates)" = "$((n0 + 1))" ] \
+        && ok "push-pr does not reuse a stranger's fork PR ($v) with the same branch name" || bad "push-pr fork reuse ($v): rc=$rc out=$out"
+done
+rm -f "$W/pr.fork"
+# Local bare origin: no PR exists, so pr-ready is a no-op that exits 0 without calling gh.
+LB="$W/localbare.git"; git init -q --bare "$LB"
+: > "$GHLOG"
+out="$(GH_TOKEN="$CANARY" _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="$LB" bash "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md" "$PRURL" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -s "$GHLOG" ] && grep -q "local origin: no PR to mark ready" "$W/err" \
+    && ok "pr-ready on a local origin is a no-op (exit 0, no gh)" || bad "pr-ready local: rc=$rc out=$out gh=$(tr '\n' '|' < "$GHLOG")"
+refused "pr-ready needs the pr-url argument" "usage: pr-ready" p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

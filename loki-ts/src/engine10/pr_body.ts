@@ -4,7 +4,10 @@ import type { Verdict } from "./types.ts";
 /** MARK-1: LOKI_AI_MARKING=1 turns on AI trailers and the PR marker. Off by default. */
 const markingOn = (env: NodeJS.ProcessEnv): boolean => env["LOKI_AI_MARKING"] === "1";
 /** One line, no control characters, bounded: a value can never open a new trailer or markdown line. */
-export const clean = (v: string): string => v.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "unknown";
+const cleanFull = (v: string): string => v.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+export const clean = (v: string): string => cleanFull(v).slice(0, 100) || "unknown";
+/** clean, but a value over 100 chars ends in "..." (100 total) so the reader knows it was cut. */
+export const cleanMarked = (v: string): string => { const f = cleanFull(v); return f.length > 100 ? `${f.slice(0, 97)}...` : f || "unknown"; };
 export interface AiMarkInput { runId: string; provider: string; model: string; receiptRel?: string }
 /** The commit trailers added after Loki-Run. Empty when the flag is off. */
 export function aiTrailers(i: AiMarkInput & { receiptRel: string }, env: NodeJS.ProcessEnv = process.env): string[] {

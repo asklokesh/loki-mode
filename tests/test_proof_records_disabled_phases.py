@@ -130,6 +130,15 @@ class ProofInterventionDetailTests(unittest.TestCase):
         self.assertEqual(out["interventions_detail"]["by_type"],
                          {"steer": 0, "input": 1, "authorization": 1, "repair": 0})
 
+    def test_active_s_reaches_detail_when_recorded(self):
+        out = self._journey({"count": 1, "by_type": {"input": 1}, "waited_s": 60,
+                             "active_s": 45})
+        self.assertEqual(out["interventions_detail"]["active_s"], 45)
+
+    def test_active_s_absent_stays_absent_not_zero(self):
+        out = self._journey({"count": 1, "by_type": {"input": 1}, "waited_s": 60})
+        self.assertNotIn("active_s", out["interventions_detail"])
+
     def test_legacy_count_only_file_has_no_detail(self):
         out = self._journey({"count": 1})
         self.assertEqual(out["interventions"], 1)
