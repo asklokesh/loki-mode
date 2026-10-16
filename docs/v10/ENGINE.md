@@ -151,6 +151,7 @@ Targets drive the ETA. Limits are hard kills of the stage (the whole process gro
 - **Wall author:** a separate session whose cwd is a fresh temp dir holding only `task.md` and `repomap.txt`. It never sees the repo, which enforces "never the code" physically. It writes behavioral acceptance tests named `loki_wall_*` in the repo's detected test framework.
 - The engine copies the Wall tests into the repo test dir, hashes each file (sha256), emits `wall.sealed` before Implement, and keeps a sealed copy in `<runDir>/wall/`.
 - The engine then runs the Wall tests on the base tree. If they all pass, the run seals ALREADY_SATISFIED.
+- **Wall holdout (on by default):** when the Wall has 5 or more checks, a deterministic 20% subset (at least 1) is kept outside the repo and runDir, never shown to the implementer, and copied in only at Fast verify as blocking `holdout:N` checks. A held-out failure blocks the Seal (NOT PROVEN naming the holdout check). It reaches the fix stage only as an opaque count (`holdout_failed`), never as a name, command or failure text. Opt out with `LOKI_WALL_HOLDOUT=0` (or `LOKI_WALL_HOLDOUT_RATIO=0`); `LOKI_WALL_HOLDOUT_RATIO=0.4` holds out about 40%, capped at 0.9. An unparseable ratio falls back to 0.2, never to off.
 
 **Implement:** exactly ONE provider session through the existing loki-ts invoker (`resolveProvider(provider).invoke({mainLoop: true, tier: "development", cwd: repoDir, ...})`), wrapped by `session.ts`.
 

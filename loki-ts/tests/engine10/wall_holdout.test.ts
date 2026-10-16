@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { runMachine } from "../../src/engine10/machine.ts";
+import { buildFixBrief } from "../../src/engine10/stages/fix.ts";
+import { hasFailures, runMachine } from "../../src/engine10/machine.ts";
 import { WALL_HOLDOUT_MIN, holdoutDirFor, holdoutSplit, removeHoldout, stashHoldout, wallHoldoutRatio } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunOptions, StageName, TestRef } from "../../src/engine10/types.ts";
 
@@ -94,7 +95,9 @@ describe("Wall holdout end to end", () => {
     expect(checks.find((c) => c.name === "holdout:1")?.result).toBe("fail");
     expect(checks.find((c) => c.name === "holdout:1")!.cmd).not.toContain(held!); // neutral name
     expect(checks.filter((c) => c.name.startsWith("bun:") && c.result !== "pass")).toEqual([]);
-    expect(v.data.failures_grouped as unknown[]).toHaveLength(1);
+    expect(v.data.failures_grouped as unknown[]).toHaveLength(0); // C-C4b: a held-out failure never reaches the fix input as text, name or command...
+    expect(v.data["holdout_failed"]).toBe(1); // ...only as an opaque count
+    expect(JSON.stringify(v.data.failures_grouped)).not.toMatch(/holdout|loki_wall/);
     expect(v.data.not_proven as string[]).toContain("holdout check failed: holdout:1"); // D99 item 4: names the holdout check, never a warning
     expect(walk(repoDir).filter((p) => p.includes("loki_wall_holdout"))).toEqual([]); // copied in only for the run
     // control: implement the held function too -> holdout passes
@@ -123,11 +126,19 @@ describe("Wall holdout end to end", () => {
     const a = pick(), b = pick();
     expect(a).toHaveLength(2); expect(b).toEqual(a);
   });
-  test("a failing held-out check blocks the Seal: not_proven names it and the verdict is not VERIFIED", () => {
-    const checks = [{ name: "holdout:1", cmd: "bun", result: "fail", duration_s: 0 }, { name: "bun:tests/a.test.ts", cmd: "bun", result: "pass", duration_s: 0, n: 1 }];
-    expect(checks.filter((c) => c.name.startsWith("holdout:") && c.result !== "pass")).toHaveLength(1);
-  });
-
+  test("fix stage input carries a held-out failure only as an opaque count, and a holdout-only red still triggers a fix round", async () => {
+    const { repoDir, base } = mkRepo(), all = names(5), [held] = holdoutSplit(RUN, all, { ratio: 0.2, min: 5 });
+    const r = await runWall(mkCtx(repoDir, base, all), new AbortController().signal, { baseRunner: pass });
+    const i = all.indexOf(held!) + 1;
+    writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => (k + 1 === i ? "" : `export const f${k + 1} = () => ${k + 1};\n`)).join(""));
+    const files = (r.data as { files: { path: string }[] }).files;
+    const vctx = mkCtx(repoDir, base, [], r.data); vctx.tests = { detect: async () => ({ runners: ["bun"], tests: files.map((f) => ({ runner: "bun", path: `tests/${f.path.split("/").pop()}` })) }), impacted: () => [] } as never;
+    const v = await verifyStage.run(vctx, new AbortController().signal);
+    const brief = buildFixBrief("t", null, [], v.data.failures_grouped as never, null, "", undefined, v.data["holdout_failed"] as number);
+    expect(brief).toContain("1 hidden acceptance check failed");
+    for (const leak of [held!, `f${i}`, "loki_wall_holdout", "holdout:"]) expect(brief).not.toContain(leak);
+    expect(hasFailures(v.data)).toBe(true);
+  }, 120_000);
   test("tampered or missing holdout store fails closed", async () => {
     const { repoDir, base } = mkRepo(), all = names(5);
     const r = await runWall(mkCtx(repoDir, base, all), new AbortController().signal, { baseRunner: pass });
