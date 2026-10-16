@@ -420,6 +420,7 @@ CHILD_ENV_DENYLIST = (
     "LINEAR_WEBHOOK_SECRET",
     "LINEAR_API_KEY",
     "JIRA_WEBHOOK_SECRET",
+    "JIRA_API_TOKEN",
     "TEAMS_SECURITY_TOKEN",
 )
 
@@ -878,32 +879,61 @@ def _post_json(url, data, headers):
         resp.read()
 
 
+def _notify_slack(target, text):
+    url = target.get("response_url", "")
+    if not (isinstance(url, str) and url.startswith(SLACK_REPLY_PREFIX)):
+        return
+    _post_json(url, {"response_type": "in_channel", "text": text}, {})
+
+
+def _notify_linear(target, text):
+    key = os.environ.get("LINEAR_API_KEY", "")
+    issue_id = target.get("issue_id", "")
+    if not key or not isinstance(issue_id, str) or not issue_id:
+        return
+    _post_json(LINEAR_API_URL, {
+        "query": "mutation($i:String!,$b:String!){commentCreate(input:"
+                 "{issueId:$i,body:$b}){success}}",
+        "variables": {"i": issue_id, "b": text},
+    }, {"Authorization": key})
+
+
+def _notify_jira(target, text):
+    """ADF comment on the issue. Site and credentials come from the operator's
+    env only (never the payload); a non-https base URL is never contacted."""
+    base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
+    email = os.environ.get("JIRA_EMAIL", "")
+    token = os.environ.get("JIRA_API_TOKEN", "")
+    key = target.get("key", "")
+    if not (base.startswith("https://") and email and token
+            and isinstance(key, str) and JIRA_KEY_RE.match(key)):
+        return
+    auth = base64.b64encode(("%s:%s" % (email, token)).encode("utf-8")).decode("ascii")
+    _post_json("%s/rest/api/3/issue/%s/comment" % (base, key), {
+        "body": {"type": "doc", "version": 1, "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": text}]}]},
+    }, {"Authorization": "Basic " + auth})
+
+
+# Reply-target kind -> notifier. Sentry has no entry on purpose: it never replies.
+NOTIFIERS = {"slack": _notify_slack, "linear": _notify_linear, "jira": _notify_jira}
+
+
 def notify_job_complete(target, job_id, status, summary):
     """Send a completion summary to a reply target captured after verification.
 
-    Never raises: a notifier failure must not fail the job. The Slack URL is
-    re-checked here as defense in depth.
+    Never raises: a notifier failure must not fail the job. Each notifier
+    re-checks its own destination as defense in depth.
     """
     if not isinstance(target, dict):
+        return
+    notifier = NOTIFIERS.get(target.get("kind"))
+    if notifier is None:
         return
     text = ("loki job %s finished: %s. %s" % (job_id, status, summary or "")).strip()
     text = CONTROL_CHARS_RE.sub(" ", text)[:NOTIFY_TEXT_MAX]
     try:
-        if target.get("kind") == "slack":
-            url = target.get("response_url", "")
-            if not (isinstance(url, str) and url.startswith(SLACK_REPLY_PREFIX)):
-                return
-            _post_json(url, {"response_type": "in_channel", "text": text}, {})
-        elif target.get("kind") == "linear":
-            key = os.environ.get("LINEAR_API_KEY", "")
-            issue_id = target.get("issue_id", "")
-            if not key or not isinstance(issue_id, str) or not issue_id:
-                return
-            _post_json(LINEAR_API_URL, {
-                "query": "mutation($i:String!,$b:String!){commentCreate(input:"
-                         "{issueId:$i,body:$b}){success}}",
-                "variables": {"i": issue_id, "b": text},
-            }, {"Authorization": key})
+        notifier(target, text)
     except Exception as e:  # notifier errors never fail a job
         logging.warning("Completion notify for job %s failed: %s", job_id, e)
 
@@ -1845,7 +1875,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         if dup_id or dup_body:
             self._send_json(200, {"status": "duplicate"})
             return
-        job_id = self._enqueue_job(brief, pr=True)
+        job_id = self._enqueue_job(brief, {"kind": "jira", "key": key}, pr=True)
         if job_id is None:
             return
         self._send_json(202, {"id": job_id, "status": "queued"})

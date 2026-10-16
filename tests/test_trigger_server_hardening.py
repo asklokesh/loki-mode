@@ -1263,6 +1263,53 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertEqual(args[3:], ["--pr", "--detach"])
         self.assertNotIn("--deploy", args)
 
+    JIRA_ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net/",
+                "JIRA_EMAIL": "bot@acme.test", "JIRA_API_TOKEN": "tok"}
+
+    def _run_jira_notify(self, env, urlopen_side_effect=None):
+        posts = []
+
+        def fake_urlopen(req, timeout=None):
+            posts.append((req.full_url, json.loads(req.data), dict(req.header_items())))
+            if urlopen_side_effect:
+                raise urlopen_side_effect
+            return _fake_resp()
+
+        keys = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
+        with patch.dict(os.environ, {k: v for k, v in env.items()}), \
+                patch.object(ts, "urlopen", side_effect=fake_urlopen):
+            for k in keys:
+                if k not in env:
+                    os.environ.pop(k, None)
+            result, seen = self._run(self._jira(self._jira_body()))
+        return result, seen, posts
+
+    def test_jira_completion_posts_adf_comment_with_basic_auth(self):
+        (status, data), seen, posts = self._run_jira_notify(self.JIRA_ENV)
+        self.assertEqual(status, 202)
+        self.assertEqual(len(posts), 1)
+        url, body, headers = posts[0]
+        self.assertEqual(url, "https://acme.atlassian.net/rest/api/3/issue/ENG-7/comment")
+        self.assertEqual(body["body"]["type"], "doc")
+        text = body["body"]["content"][0]["content"][0]["text"]
+        self.assertIn(json.loads(data)["id"], text)
+        expect = "Basic " + base64.b64encode(b"bot@acme.test:tok").decode()
+        self.assertEqual(headers.get("Authorization"), expect)
+
+    def test_jira_no_comment_without_credentials_or_with_http_base(self):
+        _, _, posts = self._run_jira_notify({})
+        self.assertEqual(posts, [])
+        env = dict(self.JIRA_ENV, JIRA_BASE_URL="http://acme.atlassian.net")
+        _, _, posts = self._run_jira_notify(env)
+        self.assertEqual(posts, [])
+
+    def test_jira_notifier_failure_never_fails_job(self):
+        (status, _), seen, posts = self._run_jira_notify(
+            self.JIRA_ENV, urlopen_side_effect=OSError("boom"))
+        self.assertEqual(status, 202)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(posts), 1)
+
     def test_jira_label_match_and_non_matching_skipped(self):
         (status, _), seen = self._run(
             self._jira(self._jira_body(assignee=None, labels=["loki"])))
