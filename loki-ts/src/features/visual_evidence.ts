@@ -12,6 +12,8 @@ export interface EvidenceScreen { path: string; sha256: string } // path is rela
 export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skipped: string | null; e2eSkipped?: string | null }
 
 export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] !== "0"; // D70: on unless set to 0
+/** LOKI_VISUAL_GATE=1 (opt-in): a visual evidence capture failure is recorded in the receipt and fails `loki verify`. */
+export const visualGateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_GATE"] === "1";
 const PAGE_RE = /^(?:.*\/)?(?:app|pages|src|public)\/.*\.(?:html|jsx|tsx|vue|svelte)$/;
 export const isPageFile = (p: string): boolean => PAGE_RE.test(p);
 /** Best-effort route for a changed page file (Next, Nuxt, SvelteKit and plain html layouts). */
@@ -230,17 +232,19 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
   }
 }
 /** Seal hook: returns `{ evidence_screens }` to spread into the receipt body, or `{}`. Records a skip in notProven. Throws only if the stage was aborted, so nothing is written after a limit kill. */
-export async function sealEvidence(repoDir: string, runDir: string, o: { verify?: Record<string, unknown> }, notProven: Set<string>, signal?: AbortSignal, emit?: (type: "session.started", stage: "seal", data: Record<string, unknown>) => void): Promise<{ evidence_screens?: EvidenceScreen[] }> {
+export async function sealEvidence(repoDir: string, runDir: string, o: { verify?: Record<string, unknown> }, notProven: Set<string>, signal?: AbortSignal, emit?: (type: "session.started", stage: "seal", data: Record<string, unknown>) => void): Promise<{ evidence_screens?: EvidenceScreen[]; evidence_failed?: string }> {
   if (!visualEvidenceEnabled()) return {};
   const cf = Array.isArray(o.verify?.["changed_files"]) ? (o.verify["changed_files"] as unknown[]).map(String) : [];
   const ev = await captureVisualEvidence(repoDir, runDir, cf, { signal, onServer: (pgid) => emit?.("session.started", "seal", { session_id: "visual-evidence", provider: "visual-evidence", model: null, pgid }) }); // the supervisor reaps announced groups on a hard kill
   if (signal?.aborted) throw new Error("seal aborted: visual evidence discarded");
   if (ev.skipped) notProven.add(`visual evidence skipped: ${ev.skipped}`);
   if (ev.e2eSkipped) notProven.add(ev.e2eSkipped);
+  if (visualGateEnabled() && ev.skipped && !/^no changed page files/.test(ev.skipped)) return { evidence_failed: ev.skipped }; // a repo with no pages has nothing to fail
   return ev.screens.length > 0 ? { evidence_screens: ev.screens } : {};
 }
 /** Verify hook: null when the receipt has no evidence_screens or all still match, else a message. */
 export function receiptScreensProblem(receiptPath: string, receipt: Record<string, unknown>): string | null {
+  if (visualGateEnabled() && typeof receipt["evidence_failed"] === "string") return `visual evidence failed (LOKI_VISUAL_GATE=1): ${receipt["evidence_failed"]}`;
   return receipt["evidence_screens"] === undefined ? null : checkScreens(dirname(receiptPath), receipt["evidence_screens"]);
 }
 /** PR hook: an "Evidence" markdown section read from the sealed receipt, or "" when there are no screens. */

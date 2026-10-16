@@ -16,8 +16,8 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-function writeReceipt(screens: { path: string; sha256: string }[] | null): string {
-  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: "r1", verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} }, ...(screens ? { evidence_screens: screens } : {}) };
+function writeReceipt(screens: { path: string; sha256: string }[] | null, extra: Record<string, unknown> = {}): string {
+  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: "r1", verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} }, ...(screens ? { evidence_screens: screens } : {}), ...extra };
   const receipt = { ...body, receipt_sha256: computeReceiptHash(body), verification: { jwt: null, kid: null } };
   const p = join(root, "runs", "r1", "receipt.json");
   writeFileSync(p, JSON.stringify(receipt));
@@ -286,4 +286,32 @@ test("monorepo without a root manifest names the packages it checked", async () 
   expect(bv.skipped).toBe("no root package.json (backend/ or frontend/ have a dev, preview or start script but no UI boot was resolved)");
   const bare = join(root, "bare"); mkdirSync(bare, { recursive: true });
   expect((await captureVisualEvidence(bare, RUN, ["a/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 })).skipped).toBe("no package.json");
+});
+
+test("LOKI_VISUAL_GATE=1 turns a recorded visual evidence failure into a verify failure; unset keeps UNSIGNED", async () => {
+  const p = writeReceipt(null, { evidence_failed: "screenshots failed" });
+  const prev = process.env["LOKI_VISUAL_GATE"];
+  try {
+    delete process.env["LOKI_VISUAL_GATE"];
+    expect((await verifyReceipt(p)).verdict).toBe("UNSIGNED");
+    process.env["LOKI_VISUAL_GATE"] = "1";
+    const r = await verifyReceipt(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("screenshots failed");
+  } finally { if (prev === undefined) delete process.env["LOKI_VISUAL_GATE"]; else process.env["LOKI_VISUAL_GATE"] = prev; }
+});
+
+test("sealEvidence records evidence_failed only when the gate is on and capture skipped for a real reason", async () => {
+  const np = new Set<string>();
+  const env = process.env["LOKI_VISUAL_GATE"];
+  try {
+    process.env["LOKI_VISUAL_GATE"] = "1";
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { dev: "true" } }));
+    const out = await sealEvidence(root, RUN, { verify: { changed_files: ["src/pages/a.tsx"] } }, np);
+    expect(out.evidence_failed).toBeTruthy();
+    delete process.env["LOKI_VISUAL_GATE"];
+    expect((await sealEvidence(root, RUN, { verify: { changed_files: ["src/pages/a.tsx"] } }, new Set())).evidence_failed).toBeUndefined();
+    process.env["LOKI_VISUAL_GATE"] = "1";
+    expect((await sealEvidence(root, RUN, { verify: { changed_files: ["lib/x.ts"] } }, new Set())).evidence_failed).toBeUndefined();
+  } finally { if (env === undefined) delete process.env["LOKI_VISUAL_GATE"]; else process.env["LOKI_VISUAL_GATE"] = env; }
 });
