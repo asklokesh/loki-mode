@@ -10,7 +10,7 @@ import { isEarlyAccept, selectAttempt, type AttemptCandidate, type AttemptCheck 
 import { DEFAULT_EXCLUDES, applyDiff, cleanupAttempt, resetToBase, snapshotDiff, swapAttemptIntoWorkingTree } from "../e10ext/treeswap.ts";
 type Idx = 0 | 1;
 /** LOKI_E10_ATTEMPTS=2, size normal, and a non-empty predicted S (section 4 Gate). With no selector there is no second attempt. */
-export const attemptsGate = (a: { size: "small" | "normal"; predictedS: number; env?: NodeJS.ProcessEnv }): boolean =>
+export const attemptsGate = (a: { size: string; predictedS: number; env?: NodeJS.ProcessEnv }): boolean =>
   (a.env ?? process.env).LOKI_E10_ATTEMPTS === "2" && a.size === "normal" && a.predictedS > 0;
 /** Fail closed, same rule as the worker: a real GitHub token in this env would reach treeswap's git children. */
 export function assertScrubbedEnv(env: NodeJS.ProcessEnv): void {
