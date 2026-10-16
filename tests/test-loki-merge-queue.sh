@@ -234,6 +234,23 @@ rm "$NS_REPO/a/f"
 [ "$(spdr "$NS_REPO" "$WORK")" = "True" ] && ok "sparse no-cone negation: in-cone deletion is dirty" || bad "negation in-cone: $(spdr "$NS_REPO" "$WORK")"
 git -C "$NS_REPO" update-index --no-skip-worktree a/f
 git -C "$NS_REPO" checkout -q -- a/f
+# P12-03d perf: many out-of-cone paths use one batched matcher call, not one process each.
+BIG_REPO="$WORK/bigrepo"; mkdir -p "$BIG_REPO/keep" "$BIG_REPO/out"
+git -C "$BIG_REPO" init -q
+echo 1 > "$BIG_REPO/keep/f"
+for _i in $(seq 1 400); do echo "$_i" > "$BIG_REPO/out/f$_i"; done
+git -C "$BIG_REPO" add keep/f out
+git -C "$BIG_REPO" -c user.name=t -c user.email=t@t commit -qm big
+git -C "$BIG_REPO" sparse-checkout set --cone keep >/dev/null 2>&1
+_t0=$SECONDS
+_bv="$(spdr "$BIG_REPO" "$WORK")"
+_dt=$((SECONDS - _t0))
+[ ! -e "$BIG_REPO/out/f1" ] && [ "$_bv" = "False" ] && ok "sparse: 400 out-of-cone files read clean" || bad "big sparse: $_bv"
+[ "$_dt" -lt 5 ] && ok "sparse: 400 out-of-cone files checked in ${_dt}s (<5s, batched)" || bad "big sparse slow: ${_dt}s"
+git -C "$BIG_REPO" update-index --skip-worktree keep/f
+rm "$BIG_REPO/keep/f"
+[ "$(spdr "$BIG_REPO" "$WORK")" = "True" ] && ok "sparse: in-cone deletion among 400 out-of-cone files is dirty" || bad "big sparse dirty"
+git -C "$BIG_REPO" update-index --no-skip-worktree keep/f
 # CRLF in the index plus autocrlf: raw bytes match, so a flagged file is clean.
 printf 'x\r\n' > "$GD_REPO/crlf"
 git -C "$GD_REPO" -c core.autocrlf=false add crlf

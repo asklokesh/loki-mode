@@ -1173,24 +1173,27 @@ def git_head(repo):
     return out.strip() if out and out.strip() else ""
 
 
-def _sparse_in_cone(repo, path):
-    """True/False from git's own sparse matcher; None when git cannot answer.
+def _sparse_included(repo, paths):
+    """Set of `paths` git's own sparse matcher includes; None when git cannot answer.
 
-    `git sparse-checkout check-rules` echoes the paths the patterns include,
-    for cone, non-cone and negation alike. Known limit: a .git directory
-    writable by the subject can drop paths from info/sparse-checkout. That hole
-    predates this check (core.sparseCheckout=true alone was enough).
+    One `git sparse-checkout check-rules` call for the whole batch: it echoes
+    the paths the patterns include, for cone, non-cone and negation alike.
+    Known limit: a .git directory writable by the subject can drop paths from
+    info/sparse-checkout. That hole predates this check (core.sparseCheckout=true
+    alone was enough).
     """
+    enc = [p.encode("utf-8", "surrogateescape") for p in paths]
     try:
         r = subprocess.run(
             ["git", "-C", repo or ".", "sparse-checkout", "check-rules", "-z"],
-            input=path.encode("utf-8", "surrogateescape") + b"\0",
-            capture_output=True, timeout=10, env=_scoped_env())
+            input=b"".join(e + b"\0" for e in enc),
+            capture_output=True, timeout=60, env=_scoped_env())
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     if r.returncode != 0:
         return None
-    return path.encode("utf-8", "surrogateescape") in r.stdout.split(b"\0")
+    out = set(r.stdout.split(b"\0"))
+    return set(p for p, e in zip(paths, enc) if e in out)
 
 
 def git_dirty(repo):
@@ -1234,16 +1237,17 @@ def git_dirty(repo):
     root = repo or "."
     bad = None
     todo = []
+    sparse_missing = []
     for skip, path in cand:
         full = os.path.join(root, path)
         mode, want = blobs.get(path, ("", ""))
         if not os.path.lexists(full):
             if skip and sparse:
-                # Clean only when git's own sparse patterns exclude the path. An
-                # in-cone path flagged by hand and deleted is a real deletion;
-                # an undeterminable cone fails closed (dirty).
-                if _sparse_in_cone(repo, path) is False:
-                    continue
+                # Decided after the loop in one batched git call: clean only when
+                # git's sparse patterns exclude the path. An in-cone path flagged
+                # by hand and deleted is a real deletion; fail closed otherwise.
+                sparse_missing.append(path)
+                continue
             bad = (skip, path)
             break
         if mode == "160000":
@@ -1255,6 +1259,12 @@ def git_dirty(repo):
                 break
             continue
         todo.append((skip, path))
+    if sparse_missing and not bad:
+        included = _sparse_included(repo, sparse_missing)
+        for path in sparse_missing:
+            if included is None or path in included:
+                bad = (True, path)
+                break
     for i in range(0, len(todo), 200):
         if bad:
             break
