@@ -1,10 +1,10 @@
 // CLI-MODERN-2: `loki status` shows Loki 10 runs and never the legacy box.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EventLog } from "../../src/engine10/events.ts";
-import { workItemState } from "../../src/util/run_outputs.ts";
+import { EventLog, readEvents } from "../../src/engine10/events.ts";
+import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { NO_RUN_HINT, runIntentShow, runModernStatus } from "../../src/commands/run_status.ts";
 
@@ -193,5 +193,44 @@ describe("loki intent show <run>", () => {
     const r = await show(["show", "nope"]);
     expect(r.code).toBe(1);
     expect(r.err).toContain("no such run");
+  });
+});
+
+describe("issue status projector (FV-gh-steer-3)", () => {
+  const stub = (): { sh: string; log: string } => {
+    const sh = join(dir, "push-stub.sh"), log = join(dir, "push.log");
+    writeFileSync(sh, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\ncp "$4" "${log}.body"\nexit 0\n`, { mode: 0o755 });
+    return { sh, log };
+  };
+  test("the body carries the marker, plan state and PR link, and flattens untrusted reason text", () => {
+    const runDir = join(dir, ".loki", "runs", "r1"), log = new EventLog(join(runDir, "events.jsonl"), "r1");
+    log.append("run.started", null, {});
+    const none = issueStatusBody(readEvents(join(runDir, "events.jsonl")), { runId: "r1", steerRevs: 0 });
+    expect(none).toContain(STATUS_MARKER);
+    expect(none).toContain("Plan: pending");
+    log.append("stage.completed", "plan", { plan: "SECRET PLAN TEXT" });
+    const evs = readEvents(join(runDir, "events.jsonl"));
+    const body = issueStatusBody(evs, { runId: "r1", steerRevs: 2, prUrl: "https://github.com/o/r/pull/3", outcome: "BLOCKED", reason: "x <!-- loki-status --> @victim `rm`\nline2" });
+    expect(body).toContain("Plan: ready");
+    expect(body).toContain("Operator steers applied: 2");
+    expect(body).toContain("Pull request: https://github.com/o/r/pull/3");
+    expect(body).not.toContain("SECRET PLAN TEXT");
+    expect(body.match(/<!-- loki-status -->/g)!.length).toBe(1);
+    expect(body).not.toMatch(/@victim|`rm`/);
+  });
+  test("each projection upserts via issue-comment --update; an unchanged body is not re-posted", async () => {
+    const { sh, log } = stub(), runDir = join(dir, ".loki", "runs", "r2"), eventsPath = join(runDir, "events.jsonl");
+    const ev = new EventLog(eventsPath, "r2"); ev.append("run.started", null, {});
+    const project = issueStatusProjector({ pushSh: sh, env: process.env, repoDir: dir, runDir, runId: "r2", issueRef: "acme/widgets#12", eventsPath });
+    expect((await project())!.ok).toBe(true);
+    expect((await project())!.ok).toBe(true); // identical body: skipped
+    ev.append("stage.completed", "plan", {});
+    const calls = await Promise.all([project(), project({ prUrl: "https://github.com/o/r/pull/3" })]); // concurrent: serialised
+    expect(calls.every((c) => c?.ok)).toBe(true);
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    expect(lines.length).toBe(3);
+    for (const l of lines) expect(l).toMatch(/^issue-comment --update acme\/widgets#12 .*status-comment\.md$/);
+    expect(readFileSync(`${log}.body`, "utf8")).toContain("Pull request: https://github.com/o/r/pull/3");
+    expect(existsSync(join(runDir, "status-comment.md"))).toBe(true);
   });
 });

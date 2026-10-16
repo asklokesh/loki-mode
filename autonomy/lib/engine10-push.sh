@@ -4,7 +4,7 @@
 #   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]
 #   engine10-push.sh check-origin   (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
 #   engine10-push.sh comment <pr-number> <body-file>
-#   engine10-push.sh issue-comment <issue-ref> <body-file>
+#   engine10-push.sh issue-comment [--update] <issue-ref> <body-file>
 #   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
 #
 # Holds GitHub credentials, runs no LLM, reads no untrusted text. Inputs come
@@ -179,11 +179,32 @@ case "$mode" in
     issue-comment)
         # E-67: a FAILED run with no diff (or no remote) has no PR to open; comment on the issue
         # instead so the run's reason is never silently lost. <issue-ref> is owner/repo#N or #N.
-        [ "$#" -eq 2 ] || die "usage: issue-comment <issue-ref> <body-file>"
+        # --update: the status projector. One comment carrying the marker below is edited in place (created when absent),
+        # so an issue shows live run state without a new comment per event. Only a comment written by the authenticated
+        # gh user counts, and the body file must carry the marker (it is built by the supervisor, never from task text).
+        _e10_upd=""
+        [ "${1:-}" != "--update" ] || { _e10_upd=1; shift; }
+        [ "$#" -eq 2 ] || die "usage: issue-comment [--update] <issue-ref> <body-file>"
         num="${1##*#}"
         case "$num" in '' | *[!0-9]*) die "cannot extract issue number from: $1" ;; esac
         [ -f "$2" ] || die "body file not found: $2"
         [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
+        if [ -n "$_e10_upd" ]; then
+            _e10_marker='<!-- loki-status -->'
+            grep -qF -- "$_e10_marker" "$2" || die "status body must carry $_e10_marker"
+            _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
+            _e10_cid=""
+            if [ -n "$_e10_me" ]; then
+                _e10_cid="$(_e10_gh api "repos/$_e10_repo/issues/$num/comments" --paginate \
+                    --jq ".[] | select(.user.login == \"$_e10_me\") | select(.body | contains(\"$_e10_marker\")) | .id" 2>/dev/null | head -n 1)" || _e10_cid=""
+            fi
+            case "$_e10_cid" in
+                '') _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed" ;;
+                *[!0-9]*) die "unexpected comment id" ;;
+                *) _e10_gh api -X PATCH "repos/$_e10_repo/issues/comments/$_e10_cid" -F "body=@$2" >/dev/null || die "gh api comment update failed" ;;
+            esac
+            exit 0
+        fi
         _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed"
         ;;
     status)
