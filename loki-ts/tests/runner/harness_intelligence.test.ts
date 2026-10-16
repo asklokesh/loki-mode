@@ -837,6 +837,25 @@ describe("repo baseline profile (REPOMEM)", () => {
   describe("intake wiring", () => {
     const ictx = (d: string): RunContext => ({ runId: "e10-t", repoDir: d, runDir: join(d, ".loki", "runs", "e10-t"), baseSha: "", branch: "loki/e10-t", provider: "claude", model: "m", deep: false, capS: 900, emit: () => {},
       sessions: { run() { throw new Error("no session"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] }, cost: {}, clock: { now: () => Date.now() }, outputs: () => ({}) }) as unknown as RunContext;
+    test("a failing intake still prints the Readiness line when the supervisor would have folded it; a completed folded intake prints none", async () => {
+      const grab = async (fn: () => Promise<unknown>): Promise<{ err: unknown; out: string }> => {
+        const errs: string[] = [], we = process.stderr.write.bind(process.stderr);
+        process.stderr.write = ((s: string) => (errs.push(String(s)), true)) as typeof process.stderr.write;
+        let err: unknown = null;
+        try { await fn(); } catch (e) { err = e; } finally { process.stderr.write = we; }
+        return { err, out: errs.join("") };
+      };
+      process.env.LOKI_E10_READINESS_FOLD = "1"; const speed = process.env.LOKI_SPEED; process.env.LOKI_SPEED = "0"; // the sync already-done check is what throws
+      try {
+        const ok = await grab(() => runIntake(ictx(repo(NODE)), new AbortController().signal, { taskText: "unrelated zzqx" }));
+        expect(ok.err).toBeNull();
+        expect(ok.out).not.toMatch(/Readiness:/); // folded into the last line by the supervisor
+        const d = repo({ ...NODE, "src/search-command.ts": "export function search(q: string): string[] { return [q]; }\n", "CHANGELOG.md": "## 1.0\n- Added global search command palette\n" }), c = { ...ictx(d), tests: { detect: async () => ({ runners: [], tests: [{ path: "src/search-command.test.ts" }] }), impacted: () => [] } } as unknown as RunContext;
+        const bad = await grab(() => runIntake(c, new AbortController().signal, { taskText: "Add global search (Cmd+K)" }));
+        expect(String(bad.err)).toContain("no session");
+        expect(bad.out).toMatch(/Readiness: \d+\/100 \([A-F]\)/);
+      } finally { delete process.env.LOKI_E10_READINESS_FOLD; if (speed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = speed; }
+    }, 60_000);
     test("intake writes the profile on the untouched tree and a second intake reuses it; LOKI_REPO_BASELINE=0 skips it", async () => {
       const d = repo(NODE);
       const errs: string[] = [], we = process.stderr.write.bind(process.stderr);

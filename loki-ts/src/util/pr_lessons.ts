@@ -329,6 +329,7 @@ export async function openReviewComments(gh: GhClient, repo: string, num: number
   return { open, skipped: roots.length - open.length };
 }
 
+const STATUS_ARGS = ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"]; // Loki run artifacts are neither "dirty" nor stageable
 /** `loki verify-pr respond`: one fix commit per open review comment (bounded by max), one push, then a reply per fixed
  *  comment citing its commit sha. A comment whose fix edits nothing gets no commit and no reply. Threads are never resolved. */
 export async function respondToReview(repoDir: string, ref: string, deps: RespondDeps): Promise<RespondResult> {
@@ -342,12 +343,12 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   if (!headRef) throw new GhError(`Cannot resolve the head branch of ${ref}; refusing to push.`);
   const current = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
   if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
-  if (vcs(["status", "--porcelain"]).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");
+  if (vcs(STATUS_ARGS).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");
   const { open, skipped } = await openReviewComments(gh, pr.repo, pr.num);
   const done: Array<{ c: OpenComment; sha: string }> = [];
   for (const c of open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
     if (!(await deps.fix(c))) continue;
-    const files = vcs(["status", "--porcelain"]).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, ""));
+    const files = vcs(STATUS_ARGS).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, "")).filter((f) => f !== ".loki" && !f.startsWith(".loki/")); // only the repo-root .loki is Loki's run state; a nested sub/.loki is the user's and stays unfiltered
     if (files.length === 0) continue;
     vcs(["add", "--", ...files]);
     vcs(["commit", "-m", `Address review comment on ${c.path || "PR"}\n\nReview-Comment: ${c.url}`]);

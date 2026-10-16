@@ -136,6 +136,13 @@ describe("engine10 e2e (stub claude)", () => {
     const v = runEngine("done", false, ["--verbose"]);
     expect(v.out).toMatch(/^\[\d\d:\d\d\] intake/m);
   });
+  test("an inherited LOKI_E10_READINESS_FOLD never hides the Readiness line outside default mode (--verbose)", () => {
+    process.env.LOKI_E10_READINESS_FOLD = "1";
+    try {
+      const v = runEngine("done", false, ["--verbose"]);
+      expect(v.out).toMatch(/^Readiness: \d+\/100 \([A-F]\)/m); // its own stderr line, not folded
+    } finally { delete process.env.LOKI_E10_READINESS_FOLD; }
+  }, 120_000);
   test("done run: intake through seal, receipt, marker, efficiency record, under 60s", () => {
     const r = runEngine("done");
     if (r.code !== 0) console.error(r.out);
