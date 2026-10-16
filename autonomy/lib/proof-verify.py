@@ -1173,6 +1173,22 @@ def git_head(repo):
     return out.strip() if out and out.strip() else ""
 
 
+def _sparse_in_cone(repo):
+    """Tracked paths git's sparse patterns include (cone and non-cone); None if unknown."""
+    pat = _vr_git_args(repo, ["rev-parse", "--git-path", "info/sparse-checkout"])
+    if pat is None or not pat.strip():
+        return None
+    pat = pat.strip()
+    if not os.path.isabs(pat):
+        pat = os.path.join(repo or ".", pat)
+    if not os.path.isfile(pat):
+        return None
+    out = _vr_git_args(repo, ["ls-files", "-c", "-i", "-z", "--exclude-from=" + pat])
+    if out is None:
+        return None
+    return set(p for p in out.split("\0") if p)
+
+
 def git_dirty(repo):
     """True/False, or None when git cannot answer. .loki/ is excluded: the
     verifier writes its own artifacts there."""
@@ -1214,12 +1230,19 @@ def git_dirty(repo):
     root = repo or "."
     bad = None
     todo = []
+    in_cone = None
     for skip, path in cand:
         full = os.path.join(root, path)
         mode, want = blobs.get(path, ("", ""))
         if not os.path.lexists(full):
             if skip and sparse:
-                continue
+                # Clean only when git's own sparse patterns exclude the path. An
+                # in-cone path flagged by hand and deleted is a real deletion;
+                # an undeterminable cone fails closed (dirty).
+                if in_cone is None:
+                    in_cone = _sparse_in_cone(repo)
+                if in_cone is not None and path not in in_cone:
+                    continue
             bad = (skip, path)
             break
         if mode == "160000":
@@ -1242,6 +1265,9 @@ def git_dirty(repo):
                 if h != blobs.get(p, ("", ""))[1]]
         if miss:
             # Identical raw bytes mean clean (CRLF in the index plus autocrlf).
+            # The clean filter is not idempotent: the index may hold unfiltered
+            # bytes that a filtered hash of the worktree file never reproduces,
+            # so the filtered hash alone would call such a file dirty.
             raw = _vr_git_args(repo, ["hash-object", "--no-filters", "--"] + [p for _, p in miss])
             if raw is None:
                 return None

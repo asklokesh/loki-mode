@@ -187,6 +187,30 @@ git -C "$SP_REPO" sparse-checkout set --no-cone /keep/ >/dev/null 2>&1
 [ ! -e "$SP_REPO/other/g" ] && ok "sparse: excluded file absent" || bad "sparse setup: other/g present"
 SPV="$(python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$SP_REPO")"
 [ "$SPV" = "False" ] && ok "writer: real sparse-checkout repo is clean" || bad "writer real sparse: $SPV"
+# P12-03d: under sparse checkout only an OUT-of-cone missing skip-worktree path is clean.
+spd() { python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$SP_REPO" 2>/dev/null; }
+git -C "$SP_REPO" update-index --skip-worktree keep/f
+rm "$SP_REPO/keep/f"
+[ "$(spd)" = "True" ] && ok "sparse non-cone: in-cone skip-worktree path deleted is dirty" || bad "sparse in-cone deleted: $(spd)"
+git -C "$SP_REPO" update-index --no-skip-worktree keep/f
+git -C "$SP_REPO" checkout -q -- keep/f
+[ "$(spd)" = "False" ] && ok "sparse non-cone: restored in-cone path is clean" || bad "sparse in-cone restored: $(spd)"
+git -C "$SP_REPO" ls-files -v | grep -q '^S other/g$' && [ ! -e "$SP_REPO/other/g" ] && [ "$(spd)" = "False" ] && ok "sparse non-cone: out-of-cone skip-worktree path absent is clean" || bad "sparse out-of-cone: $(spd)"
+git -C "$SP_REPO" sparse-checkout set --cone keep >/dev/null 2>&1
+git -C "$SP_REPO" update-index --skip-worktree keep/f
+rm "$SP_REPO/keep/f"
+[ "$(spd)" = "True" ] && ok "sparse cone: in-cone skip-worktree path deleted is dirty" || bad "sparse cone in-cone deleted: $(spd)"
+git -C "$SP_REPO" update-index --no-skip-worktree keep/f
+git -C "$SP_REPO" checkout -q -- keep/f
+[ "$(spd)" = "False" ] && ok "sparse cone: out-of-cone paths absent is clean" || bad "sparse cone out-of-cone: $(spd)"
+# Fail closed: an unreadable cone makes the missing flagged path dirty.
+git -C "$SP_REPO" update-index --skip-worktree keep/f
+rm "$SP_REPO/keep/f"
+mv "$SP_REPO/.git/info/sparse-checkout" "$SP_REPO/.git/info/sparse-checkout.bak"
+[ "$(spd)" = "True" ] && ok "sparse: undeterminable cone fails closed (dirty)" || bad "sparse fail-closed: $(spd)"
+mv "$SP_REPO/.git/info/sparse-checkout.bak" "$SP_REPO/.git/info/sparse-checkout"
+git -C "$SP_REPO" update-index --no-skip-worktree keep/f
+git -C "$SP_REPO" checkout -q -- keep/f
 # CRLF in the index plus autocrlf: raw bytes match, so a flagged file is clean.
 printf 'x\r\n' > "$GD_REPO/crlf"
 git -C "$GD_REPO" -c core.autocrlf=false add crlf
