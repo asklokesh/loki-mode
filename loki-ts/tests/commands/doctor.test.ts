@@ -409,6 +409,61 @@ describe("doctor.runDoctor (end-to-end)", () => {
     }
   });
 
+  describe("P12-41 readiness history and round-trip", () => {
+    const withRepo = async (fn: (d: string) => Promise<void>) => {
+      const prev = process.env.LOKI_REPO_BASELINE, cwd = process.cwd(), d = mkdtempSync(join(tmpdir(), "doctor-p1241-"));
+      process.env.LOKI_REPO_BASELINE = "0";
+      try { process.chdir(d); await fn(d); } finally {
+        process.chdir(cwd); rmSync(d, { recursive: true, force: true });
+        if (prev === undefined) delete process.env.LOKI_REPO_BASELINE; else process.env.LOKI_REPO_BASELINE = prev;
+      }
+    };
+    const lines = (d: string) => readFileSync(join(d, ".loki", "state", "readiness.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+    it("two --repo runs append two JSON lines", async () => {
+      await withRepo(async (d) => {
+        await captureStdio(() => runDoctor(["--repo"]));
+        await captureStdio(() => runDoctor(["--repo"]));
+        const l = lines(d);
+        expect(l.length).toBe(2);
+        expect(typeof l[0].ts).toBe("string");
+        expect(Array.isArray(l[0].checks)).toBe(true);
+        expect(typeof l[0].pass).toBe("boolean");
+        expect(l[0].roundTrip).toBeNull();
+      });
+    });
+
+    it("no provider call without --round-trip", async () => {
+      await withRepo(async () => {
+        let calls = 0;
+        await captureStdio(() => runDoctor(["--repo"], { roundTrip: async () => { calls++; return { ok: true, detail: "x" }; } }));
+        expect(calls).toBe(0);
+      });
+    });
+
+    it("--round-trip failure is recorded, not thrown", async () => {
+      await withRepo(async (d) => {
+        const { result } = await captureStdio(() => runDoctor(["--repo", "--round-trip"], { roundTrip: async () => { throw new Error("boom"); } }));
+        expect(result).toBe(0);
+        const l = lines(d);
+        expect(l[0].roundTrip.ok).toBe(false);
+        expect(l[0].roundTrip.detail).toContain("boom");
+      });
+    });
+
+    it("--round-trip success is recorded", async () => {
+      await withRepo(async (d) => {
+        await captureStdio(() => runDoctor(["--repo", "--round-trip"], { roundTrip: async () => ({ ok: true, detail: "OK" }) }));
+        expect(lines(d)[0].roundTrip.ok).toBe(true);
+      });
+    });
+
+    it("help lists --round-trip", async () => {
+      const { cap } = await captureStdio(() => runDoctor(["--help"]));
+      expect(cap.out).toContain("--round-trip");
+    });
+  });
+
   it("rejects unknown options with exit 1", async () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--bogus"]));
     expect(result).toBe(1);

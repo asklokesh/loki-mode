@@ -11,10 +11,10 @@
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
-import { accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
+import { appendFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
@@ -1020,7 +1020,7 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON (includes requirements grouped by execution path)\n`);
   process.stdout.write(`  --requirements  Print requirements per execution path (required or optional, present or missing, one-line fix)\n`);
@@ -1029,6 +1029,8 @@ function printHelp(): void {
   process.stdout.write(`  --repo    Print the repo profile (.loki/state/repo-profile.json): discovered\n`);
   process.stdout.write(`            test/lint/typecheck/build commands, the baseline test run and a\n`);
   process.stdout.write(`            readiness score. Builds the profile if absent; with --fix, refreshes it\n`);
+  process.stdout.write(`  --round-trip  With --repo: make one tiny provider call (opt-in, may cost a few tokens) and\n`);
+  process.stdout.write(`            record the result in .loki/state/readiness.jsonl. Off by default\n`);
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
@@ -1808,7 +1810,23 @@ else:
 
 // ---------- Public entry point -----------------------------------------------
 
-export async function runDoctor(argv: readonly string[]): Promise<number> {
+export interface RoundTripResult { ok: boolean; detail: string }
+export type RoundTripRunner = () => Promise<RoundTripResult>;
+export interface DoctorDeps { roundTrip?: RoundTripRunner }
+
+// Default harmless round-trip: one tiny prompt through the active provider CLI.
+const defaultRoundTrip: RoundTripRunner = async () => {
+  const provider = process.env["LOKI_PROVIDER"] || "claude";
+  const prompt = "Reply with the single word OK";
+  const args = provider === "claude" ? ["-p", prompt] : provider === "codex" ? ["exec", prompt] : null;
+  if (!args) return { ok: false, detail: `round-trip unsupported for provider ${provider}` };
+  const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: { ...process.env } });
+  if (r.error) return { ok: false, detail: String(r.error.message).slice(0, 200) };
+  return { ok: r.status === 0, detail: (r.status === 0 ? r.stdout : r.stderr || `exit ${r.status}`).trim().slice(0, 200) };
+};
+
+export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}): Promise<number> {
+  let roundTrip = false;
   let json = false;
   let fix = false;
   let repo = false;
@@ -1816,6 +1834,8 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
   for (const arg of argv) {
     if (arg === "--repo") {
       repo = true;
+    } else if (arg === "--round-trip") {
+      roundTrip = true;
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--fix") {
@@ -1827,7 +1847,7 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
       return 1;
     }
   }
@@ -1841,6 +1861,16 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     const failing = rep.paths.flatMap((x) => x.items).find((i) => i.level === "required" && i.status !== "present");
     const host = { firstTaskReady: ready, fix: failing ? requirementFix(failing.id) : null };
     const withReadiness = p ? { ...p, readiness: repoReadiness(p, host) } : p;
+    let rt: RoundTripResult | null = null;
+    if (roundTrip) {
+      try { rt = await (deps.roundTrip ?? defaultRoundTrip)(); } catch (e) { rt = { ok: false, detail: String((e as Error)?.message ?? e).slice(0, 200) }; }
+    }
+    try { // readiness history: one JSON line per run; never fails the command
+      const dir = join(process.cwd(), ".loki", "state");
+      mkdirSync(dir, { recursive: true });
+      const checks = rep.paths.flatMap((x) => x.items).map((i) => ({ id: i.id, level: i.level, status: i.status }));
+      appendFileSync(join(dir, "readiness.jsonl"), JSON.stringify({ ts: new Date().toISOString(), checks, pass: ready, score: withReadiness?.readiness?.score ?? null, roundTrip: rt }) + "\n");
+    } catch { /* history is best effort */ }
     if (json) process.stdout.write(JSON.stringify(reqs ? { repo: withReadiness, requirements: rep } : withReadiness, null, 2) + "\n");
     else process.stdout.write(renderProfile(p, host) + (reqs ? renderRequirementsText(rep) + "\n" : ""));
     return 0;
