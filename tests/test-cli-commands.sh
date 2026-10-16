@@ -111,6 +111,19 @@ test_cmd "loki --version exits 0 and shows version" \
 test_cmd "loki status exits 0" \
     0 "" status
 
+# P12-19: status freshness label for the newest Loki 10 run (bash route)
+((TOTAL++))
+_fresh_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-fresh.XXXXXXXX")"
+mkdir -p "$_fresh_dir/.loki/runs/e10-20261016T000000Z-aaaa"
+printf '%s\n' '{"v":1,"seq":7,"ts":"2020-01-01T00:00:00Z","run":"e10-20261016T000000Z-aaaa","type":"heartbeat","stage":null,"data":{}}' > "$_fresh_dir/.loki/runs/e10-20261016T000000Z-aaaa/events.jsonl"
+_fresh_out="$(cd "$_fresh_dir" && LOKI_DIR="$_fresh_dir/.loki" "$LOKI" status 2>&1)" || true
+if echo "$_fresh_out" | grep -Eq 'last event [0-9]+s ago \(seq 7\)'; then
+    log_pass "loki status shows last event age and seq"
+else
+    log_fail "loki status shows last event age and seq" "got: $_fresh_out"
+fi
+rm -rf -- "$_fresh_dir"
+
 # -------------------------------------------
 # Test: loki config show
 # -------------------------------------------

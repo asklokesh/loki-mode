@@ -1,18 +1,20 @@
 // D82-LIVELINE: quiet-mode live status line. Presentation only, kept in e10ext so the D29 core budget holds.
 import { formatDuration } from "../engine10/output.ts";
 import { terminalWidth } from "../util/term_width.ts";
+import { controlRunLink } from "../util/run_outputs.ts";
 const LIVE_LABELS: Record<string, string> = { intake: "reading the task", plan: "planning", wall: "writing acceptance checks", implement: "implementing", verify: "verifying", fix: "fixing failures", commit: "committing", seal: "sealing the receipt", pr: "opening the PR", deep: "deep review" };
-export interface LiveLineOpts { tty: boolean; write: (s: string) => void; now?: () => number; columns?: number; graceS?: number }
+export interface LiveLineOpts { tty: boolean; write: (s: string) => void; now?: () => number; columns?: number; graceS?: number; repoDir?: string }
 /** D82: quiet-mode progress. TTY: one status line rewritten in place (\r + clear-line), cleared before the summary. Non-TTY: one plain line per stage that stays open past graceS (fast stages print nothing, so the D48 line budget holds). */
 export class LiveLine {
   private cur: { stage: string; at: number; announced: boolean } | null = null;
   private done: { stage: string; s: number } | null = null;
-  private url: string | null = null; private shown = false; private closed = false; private readonly t0: number;
+  private url: string | null = null; private runId: string | null = null; private shown = false; private closed = false; private readonly t0: number;
   constructor(private o: LiveLineOpts) { this.t0 = (o.now ?? Date.now)(); }
   private now(): number { return (this.o.now ?? Date.now)(); }
   setUrl(u: string): void { if (u && u !== this.url) { this.url = u; this.render(); } }
-  onEvent(e: { type: string; stage: string | null; data: Record<string, unknown> }): void {
+  onEvent(e: { type: string; stage: string | null; data: Record<string, unknown>; run?: string }): void {
     if (this.closed) return;
+    if (typeof e.run === "string" && e.run) this.runId = e.run;
     const cp = e.data?.control_plane_url; if (typeof cp === "string" && cp) this.url = cp;
     if (e.type === "stage.started" && e.stage) this.cur = { stage: e.stage, at: this.now(), announced: false };
     else if (/^stage\.(completed|failed|skipped)$/.test(e.type) && e.stage) {
@@ -25,7 +27,7 @@ export class LiveLine {
     if (!this.cur) return null;
     const bits = [`[${this.cur.stage}] ${LIVE_LABELS[this.cur.stage] ?? this.cur.stage}`, formatDuration((this.now() - this.cur.at) / 1000)];
     if (this.done) bits.push(`(${this.done.stage} done ${formatDuration(this.done.s)})`);
-    if (this.url) bits.push(this.url);
+    if (this.url) bits.push(controlRunLink(this.url, this.o.repoDir ?? process.env.LOKI_E10_REPO_DIR ?? process.cwd(), this.runId ?? "") ?? this.url); // P12-19 (D06): deep link once the run id is known
     return bits.join("  ");
   }
   /** Heartbeat: redraws the TTY line (elapsed ticks) or announces a stage that outlived the grace period. */

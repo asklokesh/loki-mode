@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
-import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
+import { controlRunLink, issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
@@ -47,6 +47,25 @@ describe("loki status (Loki 10)", () => {
     expect(out).toContain("$0.42");
     expect(out).toContain("https://github.com/acme/widgets/pull/99");
     expect(out).toContain("receipt.json");
+  });
+
+  test("text and json status carry last event age and seq (P12-19)", async () => {
+    writeRun("e10-20261003T000000Z-aaaa", { done: true });
+    const { out } = await run([]);
+    expect(out).toMatch(/last event \d+s ago \(seq 5\)/);
+    const j = JSON.parse((await run(["--json"])).out);
+    expect(j.last_event_seq).toBe(5);
+    expect(j.last_event_ago_s).toBeGreaterThanOrEqual(0);
+  });
+  test("a running Control Plane yields a per-run deep link (P12-19)", async () => {
+    writeRun("e10-20261003T000000Z-aaaa", { done: true });
+    const orig = process.stdout.write.bind(process.stdout);
+    let out = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    try { await runModernStatus([], { ...env(), LOKI_CONTROL: "1", LOKI_CONTROL_URL: "http://127.0.0.1:47821/" }); } finally { process.stdout.write = orig; }
+    expect(out).toMatch(/Control Plane run: http:\/\/127\.0\.0\.1:47821\/#\/runs\/[0-9a-f]{16}\/e10-20261003T000000Z-aaaa/);
+    expect(controlRunLink(null, dir, "r")).toBeNull();
+    expect(controlRunLink("javascript:x", dir, "r")).toBeNull();
   });
 
   test("a live run is preferred over a newer-named completed one and shows its stage", async () => {
@@ -272,6 +291,9 @@ describe("issue status projector (FV-gh-steer-3)", () => {
     expect(body).toContain("Operator steers applied: 2");
     expect(body).toContain("Pull request: https://github.com/o/r/pull/3");
     expect(body).not.toContain("SECRET PLAN TEXT");
+    expect(body).toMatch(/Last event: seq \d+/);
+    expect(body).not.toContain("Control Plane:");
+    expect(issueStatusBody(evs, { runId: "r1", steerRevs: 0, controlUrl: "http://127.0.0.1:47821/#/runs/abc/r1" })).toContain("Control Plane: http://127.0.0.1:47821/#/runs/abc/r1");
     expect(body.match(/<!-- loki-status -->/g)!.length).toBe(1);
     expect(body).not.toMatch(/@victim|`rm`/);
   });
