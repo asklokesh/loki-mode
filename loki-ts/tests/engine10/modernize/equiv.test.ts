@@ -262,7 +262,7 @@ describe("checkEquivalence: each NOT_PROVEN cause gives NOT_PROVEN", () => {
     const sealed = JSON.parse(readFileSync(join(oracleDir(repoDir, mid, "vacuous_heldout"), "sealed.json"), "utf8")) as { held_out: string[] };
     // If the one held-out case is not c1, this test's premise does not hold for this seed; the
     // fixed set of 5 case ids and the deterministic split make this stable, but assert it so a
-    // future change to heldOutSplit fails loudly here instead of silently.
+    // future change to holdoutSplit fails loudly here instead of silently.
     expect(sealed.held_out).toEqual(["c1"]);
     const result = check("vacuous_heldout", "/new-tree", NO_NORMALIZERS, IDENTITY_RUNNER);
     expect(result.not_proven.some((n) => /no held-out cases were compared/.test(n))).toBe(true);
@@ -381,7 +381,7 @@ describe("modernizationVerified: a run with any NOT_PROVEN item can never report
   it("a sealed held_out of [] must not let checkEquivalence report PROVEN either", () => {
     // Simulates a corrupted or future oracle seal: PROVEN_ORACLE verdict, but an empty held_out
     // array, hand-written straight into sealed.json (never producible by today's M-12
-    // heldOutSplit, which always marks < 2 cases NOT_PROVEN -- this guards the checker itself,
+    // holdoutSplit, which always marks < 2 cases NOT_PROVEN -- this guards the checker itself,
     // not just the seal writer).
     sealRaw(
       "empty_heldout",

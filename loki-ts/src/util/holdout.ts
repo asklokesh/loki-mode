@@ -1,0 +1,65 @@
+// Shared deterministic holdout (P12-05): modernize holds out oracle cases, engine10's Wall holds out acceptance tests.
+// Selection is ranked by sha256(seed:id): no clock, file order or RNG. Held files live outside the repo (the implementer's cwd).
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, relative } from "node:path";
+
+const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+/** LOKI_WALL_HOLDOUT_RATIO: default 0 (off, opt-in; founder decision C-C4 pending), e.g. 0.2 holds out ~20%, an unparseable value is off, capped at 0.9. */
+export function wallHoldoutRatio(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env["LOKI_WALL_HOLDOUT_RATIO"]; if (raw === undefined || raw.trim() === "") return 0;
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(raw.trim())) return 0; // decimal only: hex (0x1), exponent, sign and words are garbage
+  const r = Number(raw); return Number.isFinite(r) ? Math.min(r, 0.9) : 0;
+}
+
+/** Deterministic split ranked by sha256(seed:id). Count is max(1, round(ratio*N)) for N >= min, else none; ids keep input order. */
+export function holdoutSplit(seed: string, ids: string[], opts: { ratio: number; min: number }): string[] {
+  if (opts.ratio <= 0 || ids.length < Math.max(1, opts.min)) return [];
+  const ranked = ids.map((id) => ({ id, d: sha(`${seed}:${id}`) })).sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  const held = new Set(ranked.slice(0, Math.max(1, Math.round(opts.ratio * ids.length))).map((r) => r.id));
+  return ids.filter((id) => held.has(id));
+}
+
+/** The one exact store path for a run (never a glob). */
+export const holdoutDirFor = (runId: string, repoDir: string): string => join(tmpdir(), `loki-e10-holdout-${sha(`${runId}:${repoDir}`).slice(0, 16)}`);
+/** Run-end cleanup: removes only this run's store. */
+export function removeHoldout(runId: string, repoDir: string): void { rmSync(holdoutDirFor(runId, repoDir), { recursive: true, force: true }); }
+
+interface HoldoutManifest { targetDir: string; files: { name: string; runner: string; sha256: string }[]; }
+const MANIFEST = "manifest.json";
+
+/** Wall holdout needs at least 3 tests so the implementer keeps at least 2 visible ones. */
+export const WALL_HOLDOUT_MIN = 3;
+
+/** Moves the held-out subset of srcDir's files out of the Wall author dir into a private dir under the OS tmp (never the repo), with a manifest. Returns the dir and the held names, or null when nothing is held. */
+export function stashHoldout(o: { runId: string; repoDir: string; srcDir: string; targetDir: string; names: string[]; runnerOf: (name: string) => string | null }): { dir: string; names: Set<string> } | null {
+  const eligible = o.names.filter((n) => o.runnerOf(n) !== null);
+  const held = holdoutSplit(o.runId, eligible, { ratio: wallHoldoutRatio(), min: WALL_HOLDOUT_MIN });
+  if (held.length === 0) return null;
+  const dir = holdoutDirFor(o.runId, o.repoDir);
+  rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const files = held.map((name) => {
+    copyFileSync(join(o.srcDir, name), join(dir, name)); rmSync(join(o.srcDir, name), { force: true });
+    return { name, runner: o.runnerOf(name)!, sha256: sha(readFileSync(join(dir, name), "utf8")) };
+  });
+  writeFileSync(join(dir, MANIFEST), JSON.stringify({ targetDir: o.targetDir, files } satisfies HoldoutManifest));
+  return { dir, names: new Set(held) };
+}
+
+/** Verify time only: copies the held files into the Wall target dir under neutral names and returns their TestRefs. A missing dir, manifest or file, or a sha mismatch, yields a `missing` entry so the caller fails closed. */
+export function stageHoldout(dir: string, repoDir: string): { tests: { runner: string; path: string }[]; missing: string[]; cleanup: () => void } {
+  const put: string[] = [], tests: { runner: string; path: string }[] = [], missing: string[] = [];
+  let man: HoldoutManifest | null = null;
+  try { man = JSON.parse(readFileSync(join(dir, MANIFEST), "utf8")) as HoldoutManifest; } catch { /* handled below */ }
+  if (!man) return { tests, missing: [`holdout store unreadable: ${basename(dir)}`], cleanup: () => {} };
+  mkdirSync(man.targetDir, { recursive: true });
+  man.files.forEach((f, i) => {
+    const src = join(dir, f.name);
+    if (!existsSync(src) || sha(readFileSync(src, "utf8")) !== f.sha256) { missing.push(`holdout ${i + 1} missing or altered`); return; }
+    const dest = join(man.targetDir, `loki_wall_holdout_${i + 1}${f.name.slice(f.name.indexOf("."))}`);
+    copyFileSync(src, dest); put.push(dest); tests.push({ runner: f.runner, path: relative(repoDir, dest) });
+  });
+  return { tests, missing, cleanup: () => { for (const p of put) rmSync(p, { force: true }); } };
+}
