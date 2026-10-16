@@ -2,7 +2,7 @@
 // cannot seal VERIFIED (the agent could be mocking the code under test). Shared files (package.json, go.mod, Cargo.toml, ...) are
 // compared base vs head by section, so a dependency bump is not config but a pretest edit, a go.mod replace or a tsconfig path is.
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
@@ -69,4 +69,43 @@ export function testConfigChanged(repoDir: string, baseSha: string, changed: str
     const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
     try { return relevant(spec.shared, b || e) !== relevant(spec.shared, h || e); } catch { return true; }
   });
+}
+const REFS = /["']?\b(?:preload|setupFiles|setupFilesAfterEnv|setupFilesAfterFramework|globalSetup|globalTeardown)\b["']?\s*[:=]\s*(\[[^\]]*\]|"[^"\n]*"|'[^'\n]*')/g, MAPPER = /moduleNameMapper["']?\s*[:=]\s*\{([^}]*)\}/g, ROOT_DIR = /\brootDir["']?\s*[:=]\s*(?:["']([^"'\n]*)["'])?/, QUOTED = /["']([^"'\n]+)["']/g;
+const EXT = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json", ".py", "/index.ts", "/index.js"];
+/** Repo-relative candidates for every file a config loads (preload, setupFiles, globalSetup, exact-file moduleNameMapper target). Wildcard mapper targets map a tree, not a mock, so they are skipped.
+ *  Jest's rootDir is the folder holding the config; an explicit rootDir is unknowable here, so every plausible root is tried (fail closed). */
+function referenced(cfg: string, text: string): string[] {
+  const raw = [...text.matchAll(REFS)].flatMap((m) => [...m[1]!.matchAll(QUOTED)].map((q) => q[1]!));
+  for (const m of text.matchAll(MAPPER)) for (const kv of m[1]!.split(",")) { const v = [...kv.matchAll(QUOTED)][1]?.[1]; if (v && !/[$*]/.test(v)) raw.push(v); }
+  const dir = dirname(cfg), explicit = ROOT_DIR.exec(text), roots = [dir];
+  if (explicit) roots.push("", ...(explicit[1] ? [join(dir, explicit[1])] : []));
+  return raw.flatMap((r) => r.startsWith("/") ? [normalize(r.slice(1))] : roots.map((root) => normalize(join(root, r.replace(/^<rootDir>\/?/, "")))));
+}
+const gitOut = (dir: string, args: string[], signal?: AbortSignal): string => safeGit(dir, args, { timeout: 20000, maxBuffer: 64 << 20, ...(signal ? { signal } : {}) });
+/** FC-09 seal side: NOT PROVEN lines for every runner config, and every file one loads, that the run added, changed or deleted between base and head
+ *  (`changed` = repo-relative paths from the base..head diff). Shared files count only when their runner section differs. An unchanged broken config never caps. */
+export function runnerConfigNotes(repoDir: string, baseSha: string, head: string, changed: string[], signal?: AbortSignal): string[] {
+  const notes = new Set<string>(), ch = new Set(changed.map((c) => normalize(c)));
+  for (const c of ch) if (/(^|\/)__mocks__\//.test(c)) notes.add(`runner setup file changed: ${c} (jest/vitest manual mock)`);
+  const trees = new Map<string, Set<string>>();
+  try { for (const rev of [baseSha, head]) trees.set(rev, new Set(gitOut(repoDir, ["ls-tree", "-r", "--name-only", rev], signal).split("\n").filter(Boolean))); } catch { if (ch.size) notes.add("runner config not inspected: tree listing failed"); return [...notes]; }
+  const cfgs = new Set<string>();
+  for (const tree of trees.values()) for (const f of tree) if (RUNNER_CONFIGS.some((s) => s.re.test(f))) cfgs.add(f);
+  for (const cfg of [...cfgs].sort()) {
+    const spec = RUNNER_CONFIGS.find((s) => s.re.test(cfg))!, refs = new Set<string>(), texts: string[] = [];
+    let changedHere = false;
+    try {
+      for (const rev of [baseSha, head]) {
+        const tree = trees.get(rev)!, t = tree.has(cfg) ? gitOut(repoDir, ["show", `${rev}:${cfg}`], signal) : "";
+        texts.push(t);
+        if (spec.shared && t) relevant(spec.shared, t); // throws when this side is malformed: fail closed below
+        for (const c of referenced(cfg, t)) refs.add(EXT.map((e) => c + e).find((p) => tree.has(p)) ?? c);
+      }
+      const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
+      changedHere = !spec.shared || /conftest\.py$/.test(cfg) || relevant(spec.shared, texts[0] || e) !== relevant(spec.shared, texts[1] || e);
+    } catch { if (ch.has(cfg)) notes.add(`runner config unparseable, trust capped: ${cfg}`); continue; }
+    if (ch.has(cfg) && changedHere) notes.add(`runner config changed: ${cfg} (the run could mock the code under test)`);
+    for (const r of [...refs].sort()) if (ch.has(r)) notes.add(`runner setup file changed: ${r} (loaded by ${cfg} as a preload, setup or mapper target)`);
+  }
+  return [...notes];
 }
