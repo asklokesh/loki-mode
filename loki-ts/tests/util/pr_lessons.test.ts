@@ -544,6 +544,52 @@ describe("respondToReview", () => {
     expect(replies(e.calls).length).toBe(0);
   });
 
+  const realRepo = (remote = "https://github.com/o/r.git") => {
+    const d = mk();
+    const run = (args: string[]): string => execFileSync("git", args, { cwd: d, encoding: "utf8" });
+    run(["init", "-q", "-b", "feat"]); run(["config", "user.email", "t@t.test"]); run(["config", "user.name", "t"]);
+    run(["remote", "add", "origin", remote]);
+    writeFileSync(join(d, "a.ts"), "1\n"); run(["add", "a.ts"]); run(["commit", "-q", "-m", "base"]);
+    return { d, run };
+  };
+
+  it("real repo: a fixer that checks out another branch throws with no push and no replies", async () => {
+    const { d, run } = realRepo();
+    const e = mkEnv([C(1, "x")]);
+    const pushed: string[] = [];
+    await expect(respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { run(["checkout", "-q", "-b", "other"]); writeFileSync(join(d, "a.ts"), "2\n"); return true; } })).rejects.toThrow(/'other'/);
+    expect(pushed).toEqual([]);
+    expect(replies(e.calls).length).toBe(0);
+    expect(run(["log", "--oneline"]).trim().split("\n").length).toBe(1);
+  });
+
+  it("real repo: the normal path commits on the PR branch, pushes once and replies with the real sha", async () => {
+    const { d, run } = realRepo();
+    const e = mkEnv([C(1, "x")]);
+    const pushed: string[] = [];
+    const r = await respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); return true; } });
+    expect(r.fixed).toBe(1);
+    expect(r.shas[0]).toBe(run(["rev-parse", "HEAD"]).trim());
+    expect(pushed).toEqual(["feat"]);
+    expect(replies(e.calls).length).toBe(1);
+  });
+
+  it("real repo: a recorded sha that left the PR branch blocks the push and the replies", async () => {
+    const { d, run } = realRepo();
+    const e = mkEnv([C(1, "x"), C(2, "y")]);
+    const pushed: string[] = [];
+    let n = 0;
+    await expect(respondToReview(d, "o/r#7", { gh: e.gh, push: (h) => { pushed.push(h); }, fix: async () => { n++; if (n === 2) run(["reset", "-q", "--hard", "HEAD~1"]); writeFileSync(join(d, "a.ts"), `v${n}\n`); return true; } })).rejects.toThrow(/is not on 'feat'/);
+    expect(pushed).toEqual([]);
+    expect(replies(e.calls).length).toBe(0);
+  });
+
+  it("repo comparison is case-insensitive (Owner/Repo matches owner/repo)", async () => {
+    const e = mkEnv([C(1, "x")]);
+    const r = await respondToReview(mk(), "Owner/Repo#7", { originUrl: () => "https://github.com/owner/repo.git", gh: async (a) => e.gh(a.map((x) => x.replace(/Owner\/Repo/g, "o/r"))), git: e.vcs, push: e.push, fix: e.edit });
+    expect(r.fixed).toBe(1);
+  });
+
   it("default push passes the pinned origin env and runs the real push script onto the origin", () => {
     const d = mk();
     const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });
