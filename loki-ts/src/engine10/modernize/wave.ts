@@ -4,6 +4,9 @@
 // reason naming the failing step (M-21 ship consumes this verdict). Child processes get tokenFreeEnv.
 // Output is kept only as a bounded tail for humans, never parsed and never in the reason string.
 import { spawnSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { InventoryResult } from "./inventory.ts";
 import type { ModernizeLog } from "./log.ts";
 import { tokenFreeEnv } from "../../util/safe_git.ts";
 
@@ -118,4 +121,24 @@ export function verifyWave(opts: VerifyWaveOpts): WaveVerdict {
 export function nextWaveGate(prior: WaveVerdict[]): { allowed: boolean; reason: string | null } {
   const bad = prior.find((v) => !v.verified);
   return bad ? { allowed: false, reason: bad.reason ?? `wave ${bad.wave} blocked: not verified` } : { allowed: true, reason: null };
+}
+
+/** Verify argv from the Inventory (M-27D). Fail closed: an undetected step is null, never another step's command. */
+export function detectWaveCommands(inv: InventoryResult, target: string): Record<WaveStep, StepCommand | null> {
+  const { system, marker } = inv.buildSystem;
+  const none = { build: null, integration: null, original_suite: null };
+  const text = (): string => { try { return readFileSync(join(target, marker ?? ""), "utf8"); } catch { return ""; } };
+  if (system === "maven") return { build: { argv: ["mvn", "-B", "-q", "compile"] }, integration: { argv: ["mvn", "-B", "verify"] }, original_suite: { argv: ["mvn", "-B", "test"] } };
+  if (system === "gradle") {
+    let gw = "gradle";
+    try { if (inv.files.includes("gradlew") && (statSync(join(target, "gradlew")).mode & 0o111) !== 0) gw = "./gradlew"; } catch { /* keep gradle */ }
+    return { build: { argv: [gw, "assemble"] }, integration: text().includes("integrationTest") ? { argv: [gw, "integrationTest"] } : null, original_suite: { argv: [gw, "test"] } };
+  }
+  if (system !== "setuptools" && system !== "poetry" && system !== "tox") return none;
+  const dirs = inv.files.map((f) => f.split("/").slice(0, -1).join("/"));
+  const itDir = dirs.find((d) => d === "tests/integration" || d === "integration");
+  const pytest = "pytest" in inv.tests.evidence;
+  const integration: StepCommand | null = system === "tox" && text().includes("[testenv:integration") ? { argv: ["tox", "-e", "integration"] }
+    : itDir && pytest ? { argv: ["python3", "-m", "pytest", "-q", itDir] } : null;
+  return { build: { argv: ["python3", "-m", "compileall", "-q", "-x", "/\\.loki/", "."] }, integration, original_suite: pytest ? { argv: ["python3", "-m", "pytest", "-q"] } : null };
 }
