@@ -169,3 +169,76 @@ describe("FC-09s runner_config sibling sweep", () => {
     expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
   });
 });
+
+describe("FC-09t runner_config commented headers and path deps", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[lib]\nname = "x"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  test.each([
+    ['[patch.crates-io] # local\nserde = { path = "f" }\n'],
+    ['[ patch.crates-io ]\nserde = { path = "f" }\n'],
+    ['[patch . crates-io]\nserde = { path = "f" }\n'],
+  ])("patch header variant caps: %s", (add) => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO + "\n" + add)).toEqual(["Cargo.toml"]);
+  });
+  test("[dev-dependencies] # t with path= caps", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace("[dev-dependencies]", "[dev-dependencies] # t").replace('tokio = "1"', 'tokio = { path = "../f" }'))).toEqual(["Cargo.toml"]);
+  });
+  test("[dependencies] and [workspace.dependencies] path= cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { path = "../f" }'))).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO + '\n[workspace.dependencies]\nfoo = { path = "../f" }\n')).toEqual(["Cargo.toml"]);
+  });
+  test("dev-dependency git= caps; [dependencies] git= alone does not", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('tokio = "1"', 'tokio = { git = "https://x/y" }'))).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual([]);
+  });
+  test("[[test]] path and [lib] test = false cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO + '\n[[test]]\nname = "it"\npath = "fake.rs"\n')).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('[lib]\nname = "x"\n', '[lib]\nname = "x"\ntest = false\n'))).toEqual(["Cargo.toml"]);
+  });
+  test("comment-only edits and plain version bump do not cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace("[dependencies]", "[dependencies] # deps").replace('serde = "1"', 'serde = "2" # bump'))).toEqual([]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('name = "x"\n\n[dep', 'name = "x"\nversion = "0.2.0"\n\n[dep'))).toEqual([]);
+  });
+  test("go.work use lines cap: single, block, newly created", () => {
+    const W = "go 1.21\n\nuse ./a\n";
+    expect(capsOn("go.work", W, W + "use ./x\n")).toEqual(["go.work"]);
+    expect(capsOn("go.work", W, "go 1.21\n\nuse (\n\t./a\n\t./x\n)\n")).toEqual(["go.work"]);
+    const r = repo({ "README.md": "x\n" });
+    r.edit("go.work", "use ./x\n");
+    expect(testConfigChanged(r.dir, r.base, ["go.work"])).toEqual(["go.work"]);
+  });
+  test("go.work go directive bump and package.json version bump do not cap", () => {
+    const W = "go 1.21\n\nuse ./a\n";
+    expect(capsOn("go.work", W, W.replace("1.21", "1.22"))).toEqual([]);
+    expect(capsOn("package.json", '{"version":"1.0.0"}', '{"version":"1.0.1"}')).toEqual([]);
+  });
+  test(".pnpmfile.mjs edit caps", () => {
+    expect(capsOn(".pnpmfile.mjs", "a\n", "b\n")).toEqual([".pnpmfile.mjs"]);
+  });
+});
+
+describe("FC-09t r2 Cargo dotted-key paths", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[lib]\nname = "x"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  test.each([
+    ["dotted dependencies under [workspace]", '[workspace]\ndependencies.serde = { path = "../s" }\n'],
+    ["dotted dev-dependencies under [target.cfg]", "[target.'cfg(unix)']\ndev-dependencies.serde = { path = \"../s\" }\n"],
+    ["top-level dotted target dependencies", "target.'cfg(unix)'.dependencies.serde = { path = \"../s\" }\n"],
+    ["top-level lib.test = false", "lib.test = false\n"],
+    ["top-level lib inline table", "lib = { test = false }\n"],
+    ["top-level inline test array", 'test = [{ name = "t", path = "tests/fake.rs", harness = false }]\n'],
+    ["[ workspace . dependencies ] path dep", '[ workspace . dependencies ]\nfoo = { path = "../f" }\n'],
+    ["dev-dependency package rename", '[dev-dependencies]\ntokio = { package = "other", version = "1" }\n'],
+    ["dev-dependency registry", '[dev-dependencies]\ntokio = { registry = "r", version = "1" }\n'],
+    ["[build-dependencies] path", '[build-dependencies]\ncc = { path = "../cc" }\n'],
+  ])("%s caps", (_n, add) => {
+    expect(capsOn("Cargo.toml", CARGO, add + "\n" + CARGO)).toEqual(["Cargo.toml"]);
+  });
+  test("dotted dependency version entry does not cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, '[workspace]\ndependencies.serde = "2"\n\n' + CARGO)).toEqual([]);
+  });
+  test("go.work use block gains an entry", () => {
+    const B = "go 1.21\n\nuse (\n\t./a\n)\n";
+    expect(capsOn("go.work", B, B.replace("\t./a\n", "\t./a\n\t./x\n"))).toEqual(["go.work"]);
+  });
+});
