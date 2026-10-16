@@ -1,10 +1,8 @@
 // loki-ts/src/engine10/modernize/wave.ts -- M-20: wave verify (docs/v10/MODERNIZE.md section 3.5 "Per wave", D30).
-// After a wave's units merge, run the full build, the integration checks and the ORIGINAL test suite of the
-// legacy repo. A wave is verified only if all three pass. Any failure blocks the next wave with a fixed
-// reason that names the failing step. No other modernize module owns wave verification (scheduler.ts only
-// plans and runs units; M-21 ship consumes this verdict), so this is the one home for it. Child processes get
-// tokenFreeEnv (no GH token, no SSH agent). Output is kept only as a bounded tail for humans: it is never
-// parsed, and it never enters the reason string, so the reason is deterministic.
+// After a wave's units merge, run the full build, the integration checks and the ORIGINAL legacy test
+// suite. A wave is verified only if all three pass; any failure blocks the next wave with a fixed
+// reason naming the failing step (M-21 ship consumes this verdict). Child processes get tokenFreeEnv.
+// Output is kept only as a bounded tail for humans, never parsed and never in the reason string.
 import { spawnSync } from "node:child_process";
 import type { ModernizeLog } from "./log.ts";
 import { tokenFreeEnv } from "../../util/safe_git.ts";

@@ -4,12 +4,9 @@
 // harness executes them and keeps only the inputs that add branches. It stops at a plateau
 // (two rounds with no gain) or at the unit's capture budget.").
 //
-// Pure algorithm: both the provider call and the case executor are injected, so the loop stays
-// deterministic with a stub provider (section 13). `realCaptureRunner` below is the real
-// executor: it shells out to M-09's py_capture.py the way lang/python.ts (M-03) shells out to
-// py_imports.py. Wiring a real ProposeInputs (an actual read-only model session, as opposed to
-// the harness that runs its proposals) is the oracle-capture orchestrator's job, not this
-// slice's -- that needs a provider client this file set has no access to.
+// Pure algorithm: the provider call and case executor are injected, so the loop is deterministic
+// with a stub provider (section 13). `realCaptureRunner` shells out to M-09's py_capture.py. Wiring
+// a real ProposeInputs (a read-only model session) is the oracle-capture orchestrator's job.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,8 +15,7 @@ import { REPO_ROOT } from "../../../util/paths.ts";
 
 const PY_CAPTURE_SCRIPT = join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py");
 
-/** One candidate or seed input, in py_capture.py's --cases line format (that file's docstring,
- *  "INPUT"). Values here are already type-tagged; search.ts never interprets them. */
+/** One candidate or seed input, in py_capture.py's --cases line format. Values are already type-tagged. */
 export interface CaseSpec {
   entry: string;
   args: unknown[];
@@ -38,20 +34,16 @@ export interface CoverageResult {
   branchesTaken: number;
   branchPct: number;
   missing: CoverageMissing[];
-  /** Set only on a CAPTURE_FAILED result (branchesTotal < 0): why this specific capture failed
-   *  (section 3.2's NOT PROVEN reason), e.g. "old runtime unavailable" vs a py_capture.py exit. */
+  /** Set only on a CAPTURE_FAILED result (branchesTotal < 0): why it failed (section 3.2's NOT PROVEN reason). */
   error?: string;
 }
 
-/** Runs `cases` through the capture tracer for one unit and reports the coverage that set
- *  reaches. `unitSource` is opaque to search() itself: a stub in tests can treat it as literal
- *  source text, while `realCaptureRunner` (below) treats it as the unit's file path, matching
- *  py_capture.py's `--unit <path>`. Swapped for a stub in tests. */
+/** Runs `cases` through the capture tracer and reports the coverage reached. `unitSource` is opaque
+ *  to search(): stubs treat it as source text, realCaptureRunner as the unit's file path. */
 export type CaptureRunner = (unitSource: string, cases: readonly CaseSpec[]) => CoverageResult;
 
-/** The read-only provider session (section 3.2): given the unit source and this round's
- *  uncovered branches, proposes candidate cases. Returning [] means the session has nothing
- *  left to propose, which counts as a no-gain round toward the plateau. */
+/** The read-only provider session (section 3.2): proposes candidate cases for the uncovered
+ *  branches. Returning [] counts as a no-gain round toward the plateau. */
 export type ProposeInputs = (
   unitSource: string,
   missing: readonly CoverageMissing[],
@@ -82,11 +74,9 @@ export interface SearchResult {
   reason?: string;
 }
 
-/** Coverage-guided input search over one unit's seed cases. Each round asks `propose` for
- *  candidates against the current uncovered branches, then keeps only the ones that, added to
- *  the running case set, raise `branchesTaken` -- matching "the harness executes them and keeps
- *  only the inputs that add branches" exactly, including order sensitivity (a candidate that
- *  duplicates a branch an already-kept candidate this round just added is dropped). */
+/** Coverage-guided input search over one unit's seed cases. Each round keeps only the proposed
+ *  candidates that raise `branchesTaken` when added to the running set (order-sensitive: a
+ *  candidate duplicating a branch just added this round is dropped). */
 export function search(
   unitSource: string,
   seedCases: readonly CaseSpec[],
@@ -100,10 +90,8 @@ export function search(
   let cases = [...seedCases];
   let coverage = runCapture(unitSource, cases);
   const rounds: SearchRound[] = [];
-  // A failed seed capture (CAPTURE_FAILED: branchesTotal -1) is not a real 0%-coverage unit --
-  // section 3.2: "capture fails and the unit is NOT PROVEN". Ending here, before propose is ever
-  // called, keeps this the one place that distinguishes real from fabricated coverage: every
-  // later round only ever sees a coverage value that came from this successful seed capture.
+  // A failed seed capture (branchesTotal -1) is not a real 0%-coverage unit (section 3.2: NOT
+  // PROVEN). Ending before propose keeps this the one place that tells real from fabricated coverage.
   if (coverage.branchesTotal < 0) {
     return { cases, coverage, rounds, stoppedReason: "capture_failed", reason: coverage.error ?? "seed capture failed" };
   }
@@ -140,14 +128,11 @@ export function search(
   return { cases, coverage, rounds, stoppedReason: "budget" };
 }
 
-/** Builds a CAPTURE_FAILED result for a specific cause: worse than any real coverage
- *  (branchesTaken -1, so `search`'s `>` keep-check always rejects it) and never mistaken for
- *  full coverage (missing is non-empty even when branchesTotal is unknown). A model-proposed
- *  candidate is untrusted input -- py_capture.py exits nonzero for the whole batch when even
- *  one case in it names a missing entry or an unparseable tagged value (verified: `py_capture:
- *  entry not found or not callable: <name>`, exit 2), so that must drop the one candidate, never
- *  abort the search or throw. `cause` is the specific reason (never fabricated as a single
- *  generic message): search() surfaces it verbatim as the seed-failure `reason`. */
+/** Builds a CAPTURE_FAILED result: worse than any real coverage (branchesTaken -1, so search's `>`
+ *  keep-check rejects it) and never mistaken for full coverage (missing is non-empty). A
+ *  model-proposed candidate is untrusted: py_capture.py exits nonzero for the whole batch when one
+ *  case names a missing entry or bad tagged value (exit 2), which must drop that candidate, never
+ *  abort or throw. `cause` is surfaced verbatim as the seed-failure `reason`. */
 function captureFailed(cause: string): CoverageResult {
   return {
     branchesTotal: -1, branchesTaken: -1, branchPct: 0,
@@ -162,15 +147,11 @@ interface RawCoverageJson {
   missing: CoverageMissing[];
 }
 
-/** Real `CaptureRunner`: shells out to py_capture.py (M-09) for one round's cases, under the OLD
- *  runtime (section 3.2: `LOKI_MOD_OLD_RUNTIME`, else python2.7/python2 on PATH) -- never the new
- *  runtime util/python.ts resolves, because a 2/3-compatible unit captured under the new runtime
- *  would seal golden records the old runtime never actually produced, breaking the oracle.
- *  `unitPath` is a filesystem path, per py_capture.py's `--unit`. Never throws: a missing old
- *  runtime, a nonzero exit or malformed coverage.json all come back as a CAPTURE_FAILED result
- *  (see captureFailed) carrying the specific cause, so an untrusted candidate is dropped
- *  mid-search, not fatal; a failed SEED capture is what search() turns into "capture_failed"
- *  (never a fake plateau), with that same cause as its `reason`. */
+/** Real `CaptureRunner`: shells out to py_capture.py (M-09) under the OLD runtime (section 3.2:
+ *  `LOKI_MOD_OLD_RUNTIME`, else python2.7/python2) -- never the new runtime, which would seal
+ *  golden records the old runtime never produced. `unitPath` is a filesystem path. Never throws:
+ *  a missing runtime, nonzero exit or malformed coverage.json returns a CAPTURE_FAILED result with
+ *  the cause; search() turns a failed SEED capture into "capture_failed", never a fake plateau. */
 export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[]): CoverageResult {
   const py = resolveOldRuntimeSync();
   if (!py) return captureFailed("old runtime unavailable");
@@ -203,10 +184,8 @@ export function realCaptureRunner(unitPath: string, cases: readonly CaseSpec[]):
   }
 }
 
-// Section 3.2's old-runtime resolution, sync (search()'s loop is sync): LOKI_MOD_OLD_RUNTIME
-// if set, else python2.7 then python2 on PATH. Mirrors tests/test-modernize-py-capture.sh
-// section 12's shell resolution exactly, the only other place this is done. Not cached: callers
-// of this module are one-shot capture rounds, not a hot path.
+// Section 3.2's old-runtime resolution (sync): LOKI_MOD_OLD_RUNTIME, else python2.7 then python2.
+// Mirrors tests/test-modernize-py-capture.sh section 12. Not cached (one-shot rounds).
 function resolveOldRuntimeSync(): string | null {
   const envRuntime = process.env["LOKI_MOD_OLD_RUNTIME"];
   for (const cmd of envRuntime ? [envRuntime] : ["python2.7", "python2"]) {

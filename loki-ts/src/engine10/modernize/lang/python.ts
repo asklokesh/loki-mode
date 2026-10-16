@@ -29,11 +29,9 @@ interface RawOutput {
   unresolved: UnresolvedImport[];
 }
 
-/** Builds the Python dependency graph for `files` (repo-relative .py paths, as
- *  M-02's inventory already found them). Never throws: python3 missing, a
- *  timeout, or malformed script output all come back as an empty graph plus
- *  every file recorded unresolved -- a scan that can't run is not the same
- *  claim as "these files import nothing", so the caller can tell the two apart. */
+/** Builds the Python dependency graph for `files` (repo-relative .py paths from M-02). Never throws:
+ *  python3 missing, a timeout or malformed output yield an empty graph with every file unresolved,
+ *  so "could not scan" is distinguishable from "imports nothing". */
 export async function buildPythonGraph(
   repoDir: string,
   files: readonly string[],

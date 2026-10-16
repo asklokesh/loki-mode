@@ -30,8 +30,7 @@ export interface AttemptCtx {
   worker: number;
   worktree: string;
   baseSha: string;
-  /** Set on a resumed unit (M-22): the recorded engine10 run id, to be continued through the E-39 resume path
-   *  (`loki --resume <run-id>`) inside the reattached worktree rather than started over. */
+  /** Set on a resumed unit (M-22): the recorded run id, continued via E-39 (`loki --resume <run-id>`) in the reattached worktree. */
   resumeRunId?: string;
 }
 export interface AttemptOutcome {
@@ -55,9 +54,8 @@ export interface MergeOps {
 }
 export type MergeResult = "merged" | "already_completed" | "adopted";
 
-/** Idempotent merge. The merge and the unit.completed write are not atomic, so a crash can land between
- *  them: on restart the repo says merged but the log does not say completed. That case is adopted (the
- *  completion is recorded) and the merge is never repeated. */
+/** Idempotent merge. The merge and unit.completed write are not atomic: if a crash lands between them,
+ *  the repo says merged but the log does not, so the completion is adopted and the merge never repeated. */
 export function mergeOnce(unit: string, ops: MergeOps, log: ModernizeLog, completed: ReadonlySet<string>, worktree?: string): MergeResult {
   if (completed.has(unit)) return "already_completed";
   if (ops.isMerged(unit)) {
@@ -69,8 +67,8 @@ export function mergeOnce(unit: string, ops: MergeOps, log: ModernizeLog, comple
   return "merged";
 }
 
-/** Real git worktrees. Argument arrays only (no shell), detached at the recorded base. Routed through safeGit (FC-25): a unit agent
- *  can plant hooks or config in the shared common git dir, so hooks and fsmonitor are off and the token is withheld. */
+/** Real git worktrees: argument arrays (no shell), detached at the recorded base, via safeGit (FC-25:
+ *  a unit agent can plant hooks/config in the shared git dir, so hooks and fsmonitor are off). */
 export const gitWorktrees: WorktreeOps = {
   create(repoDir, path, baseSha) {
     safeGit(repoDir, ["worktree", "add", "--detach", "--force", path, baseSha]);
@@ -150,8 +148,7 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
   let inFlight = 0;
   let hit = false;
 
-  // running = units counted in inFlight before this check. At dispatch the candidate is not yet in inFlight (add 1);
-  // inside the cascade the current unit already is (add 0).
+  // `candidates`: 1 at dispatch (the unit is not yet in inFlight), 0 inside the cascade (it already is).
   const stopped = (candidates: 0 | 1): boolean => {
     if (hit) return true;
     const over = est == null
@@ -186,8 +183,7 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
       const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? unit.id : `${unit.id}${VARIANT_SEP}${variant}`);
       let outcome: AttemptOutcome;
       attempts++;
-      // Resume (M-22): reattach the recorded worktree and hand the run id to the E-39 path. If the worktree cannot be
-      // reattached at the recorded base, restart cleanly and say why in the log.
+      // Resume (M-22): reattach the recorded worktree at its base and hand the run id to E-39, else restart cleanly and log why.
       let resumeRunId: string | undefined;
       const wantRun = variant === 0 ? opts.resumeRuns?.get(unit.id) : undefined;
       if (wantRun !== undefined) {

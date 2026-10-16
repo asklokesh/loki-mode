@@ -1,26 +1,17 @@
 // loki-ts/src/engine10/modernize/oracle/java.ts -- M-11: Java 8 to 21 oracle capture
-// (docs/v10/MODERNIZE.md sections 3.2, 7; uses the merged M-04 graph via
-// ../lang/java.ts to resolve each unit file's package -- the same regex
-// M-04 already uses, not a second copy of its scan). Every verdict lives
-// here, as pure functions over the raw files autonomy/lib/modernize/
-// java_capture.sh writes (status.json, jacoco.xml, replay1.jsonl,
-// replay2.jsonl): the shell script only runs tools, this module decides
-// what is proven. Coverage and case output paths follow types.ts's
-// oracleDir (unit -> cases.jsonl, coverage.json), matching M-09's shape.
+// (docs/v10/MODERNIZE.md sections 3.2, 7; resolves each unit file's package via the M-04 graph in
+// ../lang/java.ts). Every verdict is a pure function over the raw files autonomy/lib/modernize/
+// java_capture.sh writes (status.json, jacoco.xml, replay1.jsonl, replay2.jsonl): the script only
+// runs tools, this module decides what is proven. Output paths follow types.ts's oracleDir.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { REPO_ROOT } from "../../../util/paths.ts";
-import { buildJavaGraph } from "../lang/java.ts";
+import { PACKAGE_RE, buildJavaGraph } from "../lang/java.ts";
 
 const SCRIPT = join(REPO_ROOT, "autonomy", "lib", "modernize", "java_capture.sh");
-const PACKAGE_RE = /^\s*package\s+([\w.]+)\s*;/m;
 
-/** Fully-qualified class names for a unit's files, reusing M-04's own .java filtering
- *  (buildJavaGraph's graph.nodes) rather than re-scanning the file list here -- a file M-04
- *  dropped (not .java, unreadable) is dropped here the same way. The package-line regex is
- *  the one line of lang/java.ts's private scanJavaFiles this module needs and that file does
- *  not export, so it is repeated rather than exported for a one-line reason. */
+/** Fully-qualified class names for a unit's files, reusing M-04's .java filtering (graph.nodes). */
 export function unitClassesFromGraph(repoDir: string, files: readonly string[]): string[] {
   const { graph } = buildJavaGraph(repoDir, files);
   return graph.nodes.map((n) => {
@@ -31,9 +22,8 @@ export function unitClassesFromGraph(repoDir: string, files: readonly string[]):
   });
 }
 
-/** found:false means the script binary itself is missing -- separate from the script running
- *  and reporting no JDK 8, which is a normal, expected outcome, not a runner failure. Mirrors
- *  codemod.ts's CommandResult/CommandRunner so tests inject this the same way. */
+/** found:false means the script binary is missing, distinct from the script reporting no JDK 8
+ *  (a normal outcome). Mirrors codemod.ts's CommandRunner so tests inject it the same way. */
 export interface CommandResult {
   found: boolean;
   code: number | null;
@@ -41,8 +31,7 @@ export interface CommandResult {
 export type CommandRunner = (cmd: string, args: string[], cwd: string) => CommandResult;
 
 export const realCommandRunner: CommandRunner = (cmd, args, cwd) => {
-  // env is explicit, never inherited bare -- see tests/runner/spawn_env_guard.test.ts
-  // (BACKLOG 149): a spawn with no env silently carries real GH_TOKEN/SSH_AUTH_SOCK through.
+  // env explicit, never inherited bare (tests/runner/spawn_env_guard.test.ts, BACKLOG 149).
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: process.env });
   if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") return { found: false, code: null };
   return { found: true, code: r.status };
@@ -83,10 +72,7 @@ export interface CoverageResult {
   branches_total: number;
   branches_taken: number;
   branch_pct: number | null; // null = not measured (section 3.2); never rounds up to 100
-  missing: never[]; // ponytail: JaCoCo XML gives report-level counters only here, no per-line
-  // missing detail -- upgrade path: parse <line> elements once a real JaCoCo run is available
-  // to validate the schema against (section 7 gives the method/return/stdout fields the same
-  // way; this field mirrors py_capture's coverage.json shape for the equivalence checker).
+  missing: never[]; // ponytail: report-level counters only; parse <line> elements once a real JaCoCo run exists
 }
 
 export interface JavaCaptureResult {
@@ -132,12 +118,9 @@ function readJsonl(path: string): RawCase[] {
   return out;
 }
 
-/** JaCoCo's XML report nests a BRANCH <counter> inside every element (method, class, package)
- *  and rolls one up as a direct child of the root <report>. Regex-scraping the LAST BRANCH
- *  counter in the file lands on that report-level roll-up without a full XML parser.
- *  ponytail: never validated against a real JaCoCo run (none installed here) -- validated only
- *  against fixtures built from JaCoCo's documented XML schema. Upgrade path: swap for a real
- *  XML parser plus a live run once a JDK 8 + JaCoCo host exists. */
+/** JaCoCo nests a BRANCH <counter> in every element and rolls one up under the root <report>; the
+ *  LAST BRANCH counter in the file is that roll-up. ponytail: validated only against fixtures from
+ *  JaCoCo's documented schema; swap for a real XML parser once a JDK 8 + JaCoCo host exists. */
 function parseJacocoBranches(xml: string): { total: number; taken: number } | null {
   const re = /<counter\s+type="BRANCH"\s+missed="(\d+)"\s+covered="(\d+)"\s*\/>/g;
   let last: RegExpExecArray | null = null;
@@ -149,10 +132,7 @@ function parseJacocoBranches(xml: string): { total: number; taken: number } | nu
   return { total: missed + covered, taken: covered };
 }
 
-/** Deep-equal over already-parsed JSON values (cases are JSON-safe by construction: no NaN,
- *  no cycles, no functions), used for the double-replay determinism check (section 3.2:
- *  "Replay every case twice ... A field that differs between the replays is marked
- *  nondeterministic"). */
+/** Deep-equal over parsed JSON values, for the double-replay determinism check (section 3.2). */
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b || a === null || b === null) return false;
@@ -163,9 +143,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return ak.every((k) => deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
-/** Runs java_capture.sh, reads its raw artifacts, applies the double-replay determinism filter,
- *  the boundary check, the coverage floor, and writes cases.jsonl + coverage.json into opts.outDir.
- *  Every verdict here is a pure function of files on disk -- java_capture.sh only produced them. */
+/** Runs java_capture.sh, reads its artifacts, applies the determinism filter and coverage floor,
+ *  and writes cases.jsonl + coverage.json into opts.outDir. */
 export function captureJavaUnit(opts: JavaCaptureOpts): JavaCaptureResult {
   const runner = opts.runner ?? realCommandRunner;
   mkdirSync(opts.outDir, { recursive: true });
@@ -185,37 +164,33 @@ export function captureJavaUnit(opts: JavaCaptureOpts): JavaCaptureResult {
   const casesPath = join(opts.outDir, "cases.jsonl");
   const coveragePath = join(opts.outDir, "coverage.json");
 
+  const bail = (): JavaCaptureResult => {
+  const coverage: CoverageResult = {
+    unit: opts.unitDir, entries: classes, cases: 0,
+    branches_total: 0, branches_taken: 0, branch_pct: null, missing: [],
+  };
+  writeFileSync(casesPath, "");
+  writeFileSync(coveragePath, JSON.stringify(coverage));
+  return { proven: false, notProven, caseCount: 0, nondeterministicCount: 0, coverage, casesPath, coveragePath };
+  };
+
   if (!result.found) {
     notProven.push("skipped: no JDK 8", "java_capture.sh not found");
-    const coverage: CoverageResult = {
-      unit: opts.unitDir, entries: classes, cases: 0,
-      branches_total: 0, branches_taken: 0, branch_pct: null, missing: [],
-    };
-    writeFileSync(casesPath, "");
-    writeFileSync(coveragePath, JSON.stringify(coverage));
-    return { proven: false, notProven, caseCount: 0, nondeterministicCount: 0, coverage, casesPath, coveragePath };
+    return bail();
   }
 
   const statusPath = join(opts.outDir, "status.json");
   const status = readJson<Status>(statusPath);
   if (!status || !status.jdk8) {
     if (status === null && existsSync(statusPath)) {
-      // The file is there but did not parse: a java_capture.sh bug, never "no JDK 8" (which the
-      // script itself already records honestly via reasons when it exits early on purpose).
+      // Present but unparseable: a java_capture.sh bug, never "no JDK 8".
       notProven.push(`status.json malformed: could not parse ${statusPath}`);
     } else {
-      // A missing status.json is the same honest "exited before writing one" outcome as the
-      // script's own recorded reasons -- just from a different cause (e.g. runner never ran it).
+      // Missing status.json: the script exited before writing one (e.g. the runner never ran it).
       notProven.push(...(status?.reasons ?? ["skipped: no JDK 8", "old runtime unavailable"]));
       if (!notProven.some((r) => r.startsWith("skipped: no JDK 8"))) notProven.unshift("skipped: no JDK 8");
     }
-    const coverage: CoverageResult = {
-      unit: opts.unitDir, entries: classes, cases: 0,
-      branches_total: 0, branches_taken: 0, branch_pct: null, missing: [],
-    };
-    writeFileSync(casesPath, "");
-    writeFileSync(coveragePath, JSON.stringify(coverage));
-    return { proven: false, notProven, caseCount: 0, nondeterministicCount: 0, coverage, casesPath, coveragePath };
+    return bail();
   }
   notProven.push(...status.reasons);
 
@@ -251,8 +226,7 @@ export function captureJavaUnit(opts: JavaCaptureOpts): JavaCaptureResult {
   const branches = xml.trim() ? parseJacocoBranches(xml) : null;
   let branchPct: number | null = null;
   if (branches && branches.total > 0) {
-    // Floor, never round: MODERNIZE.md says the report never rounds up, and Math.round on
-    // 79.996% would land on 80, silently skipping the NOT PROVEN coverage flag it earned.
+    // Floor, never round: Math.round on 79.996% would reach 80 and skip the NOT PROVEN flag.
     branchPct = Math.floor((10000 * branches.taken) / branches.total) / 100;
   } else {
     notProven.push("coverage not measured");
