@@ -304,14 +304,22 @@ function hostGuardRequired(cwd: string): boolean {
   });
 }
 
-function hostGuardSettingsJson(): string {
+// Host-guard hook timeout, seconds. Mirrors _loki_hook_timeout in autonomy/run.sh
+// (same env var, same default, same validation); parity test: tests/runner/hook_timeout_parity.test.ts.
+export const HOOK_TIMEOUT_DEFAULT_S = 30;
+export function hookTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env["LOKI_HOOK_TIMEOUT"] ?? "";
+  return /^[1-9][0-9]{0,4}$/.test(raw) ? Number(raw) : HOOK_TIMEOUT_DEFAULT_S;
+}
+
+export function hostGuardSettingsJson(): string {
   const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
   if (!existsSync(hookPath)) throw new Error(`host command guard hook is missing: ${hookPath}`);
   return JSON.stringify({
     hooks: {
       PreToolUse: [{
         matcher: "Bash",
-        hooks: [{ type: "command", command: `bash ${shellQuote(hookPath)}` }],
+        hooks: [{ type: "command", command: `bash ${shellQuote(hookPath)}`, timeout: hookTimeoutSeconds() }],
       }],
     },
   });
@@ -731,12 +739,19 @@ async function runSdkHostGuard(input: unknown, cwd: string) {
       stdout: "pipe",
       stderr: "ignore",
     });
+    // Fail closed on timeout: kill the hook and deny (same budget as the CLI route).
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; proc.kill(9); }, hookTimeoutSeconds() * 1000);
     proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
-    const [stdout, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      proc.exited,
-    ]);
+    let stdout: string;
+    let exitCode: number;
+    try {
+      [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (timedOut) return hostGuardDecision("LOKI_HOST_GUARD: hook timed out, so the Bash command was denied.");
     const parsed = JSON.parse(stdout) as {
       hookSpecificOutput?: { permissionDecision?: string };
     };
