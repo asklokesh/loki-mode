@@ -1035,8 +1035,8 @@ async function runAutonomousCore(
             buildExitCode,
             treeCorrupt: checkpointedStateCorrupt(ctx.lokiDir),
             providerUnavailable,
-            // P12-11b: same-tree fail-then-pass evidence from verify's flaky fingerprints; only a failing build signal can consume it.
-            rerun: buildExitCode === 1 ? flakyRerunSignal(resolve(ctx.cwd, ".loki", "state"), spawnSync("git", ["-C", ctx.cwd, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).stdout?.trim() ?? "") : undefined,
+            // P12-11b: same-tree fail-then-pass evidence from verify's flaky fingerprints; the row must match the current tree id.
+            rerun: flakyRerunSignal(resolve(ctx.cwd, ".loki", "state"), spawnSync("git", ["-C", ctx.cwd, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).stdout?.trim() ?? ""),
           },
           { env: process.env as NodeJS.ProcessEnv },
         );

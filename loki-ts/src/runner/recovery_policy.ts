@@ -258,15 +258,16 @@ export function decideRecovery(sig: RecoverySignals, opts: DecideOpts = {}): Rec
     return { action: "failover", reason: "provider_unavailable", requestTier: "development" };
   }
 
+  // (7a) flaky: fail-then-pass on an identical tree proves the failure is non-deterministic, so it
+  // outranks build_failed (a revise would rewrite code that is not broken). Different or unknown trees prove nothing.
+  if (isFlaky(sig.rerun)) {
+    return { action: "retry", reason: "flaky" };
+  }
+
   // (7) COMPILE/TEST FAILURE -- exit code ONLY. `undefined` means no build ran,
   // which is NOT a pass and NOT a failure; it simply yields no signal here.
   if (sig.buildExitCode !== undefined && sig.buildExitCode !== 0) {
     return { action: "revise", reason: "build_failed" };
-  }
-
-  // (7b) flaky: rerun evidence on an identical tree only.
-  if (isFlaky(sig.rerun)) {
-    return { action: "retry", reason: "flaky" };
   }
 
   // (8) Transient (including "unrecognized", the fail-safe direction from
