@@ -204,11 +204,18 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
   const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
   if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
-  // P12-07d: durable late-steer state. Nothing seeds ctx from these yet (re-entry is P12-07h); they are parsed here so a future re-entry can restore them.
-  const seen = new Set<number>(), intentRevisions: IntentRevision[] = []; // union of every intent.revised, so a later (forged or empty) event cannot clear an honest one
-  for (const e of events) if (e.type === "intent.revised" && Array.isArray(e.data["revisions"])) for (const r of e.data["revisions"] as IntentRevision[]) if (typeof r === "object" && r !== null && Number.isInteger(r.rev) && Number.isFinite(r.at) && !seen.has(r.rev)) { seen.add(r.rev); intentRevisions.push(r); }
-  const timeline = events.filter((e) => e.type === "stage.started" && e.stage === "wall").map((e) => { const m = e.data["start_ms"], startMs = typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : 0; return { stage: "wall" as const, startMs, endMs: startMs }; }); // unknown start = 0: every revision is stale (fail closed)
+  // P12-07d/h: durable late-steer state, seeded into ctx on re-entry (seedResumeCtx). Both inputs are worker-forgeable via ingest, so each rule fails closed.
+  const byRev = new Map<number, IntentRevision>(); // union of every intent.revised; on a duplicate rev keep the LATEST at (unapplied wins), so a pre-claimed at:0 cannot displace the honest entry
+  for (const e of events) if (e.type === "intent.revised" && Array.isArray(e.data["revisions"])) for (const r of e.data["revisions"] as IntentRevision[]) if (typeof r === "object" && r !== null && Number.isInteger(r.rev) && Number.isFinite(r.at)) { const o = byRev.get(r.rev); if (!o || (r.unapplied === true && o.unapplied !== true) || (o.unapplied !== true && r.at > o.at)) byRev.set(r.rev, r); }
+  const intentRevisions = [...byRev.values()].sort((x, y) => x.rev - y.rev);
+  const starts = events.filter((e) => e.type === "stage.started" && e.stage === "wall").map((e) => { const m = e.data["start_ms"], seen = Date.parse(e.ts); return typeof m === "number" && Number.isFinite(m) && m >= 0 ? Math.min(m, Number.isFinite(seen) ? seen : 0) : 0; }); // a claimed start is capped at the supervisor's own append time; unknown = 0: every revision stale
+  const first = starts.length ? Math.min(...starts) : null, timeline = first === null ? [] : [{ stage: "wall" as const, startMs: first, endMs: first }]; // EARLIEST start only: a later forged start cannot move the freeze point forward
   return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events), intentRevisions, timeline };
+}
+
+/** P12-07h: seeds a re-entered run's ctx with the durable steer state; the machine does `ctx.timeline ??= []`, so a seeded array is used as is. */
+export function seedResumeCtx(ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: "wall"; startMs: number; endMs: number }[] }, rp: Extract<ResumePoint, { ok: true }>): void {
+  ctx.intentRevisions = [...rp.intentRevisions]; ctx.timeline = [...rp.timeline];
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
