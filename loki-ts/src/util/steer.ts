@@ -18,21 +18,21 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
   if (/^(0|false)$/i.test(env.LOKI_PROMPT_INJECTION ?? "")) return null;
   const f = join(repoDir, ".loki", "HUMAN_INPUT.md");
   // One mechanism for every steer that could not be consumed (unwritable logs dir, oversize, non-file entry, any throw): an `unapplied` record in the sink, which Seal always refuses.
-  const unapplied = (): void => { sink?.push({ rev: 0, source: null, actor: null, sha: "", at: now().getTime(), unapplied: true }); };
+  const unapplied = (reason: string): void => { sink?.push({ rev: 0, source: null, actor: null, sha: "", at: now().getTime(), unapplied: true, reason }); };
   try {
     const st = lstatSync(f, { throwIfNoEntry: false });
     if (!st) return null;
     if (st.isSymbolicLink()) { rmSync(f, { force: true }); return null; }
-    if (!st.isFile()) { unapplied(); return null; }
+    if (!st.isFile()) { unapplied("not a regular file"); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
-    if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); unapplied(); return null; }
+    if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); unapplied("over 1 MiB"); return null; }
     const text = readFileSync(f, "utf8").trim();
     renameSync(f, join(logs, `human-input-${stamp}.md`));
     if (text !== "") { const recs = recordRevisions(repoDir, text, `human-input-${stamp}.md`, now()); sink?.push(...recs); }
     return text === "" ? null : text;
-  } catch { try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied(); } catch { /* unreadable: nothing more to learn */ } return null; }
+  } catch { try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
 }
 
 const REV_HDR = /^## Operator directive rev (\d+) \(([^)]*)\) actor=(\S*) source=(\S*)\s*$/;
@@ -61,7 +61,7 @@ function recordRevisions(repoDir: string, text: string, archived: string, at: Da
   return recs;
 }
 
-export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number; unapplied?: boolean }
+export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number; unapplied?: boolean; reason?: string }
 /** Revisions consumed at or after sinceMs (epoch ms), by rev. Only the engine-written consumed_at counts, never the operator-supplied header ts; an older run's records and torn lines are skipped. */
 export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevision[] {
   const out: IntentRevision[] = [];
@@ -86,6 +86,13 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
 
 /** Seal gate: consumes a steer still pending in HUMAN_INPUT.md (sent after the last implement session, so no work reflects it) into ctx.intentRevisions and counts it stale
  *  whatever the Wall timeline says; otherwise the revisions that postdate the Wall start. */
+/** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
+export function staleReason(stale: readonly IntentRevision[]): string {
+  const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
+  if (bad.length) return `a steer in .loki/HUMAN_INPUT.md could not be applied (${[...new Set(bad.map((r) => r.reason ?? "unknown"))].join("; ")}); fix it and re-run`;
+  return `operator steer rev ${late.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"`;
+}
+
 export function staleAtSeal(repoDir: string, ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: string; startMs: number }[] }): IntentRevision[] {
   const late: IntentRevision[] = [];
   consumeSteer(repoDir, process.env, () => new Date(), late);

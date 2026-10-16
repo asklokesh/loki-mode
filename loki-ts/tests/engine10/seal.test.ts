@@ -1420,31 +1420,31 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
   }, 30000);
   // Unconsumable steers must fail closed: an unwritable logs dir or an oversize file leaves no revision record by the old path.
   const HDR = "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\n";
-  const refuses = async (ctx: RunContext) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
+  const refuses = async (ctx: RunContext, why: string) => { await commitStage.run(ctx, new AbortController().signal); const r = await sealStage.run(ctx, new AbortController().signal); expect(r.status).toBe("failed"); expect(r.reason).toBe(`a steer in .loki/HUMAN_INPUT.md could not be applied (${why}); fix it and re-run`); expect(existsSync(join(ctx.runDir, "receipt.json"))).toBe(false); };
   test("logs path is a regular file: a steer at implement refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-impl", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}change\n`);
     expect(withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions).brief).toBe("b"); // not injected, but recorded as unapplied
-    await refuses(ctx);
+    await refuses(ctx, "logs dir unwritable or file unreadable");
   }, 30000);
   test("logs path is a regular file: a late steer refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-late", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}late\n`);
-    await refuses(ctx);
+    await refuses(ctx, "logs dir unwritable or file unreadable");
   }, 30000);
   test("an oversize late steer refuses the seal", async () => {
     const ctx = withRevs("rev-oversize-late", []);
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
-    await refuses(ctx);
+    await refuses(ctx, "over 1 MiB");
   }, 30000);
   test("an oversize steer at implement refuses the seal", async () => {
     const ctx = withRevs("rev-oversize-impl", []);
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}${"x".repeat(STEER_MAX_BYTES + 1)}`);
     withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions);
     rmSync(join(ctx.repoDir, ".loki/logs"), { recursive: true, force: true });
-    await refuses(ctx);
+    await refuses(ctx, "over 1 MiB");
   }, 30000);
   test("receipt lists revisions", async () => {
     const ctx = withRevs("rev-receipt", [rv(1, 1800), rv(2, 1900)]);
