@@ -168,22 +168,111 @@ def summarize(loki_dir):
     }
 
 
+# DESIGN RECORDS. A second record type next to the dispatch record: why a design
+# approach was chosen, not which model ran. Kept in its own file so
+# summarize() and verdict.py, which read decisions.jsonl as dispatch records,
+# never see a record without model_id. Same rules: fixed allowlist, append-only.
+DESIGN_FIELDS = (
+    "schema_version",
+    "recorded_at",
+    "rationale",      # required: why this approach
+    "alternatives",   # list of approaches considered and not chosen
+    "source",         # what made the call, e.g. plan
+    "scope",          # what the decision covers
+    "decided_at",
+)
+
+
+def _design_path(loki_dir):
+    return os.path.join(loki_dir, "decisions", "design.jsonl")
+
+
+def record_design(loki_dir, fields):
+    """Append one design decision record, or return a named refusal."""
+    clean = {}
+    dropped = []
+    for k, v in (fields or {}).items():
+        if k in DESIGN_FIELDS:
+            clean[k] = v
+        else:
+            dropped.append(k)
+
+    rationale = clean.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        return {"status": "UNKNOWN", "reason": "no_rationale",
+                "detail": "a design record without a rationale records nothing about why"}
+    alts = clean.get("alternatives", [])
+    if isinstance(alts, str):
+        alts = [a.strip() for a in alts.split("|") if a.strip()]
+    if not isinstance(alts, list) or not all(isinstance(a, str) for a in alts):
+        return {"status": "UNKNOWN", "reason": "bad_alternatives",
+                "detail": "alternatives must be a list of strings"}
+    for k in ("source", "scope", "decided_at"):
+        if k in clean and not isinstance(clean[k], str):
+            return {"status": "UNKNOWN", "reason": "bad_" + k,
+                    "detail": k + " must be a string"}
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    clean["rationale"] = rationale.strip()
+    clean["alternatives"] = alts
+    clean.setdefault("decided_at", now)
+    clean["schema_version"] = SCHEMA_VERSION
+    clean["recorded_at"] = now
+
+    path = _design_path(loki_dir)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(clean, sort_keys=True) + "\n")
+    except OSError as exc:
+        return {"status": "UNKNOWN", "reason": "unwritable", "detail": str(exc)}
+
+    out = {"status": "recorded", "path": path, "record": clean}
+    if dropped:
+        out["dropped_fields"] = sorted(dropped)
+    return out
+
+
+def read_design(loki_dir):
+    """Return the parseable design records, oldest first."""
+    path = _design_path(loki_dir)
+    recs = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    recs.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return recs
+
+
 def main(argv):
     if not argv:
-        print("usage: decision_record.py record|summary [--field=value ...]",
+        print("usage: decision_record.py record|design|design-file|summary [--field=value ...]",
               file=sys.stderr)
         return 2
     action = argv[0]
     cwd = os.environ.get("LOKI_DECISION_CWD") or os.getcwd()
     loki_dir = os.environ.get("LOKI_DIR") or os.path.join(cwd, ".loki")
 
-    if action == "record":
+    if action in ("record", "design"):
         fields = {}
         for arg in argv[1:]:
             if arg.startswith("--") and "=" in arg:
                 k, v = arg[2:].split("=", 1)
                 fields[k] = v
-        res = record(loki_dir, fields)
+        res = (record_design if action == "design" else record)(loki_dir, fields)
+    elif action == "design-file" and len(argv) == 2:
+        try:
+            with open(argv[1], "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            data = None
+        res = record_design(loki_dir, data) if isinstance(data, dict) else {
+            "status": "UNKNOWN", "reason": "unreadable_file"}
     elif action == "summary":
         res = summarize(loki_dir)
     else:

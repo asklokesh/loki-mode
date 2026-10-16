@@ -26379,6 +26379,15 @@ EOF
               >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
         fi
 
+        # DESIGN DECISION RECORD (P12-37). The plan (REASON) stage may leave
+        # .loki/signals/DESIGN_DECISION.json (rationale, alternatives, source,
+        # scope). Record it once, then consume it. Non-fatal; no file, no record.
+        local _dd_file="${TARGET_DIR:-.}/.loki/signals/DESIGN_DECISION.json"
+        if [ "${rarv_phase:-}" = "REASON" ] && [ -s "$_dd_file" ] && [ -f "${SCRIPT_DIR:-}/lib/decision_record.py" ]; then
+            LOKI_DIR="${TARGET_DIR:-.}/.loki" python3 "${SCRIPT_DIR}/lib/decision_record.py" design-file "$_dd_file" \
+                >/dev/null 2>&1 </dev/null && rm -f "$_dd_file" || true
+        fi
+
         # AGENT PROMPT SIZE. The call this brackets is 93% of a run's wall clock
         # (1814s of 1941s measured), and its INPUT was never measured -- every
         # reviewer logs its prompt bytes, the dominant call logged nothing.
