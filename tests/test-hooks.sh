@@ -447,6 +447,26 @@ test_validate_bash_safe_override_is_anchored() {
     pass "safe-path override anchored per segment; legit cleanup forms still allowed"
 }
 
+test_validate_bash_safe_override_rejects_risky_env() {
+    log_test "validate-bash.sh: safe-path override rejects loader/shell-altering env prefixes"
+    local c got
+    local risky=(
+        'PATH=/tmp/x rm -rf /tmp/a' 'LD_PRELOAD=/tmp/x.so rm -rf /tmp/a'
+        'DYLD_INSERT_LIBRARIES=x rm -rf /tmp/a' 'BASH_ENV=/tmp/x rm -rf /tmp/a'
+        'FOO=1 IFS=x rm -rf /tmp/a' 'NODE_OPTIONS=x rm -rf /tmp/a'
+        'GIT_SSH_COMMAND=x rm -rf /tmp/a' 'PYTHONPATH=/tmp/x rm -rf /tmp/a'
+    )
+    for c in "${risky[@]}"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "risky env prefix not blocked: $c (got $got)"; return; }
+    done
+    got=$(run_hook_case 'FOO=1 rm -rf /tmp/a' "")
+    [ "$got" = "0:allow" ] || { fail "ordinary env prefix blocked (got $got)"; return; }
+    got=$(run_hook_case 'LOKI_X=1 rm -rf /tmp/foo' "")
+    [ "$got" = "0:allow" ] || { fail "LOKI_X prefix blocked (got $got)"; return; }
+    pass "risky env prefixes denied; ordinary prefixes still allowed"
+}
+
 test_validate_bash_compiled_no_python_denies() {
     log_test "validate-bash.sh: compiled policy denies when python3 is absent"
     local stub payload out rc
@@ -485,6 +505,7 @@ test_host_guard_rejects_unhooked_provider
 test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
+test_validate_bash_safe_override_rejects_risky_env
 test_validate_bash_compiled_no_python_denies
 
 # Summary
