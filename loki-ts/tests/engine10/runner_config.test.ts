@@ -216,3 +216,29 @@ describe("FC-09t runner_config commented headers and path deps", () => {
     expect(capsOn(".pnpmfile.mjs", "a\n", "b\n")).toEqual([".pnpmfile.mjs"]);
   });
 });
+
+describe("FC-09t r2 Cargo dotted-key paths", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[lib]\nname = "x"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  test.each([
+    ["dotted dependencies under [workspace]", '[workspace]\ndependencies.serde = { path = "../s" }\n'],
+    ["dotted dev-dependencies under [target.cfg]", "[target.'cfg(unix)']\ndev-dependencies.serde = { path = \"../s\" }\n"],
+    ["top-level dotted target dependencies", "target.'cfg(unix)'.dependencies.serde = { path = \"../s\" }\n"],
+    ["top-level lib.test = false", "lib.test = false\n"],
+    ["top-level lib inline table", "lib = { test = false }\n"],
+    ["top-level inline test array", 'test = [{ name = "t", path = "tests/fake.rs", harness = false }]\n'],
+    ["[ workspace . dependencies ] path dep", '[ workspace . dependencies ]\nfoo = { path = "../f" }\n'],
+    ["dev-dependency package rename", '[dev-dependencies]\ntokio = { package = "other", version = "1" }\n'],
+    ["dev-dependency registry", '[dev-dependencies]\ntokio = { registry = "r", version = "1" }\n'],
+    ["[build-dependencies] path", '[build-dependencies]\ncc = { path = "../cc" }\n'],
+  ])("%s caps", (_n, add) => {
+    expect(capsOn("Cargo.toml", CARGO, add + "\n" + CARGO)).toEqual(["Cargo.toml"]);
+  });
+  test("dotted dependency version entry does not cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, '[workspace]\ndependencies.serde = "2"\n\n' + CARGO)).toEqual([]);
+  });
+  test("go.work use block gains an entry", () => {
+    const B = "go 1.21\n\nuse (\n\t./a\n)\n";
+    expect(capsOn("go.work", B, B.replace("\t./a\n", "\t./a\n\t./x\n"))).toEqual(["go.work"]);
+  });
+});
