@@ -447,6 +447,50 @@ test_validate_bash_safe_override_is_anchored() {
     pass "safe-path override anchored per segment; legit cleanup forms still allowed"
 }
 
+test_validate_bash_temp_root_and_glob_denied() {
+    log_test "validate-bash.sh: recursive rm of a temp root or bare temp glob is denied after slash normalization"
+    local c got t
+    local rmcmd="rm -rf"
+    local targets=(
+        '//tmp' '/tmp//' '/private//tmp/' '/tmp' '/tmp/' '/private/tmp' '/var/tmp/'
+        '/tmp/*' '/tmp/.*' '/tmp//*' '/tmp/./*' '/private/tmp/*' '/var//tmp/*' '/tmp/?'
+        '"$TMPDIR"/*' '$TMPDIR/*' '${TMPDIR}/*' '"$TMPDIR"' '$TMPDIR//'
+    )
+    for t in "${targets[@]}"; do
+        c=$(printf '%s %s' "$rmcmd" "$t")
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "temp root/glob not denied: $c (got $got)"; return; }
+    done
+    c=$(printf 'FOO=1 %s /tmp/a /tmp/*' "$rmcmd")
+    got=$(run_hook_case "$c" "")
+    [ "$got" = "2:deny" ] || { fail "temp glob after a named target not denied (got $got)"; return; }
+    c=$(printf '%s /tmp/a; %s /tmp//' "$rmcmd" "$rmcmd")
+    got=$(run_hook_case "$c" "")
+    [ "$got" = "2:deny" ] || { fail "chained temp root not denied (got $got)"; return; }
+    local ok=(
+        '/tmp/loki-run.abc123' '/tmp/loki-run.abc123/' '/tmp//loki-run.abc123'
+        '/tmp/foo*' '/tmp/foo/*' '$TMPDIR/loki-run.abc123' '"$TMPDIR"/foo'
+    )
+    for t in "${ok[@]}"; do
+        c=$(printf '%s %s' "$rmcmd" "$t")
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "named temp subdir wrongly blocked: $c (got $got)"; return; }
+    done
+    pass "temp roots and bare temp globs denied; named subdirectories still allowed"
+}
+
+test_validate_bash_safe_patterns_locale_independent() {
+    log_test "validate-bash.sh: security character classes spell out letters (no locale-dependent ranges)"
+    if grep -E "^(_SAFE_ENV|_ASSIGN_ONLY)=|^[[:space:]]*.\^\[\[:space:\]\]\*.|while .*=~ " "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" | grep -qE "A-Z|a-z"; then
+        fail "locale-dependent A-Z/a-z range found in a security pattern"
+        return
+    fi
+    local got
+    got=$(LC_ALL=en_US.UTF-8 run_hook_case 'FOO=1 rm -rf /tmp/x' "")
+    [ "$got" = "0:allow" ] || { fail "env-prefixed safe rm under UTF-8 locale (got $got)"; return; }
+    pass "no A-Z/a-z ranges in _SAFE_ENV, _ASSIGN_ONLY, safe patterns"
+}
+
 test_validate_bash_safe_override_rejects_risky_env() {
     log_test "validate-bash.sh: safe-path override rejects loader/shell-altering env prefixes"
     local c got
@@ -555,6 +599,8 @@ test_host_guard_rejects_unhooked_provider
 test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
+test_validate_bash_temp_root_and_glob_denied
+test_validate_bash_safe_patterns_locale_independent
 test_validate_bash_safe_override_rejects_risky_env
 test_validate_bash_safe_override_rejects_earlier_segment_taint
 test_validate_bash_compiled_no_python_denies
