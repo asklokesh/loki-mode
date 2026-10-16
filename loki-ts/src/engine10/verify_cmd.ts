@@ -46,11 +46,18 @@ function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject):
   if (!verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, "base64url"))) return bad("signature does not verify");
   return payload?.receipt_sha256 === expectedHash ? { status: "verified", reason: null } : bad("attestation binds a different receipt hash");
 }
+const isPlain = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v);
 /** A-117: the worker seals before the supervisor can detect a log tamper, so the receipt alone cannot say so. Bind it to events.jsonl: the log must exist, hold a
  *  prefix hashing to receipt.events_sha256, contiguous seq from 0 and no tamper.detected. Removing the evidence breaks these too.
  *  Deleting the post-seal tail is closed by checkLogSeal (signed receipts); an unsigned receipt carries no key, so it stays exposed to that. */
 function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const bound = receipt["events_sha256"];
+  if (receipt["schema"] === "loki.v10.receipt/1") { // P12-01c: seal.ts always writes these, so absence means an edit (other receipt kinds are not gated)
+    const time = receipt["time"] as { stages?: unknown } | null | undefined;
+    const hashOk = typeof bound === "string" && /^[0-9a-f]{64}$/.test(bound);
+    const miss = !hashOk ? "events_sha256" : !time || typeof time !== "object" ? "time" : !isPlain(time.stages) ? "time.stages" : null;
+    if (miss) return `the receipt is missing a valid ${miss}, which seal always writes; it was edited. Re-run the task to produce a fresh receipt.`;
+  }
   if (typeof bound !== "string") return null;
   if (bound === createHash("sha256").digest("hex")) { // P12-01b: the empty-log hash is honest only for a receipt that records zero events and stages (a real run writes run.started first); --allow-unsigned never waives this
     const st = (receipt["time"] as { stages?: unknown } | null | undefined)?.stages;

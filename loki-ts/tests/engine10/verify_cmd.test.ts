@@ -601,6 +601,36 @@ describe("main() UNSIGNED policy (D47)", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
   });
 
+  test("P12-01c: a receipt/1 missing events_sha256, time or time.stages is TAMPERED even with --allow-unsigned", async () => {
+    const dir = tmpDir();
+    try {
+      const mk = (id: string, mutate: (f: Record<string, unknown>) => void): void => {
+        const f = baseReceiptFields(); f["run_id"] = id; mutate(f);
+        const rd = join(dir, "runs", id); mkdirSync(rd, { recursive: true });
+        writeFileSync(join(rd, "receipt.json"), JSON.stringify({ ...f, receipt_sha256: computeReceiptHash(f), verification: { jwt: null, kid: null } }));
+      };
+      const cases: Array<[string, string, (f: Record<string, unknown>) => void]> = [
+        ["nohash", "events_sha256", (f) => { delete f["events_sha256"]; }],
+        ["badhash", "events_sha256", (f) => { f["events_sha256"] = "A".repeat(64); }],
+        ["notime", "time", (f) => { delete f["time"]; f["stages"] = {}; }],
+        ["nulltime", "time", (f) => { f["time"] = null; }],
+        ["strstages", "time.stages", (f) => { f["time"] = { wall_s: 0, stages: "none" }; }],
+        ["arrstages", "time.stages", (f) => { f["time"] = { wall_s: 0, stages: [] }; }],
+      ];
+      for (const [id, field, m] of cases) {
+        mk(id, m);
+        const r = await runMain([id, "--allow-unsigned"], join(dir, "runs"));
+        expect(r.code).toBe(1);
+        expect(r.out).toContain("verdict: TAMPERED");
+        expect(r.out).toContain(field);
+        expect(r.out).toContain("Re-run the task to produce a fresh receipt.");
+      }
+      mk("honest0", () => {}); // zero stages, real empty-log hash: stays UNSIGNED
+      const ok = await verifyReceipt(join(dir, "runs", "honest0", "receipt.json"));
+      expect(ok.verdict).toBe("UNSIGNED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   test("P12-01b: --allow-unsigned never waives the log check: empty-hash receipt that claims stages is TAMPERED", async () => {
     const dir = tmpDir();
     try {

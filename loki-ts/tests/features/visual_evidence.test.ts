@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 function writeReceipt(screens: { path: string; sha256: string }[] | null): string {
-  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: "r1", verdict: "VERIFIED", ...(screens ? { evidence_screens: screens } : {}) };
+  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: "r1", verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} }, ...(screens ? { evidence_screens: screens } : {}) };
   const receipt = { ...body, receipt_sha256: computeReceiptHash(body), verification: { jwt: null, kid: null } };
   const p = join(root, "runs", "r1", "receipt.json");
   writeFileSync(p, JSON.stringify(receipt));
@@ -130,7 +130,7 @@ test("two runs touching the same route both verify (per-run dirs)", async () => 
     const run = join(root, "runs", id);
     mkdirSync(join(run, "evidence", "x"), { recursive: true });
     writeFileSync(join(run, "evidence", "x", "index.png"), Buffer.from(bytes));
-    const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", evidence_screens: hashScreens(run, ["evidence/x/index.png"]) };
+    const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} }, evidence_screens: hashScreens(run, ["evidence/x/index.png"]) };
     const p = join(run, "receipt.json");
     writeFileSync(p, JSON.stringify({ ...body, receipt_sha256: computeReceiptHash(body), verification: { jwt: null, kid: null } }));
     return p;

@@ -23,7 +23,7 @@ function commit(file: string, msg: string, runTrailer?: string): string {
 function writeReceipt(runId: string, base: string, head: string, tamper = false, events?: object[]): void {
   const dir = join(runsRoot, runId);
   mkdirSync(dir, { recursive: true });
-  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: runId, base_sha: base, head_sha: head, verdict: "VERIFIED", events_sha256: sha256(""), verification: { jwt: null } };
+  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: runId, base_sha: base, head_sha: head, verdict: "VERIFIED", events_sha256: sha256(""), time: { wall_s: 0, stages: {} }, verification: { jwt: null } };
   body["receipt_sha256"] = computeReceiptHash(body);
   if (tamper) body["head_sha"] = base;
   writeFileSync(join(dir, "receipt.json"), JSON.stringify(body));

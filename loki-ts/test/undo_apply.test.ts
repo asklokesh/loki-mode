@@ -24,7 +24,7 @@ function commit(file: string, msg: string, trailer?: string): string {
 function writeReceipt(runId: string, base: string, head: string, mode: "signed" | "unsigned" | "tampered" = "signed"): void {
   const dir = join(runsRoot, runId);
   mkdirSync(dir, { recursive: true });
-  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: runId, base_sha: base, head_sha: head, verdict: "VERIFIED" };
+  const body: Record<string, unknown> = { schema: "loki.v10.receipt/1", run_id: runId, base_sha: base, head_sha: head, verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} } };
   const hash = computeReceiptHash(body);
   const sig = mode === "unsigned" ? { jwt: null, kid: null } : signReceipt(runId, hash);
   const rec: Record<string, unknown> = { ...body, receipt_sha256: hash, verification: sig };

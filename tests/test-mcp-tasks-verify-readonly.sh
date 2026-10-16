@@ -65,7 +65,7 @@ const { privateKey, publicKey } = c.generateKeyPairSync("ed25519");
 fs.writeFileSync(w + "/k.pem", privateKey.export({ type: "pkcs8", format: "pem" }));
 const canon = (v) => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v === undefined ? null : v);
 const b = (x) => Buffer.from(x).toString("base64url");
-const body = { schema: "loki.v10.receipt/1", run_id: "e10-1", verdict: "VERIFIED" };
+const body = { schema: "loki.v10.receipt/1", run_id: "e10-1", verdict: "VERIFIED", events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} } };
 const hash = c.createHash("sha256").update(canon(body)).digest("hex");
 const kid = b(c.createHash("sha256").update('{"crv":"Ed25519","kty":"OKP","x":"' + publicKey.export({ format: "jwk" }).x + '"}').digest());
 const input = b(canon({ alg: "EdDSA", typ: "JWT", kid: kid })) + "." + b(canon({ job_id: "e10-1", run_id: "e10-1", receipt_sha256: hash, iat: 1 }));
