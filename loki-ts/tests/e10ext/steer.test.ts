@@ -1,10 +1,10 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleAtSeal, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -88,10 +88,29 @@ describe("engine10 steer", () => {
     expect(sink.map((r) => [r.rev, r.actor, r.source, r.at])).toEqual([[1, "alice", "chat", 5000]]);
     const wall = (startMs: number) => [{ stage: "wall", startMs }];
     expect(staleWallRevisions(sink, wall(4000)).map((r) => r.rev)).toEqual([1]);
-    expect(staleWallRevisions(sink, wall(5000))).toEqual([]); // same tick: not after
+    expect(staleWallRevisions(sink, wall(5000)).map((r) => r.rev)).toEqual([1]); // same tick: the Wall never receives steers, so a tie is late
+    expect(staleWallRevisions(sink, wall(5001))).toEqual([]);
     expect(staleWallRevisions(sink, [])).toEqual([]); // no Wall yet
     expect(staleWallRevisions(sink, [...wall(4000), ...wall(6000)])).toEqual([]); // re-authored
     expect(staleWallRevisions(undefined, wall(1))).toEqual([]);
+  });
+  test("audit file replaced by a directory, or unreadable (chmod 000): the sink still gets the record and the steer is still injected", () => {
+    const hdr1 = "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\nchange it\n";
+    const d1 = repo(hdr1), sink1: IntentRevision[] = [];
+    mkdirSync(join(d1, ".loki", "intent-revisions.jsonl"));
+    expect(consumeSteer(d1, process.env, () => new Date(5000), sink1)).toContain("change it");
+    expect(sink1.map((r) => r.rev)).toEqual([1]);
+    const d2 = repo(hdr1), sink2: IntentRevision[] = [], f = join(d2, ".loki", "intent-revisions.jsonl");
+    writeFileSync(f, "{\"rev\":4}\n"); chmodSync(f, 0);
+    try { expect(consumeSteer(d2, process.env, () => new Date(5000), sink2)).toContain("change it"); } finally { chmodSync(f, 0o600); }
+    expect(sink2.map((r) => r.rev)).toEqual([1]);
+  });
+  test("staleAtSeal consumes a steer still pending and counts it stale even with no Wall in the timeline", () => {
+    const d = repo("## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\nlate\n");
+    const ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: string; startMs: number }[] } = { timeline: [] };
+    expect(staleAtSeal(d, ctx).map((r) => r.rev)).toEqual([1]);
+    expect(ctx.intentRevisions?.map((r) => r.rev)).toEqual([1]);
+    expect(staleAtSeal(d, ctx)).toEqual([]); // nothing pending any more, and no Wall
   });
   test("readIntentRevisions (status comment count) skips torn lines and earlier runs", () => {
     const d = repo();

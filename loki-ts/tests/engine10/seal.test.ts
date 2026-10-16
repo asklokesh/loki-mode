@@ -1397,14 +1397,25 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     await commitStage.run(ok, new AbortController().signal);
     expect(receiptOf(await sealStage.run(ok, new AbortController().signal)).intent_revisions?.map((r) => r.rev)).toEqual([1]);
   }, 60000);
-  test("pre-wall revision does not block seal; one at the Wall start tick is not stale, one after it is", async () => {
-    const ctx = withRevs("rev-before-wall", [rv(1, 1800), rv(2, 2000)]);
+  test("pre-wall revision does not block seal; one at or after the Wall start tick is stale", async () => {
+    const ctx = withRevs("rev-before-wall", [rv(1, 1800), rv(2, 1999)]);
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
     expect(s.status).toBe("completed");
     expect(receiptOf(s).intent_revisions?.map((r) => r.rev)).toEqual([1, 2]);
     ctx.intentRevisions = [rv(3, 2001)]; // after the Wall STARTED (it ended later at 2500): the boundary is the start
     expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("failed");
+    ctx.intentRevisions = [rv(4, 2000)]; // the same tick as the Wall start is late too
+    expect((await sealStage.run(ctx, new AbortController().signal)).status).toBe("failed");
+  }, 30000);
+  test("a steer still pending in HUMAN_INPUT.md at seal refuses and is recorded", async () => {
+    const ctx = withRevs("rev-pending", []);
+    writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), "## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\nmore\n");
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("failed");
+    expect(s.reason).toContain("arrived after the Wall was frozen");
+    expect(ctx.intentRevisions?.map((r) => r.rev)).toEqual([1]);
   }, 30000);
   test("receipt lists revisions", async () => {
     const ctx = withRevs("rev-receipt", [rv(1, 1800), rv(2, 1900)]);

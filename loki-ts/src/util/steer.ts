@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -34,32 +34,29 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
 }
 
 const REV_HDR = /^## Operator directive rev (\d+) \(([^)]*)\) actor=(\S*) source=(\S*)\s*$/;
-/** Appends the revision records for a consumed steer. Best effort: a failure here never blocks the run. */
+/** Builds the in-memory revision records from the parsed steer headers (pure: no file access) and appends them to the audit file. The audit file is agent-writable
+ *  and best effort: a missing, unreadable or replaced file only affects rev numbering and the append, never the returned records. */
 function recordRevisions(repoDir: string, text: string, archived: string, at: Date): IntentRevision[] {
-  const recs: IntentRevision[] = [];
-  try {
-    const file = join(repoDir, ".loki", "intent-revisions.jsonl");
-    const prior = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
-    let last = 0;
-    for (const l of prior) { try { last = Math.max(last, Number((JSON.parse(l) as { rev?: unknown }).rev) || 0); } catch { /* skip a torn line */ } }
-    const parts: { rev: number | null; ts: string | null; actor: string | null; source: string | null; body: string[] }[] = [{ rev: null, ts: null, actor: null, source: null, body: [] }];
-    for (const line of text.split("\n")) {
-      const m = REV_HDR.exec(line);
-      if (m) parts.push({ rev: Number(m[1]), ts: m[2]!, actor: m[3] || null, source: m[4] || null, body: [] });
-      else parts[parts.length - 1]!.body.push(line);
-    }
-    const out: string[] = [];
-    for (const p of parts) {
-      const body = p.body.join("\n").trim();
-      if (p.rev === null && body === "") continue;
-      const rev = p.rev !== null && p.rev > last ? p.rev : last + 1;
-      last = rev;
-      recs.push({ rev, source: p.source, actor: p.actor, sha: createHash("sha256").update(body).digest("hex"), at: at.getTime() });
-      out.push(JSON.stringify({ rev, ts: p.ts, actor: p.actor, source: p.source, chars: body.length, sha256: createHash("sha256").update(body).digest("hex"), consumed_at: at.toISOString(), archived }));
-    }
-    if (out.length) appendFileSync(file, `${out.join("\n")}\n`);
-  } catch { /* audit log is best effort */ }
-  return recs; // the caller keeps these in memory: the repo file is agent-writable and is audit only
+  const file = join(repoDir, ".loki", "intent-revisions.jsonl");
+  let last = 0;
+  try { for (const l of readFileSync(file, "utf8").split("\n")) { try { last = Math.max(last, Number((JSON.parse(l) as { rev?: unknown }).rev) || 0); } catch { /* skip a torn line */ } } } catch { /* unreadable: numbering restarts at 0 */ }
+  const parts: { rev: number | null; ts: string | null; actor: string | null; source: string | null; body: string[] }[] = [{ rev: null, ts: null, actor: null, source: null, body: [] }];
+  for (const line of text.split("\n")) {
+    const m = REV_HDR.exec(line);
+    if (m) parts.push({ rev: Number(m[1]), ts: m[2]!, actor: m[3] || null, source: m[4] || null, body: [] });
+    else parts[parts.length - 1]!.body.push(line);
+  }
+  const recs: IntentRevision[] = [], out: string[] = [];
+  for (const p of parts) {
+    const body = p.body.join("\n").trim();
+    if (p.rev === null && body === "") continue;
+    const rev = p.rev !== null && p.rev > last ? p.rev : last + 1, sha = createHash("sha256").update(body).digest("hex");
+    last = rev;
+    recs.push({ rev, source: p.source, actor: p.actor, sha, at: at.getTime() });
+    out.push(JSON.stringify({ rev, ts: p.ts, actor: p.actor, source: p.source, chars: body.length, sha256: sha, consumed_at: at.toISOString(), archived }));
+  }
+  try { if (out.length) appendFileSync(file, `${out.join("\n")}\n`); } catch { /* audit log is best effort */ }
+  return recs;
 }
 
 export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number }
@@ -78,11 +75,20 @@ export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevisio
   return out.sort((a, b) => a.rev - b.rev);
 }
 
-/** Revisions (kept in machine memory by withSteer, never re-read from the agent-writable repo file) consumed after the latest Wall authoring STARTED:
+/** Revisions (kept in machine memory by withSteer, never re-read from the agent-writable repo file) consumed at or after the latest Wall authoring STARTED (the Wall session never receives steers, so a tie is a late steer):
  *  the Wall was written from an older intent. Empty when no Wall ran, so a pre-Wall revision never stales it; a re-authored Wall (later start) clears earlier ones. */
 export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, timeline: readonly { stage: string; startMs: number }[] | undefined): IntentRevision[] {
   const starts = (timeline ?? []).filter((t) => t.stage === "wall").map((t) => t.startMs);
-  return starts.length === 0 ? [] : (revs ?? []).filter((r) => r.at > Math.max(...starts));
+  return starts.length === 0 ? [] : (revs ?? []).filter((r) => r.at >= Math.max(...starts));
+}
+
+/** Seal gate: consumes a steer still pending in HUMAN_INPUT.md (sent after the last implement session, so no work reflects it) into ctx.intentRevisions and counts it stale
+ *  whatever the Wall timeline says; otherwise the revisions that postdate the Wall start. */
+export function staleAtSeal(repoDir: string, ctx: { intentRevisions?: IntentRevision[]; timeline?: { stage: string; startMs: number }[] }): IntentRevision[] {
+  const late: IntentRevision[] = [];
+  consumeSteer(repoDir, process.env, () => new Date(), late);
+  (ctx.intentRevisions ??= []).push(...late);
+  return [...new Set([...staleWallRevisions(ctx.intentRevisions, ctx.timeline), ...late])];
 }
 
 export function steerBlock(text: string): string {

@@ -4,7 +4,7 @@
 // and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
-import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleWallRevisions } from "../../util/steer.ts"; import { intentRevisionsBlock } from "../../util/run_outputs.ts";
+import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal } from "../../util/steer.ts"; import { intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -165,7 +165,7 @@ export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
-    const o = ctx.outputs(), stale = staleWallRevisions(ctx.intentRevisions, ctx.timeline); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: `operator steer rev ${stale.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"` };
+    const o = ctx.outputs(), stale = staleAtSeal(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: `operator steer rev ${stale.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"` };
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
     // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
