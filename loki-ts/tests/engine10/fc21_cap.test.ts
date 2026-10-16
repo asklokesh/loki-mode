@@ -60,6 +60,7 @@ describe("resizeCap and resolveRunCapS", () => {
     expect(resolveRunCapS(repo, true, {})).toEqual({ capS: 1234, fixedS: 1234, ceilingS: 1234 });
     expect(resolveRunCapS(repo, true, { LOKI_E10_CAP_S: "600" })).toEqual({ capS: 600, fixedS: 600, ceilingS: 600 });
     expect(resolveRunCapS(mkdtempSync(join(dir, "n-")), false, {})).toEqual({ capS: 900, fixedS: undefined, ceilingS: 2400 });
+    expect(resolveRunCapS(mkdtempSync(join(dir, "i-")), false, { LOKI_E10_CAP_S: "Infinity" })).toEqual({ capS: 900, fixedS: undefined, ceilingS: 2400 }); // P12-07m: a non-finite env cap is not a fixed cap
   });
   test("cleanup", () => { rmSync(dir, { recursive: true, force: true }); });
 });

@@ -520,6 +520,25 @@ describe("resume from stage (P12-07)", () => {
     applyCapEnv(fast, 900, {});
     expect(fast["LOKI_E10_CAP_FIXED_S"]).toBeUndefined();
   });
+  test("P12-07m: main() on a fresh --deep start overrides a stale LOKI_E10_CAP_S in the worker env", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207m-"));
+    try {
+      const repo = join(dir, "repo"), out = join(dir, "cap.json");
+      execFileSync("git", ["init", "-q", "-b", "main", repo]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "i"]);
+      // the driver is both the entry point and, when main() respawns process.argv[1] as `engine10 worker ...`, the fake worker
+      writeFileSync(join(dir, "drive.ts"), `import { writeFileSync } from "node:fs";
+if (process.argv[2] === "engine10") { writeFileSync(${JSON.stringify(out)}, JSON.stringify({ cap: process.env.LOKI_E10_CAP_S ?? null, argv: process.argv.slice(2) })); process.exit(0); }
+const { main } = await import(${JSON.stringify(join(import.meta.dir, "../../src/engine10/supervisor.ts"))});
+await main(["--deep", "--no-pr", "--quiet", "add a thing"]); process.exit(0);
+`);
+      const env = { ...process.env, LOKI_E10_CAP_S: "Infinity", LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_SPEED: "0", LOKI_CONTROL: "0", LOKI_NO_BROWSER: "1" };
+      execFileSync(process.execPath, [join(dir, "drive.ts")], { cwd: repo, env, stdio: "ignore", timeout: 60000 });
+      const seen = JSON.parse(readFileSync(out, "utf8")) as { cap: string | null; argv: string[] };
+      expect(seen.argv).toContain("deep");
+      expect(seen.cap).toBe(String(DEEP_CAP_S));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 70000);
   test("P12-07i: resumeMachineOpts fails closed on an invalid resume point and leaves ctx unseeded", () => {
     const { ctx } = fakeCtx();
     const evs = killedAfterImplement();
