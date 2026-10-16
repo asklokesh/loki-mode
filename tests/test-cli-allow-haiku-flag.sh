@@ -159,7 +159,11 @@ parser_flags=$(sed -n '/local issue_run_detached=false/,/Unknown option: \$1/p' 
     grep -E '^            -[^ ]*\)$' | sed -e 's/^ *//' -e 's/)$//' | tr '|' '\n' |
     sed -e 's/=.*$//' | grep -v '^-\*$' | sort -u)
 table_flags=$(printf '%s\n' "$allow_rows" | cut -f2 | grep -vx -e '--resume' | sort -u)
-if [ "$parser_flags" = "$table_flags" ]; then
+# Floor: the extraction only matches 12-space arm lines, so a silently missed arm must fail loudly.
+parser_count=$(printf '%s\n' "$parser_flags" | grep -c .)
+if [ "$parser_count" -lt 61 ]; then
+    log_fail "arm extraction found only $parser_count parser flags (floor 61): the regex missed arms"
+elif [ "$parser_flags" = "$table_flags" ]; then
     log_pass "parser arms and allowlist name the same flags"
 else
     log_fail "parser and allowlist differ: $(diff <(printf '%s\n' "$parser_flags") <(printf '%s\n' "$table_flags") | tr '\n' ' ')"
@@ -246,13 +250,8 @@ else
     log_fail "boolean flag swallowed the brief: $out"
 fi
 
-log_test "--model is gone from start help and completions"
+log_test "--model is not advertised in start help (bin/loki consumes it before cmd_start)"
 if printf '%s' "$help_out" | grep -qE '^  --model'; then log_fail "start --help still lists --model"; else log_pass "start --help has no --model flag line"; fi
-if sed -n '/start|quick)/,/;;/p' "$PROJECT_DIR/completions/loki.bash" | grep -q -- '--model'; then
-    log_fail "completions/loki.bash start flags still list --model"
-else
-    log_pass "completions/loki.bash start flags have no --model"
-fi
 
 echo ""
 echo "========================================"

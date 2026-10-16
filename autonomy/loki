@@ -2552,8 +2552,9 @@ _loki_start_handoff() {
 # flag. The --workspace brief scan and the --resume scan both read it, so a value
 # is never mistaken for a brief or run id and an unknown flag exits 64 like the
 # parser's own catch-all. tests/test-cli-allow-haiku-flag.sh checks it against the
-# cmd_start case arms, so the parser and this list cannot drift apart. Flags that
-# only the Bun route honors (--model, --max-wait, ...) are unknown here on purpose.
+# cmd_start case arms, so the parser and this list cannot drift apart. --model and
+# the other Bun/engine10 flags are handled by bin/loki before cmd_start runs, so
+# they are unknown to cmd_start's pre-scans by design.
 _loki_start_flag_kind() {
     _LOKI_START_FLAG_KIND=""
     case "${1%%=*}" in

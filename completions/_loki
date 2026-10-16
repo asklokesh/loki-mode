@@ -338,6 +338,7 @@ function _loki_commands {
 }
 
 function _loki_start {
+    # Rule: list every flag bin/loki routes (Bun/engine10 ones such as --model, --max-cost, --spec, --no-pr too), not only cmd_start's own.
     _arguments \
         '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
@@ -363,6 +364,7 @@ function _loki_start {
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
+        '--model[Model or route override]:model:' \
         '--max-cost[Spend cap in USD]:amount:' \
         '--no-pr[Build and verify without opening a pull request]' \
         '--explain-route[Print the route without running]' \
