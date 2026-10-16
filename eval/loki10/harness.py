@@ -589,6 +589,12 @@ def lockfile_mismatch(repo):
     return None
 
 
+def _drop_links(directory, names):
+    """copytree ignore callback: never copy a symlink, so a link inside the
+    config source cannot pull its target (e.g. ~/secrets) into the eval config."""
+    return [n for n in names if os.path.islink(os.path.join(directory, n))]
+
+
 def arm_env(rundir, model, alias, arm=None):
     # Operator and harness state must not steer the arm: inherited LOKI_* knobs
     # (including LOKI_RUN_TMP, the harness's own tmp), nested-Claude-session
@@ -609,7 +615,7 @@ def arm_env(rundir, model, alias, arm=None):
         for name in CONFIGURED_ENTRIES:
             sp, dp = os.path.join(src, name), os.path.join(cc, name)
             if src and os.path.isdir(sp) and not os.path.islink(sp):
-                shutil.copytree(sp, dp, symlinks=False, dirs_exist_ok=True)
+                shutil.copytree(sp, dp, symlinks=True, dirs_exist_ok=True, ignore=_drop_links)
             elif src and os.path.isfile(sp) and not os.path.islink(sp):
                 shutil.copyfile(sp, dp)
     env.update({

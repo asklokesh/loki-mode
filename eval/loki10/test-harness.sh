@@ -1617,6 +1617,9 @@ echo '{"hooks":{}}' > "$T/cc-src/settings.json"
 echo "echo hook" > "$T/cc-src/hooks/h.sh"
 echo "skill" > "$T/cc-src/skills/s1/SKILL.md"
 echo "secret" > "$T/cc-src/junk/creds.json"
+mkdir -p "$T/cc-secret-dir" && echo "TOPSECRET" > "$T/cc-secret-dir/key.txt"
+ln -s "$T/cc-secret-dir" "$T/cc-src/skills/evil-dir"
+ln -s "$T/cc-secret-dir/key.txt" "$T/cc-src/hooks/evil-file"
 if python3 - "$HERE" "$T/cc-src" <<'PY'
 import importlib.util, os, sys, tempfile
 sp = importlib.util.spec_from_file_location("h", sys.argv[1] + "/harness.py")
@@ -1631,6 +1634,12 @@ cc = c["CLAUDE_CONFIG_DIR"]
 assert cc == os.path.join(d1, "claude-config"), cc
 for rel in ("CLAUDE.md", "settings.json", "hooks/h.sh", "skills/s1/SKILL.md"):
     assert os.path.isfile(os.path.join(cc, rel)), rel
+for root, dirs, files in os.walk(cc, followlinks=False):
+    for n in dirs + files:
+        assert "evil" not in n, "nested symlink copied: " + os.path.join(root, n)
+        assert not os.path.islink(os.path.join(root, n)), "link in config dir"
+    for n in files:
+        assert "TOPSECRET" not in open(os.path.join(root, n)).read(), "symlink target content copied"
 assert not os.path.exists(os.path.join(cc, "junk")), "non-allowlisted entry copied"
 assert os.listdir(r["CLAUDE_CONFIG_DIR"]) == [], "raw-claude config dir must stay empty"
 assert "LOKI_EVAL_CONFIGURED_CC_DIR" not in c
