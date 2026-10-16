@@ -4,7 +4,7 @@
 // python3 -m compileall arm. Change both together.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { run } from "./shell.ts";
+import { commandExists, run } from "./shell.ts";
 import type { ShellOpts, ShellResult } from "./shell.ts";
 
 export type PyExec = (argv: readonly string[], opts: ShellOpts) => Promise<ShellResult>;
@@ -72,27 +72,51 @@ const joinOut = (r: ShellResult): string => [r.stdout, r.stderr].filter((s) => s
 export async function runPythonTests(
   cwd: string,
   args: readonly string[] = ["--tb=short"],
-  opts: { exec?: PyExec; timeoutMs?: number } = {},
+  opts: { exec?: PyExec; exists?: (name: string) => Promise<string | null>; timeoutMs?: number } = {},
 ): Promise<PytestOutcome> {
-  const exec = opts.exec ?? run;
+  const rawExec = opts.exec ?? run;
+  const probe = opts.exists ?? commandExists;
+  const exists = async (name: string): Promise<string | null> => {
+    try {
+      return await probe(name);
+    } catch {
+      return null;
+    }
+  };
   const timeoutMs = opts.timeoutMs ?? 300_000;
+  // A spawn that cannot start (ENOENT) is exit 127, never a thrown error.
+  const exec: PyExec = async (argv, o) => {
+    try {
+      return await rawExec(argv, o);
+    } catch (e) {
+      return { stdout: "", stderr: String(e), exitCode: 127 };
+    }
+  };
   const timed = async (argv: readonly string[]): Promise<{ exitCode: number; output: string }> => {
     const t0 = Date.now();
-    const r = await exec(argv, { cwd, timeoutMs });
+    const r = await exec(argv, { cwd, timeoutMs, env: {} });
     const timedOut = r.exitCode !== 0 && Date.now() - t0 >= timeoutMs;
     return { exitCode: timedOut ? 124 : r.exitCode, output: joinOut(r) };
   };
-  const importable = (await exec(["python3", "-c", "import pytest"], { cwd, timeoutMs: 30_000 })).exitCode === 0;
-  const haveBin = importable || (await exec(["pytest", "--version"], { cwd, timeoutMs: 30_000 })).exitCode === 0;
-  if (!haveBin) {
+  // Python < 3.12 exits 0 on "Ran 0 tests"; zero tests is never a pass.
+  const unittestRun = async (): Promise<{ exitCode: number; output: string }> => {
     const u = await timed(UNITTEST_ARGV);
+    return u.exitCode === 0 && ranZeroTests(u.output) ? { ...u, exitCode: 5 } : u;
+  };
+  // run.sh `command -v`: a missing python3 proves nothing (exit 5 + zero marker = inconclusive upstream).
+  if (!(await exists("python3"))) {
+    return { exitCode: 5, output: "[loki] python3 not found\nNO TESTS RAN", runner: "unittest" };
+  }
+  const importable = (await exec(["python3", "-c", "import pytest"], { cwd, timeoutMs: 30_000, env: {} })).exitCode === 0;
+  const haveBin = importable || (await exists("pytest")) !== null;
+  if (!haveBin) {
+    const u = await unittestRun();
     return { ...u, runner: "unittest" };
   }
   const p = await timed(pytestArgv(importable, args));
   if (p.exitCode !== 5) return { ...p, runner: "pytest" };
-  const u = await timed(UNITTEST_ARGV);
+  const u = await unittestRun();
   const output = `${p.output}\n[loki] pytest collected 0 tests (exit 5); fell back to python3 -m unittest discover\n${u.output}`;
-  if (u.exitCode === 0 && ranZeroTests(u.output)) return { exitCode: 5, output, runner: "unittest" };
   return { exitCode: u.exitCode, output, runner: "unittest" };
 }
 
