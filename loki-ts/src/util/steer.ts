@@ -14,7 +14,7 @@ export const STEER_BEGIN = "--- BEGIN OPERATOR GUIDANCE (from loki steer) ---";
 export const STEER_END = "--- END OPERATOR GUIDANCE ---";
 
 /** Reads and archives .loki/HUMAN_INPUT.md. Returns its text, or null when absent, empty, a symlink, oversize or opted out (LOKI_PROMPT_INJECTION=0/false). */
-export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.env, now: () => Date = () => new Date()): string | null {
+export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.env, now: () => Date = () => new Date(), sink?: IntentRevision[]): string | null {
   if (/^(0|false)$/i.test(env.LOKI_PROMPT_INJECTION ?? "")) return null;
   const f = join(repoDir, ".loki", "HUMAN_INPUT.md");
   try {
@@ -28,14 +28,15 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
     if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); return null; }
     const text = readFileSync(f, "utf8").trim();
     renameSync(f, join(logs, `human-input-${stamp}.md`));
-    if (text !== "") recordRevisions(repoDir, text, `human-input-${stamp}.md`, now());
+    if (text !== "") { const recs = recordRevisions(repoDir, text, `human-input-${stamp}.md`, now()); sink?.push(...recs); }
     return text === "" ? null : text;
   } catch { return null; }
 }
 
 const REV_HDR = /^## Operator directive rev (\d+) \(([^)]*)\) actor=(\S*) source=(\S*)\s*$/;
 /** Appends the revision records for a consumed steer. Best effort: a failure here never blocks the run. */
-function recordRevisions(repoDir: string, text: string, archived: string, at: Date): void {
+function recordRevisions(repoDir: string, text: string, archived: string, at: Date): IntentRevision[] {
+  const recs: IntentRevision[] = [];
   try {
     const file = join(repoDir, ".loki", "intent-revisions.jsonl");
     const prior = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
@@ -53,10 +54,12 @@ function recordRevisions(repoDir: string, text: string, archived: string, at: Da
       if (p.rev === null && body === "") continue;
       const rev = p.rev !== null && p.rev > last ? p.rev : last + 1;
       last = rev;
+      recs.push({ rev, source: p.source, actor: p.actor, sha: createHash("sha256").update(body).digest("hex"), at: at.getTime() });
       out.push(JSON.stringify({ rev, ts: p.ts, actor: p.actor, source: p.source, chars: body.length, sha256: createHash("sha256").update(body).digest("hex"), consumed_at: at.toISOString(), archived }));
     }
     if (out.length) appendFileSync(file, `${out.join("\n")}\n`);
   } catch { /* audit log is best effort */ }
+  return recs; // the caller keeps these in memory: the repo file is agent-writable and is audit only
 }
 
 export interface IntentRevision { rev: number; source: string | null; actor: string | null; sha: string; at: number }
@@ -75,12 +78,11 @@ export function readIntentRevisions(repoDir: string, sinceMs = 0): IntentRevisio
   return out.sort((a, b) => a.rev - b.rev);
 }
 
-/** Revisions of this run consumed after its latest Wall authoring finished; empty when no Wall ran (a pre-Wall revision never stales the Wall, and an earlier run's records are outside the window). */
-export function staleWallRevisions(repoDir: string, ctx: { timeline?: { stage: string; startMs: number; endMs: number }[]; startedAtMs?: number }): IntentRevision[] {
-  const walls = (ctx.timeline ?? []).filter((t) => t.stage === "wall");
-  if (walls.length === 0) return [];
-  const wallEnd = Math.max(...walls.map((t) => t.endMs)), since = ctx.startedAtMs ?? Math.min(...(ctx.timeline ?? []).map((t) => t.startMs));
-  return readIntentRevisions(repoDir, since).filter((r) => r.at > wallEnd);
+/** Revisions (kept in machine memory by withSteer, never re-read from the agent-writable repo file) consumed after the latest Wall authoring STARTED:
+ *  the Wall was written from an older intent. Empty when no Wall ran, so a pre-Wall revision never stales it; a re-authored Wall (later start) clears earlier ones. */
+export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, timeline: readonly { stage: string; startMs: number }[] | undefined): IntentRevision[] {
+  const starts = (timeline ?? []).filter((t) => t.stage === "wall").map((t) => t.startMs);
+  return starts.length === 0 ? [] : (revs ?? []).filter((r) => r.at > Math.max(...starts));
 }
 
 export function steerBlock(text: string): string {
@@ -88,9 +90,9 @@ export function steerBlock(text: string): string {
 }
 
 /** Appends a pending steer to a session's brief; any other stage or a non-string brief passes through untouched. */
-export function withSteer<T extends { stage: string; brief?: unknown }>(o: T, repoDir: string): T {
+export function withSteer<T extends { stage: string; brief?: unknown }>(o: T, repoDir: string, sink?: IntentRevision[]): T {
   if (!STEER_STAGES.has(o.stage) || typeof o.brief !== "string") return o;
-  const text = consumeSteer(repoDir);
+  const text = consumeSteer(repoDir, process.env, () => new Date(), sink);
   if (text === null) return o;
   const b = o.brief, blk = steerBlock(text);
   return { ...o, brief: b.endsWith(FINISH_LINE) ? `${b.slice(0, -FINISH_LINE.length)}${blk}\n\n${FINISH_LINE}` : `${b}\n\n${blk}` };

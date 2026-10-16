@@ -16,12 +16,12 @@ import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { noteOf } from "./base_guard.ts";
 import { redactSecrets } from "./redact.ts";
-import { readIntentRevisions } from "./steer.ts";
+import { readIntentRevisions, type IntentRevision } from "./steer.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
-export function intentRevisionsBlock(repoDir: string, sinceMs: number): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
-  const r = readIntentRevisions(repoDir, sinceMs).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
+export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
+  const r = (revs ?? []).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
   return r.length ? { intent_revisions: r } : {};
 }
 

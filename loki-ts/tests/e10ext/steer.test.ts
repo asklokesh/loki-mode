@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, readIntentRevisions, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -80,15 +80,23 @@ describe("engine10 steer", () => {
     expect(rows[0].actor).toBeNull();
   });
 
-  test("reader: staleness needs a Wall, a consumed_at inside this run and after the Wall; torn lines skipped", () => {
+  test("consume returns the records to the sink even when the repo file is a /dev/null symlink; staleness is judged on Wall start in memory", () => {
+    const d = repo("## Operator directive rev 1 (2026-10-15T00:00:01Z) actor=alice source=chat\nchange it\n");
+    symlinkSync("/dev/null", join(d, ".loki", "intent-revisions.jsonl"));
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, process.env, () => new Date(5000), sink);
+    expect(sink.map((r) => [r.rev, r.actor, r.source, r.at])).toEqual([[1, "alice", "chat", 5000]]);
+    const wall = (startMs: number) => [{ stage: "wall", startMs }];
+    expect(staleWallRevisions(sink, wall(4000)).map((r) => r.rev)).toEqual([1]);
+    expect(staleWallRevisions(sink, wall(5000))).toEqual([]); // same tick: not after
+    expect(staleWallRevisions(sink, [])).toEqual([]); // no Wall yet
+    expect(staleWallRevisions(sink, [...wall(4000), ...wall(6000)])).toEqual([]); // re-authored
+    expect(staleWallRevisions(undefined, wall(1))).toEqual([]);
+  });
+  test("readIntentRevisions (status comment count) skips torn lines and earlier runs", () => {
     const d = repo();
     const row = (rev: number, at: number): string => JSON.stringify({ rev, actor: "a", source: "cli", sha256: "f".repeat(64), consumed_at: new Date(at).toISOString() });
-    writeFileSync(join(d, ".loki", "intent-revisions.jsonl"), `${row(1, 100)}\n{torn\n${row(2, 5000)}\n${row(3, 2500)}\n`);
-    const tl = [{ stage: "wall", startMs: 1500, endMs: 2000 }];
-    expect(readIntentRevisions(d, 1000).map((r) => r.rev)).toEqual([2, 3]);
-    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: tl }).map((r) => r.rev)).toEqual([2, 3]);
-    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: [] })).toEqual([]); // no Wall yet
-    expect(staleWallRevisions(d, { startedAtMs: 1000, timeline: [...tl, { stage: "wall", startMs: 5100, endMs: 5200 }] })).toEqual([]); // re-authored
-    expect(staleWallRevisions(d, { startedAtMs: 4000, timeline: tl }).map((r) => r.rev)).toEqual([2]); // rev 3 is an earlier run's
+    writeFileSync(join(d, ".loki", "intent-revisions.jsonl"), `${row(1, 100)}\n{torn\n${row(2, 5000)}\n`);
+    expect(readIntentRevisions(d, 1000).map((r) => r.rev)).toEqual([2]);
   });
 });

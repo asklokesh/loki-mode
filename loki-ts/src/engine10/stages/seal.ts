@@ -165,7 +165,7 @@ export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
-    const o = ctx.outputs(), stale = staleWallRevisions(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: `intent revised after Wall authoring (rev ${stale.map((r) => r.rev).join(",")}); re-author the Wall` };
+    const o = ctx.outputs(), stale = staleWallRevisions(ctx.intentRevisions, ctx.timeline); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: `operator steer rev ${stale.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"` };
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
     // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
@@ -292,7 +292,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.repoDir, ctx.startedAtMs ?? ctx.timeline?.[0]?.startMs ?? 0),
+      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
