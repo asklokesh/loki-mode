@@ -174,6 +174,27 @@ git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
 if ! failed_check "$out" "unmeasured Nx" >/dev/null; then ok "cited claim passes"; else bad "cited claim flagged"; fi
 
+echo "T11 -- P12-40b: quoted/code/escaped lines pass; missed phrasings are caught"
+claim_flagged() { # claim_flagged <doc text>: 0 when the guard flags the line
+    git -C "$G" reset -q --hard main
+    printf '%s\n' "$1" > "$G/planted-claim.md"
+    git -C "$G" add planted-claim.md
+    git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m c11
+    out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
+    failed_check "$out" "unmeasured Nx" >/dev/null
+}
+for line in 'The spec says `3x faster` is required.' 'It is 3x faster (see docs/METRICS.md).' 'Requirement: 3x faster. <!-- claim-ok -->'; do
+    if ! claim_flagged "$line"; then ok "not flagged: $line"; else bad "false positive: $line"; fi
+done
+printf '%s\n' '```' '3x faster' '```' > "$G/planted-claim.md"
+git -C "$G" add planted-claim.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m fence
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
+if ! failed_check "$out" "unmeasured Nx" >/dev/null; then ok "fenced block not flagged"; else bad "fenced block flagged"; fi
+for line in 'We get 50 % fewer retries.' 'This cuts cost by 50%.' 'It runs 4x as fast.' 'Result: **3x** on the bench.' 'It costs half the cost of before.'; do
+    if claim_flagged "$line"; then ok "flagged: $line"; else bad "missed: $line"; fi
+done
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
