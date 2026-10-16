@@ -307,11 +307,18 @@ export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" 
   return o.attempts === undefined ? "runner" : "attempts";
 }
 
+/** A jira:/linear: ref exports LOKI_WRITEBACK_ISSUE so tracker writeback keys off the intake ref (returns a copy when set). */
+export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const m = /^(?:jira|linear):([A-Za-z][A-Za-z0-9_]*-\d+)$/.exec(task.trim());
+  return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[1]!.toUpperCase() } : env;
+}
+
 /** One engine10 run (FC-38: the only engine `start --attempts` may reach; it seals a receipt). */
 async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
   const { existsSync, readFileSync, statSync } = await import("node:fs");
   const spec = o.prdPath;
   const task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+  env = writebackEnv(task, env);
   const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
   if (o.specPath) argv.push("--spec", o.specPath);
   if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); return await spawnEngine(cwd, argv, env); }

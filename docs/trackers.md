@@ -1,6 +1,6 @@
 # Jira and Linear intake
 
-Loki 10 can start a run from a Jira or Linear issue. This is intake only: the issue is fetched once, before any model runs, and normalized into the same `issue.json` GitHub intake writes (with a `source` field of `jira` or `linear`). Loki does not write back to the tracker or sync status.
+Loki 10 can start a run from a Jira or Linear issue. The issue is fetched once, before any model runs, and normalized into the same `issue.json` GitHub intake writes (with a `source` field of `jira` or `linear`). Loki can also write the outcome back to the ticket (see Writeback below); it never syncs status beyond that.
 
 ```bash
 loki jira:PROJ-123
@@ -13,6 +13,17 @@ loki linear:ENG-42
 - Linear: `LINEAR_API_KEY`.
 
 A missing variable stops the run with an error that names it. A Linear HTTP 401, or a GraphQL response with errors and no data, also names `LINEAR_API_KEY`.
+
+## Writeback
+
+When the run starts from a `jira:` or `linear:` ref, `loki start` exports `LOKI_WRITEBACK_ISSUE` with the issue key, and the same credentials used for intake enable writeback. With no ref, writeback stays off unless the legacy `LOKI_JIRA_URL`, `LOKI_JIRA_TOKEN`, `LOKI_JIRA_EMAIL` or `LOKI_LINEAR_TOKEN` variables are set. With nothing configured, no network call is made.
+
+- done: a comment with the verdict, the PR URL and the receipt sha256.
+- blocked: a comment that the run needs input, with the reason.
+- failed: a comment that the run ended without a PR, with the reason.
+- started: supported by the contract, with its own comment text; the engine does not emit it today.
+
+Optional status moves happen only on done: `LOKI_JIRA_DONE_TRANSITION` (a Jira transition id) and `LOKI_LINEAR_DONE_STATE` (a Linear workflow state id). Failures warn on stderr and never change a verdict or exit code. Tokens are never logged.
 
 ## Self-hosted Jira
 

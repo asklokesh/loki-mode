@@ -59,7 +59,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki trust detail` | Trust metrics detail |
 | `loki crash` | Inspect or submit scrubbed crash reports |
 | `loki contract` | Print the spec delivery contract |
-| `loki start` | Run the autonomous build |
+| `loki start` | Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md) |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
 | `loki queue` | Overnight issue queue with a morning digest |
