@@ -108,6 +108,31 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     }
   });
 
+  it("requested_model follows the router-rewritten model, not the haiku pin (P12-23b)", async () => {
+    const keys = ["LOKI_MAX_TIER", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT", "LOKI_E10_MODEL_DEFAULT", "LOKI_ITERATION", "LOKI_ROUTER", "LOKI_ROUTER_ADVISOR", "LOKI_TIER_ROUTING"];
+    const prev: Record<string, string | undefined> = {};
+    for (const k of keys) { prev[k] = process.env[k]; delete process.env[k]; }
+    process.env["LOKI_ITERATION"] = "8";
+    process.env["LOKI_ROUTER"] = "1";
+    process.env["LOKI_ROUTER_ADVISOR"] = "off"; // advisor unavailable: router turns a haiku executor into sonnet
+    process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "haiku";
+    try {
+      stubQuery([
+        { type: "system", subtype: "init", model: "claude-sonnet-4-6", session_id: "s" },
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {}, session_id: "s" },
+      ]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call({ tier: "development" }));
+      const passed = lastQueryArgs?.options?.["model"];
+      expect(passed).toBe("sonnet");
+      const r = JSON.parse(readFileSync(join(scratch, ".loki", "metrics", "result-cost-8.json"), "utf8"));
+      expect(r.requested_model).toBe(passed as string);
+      expect(r.requested_model).not.toBe("haiku");
+    } finally {
+      for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    }
+  });
+
   it("is_error result -> exit 1", async () => {
     stubQuery([
       { type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0.01, usage: {} },
