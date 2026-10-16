@@ -167,6 +167,10 @@ describe("work-item state (one vocabulary)", () => {
       expect(workItemBlockers(seqs[0]![1])).toEqual([]);
       expect(workItemBlockers(mk(["run.started", null], ["run.completed", null, { verdict: "SPEC_CONFLICT" }]))).toEqual(["spec_conflict: unspecified"]);
     });
+    test("blockers use the LATEST implement stage.completed (a re-run supersedes the earlier one)", () => {
+      const rerun = mk(["run.started", null], ["stage.completed", "implement", { spec_conflict_reason: "old reason" }], ["stage.completed", "implement", { spec_conflict_reason: "new reason" }], ["run.completed", null, { verdict: "SPEC_CONFLICT" }]);
+      expect(workItemBlockers(rerun)).toEqual(["spec_conflict: new reason"]);
+    });
     test("render shows the Blockers line only when there are blockers", () => {
       const text = (ev: EventEnvelope[]): string => render({ ...summarize("e10-x", ev, dir, Date.now()), control_plane_url: null } as never);
       expect(text(conflict)).toContain("  Blockers: spec_conflict: spec says A and B");
