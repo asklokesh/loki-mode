@@ -427,6 +427,12 @@ describe("engine10 steer", () => {
     expect(ctx.intentRevisions?.map((r) => r.rev)).toEqual([1]);
     expect(staleAtSeal(d, ctx)).toEqual([]); // nothing pending any more, and no Wall
   });
+  test("staleAtSeal: a Wall that never completed froze no tests, so a consumed steer is not stale; a completed Wall still refuses it (P12-13)", () => {
+    const rev: IntentRevision = { rev: 1, source: "cli", actor: "a", sha: "x", at: 5000 };
+    const mk = (outputs: () => { wall?: unknown }): { intentRevisions: IntentRevision[]; timeline: { stage: string; startMs: number }[]; outputs: () => { wall?: unknown } } => ({ intentRevisions: [rev], timeline: [{ stage: "wall", startMs: 4000 }], outputs });
+    expect(staleAtSeal(repo(), mk(() => ({}))).map((r) => r.rev)).toEqual([]);
+    expect(staleAtSeal(repo(), mk(() => ({ wall: { tests: 1 } }))).map((r) => r.rev)).toEqual([1]);
+  });
   test("readIntentRevisions (status comment count) skips torn lines and earlier runs", () => {
     const d = repo();
     const row = (rev: number, at: number): string => JSON.stringify({ rev, actor: "a", source: "cli", sha256: "f".repeat(64), consumed_at: new Date(at).toISOString() });
