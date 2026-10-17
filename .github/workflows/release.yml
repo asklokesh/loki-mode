@@ -167,8 +167,6 @@ jobs:
           [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
             echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
           echo "OK: packed manifest gitHead ${PACKED_HEAD}"
-          [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {
-            echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
           tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \
@@ -176,6 +174,8 @@ jobs:
                       package/web-app/dist/index.html; do
             grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
           done
+          [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {
+            echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
           mkdir -p "$RUNNER_TEMP/npm-tarball"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
           printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
@@ -798,6 +798,9 @@ jobs:
 
   publish-ts-sdk:
     needs: release
+    concurrency:
+      group: release-npm-sdk
+      cancel-in-progress: false
     if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
