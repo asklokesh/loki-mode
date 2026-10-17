@@ -68,15 +68,25 @@ describe("ModernizeLog", () => {
   });
 });
 
-describe("event producers (FC-M25W)", () => {
+/** FC-M25W-b: a producer is the event name inside an append( call on one line, before any trailing // comment. A reader (`type == "x"`, `["x"].includes(t)`) or a comment mentioning the name is not a producer. */
+export const hasProducer = (text: string, name: string): boolean =>
+  new RegExp(`append\\((?:(?!//)[^\\n])*?["'\`]${name.replace(/\./g, "\\.")}["'\`]`).test(text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n"));
+
+describe("event producers (FC-M25W, FC-M25W-b)", () => {
   const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : []; });
-  it("every event name in types.ts has a producer in loki-ts/src", () => {
+  it("every event name in types.ts has an append( producer in loki-ts/src (empty allowlist)", () => {
     const src = join(import.meta.dir, "..", "..", "..", "src");
     const typesFile = join(src, "engine10", "modernize", "types.ts");
-    // Producer = a quoted event name on a code line that is not a comment and not a reader (`type ===`). Covers `append("x"` and `cond ? "x" : "y"`.
-    const text = walk(src).filter((f) => f !== typesFile).flatMap((f) => readFileSync(f, "utf8").split("\n")).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && !/type\s*[!=]==/.test(l)).join("\n");
-    const orphans = MODERNIZE_EVENT_TYPES.filter((t) => !new RegExp(`["'\`]${t.replace(/\./g, "\\.")}["'\`]`).test(text));
-    // Declared but not yet emitted anywhere (separate failure-class rows). Shrink this list when a producer lands; never grow it.
-    expect(orphans).toEqual(["unit.planned", "codemod.skipped"]);
+    const text = walk(src).filter((f) => f !== typesFile).map((f) => readFileSync(f, "utf8")).join("\n");
+    expect(MODERNIZE_EVENT_TYPES.filter((t) => !hasProducer(text, t))).toEqual([]);
+  });
+  it("the review mutations are not producers; a real append is", () => {
+    const real = 'log.append("unit.resliced", { unit: u });';
+    expect(hasProducer(real, "unit.resliced")).toBe(true);
+    expect(hasProducer('log.append(ok ? "unit.resliced" : "unit.completed", {});', "unit.resliced")).toBe(true);
+    expect(hasProducer('if (e.type == "unit.resliced") {}', "unit.resliced")).toBe(false);
+    expect(hasProducer('if (["unit.resliced"].includes(e.type)) {}', "unit.resliced")).toBe(false);
+    expect(hasProducer('doIt(); // see "unit.resliced"', "unit.resliced")).toBe(false);
+    expect(hasProducer('log.append(kind); // "unit.resliced"', "unit.resliced")).toBe(false);
   });
 });

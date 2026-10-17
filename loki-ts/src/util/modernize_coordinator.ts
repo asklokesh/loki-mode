@@ -6,10 +6,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "../engine10/modernize/cluster.ts";
+import { realCommandRunner, runCodemod } from "../engine10/modernize/codemod.ts";
+import type { CommandRunner } from "../engine10/modernize/codemod.ts";
 import type { InventoryResult } from "../engine10/modernize/inventory.ts";
 import { captureUnitOracle, makeProposeInputs, realCaptureRunner } from "../engine10/modernize/oracle/search.ts";
 import type { ProposeInputs } from "../engine10/modernize/oracle/search.ts";
 import { alreadySealedInLog, DEFAULT_NORMALIZERS } from "../engine10/modernize/oracle/seal.ts";
+import { reslice } from "../engine10/modernize/reslice.ts";
+import type { ResliceChecker, ResliceSlicer } from "../engine10/modernize/reslice.ts";
 import { loadResumeState, resumeSchedule } from "../engine10/modernize/resume.ts";
 import { gitMergeOps, schedule } from "../engine10/modernize/scheduler.ts";
 import type { AttemptRunner, MergeOps, SchedulerOpts, UnitOutcome, WorktreeOps } from "../engine10/modernize/scheduler.ts";
@@ -54,7 +58,15 @@ export interface WaveDeps {
   prepare?: (unit: Unit) => string | null;
   /** Steps whose missing command warns instead of blocking (D2). */
   optionalSteps?: readonly WaveStep[];
+  /** FC-M25W-b: re-slices a unit that failed best-of-2 (needsReslice) so unit.resliced is emitted; the unit itself stays NOT_PROVEN (never force-passed). */
+  reslice?: { slice: ResliceSlicer; check: ResliceChecker };
 }
+
+/** Production re-slice callbacks. Function-granularity clustering needs per-child oracles that do not exist yet, so: a multi-file unit splits per file, a single-file unit has no strict subset, and a child is never judged equivalent without its own evidence (the checker throws, reslice records NOT_PROVEN). */
+export const productionReslice: NonNullable<WaveDeps["reslice"]> = {
+  slice: (unit) => unit.nodes.length < 2 ? [] : unit.nodes.map((n, i) => ({ id: `${unit.id}.${i + 1}`, nodes: [n], lines: unit.lines, highRisk: unit.highRisk })),
+  check: (unit) => { throw new Error(`no sealed oracle for re-sliced unit ${unit.id}`); },
+};
 export interface WaveReport { wave: number; verdict: WaveVerdict; shipped: boolean; url: string | null; reason: string | null }
 export type WavesResult = { ok: boolean; waves: WaveReport[]; blocked: string | null; spentUsd: number };
 
@@ -106,6 +118,9 @@ async function runWavesInner(plan: ClusterResult, d: WaveDeps, acc: RunAcc): Pro
   const waves: WaveReport[] = [];
   const verdicts = acc.verdicts;
   let spent = 0;
+  // FC-M25W-b: one unit.planned per planned unit, never repeated on resume.
+  const planned = new Set(readModernizeEvents(d.repoDir, d.mid).filter((e) => e.type === "unit.planned").map((e) => e.data["unit"]));
+  for (const x of plan.units) if (!planned.has(x.id)) d.log.append("unit.planned", { unit: x.id, files: x.nodes.length, lines: x.lines });
   const shipped = new Set(readModernizeEvents(d.repoDir, d.mid).filter((e) => e.type === "wave.shipped").map((e) => e.data["wave"]));
   const unready = acc.unready;
   // F8: on resume a unit already settled in the log is never re-captured (the tree has changed since).
@@ -149,6 +164,12 @@ async function runWavesInner(plan: ClusterResult, d: WaveDeps, acc: RunAcc): Pro
     for (const id of ids) if (unready.has(id)) outcomes.push({ unit: id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: unready.get(id)! });
     const byUnit = new Map(outcomes.map((o) => [o.unit, o]));
     for (const [k, o] of byUnit) acc.outcomes.set(k, o);
+    for (const o of outcomes) {
+      const un = plan.units.find((x) => x.id === o.unit);
+      if (!d.reslice || !un || !o.needsReslice || o.status === "PROVEN") continue;
+      try { const rs = reslice(un, d.reslice.slice, d.reslice.check, d.log); o.reason = [o.reason, `re-sliced: ${rs.verdict}`].filter(Boolean).join("; "); }
+      catch (e) { process.stderr.write(`modernize: re-slice of ${o.unit} failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+    }
     const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: { ...d.waveCommands, build: scopeBuildToWave(d.waveCommands.build, d.repoDir, sub.units) }, log: d.log, ...(d.optionalSteps ? { optional: d.optionalSteps } : {}), ...(d.stepRunner ? { run: d.stepRunner } : {}) });
     verdicts.push(verdict);
     let url: string | null = null, reason: string | null = null, didShip = false;
@@ -173,17 +194,22 @@ export interface ProductionWaveOpts {
 
 /** The real per-attempt runner: runUnit (M-15) in the attempt worktree with the shared implementer and new-tree runner (makeUnitRunners).
  *  The oracle and log live in the base tree (repoDir); only the implement session and the new-tree replay see the worktree (newTreeDir). */
-export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log: ModernizeLog; repoDir: string; units: readonly Unit[]; runners?: ReturnType<typeof makeUnitRunners>; runUnit?: typeof runUnit }): AttemptRunner {
+export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log: ModernizeLog; repoDir: string; units: readonly Unit[]; runners?: ReturnType<typeof makeUnitRunners>; runUnit?: typeof runUnit; codemod?: CommandRunner }): AttemptRunner {
   const nodesOf = new Map(o.units.map((u) => [u.id, u.nodes]));
   // Unit ids are "u-N", not paths: a single-file unit is located by its one node; a multi-file unit has no single source (NOT_PROVEN, D1).
   const unitFile = (id: string, tree: string): string | null => { const n = nodesOf.get(id); return n && n.length === 1 ? defaultUnitFile(n[0]!, tree) : null; };
   const runners = o.runners ?? makeUnitRunners({ target: o.target, unitFile });
   const run = o.runUnit ?? runUnit;
-  return (ctx) => ({
+  // FC-M25W-b: deterministic codemod first (3.4); a missing tool is logged as codemod.skipped with runCodemod's reason, never fatal.
+  return (ctx) => {
+    const cm = runCodemod(o.target, ctx.unit.nodes, ctx.worktree, o.codemod ?? realCommandRunner);
+    if (!cm.ran) o.log.append("codemod.skipped", { unit: ctx.unit.id, tool: cm.tool, reason: cm.skippedReason });
+    return {
     result: run({ unit: ctx.unit.id, repoDir: o.repoDir, newTreeDir: ctx.worktree, mid: o.mid, target: o.target, normalizers: DEFAULT_NORMALIZERS, baseSha: ctx.baseSha, files: ctx.unit.nodes },
       o.log, makePytestBaseRunner(), runners.implement, runners.runNew, runners.runStub, makePytestCollector()),
     costUsd: NaN, // unmetered here: the scheduler treats a non-finite cost as budget-unknown (charged at the estimate, or stops under --budget)
-  });
+    };
+  };
 }
 
 /** Founder default D1: capture reads one .py file. Anything else is NOT_PROVEN, never guessed at. */
@@ -243,7 +269,7 @@ export function productionWaveDeps(o: ProductionWaveOpts): { ok: true; deps: Wav
       run: makeAttemptRunner({ mid: o.mid, target: o.target, log: o.log, repoDir: o.repoDir, units: o.plan.units }),
       merge: gitMergeOps(o.repoDir, o.mid), resume: o.resume, waveCommands,
       optionalSteps: waveCommands.integration === null ? ["integration"] : [],
-      ship: !o.noPr, pinnedOrigin, headSha: head,
+      ship: !o.noPr, pinnedOrigin, headSha: head, reslice: productionReslice,
       prepare: makeUnitPrep({ repoDir: o.repoDir, mid: o.mid, propose: makeProposeInputs(makeProposeSession({ mid: o.mid })) }),
     },
   };
