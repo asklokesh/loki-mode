@@ -1,6 +1,6 @@
 // `loki queue`: an overnight queue of GitHub issue refs.
 //   loki queue add <issue...>   append refs to .loki/issue-queue.json
-//   loki queue list             show what is queued
+//   loki queue list [--json]    show what is queued (--json: the refs as a JSON array)
 //   loki queue remove <issue...> take refs out of the queue (missing ref: "not queued", exit 0)
 //   loki queue clear            empty the queue
 //   loki queue run [--no-pr] [--max-total-cost <usd>]  process one at a time through issue-mode `loki start`,
@@ -192,8 +192,12 @@ export function formatAge(addedAt: string, now: Date): string {
   return `${Math.floor(sec / 86400)}d`;
 }
 
-export function queueList(d: QueueDeps): number {
+export function queueList(d: QueueDeps, json = false): number {
   const items = readQueue(d.lokiDir);
+  if (json) {
+    d.out(JSON.stringify(items.map((it) => it.ref)) + "\n");
+    return 0;
+  }
   if (items.length === 0) {
     d.out("queue is empty\nnext: loki queue add <issue...>  (owner/repo#N, #N or an issue URL)\n");
     return 0;
@@ -258,7 +262,7 @@ export function parseMaxTotalCost(args: readonly string[]): number | null {
   return n > 0 ? n : Number.NaN;
 }
 
-const QUEUE_USAGE = "usage: loki queue <add <issue...> | list | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n";
+const QUEUE_USAGE = "usage: loki queue <add <issue...> | list [--json] | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n";
 
 // First argument queue run does not understand (so a mistyped --no-pr cannot open PRs), or null when all are valid.
 function unknownRunArg(args: readonly string[]): string | null {
@@ -494,11 +498,14 @@ export async function runQueue(args: readonly string[], inject?: Partial<QueueDe
     case "add":
       return queueAdd(rest, d);
     case "list":
-      if (rest.length > 0) {
-        d.err(`loki queue list: unexpected argument '${rest[0]}'\n${QUEUE_USAGE}`);
+    {
+      const extra = rest.find((a) => a !== "--json");
+      if (extra !== undefined) {
+        d.err(`loki queue list: unexpected argument '${extra}'\n${QUEUE_USAGE}`);
         return 2;
       }
-      return queueList(d);
+      return queueList(d, rest.includes("--json"));
+    }
     case "remove":
     case "rm":
       return queueRemove(rest, d);

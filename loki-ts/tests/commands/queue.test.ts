@@ -271,3 +271,30 @@ describe("loki queue list columns (TEN-UX-14)", () => {
     expect(await runQueue(["clear"], h.inject)).toBe(0);
   });
 });
+
+describe("loki queue list --json (TEN-ADOPTION-25)", () => {
+  const bin = join(import.meta.dir, "../../../bin/loki");
+  const run = (...a: string[]) => Bun.spawnSync([bin, "queue", ...a], { env: { ...process.env, LOKI_DIR: dir } });
+
+  test("list json prints the refs as a JSON array through bin/loki", () => {
+    expect(run("add", "o/r#1", "o/r#2").exitCode).toBe(0);
+    const r = run("list", "--json");
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout.toString())).toEqual(["o/r#1", "o/r#2"]);
+  });
+
+  test("list json on an empty queue is []", () => {
+    const r = run("list", "--json");
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout.toString())).toEqual([]);
+  });
+
+  test("plain list output is unchanged and other extras still exit 2", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1"], h.inject);
+    h.out.length = 0;
+    expect(await runQueue(["list"], h.inject)).toBe(0);
+    expect(h.out.join("")).toBe("ID     AGE  STATUS\no/r#1  0s   queued\n1 queued\n");
+    expect(await runQueue(["list", "--json", "--bogus"], h.inject)).toBe(2);
+  });
+});
