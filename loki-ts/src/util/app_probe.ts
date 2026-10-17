@@ -81,7 +81,7 @@ export async function appProbe(repoDir: string, lokiDir: string, opts: AppProbeO
     if (opts.specText !== undefined && checks[1]?.result === "pass" && url) checks.push(await functionalVerify(opts, url, dir, lokiDir, timeoutMs));
     return { checks, pid, url };
   } finally {
-    if (!opts.skipStop && pid !== null) stopApp(repoDir, { runnerPath: runner, timeoutMs });
+    if (!opts.skipStop) stopApp(repoDir, { runnerPath: runner, timeoutMs });
   }
 }
 
