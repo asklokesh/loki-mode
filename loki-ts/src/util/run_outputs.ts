@@ -20,12 +20,36 @@ import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
+import { REPO_ROOT } from "./paths.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
 export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
   const r = (revs ?? []).filter((r) => r.unapplied !== true).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
   return r.length ? { intent_revisions: r } : {};
+}
+
+/** Receipt field (TEN-GATES-15): the seeded-defect corpus the ablation gate leaned on. Present only when the run recorded a valid
+ *  .loki/quality/ablation.json and the corpus manifest is readable, so every other receipt stays byte-stable. corpus_version is the
+ *  sha256 of the manifest bytes; catch_rate is NOT_SEALED / total of the worst run in results/wrong-pass.json, counted only when that
+ *  file measured THIS manifest (a stale measurement is null, never carried over). The block sits in the signed receipt body, so
+ *  editing any value breaks receipt_sha256 and `loki verify` reports TAMPERED. */
+export interface AblationCorpus { corpus_version: string; corpus_defects: number; catch_rate: number | null }
+export function ablationCorpusBlock(repoDir: string, env: NodeJS.ProcessEnv = process.env, corpusDir?: string): { ablation?: AblationCorpus } {
+  const dir = corpusDir ?? (env["LOKI_SEEDED_DEFECTS_DIR"] || join(REPO_ROOT, "benchmarks", "seeded-defects"));
+  try {
+    const ab = JSON.parse(readFileSync(join(repoDir, ".loki", "quality", "ablation.json"), "utf8")) as { status?: unknown };
+    if (ab.status !== "load_bearing" && ab.status !== "not_load_bearing") return {};
+    const bytes = readFileSync(join(dir, "manifest.json")), version = createHash("sha256").update(bytes).digest("hex");
+    const defects = ((JSON.parse(bytes.toString("utf8")) as { defects?: unknown }).defects as unknown[] | undefined)?.length ?? 0;
+    let rate: number | null = null;
+    try {
+      const res = JSON.parse(readFileSync(join(dir, "results", "wrong-pass.json"), "utf8")) as { manifest_sha256?: unknown; runs?: { outcomes?: Record<string, unknown> }[] };
+      const rates = res.manifest_sha256 === version && Array.isArray(res.runs) ? res.runs.map((r) => Object.values(r.outcomes ?? {})).filter((o) => o.length > 0).map((o) => o.filter((x) => x === "NOT_SEALED").length / o.length) : [];
+      if (rates.length > 0) rate = Math.round(Math.min(...rates) * 10000) / 10000;
+    } catch { /* no usable results: catch_rate stays null */ }
+    return { ablation: { corpus_version: version, corpus_defects: defects, catch_rate: rate } };
+  } catch { return {}; }
 }
 
 const REVERTED = "unrelated edit reverted:";

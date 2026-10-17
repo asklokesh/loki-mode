@@ -2,10 +2,13 @@
 // (model-written spec_conflict_reason, paths, keys) must round-trip through the real
 // JSON.stringify(receipt, null, 2) file path and verify OK.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { receiptSha256, sealStage } from "../../src/engine10/stages/seal.ts";
+import type { Obj, RunContext, StageName } from "../../src/engine10/types.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "e10-roundtrip-"));
@@ -63,5 +66,88 @@ describe("seal then verify round-trip", () => {
       expect(rc).toBe(0);
       expect(out).toContain("Usage");
     }
+  });
+});
+
+// TEN-GATES-15: the corpus version and catch rate ride in the signed receipt body.
+const sh = (cwd: string, ...a: string[]): string => execFileSync(a[0]!, a.slice(1), { cwd, encoding: "utf8" });
+async function realSeal(name: string, ablation: Record<string, unknown> | null, results: ((v: string) => unknown) | null, manifest = '{"defects":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}]}'): Promise<{ receipt: Record<string, unknown>; path: string; runsRoot: string; version: string }> {
+  const repo = join(root, name), corpus = join(root, name + "-corpus"), runDir = join(repo, ".loki/runs/r1");
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(join(corpus, "results"), { recursive: true });
+  writeFileSync(join(corpus, "manifest.json"), manifest);
+  const version = createHash("sha256").update(manifest).digest("hex");
+  if (results) writeFileSync(join(corpus, "results/wrong-pass.json"), JSON.stringify(results(version)));
+  if (ablation) {
+    mkdirSync(join(repo, ".loki/quality"), { recursive: true });
+    writeFileSync(join(repo, ".loki/quality/ablation.json"), JSON.stringify(ablation));
+  }
+  sh(repo, "git", "init", "-q", "-b", "main");
+  sh(repo, "git", "config", "user.name", "t");
+  sh(repo, "git", "config", "user.email", "t@t.invalid");
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  sh(repo, "git", "add", "a.txt");
+  sh(repo, "git", "commit", "-q", "-m", "base");
+  const base = sh(repo, "git", "rev-parse", "HEAD").trim();
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  sh(repo, "git", "commit", "-q", "-am", "work");
+  const outputs = {
+    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }, wall: { files: [] }, implement: { exit: "done" },
+    verify: { checks: [{ name: "bun:w.test.ts", cmd: "bun test", result: "pass", n: 2, duration_s: 1 }], flaky: [], wall_passed: true, target_checks: [] },
+  } as Partial<Record<StageName, Obj>>;
+  const ctx: RunContext = {
+    runId: "r1", repoDir: repo, runDir, baseSha: base, branch: "b", provider: "claude", model: "m", deep: false, capS: 900,
+    emit: () => {}, sessions: { run: async () => ({ exit: 0 }) as never },
+    tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+    cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+    clock: { now: () => Date.now() }, outputs: () => outputs,
+  };
+  const prev = process.env["LOKI_SEEDED_DEFECTS_DIR"];
+  process.env["LOKI_SEEDED_DEFECTS_DIR"] = corpus;
+  try {
+    const r = await sealStage.run(ctx, new AbortController().signal), path = r.data.receipt_path as string;
+    return { receipt: JSON.parse(readFileSync(path, "utf8")), path, runsRoot: join(repo, ".loki/runs"), version };
+  } finally {
+    if (prev === undefined) delete process.env["LOKI_SEEDED_DEFECTS_DIR"];
+    else process.env["LOKI_SEEDED_DEFECTS_DIR"] = prev;
+  }
+}
+const measured = (v: string): unknown => ({
+  schema: "loki.seeded-defects.results/v2", manifest_sha256: v,
+  runs: [
+    { setup: "top", model: "x", outcomes: { a: "NOT_SEALED", b: "NOT_SEALED", c: "NOT_SEALED", d: "NOT_SEALED" } },
+    { setup: "floor", model: "y", outcomes: { a: "NOT_SEALED", b: "NOT_SEALED", c: "NOT_SEALED", d: "SEALED" } },
+  ],
+});
+
+describe("receipt records the seeded-defect corpus (TEN-GATES-15)", () => {
+  test("version, defect count and worst-run catch rate are sealed, and verify rejects a tampered value", async () => {
+    const s = await realSeal("g15a", { status: "load_bearing" }, measured);
+    expect(s.receipt["ablation"]).toEqual({ corpus_version: s.version, corpus_defects: 4, catch_rate: 0.75 });
+    expect((await verifyReceipt(s.path)).reasons.some((r) => r.startsWith("receipt_sha256 mismatch"))).toBe(false); // events.jsonl is absent in this fixture; integrity is what is under test
+    for (const [k, v, orig] of [["catch_rate", 1, 0.75], ["corpus_version", "0".repeat(64), s.version]] as const) {
+      const t = JSON.parse(readFileSync(s.path, "utf8"));
+      t.ablation[k] = v;
+      writeFileSync(s.path, JSON.stringify(t, null, 2) + "\n");
+      const bad = await verifyReceipt(s.path);
+      expect(bad.verdict).toBe("TAMPERED");
+      expect(bad.reasons[0]).toStartWith("receipt_sha256 mismatch");
+      expect((await capture(["r1", "--allow-unsigned"], s.runsRoot)).rc).toBe(1);
+      t.ablation[k] = orig;
+      writeFileSync(s.path, JSON.stringify(t, null, 2) + "\n");
+    }
+  });
+  test("a results file for a different manifest gives catch_rate null, never a stale rate", async () => {
+    const s = await realSeal("g15b", { status: "not_load_bearing" }, (v) => ({ ...(measured(v) as object), manifest_sha256: "f".repeat(64) }));
+    expect((s.receipt["ablation"] as Obj)["catch_rate"]).toBeNull();
+  });
+  test("no results file gives null; an outcome-less run is ignored", async () => {
+    expect(((await realSeal("g15c", { status: "load_bearing" }, null)).receipt["ablation"] as Obj)["catch_rate"]).toBeNull();
+    expect(((await realSeal("g15d", { status: "load_bearing" }, (v) => ({ manifest_sha256: v, runs: [{ outcomes: {} }] }))).receipt["ablation"] as Obj)["catch_rate"]).toBeNull();
+  });
+  test("no ablation record, not_applicable, or unreadable manifest leaves the key out", async () => {
+    expect("ablation" in (await realSeal("g15e", null, measured)).receipt).toBe(false);
+    expect("ablation" in (await realSeal("g15f", { status: "not_applicable" }, measured)).receipt).toBe(false);
+    expect("ablation" in (await realSeal("g15g", { status: "load_bearing" }, null, "{not json")).receipt).toBe(false);
   });
 });
