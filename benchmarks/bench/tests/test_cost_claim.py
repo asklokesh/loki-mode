@@ -419,3 +419,21 @@ def test_cli_cost_profile_lean_and_mixed(tmp_path):
     _write(f, rows)
     rc, out = _run(*_base_args(f))
     assert rc == 1 and json.loads(out)["cost_profile"] == "mixed", out
+
+
+def test_unmatched_exclusion_warned_and_listed(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows += _attr_rows("loki", 5.0, 1, prefix="bad")
+    rows += _attr_rows("raw-lean", 1.0, 1, prefix="bad")
+    _write(f, rows)
+    p = subprocess.run([sys.executable, "-I", _CLI, *_base_args(f),
+                        "--exclude-task", "bad0", "--exclude-task", "typo"],
+                       capture_output=True, text=True)
+    v = json.loads(p.stdout)
+    assert v["unmatched_exclusions"] == ["typo"], v
+    assert v["excluded_tasks"] == ["bad0", "typo"]
+    assert "typo" in p.stderr and "matches no row" in p.stderr
+    assert "bad0" not in p.stderr
+    rc, out = _run(*_base_args(f), "--exclude-task", "bad0")
+    assert json.loads(out)["unmatched_exclusions"] == []
