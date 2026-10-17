@@ -270,9 +270,10 @@ async function runOverride(argv: readonly string[]): Promise<number> {
 
 async function runHandoff(argv: readonly string[]): Promise<number> {
   const gate = argv[0];
-  const count = Number.parseInt(argv[1] ?? "0", 10);
+  const countRaw = argv[1];
+  const count = countRaw !== undefined && /^[0-9]+$/.test(countRaw) ? Number.parseInt(countRaw, 10) : 0;
   const iter = parseIter(argv[2]);
-  if (!gate || !Number.isFinite(count) || iter === null) {
+  if (!gate || !(count > 0) || iter === null) {
     process.stderr.write("handoff: usage: handoff <gate> <consecutive-failures> <iter>\n");
     return 2;
   }
