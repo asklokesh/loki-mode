@@ -5,11 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.58 (2026-10-17)
+
+### Fixed
+- The v11.17.57 release notes name the queue rm subcommand in prose, so the help and changelog drift guard passes on main again (STAB-1).
+
 ## v11.17.57 (2026-10-17)
 
 ### Fixed
 - The engine10 core is back under its 5,000-line budget (4,956): verify reuses the shared `mapPool` and `verifyJobs` in `util/check_result.ts`, and the test command resolver, failure-line normalizer, `sanitizeReason` and the clock, duration and token formatters move to existing util modules with re-exports, behavior unchanged (STAB-1).
-- `loki start` imports safe_git statically so the moat P9 allowToken caller scan passes again; the L2 destructive git registry scan no longer counts the `loki queue rm` subcommand name as a git call (STAB-1).
+- `loki start` imports safe_git statically so the moat P9 allowToken caller scan passes again; the L2 destructive git registry scan no longer counts the queue rm subcommand name as a git call (STAB-1).
 - Test-only: the FC-01 monorepo tests follow the `npx --no-install` argv, a new preflight test uses a here-string under the sigpipe ceiling, and `router_history.test.ts` carries its select marker (STAB-1).
 
 ## v11.17.56 (2026-10-17)

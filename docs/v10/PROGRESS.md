@@ -2551,3 +2551,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T15:48Z (CoS) v11.17.57
 - STAB-1 main green fix-forward: core budget 4956 (budget.test pass), P9 allowtoken case PASS, L2 registry pass, monorepo_cwd 16 pass 0 fail, sigpipe 1722 <= 1722, select-tests 119 pass 0 fail, help drift 34 pass 0 fail. Combined: tsc rc=0, build rc=0, bun test (budget, l0, monorepo, l2, verify, util, spawn_env_guard, contract, cli) 765 pass 0 fail. Three orphan bun test PIDs (ppid 1, 21h old, removed worktrees) stopped by PID.
+
+## 2026-10-17T16:07Z (CoS) v11.17.58
+- STAB-1 follow-up: Tests 39046745996 on v11.17.57 failed only on shard 1 help drift (FAIL: 'loki queue rm' (CHANGELOG) is absent from help), caused by the 11.17.57 notes. Reworded; tests/test-help-changelog-drift.sh 4 passed, 0 failed. Release 39046745968 all jobs success; npm latest and next 11.17.57.
