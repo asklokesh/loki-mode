@@ -201,7 +201,7 @@ _loki_known_blocker() {
         # single most common post-install failure unactionable in the data --
         # and it is the worst-placed one, since without this the user only learns
         # of it after confirming the spend.
-        no_provider|not_logged_in|node|python3|jq|git|curl|disk|skill_symlink)
+        no_provider|not_logged_in|not_a_repo|git_identity|node|python3|jq|git|curl|disk|skill_symlink)
             printf '%s' "$1" ;;
         *)
             printf 'other' ;;
@@ -366,5 +366,17 @@ loki_emit_build_verified() {
         [ -n "$_line" ] && _args+=("$_line")
     done <<< "$_props"
     loki_telemetry "build_verified" "${_args[@]}"
+    return 0
+}
+
+# loki_emit_build_verified_enum <headline> <route>: build_verified for the
+# default engine10 route, which has no proof.json reader. Enum args only:
+# anything but headline=VERIFIED and route=engine10 sends nothing. Same strict
+# analytics gate as loki_emit_build_verified.
+loki_emit_build_verified_enum() {
+    _loki_analytics_enabled || return 0
+    [ "${1:-}" = "VERIFIED" ] || return 0
+    [ "${2:-}" = "engine10" ] || return 0
+    loki_telemetry "build_verified" "headline=VERIFIED" "route=engine10"
     return 0
 }

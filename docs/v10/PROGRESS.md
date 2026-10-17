@@ -2438,3 +2438,8 @@ v11.17.20 published (Release run success on e2b6b77d2; npm latest 11.17.20, next
 ## 2026-10-17T05:06Z (CoS) v11.17.22
 
 v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.17.21). Security Audit red on 462fbc40a: 4 leaks, reproduced locally only with --diff-merges=first-parent (slice-branch merges fd027051c, bc0e97c63 re-add the QUALITY-01 fixture key); fingerprints added, rescan rc=0. Pre-push scans without first-parent merge diffs, so it passed; TEN-SEC-GITLEAKS-01 (HIGH) dispatched to make the fixture key runtime-built and align pre-push with CI. Ships batch P approvals: DEPLOY-04 (TL APPROVE 4ed77ee5b), QUALITY-05 (TL APPROVE 69f284f71), UX-01 (TL APPROVE 08a8ae052), STABILITY-07 (TL APPROVE 0261d735a); tsc on merged main clean. Round 2 dispatched: DEPLOY-02 (HIGH BLOCK, --max-age ignored on --url), GATES-04 (TL BLOCK, app leak on boot timeout), UX-05 (TL BLOCK, 4 readiness lines), COST-11 (HIGH BLOCK, haiku already-satisfied false green and stage limit cuts the sonnet retry).
+
+## 2026-10-17T05:25Z (CoS) v11.17.23
+- v11.17.22 published: npm latest=11.17.22 next=11.17.22 (npm view dist-tags). Its Release gate job failed on P9 injection-cannot-reach-token (reproduced locally: bash tests/moat/p9-rule-of-two.sh prints CASE P9.injection-cannot-reach-token FAIL on 2a4dad0c1); P0 fix-forward TEN-P9-FIX dispatched with opus HIGH review (workflow wpvgygoia). Security Audit on 67c21ba72: success.
+- v11.17.23 ships TEN-GATES-04 (TL APPROVE 6ce706340) and TEN-UX-05 (TL APPROVE bbba42387).
+- TEN-SEC-GITLEAKS-01 r1 HIGH BLOCK c2db05d04 (G1 greps the echo line, not the gitleaks call); r2 dispatched. Round 3 for DEPLOY-02 and COST-11 plus GATES-06 and GATES-07 building (workflow wg0hl8nge).

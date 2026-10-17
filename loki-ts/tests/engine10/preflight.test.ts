@@ -214,6 +214,33 @@ describe("first run (TEN-UX-01)", () => {
     expect(existsSync(join(dir, ".git"))).toBe(false);
   });
 
+  // TEN-UX-01-F1: the real start entry (supervisor main) must reach initEmptyRepo before its own repo check.
+  function startIn(dir: string, env: Record<string, string>) {
+    const code = `import { main } from ${JSON.stringify(join(import.meta.dir, "..", "..", "src", "engine10", "supervisor.ts"))}; process.exit(await main(["fix the bug"]));`;
+    const script = join(tmpRoot("e10-pf-entry-"), "entry.ts"); // main reads process.argv[1], so a real file, not -e
+    writeFileSync(script, code);
+    return spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8", timeout: 60000, env: { ...env, LOKI_SPEED: "0", LOKI_CLAUDE_CLI: fakeClaude('{"loggedIn":false}').cli } });
+  }
+
+  test("start entry in an empty folder initialises the repo and gets past the repo check", () => {
+    const { dir, env } = emptyFolder();
+    const r = startIn(dir, env);
+    expect(r.stderr).not.toContain("not inside a git repository");
+    expect(r.stderr).toContain("initialized a new git repository in");
+    expect(r.stderr).toContain("claude login (or set ANTHROPIC_API_KEY)");
+    expect(existsSync(join(dir, ".git"))).toBe(true);
+    expect(r.status).toBe(2);
+  });
+
+  test("start entry in a non-empty folder keeps the named git init fix and touches nothing", () => {
+    const { dir, env } = emptyFolder();
+    writeFileSync(join(dir, "a.txt"), "x");
+    const r = startIn(dir, env);
+    expect(r.stderr).toContain("git init && git add . && git commit -m init");
+    expect(existsSync(join(dir, ".git"))).toBe(false);
+    expect(r.status).toBe(2);
+  });
+
   test("claude loggedIn:false is fatal and names the fix", async () => {
     const { dir, env } = identifiedRepo();
     const { cli } = fakeClaude('{"loggedIn":false}');
