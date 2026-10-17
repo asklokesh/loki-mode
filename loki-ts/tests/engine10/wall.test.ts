@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -33,6 +34,7 @@ import type {
 } from "../../src/engine10/types.ts";
 
 import { resolveModelAlias, wallModel } from "../../src/engine10/sizing.ts";
+import { WALL_HOLDOUT_MIN, holdoutDirFor } from "../../src/util/holdout.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "wall");
 const SAMPLE = readFileSync(join(FIX, "loki_wall_sample.test.ts"), "utf8");
@@ -770,5 +772,99 @@ describe("COST-11 haiku-first Wall author", () => {
       expect(r.models).toHaveLength(1);
       expect(r.models[0]).not.toBe(HAIKU);
     }
+  });
+});
+
+describe("COST-11 r2: escalation on doubt", () => {
+  const ENV = ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE", "LOKI_E10_WALL_FIRST", "LOKI_E10_WALL_CONCURRENT"];
+  const SONNET = wallModel(), HAIKU = resolveModelAlias("haiku");
+  const OK = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0.1, killed: false } as SessionResult;
+  const KILLED = { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 1, killed: true } as SessionResult;
+  // per-file base runner: every file reports greenBase ? pass : fail
+  const baseOf = (green: boolean): BaseTestRunner => ({ run: () => (green ? { pass: 1, fail: 0 } : { pass: 0, fail: 1 }) });
+  const go = async (session: (n: number, o: SessionRunOptions, ctx: { abort: () => void; runId: string; repoDir: string }) => { files: string[]; result?: SessionResult }, green: (n: number) => boolean, env: Record<string, string> = {}) => {
+    for (const k of ENV) delete process.env[k];
+    Object.assign(process.env, env);
+    const s = setup({ runners: ["vitest"], tests: [] }), models: string[] = [], events: string[] = [], ac = new AbortController();
+    let n = 0, calls = 0;
+    const sessions: SessionRunner = { run: async (o) => {
+      models.push(String(o.model)); n++;
+      const r = session(n, o, { abort: () => ac.abort(), runId: "e10-test-1", repoDir: s.repoDir });
+      for (const f of r.files) writeFileSync(join(o.cwd!, f), SAMPLE, "utf8");
+      return r.result ?? OK;
+    } };
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, events);
+    const baseRunner: BaseTestRunner = { run: (...a) => baseOf(green(Math.min(n, 2))).run(...a) };
+    void calls;
+    try { return { result: await runWall(ctx, ac.signal, { baseRunner }), models, events, s }; }
+    finally { rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+
+  test("B1: a haiku Wall green on base is re-authored on sonnet; sonnet's red classification wins", async () => {
+    const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), (n) => n !== 2);
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.result.data.already_satisfied).toBe(false);
+    expect(r.result.data.reauthored).toBe(true);
+    expect(r.events).toContain("wall.reauthor:wall");
+  });
+  test("B1: the abandoned green attempt's files are gone from repo and sealed dir", async () => {
+    const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), (n) => n !== 2);
+    expect((r.result.data.files as { path: string }[]).map((f) => f.path.split("/").pop())).toEqual(["loki_wall_a2.test.ts"]);
+  });
+  test("B1: sonnet also green means already_satisfied stands (two sessions, no loop)", async () => {
+    const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => true);
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.result.data.already_satisfied).toBe(true);
+  });
+  test("B1 control: a haiku Wall red on base keeps a single session", async () => {
+    const r = await go(() => ({ files: ["loki_wall_a.test.ts"] }), () => false);
+    expect(r.models).toEqual([HAIKU]);
+  });
+  test("B1: pinned model (no cheap rung) never re-authors even when green", async () => {
+    try {
+      const r = await go(() => ({ files: ["loki_wall_a.test.ts"] }), () => true, { LOKI_E10_WALL_TIER: "sonnet" });
+      expect(r.models).toHaveLength(1);
+      expect(r.result.data.already_satisfied).toBe(true);
+    } finally { delete process.env.LOKI_E10_WALL_TIER; }
+  });
+
+  test("N3: a killed haiku session escalates once and both attempt ids reach the ledger", async () => {
+    const r = await go((n) => (n === 1 ? { files: [], result: KILLED } : { files: ["loki_wall_b.test.ts"] }), () => false);
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.result.data.iteration_ids).toEqual(["e10-test-1-wall", "e10-test-1-wall-r2"]);
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("N3: both rungs killed ends after two sessions, no loop, both ids recorded", async () => {
+    const r = await go(() => ({ files: [], result: KILLED }), () => false);
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.result.status).toBe("failed");
+    expect(r.result.data.iteration_ids).toEqual(["e10-test-1-wall", "e10-test-1-wall-r2"]);
+  });
+  test("N2: aborted signal blocks escalation for killed and for green first attempts", async () => {
+    const k = await go((_n, _o, c) => { c.abort(); return { files: [], result: KILLED }; }, () => false);
+    expect(k.models).toEqual([HAIKU]);
+    expect(k.events).not.toContain("wall.reauthor:wall");
+    expect(k.result.data.reauthored).toBeUndefined();
+    const g = await go((n, _o, c) => { if (n === 1) c.abort(); return { files: ["loki_wall_a.test.ts"] }; }, () => true);
+    expect(g.models).toEqual([HAIKU]);
+    expect(g.events).not.toContain("wall.reauthor:wall");
+    expect(g.result.data.already_satisfied).toBe(true);
+  });
+  test("N1: the first attempt's holdout is removed before the retry (>= WALL_HOLDOUT_MIN files)", async () => {
+    const names = Array.from({ length: WALL_HOLDOUT_MIN }, (_, i) => `loki_wall_h${i}.test.ts`);
+    const seen: boolean[] = [];
+    const r = await go((n, _o, c) => { if (n === 2) seen.push(existsSync(holdoutDirFor(c.runId, c.repoDir))); return { files: n === 1 ? names : ["loki_wall_z.test.ts"] }; }, (n) => n !== 2);
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(seen).toEqual([false]);
+    expect(r.result.data.holdout_dir).toBeUndefined();
+  });
+  test("N1 control: with no retry the holdout from a >= WALL_HOLDOUT_MIN attempt exists", async () => {
+    const names = Array.from({ length: WALL_HOLDOUT_MIN }, (_, i) => `loki_wall_h${i}.test.ts`);
+    const r = await go(() => ({ files: names }), () => false);
+    expect(r.models).toEqual([HAIKU]);
+    expect(typeof r.result.data.holdout_dir).toBe("string");
+  });
+  test("B2: the stage ceiling covers two max-length sessions plus base runs", () => {
+    expect(wallStage.limitS).toBeGreaterThanOrEqual(2 * 300 + 60);
   });
 });
