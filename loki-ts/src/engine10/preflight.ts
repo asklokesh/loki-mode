@@ -1,6 +1,6 @@
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts";
-import { claudeAuthStatusLoggedIn, requirementFix } from "../commands/doctor.ts";
+import { claudeLoginProbeCached, requirementFix } from "../commands/doctor.ts";
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
 const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
@@ -23,7 +23,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     null;
   if (fatal) return { fatal, warnings };
   if (o.provider === "claude" && !env["ANTHROPIC_API_KEY"] && !env["CLAUDE_CODE_OAUTH_TOKEN"]) { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
-    let li = claudeAuthStatusLoggedIn(cli, env); if (li === "") li = claudeAuthStatusLoggedIn(cli, env); // TEN-UX-12: one retry (as doctor does) so a slow first probe under load never adds a warning line to a quiet run
+    const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
     if (li === "no") return { fatal: "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)", warnings };
     if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing");
   }

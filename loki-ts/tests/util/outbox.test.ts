@@ -1,6 +1,6 @@
 // P12-36: outbox + idempotency keys for external side effects (PR, comment, deploy).
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { idempotencyKey, runOnce } from "../../src/util/outbox.ts";
@@ -62,6 +62,30 @@ describe("outbox", () => {
     runOnce({ dir: d, key, post: () => ({ ok: false }), keep: (x) => x.ok });
     runOnce({ dir: d, key, post: () => { r.post(key); return { ok: true }; }, keep: (x) => x.ok });
     expect(r.calls).toBe(1);
+  });
+
+  test("a truncated entry is quarantined with one warning, not fatal, and the key re-posts", () => {
+    const d = dir(), r = fakeRemote(), key = idempotencyKey("pr", "r", "trunc"), other = idempotencyKey("pr", "r", "ok");
+    runOnce({ dir: d, key: other, post: r.post });
+    writeFileSync(join(d, `outbox-${key}.json`), '{"key":"x","state":"pen');
+    const errs: string[] = [];
+    const orig = process.stderr.write;
+    process.stderr.write = ((c: string) => { errs.push(String(c)); return true; }) as typeof process.stderr.write;
+    let res;
+    try { res = runOnce({ dir: d, key, post: r.post }); } finally { process.stderr.write = orig; }
+    expect(res).toEqual({ url: "url/2" });
+    expect(errs.filter((e) => e.includes("quarantined")).length).toBe(1);
+    expect(readdirSync(d).some((n) => n.startsWith(`outbox-${key}.json.corrupt-`))).toBe(true);
+    expect(JSON.parse(readFileSync(join(d, `outbox-${key}.json`), "utf8")).state).toBe("done");
+    expect(runOnce({ dir: d, key: other, post: r.post })).toEqual({ url: "url/1" });
+    expect(r.calls).toBe(2);
+  });
+
+  test("a literal null entry is quarantined too", () => {
+    const d = dir(), r = fakeRemote(), key = idempotencyKey("pr", "r", "null");
+    writeFileSync(join(d, `outbox-${key}.json`), "null");
+    runOnce({ dir: d, key, post: r.post });
+    expect(readdirSync(d).some((n) => n.includes(".corrupt-"))).toBe(true);
   });
 
   test("distinct keys post independently", () => {

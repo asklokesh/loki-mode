@@ -1383,6 +1383,138 @@ TOKEN="; D28B="$WORKROOT/d28b"
     else
         bad "28i. deploy ran after a failed env step" "rc=$RC28I calls=$(tr '\n' '|' < "$ENV_CALLS" 2>/dev/null)"
     fi
+
+    # 29. --domain: attach with the provider's documented verb, then PROVE TLS with
+    # openssl. vercel, openssl and curl are stubs; nothing leaves the machine.
+    echo "29. loki deploy --domain attaches a domain and proves TLS (never claims valid unchecked)"
+    DOM_CALLS="$SENTINEL_DIR/dom-calls"
+    DOM_MODE="$WORKROOT/dom-mode"
+    DOM_SHA="$WORKROOT/dom-sha"
+    mk_dom_bin() {  # <bindir> <cli>... ; deploy CLIs print a URL and log argv; plus openssl and curl stubs
+        local b="$1" c; shift; mkdir -p "$b"
+        for c in "$@"; do
+            printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\necho "https://app-abc.example-host.app"\nexit 0\n' "$c" "$DOM_CALLS" > "$b/$c"
+            chmod +x "$b/$c"
+        done
+        cat > "$b/openssl" <<EOF
+#!/usr/bin/env bash
+echo "openssl \$*" >> "$DOM_CALLS"
+mode="\$(cat "$DOM_MODE" 2>/dev/null)"
+case "\$1" in
+    s_client)
+        [ "\$mode" = hsfail ] && exit 1
+        echo "-----BEGIN CERTIFICATE-----"; echo "AAAA"; echo "-----END CERTIFICATE-----"
+        exit 0 ;;
+    x509)
+        cat >/dev/null
+        echo "notAfter=Jan  1 00:00:00 2030 GMT"
+        [ "\$mode" = expiring ] && { echo "Certificate will expire"; exit 1; }
+        echo "Certificate will not expire"; exit 0 ;;
+esac
+exit 0
+EOF
+        cat > "$b/curl" <<EOF
+#!/usr/bin/env bash
+echo "curl \$*" >> "$DOM_CALLS"
+case "\$*" in *provenance*) ;; *) printf 200; exit 0 ;; esac
+[ -s "$DOM_SHA" ] || exit 22
+printf '{"head_sha":"%s"}' "\$(cat "$DOM_SHA")"
+EOF
+        chmod +x "$b/openssl" "$b/curl"
+    }
+    run_dom() {  # <dir> <bindir> <path> [flags...]
+        local d="$1" bd="$2" p="$3"; shift 3
+        ( cd "$d" && PATH="$bd:$p" LOKI_DIR="$d/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+            bash "$LOKI_BIN" deploy --dir "$d" --no-clip --execute --domain shop.example.com "$@" 2>&1 )
+    }
+    dom_calls() { tr '\n' '|' < "$DOM_CALLS" 2>/dev/null; }
+    mk_dom_bin "$WORKROOT/dom-vercel" vercel
+    mk_dom_bin "$WORKROOT/dom-netlify" netlify
+
+    # 29a. GREEN: alias argv recorded, TLS probe ran, tls_status=valid, tls_not_after set, provenance matches
+    mk_envfix d29a; D29A="$WORKROOT/d29a"
+    git -C "$D29A" rev-parse HEAD > "$DOM_SHA"
+    echo ok > "$DOM_MODE"
+    reset_sentinels
+    OUT29A="$(run_dom "$D29A" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29A=$?
+    R29A="$(last_record "$D29A")"
+    if [ "$RC29A" -eq 0 ] && grep -q "^vercel alias set https://app-abc.example-host.app shop.example.com$" "$DOM_CALLS" \
+       && grep -q "^openssl s_client -servername shop.example.com -connect shop.example.com:443$" "$DOM_CALLS" \
+       && grep -q "^openssl x509 -noout -enddate -checkend 604800$" "$DOM_CALLS" \
+       && [ "$(rec_field "$R29A" domain)" = "shop.example.com" ] && [ "$(rec_field "$R29A" domain_status)" = "attached" ] \
+       && [ "$(rec_field "$R29A" tls_status)" = "valid" ] && [ "$(rec_field "$R29A" tls_not_after)" = "2030-01-01T00:00:00Z" ] \
+       && [ "$(rec_field "$R29A" domain_provenance)" = "match" ]; then
+        ok "29a. vercel alias set argv recorded, tls_status=valid, tls_not_after set, provenance match, exit 0"
+    else
+        bad "29a. domain green path wrong" "rc=$RC29A calls=$(dom_calls) rec=$R29A $(printf '%s' "$OUT29A" | tail -4)"
+    fi
+
+    # 29b. an openssl whose -checkend fails gives expiring (exit 0, never valid)
+    mk_envfix d29b; D29B="$WORKROOT/d29b"
+    echo expiring > "$DOM_MODE"
+    reset_sentinels
+    OUT29B="$(run_dom "$D29B" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29B=$?
+    R29B="$(last_record "$D29B")"
+    if [ "$RC29B" -eq 0 ] && [ "$(rec_field "$R29B" tls_status)" = "expiring" ]; then
+        ok "29b. a failing -checkend records tls_status=expiring"
+    else
+        bad "29b. expiring not recorded" "rc=$RC29B status=$(rec_field "$R29B" tls_status) $(printf '%s' "$OUT29B" | tail -3)"
+    fi
+
+    # 29c. a handshake failure gives invalid, exit 6, and the DNS record the provider needs
+    mk_envfix d29c; D29C="$WORKROOT/d29c"
+    echo hsfail > "$DOM_MODE"
+    reset_sentinels
+    OUT29C="$(run_dom "$D29C" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29C=$?
+    R29C="$(last_record "$D29C")"
+    if [ "$RC29C" -eq 6 ] && [ "$(rec_field "$R29C" tls_status)" = "invalid" ] && grep -q "cname.vercel-dns.com" <<<"$OUT29C"; then
+        ok "29c. a handshake failure records tls_status=invalid, exits 6 and prints the Vercel DNS record"
+    else
+        bad "29c. invalid TLS wrong" "rc=$RC29C status=$(rec_field "$R29C" tls_status) $(printf '%s' "$OUT29C" | tail -3)"
+    fi
+
+    # 29d. Netlify: manual domain step, no alias call, TLS still checked
+    mk_envfix d29d; D29D="$WORKROOT/d29d"
+    echo ok > "$DOM_MODE"
+    reset_sentinels
+    OUT29D="$(run_dom "$D29D" "$WORKROOT/dom-netlify" "$(path_without $ALL_CLIS openssl curl)")"; RC29D=$?
+    R29D="$(last_record "$D29D")"
+    if [ "$RC29D" -eq 0 ] && [ "$(rec_field "$R29D" domain_status)" = "manual" ] && ! grep -q "alias\|certs" "$DOM_CALLS" \
+       && grep -q "^openssl s_client" "$DOM_CALLS" && [ "$(rec_field "$R29D" tls_status)" = "valid" ]; then
+        ok "29d. netlify records domain_status=manual, makes no alias call, still checks TLS"
+    else
+        bad "29d. netlify manual path wrong" "rc=$RC29D calls=$(dom_calls) $(printf '%s' "$OUT29D" | tail -3)"
+    fi
+
+    # 29e. no openssl on PATH gives unchecked, never valid
+    mk_dom_bin "$WORKROOT/dom-noossl" vercel
+    rm -f "$WORKROOT/dom-noossl/openssl"
+    mk_envfix d29e; D29E="$WORKROOT/d29e"
+    reset_sentinels
+    OUT29E="$(run_dom "$D29E" "$WORKROOT/dom-noossl" "$(path_without $ALL_CLIS openssl curl)")"; RC29E=$?
+    R29E="$(last_record "$D29E")"
+    if [ "$RC29E" -eq 0 ] && [ "$(rec_field "$R29E" tls_status)" = "unchecked" ] && [ "$(rec_field "$R29E" tls_not_after)" = "" ]; then
+        ok "29e. no openssl records tls_status=unchecked, never valid"
+    else
+        bad "29e. missing openssl was not unchecked" "rc=$RC29E status=$(rec_field "$R29E" tls_status) $(printf '%s' "$OUT29E" | tail -3)"
+    fi
+
+    # 29f. a failed alias exits 6 with domain_status=failed; --domain needs --execute and a hostname
+    mk_dom_bin "$WORKROOT/dom-aliasfail" vercel
+    printf '#!/usr/bin/env bash\necho "vercel $*" >> "%s"\n[ "$1" = alias ] && exit 2\necho "https://app-abc.example-host.app"\nexit 0\n' "$DOM_CALLS" > "$WORKROOT/dom-aliasfail/vercel"
+    mk_envfix d29f; D29F="$WORKROOT/d29f"
+    reset_sentinels
+    OUT29F="$(run_dom "$D29F" "$WORKROOT/dom-aliasfail" "$(path_without $ALL_CLIS openssl curl)")"; RC29F=$?
+    R29F="$(last_record "$D29F")"
+    OUT29G="$(cd "$D29F" && bash "$LOKI_BIN" deploy --dir "$D29F" --no-clip --domain shop.example.com 2>&1)"; RC29G=$?
+    OUT29H="$(cd "$D29F" && bash "$LOKI_BIN" deploy --dir "$D29F" --no-clip --execute --domain "bad host" 2>&1)"; RC29H=$?
+    if [ "$RC29F" -eq 6 ] && [ "$(rec_field "$R29F" domain_status)" = "failed" ] \
+       && [ "$RC29G" -eq 1 ] && grep -q "requires --execute" <<<"$OUT29G" \
+       && [ "$RC29H" -eq 1 ] && grep -q "not a valid hostname" <<<"$OUT29H"; then
+        ok "29f. failed alias exits 6 (domain_status=failed); --domain without --execute and a bad hostname exit 1"
+    else
+        bad "29f. alias failure or arg validation wrong" "rc=$RC29F/$RC29G/$RC29H $(printf '%s' "$OUT29F" | tail -2)"
+    fi
     kill "$HS_PID" 2>/dev/null || true
 else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"

@@ -386,3 +386,49 @@ describe("first run (TEN-UX-01)", () => {
     }
   });
 });
+
+describe("TEN-SPEED-05: login probe reuse", () => {
+  function counting(out: string): { cli: string; count: () => number } {
+    const d = tmpRoot("e10-pf-cnt-"); const cli = join(d, "claude"); const log = join(d, "log");
+    writeFileSync(cli, `#!/bin/sh\necho x >> '${log}'\n${out ? `echo '${out}'\n` : ""}exit 0\n`); chmodSync(cli, 0o755);
+    return { cli, count: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").length : 0) };
+  }
+  const o = (dir: string, env: Record<string, string>) => ({ repoDir: dir, provider: "claude", pr: false, env });
+  const cacheFile = (env: Record<string, string>) => join(env.HOME ?? "", ".loki", "claude-login-ok.json");
+
+  test("two starts inside 10 min spawn the probe once", async () => {
+    const { dir, env } = identifiedRepo(); const c = counting('{"loggedIn":true}'); const e = { ...env, LOKI_CLAUDE_CLI: c.cli };
+    expect((await checkPreflight(o(dir, e))).fatal).toBeNull();
+    expect((await checkPreflight(o(dir, e))).fatal).toBeNull();
+    expect(c.count()).toBe(1);
+  });
+
+  test("a logged-out probe is never cached", async () => {
+    const { dir, env } = identifiedRepo(); const c = counting('{"loggedIn":false}'); const e = { ...env, LOKI_CLAUDE_CLI: c.cli };
+    expect((await checkPreflight(o(dir, e))).fatal).toContain("not logged in");
+    expect((await checkPreflight(o(dir, e))).fatal).toContain("not logged in");
+    expect(c.count()).toBe(2);
+    expect(existsSync(cacheFile(e))).toBe(false);
+  });
+
+  test("an unanswered probe is never cached", async () => {
+    const { dir, env } = identifiedRepo(); const c = counting(""); const e = { ...env, LOKI_CLAUDE_CLI: c.cli };
+    await checkPreflight(o(dir, e)); const first = c.count(); await checkPreflight(o(dir, e));
+    expect(c.count()).toBe(first * 2);
+  });
+
+  test("an expired entry re-probes; a different CLI path re-probes", async () => {
+    const { dir, env } = identifiedRepo(); const c = counting('{"loggedIn":true}'); const e = { ...env, LOKI_CLAUDE_CLI: c.cli };
+    await checkPreflight(o(dir, e));
+    writeFileSync(cacheFile(e), JSON.stringify({ cli: c.cli, at: Date.now() - 10 * 60 * 1000 - 1000 }));
+    await checkPreflight(o(dir, e)); expect(c.count()).toBe(2);
+    const c2 = counting('{"loggedIn":true}');
+    await checkPreflight(o(dir, { ...e, LOKI_CLAUDE_CLI: c2.cli })); expect(c2.count()).toBe(1);
+  });
+
+  test("a corrupt cache file re-probes without crashing", async () => {
+    const { dir, env } = identifiedRepo(); const c = counting('{"loggedIn":true}'); const e = { ...env, LOKI_CLAUDE_CLI: c.cli };
+    await checkPreflight(o(dir, e)); writeFileSync(cacheFile(e), "{not json");
+    expect((await checkPreflight(o(dir, e))).fatal).toBeNull(); expect(c.count()).toBe(2);
+  });
+});

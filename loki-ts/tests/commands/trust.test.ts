@@ -154,4 +154,35 @@ describe("runTrust graduation advice", () => {
     expect(r.stdout).toContain("Autonomy advice (advisory, never changes policy)");
     expect(existsSync(join(lokiDir, "policies.json"))).toBe(false);
   });
+
+  describe("README badge snippet", () => {
+    function seedHeadline(runId: string, headline: string): void {
+      const f = join(lokiDir, "proofs", runId, "proof.json");
+      const d = JSON.parse(readFileSync(f, "utf8"));
+      d.honesty = { headline };
+      writeFileSync(f, JSON.stringify(d));
+    }
+    it("prints a markdown badge for the newest sealed run", () => {
+      seedProof("r1", "2026-01-01T00:00:00Z", 8, 8, 3);
+      seedProof("r2", "2026-01-02T00:00:00Z", 8, 8, 3);
+      seedHeadline("r1", "NOT VERIFIED");
+      seedHeadline("r2", "VERIFIED");
+      const r = run([]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("![Verified by Loki](https://img.shields.io/badge/Loki-Verified%20by%20Loki-brightgreen)");
+      expect(r.stdout).not.toContain("Not%20verified");
+    });
+    it("skips unrecognized headlines and never goes green on them", () => {
+      seedProof("r1", "2026-01-01T00:00:00Z", 8, 8, 3);
+      seedHeadline("r1", "SORTA GREEN");
+      const r = run([]);
+      expect(r.stdout).not.toContain("img.shields.io");
+      expect(r.stdout).toContain("run 'loki start'");
+    });
+    it("prints the next step with no proofs and keeps --json clean", () => {
+      const r = run([]);
+      expect(r.stdout).toContain("No README badge yet");
+      expect(run(["--json"]).stdout).not.toContain("badge");
+    });
+  });
 });

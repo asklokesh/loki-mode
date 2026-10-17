@@ -28,7 +28,7 @@ _loki_completion() {
             # If the word starts with a dash, show flags
             # Rule: list every flag bin/loki routes (Bun/engine10 ones such as --model, --max-cost, --spec, --no-pr too), not only cmd_start's own.
             if [[ "$cur" == -* ]]; then
-                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --cost --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --brief --worktree --pr --ship --detach --workspace --deploy --health-url --auto-rollback --resume --help"
+                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --cost --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --brief --worktree --pr --ship --detach --workspace --deploy --health-url --auto-rollback --destination --canary --domain --env-file --resume --help"
                 COMPREPLY=( $(compgen -W "${flags}" -- "$cur") )
                 return 0
             fi
@@ -150,7 +150,7 @@ _loki_completion() {
 
         deploy)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--execute --destination --canary --env-file --health-url --health-match --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--execute --destination --canary --env-file --domain --health-url --health-match --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
                 return 0
             fi
             ;;
