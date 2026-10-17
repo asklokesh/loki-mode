@@ -167,3 +167,19 @@ describe("loki control serve flag values", () => {
     expect(err).toContain("invalid --port abc");
   });
 });
+
+describe("loki control backfill repo missing value", () => {
+  test("backfill repo missing value fails with exit 2 and names --repo", async () => {
+    let err = "";
+    const realErr = process.stderr.write;
+    process.stderr.write = ((s: string | Uint8Array) => { err += String(s); return true; }) as typeof process.stderr.write;
+    let called = false;
+    globalThis.fetch = (async () => { called = true; return new Response("{}"); }) as unknown as typeof fetch;
+    try {
+      expect(await runControl(["backfill", "--repo"], env)).toBe(2);
+      expect(await runControl(["backfill", "--repo", "--other"], env)).toBe(2);
+    } finally { process.stderr.write = realErr; }
+    expect(err).toContain("--repo needs a value");
+    expect(called).toBe(false);
+  });
+});

@@ -231,6 +231,7 @@ export async function runControl(args: string[], env: NodeJS.ProcessEnv = proces
     case "status": return status(rest, env);
     case "prune": return prune(rest, env);
     case "backfill": {
+      if (missingValue(rest, "--repo")) { process.stderr.write("loki control backfill: --repo needs a value\nUsage: loki control backfill [--repo DIR | DIR]\n"); return 2; }
       const dir = resolve(flag(rest, "--repo") ?? rest.find((a) => !a.startsWith("-")) ?? process.cwd());
       const r = await backfill({ repoDir: dir, env: { ...env, LOKI_CONTROL_URL: baseUrl(env) } });
       process.stdout.write(`loki control: backfill ${r.runs} runs, ${r.sent} events sent, ${r.failed.length} failed${r.failed.length ? ` (${r.failed.join(", ")})` : ""}\n`);
