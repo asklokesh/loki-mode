@@ -345,7 +345,8 @@ export async function dispatchClaudeAgents(
       const roster = JSON.stringify(agentsJson);
       const sdkPrompt = `${topPrompt}\n\nDeclared council agents (produce exactly one finding per agent, keyed by its slug):\n${roster}`;
       const schema = JSON.parse(schemaContent) as Record<string, unknown>;
-      const timeoutMs = (Number(process.env["LOKI_COUNCIL_REVIEW_TIMEOUT"]) || 600) * 1000;
+      const reviewSecs = Number(process.env["LOKI_COUNCIL_REVIEW_TIMEOUT"]);
+      const timeoutMs = (Number.isFinite(reviewSecs) && reviewSecs > 0 ? reviewSecs : 600) * 1000;
       const obj = await judgeJson({
         prompt: sdkPrompt,
         schema,
