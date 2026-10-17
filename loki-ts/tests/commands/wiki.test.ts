@@ -109,4 +109,18 @@ describe("loki wiki show (Bun native)", () => {
       rmSync(empty, { recursive: true, force: true });
     }
   });
+
+  it("show json", async () => {
+    const artifact = readFileSync(join(project, ".loki", "wiki", "architecture.md"), "utf8");
+    const one = await sh(["bun", BUN_CLI, "wiki", "show", "architecture", "--json"], project);
+    expect(one.exitCode).toBe(0);
+    expect(JSON.parse(one.stdout)).toEqual({ section: "architecture", content: artifact });
+    const all = await sh(["bun", BUN_CLI, "wiki", "show", "--json"], project);
+    expect(all.exitCode).toBe(0);
+    const arr = JSON.parse(all.stdout) as { section: string; content: string }[];
+    expect(arr.map((x) => x.section)).toEqual(["architecture", "modules", "data-flow"]);
+    expect(arr[0]!.content).toBe(artifact);
+    const text = await sh(["bun", BUN_CLI, "wiki", "show", "architecture"], project);
+    expect(text.stdout).toBe(artifact);
+  });
 });

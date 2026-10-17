@@ -25,7 +25,8 @@ Usage: loki wiki <command> [options]
 
 Commands:
   generate [path] [--force]   Build/refresh the cited wiki in .loki/wiki/
-  show [section]              Print the wiki (or one section: architecture|modules|data-flow)
+  show [section] [--json]     Print the wiki (or one section: architecture|modules|data-flow)
+                              --json: emit {section, content} (all sections: an array)
   ask "<question>"           Cited answer grounded in the codebase (file:line)
 
 Each wiki section cites the real source files it was built from.
@@ -45,12 +46,17 @@ function wikiDir(): string {
 
 function runShow(args: string[]): number {
   let section = "";
+  let asJson = false;
   for (const a of args) {
     if (a === "--help" || a === "-h") {
       process.stdout.write(
-        "Usage: loki wiki show [section]\nSections: architecture, modules, data-flow\n",
+        "Usage: loki wiki show [section] [--json]\nSections: architecture, modules, data-flow\n",
       );
       return 0;
+    }
+    if (a === "--json") {
+      asJson = true;
+      continue;
     }
     if (a.startsWith("-")) {
       process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
@@ -85,7 +91,24 @@ function runShow(args: string[]): number {
       process.stderr.write(`${RED}Section not generated: ${section}${NC}\n`);
       return 1;
     }
-    process.stdout.write(readFileSync(f, "utf8"));
+    const content = readFileSync(f, "utf8");
+    process.stdout.write(
+      asJson ? `${JSON.stringify({ section, content })}\n` : content,
+    );
+    return 0;
+  }
+
+  if (asJson) {
+    const all = [...SECTIONS]
+      .filter((s) => existsSync(join(dir, `${s}.md`)))
+      .map((s) => ({ section: s, content: readFileSync(join(dir, `${s}.md`), "utf8") }));
+    if (all.length === 0) {
+      process.stderr.write(
+        `${RED}No wiki sections found. Run 'loki wiki generate'.${NC}\n`,
+      );
+      return 1;
+    }
+    process.stdout.write(`${JSON.stringify(all)}\n`);
     return 0;
   }
 
