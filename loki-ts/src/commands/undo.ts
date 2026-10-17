@@ -236,6 +236,7 @@ export async function runUndo(args: readonly string[], deps: UndoDeps = {}): Pro
   const planOnly = args.includes("--plan") || dryRun;
   if (!planOnly && (args.includes("--allow-unsigned") || args.includes("--json"))) { err("loki undo: --allow-unsigned and --json apply to --plan only; apply never accepts an unsigned receipt\n"); return 2; }
   if (planOnly && (args.includes("--yes") || args.includes("--close-pr"))) { err("loki undo: --yes and --close-pr cannot be combined with --plan or --dry-run\n"); return 2; }
+  if (!isRunId(runId)) { err(`loki undo: invalid run id '${runId}'\n`); return 2; }
   if (!planOnly && (deps.env ?? process.env)["LOKI_UNDO"] !== "1") { err("loki undo: applying an undo is behind LOKI_UNDO=1 until reviewed; use --plan to preview\n"); return 2; }
   const loaded = await loadPlan(runId, planOnly && args.includes("--allow-unsigned"), deps, deps.git ?? defaultRunner);
   if ("rc" in loaded) return loaded.rc;

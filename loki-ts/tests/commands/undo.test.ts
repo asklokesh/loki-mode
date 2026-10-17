@@ -100,3 +100,21 @@ describe("loki undo unknown flag", () => {
     expect((await list(["--list"])).rc).toBe(0);
   });
 });
+
+describe("undo id before gate", () => {
+  const run = async (args: string[]) => {
+    const err: string[] = [];
+    const rc = await runUndo(args, { runsRoot: dir, repoDir: dir, env: {}, git: () => ({ status: 0, stdout: "" }), out: () => {}, err: (s: string) => void err.push(s) } as never);
+    return { rc, err: err.join("") };
+  };
+  test("bad run id without LOKI_UNDO reports invalid id, not the gate", async () => {
+    const r = await run(["../etc"]);
+    expect(r.rc).toBe(2);
+    expect(r.err).toBe("loki undo: invalid run id '../etc'\n");
+  });
+  test("valid id without LOKI_UNDO still reports the gate", async () => {
+    const r = await run(["run1"]);
+    expect(r.rc).toBe(2);
+    expect(r.err).toContain("behind LOKI_UNDO=1");
+  });
+});
