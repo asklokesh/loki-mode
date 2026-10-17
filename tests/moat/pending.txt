@@ -29,6 +29,3 @@ P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from b
 P4.floor-does-not-raise-wrong-pass M0 no corpus and no recorded top or floor wrong-pass run
 P4.seeded-defect-corpus-present M0 no corpus manifest at benchmarks/seeded-defects/manifest.json
 P4.three-setups-resolve M0 bash and Bun both honor the opus session pin and the per-tier LOKI_CLAUDE_MODEL_* variables now; high and small still resolve to sonnet on both routes, matching D10's documented default
-P8.ablation-dead-code-not-sealed M2 record not_load_bearing and have _compute_headline refuse VERIFIED when it is set
-P8.ablation-na-docs-only M2 record not_applicable with a non-empty reason when no code changed
-P8.ablation-runtime-change-load-bearing M2 build autonomy/lib/ablation.py and copy its output into facts.ablation in proof-generator
