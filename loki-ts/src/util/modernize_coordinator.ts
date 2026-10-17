@@ -204,6 +204,7 @@ export function makeAttemptRunner(o: { mid: string; target: ModernizeTarget; log
   return (ctx) => {
     const cm = runCodemod(o.target, ctx.unit.nodes, ctx.worktree, o.codemod ?? realCommandRunner);
     if (!cm.ran) o.log.append("codemod.skipped", { unit: ctx.unit.id, tool: cm.tool, reason: cm.skippedReason });
+    else if (!cm.applied) o.log.append("codemod.skipped", { unit: ctx.unit.id, tool: cm.tool, reason: `${cm.tool} exited non-zero` });
     return {
     result: run({ unit: ctx.unit.id, repoDir: o.repoDir, newTreeDir: ctx.worktree, mid: o.mid, target: o.target, normalizers: DEFAULT_NORMALIZERS, baseSha: ctx.baseSha, files: ctx.unit.nodes },
       o.log, makePytestBaseRunner(), runners.implement, runners.runNew, runners.runStub, makePytestCollector()),
