@@ -351,6 +351,34 @@ py_module_needles() {
     [ "$dotted" != "$stem" ] && printf '%s\n' "$dotted"
 }
 
+# FC-31 route needle: an API route handler is exercised by suites that hit its
+# URL (curl, fetch), never by naming the handler file. Extract the route paths
+# a Python handler declares (@app.get("/x"), @router.post("/y") plus the
+# APIRouter prefix) and use each static path (cut at the first "{param}") as a
+# fixed-string needle. No per-route table: the handler file is the source of
+# truth. Output is captured into variables, never piped into an early-exit
+# consumer, so there is no SIGPIPE exposure under pipefail.
+route_needles() {
+    local f="$1" decos prefix p full out=""
+    [ -f "$f" ] || return 0
+    decos="$(grep -oE "@[A-Za-z_][A-Za-z0-9_]*\.(get|post|put|delete|patch|websocket|api_route)\( *f?[\"'][^\"']*[\"']" "$f" 2>/dev/null)" || decos=""
+    [ -n "$decos" ] || return 0
+    prefix="$(grep -oE "prefix *= *[\"'][^\"']*[\"']" "$f" 2>/dev/null)" || prefix=""
+    prefix="${prefix%%$'\n'*}"
+    prefix="$(printf '%s\n' "$prefix" | sed -e "s/^[^\"']*[\"']//" -e "s/[\"']\$//")"
+    while IFS= read -r p; do
+        p="$(printf '%s\n' "$p" | sed -e "s/^[^\"']*[\"']//" -e "s/[\"']\$//")"
+        full="${prefix}${p}"
+        full="${full%%\{*}"
+        full="${full%/}"
+        case "$full" in
+            /api/?*) out="${out}${full}"$'\n' ;;
+        esac
+    done <<<"$decos"
+    [ -n "$out" ] && printf '%s' "$out" | sort -u
+    return 0
+}
+
 grep_word_and_emit() {
     local rule="$1" kind="$2" needle="$3" candidates="$4"
     [ -n "$needle" ] || return 0
@@ -635,6 +663,13 @@ for f in "${CHANGED[@]}"; do
             # A .py source's tests/scripts reference it by bare module name or
             # dotted import, never the path or the ".py" suffix -- see
             # py_module_needles.
+            case "$f" in
+                dashboard/*.py | web-app/*.py)
+                    while IFS= read -r needle; do
+                        grep_and_emit R3 shell_test "$needle" "$(all_test_files)"
+                    done < <(route_needles "$f")
+                    ;;
+            esac
             case "$f" in
                 *.py)
                     while IFS= read -r needle; do
