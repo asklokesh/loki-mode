@@ -216,13 +216,16 @@ async function listRuns(deps: UndoDeps, git: GitRunner, out: (s: string) => void
 export async function runUndo(args: readonly string[], deps: UndoDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => void process.stdout.write(s)), err = deps.err ?? ((s: string) => void process.stderr.write(s));
   if (args[0] === "--help" || args[0] === "-h" || args.length === 0) { out(USAGE); return args.length === 0 ? 2 : 0; }
+  const known = new Set(["--list", "--plan", "--json", "--allow-unsigned", "--yes", "--close-pr", "--dry-run", "--help"]);
+  const bad = args.find((x) => x.startsWith("-") && !known.has(x));
+  if (bad !== undefined) { err(`loki undo: unknown flag ${bad} (see loki undo --help)\n`); return 2; }
+  if (args.includes("--help")) { out(USAGE); return 0; }
   if (args.includes("--list")) {
     if (args.length !== 1) { err(`loki undo: --list takes no other arguments\n${USAGE}`); return 2; }
     return listRuns(deps, deps.git ?? defaultRunner, out);
   }
-  const flags = new Set(["--plan", "--json", "--allow-unsigned", "--yes", "--close-pr", "--dry-run"]);
-  const pos = args.filter((a) => !a.startsWith("--")), bad = args.filter((a) => a.startsWith("--") && !flags.has(a));
-  if (bad.length > 0 || pos.length !== 1) { err(`loki undo: ${bad.length > 0 ? `unknown flag ${bad[0]}` : "exactly one run-id is required"}\n${USAGE}`); return 2; }
+  const pos = args.filter((x) => !x.startsWith("-"));
+  if (pos.length !== 1) { err(`loki undo: exactly one run-id is required\n${USAGE}`); return 2; }
   const runId = pos[0]!;
   const dryRun = args.includes("--dry-run");
   const planOnly = args.includes("--plan") || dryRun;
