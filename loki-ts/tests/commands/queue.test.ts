@@ -110,6 +110,40 @@ describe("loki queue", () => {
     expect(normalizeRef("o/r")).toBeNull();
   });
 
+  test("--max-total-cost stops after the item that reaches the cap and keeps the rest queued", async () => {
+    const results = { "o/r#1": { rc: 0, output: "", costUsd: 2 }, "o/r#2": { rc: 0, output: "", costUsd: 2 }, "o/r#3": { rc: 0, output: "", costUsd: 2 } };
+    const h = harness({ results });
+    await runQueue(["add", "o/r#1", "o/r#2", "o/r#3"], h.inject);
+    h.out.length = 0;
+    expect(await runQueue(["run", "--max-total-cost", "3"], h.inject)).toBe(0);
+    expect(h.ran).toEqual(["o/r#1", "o/r#2"]);
+    expect(readQueue(dir).map((i) => i.ref)).toEqual(["o/r#3"]);
+    const digest = h.out.join("");
+    expect(digest).toContain("Stopped early: total cost cap $3.00 reached (spent $4.00)");
+    expect(digest).toContain("o/r#3: total cost cap");
+  });
+
+  test("--max-total-cost=<usd> form works and without the flag all items run", async () => {
+    const results = { "o/r#1": { rc: 0, output: "", costUsd: 2 }, "o/r#2": { rc: 0, output: "", costUsd: 2 } };
+    const h = harness({ results });
+    await runQueue(["add", "o/r#1", "o/r#2"], h.inject);
+    await runQueue(["run", "--max-total-cost=1.5"], h.inject);
+    expect(h.ran).toEqual(["o/r#1"]);
+    await runQueue(["run"], h.inject);
+    expect(h.ran).toEqual(["o/r#1", "o/r#2"]);
+  });
+
+  test("--max-total-cost rejects a bad value with exit 2 through bin/loki and runs nothing", async () => {
+    const run = (...a: string[]) => Bun.spawnSync([join(import.meta.dir, "../../../bin/loki"), "queue", ...a], { env: { ...process.env, LOKI_DIR: dir } });
+    expect(run("add", "o/r#5").exitCode).toBe(0);
+    for (const bad of ["abc", "0", "-1", ""]) {
+      const r = run("run", "--max-total-cost", bad);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr.toString()).toContain("--max-total-cost needs a positive USD amount");
+    }
+    expect(run("list").stdout.toString()).toContain("1 queued");
+  });
+
   test("governor hold stops the run and leaves the rest queued with the reason", async () => {
     const h = harness({ governor: (n) => (n >= 1 ? { ok: true, hold: true, reason: "hold_above_70_session (82% session)" } : { ok: true, hold: false, reason: "ok" }) });
     await runQueue(["add", "o/r#1", "o/r#2", "o/r#3"], h.inject);
