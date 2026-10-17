@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.49 (2026-10-17)
+
+### P0 fix-forward: main Tests green again
+
+- Structural guards and shell shards 4, 6 and 7: tests/shard-durations.tsv gains the TEN-ADOPTION-15 self-update row, which also restores the shard-coverage spread.
+- Shell shard 1: test-cli-commands expects loki config provider without a subcommand to exit 2 (TEN-UX-26 contract).
+- Shell shard 3: test-tour-verify hides bun by running a tree copy without node_modules, since CI's npm install ships @oven/bun-*.
+- Shell shard 7: test-doctor-ux greps the integrationImpl.http MiroFish probe.
+- Bun: contract test accepts the runId argument to nextOf; config help and provider help join the CLI registry known gaps with CLI-MODERN counts; the proof share token test plants its token below the write-time redactor (Q17-05b).
+- Completions: one zsh report arm with --since, --json, --efficiency and subcommands; --repo in the zsh control arm.
+
 ## v11.17.48 (2026-10-17)
 
 ### Wave AN (30 TEN rows, all reviewed APPROVE)

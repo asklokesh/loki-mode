@@ -2524,3 +2524,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T12:36Z (CoS) v11.17.48
 - Wave AN shipped: 30 of 30 TEN rows APPROVE and merged in 19 chains (one test import conflict resolved by hand, union of both import sets). Checks: tsc rc=0; bun test changed files plus spawn_env_guard, engine10/budget and tests/util 1026 pass 0 fail; test-deploy, test-help-start-flags, test-pricing-parity rc=0; help-changelog-drift 51 passed 0 failed after the completion fix. Main Tests red on cbded2759 (shard-durations row for TEN-ADOPTION-15 plus shell and bun shards) has a P0 fix-forward agent running. Q18-03e reslice 4 (TypeScript compiler API) building.
+
+## 2026-10-17T12:39Z (CoS) v11.17.49
+- P0 fix-forward for main Tests red on cbded2759, 5a6d770f6, e8e750117 (structural guards, bun, shell shards 1,2,3,4,6,7). Local evidence: help-changelog-drift 51/0, shard-durations-drift rc=0, shard-coverage rc=0, cli-commands rc=0, doctor-ux rc=0, cli/test-tour-verify rc=0, bun contract plus touched tests 66 pass 0 fail. Shard 3 cause is CI-only (bun found via node_modules/@oven), reasoned from the log.
