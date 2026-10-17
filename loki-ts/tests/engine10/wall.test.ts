@@ -32,6 +32,8 @@ import type {
   StageName,
 } from "../../src/engine10/types.ts";
 
+import { resolveModelAlias, wallModel } from "../../src/engine10/sizing.ts";
+
 const FIX = join(import.meta.dir, "fixtures", "wall");
 const SAMPLE = readFileSync(join(FIX, "loki_wall_sample.test.ts"), "utf8");
 
@@ -223,7 +225,7 @@ describe("engine10 wall stage", () => {
     process.env.LOKI_E10_TASK_TEXT = "not this";
     try {
       const r = await wallStage.run(ctx, new AbortController().signal);
-      expect(r.data.iteration_ids).toEqual([`${ctx.runId}-wall`]);
+      expect(r.data.iteration_ids).toEqual([`${ctx.runId}-wall`, `${ctx.runId}-wall-r2`]); // COST-11: the empty haiku attempt is re-authored once
     } finally {
       if (prevEnv === undefined) delete process.env.LOKI_E10_TASK_TEXT;
       else process.env.LOKI_E10_TASK_TEXT = prevEnv;
@@ -719,5 +721,53 @@ describe("engine10 wall manifest wiring, D77", () => {
     finally { delete process.env.LOKI_E10_WALL_MANIFEST; }
     expect(listing).toEqual(["repomap.txt", "task.md"]);
     rmSync(s.repoDir, { recursive: true, force: true });
+  });
+});
+
+describe("COST-11 haiku-first Wall author", () => {
+  const ENV = ["LOKI_E10_WALL_TIER", "LOKI_MODEL_OVERRIDE", "LOKI_E10_WALL_FIRST", "LOKI_E10_WALL_CONCURRENT"];
+  const run = async (writes: (n: number) => boolean, base: { pass: number; fail: number }, env: Record<string, string | undefined> = {}) => {
+    for (const k of ENV) delete process.env[k];
+    for (const [k, v] of Object.entries(env)) if (v !== undefined) process.env[k] = v;
+    const s = setup({ runners: ["vitest"], tests: [] }), events: string[] = [], models: string[] = [];
+    let n = 0;
+    const sessions = new FakeSessionRunner((opts) => {
+      models.push(String(opts.model)); n++;
+      if (writes(n)) writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8");
+    });
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, events);
+    const baseRunner = new (class implements BaseTestRunner { lastNotRunFiles: { file: string; reason: string }[] = []; run() { return { ...base, not_run: base.pass + base.fail === 0 ? 1 : 0 }; } })();
+    try { const result = await runWall(ctx, new AbortController().signal, { baseRunner }); return { result, models, events }; }
+    finally { for (const k of ENV) delete process.env[k]; rmSync(s.repoDir, { recursive: true, force: true }); }
+  };
+  const SONNET = wallModel(), HAIKU = resolveModelAlias("haiku");
+
+  test("haiku authors first; a usable Wall keeps one session", async () => {
+    const r = await run(() => true, { pass: 0, fail: 1 });
+    expect(r.models).toEqual([HAIKU]);
+    expect(r.result.data.reauthored).toBeUndefined();
+  });
+  test("a haiku Wall that does not run triggers exactly one sonnet re-author, both ids in the ledger", async () => {
+    const r = await run(() => true, { pass: 0, fail: 0 });
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.events).toContain("wall.reauthor:wall");
+    expect(r.result.data.iteration_ids).toEqual(["e10-test-1-wall", "e10-test-1-wall-r2"]);
+  });
+  test("no escalation loop: two sessions at most, one reauthor event", async () => {
+    const r = await run(() => true, { pass: 0, fail: 0 });
+    expect(r.models).toHaveLength(2);
+    expect(r.events.filter((e) => e === "wall.reauthor:wall")).toHaveLength(1);
+  });
+  test("a haiku session that wrote nothing escalates once", async () => {
+    const r = await run((n) => n === 2, { pass: 0, fail: 1 });
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("overrides pin the model: no haiku, no escalation", async () => {
+    for (const env of [{ LOKI_E10_WALL_TIER: "sonnet" }, { LOKI_MODEL_OVERRIDE: "opus" }, { LOKI_E10_WALL_FIRST: "0" }, { LOKI_E10_WALL_CONCURRENT: "1" }]) {
+      const r = await run(() => true, { pass: 0, fail: 0 }, env);
+      expect(r.models).toHaveLength(1);
+      expect(r.models[0]).not.toBe(HAIKU);
+    }
   });
 });

@@ -12,8 +12,8 @@ import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallLimitS, wallModel } from "../sizing.ts";
-import { sha256 } from "./seal.ts"; import { stashHoldout } from "../../util/holdout.ts";
+import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
+import { sha256 } from "./seal.ts"; import { removeHoldout, stashHoldout } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyCheck, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
@@ -154,11 +154,11 @@ function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null
 }
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
-export interface WallAuthored { kind: "authored"; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; }
+export interface WallAuthored { kind: "authored"; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
-export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<WallAuthorOutcome> {
+export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: { model: string; suffix: string }): Promise<WallAuthorOutcome> {
   const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
   if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
   if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" });
@@ -190,13 +190,14 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
 
+  const model = retry?.model ?? wallFirstModel(sz.size), iterationId = `${ctx.runId}-wall${retry?.suffix ?? ""}`; // COST-11
   const session = await ctx.sessions.run({
     stage: "wall",
     brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? []),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
-    model: wallModel(),
-    iterationId: `${ctx.runId}-wall`,
+    model,
+    iterationId,
     limitS: wallLimitS(sz.size), // W1-S3
     signal,
     cwd,
@@ -215,7 +216,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<
     if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
   }
   rmSync(cwd, { recursive: true, force: true });
-  return { kind: "authored", task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
+  return { kind: "authored", model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}) };
 }
 
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
@@ -250,7 +251,7 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
       readOnlyFiles,
       base_run: baseRun,
       ...(notRunFiles.length ? { not_run_files: notRunFiles } : {}),
-      iteration_ids: [`${ctx.runId}-wall`],
+      iteration_ids: [a.iterationId ?? `${ctx.runId}-wall`],
       already_satisfied: alreadySatisfied, ...(a.holdoutDir ? { holdout_dir: a.holdoutDir } : {}), // opaque path only: names stay in the private store
       ...(discarded.length ? { discarded } : {}),
     },
@@ -259,7 +260,17 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   const a = await wallAuthor(ctx, signal);
-  return a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
+  const first = a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
+  // COST-11: a cheaper first rung that left no usable test (nothing written, all discarded or not_run) is re-authored exactly once on wallModel(). Never loops. A killed or timed-out session does not retry.
+  const cheap = a.kind === "authored" ? a.model : "";
+  const unusable = a.kind === "authored" && first.status === "completed" && ((first.data.files as unknown[] | undefined) ?? []).length === 0;
+  if (!unusable || signal.aborted || cheap === wallModel()) return first;
+  removeHoldout(ctx.runId, ctx.repoDir); // the abandoned attempt's held-out tests must not leak into the retry
+  ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: "no usable test from the first author" });
+  const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" });
+  const second = b.kind === "done" ? b.result : installWall(ctx, b, ctx.repoDir, opts);
+  const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
+  return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true } }; // both tiers' spend reaches the ledger via iteration_ids
 }
 
 export const wallStage: Stage = {
