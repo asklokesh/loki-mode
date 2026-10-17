@@ -113,3 +113,32 @@ describe("loki control stop", () => {
     expect(sent).not.toContain("SIGTERM");
   });
 });
+
+describe("loki control serve flag values", () => {
+  let err = "";
+  let realErr: typeof process.stderr.write;
+  beforeEach(() => {
+    err = "";
+    realErr = process.stderr.write;
+    process.stderr.write = ((s: string | Uint8Array) => { err += String(s); return true; }) as typeof process.stderr.write;
+  });
+  afterEach(() => { process.stderr.write = realErr; });
+  const e = { LOKI_CONTROL_PORT: "" } as NodeJS.ProcessEnv;
+  test("port without value exits 2 with usage", async () => {
+    expect(await runControl(["serve", "--port"], e)).toBe(2);
+    expect(err).toContain("--port needs a value");
+    expect(err).toContain("Usage: loki control serve");
+  });
+  test("port followed by another flag exits 2", async () => {
+    expect(await runControl(["serve", "--port", "--db", "x"], e)).toBe(2);
+    expect(err).toContain("--port needs a value");
+  });
+  test("db without value exits 2", async () => {
+    expect(await runControl(["serve", "--db"], e)).toBe(2);
+    expect(err).toContain("--db needs a value");
+  });
+  test("non-numeric port exits 2", async () => {
+    expect(await runControl(["serve", "--port", "abc"], e)).toBe(2);
+    expect(err).toContain("invalid --port abc");
+  });
+});

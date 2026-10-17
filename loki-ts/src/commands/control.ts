@@ -35,6 +35,12 @@ function flag(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+/** A value flag that is present but has no value (end of args, or the next token is another flag) must fail, never fall back to a default. */
+function missingValue(args: string[], name: string): boolean {
+  const i = args.indexOf(name);
+  return i >= 0 && (args[i + 1] === undefined || args[i + 1]!.startsWith("--"));
+}
+
 function serverCmd(): string[] | null {
   const bundled = join(REPO_ROOT, "packages/control-plane/dist/server.js");
   if (existsSync(bundled)) return ["bun", bundled];
@@ -102,6 +108,9 @@ export async function stopControlPlane(env: NodeJS.ProcessEnv, opts: { alive?: (
 }
 
 async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  for (const f of ["--port", "--db"]) {
+    if (missingValue(args, f)) { process.stderr.write(`loki control serve: ${f} needs a value\nUsage: loki control serve [--port N] [--db PATH]\n`); return 2; }
+  }
   const explicit = flag(args, "--port") ?? env.LOKI_CONTROL_PORT;
   const port = explicit ?? String(DEFAULT_PORT);
   if (!/^\d+$/.test(port) || Number(port) > 65535) { process.stderr.write(`loki control: invalid --port ${port}\n`); return 2; }
