@@ -857,3 +857,11 @@ FC-AGENT-PROOF: a run whose only executed passing check is a test file the same 
 4. Default on. Opt-out: LOKI_EXOGENOUS_PROOF=0 (exact string "0"; any other value, including "00" or "false", keeps the gate) restores the FC-16 executed-proof verdict. Provenance is still recorded under the opt-out.
 - Cost accepted: some honest runs that only add new tests for new code now seal PARTIAL until a Wall or a pre-existing suite covers them. Reason: Seal accuracy ranks above delivered accuracy (operating model order).
 - Reverse: only by a CTO call recorded here with a measured false-PARTIAL rate.
+
+## D105 (2026-10-17, CTO call under D99, TEN-GATES-10): VERIFIED needs one agent-independent fact beside the agent's own suite
+1. The agent writes both the code and its test suite, so a green suite alone is the agent grading its own work. `proof-generator.py` now records a pre-headline degraded item `exogenous_evidence` ("no agent-independent evidence (only the agent's own test suite passed)") when tests are verified and no exogenous fact passed, which turns that VERIFIED into VERIFIED WITH GAPS.
+2. Counts as corroboration: build verified, healthcheck ok, functional_status verified, a security scan that ran and came back clean, or an exogenous quality gate that passed. An advisory (model-authored) gate pass never counts, including the `unit_tests` gate derived from the suite itself.
+3. The item is a headline input (no `post_headline` flag), so `proof-verify.py` re-derives the same amber headline from the recorded ledger with no verifier change. The rule never moves a headline to green and never touches NOT VERIFIED.
+4. Opt-out: `LOKI_PROOF_REQUIRE_EXOGENOUS=0` (exact string "0" after trimming; any other value keeps the requirement, fail-closed).
+5. Ordering: the primary `loki start` route already writes build-results.json (TEN-GATES-09) and an exogenous security_scan gate (TEN-GATES-08), so a run with a real build or scan keeps VERIFIED. Health and functional facts arrive with TEN-GATES-07 (not yet merged when this landed); until then a route run whose stack has no build step and no scan result reads amber, which is the honest reading.
+- Reverse: CTO call if field receipts show honest runs with real exogenous checks reading amber; the opt-out covers one-off needs.
