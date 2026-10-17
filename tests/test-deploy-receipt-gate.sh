@@ -1094,6 +1094,24 @@ EOF
         else
             bad "26b. staging deploy wrong" "rc=$RC26S calls=$(cat "$SENTINEL_DIR/vercel-calls" 2>/dev/null)"
         fi
+        # 26c. non-canary provider output streams to stdout and its exit code is preserved
+        cp "$FAKE_BIN/vercel" "$WORKROOT/vercel.26c.bak"
+        cat > "$FAKE_BIN/vercel" <<EOF
+#!/usr/bin/env bash
+echo "STREAM-LINE-ONE"
+echo "Production: http://127.0.0.1:$HS_PORT/ok"
+exit 7
+EOF
+        chmod +x "$FAKE_BIN/vercel"
+        mk_hfix d26c; D26C="$WORKROOT/d26c"
+        OUT26C="$(run_h "$D26C" --execute)"; RC26C=$?
+        if grep -q "^STREAM-LINE-ONE" <<<"$OUT26C" && grep -q "Production: http://127.0.0.1:$HS_PORT/ok" <<<"$OUT26C" \
+           && grep -q "Deploy command exited 7" <<<"$OUT26C" && [ "$RC26C" -ne 0 ]; then
+            ok "26c. provider output streams to the terminal and its exit code is preserved"
+        else
+            bad "26c. provider output not streamed or exit code lost" "rc=$RC26C $(printf '%s' "$OUT26C" | tail -4)"
+        fi
+        cp "$WORKROOT/vercel.26c.bak" "$FAKE_BIN/vercel"
         cp "$R26S" "$WORKROOT/r26s.bak"
         python3 -c 'import json,sys;p=sys.argv[1];r=json.load(open(p));r["exit_code"]=0;r["head_sha"]="x";json.dump(r,open(p,"w"),indent=2)' "$R26S"
         rm -f "$SENTINEL_DIR/vercel-calls"
