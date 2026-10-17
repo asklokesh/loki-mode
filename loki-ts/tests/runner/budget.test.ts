@@ -288,6 +288,39 @@ describe("budget.read/writeBudgetState atomic round-trip", () => {
     expect(readBudgetState(fp)?.budget_used).toBe(expected);
   });
 
+  it("corrupt budget state rebuilds keep the cap armed (limit, budget_limit, exceeded)", () => {
+    const fp = join(scratch, "metrics", "budget.json");
+    const effDir = join(scratch, "metrics", "efficiency");
+    mkdirSync(effDir, { recursive: true });
+    writeFileSync(join(effDir, "iter-0.json"), JSON.stringify({ model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 }));
+    const used = calculateCostFromRecords(readEfficiencyDir(effDir));
+    expect(used).toBeGreaterThan(0);
+    writeFileSync(fp, "{not json");
+    const prev = process.env["BUDGET_LIMIT"];
+    try {
+      delete process.env["BUDGET_LIMIT"];
+      const unset = readBudgetState(fp);
+      expect(unset?.limit).toBe(0);
+      expect(unset?.budget_limit).toBe(0);
+      expect(unset?.exceeded).toBe(false);
+
+      process.env["BUDGET_LIMIT"] = String(used * 2);
+      const below = readBudgetState(fp);
+      expect(below?.limit).toBe(used * 2);
+      expect(below?.budget_limit).toBe(used * 2);
+      expect(below?.exceeded).toBe(false);
+
+      process.env["BUDGET_LIMIT"] = String(used);
+      const atCap = readBudgetState(fp);
+      expect(atCap?.limit).toBe(used);
+      expect(atCap?.budget_limit).toBe(used);
+      expect(atCap?.exceeded).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env["BUDGET_LIMIT"];
+      else process.env["BUDGET_LIMIT"] = prev;
+    }
+  });
+
   it("returns null when required field missing", () => {
     const fp = join(scratch, "metrics", "missing-field.json");
     mkdirSync(join(scratch, "metrics"), { recursive: true });
