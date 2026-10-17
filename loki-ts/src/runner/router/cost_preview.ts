@@ -152,9 +152,12 @@ export function runEstimate(args: readonly string[], d: { repoDir: string; env: 
     const a = args[i]!;
     if (a === "--help" || a === "-h") { out(ESTIMATE_HELP); return 0; }
     else if (a === "--json") json = true;
-    else if (a === "--model" || a === "--provider") { const v = args[++i]; if (!v) { err(`loki estimate: ${a} needs a value\n`); return 1; } if (a === "--model") model = v; else provider = v; }
-    else if (a.startsWith("--model=")) model = a.slice(8);
-    else if (a.startsWith("--provider=")) provider = a.slice(11);
+    else if (a === "--model" || a === "--provider") { const v = args[++i]; if (!v || v.startsWith("-")) { err(`loki estimate: ${a} needs a value\n`); return 1; } if (a === "--model") model = v; else provider = v; }
+    else if (a.startsWith("--model=") || a.startsWith("--provider=")) {
+      const name = a.startsWith("--model=") ? "--model" : "--provider", v = a.slice(name.length + 1);
+      if (!v || v.startsWith("-")) { err(`loki estimate: ${name} needs a value\n`); return 1; }
+      if (name === "--model") model = v; else provider = v;
+    }
     else if (a === "--iterations" || a.startsWith("--iterations=")) { err("loki estimate: --iterations was removed; the estimate now comes from this repo's run history (same as 'loki start'). Run 'loki estimate --help'.\n"); return 1; }
     else { err(`Unknown option: ${a}\nRun 'loki estimate --help' for usage.\n`); return 1; }
   }
