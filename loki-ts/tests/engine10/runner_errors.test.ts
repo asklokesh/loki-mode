@@ -150,3 +150,41 @@ describe("FC-17 Wall no-op precheck", () => {
     } finally { rmSync(repoDir, { recursive: true, force: true }); }
   });
 });
+
+describe("TEN-COST-09 Wall skipped when no project interpreter", () => {
+  const run = async (venv: boolean, files = ["app.py", "tests/test_app.py"], holdoutOff = true, nFiles = 0): Promise<{ r: Awaited<ReturnType<typeof runWall>>; called: number }> => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-c09-")), savedVenv = process.env["VIRTUAL_ENV"], savedHo = process.env["LOKI_WALL_HOLDOUT"]; delete process.env["VIRTUAL_ENV"]; if (holdoutOff) process.env["LOKI_WALL_HOLDOUT"] = "0"; else delete process.env["LOKI_WALL_HOLDOUT"];
+    try {
+      const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      if (venv) { mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true }); writeFileSync(join(repoDir, ".venv", "bin", "python"), ""); }
+      const ref = join(runDir, "repomap.json");
+      writeFileSync(ref, JSON.stringify({ files, entries: [], truncated: false }));
+      let called = 0;
+      const sessions: SessionRunner = { async run(o) { called++; for (let i = 1; i <= nFiles; i++) writeFileSync(join(o.cwd!, `loki_wall_f${i}.py`), `def test_f${i}():\n    assert True\n`); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+      const tm = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_app.py" }] };
+      const ctx = { ...ctxFor(repoDir, []), runId: "r1", runDir, sessions, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "add a feature to the app with new behavior across modules", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
+      process.env["LOKI_E10_PLAN"] = "always";
+      const r = await runWall(ctx, sig());
+      return { r, called };
+    } finally { delete process.env["LOKI_E10_PLAN"]; if (savedHo === undefined) delete process.env["LOKI_WALL_HOLDOUT"]; else process.env["LOKI_WALL_HOLDOUT"] = savedHo; if (savedVenv !== undefined) process.env["VIRTUAL_ENV"] = savedVenv; rmSync(repoDir, { recursive: true, force: true }); }
+  };
+  test("holdout off, pytest repo without a venv: no session, skip names the reason and carries not_proven", async () => {
+    const { r, called } = await run(false);
+    expect(r.status).toBe("skipped");
+    expect(r.reason).toBe("Wall skipped: no project test interpreter");
+    expect(r.data["not_proven"]).toEqual(["Wall skipped: no project test interpreter"]);
+    expect(called).toBe(0);
+  });
+  test("holdout default on, 5-file pytest Wall without a venv: NOT skipped, holdout_dir produced", async () => {
+    const { r, called } = await run(false, undefined, false, 5);
+    expect(called).toBe(1);
+    expect(r.reason ?? "").not.toContain("no project test interpreter");
+    expect(r.data["not_proven"]).toBeUndefined();
+    expect(typeof r.data["holdout_dir"]).toBe("string");
+  });
+  test("pytest repo with a .venv: the Wall session still starts", async () => {
+    const { r, called } = await run(true);
+    expect(called).toBe(1);
+    expect(r.reason ?? "").not.toContain("no project test interpreter");
+  });
+});

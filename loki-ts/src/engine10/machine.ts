@@ -158,6 +158,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       res.data.duration_s = durationS; outputs[name] = res.data; // RECEIPT-TRUTH: seal sums time.stages from outputs, so every stage records its own duration_s here; same object (not a copy) because intake mutates its own data after the stage ends (D61-04)
       ctx.emit("stage.completed", name, { ...res.data, duration_s: durationS });
     } else if (res.status === "skipped") {
+      if (Array.isArray(res.data.not_proven)) outputs[name] = res.data; // TEN-COST-09: a skip that disclosed what it left unproven reaches seal
       ctx.emit("stage.skipped", name, { ...res.data, reason: res.reason ?? "skipped by stage" });
     } else {
       ctx.emit("stage.failed", name, { ...res.data, duration_s: dur(), reason: res.reason ?? "failed" });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { buildTestMap, impactedRefs, RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import { buildTestMap, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
 
 const MIXED = resolve(import.meta.dir, "fixtures/testmap");
 
@@ -196,5 +196,16 @@ describe("node detection is conservative (A-102 r2)", () => {
   });
   test("a real node:test import adds node", () => {
     expect(buildTestMap(repo({ "a.test.js": "import t from 'node:test';" })).runners).toEqual(["node"]);
+  });
+});
+
+describe("projectInterpreter (TEN-COST-09)", () => {
+  test("system without a venv, project with .venv or venv", () => {
+    const saved = process.env["VIRTUAL_ENV"]; delete process.env["VIRTUAL_ENV"];
+    try {
+      expect(projectInterpreter(repo({ "a.py": "" }))).toBe("system");
+      expect(projectInterpreter(repo({ ".venv/bin/python": "" }))).toBe("project");
+      expect(projectInterpreter(repo({ "venv/bin/python": "" }))).toBe("project");
+    } finally { if (saved !== undefined) process.env["VIRTUAL_ENV"] = saved; }
   });
 });
