@@ -9,7 +9,7 @@
 //   - dispatchClaudeAgents throws when response missing a declared voter
 
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,6 +19,7 @@ import {
   VOTER_SLUGS,
   type ClaudeRunner,
 } from "../../src/council/voter_agents.ts";
+import { recordFromClaudeResult, recordFromUsage, withChildLedger } from "../../src/util/child_ledger.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import type { CouncilEvaluateContext, AgentVerdict } from "../../src/runner/council.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -202,6 +203,71 @@ describe("dispatchClaudeAgents", () => {
     await expect(dispatchClaudeAgents(fakeCtx(), cannedRunner(stdout))).rejects.toThrow(
       /missing finding/,
     );
+  });
+});
+
+// COST-WALL: every provider child session appends exactly one line to .loki/metrics/child-sessions.jsonl.
+describe("COST-WALL child-session ledger", () => {
+  const voters = JSON.stringify({
+    findings: [VOTER_SLUGS.REQUIREMENTS_VERIFIER, VOTER_SLUGS.TEST_AUDITOR, VOTER_SLUGS.CONVERGENCE_VOTER].map((role) => ({ role, vote: "APPROVE", reason: "ok", confidence: 0.9 })),
+  });
+  const ledgerLines = (dir: string): Record<string, unknown>[] => {
+    try { return readFileSync(join(dir, "metrics", "child-sessions.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  };
+  const ctxIn = (dir: string): CouncilEvaluateContext => { const c = fakeCtx(); return { ...c, ctx: { ...c.ctx, lokiDir: dir } }; };
+
+  it("a real council spawn (fake claude binary on PATH) writes exactly one unmeasured ledger line, never a zero usd", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw-bin-")), loki = join(dir, ".loki"), bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --agents  --json-schema"; exit 0;; esac\nprintf '%s' '${voters}'\n`, { mode: 0o755 });
+    const savedPath = process.env["PATH"], savedSdk = process.env["LOKI_SDK_VOTER_AGENTS"];
+    process.env["PATH"] = `${bin}:${savedPath}`; delete process.env["LOKI_SDK_VOTER_AGENTS"];
+    _resetClaudeHelpCacheForTest();
+    try {
+      const out = await dispatchClaudeAgents(ctxIn(loki));
+      expect(out.length).toBe(3);
+      const lines = ledgerLines(loki);
+      expect(lines.length).toBe(1);
+      expect(lines[0]!["phase"]).toBe("council");
+      expect(lines[0]!["cost_status"]).toBe("unmeasured");
+      expect("usd" in lines[0]!).toBe(false);
+    } finally {
+      process.env["PATH"] = savedPath; if (savedSdk !== undefined) process.env["LOKI_SDK_VOTER_AGENTS"] = savedSdk;
+      _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an injected runner (tests) never touches the ledger", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw-inj-"));
+    try {
+      await dispatchClaudeAgents(ctxIn(dir), async () => ({ stdout: voters, exitCode: 0 }));
+      expect(ledgerLines(dir).length).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("withChildLedger: result JSON total_cost_usd is recorded as usd; a throwing child still leaves one unmeasured line", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw-wrap-"));
+    try {
+      const ok = withChildLedger(async () => ({ stdout: JSON.stringify({ type: "result", total_cost_usd: 0.065, usage: { input_tokens: 3, output_tokens: 4 }, modelUsage: { "claude-sonnet-x": {} } }), exitCode: 0 }), dir, "wall");
+      await ok();
+      const bad = withChildLedger(async (): Promise<{ stdout: string }> => { throw new Error("boom"); }, dir, "wall");
+      await expect(bad()).rejects.toThrow("boom");
+      const lines = ledgerLines(dir);
+      expect(lines.length).toBe(2);
+      expect(lines[0]).toMatchObject({ phase: "wall", model: "claude-sonnet-x", usd: 0.065, input_tokens: 3, output_tokens: 4, source: "ts-spawn" });
+      expect(lines[1]!["cost_status"]).toBe("unmeasured");
+      expect("usd" in lines[1]!).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("tokens without total_cost_usd are priced by the shared table; usage-free results are unmeasured", () => {
+    const priced = recordFromClaudeResult("grill", { type: "result", usage: { input_tokens: 1_000_000 }, modelUsage: { sonnet: {} } })!;
+    expect(priced.usd).toBeGreaterThan(0);
+    expect(priced.source).toBe("claude-json+priced");
+    expect(recordFromClaudeResult("grill", { type: "result" })!.cost_status).toBe("unmeasured");
+    expect(recordFromClaudeResult("grill", "not an object")).toBeNull();
+    expect(recordFromUsage("council", "sonnet", { input_tokens: 10, output_tokens: 5 }).usd).toBeGreaterThan(0);
+    expect(recordFromUsage("council", "sonnet", null).cost_status).toBe("unmeasured");
   });
 });
 

@@ -16,6 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { type Effort, judgeJson, judgeText } from "../runner/sdk_invoker.ts";
+import { lokiDir } from "../util/paths.ts";
 import { isUnresolvedClaudeAlias, resolveClaudeModel } from "../util/claude_model.ts";
 
 function argVal(args: string[], flag: string): string | undefined {
@@ -33,7 +34,12 @@ export function parsePosInt(v: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-const VALID_EFFORT = new Set(["low", "medium", "high", "xhigh", "max"]);
+// COST-WALL: the bash callers shell out here for the SDK path, which never reaches their loki_child_ledger_append; the ledger line is written here instead (optional --phase names the role).
+export function cliLedger(args: string[], fallbackPhase: string): { lokiDir: string; phase: string } {
+  return { lokiDir: lokiDir(), phase: argVal(args, "--phase") ?? fallbackPhase };
+}
+
+const VALID_EFFORT =new Set(["low", "medium", "high", "xhigh", "max"]);
 
 export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const promptFile = argVal(args, "--prompt-file");
@@ -67,7 +73,7 @@ export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const timeoutMs = parsePosInt(argVal(args, "--timeout-ms"));
 
-  const result = await judgeJson({ prompt, schema, model, effort, maxTokens, timeoutMs });
+  const result = await judgeJson({ prompt, schema, model, effort, maxTokens, timeoutMs, ledger: cliLedger(args, "sdk-judge") });
   if (result === null) {
     // fail-closed: no stdout, non-zero -> bash caller uses its fallback.
     return 1;
@@ -112,7 +118,7 @@ export async function runInternalSdkText(args: string[]): Promise<number> {
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const timeoutMs = parsePosInt(argVal(args, "--timeout-ms"));
 
-  const result = await judgeText({ prompt, model, effort, maxTokens, timeoutMs });
+  const result = await judgeText({ prompt, model, effort, maxTokens, timeoutMs, ledger: cliLedger(args, "sdk-text") });
   if (result === null) {
     return 1;
   }

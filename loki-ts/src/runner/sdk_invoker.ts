@@ -15,6 +15,7 @@
 // It NEVER throws for a normal failure -- null is the single failure signal.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { appendChildLedger, recordFromUsage } from "../util/child_ledger.ts";
 import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth_dev.js";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -64,6 +65,13 @@ export interface JudgeParams {
   maxTokens?: number;
   timeoutMs?: number;
   system?: string;
+  ledger?: { lokiDir: string; phase: string }; // COST-WALL: append this call's usage to .loki/metrics/child-sessions.jsonl
+}
+
+/** COST-WALL: one ledger line per SDK judge call, priced from the response usage (the API returns tokens, not dollars). No-op without params.ledger. */
+export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg: { usage?: unknown } | null | undefined): void {
+  if (!ledger) return;
+  appendChildLedger(ledger.lokiDir, recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null));
 }
 
 // Same shape as JudgeParams but with no schema: a free-form text turn (grill
@@ -176,6 +184,7 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
       },
       { timeout: timeoutMs },
     );
+    noteJudgeUsage(params.ledger, model, msg);
 
     // A structured turn ends with the JSON in a text block. Concatenate text
     // blocks and JSON.parse. (parse() would type this, but create() keeps us
@@ -227,6 +236,7 @@ export async function judgeText(params: TextParams): Promise<string | null> {
       },
       { timeout: timeoutMs },
     );
+    noteJudgeUsage(params.ledger, model, msg);
     const text = (msg.content ?? [])
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)

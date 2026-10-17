@@ -3,7 +3,10 @@
 // the availability probe. A live smoke test (real API) lives behind an env gate.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parsePosInt } from "../../src/commands/internal_sdk_judge.ts";
-import { judgeJson, sdkJudgeAvailable, __resetSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { judgeJson, noteJudgeUsage, sdkJudgeAvailable, __resetSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
 
 const SCHEMA = {
   type: "object",
@@ -73,5 +76,35 @@ describe("parsePosInt (CLI numeric-arg fallback, council C3)", () => {
     ["Infinity token -> undefined (not finite)", "Infinity", undefined],
   ])("%s", (_label, input, expected) => {
     expect(parsePosInt(input as string | undefined)).toBe(expected as number | undefined);
+  });
+});
+
+describe("COST-WALL noteJudgeUsage ledger", () => {
+  const mk = () => mkdtempSync(join(tmpdir(), "loki-cw-sdk-"));
+  const lines = (d: string): string[] => {
+    const p = join(d, "metrics", "child-sessions.jsonl");
+    return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean) : [];
+  };
+  test("priced usage writes exactly one line", () => {
+    const d = mk();
+    noteJudgeUsage({ lokiDir: d, phase: "council" }, "claude-haiku-4-5", { usage: { input_tokens: 1000, output_tokens: 500 } });
+    const l = lines(d);
+    expect(l.length).toBe(1);
+    expect(JSON.parse(l[0]!).phase).toBe("council");
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("no ledger param writes nothing", () => {
+    const d = mk();
+    noteJudgeUsage(undefined, "claude-haiku-4-5", { usage: { input_tokens: 1, output_tokens: 1 } });
+    expect(lines(d).length).toBe(0);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("missing usage writes an unmeasured line", () => {
+    const d = mk();
+    noteJudgeUsage({ lokiDir: d, phase: "reviewer" }, "claude-haiku-4-5", {});
+    const l = lines(d);
+    expect(l.length).toBe(1);
+    expect(JSON.parse(l[0]!).cost_status).toBe("unmeasured");
+    rmSync(d, { recursive: true, force: true });
   });
 });
