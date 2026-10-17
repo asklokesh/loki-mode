@@ -1676,7 +1676,8 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
   if (process.env["LOKI_SDK_CODE_REVIEW"] === "1" && existsSync(CODE_REVIEW_SCHEMA_PATH)) {
     try {
       const schema = JSON.parse(readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8")) as Record<string, unknown>;
-      const timeoutMs = (Number(process.env["LOKI_SDK_REVIEW_TIMEOUT"]) || 180) * 1000;
+      const rawTo = Number(process.env["LOKI_SDK_REVIEW_TIMEOUT"]);
+      const timeoutMs = (Number.isFinite(rawTo) && rawTo > 0 ? rawTo : 180) * 1000;
       const obj = await judgeJson({
         prompt,
         schema,
