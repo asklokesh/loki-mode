@@ -882,3 +882,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every name in the modernize types.ts event list; the allowlist in the M-25w producer guard must shrink to empty.
 - Mechanism: the planner appends unit.planned once per unit; the codemod caller appends codemod.skipped with the reason codemod.ts already returns; then delete both allowlist entries so the existing guard covers them.
 - Fixture: the M-25w producer-coverage case with an empty allowlist.
+
+## FC-COST-PARTIAL A cost total built from ledger lines alone is reported as complete when the main records carry tokens but no dollar figure (COST-PARTIAL-HIDDEN)
+- User-visible vs raw: `loki` cost and the C-F1 benchmark show a small total with cost_partial false, so a run looks cheaper than it was and the 2x cost claim could rest on an understated number.
+- Law broken: a total that omits unpriced spend must say it is a lower bound.
+- Cause (measured 2026-10-17, COST-WALL HIGH review F1): autonomy/lib/efficiency_cost.py lines 316-325; a main efficiency record with tokens and no cost_usd plus one priced child-ledger line gives usd 0.01, cost_partial False. engine10 omits cost_usd when a session reports no dollar figure.
+- Siblings to sweep: every reader of cost_partial (autonomy/lib/cost-summary.py, the C-F1 benchmark row_true_spend, dashboard cost views).
+- Mechanism: when main records exist and cost_available is false, set cost_partial true in the one reader; siblings consume that flag.
+- Fixture: tests/test_efficiency_cost_availability.py case with token-only main record plus a priced ledger line asserts cost_partial true.
