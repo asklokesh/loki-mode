@@ -515,3 +515,26 @@ describe("TEN-SPEED-08: gh auth probe reuse", () => {
     expect((await checkPreflight(o(dir, env))).fatal).toBeNull(); expect(g.count()).toBe(4);
   });
 });
+
+describe("TEN-SPEED-14: parallel git reads", () => {
+  // A git shim that logs S (start) and E (end) per call and sleeps in between, so serial vs parallel spawn order is visible.
+  function shim(): { path: string; log: string } {
+    const d = tmpRoot("e10-pf-shim-"); const log = join(d, "log"); const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    writeFileSync(join(d, "git"), `#!/bin/sh\necho S >> '${log}'\nsleep 0.4\n'${real}' "$@"\nrc=$?\necho E >> '${log}'\nexit $rc\n`); chmodSync(join(d, "git"), 0o755);
+    return { path: d, log };
+  }
+  test("parallel git reads: all four starts precede the first end", async () => {
+    const { dir, env } = identifiedRepo(); const s = shim();
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, PATH: `${s.path}:${env.PATH}`, LOKI_CLAUDE_CLI: stubCli() } });
+    expect(r.fatal).toBeNull();
+    const seq = readFileSync(s.log, "utf8").trim().split("\n").join("");
+    expect(seq.startsWith("SSSSEEEE")).toBe(true);
+  });
+  test("auto-init re-reads once and still passes", async () => {
+    const dir = tmpRoot("e10-pf-empty-"); const home = tmpRoot("e10-pf-home-"); const s = shim();
+    const env = { PATH: `${s.path}:${process.env.PATH ?? ""}`, HOME: home, GIT_CONFIG_GLOBAL: join(home, "gc"), GIT_CONFIG_SYSTEM: "/dev/null", LOKI_CLAUDE_CLI: stubCli() };
+    writeFileSync(join(home, "gc"), "[user]\n\tname = t\n\temail = t@t.test\n");
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env });
+    expect(r.fatal).toBeNull(); expect(r.warnings.length).toBeGreaterThan(0);
+  });
+});

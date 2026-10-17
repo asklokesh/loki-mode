@@ -13,9 +13,9 @@ async function sh(argv: readonly string[], opts: ShellOpts): Promise<ShellResult
 function freeMb(dir: string, statfs: NonNullable<PreflightOptions["statfs"]>): number | null { try { const s = statfs(dir); return (Number(s.bavail) * Number(s.bsize)) / (1024 * 1024); } catch { return null; } }
 export async function checkPreflight(o: PreflightOptions): Promise<PreflightResult> {
   const env = (o.env ?? process.env) as Record<string, string>; const warnings: string[] = []; const git = (a: string[]) => safeGitRun(o.repoDir, a, { env, timeoutMs: 10000 }); // FC-25: the supervisor holds the token; the repo config is untrusted
-  let wt0 = await git(["rev-parse", "--is-inside-work-tree"]); let initFatal: string | undefined; // TEN-UX-01: only a truly empty folder is initialised
-  if (wt0.exitCode !== 0 || wt0.stdout.trim() !== "true") { const i = await initEmptyRepo(o.repoDir, env); if (i.notice) { warnings.push(i.notice); wt0 = await git(["rev-parse", "--is-inside-work-tree"]); } else initFatal = i.fatal; }
-  const [wt, name, email, head] = await Promise.all([Promise.resolve(wt0), git(["config", "user.name"]), git(["config", "user.email"]), git(["rev-parse", "--verify", "-q", "HEAD^{commit}"])]); // TEN-STABILITY-35: git init with nothing committed has no HEAD and dies later in worktree creation
+  const reads = () => Promise.all([git(["rev-parse", "--is-inside-work-tree"]), git(["config", "user.name"]), git(["config", "user.email"]), git(["rev-parse", "--verify", "-q", "HEAD^{commit}"])]); // TEN-SPEED-14: all four git reads start together; TEN-STABILITY-35: git init with nothing committed has no HEAD and dies later in worktree creation
+  let [wt, name, email, head] = await reads(); let initFatal: string | undefined; // TEN-UX-01: only a truly empty folder is initialised
+  if (wt.exitCode !== 0 || wt.stdout.trim() !== "true") { const i = await initEmptyRepo(o.repoDir, env); if (i.notice) { warnings.push(i.notice); [wt, name, email, head] = await reads(); } else initFatal = i.fatal; } // re-read only when auto-init ran
   const envVar = CLI_ENV_VAR[o.provider]; const cli = (envVar && env[envVar]?.trim()) || o.provider; const cliOk = envVar ? !!Bun.which(cli, { PATH: env.PATH ?? process.env.PATH ?? "" }) : true; // resolve against the given env's PATH, never the process's
   const fatal =
     wt.exitCode !== 0 || wt.stdout.trim() !== "true" ? (initFatal ?? NOT_A_REPO(o.repoDir)) :
