@@ -35,12 +35,30 @@ export interface BacklogRun { code: number; stdout: string }
 /** argv is the full python3 argument list after the interpreter; env is already scoped. */
 export type BacklogLauncher = (argv: string[], env: NodeJS.ProcessEnv, cwd: string, onOut?: (chunk: string) => void) => Promise<BacklogRun>;
 
-const ENV_KEEP = /^(PATH|HOME|TMPDIR|LANG|LC_ALL|CI|SSH_AUTH_SOCK|GH_TOKEN|GITHUB_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|OPENAI_API_KEY|LOKI_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+)$/;
+const ENV_KEEP = /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|LANG|LC_ALL|CI|SSH_AUTH_SOCK|GH_TOKEN|GITHUB_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|OPENAI_API_KEY|LOKI_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+)$/;
 export function scopedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(env)) if (v !== undefined && ENV_KEEP.test(k)) out[k] = v;
   out["LOKI_NO_BROWSER"] = "1";
   return out;
+}
+
+/** Cost of one backlog.py launch, summed from its per-unit summary rows (`<label> $0.17 <status>`). usd is null when no unit reported a dollar figure: unknown is never $0. */
+export interface GroupCost { usd: number | null; measured: number; unmeasured: number }
+export function parseGroupCost(stdout: string): GroupCost {
+  const tail = stdout.slice(stdout.lastIndexOf("\nSummary:") + 1);
+  let usd = 0, measured = 0, unmeasured = 0;
+  for (const m of tail.matchAll(/^(?!ITEM\b)\S+[ \t]+(\$[0-9]+(?:\.[0-9]+)?|unmeasured)[ \t]+\S/gm)) {
+    if (m[1] === "unmeasured") unmeasured++; else { usd += Number(m[1]!.slice(1)); measured++; }
+  }
+  return { usd: measured > 0 ? usd : null, measured, unmeasured };
+}
+/** One cost line for the group run, in the single-run wording: measured, partial, or not measured (never $0.00 for an unknown). */
+export function groupCostLine(costs: GroupCost[]): string {
+  const measured = costs.reduce((a, c) => a + c.measured, 0), unmeasured = costs.reduce((a, c) => a + c.unmeasured, 0);
+  if (measured === 0) return "loki: cost not measured\n";
+  const usd = costs.reduce((a, c) => a + (c.usd ?? 0), 0);
+  return unmeasured > 0 ? `loki: cost partial: $${usd.toFixed(2)} for ${measured} of ${measured + unmeasured} unit session(s)\n` : `loki: cost $${usd.toFixed(2)} (measured)\n`;
 }
 
 const defaultLauncher: BacklogLauncher = (argv, env, cwd, onOut) => new Promise((resolve) => {
@@ -218,6 +236,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const { provider, slots } = providerSlots(env, ctx.provider);
   const pending = units.length - doneCount;
   const status = new Map<string, string>();
+  const costs: GroupCost[] = [];
   let launchCode = 0;
   if (pending > 0) {
     const slug = slugOf();
@@ -228,6 +247,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     const feed = createGroupFeed(groupId, units, createGroupRenderer({ write: say, isTTY: false })); // plain per-unit lines; a TTY repaint needs a raw stderr writer
     const res = await run([backlog, slug, "--dag", dagPath, "--group", groupId, "--slots", String(n), "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir, (c) => feed.feed(c));
     launchCode = res.code;
+    costs.push(parseGroupCost(res.stdout));
     // backlog prints `backlog: unit-<group>-<n> <status>`; a unit passed only when its status is VERIFIED or a PR url. Anything else is a fail.
     for (const m of res.stdout.matchAll(/^backlog: (unit-\S+) (VERIFIED|PR \S+|FAILED.*|BLOCKED.*|BUDGET_STOP.*|SKIPPED.*)$/gm)) status.set(m[1]!, m[2]!);
   }
@@ -238,6 +258,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     if (u.done || /^(VERIFIED|PR )/.test(st)) branches[u.id] = `loki/${key}`; else failedUnits.push(u.id);
   });
   if (launchCode !== 0) say(`loki: unit launcher exit ${launchCode}; ${failedUnits.length} unit(s) did not pass\n`);
+  if (costs.length > 0) say(groupCostLine(costs));
   if (Object.keys(branches).length === 0) { say("loki: FAILED: no unit passed; nothing to integrate\n"); return 1; }
 
   const testCmd = testCommand(repoDir, env), fixes = units.filter((u) => (u as Partial<FixUnit>).fixKind) as FixUnit[];
@@ -249,6 +270,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     fix.spec = spec; fix.done = false; fix.base = git(repoDir, ["rev-parse", "HEAD"]); units.push(fix); // backlog.py starts the worktree at the group tip, not origin/HEAD
     putDag(units.map((u) => (u === fix ? u : { ...u, done: true })));
     const res = await run([join(REPO_ROOT, "autonomy", "lib", "backlog.py"), slug, "--dag", dagPath, "--group", groupId, "--slots", "1", "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir);
+    costs.push(parseGroupCost(res.stdout));
     if (res.code !== 0 || !new RegExp(`^backlog: ${key} (VERIFIED|PR \\S+)$`, "m").test(res.stdout)) { units.pop(); return null; }
     fix.done = true;
     return `loki/${key}`;
@@ -256,6 +278,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const r = await integrateWithFixes({ repoDir, env, dag: { ...full, units: units.filter((u) => !(u as Partial<FixUnit>).fixKind) }, fixes, branches, failed: failedUnits, testCmd,
     io: { integrate: (dag, br, failed) => integrate({ repoDir, groupId, baseRef, dag, branches: br, failedUnits: failed, testCmd }), launch: launchFix, leave: dropGroupBranch, say } });
   if (fixes.length > 0) putDag(units);
+  if (costs.length > 1) say(groupCostLine(costs)); // fix units ran after the first line: restate the running total
   for (const [id, o] of Object.entries(r.perUnit)) say(`loki: unit ${id} ${o}\n`);
   if (!r.ok || launchCode !== 0) {
     say(`loki: FAILED: group not verified (${r.reason ?? "launcher reported a failed unit"})\n`);

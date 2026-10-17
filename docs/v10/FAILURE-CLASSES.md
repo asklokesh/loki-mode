@@ -976,3 +976,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: every literal reason produced by reasonOf (output.ts:74); the supervisor call site that passes the reason.
 - Mechanism: nextOf in util/run_summary.ts takes reason and outcome and maps each failure class to one command; verified, done-unverified, budget and stopped output stays byte-identical.
 - Fixture: run_summary.test.ts table rows copied from the real reason literals, a pin of the old outputs, and a source scan that every reasonOf literal has a mapping; tests/features/contract.test.ts covers fatal:auth end to end.
+
+## FC-TEN-GROUP-AUTH Group child sessions lose the OS identity vars and report no cost (SCOPED-ENV-NO-IDENTITY)
+- User-visible vs raw: every unit session of a group run printed "Not logged in" and failed in about 6s at $0 on macOS Claude OAuth; the run then said nothing about the dollars the surviving units spent.
+- Law broken: a scoped child env must keep what the provider CLI needs to authenticate (USER and LOGNAME key the macOS keychain lookup) while still dropping unrelated secrets; spend that happened must be reported, never silently unmeasured.
+- Siblings: run_group.ts ENV_KEEP (broken); commands/start.ts START_ENV_NAMES and util/skill_checks.ts SKILL_CHECK_ENV_ALLOW already keep USER, LOGNAME, SHELL; a git grep of env allowlists in loki-ts/src found no other.
+- Mechanism: ENV_KEEP in run_group.ts gains USER, LOGNAME, SHELL; parseGroupCost and groupCostLine sum the per-unit cost rows of every backlog.py launch and print one measured, partial or not-measured line like a single run.
+- Fixture: tests/features/run_group_env_cost.test.ts (scopedEnv keeps USER and LOGNAME and drops an unrelated secret; group cost equals the sum of unit costs, unmeasured rows read partial, none reads not measured); tests/runner/spawn_env_guard.test.ts stays green.
