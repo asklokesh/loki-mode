@@ -314,6 +314,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     proof_present = 0
     proof_observed = 0
     costs: List[float] = []
+    measured_trials: List[Dict[str, Any]] = []
     durations: List[float] = []
     for row in rows:
         for t in row.get("trials", []) or []:
@@ -331,6 +332,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             ok = 1 if t.get("success") else 0
             successes += ok
             obs.append(ok)
+            measured_trials.append(t)
             c = t.get("cost_usd")
             if isinstance(c, (int, float)) and not isinstance(c, bool):
                 costs.append(c)
@@ -342,6 +344,9 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                 proof_observed += 1
                 if p:
                     proof_present += 1
+    cost_partial = _schema.trials_cost_partial(measured_trials)
+    per_verified = (round(sum(costs) / successes, 4)
+                    if costs and successes > 0 else None)
     p_est, lo, hi = wilson_interval(successes, n)
     honesty = ("not_captured" if proof_observed == 0
                else round(proof_present / proof_observed, 4))
@@ -368,10 +373,11 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         # fails cheaply and often; the question a buyer actually has is what a
         # working result costs. null (never 0) when nothing was solved or no
         # cost was recorded, so an unmeasured cell cannot read as "free".
-        "cost_usd_per_verified": (
-            round(sum(costs) / successes, 4)
-            if costs and successes > 0 else None
-        ),
+        # A partial cost is a lower bound, never a complete total: the headline
+        # figure is null (unmeasured) and the bound is kept under its own key.
+        "cost_partial": cost_partial,
+        "cost_usd_per_verified": None if cost_partial else per_verified,
+        "cost_usd_per_verified_lower_bound": per_verified if cost_partial else None,
         "duration_s_median": _median(durations),
         "obs": obs,
     }
@@ -599,7 +605,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
         lines.append("| %s | %d | %s | %s | %s | %s | %s | %s |" % (
             key, cx["n_trials"], _fmt_rate(cx), _fmt_false_green(cx.get("false_green")),
             cx["honesty"], cx["design"],
-            _fmt_usd(cx["cost_usd_median"]), dur))
+            (">= " if cx.get("cost_partial") and cx["cost_usd_median"] is not None else "")
+            + _fmt_usd(cx["cost_usd_median"]), dur))
     lines.append("")
 
     # (b) ablation table placeholder.

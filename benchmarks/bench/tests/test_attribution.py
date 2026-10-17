@@ -356,6 +356,92 @@ class SpendCapTest(unittest.TestCase):
         self.assertFalse(A.row_spend_is_partial({"cost_usd": 1.0}))
         self.assertFalse(A.row_spend_is_partial({"cost_usd": 1.0, "cost_partial": False}))
 
+    def test_partial_helper_decides_every_shape(self):
+        import bench_schema as S
+        P = S.cost_is_partial
+        self.assertTrue(P({"cost_usd": None, "true_cost_usd": 1.0}))
+        self.assertTrue(P({"cost_usd": 0.0, "true_cost_usd": 1.0}))
+        self.assertTrue(P({"cost_usd": 0.5}, ledger_usd=0.9))
+        self.assertTrue(P({"cost_usd": 1.0, "ledger_invalid_lines": 1}))
+        self.assertTrue(P({"cost_usd": 1.0, "cost_unpriced_records": 1}))
+        self.assertTrue(P({"cost_usd": 1.0, "cost_partial": True}))
+        self.assertFalse(P({"cost_usd": 1.0, "true_cost_usd": 1.0}))
+        self.assertFalse(P({"cost_usd": None}))
+
+    def test_row_spend_is_partial_null_cost_with_true_cost(self):
+        self.assertTrue(A.row_spend_is_partial({"cost_usd": None, "true_cost_usd": 1.0}))
+
+    def test_row_spend_is_partial_zero_cost_below_true_cost(self):
+        self.assertTrue(A.row_spend_is_partial({"cost_usd": 0.0, "true_cost_usd": 1.0}))
+
+    def test_compute_metrics_zero_cost_below_true_is_lower_bound(self):
+        r = row(accepted=True, reported=True, cost=0.0)
+        r["true_cost_usd"] = 2.0
+        m = A.compute_metrics([r])
+        self.assertEqual(m["cost_status"], "partial_lower_bound")
+
+    def test_result_rows_invalid_ledger_lines_mark_partial(self):
+        d = tempfile.mkdtemp()
+        try:
+            import json as js
+            r = dict(row(accepted=True, reported=True, cost=1.0))
+            r["ledger_invalid_lines"] = 2
+            with open(os.path.join(d, "attribution-s1.json"), "w") as f:
+                js.dump({"rows": [r]}, f)
+            out = A._result_rows(d)
+            self.assertTrue(out[0]["cost_partial"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_result_rows_zero_cost_below_true_cost_marks_partial(self):
+        d = tempfile.mkdtemp()
+        try:
+            import json as js
+            r = dict(row(accepted=True, reported=True, cost=0.0))
+            r["true_cost_usd"] = 1.5
+            with open(os.path.join(d, "attribution-s1.json"), "w") as f:
+                js.dump({"rows": [r]}, f)
+            out = A._result_rows(d)
+            self.assertTrue(out[0]["cost_partial"])
+            self.assertAlmostEqual(out[0]["cost_usd"], 1.5)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_spend_cap_message_labels_lower_bound_for_zero_below_true(self):
+        tasks, plan = self._plan(2)
+        orig = A.run_cell
+
+        def fake_cell(task, arm, repeat, **kw):
+            return {"task": task["id"], "class": "bugfix", "arm": arm, "repeat": repeat,
+                    "accepted": True, "reported_success": True, "status": "completed",
+                    "cost_usd": 0.0, "true_cost_usd": 2.0, "elapsed_s": 1.0}
+        A.run_cell = fake_cell
+        try:
+            rows = A.run_all(tasks, plan, max_spend_usd=1.0)
+        finally:
+            A.run_cell = orig
+        self.assertIn("(lower bound)", rows[1]["unmeasured_reason"])
+
+    def test_compute_metrics_null_cost_with_true_cost_is_lower_bound(self):
+        r = row(accepted=True, reported=True, cost=None)
+        r["true_cost_usd"] = 2.0
+        m = A.compute_metrics([r])
+        self.assertEqual(m["cost_status"], "partial_lower_bound")
+        self.assertAlmostEqual(m["cost_per_accepted_lower_bound_usd"], 2.0)
+
+    def test_ledger_read_counts_invalid_and_unpriced_lines(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, A.LEDGER_REL)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write('not json\n[1]\n{"usd": 0.5}\n{"phase": "x"}\n')
+            total, bad, unpriced = A.ledger_read(d)
+            self.assertAlmostEqual(total, 0.5)
+            self.assertEqual((bad, unpriced), (2, 1))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def _plan(self, n):
         tasks = [{"id": "t%d" % i, "class": "bugfix", "prompt": "p",
                   "seed_sha256": "a", "acceptance_sha256": "b", "prompt_sha256": "c"}

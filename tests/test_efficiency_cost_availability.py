@@ -262,6 +262,23 @@ class ChildLedgerTests(unittest.TestCase):
             self.assertEqual(cost["ledger_records"], 1)
             self.assertEqual(cost["ledger_invalid_lines"], 2)
 
+    def test_invalid_ledger_lines_mark_cost_partial(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, ["not json", _child("docs", 0.1)])
+            cost, _ = collect_efficiency(loki)
+            self.assertEqual(cost["ledger_invalid_lines"], 1)
+            self.assertTrue(cost["cost_partial"])
+
+    def test_only_invalid_ledger_lines_mark_cost_partial(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, ["not json"])
+            cost, _ = collect_efficiency(loki)
+            self.assertTrue(cost["cost_partial"])
+
     def test_empty_ledger_file_reads_present_with_zero_records(self):
         with tempfile.TemporaryDirectory() as d:
             loki = os.path.join(d, ".loki")
