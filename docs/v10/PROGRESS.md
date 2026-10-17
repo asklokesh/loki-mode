@@ -2518,3 +2518,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T11:21Z (CoS) v11.17.46
 - Released wave AM: 28 slices APPROVE across 19 chains; TEN-STABILITY-29 and TEN-ADOPTION-23 dropped as already fixed. Combined main: tsc rc 0; bun 593/0 and 449/0; help-changelog-drift, help-discoverability, secret-scan rc 0.
+
+## 2026-10-17T11:59Z (CoS) v11.17.47
+- Released TEN-GATES-15 and Q17-05b (wave AH redo, opus APPROVE 708682ea2 and 0112c4fcc) plus a tsc fix-forward in redact.test.ts (325df1f44). Q18-03e blocked after 3 rounds; reslice to a real tokenizer. Combined: tsc rc 0; loki-ts bun 557/0; control-plane server 335/0. Board refill wave AN (bda2ee54d) included.

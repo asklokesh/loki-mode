@@ -172,3 +172,13 @@ f77445f3558e4c2b55f4404f213c71b22357220d:loki-ts/tests/commands/export_sarif.tes
 ec6a31e650fd552b4dde1360fffda5e866111f56:loki-ts/tests/commands/export_sarif.test.ts:twilio-api-key:136
 ec6a31e650fd552b4dde1360fffda5e866111f56:tests/test-secret-scan.sh:generic-api-key:227
 ec6a31e650fd552b4dde1360fffda5e866111f56:tests/test-secret-scan.sh:twilio-api-key:228
+# v11.17.47: same known test fixtures (export_sarif, secret-scan, proof, redact) re-seen via main merged into the TEN-GATES-15 branch; not real secrets
+708682ea2700b6dfe2266d193235c8fbb5267194:loki-ts/tests/commands/export_sarif.test.ts:twilio-api-key:136
+708682ea2700b6dfe2266d193235c8fbb5267194:tests/test-secret-scan.sh:twilio-api-key:228
+708682ea2700b6dfe2266d193235c8fbb5267194:tests/test-secret-scan.sh:generic-api-key:227
+c78044736288759a11c2ad6648918b1061be43bd:loki-ts/tests/commands/export_sarif.test.ts:generic-api-key:90
+e5a4ec23facf4a217564a183872a2338da4f9534:loki-ts/tests/commands/export_sarif.test.ts:generic-api-key:90
+e5a4ec23facf4a217564a183872a2338da4f9534:loki-ts/tests/commands/proof.test.ts:github-pat:359
+e5a4ec23facf4a217564a183872a2338da4f9534:loki-ts/tests/util/redact.test.ts:private-key:39
+ab9fab7fdf8b2af6180723e7a5bf70559b202247:loki-ts/tests/commands/proof.test.ts:github-pat:359
+ab9fab7fdf8b2af6180723e7a5bf70559b202247:loki-ts/tests/util/redact.test.ts:private-key:39

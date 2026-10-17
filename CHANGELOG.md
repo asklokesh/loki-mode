@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.47 (2026-10-17)
+
+### Fixed
+- The Seal receipt now carries the seeded-defect corpus block and a correct `catch_rate`, read only from the packaged benchmarks/seeded-defects manifest, never from the target repo (TEN-GATES-15).
+- One shared redaction now covers the engine event writer, the control-plane shipper and ingest; `redactSecrets` iterates to a fixpoint so hashing once-redacted bytes stays stable, and the private shipper copy is removed (Q17-05b).
+
 ## v11.17.46 (2026-10-17)
 
 ### Added
