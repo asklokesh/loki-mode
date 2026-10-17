@@ -446,6 +446,39 @@ EOF
     [ "$l_pat" -gt "$c_pat" ]
 }
 
+# _loki_latest_published_version: print the latest published version (fresh
+# cache first, else one short registry fetch that refreshes the cache), or
+# nothing when offline. Never fabricates, always returns 0.
+_loki_latest_published_version() {
+    local cache_file latest="" checked_at now age
+    cache_file=$(_loki_update_cache_path)
+    if [ -f "$cache_file" ]; then
+        checked_at=$(sed -n 's/.*"checkedAt"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        latest=$(sed -n 's/.*"latest"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        now=$(date +%s 2>/dev/null || echo 0)
+        if [ -n "$checked_at" ] && [ -n "$latest" ]; then
+            age=$(( now - checked_at ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt 86400 ]; then
+                printf '%s\n' "$latest"
+                return 0
+            fi
+        fi
+        latest=""
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        latest=$(curl -fsS --max-time 3 "https://registry.npmjs.org/loki-mode/latest" 2>/dev/null \
+            | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    fi
+    case "$latest" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 0 ;;
+    esac
+    ( mkdir -p "$(dirname "$cache_file")" 2>/dev/null \
+        && printf '{"checkedAt":%s,"latest":"%s"}\n' "$(date +%s 2>/dev/null || echo 0)" "$latest" > "$cache_file" 2>/dev/null ) || true
+    printf '%s\n' "$latest"
+    return 0
+}
+
 # maybe_print_update_hint: print the one-line update nudge to stderr if (and
 # only if) a successful, non-fabricated check reports a strictly newer release.
 # Never blocks, never slows the command, never touches stdout. Always returns 0.
@@ -14662,7 +14695,7 @@ cmd_setup_skill() {
 #   loki self-update --to bun       Switch from current to Bun
 #   loki self-update --to npm       Switch from current to npm
 #   loki self-update --to brew      Switch from current to Homebrew
-#   loki self-update --check        Print detection result + exit 0
+#   loki self-update --check        Print detection result, installed vs latest version + exit 0
 #
 cmd_self_update() {
     local target_manager=""
@@ -14691,7 +14724,7 @@ Usage:
   loki self-update --to bun           Switch to Bun (recommended for v8)
   loki self-update --to npm           Switch to npm
   loki self-update --to brew          Switch to Homebrew
-  loki self-update --check            Print detected manager and exit
+  loki self-update --check            Print detected manager, installed vs latest version, and exit
   loki self-update --help             Show this help
 
 Auto-detection looks at the resolved path of the `loki` binary:
@@ -14761,6 +14794,15 @@ EOF
         echo "loki binary:    $resolved"
         echo "package dir:    $pkg_dir"
         echo "current mgr:    $current_mgr"
+        local installed_v latest_v="" update_flag="unknown"
+        installed_v=$(get_version)
+        latest_v=$(_loki_latest_published_version)
+        if [ -z "$latest_v" ]; then
+            echo "installed $installed_v, latest unknown"
+        else
+            if _loki_semver_newer "$latest_v" "$installed_v"; then update_flag="yes"; else update_flag="no"; fi
+            echo "installed $installed_v, latest $latest_v, update available $update_flag"
+        fi
         return 0
     fi
 
