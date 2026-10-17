@@ -23,6 +23,16 @@ afterEach(() => {
 });
 
 describe("computeKpis", () => {
+  it("iteration_count ignores group cost records but keeps their cost", () => {
+    const dir = join(td, "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "iteration-1.json"), JSON.stringify({ iteration: 1, model: "opus", duration_ms: 10, cost_usd: 0.5, status: "success" }));
+    writeFileSync(join(dir, "iteration-group-g1-000.json"), JSON.stringify({ phase: "implement", provider: "claude", status: "group", kind: "group_cost", cost_usd: 0.25 }));
+    const snap = computeKpis(td);
+    expect(snap.efficiency.iteration_count).toBe(1);
+    expect(snap.efficiency.total_cost_usd).toBe(0.75);
+  });
+
   it("returns zeroed KPIs with notes when .loki/ is empty", () => {
     const snap = computeKpis(td);
     expect(snap.schema_version).toBe(1);

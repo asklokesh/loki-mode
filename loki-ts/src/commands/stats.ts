@@ -13,6 +13,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
+import { isGroupCostRecord } from "../metrics/kpis.ts";
 import { YELLOW, NC } from "../util/colors.ts";
 
 // ---- Types ----
@@ -175,7 +176,7 @@ function aggregate(loki: string): Aggregated {
   }
 
   if (iterations.length > 0) {
-    iterationCount = Math.max(iterationCount, iterations.length);
+    iterationCount = Math.max(iterationCount, iterations.filter((it) => !isGroupCostRecord(it)).length);
   }
 
   const unmeasuredIterations = iterations.filter((it) => it.tokens_measured === false).length;

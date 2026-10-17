@@ -167,6 +167,22 @@ describe("stats: empty .loki and missing files", () => {
     }
   });
 
+  it("does not count group_cost records as iterations", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-stats-"));
+    try {
+      const loki = join(dir, ".loki");
+      const eff = join(loki, "metrics", "efficiency");
+      mkdirSync(eff, { recursive: true });
+      writeFileSync(join(eff, "iteration-1.json"), JSON.stringify({ iteration: 1, cost_usd: 0.1, input_tokens: 10, output_tokens: 5 }));
+      writeFileSync(join(eff, "iteration-group-1.json"), JSON.stringify({ kind: "group_cost", cost_usd: 0.4, input_tokens: 0, output_tokens: 0 }));
+      process.env["LOKI_DIR"] = loki;
+      const j = JSON.parse(computeStats(["--json"]).stdout);
+      expect(j.session.iterations).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("handles empty .loki in JSON mode", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-stats-"));
     try {
