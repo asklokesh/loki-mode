@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.15 (2026-10-17)
+
+### Fixed
+- Release packaging: the pack-npm job now installs loki-ts dependencies before packing. The control-plane server bundle imports loki-ts source, and without them v11.17.14 failed to pack with `Could not resolve: "@anthropic-ai/sdk"`, so v11.17.14 never reached npm. This release ships everything listed under v11.17.14.
+
 ## v11.17.14 (2026-10-17)
 
 ### Added
