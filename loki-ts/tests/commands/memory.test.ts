@@ -123,3 +123,21 @@ describe("memory unknown flag", () => {
     }
   });
 });
+
+describe("memory flag hint", () => {
+  it("suggests the closest allowed flag, and stays silent when none is close", async () => {
+    const env = { ...process.env, LOKI_NO_BROWSER: "1" };
+    for (const [args, hint] of [
+      [["memory", "lessons", "--jsno"], "Did you mean '--json'?"],
+      [["memory", "list", "--jsn"], "Did you mean '--json'?"],
+      [["memory", "brief", "--taks", "x"], "Did you mean '--task'?"],
+    ] as const) {
+      const r = await run(["bun", CLI, ...args], { env });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(hint);
+    }
+    const far = await run(["bun", CLI, "memory", "lessons", "--zzzzzzzz"], { env });
+    expect(far.exitCode).toBe(2);
+    expect(far.stderr).not.toContain("Did you mean");
+  });
+});
