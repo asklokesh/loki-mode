@@ -61,3 +61,29 @@ test("runGroup renders a unit line per backlog status from the launcher output c
   expect(r.err).toContain("unit u1 done verified");
   expect(r.err).toContain("unit u2 failed failed");
 });
+
+// TEN-GROUP-AUTH: runGroup reports the summed unit cost and rolls it into the parent efficiency records.
+test("runGroup prints the summed group cost and writes the efficiency record", async () => {
+  const { existsSync, readdirSync, readFileSync } = await import("node:fs");
+  const repo = mkdtempSync(join(tmpdir(), "grp-cost-"));
+  try {
+    const sh = (a: string[]): void => { const p = Bun.spawnSync({ cmd: ["git", ...a], cwd: repo, env: { ...process.env }, stdout: "pipe", stderr: "pipe" }); if (p.exitCode !== 0) throw new Error(p.stderr.toString()); };
+    for (const a of [["init", "-q", "-b", "main"], ["config", "user.name", "t"], ["config", "user.email", "t@t.invalid"], ["config", "commit.gpgsign", "false"]]) sh(a);
+    writeFileSync(join(repo, "README.md"), "x\n");
+    sh(["add", "README.md"]); sh(["commit", "-q", "-m", "init"]);
+    sh(["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
+    let err = "";
+    const seal = { receiptSha256: (() => "") as never, verifyReceipt: (async () => ({ verdict: "NOT_PROVEN", reasons: [] })) as never };
+    const dag: Dag = { units: [unit("u1", ["src/a.ts"]), unit("u2", ["src/b.ts"])], sharedFiles: [], edges: [] };
+    await runGroup(async (argv) => {
+      const g = argv[argv.indexOf("--group") + 1]!;
+      return { code: 0, stdout: `backlog: unit-${g}-1 VERIFIED\nbacklog: unit-${g}-2 FAILED: boom\n\nSummary: acme/widgets\nITEM           COST       RESULT\nunit-${g}-1 $0.17      VERIFIED\nunit-${g}-2 $0.25      FAILED\nTotal measured cost: $0.42\n` };
+    }, dag, { task: "t", repoDir: repo, env: { LOKI_PROVIDER: "claude" } as NodeJS.ProcessEnv, provider: "claude", spec: "- a\n- b\n", specPath: null, seal, say: (s: string) => { err += s; } });
+    expect(err).toContain("Cost:     $0.42 (claude, 2 unit sessions)");
+    const dir = join(repo, ".loki", "metrics", "efficiency");
+    expect(existsSync(dir)).toBe(true);
+    const recs = readdirSync(dir).filter((n) => n.startsWith("iteration-") && n.endsWith(".json"));
+    expect(recs.length).toBe(1);
+    expect(JSON.parse(readFileSync(join(dir, recs[0]!), "utf8")).cost_usd).toBeCloseTo(0.42, 5);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
