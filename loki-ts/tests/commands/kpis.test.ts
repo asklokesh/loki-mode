@@ -14,7 +14,8 @@
 // state. process.stdout/stderr are monkey-patched per-test because runKpis
 // writes directly to them (mirrors the bash route's echo).
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { runKpis } from "../../src/commands/kpis.ts";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -188,6 +189,24 @@ describe("runKpis --since window (TEN-COST-31)", () => {
     expect(e.iteration_count).toBe(1);
     expect(e.total_cost_usd).toBe(0.25);
     expect(e.total_input_tokens).toBe(50);
+  });
+
+  it("since skips old runs: files older than the cutoff are never read, output identical", () => {
+    seed();
+    const dir = join(td, ".loki", "metrics", "efficiency");
+    const spy = spyOn(fs, "readFileSync");
+    let r: { code: number; stdout: string; stderr: string };
+    try {
+      r = run(["--since", "7d", "--json"]);
+      const read = spy.mock.calls.map((c) => String(c[0])).filter((f) => f.startsWith(dir));
+      expect(read.some((f) => f.endsWith("iteration-3.json"))).toBe(false);
+      expect(read.some((f) => f.endsWith("iteration-2.json"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+    const e = (JSON.parse(r.stdout) as { efficiency: { iteration_count: number; total_cost_usd: number } }).efficiency;
+    expect(e.iteration_count).toBe(1);
+    expect(e.total_cost_usd).toBe(0.25);
   });
 
   it("without --since all iterations count", () => {
