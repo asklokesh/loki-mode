@@ -492,6 +492,23 @@ describe("v7.5.3 loki internal phase1-hooks", () => {
     expect(existsSync(escDir)).toBe(true);
   });
 
+  it("handoff count: missing, zero, negative or non-numeric count is rejected with exit 2", async () => {
+    for (const args of [
+      ["handoff", "code_review"],
+      ["handoff", "code_review", "0", "5"],
+      ["handoff", "code_review", "-3", "5"],
+      ["handoff", "code_review", "abc", "5"],
+      ["handoff", "code_review", "3x", "5"],
+    ]) {
+      const stop = capture();
+      const code = await runInternalPhase1Hooks(args);
+      const out = stop();
+      expect(code).toBe(2);
+      expect(out.stderr).toContain("handoff: usage");
+    }
+    expect(existsSync(join(scratch, "escalations"))).toBe(false);
+  });
+
   it("H2: one throwing appendFromGateFailure does not drop the other findings", async () => {
     // Bug-hunt H2 (batch-abort). Pre-fix, runReflect looped
     // `await appendFromGateFailure(...)` inside the single outer try, so the
