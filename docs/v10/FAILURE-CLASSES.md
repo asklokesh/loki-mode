@@ -913,3 +913,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every test that asserts a repo-local git config value runs (fsmonitor, filter, ssh, credential, uploadpack).
 - Mechanism: hermeticGit wrapper in fc25_safe_git.test.ts removes GIT_SSH, GIT_SSH_COMMAND, GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT/KEY/VALUE for the test and restores them after.
 - Fixture: the same file run with GIT_SSH_COMMAND=false GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= passes 14/0.
+
+## FC-AGENT-PROOF A VERIFIED verdict proven only by agent-authored evidence (TEN-GATES-01)
+- User-visible vs raw: the receipt says VERIFIED, but every executed pass is a test the implementer added in the same diff or an LLM judge verdict; raw shows no check the agent could not write itself.
+- Law broken: success needs evidence the implementing agent did not author (exogenous gates are the moat).
+- Siblings to sweep: engine10 seal proof, proof-generator headline, deep council pass.
+- Mechanism: util/check_result.ts checkProvenance classifies each check (exogenous, independent, agent_authored, llm_judge; unknown is exogenous) and hasExogenousProof is the one predicate every consumer calls.
+- Fixture: loki-ts/tests/engine10/check_result.test.ts "TEN-GATES-01 check provenance" (added test file, same path pre-existing, Wall path, council, unknown name).

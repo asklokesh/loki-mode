@@ -194,6 +194,28 @@ export const isExecutedProof = (c: { result?: unknown; n?: unknown }): boolean =
 /** Success-verdict gate: at least one executed check with n>0 and a pass. */
 export const hasExecutedProof = (checks: ReadonlyArray<{ result?: unknown; n?: unknown }>): boolean => checks.some(isExecutedProof);
 
+/** TEN-GATES-01 (FC-AGENT-PROOF): who authored the evidence behind a check. exogenous = lint/typecheck/static, scans, pre-existing suites, boot, probes;
+ *  independent = a Wall file or the holdout; agent_authored = a runner on a path ADDED in the diff; llm_judge = council-style reviewers.
+ *  Unknown names are exogenous (fail-closed toward the existing behaviour, same direction as proof-generator.py:286-292). Pure, no wiring. */
+export type CheckProvenance = "exogenous" | "independent" | "agent_authored" | "llm_judge";
+export interface ProvenanceCtx { addedFiles: readonly string[]; wallFiles: readonly string[]; holdout?: boolean }
+const LLM_JUDGES = new Set(["council", "xreview", "code_review", "devils_advocate", "magic_debate"]);
+const normPath = (p: string): string => p.replace(/^(?:\.\/)+/, "");
+export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenance {
+  const head = name.split(":")[0]!;
+  if (LLM_JUDGES.has(head)) return "llm_judge";
+  if (head === "holdout") return "independent";
+  if (head === "runner") {
+    const p = normPath(name.slice("runner:".length));
+    if (ctx.wallFiles.some((w) => normPath(w) === p)) return "independent";
+    if (ctx.addedFiles.some((a) => normPath(a) === p)) return "agent_authored";
+  }
+  return "exogenous";
+}
+/** True when some executed check (pass, n>0) is not backed solely by agent-authored or LLM-judge evidence. */
+export const hasExogenousProof = (checks: ReadonlyArray<{ name?: string; result?: unknown; n?: unknown }>, ctx: ProvenanceCtx): boolean =>
+  checks.some((c) => isExecutedProof(c) && ((p) => p !== "agent_authored" && p !== "llm_judge")(checkProvenance(c.name ?? "", ctx)));
+
 // RISKTIER: classify risk on the ARTIFACT (the actual diff), never the prompt, and map the tier to a verification plan.
 // The bash `loki review --risk` scorer (autonomy/lib/review_risk.py) stays a separate 0-100 advisory view.
 export type RiskTier = "low" | "medium" | "high";
