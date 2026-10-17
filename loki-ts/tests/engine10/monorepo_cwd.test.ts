@@ -85,7 +85,7 @@ const calls = (): string[] => { try { return readFileSync(logPath, "utf8").split
 beforeEach(() => {
   stubDir = tmp("e10-fc01-stub-");
   logPath = join(stubDir, "calls.log");
-  writeFileSync(join(stubDir, "npx"), `#!/bin/sh\necho "$(pwd -P)|$*" >> "${logPath}"\necho " Test Files  1 passed (1)"\necho "      Tests  1 passed (1)"\nexit 0\n`);
+  writeFileSync(join(stubDir, "npx"), `#!/bin/sh\necho "$(pwd -P)|$*" | sed "s/--no-install //" >> "${logPath}"\necho " Test Files  1 passed (1)"\necho "      Tests  1 passed (1)"\nexit 0\n`);
   chmodSync(join(stubDir, "npx"), 0o755);
   process.env["PATH"] = `${stubDir}:${savedPath ?? ""}`;
   delete process.env["LOKI_E10_PROJECT_MODEL"];
@@ -107,7 +107,7 @@ describe("FC-01 resolver", () => {
     expect(site?.file).toBe("tests/unit/validation.test.ts");
     const c = commandFor({ runner: "vitest", path: TEST_FILE }, dir, loadProjectApi(dir));
     expect(c.cwd).toBe(join(dir, "backend"));
-    expect(c.argv).toEqual(["npx", "vitest", "run", "tests/unit/validation.test.ts"]);
+    expect(c.argv).toEqual(["npx", "--no-install", "vitest", "run", "tests/unit/validation.test.ts"]);
   });
   test("no model, an unknown model, the opt-out and a single-root model all resolve to the repo root, identical to runnerCmd", () => {
     const { dir } = monorepo(true);
