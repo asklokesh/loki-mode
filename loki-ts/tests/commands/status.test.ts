@@ -880,6 +880,7 @@ describe("status --probe: re-probe last deploy health URL", () => {
         if (p === "/flaky") return ++flakyHits === 1 ? new Response("cold", { status: 503 }) : new Response("ok");
         if (p === "/ok") return new Response("ok");
         if (p === "/redirect") return new Response(null, { status: 302, headers: { location: "/ok" } });
+        if (p === "/xhost") return new Response(null, { status: 302, headers: { location: `http://localhost:${server.port}/ok` } });
         if (p === "/slow") return new Promise<Response>((r) => setTimeout(() => r(new Response("late")), 3000));
         return new Response("boom", { status: 500 });
       },
@@ -911,6 +912,14 @@ describe("status --probe: re-probe last deploy health URL", () => {
   it("redirect to a healthy URL exits 0", async () => {
     fixture({ health_url: url("/redirect") });
     expect((await runWithCapture(["--probe"])).exitCode).toBe(0);
+  });
+  it("redirect to a different host returning 200 exits 1 naming the final host", async () => {
+    fixture({ health_url: url("/xhost") });
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(1);
+    const out = stripAnsi(r.stdout);
+    expect(out).toContain("redirected to a different host (localhost)");
+    expect(out).not.toContain("Deploy health OK");
   });
   it("a 500 exits 1 naming the URL and status", async () => {
     fixture({ health_url: url("/down") });

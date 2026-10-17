@@ -864,6 +864,9 @@ async function runStatusProbe(): Promise<number> {
     try {
       const res = await fetch(raw, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
       if (res.status >= 200 && res.status < 400) {
+        // A redirect to another host (login page, provider not-found page) is not this deploy's health.
+        const finalHost = res.url ? new URL(res.url).hostname : "";
+        if (finalHost !== "" && finalHost !== new URL(raw).hostname) return `redirected to a different host (${finalHost}), returned ${res.status}`;
         process.stdout.write(`Deploy health OK: ${raw} returned ${res.status}\n`);
         return null;
       }
