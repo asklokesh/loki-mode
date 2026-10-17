@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.21 (2026-10-17)
+
+### Fixed
+- Wall cost skip keeps the holdout (TEN-COST-09): a Wall that cannot run on the project interpreter is skipped only when the holdout is off. With the holdout on (the default), the Wall runs so held-back tests still reach verify and can fail the seal.
+- Login redirect check (TEN-GATES-05b): a relative Location header is resolved against the request URL before the canonical trailing-slash comparison, so `Location: auth/` for GET /api/auth no longer reads as a login redirect while /api/auth/ serves anonymously.
+- Test hygiene (TEN-COST-09-F1): the holdout fixture removes its holdout store, so test runs no longer leave loki-e10-holdout directories in the temp root.
+- Security Audit (fix-forward): the gitleaks ignore entries for the TEN-QUALITY-01 redaction fixture on merge commit d9f24cd7a were malformed (a shell path modifier ate ":l"), so the scan of v11.17.20 failed. The entries are corrected; a local scan of 10eb771d8..HEAD reports no leaks.
+
 ## v11.17.20 (2026-10-17)
 
 ### Added

@@ -13,8 +13,8 @@ import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallLimitS, wallModel } from "../sizing.ts";
-import { sha256 } from "./seal.ts"; import { stashHoldout } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts";
+import { sha256 } from "./seal.ts"; import { stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
+import { commandFor } from "./verify.ts"; import { projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyCheck, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
@@ -180,6 +180,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<
   }
 
   if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }); // FC-17: decided before any model session
+
+  // TEN-COST-09: a pytest-only Wall under the system interpreter is classified not_run (classify, notRunReason), so the author session would be paid for and discarded. Skip it before any session ONLY when the holdout is off: with it on, held files never go through the base-run classify and verify runs them on the system interpreter, which drives fix rounds and the seal, so the Wall must still run. The held count is unknown before authoring, so ratio 0 is the only provable zero. Seal reads not_proven and the verdict can never be VERIFIED by this Wall.
+  if (testMap && (runners.length === 0 ? (repoMap?.files ?? []).some((p) => p.endsWith(".py")) && !(repoMap?.files ?? []).some((p) => p.endsWith(".go")) : runners.every((r) => r === "pytest")) && projectInterpreter(ctx.repoDir) === "system" && wallHoldoutRatio() === 0) return done({ status: "skipped", data: { size: sz.size, files: [], no_interpreter: true, not_proven: ["Wall skipped: no project test interpreter"] }, reason: "Wall skipped: no project test interpreter" });
 
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);

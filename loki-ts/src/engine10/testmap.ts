@@ -2,8 +2,8 @@
 // real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference
 // it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, extname, join, relative, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
@@ -47,6 +47,11 @@ function pytestPython(root: string): string {
     if (existsSync(bin)) return bin;
   }
   return "python";
+}
+/** TEN-COST-09: "project" when a repo-local interpreter exists (.venv, venv, or an in-repo VIRTUAL_ENV), else "system". Mirrors verify.ts resolveTool, which marks a system pytest result not_run. */
+export function projectInterpreter(root: string): "project" | "system" {
+  const ve = process.env["VIRTUAL_ENV"], inRepo = (p: string): boolean => { try { const r = relative(realpathSync(root), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
+  return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
 }
 function readText(p: string): string {
   try {

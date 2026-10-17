@@ -2430,3 +2430,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-17T04:35Z (CoS) v11.17.20: P0 CI fix, QUALITY-01, COST-12, COST-23
 - v11.17.19 Release run success (npm next 11.17.19, latest 11.17.17 propagating). P0-CI-RED TL APPROVE ec63f4398 (6 mutations each caught). TEN-QUALITY-01 r2 HIGH APPROVE 80dd9af12 (total cap byte-exact 6144 on CJK, signature stable, holdout and redaction mutations caught). TEN-COST-12 r2 TL APPROVE e177b6cd2 (both call sites pinned). TEN-COST-23 TL APPROVE 8c0bbaaf8. Decisions under D99: TEN-COST-10 rejected (router-on plan stays pinned to opus by FC-35, router-off stays byte-identical, so the haiku plan pin was dead code; quality outranks cost); TEN-COST-15 parked with it. TEN-COST-09 r2: skip the Wall only when holdout is off (r1 HIGH BLOCK: skipping discarded the holdout run). TEN-GATES-05b r5: resolve relative Location headers before comparing.
+
+## 2026-10-17T04:48Z (CoS) v11.17.21
+
+v11.17.20 published (Release run success on e2b6b77d2; npm latest 11.17.20, next 11.17.20). Security Audit red on e2b6b77d2: gitleaks found 2 leaks because the merge-commit fingerprints in .gitleaksignore were mangled by the zsh :l modifier; fixed, local gitleaks over 10eb771d8..HEAD rc=0 "no leaks found". Ships TEN-COST-09 r2 (HIGH APPROVE 660256752), TEN-GATES-05b r5 (HIGH APPROVE 8dda21a8d), TEN-COST-09-F1 (TL APPROVE 5a1a3d36c). Batch O (6), batch P (DEPLOY-02, DEPLOY-04, QUALITY-05, UX-01, GATES-04, STABILITY-07) and batch Q (UX-05, COST-11) building.
