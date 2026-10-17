@@ -71,7 +71,10 @@ function driverKeys(repoDir: string): string[] {
 }
 
 // Keys whose value is a command git runs on a network operation. Lowercase: git prints section and variable names lowercased.
-const NET_CMD_KEY_RE = "^(core\\.(sshcommand|gitproxy)|remote\\..*\\.(uploadpack|receivepack)|credential(\\..*)?\\.helper)$";
+// FC-25c(b): core.askpass runs a program; http/remote proxy and curlopt resolve redirect the authenticated connection; sslverify=false drops TLS checks.
+const NET_CMD_KEY_RE = "^(core\\.(sshcommand|gitproxy|askpass)|remote\\..*\\.(uploadpack|receivepack|proxy)|credential(\\..*)?\\.helper|https?\\.(.*\\.)?(proxy|sslverify|sslcainfo|sslcapath|curloptresolve))$";
+// A bool reset with `key=` reads as false, so a repo-set value of these is pinned to its safe default unless a global value exists.
+const BOOL_SAFE_DEFAULT = /^https?\.(.*\.)?sslverify$/;
 const LOCAL_SCOPES: ReadonlySet<string> = new Set(["local", "worktree"]);
 // remote.<n>.uploadpack and receivepack are single-valued and the FIRST value wins ("more than one uploadpack given, using the first"),
 // and config order is system, global, local, command: a -c override cannot beat a repo-local value. The command-line option does, so
@@ -105,6 +108,7 @@ function netCommandOverrides(repoDir: string, env: NodeJS.ProcessEnv): { cfg: st
     const pack = PACK_OPTS.find((o) => o.re.test(k));
     if (pack) { if (!packs.has(pack.flag)) packs.set(pack.flag, all.find((e) => e.k === k && !LOCAL_SCOPES.has(e.scope) && e.value !== "")?.value ?? pack.dflt); continue; }
     cfg.push("-c", `${k}=`); // an empty helper value resets the whole accumulated list, not just this key
+    if (BOOL_SAFE_DEFAULT.test(k)) { cfg.pop(); cfg.push(`${k}=${all.filter((e) => e.k === k && !LOCAL_SCOPES.has(e.scope) && e.value !== "").pop()?.value ?? "true"}`); continue; }
     if (!isCred(k)) for (const e of all) if (e.k === k && !LOCAL_SCOPES.has(e.scope) && e.value !== "") cfg.push("-c", `${k}=${e.value}`);
   }
   // a reset clears helpers from every credential key, so all non-repo helper entries are re-added afterwards, in config order
@@ -139,7 +143,18 @@ export function safeGitArgs(args: readonly string[], allowToken = false, repoDir
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
   const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };
-  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...injectPackOpts(noExtDiff(args), net.opts)];
+  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...(allowToken ? noSubmoduleRecursion(injectPackOpts(noExtDiff(args), net.opts)) : injectPackOpts(noExtDiff(args), net.opts))];
+}
+
+/** allowToken fetch and pull: a submodule has its own repo-local config (core.sshCommand, proxy, TLS keys) that the superproject-only
+ *  resets above do not cover, so recursion would run it holding the token. The command-line flag beats fetch.recurseSubmodules and
+ *  submodule.<n>.fetchRecurseSubmodules; a caller's own --recurse-submodules is dropped. */
+function noSubmoduleRecursion(args: string[]): string[] {
+  const i = cmdIndex(args), cmd = args[i];
+  if (cmd !== "fetch" && cmd !== "pull") return args;
+  const end = args.indexOf("--", i + 1), head = end < 0 ? args.slice(i + 1) : args.slice(i + 1, end);
+  const rest = head.filter((a) => a !== "--recurse-submodules" && !a.startsWith("--recurse-submodules=") && a !== "--no-recurse-submodules");
+  return [...args.slice(0, i + 1), "--no-recurse-submodules", ...rest, ...(end < 0 ? [] : args.slice(end))];
 }
 
 /** Inject --no-ext-diff --no-textconv after a patch-producing subcommand and drop --ext-diff/--textconv. Other commands pass through. */
