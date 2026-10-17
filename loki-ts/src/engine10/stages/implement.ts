@@ -5,7 +5,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { fence, formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
-import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
+import { cascadeDowngrade, haikuFirstDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
 import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
@@ -104,7 +104,7 @@ export const implementStage: Stage = {
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
     const routed = routerActive();
-    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model) ?? haikuFirstDowngrade(ctx.model); // the router replaces the opt-in downgrade lists; haiku-first (TEN-COST-16) only when the cascade is off
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const lessons = retrieveLessons(ctx.repoDir, task); // T6: reviewer lessons from earlier merged PRs, tagged as used by this run
