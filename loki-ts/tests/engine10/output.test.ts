@@ -119,6 +119,15 @@ describe("formatHeartbeatLine (golden, ENGINE.md section 11)", () => {
 });
 
 describe("formatSummary (golden, ENGINE.md section 11)", () => {
+  test("Q17-02: cost line shows cap use only when a cap is set", () => {
+    const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 60, stages: [] };
+    const capped = formatSummary({ ...base, cost: { usd: 0.84, provider: "claude", tokens: 212000, capUsd: 2 } } as never);
+    expect(capped).toContain("$0.84 (claude, 212k tokens; 42% of cap $2.00)");
+    const plain = formatSummary({ ...base, cost: { usd: 0.84, provider: "claude", tokens: 212000 } } as never);
+    expect(plain).not.toContain("of cap");
+    expect(formatSummary({ ...base, cost: { usd: null, provider: "claude", tokens: null, capUsd: 2 } } as never)).not.toContain("of cap");
+    expect(formatSummary({ ...base, cost: { usd: null, provider: "claude", tokens: null, partialUsd: 1, measuredSessions: 1, totalSessions: 2, capUsd: 2 } } as never)).not.toContain("of cap");
+  });
   test("known dollars with unknown tokens never prints 0 tokens", () => {
     const out = formatSummary({
       pr: null, verdict: "VERIFIED", notProven: [], flaky: [],
