@@ -171,3 +171,12 @@ test("assignment redact", () => {
   for (const s of ["password=hunter2", '"secret": "x y"', "a token: tk9 b"]) expect(redactSecrets(redactSecrets(s))).toBe(redactSecrets(s));
   expect(redactEventData("run.started", { cmd: "curl -d password=hunter2" })).toEqual({ cmd: "curl -d password=[REDACTED]" });
 });
+
+test("assignment redact is linear and handles escaped quotes", () => {
+  expect(redactSecrets('{"password":"x\\"y z","n":1}')).toBe('{"password":"[REDACTED]","n":1}');
+  for (const big of ["a_".repeat(10000), "a_".repeat(10000) + "token"]) {
+    const t0 = performance.now();
+    redactSecrets(big);
+    expect(performance.now() - t0).toBeLessThan(100);
+  }
+});

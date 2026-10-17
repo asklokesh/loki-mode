@@ -2,7 +2,7 @@
 // (order matters: specific before generic). ponytail: tokens and Bearer only; full proof redaction stays in Python.
 /** TEN-SECURITY-25: key=value, key: value and JSON "key": "value" for names ending in password, passwd, secret, token or api_key. The name must END with the
  *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
-const ASSIGNMENT = /((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)[^"\n]+")|(?:'(?!\[REDACTED)[^'\n]+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+const ASSIGNMENT = /((?<![A-Za-z0-9_.-])(?:[A-Za-z0-9]+[_.-])*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
 const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
