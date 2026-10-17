@@ -653,6 +653,49 @@ class CostHarnRealOutcomeTest(unittest.TestCase):
             shutil.rmtree(dest, ignore_errors=True)
 
 
+class TaskVenvEvidenceTest(unittest.TestCase):
+    def _task(self, root):
+        seed = os.path.join(root, "seed")
+        os.makedirs(seed)
+        open(os.path.join(seed, "a.py"), "w").write("x = 1\n")
+        return {"id": "venv-t", "seed_dir": seed}
+
+    def test_seed_has_project_python_not_committed(self):
+        root = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            wd = os.path.join(root, "wd")
+            A.materialize_seed(self._task(root), wd)
+            self.assertTrue(os.path.exists(os.path.join(wd, ".venv", "bin", "python")))
+            tracked = subprocess.run(["git", "-C", wd, "ls-files"], capture_output=True,
+                                     text=True).stdout.split()
+            self.assertEqual(tracked, ["a.py"])
+            st = subprocess.run(["git", "-C", wd, "status", "--porcelain"],
+                                capture_output=True, text=True).stdout
+            self.assertEqual(st.strip(), "")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_evidence_skips_venv_and_records_error(self):
+        wd = tempfile.mkdtemp(prefix="loki-attr-test-")
+        dest = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            os.makedirs(os.path.join(wd, ".loki", ".venv"))
+            os.makedirs(os.path.join(wd, ".loki", "venv"))
+            open(os.path.join(wd, ".loki", "engine.json"), "w").write("{}")
+            row = {}
+            A.keep_evidence(wd, dest, row)
+            self.assertEqual(os.listdir(os.path.join(dest, ".loki")), ["engine.json"])
+            self.assertNotIn("evidence_error", row)
+            bad = {}
+            blocker = os.path.join(dest, "blocker")
+            open(blocker, "w").write("f")
+            A.keep_evidence(wd, blocker, bad)
+            self.assertIn("evidence_error", bad)
+        finally:
+            shutil.rmtree(wd, ignore_errors=True)
+            shutil.rmtree(dest, ignore_errors=True)
+
+
 class LokiLedgerRowTest(unittest.TestCase):
     """S1: the loki row carries true (ledger-summed) cost, phase split, engine and honesty."""
 

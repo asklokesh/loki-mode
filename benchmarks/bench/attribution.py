@@ -445,6 +445,23 @@ def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # Execution
 # ---------------------------------------------------------------------------
 
+def ensure_task_venv(workdir: str) -> bool:
+    """Create workdir/.venv (no pip, no network) and exclude it from the repo. Returns
+    True when .venv/bin/python exists afterwards. Never raises."""
+    try:
+        ex = os.path.join(workdir, ".git", "info", "exclude")
+        os.makedirs(os.path.dirname(ex), exist_ok=True)
+        with open(ex, "a") as fh:
+            fh.write("/.venv/\n")
+        venv = os.path.join(workdir, ".venv")
+        if not os.path.exists(os.path.join(venv, "bin", "python")):
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", venv],
+                           check=True, capture_output=True, timeout=60)
+    except Exception:  # noqa: BLE001
+        pass
+    return os.path.exists(os.path.join(workdir, ".venv", "bin", "python"))
+
+
 def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
     """Copy the seed into workdir and make it a fresh, identical git repo."""
     shutil.copytree(task["seed_dir"], workdir, dirs_exist_ok=True)
@@ -457,7 +474,13 @@ def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
     # stray fetch fails fast because the adapter turns credential prompts off.
     remote = "https://github.com/loki-bench/%s.git" % re.sub(
         r"[^A-Za-z0-9_.-]", "-", str(task.get("id") or "seed"))
-    for args in (["init", "-q"], ["add", "-A"], ident + ["commit", "-q", "-m", "seed"],
+    # Task .venv: a bare interpreter shim so the loki verify stage resolves a project
+    # python (.venv/bin/python) instead of reporting not_run. Excluded before the seed
+    # commit so it never enters a diff. Best effort: no venv means system python.
+    subprocess.run(["git", "-C", workdir, "init", "-q"], check=True,
+                   capture_output=True, env=env, timeout=60)
+    ensure_task_venv(workdir)
+    for args in (["add", "-A"], ident + ["commit", "-q", "-m", "seed"],
                  ["remote", "add", "origin", remote]):
         subprocess.run(["git", "-C", workdir] + args, check=True,
                        capture_output=True, env=env, timeout=60)
@@ -653,7 +676,8 @@ def run_droid(workdir: str, prompt: str, *, timeout_s: int,
     }
 
 
-EVIDENCE_SKIP_DIRS = ("node_modules", "cache", "caches", "worktrees", ".git", "__pycache__")
+EVIDENCE_SKIP_DIRS = ("node_modules", "cache", "caches", "worktrees", ".git", "__pycache__",
+                      ".venv", "venv")
 EVIDENCE_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 
@@ -691,8 +715,9 @@ def keep_evidence(workdir: str, dest: str, row: Dict[str, Any]) -> None:
         if tail:
             with open(os.path.join(dest, "stderr.txt"), "w") as fh:
                 fh.write(tail)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # Loss stays non-fatal but visible: the row says evidence is incomplete.
+        row["evidence_error"] = str(exc)[:200]
 
 
 def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
