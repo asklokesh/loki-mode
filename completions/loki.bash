@@ -305,7 +305,7 @@ _loki_completion() {
 
         proof)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--yes --private --hosted --out --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--yes --private --hosted --dry-run --out --help" -- "$cur") )
                 return 0
             fi
             if [[ $cword -eq 2 ]]; then
