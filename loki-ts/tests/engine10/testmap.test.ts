@@ -102,6 +102,28 @@ describe("directory entry files (TEN-QUALITY-39)", () => {
   });
 });
 
+describe("package init maps to directory (TEN-QUALITY-32)", () => {
+  test("package init maps to directory: nested pkg/search/__init__.py selects tests/test_search.py", () => {
+    const root = repo({
+      "pytest.ini": "[pytest]\n",
+      "pkg/search/__init__.py": "a = 1\n",
+      "tests/test_search.py": "from pkg.search import a\n",
+    });
+    const map = buildTestMap(root);
+    expect(impactedRefs(map, ["pkg/search/__init__.py"])).toEqual([{ runner: "pytest", path: "tests/test_search.py" }]);
+  });
+
+  test("package init maps to directory: Rust mod.rs uses its directory name, mod.py does not", () => {
+    const map = {
+      runners: ["pytest"],
+      tests: [{ runner: "pytest", path: "tests/t.py" }],
+      sourceRefs: { search: ["tests/t.py"] },
+    } as unknown as Parameters<typeof impactedRefs>[0];
+    expect(impactedRefs(map, ["src/search/mod.rs"])).toEqual([{ runner: "pytest", path: "tests/t.py" }]);
+    expect(impactedRefs(map, ["src/search/mod.py"])).toEqual([]);
+  });
+});
+
 describe("TestMapProvider contract (types.ts, E-01)", () => {
   test("detect() and impacted() round-trip through the real provider", async () => {
     const provider = new RealTestMapProvider();

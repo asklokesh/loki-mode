@@ -176,9 +176,10 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
       continue;
     }
     const stem = basename(rel, extname(rel));
-    // Directory entry files (index.ts, __init__.py) are also imported by their directory name.
+    // Directory entry files (index.ts, __init__.py, Rust mod.rs) are also imported by their directory name.
     const stems = [stem];
-    if ((stem === "index" || stem === "__init__") && dirname(rel) !== ".") stems.push(basename(dirname(rel)));
+    const entry = stem === "index" || stem === "__init__" || (stem === "mod" && extname(rel) === ".rs");
+    if (entry && dirname(rel) !== ".") stems.push(basename(dirname(rel)));
     for (const s of stems) for (const p of sourceRefs[s] ?? []) add(map.tests.find((t) => t.path === p));
   }
   return scopeRefs(map, changedFiles.map(normalizeRel), out);
