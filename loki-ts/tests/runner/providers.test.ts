@@ -9,7 +9,7 @@
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
-import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
+import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
@@ -1149,5 +1149,40 @@ describe("TEN-COST-12 engine10 5-minute cache TTL", () => {
     test("without LOKI_E10_STAGE the child has no such key", async () => {
       expect(await childCacheEnv()).toBe("UNSET");
     });
+  });
+});
+
+describe("bad call timeout (TEN-STABILITY-39)", () => {
+  const KEY = "LOKI_PROVIDER_CALL_TIMEOUT";
+  let saved: string | undefined;
+  let writes: string[];
+  let origWrite: typeof process.stderr.write;
+  beforeEach(() => {
+    saved = process.env[KEY];
+    writes = [];
+    origWrite = process.stderr.write;
+    process.stderr.write = ((c: unknown) => { writes.push(String(c)); return true; }) as typeof process.stderr.write;
+  });
+  afterEach(() => {
+    process.stderr.write = origWrite;
+    if (saved === undefined) delete process.env[KEY]; else process.env[KEY] = saved;
+  });
+  test("bad call timeout warns and keeps the 7200s default", () => {
+    expect(providerCallTimeoutMs({ [KEY]: "2h" })).toBe(7200000);
+    expect(writes.length).toBe(1);
+    expect(writes[0]).toContain("2h");
+    expect(writes[0]).toContain("7200");
+  });
+  test("bad call timeout through claudeProvider.invoke notes once", async () => {
+    process.env[KEY] = "2h";
+    writeStub();
+    await claudeProvider().invoke(makeCall({ mainLoop: true }));
+    expect(writes.filter((w) => w.includes("LOKI_PROVIDER_CALL_TIMEOUT")).length).toBe(1);
+  });
+  test("unset and 0 behave as before, silently", () => {
+    expect(providerCallTimeoutMs({})).toBe(7200000);
+    expect(providerCallTimeoutMs({ [KEY]: "0" })).toBeUndefined();
+    expect(providerCallTimeoutMs({ [KEY]: "30" })).toBe(30000);
+    expect(writes.length).toBe(0);
   });
 });
