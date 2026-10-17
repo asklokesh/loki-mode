@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.45 (2026-10-17)
+
+### Fixed
+- `loki deploy` clears every leftover provenance doc before a deploy decides, so a stale doc from an earlier build can never vouch for the current SHA (TEN-DEPLOY-03). tests/test-deploy-receipt-gate.sh 83/0.
+
 ## v11.17.44 (2026-10-17)
 
 ### Added
