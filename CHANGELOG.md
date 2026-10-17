@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.43 (2026-10-17)
+
+### Fixed
+- Help and shell completions now list `loki report kpis --since` and `loki undo --list`, closing the help-changelog-drift red introduced by v11.17.40 (TEN-STABILITY-20, FC-TEN-STABILITY-20 HELP-FLAG-DRIFT).
+
 ## v11.17.42 (2026-10-17)
 
 P0 fix-forward for the nightly 39016259458 failures.
