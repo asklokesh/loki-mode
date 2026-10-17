@@ -80,6 +80,7 @@ const startFlags: FlagSpec[] = [
   bool("--fresh-prd", "Regenerate the PRD from the codebase"),
   { name: "--compliance", type: "enum", values: ["default", "healthcare", "fintech", "government"], desc: "Compliance preset" },
   str("--budget", "<usd>", "Cost budget limit in USD"),
+  { name: "--cost", type: "enum", values: ["lean", "off"], desc: "Cost profile (also LOKI_COST_PROFILE)" },
   { name: "--bmad-project", type: "path", desc: "BMAD Method project artifacts as input" },
   { name: "--openspec", type: "path", desc: "OpenSpec change directory as input" },
   { name: "--config", type: "path", desc: "Load settings from a config file" },

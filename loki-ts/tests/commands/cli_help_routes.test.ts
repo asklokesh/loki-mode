@@ -4,6 +4,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { allTreeFlags, generateBash, generateFish, generateZsh } from "../../src/cli/completions.ts";
+import { REGISTRY } from "../../src/cli/registry.ts";
 
 const SRC = readFileSync(resolve(import.meta.dir, "..", "..", "src", "cli.ts"), "utf8");
 const EXCLUDED = new Set(["help", "--help", "-h", "--version", "-v", "receipt", "internal", "completion", "__complete"]);
@@ -36,5 +38,29 @@ describe("cli HELP covers dispatch routes", () => {
   });
   test("header no longer claims 8 highest-traffic commands", () => {
     expect(SRC.slice(0, SRC.indexOf("import "))).not.toContain("8 highest-traffic");
+  });
+});
+
+describe("shell completions list registry flags", () => {
+  const bash = generateBash();
+  const zsh = generateZsh();
+  const fish = generateFish();
+  const flagsOf = (name: string): string[] => (REGISTRY.find((c) => c.name === name)?.flags ?? []).map((f) => f.name);
+
+  test("flags added after the table was written are registered on their command", () => {
+    expect(flagsOf("status")).toEqual(expect.arrayContaining(["--probe", "--badge"]));
+    expect(flagsOf("start")).toContain("--cost");
+  });
+  test("every registry flag appears in every generated shell script", () => {
+    for (const { flag } of allTreeFlags()) {
+      expect(bash.includes(flag.name)).toBe(true);
+      expect(zsh.includes(flag.name)).toBe(true);
+      expect(fish.includes(flag.name.replace(/^--?/, ""))).toBe(true);
+    }
+  });
+  test("start --cost completes through the real loki completion route", () => {
+    const r = Bun.spawnSync(["bash", resolve(import.meta.dir, "..", "..", "..", "bin", "loki"), "completion", "bash"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("--cost");
   });
 });
