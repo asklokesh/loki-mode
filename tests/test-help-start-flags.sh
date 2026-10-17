@@ -83,6 +83,11 @@ check "flag-shaped --domain value exits 2" test "$rc" -eq 2
 check "flag-shaped --domain value never deploys" test ! -e "$REC_DEPLOY"
 rc="$(run_deploy --domain x.com --help)"
 check "--domain without --deploy exits 2" test "$rc" -eq 2
+rc="$(run_deploy --deploy --config /nonexistent-cfg.yaml --help)"
+check "start --deploy --config still loads config (missing file errors)" grep -q -e 'file not found' "$WORK/out.txt"
+rm -f "$WORK/envf.yaml"; printf 'x: 1\n' > "$WORK/envf.yaml"
+run_deploy --deploy --env-file /nonexistent-env.yaml --help >/dev/null
+check "start --deploy --env-file is not loaded as config" sh -c '! grep -q "file not found" "$1"' _ "$WORK/out.txt"
 check "start --help lists --domain" grep -q -e '--domain' "$WORK/start.txt"
 check "start --help lists --env-file for deploy" grep -q -e 'env-file.*deploy\|deploy.*env-file' "$WORK/start.txt"
 

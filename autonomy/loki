@@ -22208,12 +22208,7 @@ main() {
 
     case "$command" in
         start|run|quick)
-            # `start --deploy --env-file F` means the deploy env file, not a config file.
-            local _cfg_a _cfg_skip=0
-            if [ "$command" = start ]; then
-                for _cfg_a in "$@"; do [ "$_cfg_a" = "--deploy" ] && _cfg_skip=1; done
-            fi
-            if [ "$_cfg_skip" = 0 ] && declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
+            if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
                 loki_maybe_apply_config_file "$@"
             fi
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
