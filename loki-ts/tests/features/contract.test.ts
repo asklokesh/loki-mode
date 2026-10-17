@@ -435,7 +435,7 @@ describe("failure-specific next line (TEN-UX-02)", () => {
     expect(reason).toBe("provider authentication failed");
     expect(nextOf("failed", 1, reason)).toBe("claude login");
     const sup = readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
-    expect(sup).toMatch(/nextOf\(rr, ds\?\.files \?\? null, reasonOf\(events, res\.tampered, res\.stop, res\.outcome\)\)/);
+    expect(sup).toMatch(/nextOf\(rr, ds\?\.files \?\? null, reasonOf\(events, res\.tampered, res\.stop, res\.outcome\), provider\)/);
   });
 });
 

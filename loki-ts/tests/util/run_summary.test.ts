@@ -152,6 +152,11 @@ const NEXT_ROWS: [string, "failed" | "stopped", number | null, string][] = [
   ["engine ended before sealing a receipt", "failed", 1, "loki doctor"],
 ];
 test.each(NEXT_ROWS)("nextOf %s (%s, files %p)", (reason, result, files, want) => { expect(nextOf(result, files, reason)).toBe(want); });
+test("nextOf auth failure names the active provider, not claude", () => {
+  expect(nextOf("failed", 2, "provider authentication failed", "codex")).toBe("re-authenticate codex, then loki doctor");
+  expect(nextOf("failed", 2, "provider authentication failed", "claude")).toBe("claude login");
+  expect(nextOf("failed", 2, "provider authentication failed")).toBe("claude login");
+});
 test("nextOf default outputs do not drift", () => {
   expect(nextOf("verified", 2)).toBe("loki diff");
   expect(nextOf("verified", 0)).toBe("loki status");
