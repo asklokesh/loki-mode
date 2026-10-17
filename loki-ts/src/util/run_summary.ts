@@ -59,12 +59,12 @@ export function resultOf(outcome: Outcome): RunResult {
 }
 
 /** The one "next:" suggestion; a failed or stopped run's reason (output.ts reasonOf) picks the exact fix. */
-export function nextOf(result: RunResult, filesChanged: number | null, reason?: string): string {
+export function nextOf(result: RunResult, filesChanged: number | null, reason?: string, provider = "claude"): string {
   if (result === "verified") return filesChanged ? "loki diff" : "loki status";
   if (result === "done-unverified") return "loki verify";
   const r = reason ?? "", undo = filesChanged ? "; loki undo to revert" : "";
   if (result === "stopped") return r.startsWith("spec conflict") ? 'loki answer --text "<your decision>"' : r.startsWith("stalled") ? "loki chat --attach" : "loki status";
-  if (r === "provider authentication failed") return "claude login";
+  if (r === "provider authentication failed") return provider === "claude" ? "claude login" : `re-authenticate ${provider}, then loki doctor`;
   if (r === "provider credit exhausted") return "check provider billing, or loki start --provider <other>";
   if (r === "engine ended before sealing a receipt") return "loki doctor";
   if (/^[^:]+ failed(: |$)/.test(r)) return `loki chat --attach (ask why)${undo}`;
