@@ -144,6 +144,8 @@ printing the envelope, 1 TAMPERED, an envelope given as input, or an envelope
 under a run id whose `predicate.run_id` differs, 2 UNSIGNED, UNCHECKED or an
 unreadable receipt, 4 a verified receipt whose run outcome is not VERIFIED or
 ALREADY_SATISFIED, 66 no signing key (or no runs). Refusals print nothing on stdout.
+
+`loki verify <run-id> --require-exogenous` (or `LOKI_VERIFY_REQUIRE_EXOGENOUS=1`, v10 only) prints an `agent-independent: k of n passing checks` line for a VERIFIED receipt and exits 4 when k is 0 or the receipt records no check provenance. TAMPERED, UNCHECKED and UNSIGNED verdicts are unchanged.
 `--pubkey` may come before or after the run-id and may be written `--pubkey=FILE`; `--pubkey` with no file or an empty `--pubkey=`, a repeated `--pubkey`, an unknown option, or more than one run-id exits 2.
 
 An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
