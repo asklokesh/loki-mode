@@ -1034,25 +1034,27 @@ async function runStatusJson(): Promise<number> {
 export async function runStatus(argv: readonly string[]): Promise<number> {
   // Flag parsing mirrors bash while-loop at autonomy/loki:1965.
   const args = [...argv];
-  while (args.length > 0) {
+  // Validate every flag before dispatching: a valid flag must not mask a
+  // later unknown one (`--json --bogus`). --help/-h wins when reached first.
+  for (const flag of args) {
+    if (flag === "--help" || flag === "-h") {
+      process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
+      return 0;
+    }
+    if (flag !== "--json" && flag !== "--badge" && flag !== "--probe") {
+      process.stdout.write(`${RED}Unknown flag: ${flag}${NC}\n`);
+      process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
+      return 1;
+    }
+  }
+  if (args.length > 0) {
     const flag = args[0];
     if (flag === "--json") {
       if (args.includes("--probe")) return runStatusProbe(true);
       return runStatusJson();
     }
-    if (flag === "--badge") {
-      return runStatusBadge();
-    }
-    if (flag === "--probe") {
-      return runStatusProbe(args.includes("--json"));
-    }
-    if (flag === "--help" || flag === "-h") {
-      process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
-      return 0;
-    }
-    process.stdout.write(`${RED}Unknown flag: ${flag}${NC}\n`);
-    process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
-    return 1;
+    if (flag === "--badge") return runStatusBadge();
+    return runStatusProbe(args.includes("--json"));
   }
   return runStatusText();
 }
