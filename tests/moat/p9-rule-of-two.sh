@@ -2182,10 +2182,16 @@ if (mode === "strip") {
 }
 '
 
+# TypeScript compiler for the AST scan: loki-ts (declares typescript, installed by
+# every CI job that runs this suite) first, then web-app. P9_TS_CANDIDATES (a
+# space-separated list of typescript.js paths) replaces the list, so the
+# missing-compiler path can be exercised without touching real node_modules.
 p9_ts_path() {
-    local ts="$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"
-    [ -f "$ts" ] || return 1
-    printf '%s\n' "$ts"
+    local ts
+    for ts in ${P9_TS_CANDIDATES:-"$REPO_ROOT/loki-ts/node_modules/typescript/lib/typescript.js" "$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"}; do
+        [ -f "$ts" ] && { printf '%s\n' "$ts"; return 0; }
+    done
+    return 1
 }
 
 allowtoken_scan() {
@@ -2204,7 +2210,7 @@ allowtoken_scan() {
 $hits
 EOF_HITS
     local ts_js code kind rest f2
-    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: web-app/node_modules/typescript (npm ci in web-app of this checkout); allowToken scan cannot parse"; return; }
+    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: typescript not found in loki-ts/node_modules or web-app/node_modules (bun install in loki-ts); allowToken scan cannot parse (fail closed)"; return; }
     command -v node >/dev/null 2>&1 || { nok "prerequisite missing: node"; return; }
     # Per-file scans parse with the real TypeScript grammar and fail closed on a
     # parse diagnostic.
@@ -2268,7 +2274,7 @@ allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2317,6 +2323,10 @@ for (const x of [1]) /'\''/.test("a"); safeGitEnv(process.env /* '\'' */, true);
 const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
             elem-access-dyn-import) body='const p = "./util/" + "safe_git.ts"; const m = await import(p); m["safeGitEnv"](process.env, true);' ;;
             elem-access-dyn-require) body='const m = require(`./util/${"safe_git"}.ts`); m["safeGitArgs"]([], true);' ;;
+            elem-access-param) # indirect rule alone: no import, no loader, string-keyed call
+                            body='export function f(m: any) { m["safeGitEnv"](process.env, true); }' ;;
+            dyn-loader-keyvar) # import rule alone: computed loader plus helper name in a string, key held in a variable
+                            body='const k = "safeGitEnv"; const p = "./util/" + "safe_git.ts"; const m = await import(p); m[k](process.env, true);' ;;
             probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
