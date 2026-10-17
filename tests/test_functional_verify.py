@@ -235,7 +235,7 @@ class AuthBehaviors(unittest.TestCase):
     def test_redirect_must_be_login_path_segment(self):
         out = FV.run(self.SPEC_AUTH, self._serve(302, location="/authors/1"))
         self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
-        out = FV.run(self.SPEC_AUTH, self._serve(302, location="https://x.io/auth/start?next=/a"))
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="https://x.io/auth?next=/a"))
         self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
 
     def test_not_public_means_protected(self):
@@ -282,7 +282,7 @@ class AuthBehaviors(unittest.TestCase):
         for loc in ("/static/login.png", "/api/auth-free"):
             out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
             self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", loc)
-        for loc in ("/login", "/oauth/x", "/auth?next=/a"):
+        for loc in ("/login", "/oauth", "/auth?next=/a"):
             out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
             self.assertEqual(out["auth_behaviors"][0]["status"], "passed", loc)
 
@@ -292,3 +292,58 @@ class AuthBehaviors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _SlashRedirectApp:
+    """301 /p -> /p/ then 200 anonymously on /p/."""
+
+    def handler(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.endswith("/"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"me": 1}')
+                else:
+                    self.send_response(301)
+                    self.send_header("Location", self.path + "/")
+                    self.end_headers()
+
+        return H
+
+
+class Round3Regressions(unittest.TestCase):
+    def test_trailing_slash_redirect_is_not_login(self):
+        srv = HTTPServer(("127.0.0.1", 0), _SlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        for spec in ("GET /api/auth/me requires auth", "GET /api/auth requires auth"):
+            out = FV.run(spec, base)
+            self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_login_redirect_last_segment_only(self):
+        self.assertTrue(FV._is_login_redirect("/login/", "/api/me"))
+        self.assertTrue(FV._is_login_redirect("/login.html?next=/a", "/api/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/me/", "/api/auth/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/", "/api/auth"))
+        self.assertFalse(FV._is_login_redirect("/home?next=/login", "/api/me"))
+
+    def test_curly_apostrophe_negates(self):
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x doesn\u2019t require auth"), [])
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x isn\u2019t a protected route"), [])
+
+    def test_article_between_negator_and_match(self):
+        for spec in ("GET /api/x is not a protected endpoint",
+                     "GET /api/x isn't a protected route",
+                     "GET /api/x is not an admin-only route"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_but_clause_still_protected(self):
+        # and/but stop the negation window on their own; no separate split needed.
+        for spec in ("GET /api/x is not even but requires auth",
+                     "GET /api/x is not public but requires auth"):
+            self.assertEqual(len(FV.derive_auth_assertions(spec)), 1, spec)

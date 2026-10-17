@@ -27,6 +27,7 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -80,7 +81,8 @@ _NEGATION_WORDS = {"no", "not", "never", "without",
                    "isn't", "doesn't", "don't", "cannot", "can't"}
 _NEGATION_AUX = {"does", "do", "is", "are", "need", "needs", "would", "will",
                  "should", "must", "longer", "even", "actually", "really",
-                 "necessarily", "always", "ever", "also", "currently"}
+                 "necessarily", "always", "ever", "also", "currently",
+                 "a", "an", "the"}
 
 
 def _is_negated(words: list[str]) -> bool:
@@ -104,10 +106,12 @@ def _is_negated(words: list[str]) -> bool:
 
 def _is_protected_text(text: str) -> bool:
     """True when a protected-wording match is not directly negated. Negation
-    cancels only the match it modifies, inside the same clause (no ; , . : and/but
-    between). Words like "public" are not negators: "not public" means protected."""
+    cancels only the match it modifies, inside the same clause (no ; , . : between;
+    and/but need no split because they are not aux words, so _is_negated's window
+    already stops at them). Words like "public" are not negators: "not public" means protected."""
     for m in _PROTECTED_RE.finditer(text or ""):
-        clause = re.split(r'[;,.:]|\b(?:and|but)\b', text[:m.start()], flags=re.IGNORECASE)[-1]
+        clause = re.split(r'[;,.:]', text[:m.start()])[-1]
+        clause = clause.replace("\u2018", "'").replace("\u2019", "'")
         if not _is_negated(re.findall(r"[\w']+", clause.lower())):
             return True
     return False
@@ -290,6 +294,19 @@ def _probe_unauth(base_url: str, method: str, path: str, timeout=8):
         return None, False, str(e)
 
 
+def _is_login_redirect(location: str, probe_path: str) -> bool:
+    """True when Location points at a login page: the auth segment is the LAST
+    path segment (optional extension, optional trailing slash). A redirect to
+    the probe path plus "/" is a canonical-slash redirect, never a login page."""
+    loc_path = urllib.parse.urlsplit(location).path
+    probe = re.sub(r'(:[A-Za-z_]\w*|\{[^}]*\})', 'loki-auth-probe', probe_path)
+    if loc_path == probe + "/":
+        return False
+    return bool(re.search(
+        r'(^|/)(login|signin|sign-in|auth|oauth)(?:\.(?:html?|php|aspx?|jsp))?/?$',
+        loc_path, re.IGNORECASE))
+
+
 def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[dict]:
     """Probe each spec-protected endpoint unauthenticated.
     401/403 -> passed; 2xx served -> failed; anything else -> inconclusive."""
@@ -302,8 +319,7 @@ def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[di
             st, detail = "passed", f"HTTP {code} without credentials"
         elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
             st, detail = "failed", f"served without credentials (HTTP {code})"
-        elif code is not None and 300 <= code < 400 and re.search(
-                r'(^|/)(login|signin|sign-in|auth|oauth)(?=[/?#]|\.(?:html?|php|aspx?|jsp)(?:[?#]|$)|$)', extra, re.IGNORECASE):
+        elif code is not None and 300 <= code < 400 and _is_login_redirect(extra, path):
             st, detail = "passed", f"HTTP {code} redirect to {extra}"
         elif code is None:
             st, detail = "inconclusive", f"unreachable: {extra}"
