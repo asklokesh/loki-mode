@@ -66,6 +66,13 @@ describe("mutation proof outcomes", () => {
     const r = mutationProof(input(f, { timeoutS: -1 }));
     expect(r.line).toBe("test fails without the fix: inconclusive (timeout)"); expect(worktrees(f.repo)).toBe(1);
   });
+  test("negative timeout env falls back to 30s, not an already-past deadline", () => {
+    for (const bad of ["-5", "0", "NaN", "Infinity", "abc"]) {
+      const f = fixture(`negenv${bad.replace(/\W/g, "")}`, 2);
+      const r = mutationProof(input(f, { env: { LOKI_MUTATION_PROOF_TIMEOUT_S: bad } }));
+      expect(r.outcome).toBe("yes");
+    }
+  });
   test("worktree removed when the runner throws", () => {
     const f = fixture("throw", 2); const before = leftovers();
     const r = mutationProof(input(f, { runner: { run: () => { throw new Error("boom"); } } }));
