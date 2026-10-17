@@ -2336,4 +2336,26 @@ describe("COST-WALL-c claudeReviewer ledger wiring", () => {
       expect(typeof l[0]!["usd"]).toBe("number");
     } finally { srv.stop(true); }
   });
+
+  it("negative sdk review timeout falls back to 180s instead of timing out at once", async () => {
+    const seen: unknown[] = [];
+    const msg = { id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ verdict: "PASS", findings: [] }) }], usage: { input_tokens: 1, output_tokens: 1 } };
+    const prevTo = process.env["LOKI_SDK_REVIEW_TIMEOUT"];
+    const sdk = await import("../../src/runner/sdk_invoker.ts");
+    try {
+      process.env["LOKI_SDK_CODE_REVIEW"] = "1";
+      process.env["ANTHROPIC_API_KEY"] = "sk-test";
+      sdk.__setSdkClientForTests({ messages: { create: async (_b: unknown, o: { timeout?: number }) => { seen.push(o?.timeout); return msg; } } });
+      for (const v of ["-5", "0", "NaN", "Infinity"]) {
+        process.env["LOKI_SDK_REVIEW_TIMEOUT"] = v;
+        await review();
+      }
+      process.env["LOKI_SDK_REVIEW_TIMEOUT"] = "90";
+      await review();
+      expect(seen).toEqual([180000, 180000, 180000, 180000, 90000]);
+    } finally {
+      if (prevTo === undefined) delete process.env["LOKI_SDK_REVIEW_TIMEOUT"]; else process.env["LOKI_SDK_REVIEW_TIMEOUT"] = prevTo;
+    }
+  });
+
 });
