@@ -21,6 +21,7 @@ import {
   _setJsonProbesForTest,
   _setPythonImportOkForTest,
   probeIntegrations,
+  cmpVersion,
   evaluateClaudeCliCompat,
   loadClaudeCliRange,
   evaluateRequirements,
@@ -1557,4 +1558,21 @@ describe("doctor hung helper (TEN-STABILITY-47)", () => {
     expect(Date.now() - t0).toBeLessThan(25000);
     expect(cap.out).toContain("timed out (skipped)");
   }, 30000);
+});
+
+describe("doctor version compare", () => {
+  test("one semver compare serves all three call shapes", async () => {
+    expect(cmpVersion("2.1.0", "2.1.0", 3)).toBe(0);
+    expect(cmpVersion("2.0.9", "2.1.0", 3)).toBeLessThan(0);
+    expect(cmpVersion("2.1.1", "2.1.0", 2)).toBe(0);
+    expect(cmpVersion("2.1.1", "2.1.0")).toBeGreaterThan(0);
+    expect(cmpVersion("20", "20.0", 2)).toBe(0);
+    expect(cmpVersion("1.x", "1.0", 2)).toBe(0);
+    expect(evaluateClaudeCliCompat("2.0.9", { min_version: "2.1.0" } as never)).toBe("below_min");
+    expect(evaluateClaudeCliCompat("2.1.5", { min_version: "2.1.0", qualified_version: "2.1.4" } as never)).toBe("newer_unqualified");
+    const old = await checkTool("bun", "bun", "required", "999.0");
+    expect(old.status).toBe("fail");
+    const ok = await checkTool("bun", "bun", "required", null);
+    expect(ok.status).toBe("pass");
+  });
 });

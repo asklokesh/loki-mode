@@ -94,14 +94,20 @@ export function requirementMin(id: string): string | null {
   return requirementById(id)?.min ?? null;
 }
 
-function versionAtLeast(version: string, min: string): boolean {
-  const a = version.split(".").map((n) => parseInt(n, 10) || 0);
-  const b = min.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length, 2); i++) {
-    const x = a[i] ?? 0, y = b[i] ?? 0;
-    if (x !== y) return x > y;
+/** Shared dotted-version comparator: compares the first `depth` parts (default: the longer input, min 2); non-numeric parts count as 0. */
+export function cmpVersion(a: string, b: string, depth?: number): number {
+  const x = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const y = b.split(".").map((n) => parseInt(n, 10) || 0);
+  const n = depth ?? Math.max(x.length, y.length, 2);
+  for (let i = 0; i < n; i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
   }
-  return true;
+  return 0;
+}
+
+function versionAtLeast(version: string, min: string): boolean {
+  return cmpVersion(version, min) >= 0;
 }
 
 async function defaultVersion(cmd: string): Promise<string | null> {
@@ -314,20 +320,6 @@ async function probeVersion(cmd: string): Promise<string | null> {
   }
 }
 
-function compareMajorMinor(version: string, min: string): number {
-  const cur = version.split(".").map((p) => parseInt(p, 10));
-  const want = min.split(".").map((p) => parseInt(p, 10));
-  while (cur.length < 2) cur.push(0);
-  while (want.length < 2) want.push(0);
-  for (let i = 0; i < 2; i++) {
-    const a = cur[i] ?? 0;
-    const b = want[i] ?? 0;
-    if (Number.isNaN(a) || Number.isNaN(b)) return 0;
-    if (a !== b) return a - b;
-  }
-  return 0;
-}
-
 export async function checkTool(
   name: string,
   cmd: string,
@@ -342,7 +334,7 @@ export async function checkTool(
   if (!found) {
     status = required === "required" ? "fail" : "warn";
   } else if (minVersion && version) {
-    if (compareMajorMinor(version, minVersion) < 0) {
+    if (cmpVersion(version, minVersion, 2) < 0) {
       status = required === "required" ? "fail" : "warn";
     }
   }
@@ -563,21 +555,11 @@ export function loadClaudeCliRange(root: string = REPO_ROOT): ClaudeCliRange | n
   }
 }
 
-function cmpSemver(a: string, b: string): number {
-  const x = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const y = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const d = (x[i] ?? 0) - (y[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
-
 /** Pure: classify a probed claude CLI version against the qualified range. */
 export function evaluateClaudeCliCompat(version: string | null, range: ClaudeCliRange | null): ClaudeCliCompat {
   if (!version || !range) return "unknown";
-  if (range.min_version && cmpSemver(version, range.min_version) < 0) return "below_min";
-  if (range.qualified_version && cmpSemver(version, range.qualified_version) > 0) return "newer_unqualified";
+  if (range.min_version && cmpVersion(version, range.min_version, 3) < 0) return "below_min";
+  if (range.qualified_version && cmpVersion(version, range.qualified_version, 3) > 0) return "newer_unqualified";
   return "ok";
 }
 
@@ -1159,7 +1141,7 @@ function formatToolLine(c: ToolRow): string {
           : "not found (optional)";
     return `  ${badge(c.status)}  ${label} - ${note}`;
   }
-  if (c.min_version && c.version && compareMajorMinor(c.version, c.min_version) < 0) {
+  if (c.min_version && c.version && cmpVersion(c.version, c.min_version, 2) < 0) {
     const tag = c.required === "required" ? "requires" : "recommended";
     return `  ${badge(c.status)}  ${label}${ver} - ${tag} >= ${c.min_version}`;
   }
