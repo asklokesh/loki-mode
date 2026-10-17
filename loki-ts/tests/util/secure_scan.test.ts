@@ -1,8 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runSecureScan } from "../../src/util/secure_scan.ts";
+import { runSecurityScan } from "../../src/runner/quality_gates.ts";
+import type { RunnerContext } from "../../src/runner/types.ts";
+import { ADDED_LINE_RULE, parseAddedLines, runSecureScan } from "../../src/util/secure_scan.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "secure-scan-test-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -99,5 +102,111 @@ describe("runSecureScan token rules (real scanner)", () => {
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+// TEN-SECURITY-01: the pre-PR scan blocks a provider key on an ADDED line in any
+// file (server code included), naming file:line and never echoing the value.
+// Keys are built at runtime so the fixture itself never trips gitleaks.
+describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
+  const body = "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+  const KEYS = {
+    ant: ["sk", "ant", "api03", body].join("-"),
+    google: "AI" + "za" + body.slice(0, 35),
+    slack: ["xo" + "xb", "1234567890", "abcdefghij"].join("-"),
+    github: "gh" + "p_" + body,
+  };
+
+  function git(repo: string, ...args: string[]): void {
+    const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  }
+  function repoWithBase(): string {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-diff-"));
+    git(d, "init", "-q");
+    mkdirSync(join(d, "src"));
+    writeFileSync(join(d, "src", "config.ts"), "export const a = 1;\nexport const b = 2;\n");
+    git(d, "add", "src/config.ts");
+    git(d, "commit", "-q", "-m", "base");
+    return d;
+  }
+
+  it("red-then-green: a runtime-built sk-ant key added to server code is blocked at file:line", async () => {
+    const d = repoWithBase();
+    try {
+      writeFileSync(join(d, "src", "config.ts"), `export const a = 1;\nexport const key = "${KEYS.ant}";\nexport const b = 2;\n`);
+      const r = await runSecureScan(d);
+      expect(r.ok).toBe(true);
+      expect(r.findings).toHaveLength(1);
+      const f = r.findings[0]!;
+      expect(f).toMatchObject({ rule: ADDED_LINE_RULE, file: "src/config.ts", line: 2, severity: "HIGH" });
+      expect(f.message).toContain("src/config.ts:2");
+      expect(f.message).toContain("anthropic-key");
+      expect(JSON.stringify(r)).not.toContain(KEYS.ant);
+      // The off switch is the old behavior: server code was never scanned.
+      const off = await runSecureScan(d, { diffBase: false });
+      expect(off.findings).toEqual([]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("flags AIza, xoxb and ghp_ keys in committed and untracked added lines", async () => {
+    const d = repoWithBase();
+    try {
+      const base = spawnSync("git", ["rev-parse", "HEAD"], { cwd: d, encoding: "utf8" }).stdout.trim();
+      writeFileSync(join(d, "src", "svc.py"), `x = 1\nGOOGLE = "${KEYS.google}"\n`);
+      git(d, "add", "src/svc.py");
+      git(d, "commit", "-q", "-m", "add svc");
+      writeFileSync(join(d, "notes.yaml"), `slack: ${KEYS.slack}\n\ngithub: ${KEYS.github}\n`);
+      const r = await runSecureScan(d, { diffBase: base });
+      expect(r.ok).toBe(true);
+      const got = r.findings.map((f) => `${f.rule} ${f.file}:${f.line}`).sort();
+      expect(got).toEqual([`${ADDED_LINE_RULE} notes.yaml:1`, `${ADDED_LINE_RULE} notes.yaml:3`, `${ADDED_LINE_RULE} src/svc.py:2`]);
+      const text = JSON.stringify(r);
+      for (const k of Object.values(KEYS)) expect(text).not.toContain(k);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("a clean diff passes and a key already in the base is not re-flagged", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-diff-"));
+    try {
+      git(d, "init", "-q");
+      writeFileSync(join(d, "old.ts"), `const k = "${KEYS.ant}";\n`);
+      git(d, "add", "old.ts");
+      git(d, "commit", "-q", "-m", "base");
+      writeFileSync(join(d, "old.ts"), `const k = "${KEYS.ant}";\nconst clean = process.env.ANTHROPIC_API_KEY;\n`);
+      writeFileSync(join(d, "new.ts"), "export const n = 3;\n");
+      const r = await runSecureScan(d);
+      expect(r).toEqual({ ok: true, findings: [] });
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("the security_scan gate blocks and its receipt names file:line without the value", async () => {
+    const d = repoWithBase();
+    try {
+      writeFileSync(join(d, "src", "config.ts"), `export const a = 1;\nexport const b = 2;\nconst k = "${KEYS.ant}";\n`);
+      const ctx = { cwd: d, lokiDir: join(d, ".loki"), log: () => {} } as unknown as RunnerContext;
+      const g = await runSecurityScan(ctx);
+      expect(g.passed).toBe(false);
+      const receipt = readFileSync(join(d, ".loki", "quality", "security-findings.json"), "utf8");
+      expect(receipt).not.toContain(KEYS.ant);
+      const doc = JSON.parse(receipt) as { high_active: number; findings: Array<{ rule: string; file: string; line: number }> };
+      expect(doc.high_active).toBe(1);
+      expect(doc.findings[0]).toMatchObject({ rule: ADDED_LINE_RULE, file: "src/config.ts", line: 3 });
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("parseAddedLines keeps new-file line numbers across hunks", () => {
+    const diff = ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -1,0 +2,2 @@", "+two", "+three", "@@ -9 +11 @@", "-old", "+eleven", "--- a/gone", "+++ /dev/null"].join("\n");
+    const m = parseAddedLines(diff);
+    expect([...m.keys()]).toEqual(["x"]);
+    expect([...m.get("x")!.entries()]).toEqual([[2, "two"], [3, "three"], [11, "eleven"]]);
   });
 });
