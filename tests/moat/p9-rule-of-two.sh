@@ -2075,58 +2075,150 @@ inj_run_bun_default() {
     fi
 }
 
-p9_at_comma() {
-    perl -0777 -ne '
-            while (/\b(?:safeGitEnv|safeGitArgs)\s*\(/g) {
-                my ($d, $q, $i) = (0, "", pos());
-                for (; $i < length($_); $i++) {
-                    my $c = substr($_, $i, 1);
-                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
-                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
-                    if ($c =~ /[(\[{]/) { $d++; next }
-                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
-                    if ($c eq "," && $d == 0) {
-                        if (substr($_, $i + 1) =~ /\A\s*\)/) { last }
-                        exit 0;
-                    }
-                }
-            }
-            exit 1'
+# Real-grammar scanner for the allowToken guard (Q18-03e). Hand-rolled comment and
+# regex stripping cannot tell a regex literal from division (`export default /re/`,
+# `if (a) /re/` vs `(4) / 2`), so every call-site check parses with the TypeScript
+# compiler API (the typescript package web-app already depends on, as P2 and P7
+# do). Comments, strings, regex literals, templates and JSX are the real grammar's
+# job. A file that does not parse is reported as PARSE and fails the case.
+#   scan  <ts.js>  (NUL-separated paths on stdin): FLAG<TAB>comma|import|indirect<TAB>file
+#   json  <ts.js>  (NUL-separated *.json paths): FLAG<TAB>escape<TAB>file for an escaped allowToken key
+#   strip <ts.js>  (one path on stdin): the file with comments replaced by blanks
+P9_AST_JS='
+const fs = require("fs"), ts = require(process.argv[1]), mode = process.argv[2];
+const files = fs.readFileSync(0, "utf8").split("\0").filter(Boolean);
+const H = new Set(["safeGitEnv", "safeGitArgs"]);
+const K = ts.SyntaxKind;
+function sk(f) {
+  if (/\.tsx$/.test(f)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/.test(f)) return ts.ScriptKind.JSX;
+  if (/\.(js|mjs|cjs)$/.test(f)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
 }
-
-p9_at_import() {
-    perl -0777 -ne '
-            exit 0 if /\bimport\s*\*\s*as\s+\w+\s+from\s*["\x27][^"\x27]*safe_git/
-                || /\bimport\s*(?:type\s*)?\{[^}]*\bas\b[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
-                || /\brequire\s*\(\s*["\x27][^"\x27]*safe_git/
-                || /\bimport\s*\(\s*["\x27][^"\x27]*safe_git/
-                || /\bexport\s*(?:type\s*)?\{[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
-                || /\bexport\s*(?:type\s*)?\{[^}]*\b(?:safeGitEnv|safeGitArgs)\b[^}]*\}\s*from\s*["\x27]/
-                || /\bexport\s*\*\s*(?:as\s+\w+\s+)?from\s*["\x27][^"\x27]*safe_git/;
-            exit 1'
+function parse(f) {
+  const text = fs.readFileSync(f, "utf8");
+  const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, sk(f));
+  return { text, sf, bad: sf.parseDiagnostics.length > 0 };
 }
-
-p9_at_indirect() {
-    perl -0777 -ne '
-            s/\b(?:import|export)\s*(?:type\s*)?\{[^}]*\}\s*from\s*["\x27][^"\x27]*["\x27]//g;
-            exit 0 if /\b(?:safeGitEnv|safeGitArgs)\b(?!\s*\()/;
-            while (/\b(?:safeGitEnv|safeGitArgs)\s*\(/g) {
-                my ($d, $q) = (0, "");
-                for (my $i = pos(); $i < length($_); $i++) {
-                    my $c = substr($_, $i, 1);
-                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
-                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
-                    if ($c =~ /[(\[{]/) { $d++; next }
-                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
-                    exit 0 if $d == 0 && substr($_, $i, 3) eq "...";
-                }
-            }
-            exit 1'
+const lit = (n) => n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) ? n.text : null;
+const sg = (s) => s !== null && s.includes("safe_git");
+function stripComments({ text, sf }) {
+  const seen = new Map();
+  (function walk(n) {
+    if (n.kind >= K.FirstJSDocNode && n.kind <= K.LastJSDocNode) return;
+    if (n.getChildCount(sf) === 0) {
+      for (const r of [...(ts.getLeadingCommentRanges(text, n.pos) || []), ...(ts.getTrailingCommentRanges(text, n.pos) || [])]) seen.set(r.pos, r);
+      return;
+    }
+    n.getChildren(sf).forEach(walk);
+  })(sf);
+  let out = "", at = 0;
+  for (const r of [...seen.values()].sort((x, y) => x.pos - y.pos)) {
+    out += text.slice(at, r.pos) + " ";
+    at = r.end;
+  }
+  return out + text.slice(at);
 }
+function scan(P) {
+  const flags = new Set();
+  let dynLoader = false, strMention = false;
+  const args = (c) => {
+    if (c.arguments.length >= 2) flags.add("comma");
+    if (c.arguments.some(ts.isSpreadElement)) flags.add("indirect");
+  };
+  function ident(n) {
+    const p = n.parent;
+    if (ts.isImportSpecifier(p)) return;
+    if (ts.isExportSpecifier(p)) { if (!p.parent.parent.moduleSpecifier) flags.add("indirect"); return; }
+    if (ts.isCallExpression(p) && p.expression === n && !p.questionDotToken) return args(p);
+    if (ts.isPropertyAccessExpression(p) && p.name === n && !p.questionDotToken
+        && ts.isCallExpression(p.parent) && p.parent.expression === p && !p.parent.questionDotToken) return args(p.parent);
+    flags.add("indirect");
+  }
+  (function visit(n) {
+    if (ts.isIdentifier(n) && H.has(n.text)) ident(n);
+    if (ts.isCallExpression(n)) {
+      const e = n.expression;
+      const loader = e.kind === K.ImportKeyword || (ts.isIdentifier(e) && e.text === "require");
+      if (loader && n.arguments.length > 0) {
+        const a0 = lit(n.arguments[0]);
+        if (a0 === null) dynLoader = true;
+        else if (sg(a0)) flags.add("import");
+      }
+    }
+    if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
+        || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && (sg(n.text) || [...H].some((h) => n.text.includes(h)))) strMention = true;
+    if (ts.isElementAccessExpression(n) && H.has(lit(n.argumentExpression))) flags.add("indirect");
+    // allowToken spelled so the raw grep cannot see it: an identifier, property
+    // name or string whose decoded text is allowToken but whose source text is
+    // not (unicode or hex escapes). The plain spelling belongs to the grep rule.
+    if ((ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n))
+        && n.text === "allowToken" && !n.getText(P.sf).includes("allowToken")) flags.add("escape");
+    // A safe_git literal anywhere but a module specifier or the direct argument of
+    // require/import(): an aliased or wrapped loader (const r = require; r("..."),
+    // require.call(null, "..."), createRequire(url)("...")) hides the module.
+    if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && sg(n.text)) {
+      const p = n.parent;
+      const spec = (ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === n;
+      const ext = ts.isExternalModuleReference(p);
+      const direct = ts.isCallExpression(p) && p.arguments[0] === n
+        && (p.expression.kind === K.ImportKeyword || (ts.isIdentifier(p.expression) && p.expression.text === "require"));
+      if (!spec && !ext && !direct) flags.add("import");
+    }
+    if (ts.isImportDeclaration(n)) {
+      const from = lit(n.moduleSpecifier), nb = n.importClause && n.importClause.namedBindings;
+      if (nb && ts.isNamespaceImport(nb) && sg(from)) flags.add("import");
+      if (nb && ts.isNamedImports(nb)) for (const el of nb.elements)
+        if (el.propertyName && (sg(from) || H.has(el.propertyName.text))) flags.add("import");
+    }
+    if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)
+        && sg(lit(n.moduleReference.expression))) flags.add("import");
+    if (ts.isExportDeclaration(n) && n.moduleSpecifier) {
+      const from = lit(n.moduleSpecifier);
+      if (sg(from)) flags.add("import");
+      if (n.exportClause && ts.isNamedExports(n.exportClause))
+        for (const el of n.exportClause.elements) if (H.has((el.propertyName || el.name).text)) flags.add("import");
+    }
+    ts.forEachChild(n, visit);
+  })(P.sf);
+  // A computed loader specifier in a file that spells safe_git or a helper name
+  // in a string is a hidden-module bypass; computed specifiers alone are common.
+  if (dynLoader && strMention) flags.add("import");
+  return flags;
+}
+if (mode === "json") {
+  // A JSON module can carry allowToken as an escaped key the raw grep cannot see.
+  for (const f of files) {
+    const raw = fs.readFileSync(f, "utf8");
+    let hit = false;
+    try { JSON.parse(raw, (k, v) => { if (k === "allowToken") hit = true; return v; }); }
+    catch (e) { console.log("PARSE\t" + f); continue; }
+    if (hit && !raw.includes("allowToken")) console.log("FLAG\tescape\t" + f);
+  }
+} else if (mode === "strip") {
+  const P = parse(files[0]);
+  if (P.bad) { process.stderr.write("PARSE " + files[0] + "\n"); process.exit(3); }
+  process.stdout.write(stripComments(P));
+} else {
+  for (const f of files) {
+    const P = parse(f);
+    if (P.bad) { console.log("PARSE\t" + f); continue; }
+    for (const k of scan(P)) console.log("FLAG\t" + k + "\t" + f);
+  }
+}
+'
 
-p9_at_either() {  # <scan fn> <file> <stripped text>: 0 if raw OR stripped trips it
-    "$1" < "$2" && return 0
-    printf '%s\n' "$3" | "$1"
+# TypeScript compiler for the AST scan: loki-ts (declares typescript, but not every
+# CI job installs it; run.sh installs web-app and control-plane, so in a fresh tree
+# the web-app fallback does the work) first, then web-app. P9_TS_CANDIDATES (a
+# space-separated list of typescript.js paths) replaces the list, so the
+# missing-compiler path can be exercised without touching real node_modules.
+p9_ts_path() {
+    local ts
+    for ts in ${P9_TS_CANDIDATES:-"$REPO_ROOT/loki-ts/node_modules/typescript/lib/typescript.js" "$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"}; do
+        [ -f "$ts" ] && { printf '%s\n' "$ts"; return 0; }
+    done
+    return 1
 }
 
 allowtoken_scan() {
@@ -2144,45 +2236,48 @@ allowtoken_scan() {
     done <<EOF_HITS
 $hits
 EOF_HITS
-    local strip='
-        my ($s, $o, $q, $n) = (do { local $/; <STDIN> }, "", "", 0);
-        for (my $i = 0; $i < length $s; $i++) {
-            my $c = substr($s, $i, 1); my $d = substr($s, $i + 1, 1);
-            if ($q ne "") { $o .= $c; if ($c eq "\\") { $o .= $d; $i++ } elsif ($c eq $q) { $q = "" } next }
-            if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; $o .= $c; next }
-            if ($c eq "/" && $d eq "/") { $i++ while $i < length $s && substr($s, $i, 1) ne "\n"; $o .= "\n"; next }
-            if ($c eq "/" && $d eq "*") { $i += 2; $i++ while $i < length $s && substr($s, $i, 2) ne "*/"; $i++; $o .= " "; next }
-            $o .= $c;
-        }
-        print $o;'
-    # Per-file scans trip on EITHER the raw text OR the comment-stripped text (OR, never
-    # AND). The strip helper ignores regex literals and template ${} nesting, so on its
-    # own it can delete a real call; the raw pass keeps that failure fail-closed.
+    local ts_js code kind rest f2
+    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: typescript not found in loki-ts/node_modules or web-app/node_modules (bun install in loki-ts); allowToken scan cannot parse (fail closed)"; return; }
+    command -v node >/dev/null 2>&1 || { nok "prerequisite missing: node"; return; }
+    # Per-file scans parse with the real TypeScript grammar and fail closed on a
+    # parse diagnostic.
     # (1) Positional opt-in: any safeGitEnv/safeGitArgs call outside safe_git.ts with
-    # a second argument (top-level comma, quote/bracket aware, multi-line, nested).
+    # a second argument (multi-line, nested; comments and regex literals irrelevant).
     # (2) Alias, namespace, require, dynamic import and any re-export of safe_git or
     # of its opt-in helpers (barrel, with or without "as") fail closed.
-    # (3) Indirect use: any mention outside an import list that is not a direct call
-    # (alias const, .apply/.call/.bind, optional call) or a spread-argument call.
-    local code
-    while IFS= read -r -d '' f; do
-        code="$(perl -e "$strip" < "$f")"
-        if p9_at_either p9_at_comma "$f" "$code"; then
-            nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
+    # (3) Indirect use: any identifier mention outside an import list that is not a
+    # direct call (alias const, .apply/.call/.bind, optional call) or a spread-argument call.
+    while IFS=$'\t' read -r kind rest f2; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" != FLAG ]; then
+            nok "allowToken scan could not parse (fail closed): ${rest#"$REPO_ROOT"/}"
+            continue
         fi
-        if p9_at_either p9_at_import "$f" "$code"; then
-            nok "safe_git imported by alias, namespace, require or dynamic import, or its opt-in helpers re-exported (call names hidden from the scan): ${f#"$REPO_ROOT"/}"
+        case "$rest" in
+            comma)    nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f2#"$REPO_ROOT"/}" ;;
+            import)   nok "safe_git imported by alias, namespace, require or dynamic import, or its opt-in helpers re-exported (call names hidden from the scan): ${f2#"$REPO_ROOT"/}" ;;
+            escape)   nok "allowToken spelled with an escape sequence (hidden from the raw grep): ${f2#"$src"/}" ;;
+            indirect) nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f2#"$src"/}" ;;
+        esac
+    done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
+        | node -e "$P9_AST_JS" "$ts_js" scan 2>&1)
+    # JSON modules: parse every *.json under src; a key that decodes to allowToken
+    # while the raw text never spells it is an escaped key (hidden from the grep).
+    while IFS=$'\t' read -r kind rest f2; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" != FLAG ]; then
+            nok "allowToken scan could not parse JSON (fail closed): ${rest#"$REPO_ROOT"/}"
+            continue
         fi
-        if p9_at_either p9_at_indirect "$f" "$code"; then
-            nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f#"$src"/}"
-        fi
-    done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0)
+        nok "allowToken spelled with an escape sequence in a JSON key (hidden from the raw grep): ${f2#"$src"/}"
+    done < <(find "$src" -type f -name '*.json' -print0 | node -e "$P9_AST_JS" "$ts_js" json 2>&1)
     # Fetch-only pin: exactly one allowToken occurrence (raw and comment-stripped),
     # and across the whole comment-stripped file it is followed by the fetch-only
     # expression and then , or } (newlines allowed), so a widened or second use fails.
-    local raw_n code_n code sig
+    local raw_n code_n sig
     for f in base_guard modernize_unit; do
-        code="$(perl -e "$strip" < "$src/util/$f.ts")"
+        code="$(printf '%s\0' "$src/util/$f.ts" | node -e "$P9_AST_JS" "$ts_js" strip)" \
+            || { nok "$f.ts could not be parsed (fail closed)"; continue; }
         raw_n="$(grep -o 'allowToken' "$src/util/$f.ts" | grep -c .)"
         code_n="$(printf '%s\n' "$code" | grep -o 'allowToken' | grep -c .)"
         if [ "$raw_n" -ne 1 ] || [ "$code_n" -ne 1 ] \
@@ -2211,15 +2306,20 @@ EOF_HITS
     done
 }
 
+# Inherent limits of this static scan (not closable without running the code):
+# a computed key such as o["allow"+"Token"], options built by JSON.parse, an
+# assignment o["allow"+"Token"]=true, and a fully templated dynamic import whose
+# helper key is joined at run time are all invisible to it. The guard bounds
+# source-visible spellings only; the runtime bound is safe_git.ts itself.
 # Positive controls: each synthetic bypass tree (the real util files plus one
 # offender) must make the scan fail, so a blind guard cannot pass quietly.
 allowtoken_controls() {
-    local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu
+    local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call fetch-pin-widened escape-template export-rename-barrel import-rename-barrel indirect-template-key strmention-tail strmention-middle strmention-nosub json-escaped-key"
     for name in $names; do
-        t="$T_AT/$name"
+        t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
         cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
         case "$name" in
@@ -2239,7 +2339,7 @@ safeGitArgs.apply(null, [["fetch"], true]);' ;;
 const a: [NodeJS.ProcessEnv, boolean] = [process.env, true]; safeGitEnv(...a);' ;;
             shadow-default) printf '%s\n' "$real_bg" | sed 's/args: string\[\], timeout/args: string[] = ["fetch"], timeout/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-const)   { printf '%s\n' "$real_mu"; printf '%s\n' 'const args = ["fetch"];'; } > "$t/util/modernize_unit.ts"; body='export {};' ;;
-            shadow-catch)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  try { throw 1; } catch ([args]) {/' > "$t/util/base_guard.ts"; body='export {};' ;;
+            shadow-catch)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  try { try { throw 1; } catch (args) { void args; }/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-destructure) printf '%s\n' "$real_bg" | sed 's/^  try {$/  [args] = [["fetch"]]; try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-forof)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  for (args of [["fetch"]]); try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-method)  printf '%s\n' "$real_bg" | sed 's/^  try {$/  const o = { m(args: string[]) { return args; } }; try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
@@ -2255,15 +2355,140 @@ const a = `${"`"}`; const b = "//"; safeGitEnv(process.env, true);' ;;
             comment-only-strip) # raw text hides the comma behind a quote inside the comment; only stripping sees it
                             body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(process.env /* '\'' */, true);' ;;
+            regex-comment-call) # Q18-03e: a regex plus a quote inside a comment used to hide the call from both passes
+                            body='import { safeGitEnv } from "./util/safe_git.ts";
+const re = /\/*/; safeGitEnv(process.env /* '\'' */, true);' ;;
+            regex-div-quote) body='import { safeGitEnv } from "./util/safe_git.ts";
+const q = (4) / 2; const re = /'\''/; safeGitEnv(process.env /* '\'' */, true);' ;;
+            probe-of)       body='import { safeGitEnv } from "./util/safe_git.ts";
+for (const x of [1]) /'\''/.test("a"); safeGitEnv(process.env /* '\'' */, true);' ;;
+            probe-jsx)      ext=tsx; body='import { safeGitEnv } from "./util/safe_git.ts";
+const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
+            elem-access-dyn-import) body='const p = "./util/" + "safe_git.ts"; const m = await import(p); m["safeGitEnv"](process.env, true);' ;;
+            elem-access-dyn-require) body='const m = require(`./util/${"safe_git"}.ts`); m["safeGitArgs"]([], true);' ;;
+            elem-access-param) # indirect rule alone: no import, no loader, string-keyed call
+                            body='export function f(m: any) { m["safeGitEnv"](process.env, true); }' ;;
+            dyn-loader-keyvar) # import rule alone: computed loader plus helper name in a string, key held in a variable
+                            body='const k = "safeGitEnv"; const p = "./util/safe_" + "git.ts"; const m = await import(p); m[k](process.env, true);' ;;
+            import-alias)   # import rule alone: aliased named import
+                            body='import { safeGitEnv as g } from "./util/safe_git.ts"; g(process.env, true);' ;;
+            import-namespace) # import rule alone: namespace import, helper reached through a variable key
+                            body='import * as m from "./util/safe_git.ts"; const k = ["safe", "GitEnv"].join(""); m[k](process.env, true);' ;;
+            loader-literal) # import rule alone: literal require specifier
+                            body='const k = ["safe", "GitEnv"].join(""); const m = require("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            reexport-local) # indirect rule alone: local re-export of the helper
+                            body='import { safeGitEnv } from "./util/safe_git.ts"; export { safeGitEnv };' ;;
+            reexport-star)  # import rule alone: star re-export of safe_git
+                            body='export * from "./util/safe_git.ts";' ;;
+            import-equals)  # import rule alone: import = require
+                            body='import m = require("./util/safe_git.ts"); const k = ["safe", "GitEnv"].join(""); (m as any)[k](process.env, true);' ;;
+            loader-wrapped-require) # literal-outside-specifier rule alone: aliased require
+                            body='const r = require; const k = ["safe", "GitEnv"].join(""); const m = r("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            loader-call-require) # literal-outside-specifier rule alone: require.call
+                            body='const k = ["safe", "GitEnv"].join(""); const m = require.call(null, "./util/safe_git.ts"); m[k](process.env, true);' ;;
+            loader-create-require) # literal-outside-specifier rule alone: createRequire(url)(...)
+                            body='import { createRequire } from "node:module"; const k = ["safe", "GitEnv"].join(""); const m = createRequire(import.meta.url)("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            comma-prop-call) # comma rule alone: positional flag through a property-access call
+                            body='export function f(m: any) { m.safeGitEnv(process.env, true); }' ;;
+            dyn-import-template) # import rule alone: template-head mention plus computed import
+                            body='const k = ["safe", "GitEnv"].join(""); const m = await import(`./util/safe_git${".ts"}`); m[k](process.env, true);' ;;
+            loader-template-literal) # literal-outside-specifier rule alone: no-substitution template literal
+                            body='const r = require; const k = ["safe","GitEnv"].join(""); const m = r(`./util/safe_git.ts`); m[k](process.env, true);' ;;
+            loader-aliased-spec) # literal-outside-specifier rule alone: specifier held in a variable
+                            body='const r = require; const p = "./util/safe_git.ts"; const k = ["safe","GitEnv"].join(""); const m = r(p); m[k](process.env, true);' ;;
+            ext-js|ext-mjs|ext-cjs|ext-mts|ext-cts|ext-jsx) # find list: every scanned extension must reach the scan
+                            ext="${name#ext-}"; body='const m = require("./util/safe_git.ts"); const k = ["safe", "GitEnv"].join(""); m[k](process.env, true);' ;;
+            allowtoken-core) # core grep alone: allowToken passed to safeGit outside the fetch callers
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { allowToken: true });' ;;
+            allowtoken-quoted) # core grep alone: quoted property name
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { "allowToken": true });' ;;
+            allowtoken-escaped-ident) # escape rule alone: unicode-escaped identifier (built so this file stays readable)
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { \u0061llowToken: true });' ;;
+            allowtoken-escaped-string) # escape rule alone: escaped string property name
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { "allow\u0054oken": true });' ;;
+            import-alias-config) # import rule alone: aliased import of a non-helper export of safe_git
+                            body='import { SAFE_GIT_CONFIG as c } from "./util/safe_git.ts";' ;;
+            optional-call)  # indirect rule alone: optional call of the bare helper
+                            body='safeGitEnv?.(process.env);' ;;
+            optional-prop-head) # indirect rule alone: optional chain on the receiver
+                            body='export function f(m: any) { m?.safeGitEnv(process.env); }' ;;
+            optional-prop-call) # indirect rule alone: optional call on a property access
+                            body='export function f(m: any) { m.safeGitEnv?.(process.env); }' ;;
+            fetch-pin-widened) # fetch-pin rule alone: the pin widened to a second verb
+                            printf '%s\n' "$real_bg" | sed 's/allowToken: args\[0\] === "fetch"/allowToken: args[0] === "fetch" || args[0] === "push"/' > "$t/util/base_guard.ts"; body='export {};' ;;
+            escape-template) # escape rule alone, NoSubstitutionTemplateLiteral operand (escaped so the raw grep stays blind)
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { [`allow\u0054oken`]: true });' ;;
+            export-rename-barrel) # export rule alone: renamed re-export from a non-safe_git barrel (propertyName only)
+                            body='export { safeGitEnv as g } from "./b1.ts";' ;;
+            import-rename-barrel) # named-import rule alone: renamed import of a helper from a non-safe_git barrel
+                            body='import { safeGitEnv as g } from "./barrel.ts"; g(process.env, true);' ;;
+            indirect-template-key) # lit() NoSubstitutionTemplate operand alone: template-keyed element access
+                            body='export function f(m: any) { m[`safeGitEnv`](process.env, true); }' ;;
+            strmention-tail) # strMention TemplateTail alone: helper path ends in the tail of a templated import
+                            body='const d = "./util"; await import(`${d}/safe_git.ts`); m[k](process.env, true);' ;;
+            strmention-middle) # strMention TemplateMiddle alone: safe_git sits in the middle of a templated import
+                            body='await import(`${d}/safe_git${e}`);' ;;
+            strmention-nosub) # strMention NoSubstitutionTemplate alone: helper name in a template, path joined at run time
+                            body='const k = `safeGitEnv`; const p = "./util/safe_" + "git.ts"; const m = await import(p); m[k](process.env, true);' ;;
+            json-escaped-key) # JSON rule alone: escaped allowToken key in a JSON module
+                            ext=json; body='{"allow\u0054oken": true}' ;;
+            probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
+safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             argv-prefix-mu) printf '%s\n' "$real_mu" | sed 's/safeGit(dest, args, {/safeGit(dest, ["push", "origin"], {/' > "$t/util/modernize_unit.ts"; body='export {};' ;;
         esac
-        printf '%s\n' "$body" > "$t/offender.ts"
+        printf '%s\n' "$body" > "$t/offender.$ext"
         saved_fails="$CASE_FAILS"; CASE_FAILS=""
         allowtoken_scan "$t"
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # A BOM-prefixed JSON module defeats node JSON.parse but loads in bun: an
+    # unparseable *.json must fail closed, not be skipped.
+    t="$T_AT/json-parse"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    printf '\357\273\277{"allow\\u0054oken": true}\n' > "$t/offender.json"
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    case "$CASE_FAILS" in
+        *"could not parse JSON (fail closed)"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'json-parse' did not fail closed with 'could not parse JSON (fail closed)'" ;;
+    esac
+    # Fail closed when the TypeScript compiler cannot be found.
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    P9_TS_CANDIDATES=/nonexistent allowtoken_scan "$src"
+    case "$CASE_FAILS" in
+        *"prerequisite missing: typescript"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'ts-missing' did not fail closed with 'prerequisite missing: typescript'" ;;
+    esac
+    # Negative control: look-alikes the scan must NOT flag (names in comments, strings
+    # and regex literals, and a plain one-argument call), so a scan that flags every
+    # file cannot pass the positive controls above by being blind the other way.
+    t="$T_AT/clean"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    cat > "$t/clean.ts" <<'EOF_CLEAN'
+import { safeGitEnv } from "./util/safe_git.ts";
+// safeGitEnv(process.env, true) in a comment
+/* safeGitArgs.apply(null, []) */
+const s = "safeGitEnv(process.env, true)";
+const re = /safeGitEnv\(a, b\)/;
+const half = (4) / 2;
+export const env = safeGitEnv(process.env);
+EOF_CLEAN
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    [ -z "$CASE_FAILS" ] || { local why="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a clean tree: $why"; return; }
+    CASE_FAILS="$saved_fails"
+    # A comment (with a quote and slashes) inside the real pin must not hide it: the
+    # stripped text is what the fetch-only pin is matched against.
+    printf '%s\n' "$real_bg" | sed 's|allowToken: args|allowToken: /* it'\''s // */ args|' > "$t/util/base_guard.ts"
+    grep -q "it's //" "$t/util/base_guard.ts" || { nok "negative control setup: comment not inserted into the pin"; return; }
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    [ -z "$CASE_FAILS" ] || { local why2="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a pin with an inner comment: $why2"; return; }
+    CASE_FAILS="$saved_fails"
 }
 
 case_allowtoken() {
