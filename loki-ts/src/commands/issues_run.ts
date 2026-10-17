@@ -93,8 +93,9 @@ export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string
       if (t === "--label") a.label = v;
       else a.milestone = v;
     } else if (t === "--limit" || t === "--parallel") {
-      const v = Number(val());
-      if (!Number.isInteger(v) || v < 1) return `${t} needs a positive integer`;
+      const raw = val();
+      const v = raw !== null && /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+      if (!Number.isSafeInteger(v) || v < 1) return `${t} needs a positive integer`;
       if (t === "--parallel" && v > MAX_PARALLEL) return `--parallel is at most ${MAX_PARALLEL}`;
       if (t === "--limit") a.limit = v;
       else a.parallel = v;
