@@ -133,6 +133,12 @@ jobs:
           # Rule of Two: never restore a cache an issue-triggered job could have written.
           no-cache: true
 
+      # The control-plane server bundle imports loki-ts source (runner, engine10),
+      # so @anthropic-ai/sdk and the other loki-ts deps must resolve during pack.
+      # v11.17.14 pack failed with: Could not resolve: "@anthropic-ai/sdk".
+      - name: Install loki-ts dependencies
+        run: bun install --cwd loki-ts --frozen-lockfile
+
       - name: Pack once and verify the PACKED tarball carries a fresh dist
         run: |
           # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
