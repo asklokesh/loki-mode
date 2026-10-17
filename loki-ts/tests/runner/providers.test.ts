@@ -1127,4 +1127,27 @@ describe("TEN-COST-12 engine10 5-minute cache TTL", () => {
   test("LOKI_E10_CACHE_TTL=1h opts out", () => {
     expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "plan", LOKI_E10_CACHE_TTL: "1h" })).toEqual({});
   });
+
+  // r2: the helper alone is not enough; pin the claudeProvider shellRun call site.
+  describe("claudeProvider child env", () => {
+    const KEYS = ["LOKI_E10_STAGE", "LOKI_E10_CACHE_TTL", "FORCE_PROMPT_CACHING_5M"];
+    let backup: Record<string, string | undefined>;
+    beforeEach(() => { backup = Object.fromEntries(KEYS.map((k) => [k, process.env[k]])); for (const k of KEYS) delete process.env[k]; });
+    afterEach(() => { for (const k of KEYS) { if (backup[k] === undefined) delete process.env[k]; else process.env[k] = backup[k]; } });
+    async function childCacheEnv(): Promise<string> {
+      const envLog = join(tmp, "env.log");
+      writeStub();
+      writeFileSync(stubPath, `#!/bin/sh\nprintf '%s' "\${FORCE_PROMPT_CACHING_5M-UNSET}" > '${envLog}'\nexit 0\n`);
+      chmodSync(stubPath, 0o755);
+      await claudeProvider().invoke(makeCall({ mainLoop: true }));
+      return readFileSync(envLog, "utf8");
+    }
+    test("LOKI_E10_STAGE set gives the child FORCE_PROMPT_CACHING_5M=1", async () => {
+      process.env["LOKI_E10_STAGE"] = "implement";
+      expect(await childCacheEnv()).toBe("1");
+    });
+    test("without LOKI_E10_STAGE the child has no such key", async () => {
+      expect(await childCacheEnv()).toBe("UNSET");
+    });
+  });
 });

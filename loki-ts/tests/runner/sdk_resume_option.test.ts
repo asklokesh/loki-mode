@@ -7,7 +7,7 @@ import type { ProviderInvocation } from "../../src/runner/types.ts";
 
 let scratch: string;
 let seen: { prompt: string; options: Record<string, unknown> } | undefined;
-const KEYS = ["LOKI_E10_RESUME_SESSION", "LOKI_E10_STAGE", "LOKI_ITERATION", "LOKI_HOST_GUARD"];
+const KEYS = ["FORCE_PROMPT_CACHING_5M", "LOKI_E10_CACHE_TTL", "LOKI_E10_RESUME_SESSION", "LOKI_E10_STAGE", "LOKI_ITERATION", "LOKI_HOST_GUARD"];
 let backup: Record<string, string | undefined>;
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "loki-sdkresume-"));
@@ -44,5 +44,20 @@ describe("sdkQueryProvider resume (MW-2)", () => {
     await sdkQueryProvider().invoke(call());
     expect("resume" in seen!.options).toBe(false);
     expect(existsSync(join(scratch, ".loki", "e10-session-0.json"))).toBe(false);
+  });
+});
+
+// TEN-COST-12 r2: pin the SDK route call site of engine10CacheTtlEnv.
+describe("sdkQueryProvider 5-minute cache TTL (TEN-COST-12)", () => {
+  it("LOKI_E10_STAGE set gives query options.env FORCE_PROMPT_CACHING_5M=1", async () => {
+    process.env["LOKI_E10_STAGE"] = "implement";
+    const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+    await sdkQueryProvider().invoke(call());
+    expect((seen!.options["env"] as Record<string, string>)["FORCE_PROMPT_CACHING_5M"]).toBe("1");
+  });
+  it("without LOKI_E10_STAGE options.env has no such key", async () => {
+    const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+    await sdkQueryProvider().invoke(call());
+    expect("FORCE_PROMPT_CACHING_5M" in (seen!.options["env"] as Record<string, string>)).toBe(false);
   });
 });
