@@ -63,7 +63,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
     ...(acceptance.length ? [`Acceptance criteria frozen for this unit (each must be covered by a test):\n${acceptance.map((a) => `Acceptance: ${a}`).join("\n")}`] : []),
-    "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
+    "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded. Negative case: for each acceptance line include one assertion that rejects bad input or would fail before the fix.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     ...(conventions ? [conventions] : []),
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
