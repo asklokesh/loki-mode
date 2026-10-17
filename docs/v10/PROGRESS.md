@@ -2539,3 +2539,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T13:56Z (CoS) v11.17.53
 - Wave AP released (30 rows, 19 chains, each reviewer APPROVE by SHA); evidence in ~/loki-ci-logs/ap-check.log (tsc, bun test, secure-scan, drift guards, cost_claim pytest).
+
+## 2026-10-17T14:35Z (CoS) v11.17.54
+- Wave AQ released (30 rows, 19 chains, every reviewer APPROVE by SHA, ancestry checked) plus Q18-03e (opus round 5 APPROVE e41ef40b2 after 5 BLOCK rounds); evidence in ~/loki-ci-logs/aq-check.log.

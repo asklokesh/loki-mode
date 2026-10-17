@@ -5,6 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.54 (2026-10-17)
+
+### Added
+- `loki start --dry-run` validates every flag, runs the preflight and prints the provider, model and cost cap it would use, then exits 0 without spending a token (TEN-UX-45).
+- engine10 speed: intake reuses the tree-keyed repomap and testmap cache; verify (`LOKI_E10_VERIFY_JOBS`) and the Wall base run (`LOKI_E10_BASE_JOBS`) run test files with bounded concurrency, default 1; a group suite-fix unit reuses the failing-suite output integrate already captured (TEN-SPEED-17 to TEN-SPEED-20).
+- `LOKI_PRICE_TABLE=<json file>` overrides or extends the built-in price table; an invalid file falls back to the built-in table (TEN-COST-54).
+- opencode runs get a size-estimate cost record when the model is priced, so the cost cap and `loki cost` cover all 5 providers (TEN-COST-55).
+- Test selection maps a changed Python `__init__.py` and Rust `mod.rs` to the package name (TEN-QUALITY-32).
+- The supervisor forwards SIGHUP to the detached worker process group, so closing the terminal no longer orphans a paid worker (TEN-STABILITY-56).
+
+### Changed
+- `loki start` unknown-flag errors suggest the closest valid flag, and an unknown `--provider` lists the valid providers (TEN-UX-46, TEN-UX-47).
+- The session heartbeat, buildTestMap and repomap read less: one untracked-file listing per beat, one read per JS test file, and at most MAX_SCAN_BYTES per file (TEN-SPEED-21 to TEN-SPEED-23).
+- `noImplicitReturns` is enabled; `handleSlackEvent` narrows an unknown payload; `SessionResult` carries an optional `stderrTail`; new characterization tests for fix_units, compound_match and buildOpencodeArgv (TEN-QUALITY-33 to TEN-QUALITY-38).
+- The P9 rule-of-two moat guard pins every allowToken detection rule with a positive control, including escaped keys in JSON modules (Q18-03e).
+
+### Fixed
+- Test selection now finds tests for a changed `index.ts`/`index.js` (TEN-QUALITY-39).
+- `usdFor` clamps non-finite or negative token counts and caps cached tokens at input; mini and nano OpenAI models get their own prices instead of the full-model rate (TEN-COST-56, TEN-COST-58).
+- `loki estimate --model` requires a non-empty value that is not another flag (TEN-COST-57).
+- `loki start` fails with "needs a value" for an empty `--provider`, `--session-model`, `--cost`, `--spec`, `--health-url`, `--domain`, `--destination` or `--env-file`, and treats a missing PRD path with spaces as a path, not a paid brief (TEN-UX-48, TEN-UX-50, TEN-DEPLOY-26).
+- A first-run folder holding only `.DS_Store` or other OS metadata counts as empty (TEN-UX-51).
+- `appendRunOutcome` no longer loses an outcome when two runs finish together (TEN-STABILITY-57).
+- secure-scan scans untracked files over 1 MB line by line up to a hard cap and reports anything above the cap, instead of skipping them silently (TEN-SECURITY-22).
+
 ## v11.17.53 (2026-10-17)
 
 ### Added
