@@ -572,3 +572,22 @@ describe("TEN-ADOPTION-34: provider login probe", () => {
     expect(r.warnings.join("\n")).not.toContain("login or API key");
   });
 });
+
+describe("TEN-UX-55: repo writable", () => {
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  const env = (e: Record<string, string>) => ({ ...e, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" });
+  test.skipIf(isRoot)("read-only repo dir is fatal with a one-line fix", async () => {
+    const { dir, env: e } = identifiedRepo(); chmodSync(dir, 0o555);
+    try { const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: env(e) }); expect(r.fatal).toMatch(/is not writable; run: chmod u\+w/); expect(r.fatal).not.toContain("\n"); } finally { chmodSync(dir, 0o755); }
+  });
+  test("writable repo dir passes", async () => {
+    const { dir, env: e } = identifiedRepo(); expect((await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: env(e) })).fatal).toBeNull();
+  });
+  test.skipIf(isRoot)("real preflight() entry exits 2 on a read-only repo", () => {
+    const { dir, env: e } = identifiedRepo(); chmodSync(dir, 0o555);
+    try {
+      const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify(env(e))}});`], { encoding: "utf8" });
+      expect(r.status).toBe(2); expect(r.stderr).toContain("is not writable");
+    } finally { chmodSync(dir, 0o755); }
+  });
+});

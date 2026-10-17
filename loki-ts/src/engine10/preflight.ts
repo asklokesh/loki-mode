@@ -1,4 +1,4 @@
-import { statfsSync } from "node:fs";
+import { accessSync, constants as fsc, statfsSync } from "node:fs";
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts";
 import { claudeLoginProbeCached, ghAuthProbeCached, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
@@ -26,6 +26,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     head.exitCode !== 0 ? "repository has no commits; run: git add . && git commit -m init" :
     null;
   if (fatal) return { fatal, warnings };
+  try { accessSync(o.repoDir, fsc.W_OK); } catch { return { fatal: `${o.repoDir} is not writable; run: chmod u+w "${o.repoDir}" (or run loki from a writable checkout)`, warnings }; } // TEN-UX-55: a read-only checkout otherwise fails mid-run on the first write
   const free = freeMb(o.repoDir, o.statfs ?? statfsSync); const minMb = Number(env["LOKI_MIN_FREE_MB"]) > 0 ? Number(env["LOKI_MIN_FREE_MB"]) : 200; // TEN-STABILITY-36: a full volume otherwise dies mid-run in worktree or event-log writes
   if (free !== null && free < minMb) return { fatal: `only ${Math.floor(free)} MB free on the volume holding ${o.repoDir} (need ${minMb} MB); free disk space, or lower LOKI_MIN_FREE_MB`, warnings };
   if (free !== null && free < Math.max(2048, minMb)) warnings.push(`low disk: ${Math.floor(free)} MB free on the volume holding ${o.repoDir}; a long run may fail mid-way (warns under 2 GB)`);
