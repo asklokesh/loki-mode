@@ -25,6 +25,12 @@ const SECRET_PATTERNS: [string, RegExp][] = [
   ["sendgrid-key", /(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/],
   ["twilio-key", /(?<![A-Za-z0-9])SK[0-9a-f]{32}(?![A-Za-z0-9])/],
   ["azure-storage-key", /AccountKey=[A-Za-z0-9+\/]{40,}={0,2}/],
+  ["pypi-token", /(?<![A-Za-z0-9])pypi-AgEI[A-Za-z0-9_-]{50,}/],
+  ["docker-pat", /(?<![A-Za-z0-9])dckr_pat_[A-Za-z0-9_-]{20,}/],
+  ["digitalocean-token", /(?<![A-Za-z0-9])dop_v1_[a-f0-9]{64}/],
+  ["google-oauth-token", /(?<![A-Za-z0-9])ya29\.[A-Za-z0-9_-]{20,}/],
+  ["shopify-token", /(?<![A-Za-z0-9])shpat_[a-fA-F0-9]{32}/],
+  ["postman-key", /(?<![A-Za-z0-9])PMAK-[A-Za-z0-9]{24}-[A-Za-z0-9]{34}/],
 ];
 const TEMPLATE_PATH = /\.(example|sample|template|dist)(\.|$)|(^|\/)(fixtures|__fixtures__)\//;
 
