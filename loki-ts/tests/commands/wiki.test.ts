@@ -92,6 +92,15 @@ describe("loki wiki show (Bun native)", () => {
     expect(ok.exitCode).toBe(0);
   });
 
+  it("unknown command exits 2", async () => {
+    const bun = await sh(["bun", BUN_CLI, "wiki", "shw"], project);
+    expect(bun.exitCode).toBe(2);
+    expect(bun.stdout).toBe("");
+    expect(bun.stderr).toContain("Unknown wiki command: shw");
+    expect(bun.stderr).toContain("Did you mean 'show'?");
+    expect(bun.stderr).toContain("Usage");
+  });
+
   it("two sections is a usage error with exit 1 and no output", async () => {
     const bun = await sh(["bun", BUN_CLI, "wiki", "show", "architecture", "modules"], project);
     expect(bun.exitCode).toBe(1);
