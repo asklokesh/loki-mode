@@ -157,6 +157,7 @@ function _loki {
                         '--yes[Skip redaction-preview confirmation]' \
                         '--private[Create a secret gist when sharing]' \
                         '--hosted[Hosted publishing (coming in R9)]' \
+                        '--dry-run[Scan and list what share would publish; publishes nothing]' \
                         '--help[Show help]' \
                         '1:subcommand:(list show open share badge md bundle)'
                     ;;
