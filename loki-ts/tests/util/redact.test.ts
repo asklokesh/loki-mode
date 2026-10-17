@@ -105,3 +105,22 @@ test("redaction is idempotent over every ordered pair and triple of rule samples
   }
   expect(bad).toEqual([]);
 });
+
+test("vendor tokens: PyPI, Shopify, Postman, Databricks, Mailgun are redacted", () => {
+  const hex = (n: number) => "0123456789abcdef".repeat(4).slice(0, n);
+  const cases: [string, string][] = [
+    ["pypi-AgEIcHlwaS5vcmc" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6", "PYPI_TOKEN"],
+    ["shpat_" + hex(32), "SHOPIFY_TOKEN"],
+    ["PMAK-" + hex(24) + "-" + hex(34), "POSTMAN_KEY"],
+    ["dapi" + hex(32), "DATABRICKS_TOKEN"],
+    ["key-" + hex(32), "MAILGUN_KEY"],
+  ];
+  for (const [tok, label] of cases) {
+    const out = redactSecrets(`value ${tok} end`);
+    expect(out).toBe(`value [REDACTED:${label}] end`);
+    expect(redactSecrets(out)).toBe(out);
+  }
+  for (const benign of ["key-value", "dapi-docs", "pypi-package", "shpat_short", "monkey-" + hex(32), "PMAK-notatoken"]) {
+    expect(redactSecrets(benign)).toBe(benign);
+  }
+});
