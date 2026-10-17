@@ -692,6 +692,11 @@ describe("repo baseline profile (REPOMEM)", () => {
       expect(attributeStatic("ruff", R("1"), "garbage\n", 1).preExisting).toBe(false);
       expect(attributeStatic("pylint", R("1"), R("1"), 1).preExisting).toBe(false);
       expect(attributeStatic("ruff", "All checks passed!\n", R("1"), 0).preExisting).toBe(true);
+      // 3-arg form: exit unknown, empty or summary-only parse fails closed
+      expect(attributeStatic("ruff", "", R("1")).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "Found 2 errors.\n", R("1")).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "Found 2 errors.\n", R("1"), 0).preExisting).toBe(false);
+      expect(attributeStatic("eslint", "2 problems\n", "", 0).preExisting).toBe(false);
     });
   });
 

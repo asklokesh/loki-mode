@@ -398,7 +398,7 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
 
 /** Static-diagnostic attribution (TEN-QUALITY-02): lint output of head vs base as multisets keyed path/code/message, line and column dropped so shifts do not count.
  *  preExisting only when every head diagnostic key appears in base at the same or a higher count. Fail-closed (introduced): unknown tool, unparseable head or base
- *  output, an empty parse with a non-zero exit, or a missing base output (file new on head). */
+ *  output, an empty parse with a non-zero or unknown (null, the default) exit, a summary count >0 with nothing parsed, or a missing base output (file new on head). */
 export type StaticTool = "ruff" | "shellcheck" | "eslint";
 export interface StaticAttribution { preExisting: boolean; introduced: string[]; reason: string }
 const STATIC_DIAG: Record<StaticTool, RegExp> = {
@@ -407,6 +407,7 @@ const STATIC_DIAG: Record<StaticTool, RegExp> = {
   eslint: /^(.+?):\d+:\d+: (.*) \[(?:Error|Warning)\/([^\]]*)\]$/,
 };
 const STATIC_NOISE = /^(?:Found \d+ errors?\.?|\[\*\] .*|All checks passed!|No fixes available.*|\d+ problems?)$/;
+const STATIC_SUMMARY = /^\s*(?:Found ([1-9]\d*) errors?|([1-9]\d*) problems?)/m;
 function parseStatic(tool: StaticTool, out: string): Map<string, number> | null {
   const re = STATIC_DIAG[tool], m = new Map<string, number>();
   for (const raw of out.split("\n")) {
@@ -420,12 +421,13 @@ function parseStatic(tool: StaticTool, out: string): Map<string, number> | null 
   }
   return m;
 }
-export function attributeStatic(tool: string, headOut: string, baseOut: string | null, headExit: number | null = 0): StaticAttribution {
+export function attributeStatic(tool: string, headOut: string, baseOut: string | null, headExit: number | null = null): StaticAttribution {
   const bad = (reason: string): StaticAttribution => ({ preExisting: false, introduced: [], reason });
   if (tool !== "ruff" && tool !== "shellcheck" && tool !== "eslint") return bad(`unknown tool ${tool}`);
   const head = parseStatic(tool, headOut);
   if (!head) return bad("unparseable head output");
   if (head.size === 0 && headExit !== 0) return bad("no diagnostics parsed but non-zero exit");
+  if (head.size === 0 && STATIC_SUMMARY.test(headOut)) return bad("summary reports problems but no diagnostics parsed");
   if (baseOut === null) return bad("no base output (file new on head)");
   const base = parseStatic(tool, baseOut);
   if (!base) return bad("unparseable base output");
