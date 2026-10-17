@@ -62,6 +62,12 @@ describe("resizeCap and resolveRunCapS", () => {
     expect(resolveRunCapS(mkdtempSync(join(dir, "n-")), false, {})).toEqual({ capS: 900, fixedS: undefined, ceilingS: 2400 });
     expect(resolveRunCapS(mkdtempSync(join(dir, "i-")), false, { LOKI_E10_CAP_S: "Infinity" })).toEqual({ capS: 900, fixedS: undefined, ceilingS: 2400 }); // P12-07m: a non-finite env cap is not a fixed cap
   });
+  test("yaml precedence: loki.yaml wins over loki.yml; a key only in loki.yml is used", () => {
+    const both = mkdtempSync(join(dir, "p-")); writeFileSync(join(both, "loki.yaml"), "budgets:\n  run_cap_s: 1111\n"); writeFileSync(join(both, "loki.yml"), "budgets:\n  run_cap_s: 2222\n");
+    expect(resolveRunCapS(both, true, {}).fixedS).toBe(1111);
+    const onlyYml = mkdtempSync(join(dir, "q-")); writeFileSync(join(onlyYml, "loki.yaml"), "cost:\n  profile: lean\n"); writeFileSync(join(onlyYml, "loki.yml"), "budgets:\n  run_cap_s: 2222\n");
+    expect(resolveRunCapS(onlyYml, true, {}).fixedS).toBe(2222);
+  });
   test("cleanup", () => { rmSync(dir, { recursive: true, force: true }); });
 });
 
