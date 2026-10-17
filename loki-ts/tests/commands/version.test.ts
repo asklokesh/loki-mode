@@ -69,3 +69,21 @@ describe("version unknown flag", () => {
     expect(p.stdout).toMatch(/^Loki Mode v\d+\.\d+\.\d+\n$/);
   });
 });
+
+describe("version extra args", () => {
+  it("extra positional exits 2 with usage and no version on stdout", async () => {
+    for (const argv of [["version", "bogus"], ["--version", "bogus"], ["-v", "bogus"], ["version", "--json", "bogus"]]) {
+      const a = await run(["bun", CLI, ...argv]);
+      expect(a.exitCode).toBe(2);
+      expect(a.stdout).toBe("");
+      expect(a.stderr).toContain("Unexpected argument for version: bogus");
+      expect(a.stderr).toContain("Usage: loki version [--json]");
+    }
+  });
+
+  it("bare help word still prints help", async () => {
+    const a = await run(["bun", CLI, "version", "help"]);
+    expect(a.exitCode).toBe(0);
+    expect(a.stdout).toContain("Usage: loki version");
+  });
+});
