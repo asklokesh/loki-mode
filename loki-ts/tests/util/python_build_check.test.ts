@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildFact,
+  writeBuildResults,
   hasPythonSources,
   hasPythonTests,
   pytestArgv,
@@ -227,5 +229,62 @@ describe("pythonBuildCheck (real python3)", () => {
     writeFileSync(join(dir, "package.json"), "{}");
     writeFileSync(join(dir, "m.py"), "x = 1\n");
     expect((await pythonBuildCheck(dir, join(dir, ".pc"))).status).toBe("not_applicable");
+  });
+});
+
+describe("buildFact + writeBuildResults (TEN-GATES-09)", () => {
+  const pkg = (build: string) =>
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", scripts: { build } }));
+
+  it("package.json build 'exit 1' -> failed", async () => {
+    pkg("exit 1");
+    const f = await buildFact(dir, join(dir, ".pyc"));
+    expect(f.status).toBe("failed");
+    expect(f.exitCode).not.toBe(0);
+  });
+  it("package.json build 'exit 0' -> verified", async () => {
+    pkg("exit 0");
+    const f = await buildFact(dir, join(dir, ".pyc"));
+    expect(f.status).toBe("verified");
+    expect(f.exitCode).toBe(0);
+    expect(f.command).toBe("npm run build --if-present");
+  });
+  it("package.json without a build script -> not_applicable, not verified", async () => {
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", scripts: { test: "true" } }));
+    expect((await buildFact(dir, join(dir, ".pyc"))).status).toBe("not_applicable");
+  });
+  it("python tree with a syntax error -> failed", async () => {
+    writeFileSync(join(dir, "bad.py"), "def (:\n");
+    expect((await buildFact(dir, join(dir, ".pyc"))).status).toBe("failed");
+  });
+  it("empty tree -> not_applicable", async () => {
+    expect((await buildFact(dir, join(dir, ".pyc"))).status).toBe("not_applicable");
+  });
+  it("build env carries no token variables", async () => {
+    pkg("exit 0");
+    let seen: Record<string, string> | undefined;
+    const exec: PyExec = async (_a, o) => {
+      seen = o.env;
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+    await buildFact(dir, join(dir, ".pyc"), { exec });
+    expect(seen?.ANTHROPIC_API_KEY).toBe("");
+    expect(seen?.GITHUB_TOKEN).toBe("");
+    expect(seen?.NPM_TOKEN).toBe("");
+  });
+  it("written JSON has the keys proof-generator reads", async () => {
+    pkg("exit 0");
+    const lokiDir = join(dir, ".loki");
+    const fact = await buildFact(dir, join(lokiDir, "quality", ".pycache"));
+    writeBuildResults(lokiDir, fact);
+    const j = JSON.parse(readFileSync(join(lokiDir, "quality", "build-results.json"), "utf8"));
+    expect(j).toMatchObject({ command: "npm run build --if-present", exit_code: 0, ran: true, applicable: true, status: "verified" });
+    expect(typeof j.duration_sec).toBe("number");
+  });
+  it("not_applicable writes applicable:false, ran:false, null exit_code", () => {
+    const lokiDir = join(dir, ".loki");
+    writeBuildResults(lokiDir, { status: "not_applicable", command: "", exitCode: null, durationSec: null });
+    const j = JSON.parse(readFileSync(join(lokiDir, "quality", "build-results.json"), "utf8"));
+    expect(j).toMatchObject({ ran: false, applicable: false, exit_code: null, status: "not_applicable" });
   });
 });

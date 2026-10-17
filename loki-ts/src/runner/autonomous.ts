@@ -10,7 +10,7 @@
 // diff against the source while the integration is wired up.
 
 import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync, unlinkSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   realClock,
   type Clock,
@@ -496,6 +496,11 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   } finally {
     // R1: shareable proof-of-run. Single call site -> emits on EVERY terminal
     // return (success and failure). Fire-and-forget; never throws.
+    try {
+      const { buildFact, writeBuildResults } = await import("../util/python_build_check.ts");
+      const qdir = join(ctx.lokiDir, "quality");
+      writeBuildResults(ctx.lokiDir, await buildFact(ctx.cwd, join(qdir, ".pycache")));
+    } catch { /* build fact is best effort; absent file stays an honest not_run */ }
     await maybeGenerateProof(ctx).catch(() => {});
     try { (await import("../features/contract.ts")).writeFromChecklist(ctx.cwd, ctx.lokiDir); } catch { /* REQTRACE: never fails a run */ }
   }
