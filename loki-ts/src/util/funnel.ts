@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
-import { safeGitRun } from "./safe_git.ts";
+import { safeGitRun, tokenFreeEnv } from "./safe_git.ts";
 
 export type FunnelKind = "first_run_blocked" | "build_verified";
 
@@ -17,7 +17,7 @@ export function emitFunnel(kind: FunnelKind, key: string): void {
     const child = spawn("bash", ["-c", `source "$1" >/dev/null 2>&1 && ${fn} >/dev/null 2>&1`, "_", script, key], {
       detached: true,
       stdio: "ignore",
-      env: { ...process.env },
+      env: tokenFreeEnv(process.env),
     });
     child.on("error", () => {});
     child.unref();
@@ -28,7 +28,7 @@ export function emitFunnel(kind: FunnelKind, key: string): void {
 
 /** Bounded class of an engine10 preflight refusal, probed from the folder (never from the message text). */
 export async function classifyPreflightBlocker(cwd: string): Promise<string> {
-  const env = { ...process.env } as Record<string, string>;
+  const env = tokenFreeEnv(process.env) as Record<string, string>;
   const git = (a: string[]) => safeGitRun(cwd, a, { env, timeoutMs: 5000 });
   try {
     const wt = await git(["rev-parse", "--is-inside-work-tree"]);
