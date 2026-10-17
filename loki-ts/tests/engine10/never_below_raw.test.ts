@@ -7,14 +7,14 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { cascadeDowngrade, cascadeEnabled, escalationModel, modelRank } from "../../src/engine10/sizing.ts";
+import { cascadeDowngrade, cascadeEnabled, escalationModel, haikuFirstDowngrade, modelRank } from "../../src/engine10/sizing.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import type { RunContext, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const SRC = join(import.meta.dir, "../../src/engine10");
-afterEach(() => { delete process.env.LOKI_E10_CASCADE; });
+afterEach(() => { delete process.env.LOKI_E10_CASCADE; delete process.env.LOKI_IMPLEMENT_HAIKU_FIRST; });
 
 function ctxFor(model: string, calls: SessionRunOptions[], outputs: RunContext["outputs"] = () => ({ intake: { task: "t" } })): RunContext {
   return {
@@ -56,6 +56,28 @@ describe("L1 behavior", () => {
       expect(written.join("")).toContain(note);
       expect(r.data.model_downgrade).toBe(note);
     } finally { process.stderr.write = orig; }
+  });
+
+  it("TEN-COST-16 haiku-first: off by default; on pins implement to haiku; fix after failed verify runs the run model", async () => {
+    const run = "claude-sonnet-5-5";
+    const off: SessionRunOptions[] = [];
+    await implementStage.run(ctxFor(run, off), new AbortController().signal);
+    expect(off[0]!.model).toBeUndefined();
+    process.env.LOKI_IMPLEMENT_HAIKU_FIRST = "1";
+    try {
+      expect(haikuFirstDowngrade("claude-haiku-4-5")).toBeNull();
+      const on: SessionRunOptions[] = [];
+      const r = await implementStage.run(ctxFor(run, on), new AbortController().signal);
+      expect(modelRank(on[0]!.model ?? run)).toBeLessThan(modelRank(run));
+      expect(String(r.data.model_downgrade)).toContain("haiku-first");
+      const g = [{ signature: "bun:a.test.ts", count: 1, sample: "S" }];
+      const fx: SessionRunOptions[] = [];
+      await fixStage.run(ctxFor(run, fx, () => ({ intake: { task: "t" }, implement: { model: on[0]!.model }, verify: { failures_grouped: g } })), new AbortController().signal);
+      expect(fx[0]!.model).toBeUndefined();
+      const fx2: SessionRunOptions[] = [];
+      await fixStage.run(ctxFor(run, fx2, () => ({ intake: { task: "t" }, verify: { failures_grouped: g }, fix: { round: 1, signatures: "bun:a.test.ts", diagnosis: "d" } })), new AbortController().signal);
+      expect(modelRank(fx2[0]!.model ?? run)).toBeGreaterThanOrEqual(modelRank(run));
+    } finally { delete process.env.LOKI_IMPLEMENT_HAIKU_FIRST; }
   });
 
   it("opt-in never downgrades a run that is already on the cascade model or weaker", () => {
@@ -115,7 +137,7 @@ export function guardViolations(files: Record<string, string>): string[] {
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
     // xreview: the model flag is the user-configured reviewer agent model (council/role_agents.ts), claude judge only; never a cascade or cost downgrade.
-    "stages/xreview.ts": /^: \[cli, "-p", prompt, \.\.\.\(model \? \["--model", model\] : \[\]\), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"\];$/,
+    "stages/xreview.ts": /^: \[cli, "-p", prompt, \.\.\.\(model \? \["--model", model\] : \[\]\), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash", \.\.\.leanReviewerFlags\(\{ env, flagSupported \}\), "--output-format", "json"\];$/,
   };
   for (const [path, src] of Object.entries(files)) {
     if (path.startsWith("dashboard/") || path === "types.ts" || path === "session.ts" || path === "cost.ts") continue;
@@ -148,7 +170,8 @@ export function guardViolations(files: Record<string, string>): string[] {
   // Secondary: a haiku model token may appear only on the vetted lines (the router's single haiku producer lives in unit_model.ts).
   const HAIKU_OK: Record<string, RegExp[]> = {
     "../runner/router/plan_route.ts": [/^export const ROUTER_UNITS_INSTRUCTION/],
-    "../runner/model_rank.ts": [/^export const modelRank/, /^\s*const model = k\.includes\("haiku"\)/],
+    "stages/implement.ts": [/^import \{ cascadeDowngrade, haikuFirstDowngrade,/, /^\s*const downgrade = routed \? null : cascadeDowngrade\(ctx\.model\) \?\? haikuFirstDowngrade\(ctx\.model\);/],
+    "../runner/model_rank.ts": [/^export const modelRank/, /^\/\*\* TEN-COST-16/, /^export const haikuFirstEnabled/, /^export function haikuFirstDowngrade/, /^\s*return haikuFirstEnabled\(env\) && modelRank\(to\) < modelRank\(runModel\)/, /^  const to = resolveModelAlias\("haiku"\);/, /^\s*const model = k\.includes\("haiku"\)/],
     "../runner/router/unit_model.ts": [/^const isHaiku = /, /^export function validHaikuRoute/, /r\["executor"\] !== "haiku"/, /^\s*return v \? \{ model: resolveModelAlias\("haiku"\), source: "opus-plan", reason: v\.reason, valid: true \} : \{ model: runFloor\(runModel\)/, /unitRedo\(isHaiku\(cur\) \? "haiku"/, /^\s*const v = validHaikuRoute\(plan\);$/, /^export const floorNoAdvisor/],
   };
   for (const path of ["stages/implement.ts", "stages/fix.ts", "stages/plan.ts", "machine.ts", "session.ts", "cost.ts", "../runner/model_rank.ts", "../runner/router/unit_model.ts", "../runner/router/plan_route.ts", "../runner/router/implement_route.ts", "../runner/router/session_route.ts"]) {
