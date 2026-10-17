@@ -296,6 +296,7 @@ def summarize_row(row):
         "success_rate": success_rate,
         "quality_median": _median([q for q in qualities if q is not None]),
         "cost_usd_median": cost_median,
+        "cost_partial": any(_schema.cost_is_partial(t) for t in trials),
         "wall_clock_median": _median([d for d in durations if d is not None]),
         "iterations_median": _median([i for i in iters if i is not None]),
         "manual": _is_manual(row),
@@ -465,6 +466,8 @@ def render_markdown(results):
         else:
             kN = "n/a"
         cost = fmt_usd(s["cost_usd_median"])
+        if s.get("cost_partial") and s["cost_usd_median"] is not None:
+            cost = ">= " + cost
         wall = ("%.1fs" % s["wall_clock_median"]
                 if s["wall_clock_median"] is not None else "not recorded")
         iters = ("%g" % s["iterations_median"]

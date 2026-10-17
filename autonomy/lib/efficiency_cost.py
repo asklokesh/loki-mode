@@ -295,6 +295,9 @@ def _merge_child_ledger(loki_dir, cost):
     cost["ledger"] = "present"
     cost["ledger_records"] = len(records)
     cost["ledger_invalid_lines"] = invalid
+    if invalid > 0:
+        # A line that could not be parsed is spend we cannot see: lower bound.
+        cost["cost_partial"] = True
     if not records:
         if by_phase:
             cost["cost_by_phase"] = by_phase

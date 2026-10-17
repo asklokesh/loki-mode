@@ -298,11 +298,14 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                  ("completed", "timeout", "unmeasured"))
     any_unmeasured = unmeasured_runs > 0
 
-    measured = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
-    # A cost_partial row has a usd that is only a lower bound: it counts toward
+    # A row's spend is the larger of its stored and true cost; a row whose
+    # cost_is_partial (one shared helper) is only a lower bound: it counts toward
     # the measured spend but not as a fully measured run.
+    measured = [row_true_spend(r) for r in rows
+                if r.get("cost_usd") is not None or r.get("true_cost_usd") is not None]
     partial_n = sum(1 for r in rows
-                    if r.get("cost_usd") is not None and r.get("cost_partial"))
+                    if (r.get("cost_usd") is not None or r.get("true_cost_usd") is not None)
+                    and row_spend_is_partial(r))
     missing_n = assigned - len(measured)
     unmeasured_n = missing_n + partial_n
     spend = round(sum(measured), 6)
@@ -402,28 +405,45 @@ def grade(task: Dict[str, Any], workdir: str) -> Dict[str, Any]:
     return {"passed": rc == 0, "rc": rc, "tail": "\n".join(tail)}
 
 
-def ledger_spend(workdir: str) -> Optional[float]:
-    """Sum of `usd` over the child-session ledger, or None when absent/unreadable."""
+def ledger_read(workdir: str) -> Tuple[Optional[float], int, int]:
+    """(usd sum or None, invalid lines, unpriced lines) of the child-session ledger.
+    Invalid = not a JSON object; unpriced = an object without a numeric usd."""
     path = os.path.join(workdir, LEDGER_REL)
     try:
         with open(path) as fh:
             lines = fh.read().splitlines()
     except OSError:
-        return None
-    total, seen = 0.0, False
+        return None, 0, 0
+    total, seen, invalid, unpriced = 0.0, False, 0, 0
     for ln in lines:
-        try:
-            v = json.loads(ln).get("usd")
-            total += float(v)
-            seen = True
-        except (ValueError, TypeError, AttributeError):
+        if not ln.strip():
             continue
-    return round(total, 6) if seen else None
+        try:
+            rec = json.loads(ln)
+        except ValueError:
+            invalid += 1
+            continue
+        if not isinstance(rec, dict):
+            invalid += 1
+            continue
+        v = rec.get("usd")
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            unpriced += 1
+            continue
+        total += float(v)
+        seen = True
+    return (round(total, 6) if seen else None), invalid, unpriced
+
+
+def ledger_spend(workdir: str) -> Optional[float]:
+    """Sum of `usd` over the child-session ledger, or None when absent/unreadable."""
+    return ledger_read(workdir)[0]
 
 
 def row_spend_is_partial(row: Dict[str, Any]) -> bool:
-    """True when the row's reported cost is a lower bound (cost_partial)."""
-    return bool(row.get("cost_partial"))
+    """True when the row's reported cost is a lower bound (bench_schema.cost_is_partial,
+    the one decision shared by every cost consumer)."""
+    return _schema.cost_is_partial(row)
 
 
 def row_true_spend(row: Dict[str, Any]) -> float:
@@ -840,12 +860,11 @@ def _result_rows(out_dir: str) -> List[Dict[str, Any]]:
             r = dict(r)
             ev = os.path.join(out_dir, "evidence-%s" % stamp,
                               "%s-%s-%d" % (r.get("task"), r.get("arm"), r.get("repeat", 1)))
-            led = ledger_spend(ev)
+            led, bad, unpriced = ledger_read(ev)
             vals = [v for v in (r.get("cost_usd"), r.get("true_cost_usd"), led)
                     if v is not None]
-            if r.get("cost_usd") is None and vals:
-                # No main-session cost was stored; the ledger or true cost alone
-                # excludes the main RARV session, so it is only a lower bound.
+            if _schema.cost_is_partial(r, ledger_usd=led, ledger_invalid=bad,
+                                       ledger_unpriced=unpriced):
                 r["cost_partial"] = True
             r["cost_usd"] = float(max(vals)) if vals else None
             rows.append(r)

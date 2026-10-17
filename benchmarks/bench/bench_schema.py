@@ -387,6 +387,44 @@ UNMEASURED_EXIT_STATUSES = frozenset({
 })
 
 
+def _num(v: Any) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def cost_is_partial(rec: Any, ledger_usd: Optional[float] = None,
+                    ledger_invalid: int = 0, ledger_unpriced: int = 0) -> bool:
+    """The ONE decision of whether a cost is only a lower bound (FC-COST-PARTIAL-b).
+
+    Every cost consumer (attribution, equivalence_report, report, spend cap) calls
+    this; none re-derives it. rec is a result row or trial; the ledger arguments
+    are optional extra evidence a caller read from disk. Partial when any of:
+    cost_partial already true (also under adapter / adapter.provenance); cost_usd
+    missing while a true cost or ledger value exists; stored cost_usd below the
+    true cost or ledger sum (covers a stored 0.0); invalid or unpriced ledger lines.
+    """
+    if not isinstance(rec, dict):
+        return False
+    adapter = rec.get("adapter") if isinstance(rec.get("adapter"), dict) else {}
+    prov = adapter.get("provenance") if isinstance(adapter.get("provenance"), dict) else {}
+    for src in (rec, adapter, prov):
+        if src.get("cost_partial"):
+            return True
+    invalid = (rec.get("ledger_invalid_lines") or 0) + (ledger_invalid or 0)
+    unpriced = (rec.get("cost_unpriced_records") or 0) + (ledger_unpriced or 0)
+    if invalid > 0 or unpriced > 0:
+        return True
+    stored = _num(rec.get("cost_usd"))
+    others = [v for v in (_num(rec.get("true_cost_usd")), _num(ledger_usd))
+              if v is not None]
+    if not others:
+        return False
+    if stored is None:
+        return True
+    return stored < max(others) - 1e-9
+
+
 def trial_is_measured(trial: Dict[str, Any]) -> bool:
     """True when this trial represents a real, gradeable observation.
 
@@ -472,6 +510,7 @@ def summarize_trials(trials: List[Dict[str, Any]]) -> Dict[str, Any]:
     if total_cost is not None and n_success > 0:
         per_solved = round(total_cost / n_success, 4)
     return {
+        "cost_partial": any(cost_is_partial(t) for t in measured),
         "n_trials": n,
         "n_attempted": n_attempted,
         "n_unmeasured": len(unmeasured),
