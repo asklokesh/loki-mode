@@ -171,7 +171,9 @@ def _interventions_value(proof):
 _IV_TYPES = ("steer", "input", "authorization", "repair")
 
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
 from efficiency_cost import cost_block_is_partial  # noqa: E402
 
 

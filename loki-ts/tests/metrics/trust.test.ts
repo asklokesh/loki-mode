@@ -301,7 +301,7 @@ describe("formatting", () => {
   });
 });
 
-import { graduationAdvice, type TrustRun } from "../../src/metrics/trust.ts";
+import { graduationAdvice, outcomeEffort, type TrustRun } from "../../src/metrics/trust.ts";
 
 function gRun(i: number, over: Partial<TrustRun> = {}): TrustRun {
   return {
@@ -440,5 +440,39 @@ describe("computeTrajectory: outcome effort", () => {
     expect(eff.cost_per_accepted_usd).toBeNull();
     expect(eff.cost_note).toContain("no accepted");
     expect(eff.misleading_completion_rate).toBeNull();
+  });
+});
+
+describe("outcomeEffort partial cost", () => {
+  it("refuses a bare cost per accepted when any run cost is partial", () => {
+    const e = outcomeEffort([gRun(0, { cost_usd: 0.5 }), gRun(1, { cost_usd: 0.5, cost_partial: true })]);
+    expect(e.cost_per_accepted_usd).toBeNull();
+    expect(e.cost_note).toContain("cost partial for 1 of 2 runs");
+  });
+  it("still reports complete cost", () => {
+    const e = outcomeEffort([gRun(0, { cost_usd: 0.5, cost_partial: false })]);
+    expect(e.cost_per_accepted_usd).toBe(0.5);
+  });
+});
+
+describe("computeTrajectory partial cost parity with trust_trajectory.py", () => {
+  it("loads cost_partial from proofs and refuses a bare cost per accepted", () => {
+    for (const id of ["r0", "r1"]) {
+      writeProof(id, {
+        generatedAt: "2026-01-01T00:00:00Z",
+        raw: { run_id: id, verdict: "VERIFIED", cost: { usd: 0.5, cost_partial: true } },
+      });
+    }
+    const traj = computeTrajectory(td);
+    expect(traj.outcome_effort.cost_per_accepted_usd).toBeNull();
+    expect(traj.outcome_effort.cost_note).toContain("cost partial for 2 of 2 runs");
+    expect(formatTrajectoryHuman(traj)).not.toContain("Cost per accepted: $");
+  });
+  it("unpriced records alone mark the run partial", () => {
+    writeProof("r0", {
+      generatedAt: "2026-01-01T00:00:00Z",
+      raw: { run_id: "r0", verdict: "VERIFIED", cost: { usd: 0.5, cost_unpriced_records: 2 } },
+    });
+    expect(computeTrajectory(td).outcome_effort.cost_per_accepted_usd).toBeNull();
   });
 });

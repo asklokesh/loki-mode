@@ -349,6 +349,39 @@ class PartialCostSiblingTests(unittest.TestCase):
         self.assertNotIn("at least", hook)
         self.assertIn("$0.25", hook)
 
+    def test_cost_summary_unmeasured_iteration_alone_marks_lower_bound(self):
+        cs = _load("cost_summary_t3", "cost-summary.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [
+                {"iteration": 1, "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.1},
+                {"iteration": 2, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
+            ])
+            s = cs.summarize(d)
+            self.assertEqual(s["iterations_measured"], 1)
+            self.assertEqual(s["iterations_found"], 2)
+            self.assertEqual(s["cost_iterations_counted"], 1)
+            self.assertTrue(s["cost_partial"])
+
+    def test_proof_generator_fallback_html_labels_partial_cost(self):
+        pg = _load("proof_generator_t2", "proof-generator.py")
+        base = {"run_id": "r", "cost": {"usd": 0.25, "cost_partial": True}}
+        self.assertIn("at least $0.25", pg._render_fallback_html(base))
+        base["cost"]["cost_partial"] = False
+        html = pg._render_fallback_html(base)
+        self.assertNotIn("at least $0.25", html)
+
+    def test_proof_template_labels_partial_cost_in_hero_and_cost_card(self):
+        html = (_LIB / "proof-template.html").read_text(encoding="utf-8")
+        self.assertIn("function costIsPartial(", html)
+        for fn in ("renderHero", "renderHeroStats", "renderCost"):
+            start = html.index("function " + fn + "(")
+            end = html.index("\n  function ", start + 10)
+            body = html[start:end]
+            if fn != "renderHeroStats":
+                self.assertIn("costIsPartial(p)", body, fn)
+            self.assertIn('"at least "', body, fn)
+
 
 if __name__ == "__main__":
     unittest.main()
