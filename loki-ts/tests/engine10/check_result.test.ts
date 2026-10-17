@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkProvenance, classifyCheck, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -306,5 +306,47 @@ describe("TEN-GATES-01 check provenance", () => {
     expect(hasExogenousProof([ok("lint:x", 2, "fail")], ctx)).toBe(false);
     expect(hasExogenousProof([ok("bun:tests/new.test.ts"), ok("council", 5), ok("app_boot", 1)], ctx)).toBe(true);
     expect(hasExogenousProof([], ctx)).toBe(false);
+  });
+});
+
+describe("TEN-QUALITY-01 failureExcerpt", () => {
+  const PY = "tests/test_a.py:4: AssertionError\n=== FAILURES ===\n    def test_add():\n>       assert add(2, 2) == 5\nE       assert 4 == 5\nE        +  where 4 = add(2, 2)\n/repo/tests/test_a.py:4: AssertionError\n1 failed in 0.01s\n";
+  test("pytest: E lines and last frame, noise dropped", () => {
+    const x = failureExcerpt(PY, "/repo");
+    expect(x).toContain("E       assert 4 == 5");
+    expect(x).toContain("tests/test_a.py:4: AssertionError");
+    expect(x).not.toContain("/repo/");
+    expect(x).not.toContain("1 failed in");
+  });
+  test("jest/vitest: Expected and Received", () => {
+    const x = failureExcerpt("\u001b[31m  Expected: 5\u001b[0m\n  Received: 4\n  at foo (a.test.ts:3:1)\nTests: 1 failed\n");
+    expect(x).toContain("Expected: 5");
+    expect(x).toContain("Received: 4");
+    expect(x).not.toContain("\u001b");
+  });
+  test("node:test: AssertionError block", () => {
+    const x = failureExcerpt("not ok 1 - adds\n  error: 'Expected values to be strictly equal:'\n  AssertionError [ERR_ASSERTION]: 4 !== 5\n  actual: 4\n  expected: 5\n# fail 1\n");
+    expect(x).toContain("AssertionError");
+    expect(x).toContain("expected: 5");
+  });
+  test("go: --- FAIL and following lines", () => {
+    const x = failureExcerpt("=== RUN   TestA\n--- FAIL: TestA (0.00s)\n    a_test.go:9: got 4, want 5\nFAIL\nFAIL\tp\t0.1s\n");
+    expect(x).toContain("--- FAIL: TestA");
+    expect(x).toContain("got 4, want 5");
+  });
+  test("tsc diagnostics", () => {
+    const x = failureExcerpt("src/a.ts(3,5): error TS2322: Type 'string' is not assignable to type 'number'.\nFound 1 error.\n");
+    expect(x).toContain("error TS2322");
+  });
+  test("cap is bytes and secrets are redacted", () => {
+    const big = Array.from({ length: 400 }, (_, i) => `E   line ${i} AKIAABCDEFGHIJKLMNOP`).join("\n");
+    const x = failureExcerpt(big);
+    expect(Buffer.byteLength(x)).toBeLessThanOrEqual(1500);
+    expect(x).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(x).toContain("[REDACTED:AWS_KEY]");
+  });
+  test("unknown shape falls back to the last lines; empty stays empty", () => {
+    expect(failureExcerpt("a\nb\nboom\n")).toContain("boom");
+    expect(failureExcerpt("")).toBe("");
   });
 });
