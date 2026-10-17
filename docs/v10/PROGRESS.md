@@ -2530,3 +2530,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T13:13Z (CoS) v11.17.50
 - Wave AO shipped: 28 of 30 TEN rows APPROVE and merged clean in 22 chains. TEN-COST-49 FAILED (builder worktree path missing) so TEN-COST-50 was not built; both stay ready. Checks: tsc rc=0; bun changed tests plus guards 1266 pass 4 fail before the dist rebuild, 2 fail after (full_env_spawn_guard on doctor.ts, engine10 budget 5016 of 5000); secure-scan, help-changelog-drift, shard-durations-drift rc=0. Main Tests on 3756bef0f still red (bun, shell shards 0,3,4); a P0 fix-forward agent covers those and the two local reds. Q18-03e fix round 2 (64d5d906d) is in opus re-review.
+
+## 2026-10-17T13:29Z (CoS) v11.17.51
+- P0 fix-forward for the wave AO reds (doctor spawn env, engine10 budget, deep_wiring, workspace e2e, sigpipe, DEPS) released; evidence: targeted bun 570 pass 0 fail, four shell suites rc=0, tsc clean.

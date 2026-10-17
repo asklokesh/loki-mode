@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.51 (2026-10-17)
+
+### Fixed
+- `loki doctor` no longer passes the full parent environment to its helper and provider-offer spawns; both use the token-free environment, and the stale spawn-guard allowlist row is removed.
+- The engine10 core is back under its 5000-line budget: the AI-marking helpers moved from `engine10/pr_body.ts` to `util/reviewer_brief.ts` and are re-exported unchanged.
+- `deep_wiring.test.ts` creates an initial commit, matching the preflight that now refuses repos with no commits.
+- The workspace e2e check, the sigpipe-guard ceiling, and the dependency inventory (`loki-ts/todo-app/package.json`) are green again after wave AO.
+
 ## v11.17.50 (2026-10-17)
 
 ### Wave AO (28 TEN rows, all reviewed APPROVE)
