@@ -130,7 +130,7 @@ _loki_completion() {
 
         status)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --badge --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --badge --probe --help" -- "$cur") )
                 return 0
             fi
             ;;

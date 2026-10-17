@@ -131,12 +131,13 @@ async function probeConfiguredControl(env: NodeJS.ProcessEnv): Promise<string | 
 
 export async function runModernStatus(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (argv.includes("--badge")) return (await import("./status.ts")).runStatus(["--badge"]);
+  if (argv.includes("--probe")) return (await import("./status.ts")).runStatus(["--probe"]);
   let json = false;
   let wanted: string | null = null;
   for (const a of argv) {
     if (a === "--json") json = true;
     else if (!a.startsWith("-") && wanted === null) wanted = a;
-    else if (a === "--help" || a === "-h") { process.stdout.write("Usage: loki status [run-id] [--json|--badge]\n  Shows the current or latest Loki 10 run.\n"); return 0; }
+    else if (a === "--help" || a === "-h") { process.stdout.write("Usage: loki status [run-id] [--json|--badge|--probe]\n  Shows the current or latest Loki 10 run.\n"); return 0; }
     else { process.stderr.write(`loki status: unknown flag ${a}\nUsage: loki status [--json]\n`); return 1; }
   }
   const repoDir = env.LOKI_E10_REPO_DIR ?? process.cwd();

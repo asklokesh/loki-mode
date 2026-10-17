@@ -841,6 +841,36 @@ async function runStatusBadge(): Promise<number> {
   return 0;
 }
 
+// loki status --probe: re-probe the newest deploy record's health_url now. Exit 0 when healthy
+// (2xx/3xx) or when there is nothing to probe; exit 1 on a 4xx/5xx, timeout or network error.
+async function runStatusProbe(): Promise<number> {
+  const d = await loadLastDeploy(lokiDir());
+  if (d === null) {
+    process.stdout.write("No deploy to probe: no deploy record\n");
+    return 0;
+  }
+  const raw = d.rec !== null && typeof d.rec["health_url"] === "string" ? (d.rec["health_url"] as string).trim() : "";
+  if (!/^https?:\/\/\S+$/.test(raw)) {
+    process.stdout.write("No deploy to probe: last deploy record has no health URL\n");
+    return 0;
+  }
+  const ms = Number(process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"]);
+  const timeoutMs = Number.isFinite(ms) && ms > 0 ? ms : 10000;
+  try {
+    const res = await fetch(raw, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status >= 200 && res.status < 400) {
+      process.stdout.write(`Deploy health OK: ${raw} returned ${res.status}\n`);
+      return 0;
+    }
+    process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} returned ${res.status}${NC}\n`);
+    return 1;
+  } catch (e) {
+    const why = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError") ? `timed out after ${timeoutMs}ms` : `unreachable (${e instanceof Error ? e.message : String(e)})`;
+    process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} ${why}${NC}\n`);
+    return 1;
+  }
+}
+
 // v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
 async function renderPhase1Section(lokiBase: string): Promise<void> {
   const stateDir = resolve(lokiBase, "state");
@@ -978,12 +1008,15 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
     if (flag === "--badge") {
       return runStatusBadge();
     }
+    if (flag === "--probe") {
+      return runStatusProbe();
+    }
     if (flag === "--help" || flag === "-h") {
-      process.stdout.write(`Usage: loki status [--json|--badge]\n`);
+      process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
       return 0;
     }
     process.stdout.write(`${RED}Unknown flag: ${flag}${NC}\n`);
-    process.stdout.write(`Usage: loki status [--json|--badge]\n`);
+    process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);
     return 1;
   }
   return runStatusText();
