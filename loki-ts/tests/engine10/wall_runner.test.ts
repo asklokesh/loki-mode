@@ -1,7 +1,7 @@
 // A-103: real `node --test` runs on a bugrepo (off-by-one sum) through RealBaseTestRunner.
 // A Wall test that is not red for the right reason is discarded, never left in the tree.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classify, runWall } from "../../src/engine10/stages/wall.ts";
@@ -139,4 +139,38 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(classify(f, 1, "/r/t.test.js:1\ndescribe('x', () => {});\n^\n\nReferenceError: describe is not defined\n# fail 1\n", "/x")).toBe("not_run");
     expect(classify(f, 1, "Error: Cannot find module 'lodash'\n    at require (node:internal/x:1:1)\n  code: 'MODULE_NOT_FOUND'\n}\n\nNode.js v26.5.0\n# fail 1\n", "/x")).toBe("not_run");
   });
+});
+
+describe("TEN-SPEED-19 base jobs", () => {
+  const H2 = "const test = require('node:test');\nconst assert = require('node:assert');\nconst fs = require('node:fs');\nconst { sum } = require('../sum');\n";
+  const slow = (n: string) => H2 + `test('${n}', () => { const t0 = Date.now(); fs.appendFileSync(process.env.SPAN_LOG, 'S ' + t0 + '\\n'); while (Date.now() - t0 < 700) {} fs.appendFileSync(process.env.SPAN_LOG, 'E ' + Date.now() + '\\n'); assert.strictEqual(sum([1, 2, 3]), 6); });\n`;
+  const files = { "loki_wall_a.test.js": slow("a"), "loki_wall_b.test.js": slow("b"), "loki_wall_c.test.js": slow("c"), "loki_wall_jest.test.js": JEST, "loki_wall_jest2.test.js": JEST.replace("adds all", "again") };
+  async function run(jobs: string | undefined) {
+    const logDir = mkdtempSync(join(tmpdir(), "loki-ten19-log-")), log = join(logDir, "span.log");
+    repos.push(logDir);
+    const saved = { j: process.env.LOKI_E10_BASE_JOBS, s: process.env.SPAN_LOG };
+    if (jobs === undefined) delete process.env.LOKI_E10_BASE_JOBS; else process.env.LOKI_E10_BASE_JOBS = jobs;
+    process.env.SPAN_LOG = log; writeFileSync(log, "");
+    try {
+      const r = await wallWith(files);
+      const ev = readFileSync(log, "utf8").trim().split("\n").map((l) => l.split(" "));
+      ev.sort((x, y) => Number(x[1]) - Number(y[1]) || (x[0] === "E" ? -1 : 1));
+      let live = 0, peak = 0;
+      for (const [k] of ev) { live += k === "S" ? 1 : -1; peak = Math.max(peak, live); }
+      return { d: r.result.data, peak };
+    } finally {
+      if (saved.j === undefined) delete process.env.LOKI_E10_BASE_JOBS; else process.env.LOKI_E10_BASE_JOBS = saved.j;
+      if (saved.s === undefined) delete process.env.SPAN_LOG; else process.env.SPAN_LOG = saved.s;
+    }
+  }
+  test("default is sequential; jobs=3 overlaps files with identical counts, files and result", async () => {
+    const seq = await run(undefined), par = await run("3"), bad = await run("abc");
+    expect(seq.peak).toBe(1);
+    expect(bad.peak).toBe(1);
+    expect(par.peak).toBeGreaterThan(1);
+    expect(seq.d.base_run).toEqual({ pass: 0, fail: 3, not_run: 1 });
+    expect(par.d.base_run).toEqual(seq.d.base_run);
+    const norm = (d: Record<string, unknown>) => JSON.stringify({ files: (d.files as { path: string }[]).map((f) => f.path.split("/").pop()), ro: (d.readOnlyFiles as { path: string }[]).map((f) => f.path.split("/").pop()), nr: d.not_run_files ?? d.notRunFiles ?? null, base: d.base_run, sat: d.already_satisfied });
+    expect(norm(par.d)).toBe(norm(seq.d));
+  }, 60_000);
 });

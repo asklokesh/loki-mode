@@ -3,6 +3,7 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
@@ -530,4 +531,22 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
   return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
+}
+
+/** TEN-SPEED-19: LOKI_E10_BASE_JOBS, default 1 (sequential); an invalid value or one below 1 falls back to 1, capped at 16. */
+export function baseJobs(): number { const n = Number(process.env.LOKI_E10_BASE_JOBS); return Number.isInteger(n) && n >= 1 ? Math.min(n, 16) : 1; }
+/** TEN-SPEED-19: map items through an async fn with at most `jobs` in flight; results keep input order. */
+export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length); let next = 0;
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, jobs), items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]!); } }));
+  return out;
+}
+/** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. */
+export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): Promise<{ status: number | null; output: string }> {
+  return new Promise((resolve) => {
+    let output = "", error = false, done = false; const fin = (status: number | null) => { if (!done) { done = true; resolve({ status: error ? null : status, output }); } };
+    const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, timeout: o.timeoutMs });
+    c.stdout?.on("data", (d) => { output += d; }); c.stderr?.on("data", (d) => { output += d; });
+    c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
+  });
 }
