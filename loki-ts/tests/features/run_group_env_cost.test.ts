@@ -18,19 +18,26 @@ describe("group cost", () => {
   test("sums unit costs", () => {
     const c = parseGroupCost(table(["unit-g1-1      $0.17      VERIFIED", "unit-g1-2      $0.25      VERIFIED"]));
     expect(c.usd).toBeCloseTo(0.42, 5);
-    expect(groupCostLine([c])).toBe("loki: cost $0.42 (measured)\n");
+    expect(groupCostLine([c])).toBe("Cost:     $0.42 (claude, 2 unit sessions)\n");
   });
   test("unmeasured rows make it partial, never $0", () => {
     const c = parseGroupCost(table(["unit-g1-1      $0.17      VERIFIED", "unit-g1-2      unmeasured FAILED: x"]));
-    expect(groupCostLine([c])).toBe("loki: cost partial: $0.17 for 1 of 2 unit session(s)\n");
+    expect(groupCostLine([c])).toBe("Cost:     $0.17 partial (claude, 1 of 2 unit sessions measured)\n");
   });
   test("no figures reads not measured", () => {
     const c = parseGroupCost(table(["unit-g1-1      unmeasured FAILED: x", "unit-g1-2      -          SKIPPED"]));
     expect(c.usd).toBeNull();
-    expect(groupCostLine([c])).toBe("loki: cost not measured\n");
+    expect(groupCostLine([c])).toBe("Cost:     not measured\n");
   });
   test("sums across launches", () => {
     const a = parseGroupCost(table(["unit-g1-1      $0.10      VERIFIED"])), b = parseGroupCost(table(["unit-g1-3      $0.05      VERIFIED"]));
-    expect(groupCostLine([a, b])).toBe("loki: cost $0.15 (measured)\n");
+    expect(groupCostLine([a, b])).toBe("Cost:     $0.15 (claude, 2 unit sessions)\n");
+  });
+});
+
+describe("parser guard", () => {
+  test("no Summary table means no cost, stray dollar lines ignored", () => {
+    const c = parseGroupCost("backlog: crashed $9.99 early\nmore $1.00 stuff\n");
+    expect(c).toEqual({ usd: null, measured: 0, unmeasured: 0 });
   });
 });

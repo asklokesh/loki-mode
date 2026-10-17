@@ -46,19 +46,32 @@ export function scopedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 /** Cost of one backlog.py launch, summed from its per-unit summary rows (`<label> $0.17 <status>`). usd is null when no unit reported a dollar figure: unknown is never $0. */
 export interface GroupCost { usd: number | null; measured: number; unmeasured: number }
 export function parseGroupCost(stdout: string): GroupCost {
-  const tail = stdout.slice(stdout.lastIndexOf("\nSummary:") + 1);
+  const at = stdout.lastIndexOf("\nSummary:");
+  if (at < 0) return { usd: null, measured: 0, unmeasured: 0 }; // launcher died before its table: streamed lines are not unit rows
+  const tail = stdout.slice(at + 1);
   let usd = 0, measured = 0, unmeasured = 0;
   for (const m of tail.matchAll(/^(?!ITEM\b)\S+[ \t]+(\$[0-9]+(?:\.[0-9]+)?|unmeasured)[ \t]+\S/gm)) {
     if (m[1] === "unmeasured") unmeasured++; else { usd += Number(m[1]!.slice(1)); measured++; }
   }
   return { usd: measured > 0 ? usd : null, measured, unmeasured };
 }
-/** One cost line for the group run, in the single-run wording: measured, partial, or not measured (never $0.00 for an unknown). */
-export function groupCostLine(costs: GroupCost[]): string {
+/** One cost line for the group run, in the run-summary wording (`Cost:     $0.11` / `not measured`); partial when some units reported no figure, never $0.00 for an unknown. */
+export function groupCostLine(costs: GroupCost[], provider = "claude"): string {
   const measured = costs.reduce((a, c) => a + c.measured, 0), unmeasured = costs.reduce((a, c) => a + c.unmeasured, 0);
-  if (measured === 0) return "loki: cost not measured\n";
+  if (measured === 0) return "Cost:     not measured\n";
   const usd = costs.reduce((a, c) => a + (c.usd ?? 0), 0);
-  return unmeasured > 0 ? `loki: cost partial: $${usd.toFixed(2)} for ${measured} of ${measured + unmeasured} unit session(s)\n` : `loki: cost $${usd.toFixed(2)} (measured)\n`;
+  return unmeasured > 0 ? `Cost:     $${usd.toFixed(2)} partial (${provider}, ${measured} of ${measured + unmeasured} unit sessions measured)\n` : `Cost:     $${usd.toFixed(2)} (${provider}, ${measured} unit session${measured === 1 ? "" : "s"})\n`;
+}
+/** Roll the summed unit cost into the parent run's efficiency records (.loki/metrics/efficiency/iteration-*.json) so collect_efficiency, the receipt and the bench read it. No figure: no cost_usd (absence reads as unmeasured). */
+export function writeGroupCostRecord(repoDir: string, name: string, costs: GroupCost[], provider: string): void {
+  const measured = costs.reduce((a, c) => a + c.measured, 0), unmeasured = costs.reduce((a, c) => a + c.unmeasured, 0);
+  if (measured + unmeasured === 0) return;
+  const usd = costs.reduce((a, c) => a + (c.usd ?? 0), 0);
+  const dir = join(repoDir, ".loki", "metrics", "efficiency");
+  try {
+    mkdirSync(dir, { recursive: true });
+    atomicWriteJson(join(dir, `iteration-group-${name}.json`), { phase: "group", provider, status: "group", ...(measured > 0 ? { cost_usd: Number(usd.toFixed(6)) } : { cost_unmeasured_reason: "no unit reported a dollar figure" }), ...(unmeasured > 0 ? { cost_partial: true, units_measured: measured, units_unmeasured: unmeasured } : {}), timestamp: new Date().toISOString() });
+  } catch { /* cost reporting never fails the run */ }
 }
 
 const defaultLauncher: BacklogLauncher = (argv, env, cwd, onOut) => new Promise((resolve) => {
@@ -238,6 +251,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const status = new Map<string, string>();
   const costs: GroupCost[] = [];
   let launchCode = 0;
+  const costName = `${groupId}-${Date.now().toString(36)}`; // one record per invocation: a resumed group adds to earlier launches
   if (pending > 0) {
     const slug = slugOf();
     if (!slug) { say("loki: NOT PROVEN: group run needs an origin remote of the form owner/repo; no unit was started\n"); return 1; }
@@ -258,7 +272,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     if (u.done || /^(VERIFIED|PR )/.test(st)) branches[u.id] = `loki/${key}`; else failedUnits.push(u.id);
   });
   if (launchCode !== 0) say(`loki: unit launcher exit ${launchCode}; ${failedUnits.length} unit(s) did not pass\n`);
-  if (costs.length > 0) say(groupCostLine(costs));
+  if (costs.length > 0) { say(groupCostLine(costs, provider)); writeGroupCostRecord(repoDir, costName, costs, provider); }
   if (Object.keys(branches).length === 0) { say("loki: FAILED: no unit passed; nothing to integrate\n"); return 1; }
 
   const testCmd = testCommand(repoDir, env), fixes = units.filter((u) => (u as Partial<FixUnit>).fixKind) as FixUnit[];
@@ -278,7 +292,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const r = await integrateWithFixes({ repoDir, env, dag: { ...full, units: units.filter((u) => !(u as Partial<FixUnit>).fixKind) }, fixes, branches, failed: failedUnits, testCmd,
     io: { integrate: (dag, br, failed) => integrate({ repoDir, groupId, baseRef, dag, branches: br, failedUnits: failed, testCmd }), launch: launchFix, leave: dropGroupBranch, say } });
   if (fixes.length > 0) putDag(units);
-  if (costs.length > 1) say(groupCostLine(costs)); // fix units ran after the first line: restate the running total
+  if (costs.length > 1) { say(groupCostLine(costs, provider)); writeGroupCostRecord(repoDir, costName, costs, provider); } // fix units ran after the first line: restate the running total
   for (const [id, o] of Object.entries(r.perUnit)) say(`loki: unit ${id} ${o}\n`);
   if (!r.ok || launchCode !== 0) {
     say(`loki: FAILED: group not verified (${r.reason ?? "launcher reported a failed unit"})\n`);

@@ -39,7 +39,7 @@ function conflictInfo(repoDir: string, groupBranch: string, unitBranch: string):
 }
 
 function suiteTail(repoDir: string, cmd: readonly string[]): string {
-  const s = spawnSync(cmd[0]!, cmd.slice(1), { cwd: repoDir, encoding: "utf8", timeout: 600_000, env: { PATH: process.env["PATH"], HOME: process.env["HOME"], CI: "1", LOKI_NO_BROWSER: "1" } });
+  const s = spawnSync(cmd[0]!, cmd.slice(1), { cwd: repoDir, encoding: "utf8", timeout: 600_000, env: { PATH: process.env["PATH"], HOME: process.env["HOME"], USER: process.env["USER"], LOGNAME: process.env["LOGNAME"], SHELL: process.env["SHELL"], CI: "1", LOKI_NO_BROWSER: "1" } });
   const out = `${String(s.stdout)}\n${String(s.stderr)}`.split("\n");
   const names = out.filter((l) => /\b(fail|FAIL|not ok|Error)\b/.test(l)).slice(0, 20);
   return `Failing tests:\n${names.join("\n")}\nOutput tail:\n${out.slice(-40).join("\n")}`.slice(-4000);
