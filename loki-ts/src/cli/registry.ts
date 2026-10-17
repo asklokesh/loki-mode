@@ -103,10 +103,10 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("memory", "UPDATE", "both", "Cross-project learnings", "Memory still carries legacy store paths", {
     subcommands: [
-      sub("list", "All learnings"),
+      sub("list", "All learnings", { flags: [bool("--json", "Print the learnings summary as JSON")] }),
       sub("index", "Show or rebuild the memory index", { positionals: [{ name: "action", type: "enum", values: ["rebuild"] }] }),
       sub("learn", "Learn lessons from a merged PR's review comments", { positionals: [{ name: "pr", type: "string" }] }),
-      sub("lessons", "List PR review lessons with uses and outcomes"),
+      sub("lessons", "List PR review lessons with uses and outcomes", { flags: [bool("--json", "Print the lessons as JSON")] }),
       sub("brief", "Print the lessons and learnings block an engine10 run injects", { flags: [str("--task", "text", "Task text used to pick relevant lessons")] }),
       sub("show", "Show one learning"),
       sub("search", "Search learnings"),
@@ -117,10 +117,11 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("rollback", "KEEP-MODERN", "both", "Restore .loki/ state from a checkpoint", "Checkpoint restore is engine-neutral", {
     subcommands: [
-      sub("list", "List checkpoints"),
+      sub("list", "List checkpoints", { flags: [bool("--json", "Print the checkpoints as a JSON array")] }),
       sub("show", "Show a checkpoint", { positionals: [runId] }),
       sub("to", "Restore a checkpoint", { positionals: [runId] }),
       sub("latest", "Restore the latest checkpoint"),
+      sub("deploy", "Print the provider rollback command for the last deploy (read-only)"),
     ],
   }),
   cmd("backup", "KEEP-MODERN", "bash", "Back up dashboard state (audit log, checkpoint) with a sha256 manifest", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), str("--out", "<archive>", "Archive path (default ./loki-backup-<timestamp>.tar.gz)")] }),
@@ -150,7 +151,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("backfill", "Ship DIR/.loki/runs to the control plane", { positionals: [{ name: "dir", type: "path" }] }),
       sub("prune", "Delete matching runs", { flags: [str("--repo", "<owner/name>", "Repository to prune"), str("--before", "<iso-date>", "Prune runs before this date"), bool("--dry-run", "Report only"), dbFlag] }),
       sub("stop", "Stop the running control plane"),
-      sub("status", "Show control plane reachability"),
+      sub("status", "Show control plane reachability", { flags: [bool("--json", "Print one JSON object")] }),
     ],
   }),
   cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
@@ -166,8 +167,10 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("dogfood", "Dogfood report"),
     ],
   }),
-  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { subcommands: [sub("detail", "Trust metrics detail")] }),
-  cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing"),
+  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { flags: [bool("--json", "Print the trust trajectory as JSON")], subcommands: [sub("detail", "Trust metrics detail")] }),
+  cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing", {
+    subcommands: [sub("list", "List stored crash reports"), sub("show", "Show one scrubbed crash report"), sub("submit", "Submit a scrubbed crash report"),sub("help", "Show crash usage")],
+  }),
   cmd("contract", "KEEP-MODERN", "bun", "Print the spec delivery contract", "v10 delivery contract", { positionals: [{ name: "spec", type: "path" }] }),
   cmd("start", "UPDATE", "both", "Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md)", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),
@@ -179,7 +182,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       flags: [str("--label", "<label>", "Only issues with this label"), { name: "--limit", type: "int", placeholder: "<n>", desc: "At most this many issues" }, { name: "--parallel", type: "int", placeholder: "<k>", desc: "Runs at once, at most 4 (separate worktrees)" }, bool("--draft", "Open every PR as a draft"), bool("--dry-run", "List, dedupe and show the plan; no model calls"), bool("--json", "With --dry-run: print the plan as JSON (number, decision, reason, covered_by_pr)"), bool("--yes", "Skip the cost confirmation (CI)"), bool("--comment", "Comment the triage reason on skipped issues and the slice plan on split ones"), bool("--no-split", "Skip too-large issues instead of splitting them into stacked PRs")],
     })],
   }),
-  cmd("undo", "KEEP-MODERN", "bun", "Plan or apply an undo of a run", "UNDO-1/2: --plan is read-only, apply behind LOKI_UNDO=1", { flags: [bool("--plan", "Read-only plan"), bool("--json", "JSON plan (with --plan)"), bool("--allow-unsigned", "Accept an unsigned receipt (with --plan)"), bool("--yes", "Skip the confirm prompt"), bool("--close-pr", "Also close the PR")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
+  cmd("undo", "KEEP-MODERN", "bun", "Plan or apply an undo of a run", "UNDO-1/2: --plan is read-only, apply behind LOKI_UNDO=1", { flags: [bool("--plan", "Read-only plan"), bool("--list", "List runs that can be undone"), bool("--dry-run", "Report what would be undone; change nothing"), bool("--json", "JSON plan (with --plan)"), bool("--allow-unsigned", "Accept an unsigned receipt (with --plan)"), bool("--yes", "Skip the confirm prompt"), bool("--close-pr", "Also close the PR")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("verify-pr", "KEEP-MODERN", "bun", "Verify a PR against its linked issue in a sandbox", "VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1", { flags: [{ name: "--out", type: "path", desc: "Result directory" }, bool("--json", "Print the verdict object on stdout")], positionals: [{ name: "pr", type: "string" }], subcommands: [sub("respond", "Fix open review comments on the PR branch, one commit each, reply with the sha", { positionals: [{ name: "pr", type: "string" }] })] }),
   cmd("answer", "KEEP-MODERN", "bun", "Start a follow-up run from a BLOCKED run with your answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {

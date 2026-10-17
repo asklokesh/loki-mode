@@ -175,6 +175,49 @@ describe("completions", () => {
     return r.stdout.split("\n").filter(Boolean);
   }
 
+  test("crash subcommands", () => {
+    const src = readFileSync(join(REPO_ROOT, "loki-ts", "src", "commands", "crash.ts"), "utf8");
+    const decl = /const CRASH_SUBCOMMANDS = \[([^\]]+)\]/.exec(src)?.[1] ?? "";
+    const names = [...decl.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+    expect(names.length).toBeGreaterThan(0);
+    expect((findCommand("crash")?.subcommands ?? []).map((c) => c.name)).toEqual(names);
+    expect(complete(["loki", "crash", ""])).toEqual(expect.arrayContaining(names));
+  });
+
+  test("rollback deploy", () => {
+    const rb = findCommand("rollback");
+    expect((rb?.subcommands ?? []).map((c) => c.name)).toContain("deploy");
+    const list = (rb?.subcommands ?? []).find((c) => c.name === "list");
+    expect((list?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "rollback", ""])).toContain("deploy");
+    expect(complete(["loki", "rollback", "list", "--"])).toContain("--json");
+  });
+
+  test("control status json", () => {
+    const st = (findCommand("control")?.subcommands ?? []).find((c) => c.name === "status");
+    expect((st?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "control", "status", "--"])).toContain("--json");
+  });
+
+  test("trust json", () => {
+    expect((findCommand("trust")?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "trust", "--"])).toContain("--json");
+  });
+
+  test("memory json", () => {
+    const subs = findCommand("memory")?.subcommands ?? [];
+    for (const n of ["list", "lessons"]) {
+      expect((subs.find((c) => c.name === n)?.flags ?? []).map((f) => f.name)).toContain("--json");
+      expect(complete(["loki", "memory", n, "--"])).toContain("--json");
+    }
+  });
+
+  test("undo flags", () => {
+    const names = (findCommand("undo")?.flags ?? []).map((f) => f.name);
+    expect(names).toEqual(expect.arrayContaining(["--list", "--dry-run"]));
+    expect(complete(["loki", "undo", "--"])).toEqual(expect.arrayContaining(["--list", "--dry-run"]));
+  });
+
   test("bash: commands, subcommands, flag values, exclusivity", () => {
     expect(complete(["loki", "sta"])).toContain("start");
     expect(complete(["loki", "control", ""])).toEqual(expect.arrayContaining(["serve", "prune"]));
