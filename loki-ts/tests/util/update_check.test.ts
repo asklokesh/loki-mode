@@ -180,6 +180,7 @@ describe("maybePrintUpdateHint", () => {
     };
     expect(await hint("/opt/homebrew/Cellar/loki-mode/1/bin/loki")).toContain("brew upgrade loki-mode");
     expect(await hint("/usr/local/lib/node_modules/loki-mode/bin/loki")).toContain("Update: npm i -g loki-mode");
+    expect(await hint("/opt/homebrew/lib/node_modules/loki-mode/bin/loki")).toContain("Update: npm i -g loki-mode");
     expect(await hint("/Users/a/.bun/install/global/node_modules/loki-mode/x")).toContain("Update: bun install -g loki-mode");
     expect(await hint("/src/loki")).toContain("Update: bun install -g loki-mode");
   });

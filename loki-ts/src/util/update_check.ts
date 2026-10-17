@@ -232,9 +232,10 @@ export function maybePrintWhatsNew(
 // Exported for tests.
 export function updateCommandFor(installPath: string): string {
   const p = installPath.replace(/\\/g, "/");
-  if (p.includes("/Cellar/") || p.includes("/homebrew/")) return "brew upgrade loki-mode";
+  if (p.includes("/Cellar/")) return "brew upgrade loki-mode";
   if (p.includes("/.bun/")) return "bun install -g loki-mode  (or npm i -g loki-mode)";
   if (p.includes("/lib/node_modules/")) return "npm i -g loki-mode  (or bun install -g loki-mode)";
+  if (p.includes("/homebrew/")) return "brew upgrade loki-mode";
   return "bun install -g loki-mode  (or npm i -g loki-mode)";
 }
 
