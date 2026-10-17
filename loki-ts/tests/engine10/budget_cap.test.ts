@@ -43,6 +43,23 @@ describe("cap resolution", () => {
       expect("error" in resolveCap("zero", d, none)).toBe(true);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("unparseable env or yaml cap returns an error, 0 stays valid", () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-cap-"));
+    try {
+      const keyed = { ANTHROPIC_API_KEY: "present" } as NodeJS.ProcessEnv;
+      for (const bad of ["5usd", "abc", "-3"]) {
+        const r = resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: bad });
+        expect("error" in r && r.error.includes("LOKI_BUDGET_LIMIT")).toBe(true);
+      }
+      expect(resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: "0" })).toEqual({ usd: 100, source: "default" });
+      expect(resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: "" })).toEqual({ usd: 100, source: "default" });
+      writeFileSync(join(d, "loki.yaml"), "budgets:\n  per_run: 5usd\n");
+      const y = resolveCap(null, d, keyed);
+      expect("error" in y && y.error.includes("budgets.per_run")).toBe(true);
+      writeFileSync(join(d, "loki.yaml"), "budgets:\n  per_run: 0\n");
+      expect(resolveCap(null, d, keyed)).toEqual({ usd: 100, source: "default" });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("start-line note names the cap", () => {
     expect(capNote(100, "default")).toBe("cap $100.00 (default)");
     expect(capNote(0, "subscription")).toBe("no dollar cap (subscription)");
@@ -228,6 +245,12 @@ describe("every start mode honors the one cap", () => {
     expect(runnerBudget(4, "/nonexistent", {}).usd).toBe(4);
     expect(runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x" } as NodeJS.ProcessEnv)).toEqual({ usd: DEFAULT_MAX_COST_USD, note: capNote(DEFAULT_MAX_COST_USD, "default") });
     expect(runnerBudget(undefined, "/nonexistent", {} as NodeJS.ProcessEnv)).toEqual({ usd: undefined, note: null });
+  });
+  test("runner keeps a dollar cap when LOKI_BUDGET_LIMIT is unparseable", () => {
+    const r = runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x", LOKI_BUDGET_LIMIT: "5usd" } as NodeJS.ProcessEnv);
+    expect(r.usd).toBe(DEFAULT_MAX_COST_USD);
+    expect(r.note).toContain("LOKI_BUDGET_LIMIT must be a positive number");
+    expect(runnerBudget(undefined, "/nonexistent", { LOKI_BUDGET_LIMIT: "5usd" } as NodeJS.ProcessEnv).usd).toBe(DEFAULT_MAX_COST_USD);
   });
   test("attempts split the total: 3 attempts on a $3 cap get $1 each", () => {
     expect(perAttemptCap(3, 3)).toBe(1);

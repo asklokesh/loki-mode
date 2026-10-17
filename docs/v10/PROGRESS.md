@@ -2509,3 +2509,9 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T09:49Z (CoS) v11.17.43
 - Released TEN-STABILITY-20 (help/completion drift fix-forward). Board refilled with 30 TEN rows for wave AL (fc36b4548).
+
+## 2026-10-17T10:10Z (CoS) v11.17.44
+- Released waves AL (30 slices, 21 chains, all APPROVE) and AK (6 slices). Combined main: tsc rc 0; bun 1233/0 and 528/0; help-changelog-drift rc 0; secure-scan rc 0.
+
+## 2026-10-17T10:17Z (CoS) v11.17.45
+- Released TEN-DEPLOY-03 (wave AH fix round, APPROVE fe1026bf1). Board refilled with 30 TEN rows for wave AM (fbde018b2).

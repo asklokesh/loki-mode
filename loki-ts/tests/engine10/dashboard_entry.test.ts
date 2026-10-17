@@ -163,3 +163,31 @@ describe("engine10 dashboard entry e2e (real cli.ts, real Bun.serve)", () => {
     expect(await proc.exited).not.toBe(0); // killed while blocked forever, never a clean exit
   }, 20_000);
 });
+
+describe("bad port env", () => {
+  // A non-Loki listener holds the default port so main() fails fast after the
+  // note instead of ever replacing a live dashboard.
+  for (const bad of ["abc", "", "70000", "0", "1.5"]) {
+    test(`bad port env ${JSON.stringify(bad)} notes and falls back to the default port`, async () => {
+      let holder: ReturnType<typeof Bun.serve> | null = null;
+      try {
+        holder = Bun.serve({ port: 57375, hostname: "127.0.0.1", fetch: () => new Response("held") });
+      } catch {
+        const body = await fetch("http://127.0.0.1:57375/").then((r) => r.text()).catch(() => "");
+        if (body.includes("Loki 10 dashboard")) return; // main() would replace a live dashboard
+      }
+      try {
+        const env: Record<string, string | undefined> = { ...process.env, LOKI_TS_ENTRY: ENTRY, LOKI_E10_DASHBOARD_PORT: bad, LOKI_NO_BROWSER: "1" };
+        delete env.LOKI_LEGACY_BASH;
+        const proc = Bun.spawn({ cmd: [process.execPath, ENTRY, "engine10", "dashboard"], cwd: mkRepo(), env, stdout: "ignore", stderr: "pipe" });
+        procs.push(proc);
+        const err = await new Response(proc.stderr).text();
+        await proc.exited;
+        expect(err).toContain(`LOKI_E10_DASHBOARD_PORT=${JSON.stringify(bad)} is not a port in 1-65535; using default 57375.`);
+        expect(err).toContain("Port 57375");
+      } finally {
+        holder?.stop(true);
+      }
+    }, 20_000);
+  }
+});

@@ -183,7 +183,7 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   return { ...res, verdict: "VERIFIED" };
 }
 
-const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\nExit: 0 verified, 2 usage or sandbox blocked, 4 not proven.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
+const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR] [--json]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\n--json prints the verify-pr-result.json verdict object on stdout instead of the text summary.\nExit: 0 verified, 2 usage or sandbox blocked, 4 not proven.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
 
 /** `loki verify-pr respond <o/r#N>`: fix open review comments on the checked-out PR branch, one commit each, push, reply with the sha. */
 async function runRespond(args: readonly string[], out: (s: string) => void, err: (s: string) => void): Promise<number> {
@@ -217,6 +217,9 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
   let outDir = join(process.cwd(), ".loki", "verify-pr");
   const oi = rest.indexOf("--out");
   if (oi >= 0) { outDir = rest[oi + 1] ?? ""; rest.splice(oi, 2); }
+  const ji = rest.indexOf("--json");
+  const asJson = ji >= 0;
+  if (asJson) rest.splice(ji, 1);
   if (rest.length !== 1 || outDir === "") return (err(USAGE), 2);
   const ref = parsePrRef(rest[0]!);
   if (!ref) return (err(`loki verify-pr: not a PR url or owner/repo#N: ${rest[0]}\n`), 2);
@@ -235,8 +238,11 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
   }
   mkdirSync(deps.outDir, { recursive: true });
   writeFileSync(join(deps.outDir, "verify-pr-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-  out(`pr: ${ref.repo}#${ref.number}\nverdict: ${result.verdict}\n`);
-  for (const r of result.reasons) out(`  ${r}\n`);
-  for (const n of result.notes) out(`  note: ${n}\n`);
+  if (asJson) out(`${JSON.stringify(result, null, 2)}\n`);
+  else {
+    out(`pr: ${ref.repo}#${ref.number}\nverdict: ${result.verdict}\n`);
+    for (const r of result.reasons) out(`  ${r}\n`);
+    for (const n of result.notes) out(`  note: ${n}\n`);
+  }
   return result.verdict === "VERIFIED" ? 0 : result.blocked ? 2 : 4;
 }

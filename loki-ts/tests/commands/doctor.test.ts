@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
+import { processStartTime } from "../../src/util/run_pid.ts";
 import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
@@ -31,6 +32,8 @@ import {
   type ReqTable,
   buildDoctorJson,
   checkDisk,
+  findOrphanRuns,
+  lowestVolume,
   checkSkills,
   checkTool,
   httpReachable,
@@ -153,6 +156,31 @@ describe("doctor.checkDisk", () => {
       expect(d.available_gb).toBeGreaterThanOrEqual(0);
     }
     expect(["pass", "fail", "warn"]).toContain(d.status);
+  });
+
+  it("reports the minimum across home, cwd and tmp and names the low volume", () => {
+    const d = checkDisk();
+    expect(d.volumes!.length).toBeGreaterThan(0);
+    const min = Math.min(...d.volumes!.map((v) => v.available_gb));
+    expect(d.available_gb).toBe(min);
+    expect(d.volumes!.find((v) => v.available_gb === min)!.name).toBe(d.low_volume!);
+    expect(d.volumes!.map((v) => v.name)).toEqual(["home", "cwd", "tmp"]);
+  });
+
+  it("lowestVolume picks the smallest volume by name", () => {
+    const r = lowestVolume([
+      { name: "home", path: "/h", available_gb: 200 },
+      { name: "cwd", path: "/c", available_gb: 3.5 },
+      { name: "tmp", path: "/t", available_gb: 40 },
+    ]);
+    expect(r).toEqual({ available_gb: 3.5, low_volume: "cwd" });
+    expect(lowestVolume([])).toEqual({ available_gb: null, low_volume: null });
+  });
+
+  it("skips unreadable volumes and keeps null when none are readable", () => {
+    const d = checkDisk([{ name: "cwd", path: "/nonexistent-loki-path-xyz" }]);
+    expect(d.available_gb).toBeNull();
+    expect(d.low_volume).toBeNull();
   });
 });
 
@@ -1257,5 +1285,96 @@ describe("doctor Integration probes run concurrently (TEN-SPEED-06)", () => {
       expect(i).toBeGreaterThan(at);
       at = i;
     }
+  });
+});
+
+// TEN-UX-18: doctor --quiet keeps only FAIL/WARN rows and the Summary footer.
+describe("doctor --quiet", () => {
+  afterEach(() => { _setPythonImportOkForTest(null); _setIntegrationProbesForTest(null); });
+
+  it("filterQuietDoctor drops pass rows, headers and OK lines, keeps fail/warn with fix lines and the footer", async () => {
+    const { filterQuietDoctor } = await import("../../src/commands/doctor.ts");
+    const text = [
+      "Loki Mode Doctor", "", "Tools:", "  PASS  Node (v20)", "  FAIL  Git - not found",
+      "         Fix: install git", "  OK    Single loki install", "  WARN  Disk low", "  PASS  Bun",
+      "         Note: pass detail", "", "Summary: 2 passed, 1 failed, 1 warnings", "", "Then re-run: loki doctor", "",
+    ].join("\n");
+    const out = filterQuietDoctor(text);
+    expect(out).toContain("FAIL  Git - not found");
+    expect(out).toContain("Fix: install git");
+    expect(out).toContain("WARN  Disk low");
+    expect(out).toContain("Summary: 2 passed");
+    expect(out).toContain("Then re-run: loki doctor");
+    expect(out).not.toContain("PASS");
+    expect(out).not.toContain("Tools:");
+    expect(out).not.toContain("Single loki");
+    expect(out).not.toContain("pass detail");
+  });
+
+  it("runDoctor(['--quiet']) prints no PASS row, keeps the footer, and returns the same exit code as the full run", async () => {
+    stubPythonImportOk();
+    const full = await captureStdio(() => runDoctor([]));
+    const quiet = await captureStdio(() => runDoctor(["--quiet"]));
+    expect(quiet.result).toBe(full.result);
+    expect(quiet.cap.out).not.toMatch(/\bPASS\b/);
+    expect(quiet.cap.out).toMatch(/Summary:/);
+    expect(quiet.cap.out.length).toBeLessThan(full.cap.out.length);
+    const short = await captureStdio(() => runDoctor(["-q"]));
+    expect(short.result).toBe(full.result);
+  });
+
+  it("--quiet leaves --json unaffected", async () => {
+    stubPythonImportOk();
+    const a = await captureStdio(() => runDoctor(["--json"]));
+    const b = await captureStdio(() => runDoctor(["--json", "--quiet"]));
+    expect(b.result).toBe(a.result);
+    expect(JSON.parse(b.cap.out).summary).toEqual(JSON.parse(a.cap.out).summary);
+  });
+});
+
+// TEN-STABILITY-17: doctor lists orphan runs (dead owner, no run.completed) with the resume/undo command.
+describe("doctor orphan runs", () => {
+  const env = (id: string, seq: number, type: string) => JSON.stringify({ v: 1, seq, ts: new Date().toISOString(), run: id, type, stage: null, data: {} }) + "\n";
+  let repo: string;
+  let prevCwd: string;
+  function mkRun(id: string, types: string[], pid?: number): void {
+    const dir = join(repo, ".loki", "runs", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "events.jsonl"), types.map((t, i) => env(id, i, t)).join(""));
+    if (pid !== undefined) {
+      const start = pid === process.pid ? (processStartTime(pid) ?? "") : "dead-start";
+      writeFileSync(join(dir, "run.pid"), JSON.stringify({ pid, start, argv: ["x"], run_id: id }));
+    }
+  }
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "loki-orphan-"));
+    prevCwd = process.cwd();
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(repo, { recursive: true, force: true });
+    restorePythonImportOk();
+  });
+
+  it("lists a dead-owner run without run.completed; skips live and completed runs", () => {
+    mkRun("e10-orphan", ["run.started"], 999999);
+    mkRun("e10-live", ["run.started"], process.pid);
+    mkRun("e10-done", ["run.started", "run.completed"], 999999);
+    expect(findOrphanRuns(repo)).toEqual(["e10-orphan"]);
+  });
+
+  it("runDoctor text prints a warn row naming the run id and the resume and undo commands", async () => {
+    mkRun("e10-orphan", ["run.started"], 999999);
+    mkRun("e10-live", ["run.started"], process.pid);
+    mkRun("e10-done", ["run.started", "run.completed"], 999999);
+    process.chdir(repo);
+    stubPythonImportOk();
+    const { cap } = await captureStdio(() => runDoctor([]));
+    const out = cap.out.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(out).toMatch(/WARN\s+Orphan run e10-orphan/);
+    expect(out).toContain("loki start --resume e10-orphan");
+    expect(out).toContain("loki undo e10-orphan");
+    expect(out).not.toContain("e10-live");
+    expect(out).not.toContain("e10-done");
   });
 });

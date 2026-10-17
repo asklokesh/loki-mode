@@ -4,7 +4,7 @@
 import { capabilitiesFor, matrixText } from "../providers/provider_guard.ts";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { commandExists } from "../util/shell.ts";
+import { commandExists, commandVersion } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 
@@ -70,6 +70,28 @@ export function runProviderShow(positional?: string): number {
   return 0;
 }
 
+// Tiers per CLAUDE.md: claude full (1), cline reduced (2), codex/aider degraded (3), opencode model-agnostic.
+const PROVIDER_TIER: Readonly<Record<Provider, string>> = {
+  claude: "1",
+  cline: "2",
+  codex: "3",
+  aider: "3",
+  opencode: "model-agnostic",
+};
+
+/** Machine-readable provider list for CI and editor integrations. */
+export async function runProviderListJson(): Promise<number> {
+  const providers = await Promise.all(
+    ALL_PROVIDERS.map(async (name) => {
+      const installed = (await commandExists(name)) !== null;
+      const version = installed ? await commandVersion(name) : null;
+      return { name, tier: PROVIDER_TIER[name], installed, version };
+    }),
+  );
+  process.stdout.write(`${JSON.stringify({ providers }, null, 2)}\n`);
+  return 0;
+}
+
 export async function runProviderList(): Promise<number> {
   const saved = readSavedProvider();
   const current = saved || process.env["LOKI_PROVIDER"] || "claude";
@@ -124,7 +146,7 @@ export function printProviderHelp(): number {
   process.stdout.write(`Commands:\n`);
   process.stdout.write(`  show     Show current provider (default)\n`);
   process.stdout.write(`  set      Set provider for this project\n`);
-  process.stdout.write(`  list     List available providers\n`);
+  process.stdout.write(`  list     List available providers (--json: name, tier, installed, version)\n`);
   process.stdout.write(`  info     Show provider details (--json: capability contract)\n`);
   process.stdout.write(`  matrix   Show the capability matrix per provider and engine\n`);
   process.stdout.write(`  models   Show resolved model configuration for all providers\n`);
@@ -134,6 +156,7 @@ export function printProviderHelp(): number {
   process.stdout.write(`  loki provider set claude\n`);
   process.stdout.write(`  loki provider set codex\n`);
   process.stdout.write(`  loki provider list\n`);
+  process.stdout.write(`  loki provider list --json\n`);
   process.stdout.write(`  loki provider info codex\n`);
   process.stdout.write(`  loki provider models\n`);
   return 0;
@@ -147,6 +170,7 @@ export async function runProvider(argv: readonly string[]): Promise<number> {
     case "current":
       return runProviderShow(rest[0]);
     case "list":
+      if (rest.includes("--json")) return runProviderListJson();
       return runProviderList();
     case "matrix":
       process.stdout.write(matrixText());
@@ -158,8 +182,14 @@ export async function runProvider(argv: readonly string[]): Promise<number> {
     case "models":
       // Defer to bash for write/lookup commands not in Phase 2 scope.
       return execLegacyBash(["provider", sub, ...rest]);
-    default:
+    case "help":
+    case "-h":
+    case "--help":
       return printProviderHelp();
+    default:
+      process.stderr.write(`loki provider: unknown subcommand '${sub}' (see 'loki provider help')\n`);
+      printProviderHelp();
+      return 2;
   }
 }
 

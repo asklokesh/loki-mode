@@ -50,7 +50,7 @@ const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request)/i],
   // "quota"/"billing" = the account is out of funds; unlike a rate limit this
   // does not clear on its own within a run.
-  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low)/i],
+  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low|exceeded your current quota|check your plan and billing details)/i],
 ];
 
 // Explicitly TRANSIENT markers that must win even if a permanent-looking word
@@ -58,7 +58,13 @@ const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 // quota-adjacent wording, but it absolutely does clear with time, and treating
 // it as permanent would abandon healthy builds.
 const TRANSIENT_OVERRIDE =
-  /\b(?:rate[_ -]?limit|429\b|overloaded|please try again|temporarily unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|502\b|503\b|504\b|service unavailable)/i;
+  /\b(?:rate[_ -]?limit|429\b|overloaded|please try again|temporarily unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|502\b|503\b|504\b|529\b|bad gateway|gateway time-?out|service unavailable)/i;
+
+// Provider billing wording that is unambiguous even when sent with a 429: OpenAI
+// and Gemini both return exhausted-funds errors under 429, so this must beat the
+// override. Deliberately narrow: bare "insufficient quota" or RESOURCE_EXHAUSTED
+// also appear in per-minute rate limits and stay transient.
+const BILLING_STRONG = /\b(?:insufficient_quota|check your plan and billing details)/i;
 
 export type RetryDecision = {
   readonly klass: RetryClass;
@@ -70,7 +76,9 @@ export function classifyFailure(text: string): RetryDecision {
   const t = text ?? "";
   if (t.trim() === "") return { klass: "transient", reason: "empty_output" };
 
-  // Transient overrides are checked FIRST so a rate limit is never mistaken for
+  if (BILLING_STRONG.test(t)) return { klass: "non_retryable", reason: "quota_exhausted" };
+
+  // Transient overrides are checked next so a rate limit is never mistaken for
   // a permanent quota failure.
   if (TRANSIENT_OVERRIDE.test(t)) return { klass: "transient", reason: "transient_marker" };
 

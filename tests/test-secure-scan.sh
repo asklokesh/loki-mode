@@ -225,6 +225,26 @@ printf '# never pass verify=False here\n// rejectUnauthorized: false is unsafe\n
 printf 'Do not set verify=False.\n' > "$SAFE/README.md"
 scan "$SAFE"; assert_silent "tls-verify-disabled" "r6-safe-and-excluded-paths"
 
+# --- rule 7: shell-injection (TEN-SECURITY-07) ------------------------------
+BAD="$WORK/r7-py"; mkdir -p "$BAD"
+printf 'import subprocess\nsubprocess.run(f"rm {x}", shell=True)\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "shell-injection" "r7-subprocess-fstring-shell-true"
+sl=$(python3 -c 'import json,sys; f=[x for x in json.load(open(sys.argv[1]))["findings"] if x["rule"]=="shell-injection"]; print(f[0]["file"]+":"+str(f[0]["line"]))' "$WORK/last.json" 2>/dev/null)
+if [ "$sl" = "a.py:2" ]; then ok "r7: finding carries file and line"
+else bad "r7: expected a.py:2 got $sl"; fi
+BAD="$WORK/r7-many"; mkdir -p "$BAD"
+printf 'subprocess.call("ls %%s" %% d, shell=True)\nsubprocess.Popen("ls " + d, shell=True)\nsubprocess.run("ls {}".format(d), shell=True)\nos.system("rm " + p)\nos.system(f"rm {p}")\n' > "$BAD/b.py"
+printf 'const cp = require("child_process");\ncp.exec(`ls ${dir}`);\nexecSync(`rm ${f}`);\n' > "$BAD/c.js"
+scan "$BAD"
+if [ "$(total_findings)" = "7" ]; then ok "r7: all dynamic shapes found"
+else bad "r7: expected 7 findings" "$(cat "$WORK/last.json")"; fi
+SAFE="$WORK/r7-safe"; mkdir -p "$SAFE/tests"
+printf 'subprocess.run("ls -la", shell=True)\nsubprocess.run(["rm", x])\nsubprocess.run(f"rm {x}")\nos.system("clear")\nsubprocess.run(["ls", f"{x}"], shell=False)\n# os.system(f"rm {x}")\n' > "$SAFE/ok.py"
+printf 'const m = re.exec(`a${b}`);\nexec(`ls ${d}`);\ncp.exec("ls");\n' > "$SAFE/ok.js"
+printf 'subprocess.run(f"rm {x}", shell=True)\n' > "$SAFE/tests/test_x.py"
+printf 'Avoid os.system(f"rm {x}").\n' > "$SAFE/README.md"
+scan "$SAFE"; assert_silent "shell-injection" "r7-safe-and-excluded"
+
 # --- rule 5: cors-wildcard-credentials -------------------------------------
 # ACAO * AND ACAC true in the same file -> fires.
 BAD="$WORK/r5-bad"; mkdir -p "$BAD"

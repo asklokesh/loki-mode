@@ -22,7 +22,7 @@ Commands:
   prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]
                                  Delete matching runs, their events and orphaned sources (works with the server up or down)
   stop                           Stop the running control plane (PID from ~/.loki/control/instance.json, verified via /health)
-  status                         Show whether the control plane is reachable and how many runs it holds
+  status [--json]                Show whether the control plane is reachable and how many runs it holds (--json: one JSON object)
 
 The control plane URL comes from LOKI_CONTROL_URL, else http://127.0.0.1:\${LOKI_CONTROL_PORT:-${DEFAULT_PORT}}.
 Runs on this machine ship to a running control plane automatically (~/.loki/control/instance.json); LOKI_CONTROL_URL overrides.
@@ -33,6 +33,12 @@ const baseUrl = (env: NodeJS.ProcessEnv): string => (env.LOKI_CONTROL_URL || `ht
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/** A value flag that is present but has no value (end of args, or the next token is another flag) must fail, never fall back to a default. */
+function missingValue(args: string[], name: string): boolean {
+  const i = args.indexOf(name);
+  return i >= 0 && (args[i + 1] === undefined || args[i + 1]!.startsWith("--"));
 }
 
 function serverCmd(): string[] | null {
@@ -102,6 +108,9 @@ export async function stopControlPlane(env: NodeJS.ProcessEnv, opts: { alive?: (
 }
 
 async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  for (const f of ["--port", "--db"]) {
+    if (missingValue(args, f)) { process.stderr.write(`loki control serve: ${f} needs a value\nUsage: loki control serve [--port N] [--db PATH]\n`); return 2; }
+  }
   const explicit = flag(args, "--port") ?? env.LOKI_CONTROL_PORT;
   const port = explicit ?? String(DEFAULT_PORT);
   if (!/^\d+$/.test(port) || Number(port) > 65535) { process.stderr.write(`loki control: invalid --port ${port}\n`); return 2; }
@@ -141,24 +150,36 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   return code;
 }
 
-async function status(env: NodeJS.ProcessEnv): Promise<number> {
+async function status(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const json = args.includes("--json");
   const url = baseUrl(env);
   try {
     const h = (await (await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) })).json()) as { service?: string; pid?: number };
     if (h.service !== "loki-control") throw new Error("not a loki control plane");
     let runs: string;
+    let total: number | null = null;
     try {
       const res = await fetch(`${url}/v1/runs?limit=1`, { signal: AbortSignal.timeout(3000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const r = (await res.json()) as { total?: unknown };
       if (typeof r.total !== "number") throw new Error("no total in response");
+      total = r.total;
       runs = `${r.total} runs`;
     } catch (e) {
       runs = `runs: unknown (${(e as Error).message})`;
     }
+    if (json) {
+      const port = Number(new URL(url).port) || null;
+      process.stdout.write(`${JSON.stringify({ running: true, pid: h.pid ?? null, port, url, runs: total })}\n`);
+      return 0;
+    }
     process.stdout.write(`loki control: up at ${url} (pid ${h.pid}), ${runs}\n`);
     return 0;
   } catch (e) {
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ running: false, pid: null, port: null, url, runs: null, error: (e as Error).message })}\n`);
+      return 1;
+    }
     process.stdout.write(`loki control: not reachable at ${url} (${(e as Error).message}). Start it with: loki control serve\n`);
     return 1;
   }
@@ -207,7 +228,7 @@ export async function runControl(args: string[], env: NodeJS.ProcessEnv = proces
   switch (sub) {
     case "serve": return serve(rest, env);
     case "stop": return stopControlPlane(env);
-    case "status": return status(env);
+    case "status": return status(rest, env);
     case "prune": return prune(rest, env);
     case "backfill": {
       const dir = resolve(flag(rest, "--repo") ?? rest.find((a) => !a.startsWith("-")) ?? process.cwd());

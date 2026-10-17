@@ -56,6 +56,12 @@ function runShow(args: string[]): number {
       process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
       return 1;
     }
+    if (section) {
+      process.stderr.write(
+        `${RED}Too many arguments: expected one section, got '${section}' and '${a}'${NC}\nUsage: loki wiki show [section]\n`,
+      );
+      return 1;
+    }
     section = a;
   }
 

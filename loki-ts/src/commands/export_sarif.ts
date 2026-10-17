@@ -13,7 +13,12 @@ const SECRET_PATTERNS: [string, RegExp][] = [
   ["private-key-block", /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/],
   ["github-token", /gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,}/],
   ["slack-token", /xox[baprs]-[A-Za-z0-9-]{10,}/],
-  ["openai-style-key", /sk-[A-Za-z0-9]{20,}/],
+  ["openai-style-key", /(?<![A-Za-z0-9])sk-[A-Za-z0-9]{20,}/],
+  ["anthropic-api-key", /(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9]+-[A-Za-z0-9_-]{20,}/],
+  ["openai-project-key", /(?<![A-Za-z0-9])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/],
+  ["npm-token", /(?<![A-Za-z0-9])npm_[A-Za-z0-9]{36}/],
+  ["stripe-key", /(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}/],
+  ["jwt", /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
   ["google-api-key", /AIza[0-9A-Za-z_-]{35}/],
   ["gitlab-token", /glpat-[A-Za-z0-9_-]{20,}/],
 ];

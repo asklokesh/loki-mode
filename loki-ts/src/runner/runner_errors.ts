@@ -30,6 +30,7 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/Interrupted: \d+ errors? during collection/, "collection error"],
   [/^_+ ERROR collecting /m, "collection error"],
   [/ImportError while importing test module/, "test module import error"],
+  [/ImportError: Failed to import test module/, "unittest test module import error"],
   [/^ERROR: (?:file or directory not found|not found:)/m, "test path not found by the runner"],
   [/No test files found, exiting with code [1-9]/, "runner found no test files (wrong cwd or path)"],
   [/\[setup failed\]|cannot find package|no required module provides package/, "go package could not be set up"],

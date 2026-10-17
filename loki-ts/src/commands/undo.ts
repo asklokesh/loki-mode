@@ -39,6 +39,8 @@ export interface UndoPlan {
 /** A receipt's refs are attacker-influenced (an unsigned receipt is accepted with --allow-unsigned): only a hex object id may reach git. */
 const SHA_RE = /^[0-9a-f]{7,64}$/;
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** True when `id` is a safe single-segment run id (no separators, no leading dot, no ".."). */
+export const isRunId = (id: string): boolean => RUN_ID_RE.test(id) && !id.includes("..");
 
 const defaultRunner: GitRunner = (repoDir, args) => {
   const r = safeGitSpawn(repoDir, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });

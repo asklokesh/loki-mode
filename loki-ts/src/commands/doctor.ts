@@ -13,13 +13,16 @@
 // the value is never read or echoed.
 import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { emitFunnel } from "../util/funnel.ts";
+import { readEvents } from "../engine10/events.ts";
+import { eventsRelPath } from "../util/engine_origin.ts";
+import { runOwnerAlive } from "../util/run_pid.ts";
 import { getVersion } from "../version.ts";
 import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
@@ -209,9 +212,15 @@ export type ToolCheck = {
   path: string | null;
 };
 
+export type DiskVolume = { name: "home" | "cwd" | "tmp"; path: string; available_gb: number };
+
+// available_gb is the MINIMUM free GB across the home, cwd and tmp volumes.
+// low_volume names the volume that produced it; volumes lists each readable one.
 export type DiskCheck = {
   available_gb: number | null;
   status: Status;
+  low_volume?: DiskVolume["name"] | null;
+  volumes?: DiskVolume[];
 };
 
 // v7.5.15: sentrux architectural-drift gate state exposed in --json output.
@@ -348,25 +357,66 @@ export async function checkTool(
   };
 }
 
+// ---------- Orphan runs (TEN-STABILITY-17) -------------------------------------
+/** Run ids under <repoDir>/.loki/runs whose event log has no run.completed and whose recorded owner process is gone. */
+export function findOrphanRuns(repoDir: string, ownerAlive: (runDir: string) => boolean = runOwnerAlive): string[] {
+  const root = join(repoDir, ".loki", "runs");
+  let ids: string[] = [];
+  try { ids = readdirSync(root); } catch { return []; }
+  const out: string[] = [];
+  for (const id of ids.sort()) {
+    if (!/^e10-[A-Za-z0-9-]+$/.test(id)) continue;
+    try {
+      const events = readEvents(join(repoDir, eventsRelPath(id)));
+      if (events.length === 0 || events.some((e) => e.type === "run.completed")) continue;
+      if (ownerAlive(join(root, id))) continue;
+      out.push(id);
+    } catch { /* unreadable run dir: not reported */ }
+  }
+  return out;
+}
+
 // ---------- Disk check --------------------------------------------------------
 
 // JSON form of disk check (bash cmd_doctor_json uses round(..., 1) -- 1 decimal).
-export function checkDisk(): DiskCheck {
+export function lowestVolume(volumes: DiskVolume[]): { available_gb: number | null; low_volume: DiskVolume["name"] | null } {
   let available_gb: number | null = null;
-  try {
-    const stats = statfsSync(homedir());
-    const bytes = Number(stats.bavail) * Number(stats.bsize);
-    available_gb = Math.round((bytes / (1024 ** 3)) * 10) / 10;
-  } catch {
-    available_gb = null;
+  let low_volume: DiskVolume["name"] | null = null;
+  for (const v of volumes) {
+    if (available_gb === null || v.available_gb < available_gb) {
+      available_gb = v.available_gb;
+      low_volume = v.name;
+    }
   }
+  return { available_gb, low_volume };
+}
+
+export function checkDisk(
+  targets: Array<{ name: DiskVolume["name"]; path: string }> = [
+    { name: "home", path: homedir() },
+    { name: "cwd", path: process.cwd() },
+    { name: "tmp", path: tmpdir() },
+  ],
+): DiskCheck {
+  const volumes: DiskVolume[] = [];
+  for (const t of targets) {
+    try {
+      const stats = statfsSync(t.path);
+      const bytes = Number(stats.bavail) * Number(stats.bsize);
+      volumes.push({ name: t.name, path: t.path, available_gb: Math.round((bytes / (1024 ** 3)) * 10) / 10 });
+    } catch {
+      // unreadable volume is skipped
+    }
+  }
+
+  const { available_gb, low_volume } = lowestVolume(volumes);
 
   let status: Status = "pass";
   if (available_gb !== null) {
     if (available_gb < 1) status = "fail";
     else if (available_gb < 5) status = "warn";
   }
-  return { available_gb, status };
+  return { available_gb, status, low_volume, volumes };
 }
 
 // ---------- Network probes ----------------------------------------------------
@@ -1135,9 +1185,10 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--quiet] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON (includes requirements grouped by execution path)\n`);
+  process.stdout.write(`  --quiet   Text mode: print only FAIL and WARN rows plus the Summary footer (also -q); exit code and --json unchanged\n`);
   process.stdout.write(`  --requirements  Print requirements per execution path (required or optional, present or missing, one-line fix)\n`);
   process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); on a TTY offer the claude install and login (y/N); print commands for the rest\n`);
   process.stdout.write(`  --yes     With --fix: run the claude install and login without asking (also -y)\n`);
@@ -1554,18 +1605,19 @@ async function runText(): Promise<number> {
   // Bash text uses `df -g` (integer GB, floored). JSON uses round(_, 1).
   // checkDisk() returns the JSON-friendly float; floor it here for text-mode parity.
   const diskTextGb = disk.available_gb === null ? null : Math.floor(disk.available_gb);
+  const diskVol = disk.status !== "pass" && disk.low_volume ? ` on ${disk.low_volume} volume` : "";
   if (diskTextGb === null) {
     process.stdout.write(`  ${badge("warn")}  Disk space: unable to determine\n`);
     bump(tally, "warn");
   } else if (disk.status === "fail") {
     process.stdout.write(
-      `  ${badge("fail")}  Disk space: ${diskTextGb}GB available (need >= 1GB)\n`,
+      `  ${badge("fail")}  Disk space: ${diskTextGb}GB available${diskVol} (need >= 1GB)\n`,
     );
     bump(tally, "fail");
-    tally.blockers.push(`Free up disk: ${diskTextGb}GB available, need >= 1GB`);
+    tally.blockers.push(`Free up disk: ${diskTextGb}GB available${diskVol}, need >= 1GB`);
   } else if (disk.status === "warn") {
     process.stdout.write(
-      `  ${badge("warn")}  Disk space: ${diskTextGb}GB available (low)\n`,
+      `  ${badge("warn")}  Disk space: ${diskTextGb}GB available${diskVol} (low)\n`,
     );
     bump(tally, "warn");
   } else {
@@ -1573,6 +1625,10 @@ async function runText(): Promise<number> {
       `  ${badge("pass")}  Disk space: ${diskTextGb}GB available\n`,
     );
     bump(tally, "pass");
+  }
+  for (const id of findOrphanRuns(process.cwd()).slice(0, 5)) {
+    process.stdout.write(`  ${badge("warn")}  Orphan run ${id}: owner process died before run.completed (resume: loki start --resume ${id}, or undo: loki undo ${id})\n`);
+    bump(tally, "warn");
   }
   process.stdout.write(`\n`);
 
@@ -1910,6 +1966,36 @@ const defaultRoundTrip: RoundTripRunner = async () => {
   return { ok: r.status === 0, detail: (r.status === 0 ? r.stdout : r.stderr || `exit ${r.status}`).trim().slice(0, 200) };
 };
 
+// TEN-UX-18: --quiet keeps FAIL/WARN rows (with their indented fix lines) and
+// everything from the Summary line on; every other line is dropped.
+export function filterQuietDoctor(text: string): string {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: string[] = [];
+  let inRow = false;
+  let inFooter = false;
+  for (const line of text.split("\n")) {
+    const plain = line.replace(ansi, "");
+    if (inFooter || /^Summary:/.test(plain)) { inFooter = true; out.push(line); continue; }
+    if (/^\s+(FAIL|WARN)\b/.test(plain)) { inRow = true; out.push(line); continue; }
+    if (inRow && /^ {9,}\S/.test(plain)) { out.push(line); continue; }
+    inRow = false;
+  }
+  return out.join("\n");
+}
+
+async function runTextQuiet(): Promise<number> {
+  const orig = process.stdout.write.bind(process.stdout);
+  let buf = "";
+  (process.stdout as { write: unknown }).write = (chunk: string | Uint8Array): boolean => {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  };
+  let code: number;
+  try { code = await runText(); } finally { (process.stdout as { write: unknown }).write = orig; }
+  orig(filterQuietDoctor(buf));
+  return code;
+}
+
 export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}): Promise<number> {
   let roundTrip = false;
   let json = false;
@@ -1917,6 +2003,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
   let yes = false;
   let repo = false;
   let reqs = false;
+  let quiet = false;
   for (const arg of argv) {
     if (arg === "--repo") {
       repo = true;
@@ -1928,6 +2015,8 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       fix = true;
     } else if (arg === "--yes" || arg === "-y") {
       yes = true;
+    } else if (arg === "--quiet" || arg === "-q") {
+      quiet = true;
     } else if (arg === "--requirements") {
       reqs = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -1935,7 +2024,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--quiet] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
       return 1;
     }
   }
@@ -1973,12 +2062,12 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
     return result.summary.ok ? 0 : 1;
   }
   if (fix) {
-    const code = await runText();
+    const code = quiet ? await runTextQuiet() : await runText();
     const { runDoctorFix } = await import("./doctor_fix.ts");
     const fixCode = runDoctorFix({ yes });
     return code !== 0 ? code : fixCode;
   }
   // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
   process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);
-  return runText();
+  return quiet ? runTextQuiet() : runText();
 }

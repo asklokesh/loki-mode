@@ -27,7 +27,7 @@ import { lokiDir } from "../util/paths.ts";
 const HELP = `Usage: loki rollback <subcommand>
 
 Subcommands:
-  list                   List checkpoints (newest first)
+  list [--json]          List checkpoints (newest first); --json prints a JSON array
   show <id>              Print metadata for one checkpoint
   to <id>                Restore .loki/ state + context to that checkpoint
   latest                 Restore to the most recent checkpoint
@@ -58,11 +58,26 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
     return sub === undefined ? 1 : 0;
   }
 
+  // Reject unknown flags so a mistyped safety flag never runs the real rollback.
+  const allowed = sub === "to" || sub === "latest" ? ["--force"] : sub === "list" ? ["--json"] : [];
+  if (["list", "show", "to", "latest", "deploy"].includes(sub)) {
+    const bad = rest.find((a) => a.startsWith("-") && !allowed.includes(a));
+    if (bad !== undefined) {
+      process.stderr.write(`${RED}Unknown flag for rollback ${sub}:${NC} ${bad}\n`);
+      process.stderr.write(HELP);
+      return 2;
+    }
+  }
+
   switch (sub) {
     case "list": {
       // listCheckpoints returns oldest-first; reverse so users see newest at
       // the top (matches the "latest" subcommand semantics below).
       const items = [...listCheckpoints()].reverse();
+      if (rest.includes("--json")) {
+        process.stdout.write(`${JSON.stringify(items, null, 2)}\n`);
+        return 0;
+      }
       if (items.length === 0) {
         process.stdout.write(`${YELLOW}No checkpoints found.${NC}\n`);
         return 0;
@@ -175,6 +190,10 @@ const DEPLOY_ROLLBACKS: ReadonlyArray<{ prefix: string; provider: string; cmd?: 
   { prefix: "fly", provider: "Fly.io", cmd: "fly releases rollback <previous-version>" },
   { prefix: "netlify", provider: "Netlify", manual: "Netlify documents no CLI rollback; restore the previous deploy from the Netlify dashboard" },
   { prefix: "wrangler", provider: "Cloudflare", manual: "roll back from the Cloudflare dashboard or with the provider CLI yourself" },
+  { prefix: "heroku", provider: "Heroku", cmd: "heroku releases:rollback" },
+  { prefix: "railway", provider: "Railway", manual: "Railway documents no CLI rollback; redeploy the previous deployment from the Railway dashboard" },
+  { prefix: "render", provider: "Render", manual: "Render documents no CLI rollback; roll back to a previous deploy from the Render dashboard" },
+  { prefix: "gcloud", provider: "Google Cloud Run", manual: "list revisions with `gcloud run revisions list`, then shift traffic to the previous one with `gcloud run services update-traffic --to-revisions=<revision>=100` (not run by loki)" },
 ];
 
 // loki rollback deploy: read-only. Reads the newest .loki/deploys/*.json (loki.deploy/1) and prints the

@@ -97,6 +97,8 @@ describe("classifyFailure: real permanent provider failures still stop early", (
     ["malformed request", "invalid_request_error: messages must be non-empty", "bad_request"],
     ["exhausted credit", "Your credit balance is too low to access the API", "quota_exhausted"],
     ["insufficient quota", "insufficient_quota: please add funds", "quota_exhausted"],
+    ["exceeded current quota openai", "You exceeded your current quota, please check your plan and billing details.", "quota_exhausted"],
+    ["exceeded current quota gemini", "RESOURCE_EXHAUSTED: check your plan and billing details", "quota_exhausted"],
   ];
 
   for (const [name, text, reason] of permanent) {
@@ -133,6 +135,45 @@ describe("rate limits are never permanent", () => {
     const d = classifyFailure("429 rate limit exceeded: insufficient quota for this minute");
     expect(d.klass).toBe("transient");
     expect(d.reason).toBe("transient_marker");
+  });
+});
+
+describe("exceeded current quota vs rate limit wording", () => {
+  it("real 429-prefixed billing bodies are quota_exhausted", () => {
+    for (const body of [
+      "Error code: 429 - You exceeded your current quota, please check your plan and billing details.",
+      "429 RESOURCE_EXHAUSTED: You exceeded your current quota, please check your plan and billing details.",
+      "Error code: 429 - {'error': {'code': 'insufficient_quota'}}",
+    ]) {
+      expect(classifyFailure(body)).toEqual({ klass: "non_retryable", reason: "quota_exhausted" });
+    }
+  });
+
+  it("exceeded current quota with a rate limit marker stays transient", () => {
+    const d = classifyFailure("429 Too Many Requests: rate limit reached, you exceeded your current quota per minute");
+    expect(d.klass).toBe("transient");
+    expect(d.reason).toBe("transient_marker");
+  });
+  it("exceeded current quota: a bare RESOURCE_EXHAUSTED without billing text stays transient", () => {
+    expect(classifyFailure("RESOURCE_EXHAUSTED: too many concurrent requests").klass).toBe("transient");
+  });
+});
+
+describe("HTTP 529 and gateway words are transient", () => {
+  const cases = [
+    "HTTP 529 invalid_request_error: upstream",
+    "529 authentication_error from edge proxy",
+    "bad gateway invalid_request_error",
+    "gateway timeout authentication_failed",
+  ];
+  for (const c of cases) {
+    it(`transient: ${c}`, () => {
+      expect(classifyFailure(c).klass).toBe("transient");
+      expect(classifyFailure(c).reason).toBe("transient_marker");
+    });
+  }
+  it("a bare 5290 number is not a 529 marker", () => {
+    expect(classifyFailure("code 5290 invalid_request_error").klass).toBe("non_retryable");
   });
 });
 

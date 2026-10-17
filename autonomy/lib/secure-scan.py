@@ -18,7 +18,7 @@ The scanner is honest by construction:
     .git, vendor, bundled dist of dependencies) and oversized files, so it is
     cheap and deterministic.
 
-The five v1 rules (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
+The v1 rules (rules 6 and 7 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
   1. private-key-committed   (HIGH)   a PEM private-key block in any text file
   2. secret-in-client-file   (HIGH)   a real secret literal in a browser-served file
   3. world-open-datastore    (HIGH)   a literal world-open datastore rule
@@ -46,7 +46,7 @@ import os
 import re
 import sys
 
-RULES_VERSION = "1.1"
+RULES_VERSION = "1.2"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -409,6 +409,48 @@ def _tls_rule_applies(rel_path):
 
 
 # ---------------------------------------------------------------------------
+# rule 7: shell injection shapes
+# ---------------------------------------------------------------------------
+# Literal forms only, one line: subprocess.* with shell=True whose first
+# argument is an f-string, a %-format, a .format() call or a concatenation;
+# os.system() with an f-string, %-format, .format() or concatenation; and
+# child_process exec/execSync with a template literal containing ${...}.
+# Constant-string commands and list-form argv are never flagged.
+_PY_DYNAMIC_ARG = (
+    r"""(?:[rRbB]?[fF][rR]?(?:"[^"]*"|'[^']*')"""
+    r"""|(?:"[^"]*"|'[^']*')\s*(?:%|\+|\.format\()"""
+    r"""|[A-Za-z_][\w.]*\s*\+\s*(?:"|'|[A-Za-z_]))"""
+)
+_SHELL_TRUE_SUBPROCESS = re.compile(
+    r"""\bsubprocess\.(?:run|call|Popen|check_output|check_call)\(\s*"""
+    + _PY_DYNAMIC_ARG + r""".*\bshell\s*=\s*True\b"""
+)
+_OS_SYSTEM_DYNAMIC = re.compile(
+    r"""\bos\.(?:system|popen)\(\s*""" + _PY_DYNAMIC_ARG
+)
+_NODE_EXEC_TEMPLATE = re.compile(
+    r"""\b(?:child_process\.|cp\.)?(?:exec|execSync)\(\s*`[^`]*\$\{"""
+)
+_NODE_CP_FILE = re.compile(r"""\bchild_process\b""")
+_SHELL_INJECTION_PATH_RE = _TLS_FIXTURE_PATH_RE
+
+
+def _shell_rule_applies(rel_path):
+    """Same exclusions as rule 6: dev/test/fixture paths and prose docs."""
+    return _tls_rule_applies(rel_path)
+
+
+def _shell_injection_hit(text, node_file):
+    if _SHELL_TRUE_SUBPROCESS.search(text) or _OS_SYSTEM_DYNAMIC.search(text):
+        return True
+    m = _NODE_EXEC_TEMPLATE.search(text)
+    if not m:
+        return False
+    qualified = text[max(0, m.start()):m.end()].lstrip().startswith(("child_process.", "cp."))
+    return qualified or node_file
+
+
+# ---------------------------------------------------------------------------
 # file walking / reading
 # ---------------------------------------------------------------------------
 
@@ -471,6 +513,8 @@ def _scan_file(rel_path, lines, secrets_everywhere=False):
     browser_served = _is_browser_served(rel_path)
     prod_config = _is_production_config(rel_path)
     tls_scan = _tls_rule_applies(rel_path)
+    shell_scan = _shell_rule_applies(rel_path)
+    node_file = shell_scan and any(_NODE_CP_FILE.search(t) for _, t in lines)
 
     # rule 3 / rule 5 need whole-file context for the AND conditions.
     saw_rls_disable = None  # lineno of a DISABLE ROW LEVEL SECURITY
@@ -601,6 +645,18 @@ def _scan_file(rel_path, lines, secrets_everywhere=False):
                 "Remove the override and trust the system CA store. For a "
                 "private CA, pass its bundle (verify=/path/ca.pem, ca option) "
                 "instead of turning verification off.",
+            ))
+
+        # --- rule 7: shell injection shapes ------------------------------
+        if (shell_scan and not _COMMENT_OR_DOC_LINE.match(text)
+                and _shell_injection_hit(text, node_file)):
+            findings.append(_finding(
+                "shell-injection", rel_path, lineno, "HIGH",
+                "A shell command is built from a formatted or concatenated "
+                "string; any untrusted value in it becomes shell syntax.",
+                "Pass an argv list without shell=True (subprocess.run([cmd, "
+                "arg])) or use execFile/spawn with an args array; never "
+                "interpolate input into a command string.",
             ))
 
         # --- rule 5: CORS wildcard + credentials (whole-file AND) --------
