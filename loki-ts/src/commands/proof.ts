@@ -605,7 +605,7 @@ async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, v
       return 1;
     }
     const files = ["receipt.json", "events.jsonl", "pubkey.jwk", "VERIFY.md"].map((f) => join(bdir, f));
-    const scan = await runSecureScan(bdir);
+    const scan = await runSecureScan(bdir, { secretsEverywhere: true });
     if (!scan.ok || scan.findings.length > 0) {
       process.stderr.write(`${RED}Share refused:${NC} redaction scan ${scan.ok ? `found ${scan.findings.length} finding(s)` : `failed (${scan.error ?? "unknown"})`}\n`);
       for (const f of scan.findings) process.stderr.write(`  - ${f.file}:${f.line} ${f.rule}\n`);

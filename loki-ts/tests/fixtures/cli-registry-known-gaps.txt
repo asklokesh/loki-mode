@@ -49,6 +49,7 @@ export share
 github export
 github help
 github pr
+github publish
 github status
 github sync
 import help
@@ -127,7 +128,6 @@ projects remove
 projects rm
 projects sync
 proof chain
-proof md
 proof passport
 proof phases
 proof releases

@@ -114,10 +114,14 @@ _SECRET_PATTERNS = [
     ("openai-key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     # GitHub personal access token (classic): ghp_ + 36 chars
     ("github-pat", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
+    # GitHub OAuth / server / user-to-server tokens and fine-grained PATs
+    ("github-token", re.compile(r"\b(?:gh[osu]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b")),
+    # Anthropic API key
+    ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}")),
     # Google API key: AIza + 35 url-safe chars
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     # Slack bot token: xoxb- + token body
-    ("slack-bot-token", re.compile(r"\bxoxb-[0-9A-Za-z-]{10,}\b")),
+    ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b")),
 ]
 
 # Placeholder / example markers. If the matched secret (or its surrounding
@@ -427,7 +431,7 @@ def _finding(rule, rel_path, line, severity, message, fix):
     }
 
 
-def _scan_file(rel_path, lines):
+def _scan_file(rel_path, lines, secrets_everywhere=False):
     """Return a list of findings for one file. `lines` is [(lineno, text), ...]."""
     findings = []
     browser_served = _is_browser_served(rel_path)
@@ -457,7 +461,10 @@ def _scan_file(rel_path, lines):
             ))
 
         # --- rule 2: secret literal in a browser-served file -------------
-        if browser_served:
+        # secrets_everywhere (opt-in, used by the proof-share redaction scan)
+        # applies the same token rule to every text file: a share bundle has no
+        # browser/server split, so any token in it is a leak.
+        if browser_served or secrets_everywhere:
             for kind, pat in _SECRET_PATTERNS:
                 for m in pat.finditer(text):
                     secret = m.group(0)
@@ -590,7 +597,7 @@ def _scan_file(rel_path, lines):
 # scan driver
 # ---------------------------------------------------------------------------
 
-def scan(target_dir):
+def scan(target_dir, secrets_everywhere=False):
     """Scan target_dir and return the result dict.
 
     Raises ValueError if target_dir is not a readable directory (the CLI maps
@@ -603,7 +610,7 @@ def scan(target_dir):
         lines = _read_lines(abs_path)
         if lines is None:
             continue
-        findings.extend(_scan_file(rel_path, lines))
+        findings.extend(_scan_file(rel_path, lines, secrets_everywhere))
 
     # deterministic ordering: by file, then line, then rule
     findings.sort(key=lambda f: (f["file"], f["line"], f["rule"]))
@@ -630,14 +637,15 @@ def _cli(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # --json is accepted for symmetry with the other shims; output is always
     # JSON, so the flag is a no-op kept for a stable, predictable interface.
-    args = [a for a in argv if a != "--json"]
+    everywhere = "--secrets-everywhere" in argv
+    args = [a for a in argv if a not in ("--json", "--secrets-everywhere")]
     if not args or argv[0] in ("-h", "--help"):
         print(json.dumps(
-            {"error": "usage: secure-scan.py <target_dir> [--json]"}))
+            {"error": "usage: secure-scan.py <target_dir> [--json] [--secrets-everywhere]"}))
         return 2
     target_dir = args[0]
     try:
-        result = scan(target_dir)
+        result = scan(target_dir, everywhere)
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}))
         return 2
