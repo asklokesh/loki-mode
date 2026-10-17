@@ -9,7 +9,7 @@ import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
-import { buildFixResumeBrief, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
+import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
 function isTestFailure(g: FailureGroup): boolean {
@@ -59,7 +59,7 @@ export const fixStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
     const holdoutFailed = (prior.verify?.holdout_failed as number | undefined) ?? 0;
-    const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
+    const diffStat = currentDiff(ctx.repoDir, ctx.baseSha, 6000, round > 1);
     const repoMap = briefCtx(ctx);
     // L1: escalation only goes up: a repeated test failure gets the strongest model (never below the run's) plus the prior diagnosis, before STALLED.
     const testFailures = groups.filter(isTestFailure);

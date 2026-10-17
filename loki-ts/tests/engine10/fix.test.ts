@@ -4,6 +4,11 @@
 // PARTIAL. Depends on E-07/E-09 only through the SessionRunner interface and
 // the outputs() shapes those stages produce, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { currentDiff } from "../../src/runner/session_resume.ts";
 import { buildFixBrief, fixStage } from "../../src/engine10/stages/fix.ts";
 import type { FailureGroup } from "../../src/engine10/failures.ts";
 import type {
@@ -109,7 +114,6 @@ describe("fix stage", () => {
       {
         intake: { task: "fix the bug", impacted_tests: ["tests/x.test.ts"] },
         verify: { failures_grouped: groups },
-        implement: { diff_stat: "1 file changed, +3 -1" },
       },
       emitted,
     );
@@ -119,10 +123,8 @@ describe("fix stage", () => {
     expect(result.status).toBe("completed");
     expect(result.data.round).toBe(1);
     expect(result.data.groups_fed).toBe(1);
-    expect(result.data.diff_stat).toBe("1 file changed, +3 -1");
     expect(sessions.calls).toHaveLength(1);
     expect(sessions.calls[0]!.brief).toContain("AssertionError: expected 1 to equal 2");
-    expect(sessions.calls[0]!.brief).toContain("1 file changed, +3 -1");
     expect(sessions.calls[0]!.iterationId).toBe("e10-test-1-fix1");
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ type: "fix.round", stage: "fix" });
@@ -183,5 +185,57 @@ describe("fix stage", () => {
     const result = await fixStage.run(ctx, new AbortController().signal);
 
     expect(result.data.diff_stat).toBeNull();
+  });
+});
+
+describe("fix brief sees the current diff (TEN-QUALITY-07)", () => {
+  const vcs = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, stdio: "pipe" }).toString().trim();
+  function repo(): { d: string; base: string } {
+    const d = mkdtempSync(join(tmpdir(), "q07-"));
+    vcs(d, "init", "-q");
+    writeFileSync(join(d, "a.ts"), "export function add(a: number, b: number) {\n  return 0;\n}\n");
+    vcs(d, "add", "a.ts");
+    vcs(d, "commit", "-qm", "base");
+    const base = vcs(d, "rev-parse", "HEAD");
+    writeFileSync(join(d, "a.ts"), "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+    return { d, base };
+  }
+  const withRepo = async (fn: (d: string, base: string) => Promise<void> | void) => {
+    const { d, base } = repo();
+    try { await fn(d, base); } finally { rmSync(d, { recursive: true, force: true }); }
+  };
+  const ctxAt = (d: string, base: string, s: SessionRunner, outputs: Partial<Record<StageName, Record<string, unknown>>>) => ({ ...fakeCtx(s, outputs), repoDir: d, baseSha: base });
+
+  test("round 1 brief carries the stat, not the unavailable note", () => withRepo(async (d, base) => {
+    const s = new FakeSessionRunner(doneResult);
+    await fixStage.run(ctxAt(d, base, s, { verify: { failures_grouped: groups } }), new AbortController().signal);
+    expect(s.calls[0]!.brief).toContain("1 file changed");
+    expect(s.calls[0]!.brief).not.toContain("(diff stat is not available)");
+  }));
+
+  test("round 2 brief carries the bounded hunks", () => withRepo(async (d, base) => {
+    const s = new FakeSessionRunner(doneResult);
+    await fixStage.run(ctxAt(d, base, s, { verify: { failures_grouped: groups }, fix: { round: 1 } }), new AbortController().signal);
+    expect(s.calls[0]!.brief).toContain("+  return a + b;");
+  }));
+
+  test("a file under .loki/ never appears; untracked files are listed by name", () => withRepo((d, base) => {
+    mkdirSync(join(d, ".loki"));
+    writeFileSync(join(d, ".loki", "secret.json"), "x");
+    writeFileSync(join(d, "new.ts"), "export const n = 1;\n");
+    const out = currentDiff(d, base, 6000, true)!;
+    expect(out).not.toContain(".loki");
+    expect(out).toContain("new.ts");
+  }));
+
+  test("a 50 KB diff is cut to 6000 bytes with the truncation note", () => withRepo((d, base) => {
+    writeFileSync(join(d, "a.ts"), Array.from({ length: 3000 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n");
+    const out = currentDiff(d, base, 6000, true)!;
+    expect(Buffer.byteLength(out)).toBeLessThanOrEqual(6000);
+    expect(out).toContain("[diff truncated");
+  }));
+
+  test("a non-repo directory returns null", () => {
+    expect(currentDiff("/tmp/does-not-matter", "deadbeef")).toBeNull();
   });
 });
