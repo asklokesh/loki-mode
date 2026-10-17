@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRunCapS } from "../../src/util/run_cap.ts";
-import { tokenFreeEnv, safeGit, safeGitSpawn, safeGitRun } from "../../src/util/safe_git.ts";
+import { tokenFreeEnv, safeGit, safeGitArgs, safeGitSpawn, safeGitRun } from "../../src/util/safe_git.ts";
 import { listRepoFiles } from "../../src/engine10/repomap.ts";
 import { restoreBranch } from "../../src/e10ext/stop_restore.ts";
 
@@ -229,3 +229,54 @@ test("FC-25c(b): repo-local http.proxy is not honoured under allowToken", async 
     expect(seen.length).toBe(0);
   } finally { srv.stop(true); }
 });
+
+// FC-25c(b) r2: TLS pins. Each key is set at repo scope in its url-scoped and plain form; the pinned args must reset or force the safe value.
+const tlsArgs = (key: string, val: string, urlKey: string): string[] => {
+  const n = netRepo("tls"); lc(n.r, key, val); lc(n.r, urlKey, val);
+  return withGlobal(n.gcfg, () => safeGitArgs(["fetch", "origin"], true, n.r, {}, { ...process.env, GIT_CONFIG_GLOBAL: n.gcfg }));
+};
+const hasPair = (a: string[], v: string): boolean => a.some((x, i) => x === v && a[i - 1] === "-c");
+test("FC-25c(b) r2: repo-local http.sslVerify=false is pinned back to true under allowToken", hermeticGit(() => {
+  const a = tlsArgs("http.sslVerify", "false", "http.https://example.test/.sslVerify");
+  expect(hasPair(a, "http.sslverify=true")).toBe(true);
+  expect(hasPair(a, "http.https://example.test/.sslverify=true")).toBe(true);
+  expect(a.some((x) => /sslverify=false/.test(x))).toBe(false);
+}));
+test("FC-25c(b) r2: repo-local http.curloptResolve is reset under allowToken", hermeticGit(() => {
+  const a = tlsArgs("http.curloptResolve", "example.test:443:127.0.0.1", "http.https://example.test/.curloptResolve");
+  expect(hasPair(a, "http.curloptresolve=")).toBe(true);
+  expect(hasPair(a, "http.https://example.test/.curloptresolve=")).toBe(true);
+}));
+test("FC-25c(b) r2: repo-local http.sslCAInfo and sslCAPath are reset under allowToken", hermeticGit(() => {
+  const n = netRepo("ca"); lc(n.r, "http.sslCAInfo", "/evil/ca.pem"); lc(n.r, "http.sslCAPath", "/evil/capath");
+  const a = withGlobal(n.gcfg, () => safeGitArgs(["fetch", "origin"], true, n.r, {}, { ...process.env, GIT_CONFIG_GLOBAL: n.gcfg }));
+  expect(hasPair(a, "http.sslcainfo=")).toBe(true);
+  expect(hasPair(a, "http.sslcapath=")).toBe(true);
+  expect(a.some((x) => x.includes("/evil/"))).toBe(false);
+}));
+test("FC-25c(b) r2: allowToken fetch and pull never recurse into a submodule, even when the repo asks", hermeticGit(() => {
+  const n = netRepo("sm");
+  lc(n.r, "fetch.recurseSubmodules", "yes"); lc(n.r, "submodule.sm.fetchRecurseSubmodules", "yes");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: n.gcfg };
+  for (const cmd of ["fetch", "pull"]) {
+    const a = safeGitArgs([cmd, "--recurse-submodules=on-demand", "origin"], true, n.r, {}, env);
+    const i = a.indexOf(cmd);
+    expect(a[i + 1]).toBe("--no-recurse-submodules");
+    expect(a.some((x) => x.startsWith("--recurse-submodules"))).toBe(false);
+  }
+  // non-transport and non-token calls are untouched
+  expect(safeGitArgs(["status"], true, n.r, {}, env)).not.toContain("--no-recurse-submodules");
+  expect(safeGitArgs(["fetch", "origin"], false)).not.toContain("--no-recurse-submodules");
+}));
+test("FC-25c(b) r2: a hostile submodule core.sshCommand never runs on an allowToken fetch", hermeticGit(() => {
+  const n = netRepo("smrun"); const d = join(n.r, ".."), G = (cwd: string, ...a: string[]): string => execFileSync("git", ["-c", "protocol.file.allow=always", ...a], { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: n.gcfg } });
+  const sub = join(d, "subsrc"); mkdirSync(sub); G(sub, "init", "-q"); writeFileSync(join(sub, "f"), "1\n"); G(sub, "add", "f"); G(sub, "commit", "-qm", "s");
+  const up = join(d, "up"); mkdirSync(up); G(up, "init", "-q"); G(up, "submodule", "add", "-q", sub, "sm"); G(up, "commit", "-qm", "u");
+  const sup = join(d, "sup"); G(d, "clone", "-q", "--recurse-submodules", up, sup);
+  G(join(sup, "sm"), "config", "core.sshCommand", n.rec); G(join(sup, "sm"), "config", "remote.origin.url", "ssh://example.test/x");
+  G(sup, "config", "fetch.recurseSubmodules", "yes");
+  try { G(sup, "fetch", "origin"); } catch { /* ok */ }
+  expect(existsSync(n.hit)).toBe(true); rmSync(n.hit, { force: true });
+  try { withGlobal(n.gcfg, () => safeGit(sup, ["fetch", "origin"], { allowToken: true })); } catch { /* ok */ }
+  expect(existsSync(n.hit)).toBe(false);
+}));
