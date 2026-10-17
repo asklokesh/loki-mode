@@ -174,7 +174,7 @@ async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: Explai
   if (ma.raw !== null && (sc >= 0 || exportDsse)) return (process.stderr.write("loki verify: --max-age is not supported with --seal-composite or --export-dsse; freshness was not checked\n"), 2);
   if (sc >= 0) return args.length === 2 && sc === 0 ? sealCompositeCmd(args[1]!) : (process.stderr.write("loki verify: --seal-composite takes exactly one run directory\n"), 2);
   const dep = await deployAttestCmd(args, { takePubkey, maxAge: ma.raw, now: deps.now, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
-  const pk = takePubkey(args); if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
+  const pk = takePubkey(args); if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n${/^(unknown option|expected at most one)/.test(pk.error) ? "Usage: loki verify [run-id] (see loki verify --help)\n" : ""}`), 2); // TEN-GATES-25
   args = pk.args;
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");

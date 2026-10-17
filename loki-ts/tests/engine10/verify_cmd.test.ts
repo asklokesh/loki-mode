@@ -1482,4 +1482,13 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
       expect(r.out).not.toContain("\u001b");
     } finally { done(s.dir, s.home); }
   });
+
+  test("unknown flag and extra id exit 2 with a usage line, never a receipt verdict", async () => {
+    for (const a of [["--bogus"], ["run-a", "run-b"], ["run-a", "--bogus"]]) {
+      const r = await runBoth(a, "/nonexistent-runs");
+      expect(r.code).toBe(2);
+      expect(r.out).toBe("");
+      expect(r.err).toContain("Usage: loki verify [run-id]");
+    }
+  });
 });
