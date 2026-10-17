@@ -12,6 +12,8 @@ export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
   { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.(cjs|mjs))$/ },
   { re: /(^|\/)package\.json$/, shared: PKG_KEYS },
+  { re: /(^|\/)(pnpm-workspace\.yaml|\.yarnrc\.yml)$/ }, // D101: YAML parsers disagree (Bun.YAML vs js-yaml 4), so any byte change caps, no parsed comparison
+  { re: /(^|\/)patches\/|\.patch$/ }, // patchedDependencies targets: a changed patch rewrites installed dependency code
   { re: /(^|\/)pyproject\.toml$/, shared: /^\[tool\.pytest/ },
   { re: /(^|\/)setup\.cfg$/, shared: /^\[tool:pytest\]/ },
   { re: /(^|\/)go\.(mod|work)$/, shared: "go" },
@@ -98,7 +100,7 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
       for (const rev of same ? [head] : [baseSha, head]) {
         const tree = trees.get(rev)!, t = tree.has(cfg) ? gitOut(repoDir, ["show", `${rev}:${cfg}`], signal) : "";
         texts.push(t);
-        if (spec.shared && t) try { relevant(spec.shared, t); } catch { bad = true; } // this side is malformed: fail closed below
+        if (spec.shared && t) try { relevant(spec.shared, t); } catch (x) { bad = true; } // this side is malformed: fail closed below
         for (const c of referenced(cfg, t)) refs.add(EXT.map((e) => c + e).find((p) => tree.has(p)) ?? c);
       }
       const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";

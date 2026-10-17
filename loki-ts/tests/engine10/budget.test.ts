@@ -247,7 +247,7 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   });
 });
 
-// D66: features/ is the home for new modules, with its own 3,000-line cap. It may not import
+// D66: features/ is the home for new modules, with its own 3,300-line cap. It may not import
 // stages/ or seal/verify/wall/verify_cmd except as a whole-statement `import type`.
 const FEATURES_ROOT = join(import.meta.dir, "..", "..", "src", "features");
 
@@ -270,8 +270,9 @@ function featuresViolations(file: string, src: string): string[] {
 }
 
 describe("features size and import budget (D66)", () => {
-  it("features stays under 3,000 lines", () => {
-    expect(count(featuresFiles(), FEATURES_ROOT)).toBeLessThan(3000);
+  // D100: raised from 3,000 (FC-09u, 2026-10-16); never fold code to fit a cap.
+  it("features stays under 3,300 lines", () => {
+    expect(count(featuresFiles(), FEATURES_ROOT)).toBeLessThan(3300);
   });
 
   it("never imports stages/ or seal/verify/wall/verify_cmd except whole-statement `import type`", () => {

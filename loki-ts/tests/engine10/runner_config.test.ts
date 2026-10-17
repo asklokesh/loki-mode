@@ -475,3 +475,90 @@ describe("FC-09 seal caps a run that touches runner config", () => {
     expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["package.json"])).toEqual([]);
   });
 });
+
+describe("FC-09u pnpm-workspace and yarnrc key-level caps", () => {
+  const PNPM = 'packages:\n  - "pkgs/*"\n\noverrides:\n  foo: 1.0.0\n\npackageExtensions:\n  bar@1:\n    dependencies:\n      baz: "*"\n';
+  const YARN = 'nodeLinker: node-modules\n\npackageExtensions:\n  bar@1:\n    dependencies:\n      baz: "*"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  test("pnpm-workspace.yaml overrides edit caps", () => {
+    expect(capsOn("pnpm-workspace.yaml", PNPM, PNPM.replace("foo: 1.0.0", "foo: link:../fake"))).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test("pnpm-workspace.yaml packageExtensions edit caps", () => {
+    expect(capsOn("pnpm-workspace.yaml", PNPM, PNPM.replace('baz: "*"', 'qux: "*"'))).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test(".yarnrc.yml packageExtensions edit caps", () => {
+    expect(capsOn(".yarnrc.yml", YARN, YARN.replace('baz: "*"', 'qux: "*"'))).toEqual([".yarnrc.yml"]);
+  });
+  test("a new overrides or packageExtensions block caps, including quoted keys and nested paths", () => {
+    expect(capsOn("pnpm-workspace.yaml", 'packages:\n  - "a"\n', 'packages:\n  - "a"\noverrides:\n  x: 1\n')).toEqual(["pnpm-workspace.yaml"]);
+    expect(capsOn("sub/.yarnrc.yml", "nodeLinker: pnp\n", 'nodeLinker: pnp\n"packageExtensions": { a@1: {} }\n')).toEqual(["sub/.yarnrc.yml"]);
+  });
+  // D101 fail-closed: YAML runner configs are never compared as parsed values (Bun.YAML and js-yaml 4 disagree), so even an unrelated or comment-only edit caps.
+  test("any byte change caps, including a comment-only or unrelated edit", () => {
+    expect(capsOn("pnpm-workspace.yaml", PNPM, PNPM.replace('"pkgs/*"', '"other/*"'))).toEqual(["pnpm-workspace.yaml"]);
+    expect(capsOn("pnpm-workspace.yaml", PNPM, "# note\n" + PNPM)).toEqual(["pnpm-workspace.yaml"]);
+    expect(capsOn(".yarnrc.yml", YARN, YARN.replace("node-modules", "pnp"))).toEqual([".yarnrc.yml"]);
+  });
+  test("a byte-identical YAML config does not cap", () => {
+    const r = repo({ "pnpm-workspace.yaml": PNPM, "x.txt": "1" });
+    r.edit("x.txt", "2"); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(r.dir, r.base, sh(r.dir, ["rev-parse", "HEAD"]), ["x.txt"])).toEqual([]);
+  });
+  test.each([
+    ["block scalar on its own line", "x:\n  foo\npackages: [a]\n", "x:\n  |\noverrides:\n  foo: link:./fake\n"],
+    ["folded scalar after comment", "x: 1\n", "x: #\n  >\noverrides:\n  foo: link:./fake\n"],
+    ["1_000 number", "overrides:\n  foo: 1_000\n", "overrides:\n  foo: link:./fake\n"],
+    ["timestamp", "x: 2001-12-14\n", "x: 2001-12-14t21:59:43.10-05:00\noverrides:\n  foo: link:./fake\n"],
+    ["indentation indicator", "x: 1\n", "x: |2\n    a\noverrides:\n  foo: link:./fake\n"],
+  ])("FC-09v r2 pnpm-workspace.yaml parser-disagreement case caps: %s", (_n, a, b) => {
+    expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test("a changed, added or deleted patch file caps", () => {
+    expect(capsOn("patches/foo.patch", "a\n", "b\n")).toEqual(["patches/foo.patch"]);
+    expect(capsOn("sub/patches/foo.diff", "a\n", "b\n")).toEqual(["sub/patches/foo.diff"]);
+    expect(capsOn("x.patch", "a\n", "b\n")).toEqual(["x.patch"]);
+    const r = repo({ "patches/foo.patch": "a\n", "k": "1" });
+    r.edit("patches/foo.patch", "b\n"); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(r.dir, r.base, sh(r.dir, ["rev-parse", "HEAD"]), ["patches/foo.patch"]).length).toBe(1);
+  });
+  test.each([
+    ["explicit key", "packages: [a]\n? overrides\n: {foo: 1.0.0}\n", "packages: [a]\n? overrides\n: {foo: link:../fake}\n"],
+    ["BOM", "\uFEFFoverrides:\n  foo: 1.0.0\n", "\uFEFFoverrides:\n  foo: link:../fake\n"],
+    ["escaped key", '"overrides":\n  foo: 1.0.0\n', '"overrides":\n  foo: link:../fake\n'],
+    ["escaped unicode key", '"\\u006fverrides":\n  foo: 1.0.0\n', '"\\u006fverrides":\n  foo: link:../fake\n'],
+    ["flow map", "{packages: [a], overrides: {foo: 1.0.0}}\n", "{packages: [a], overrides: {foo: link:../fake}}\n"],
+    ["anchor body", "x-base: &o {foo: 1.0.0}\noverrides: *o\n", "x-base: &o {foo: link:../fake}\noverrides: *o\n"],
+    ["merge key", "x-base: &o {foo: 1.0.0}\noverrides:\n  <<: *o\n", "x-base: &o {foo: link:../fake}\noverrides:\n  <<: *o\n"],
+    ["bare CR", "packages: [a]\roverrides:\r  foo: 1.0.0\r", "packages: [a]\roverrides:\r  foo: link:../fake\r"],
+  ])("pnpm-workspace.yaml bypass caps: %s", (_n, a, b) => {
+    expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test.each([
+    ["double BOM", "\uFEFF\uFEFFoverrides:\n  foo: 1.0.0\n", "\uFEFF\uFEFFoverrides:\n  foo: link:./fake\n"],
+    ["collection key", "packages: [a]\n? [foo]\n: 1.0.0\n", "packages: [a]\n? [foo]\n: link:./fake\n"],
+    ["quoted merge key", 'x: &o {foo: 1.0.0}\noverrides:\n  "<<": *o\n', 'x: &o {foo: link:./fake}\noverrides:\n  "<<": *o\n'],
+    ["alias in overrides", "x: &o 1.0.0\noverrides:\n  foo: *o\n", "x: &o link:./fake\noverrides:\n  foo: *o\n"],
+    ["CR only", "overrides:\r  foo: 1.0.0\r", "overrides:\r  foo: link:./fake\r"],
+    ["tab", "packages: [a]\toverrides: {foo: 1.0.0}\n", "packages: [a]\toverrides: {foo: link:./fake}\n"],
+    ["tag", "overrides: !!map\n  foo: 1.0.0\n", "overrides: !!map\n  foo: link:./fake\n"],
+    ["document marker", "---\noverrides:\n  foo: 1.0.0\n", "---\noverrides:\n  foo: link:./fake\n"],
+  ])("FC-09v pnpm-workspace.yaml outside the strict subset caps: %s", (_n, a, b) => {
+    expect(capsOn("pnpm-workspace.yaml", a, b)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test("malformed YAML that changed fails closed", () => {
+    expect(capsOn("pnpm-workspace.yaml", "packages: [a]\n", "packages: [a\noverrides: {\n")).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test.each([["patchedDependencies", "a@1: p.patch"], ["catalog", "a: 1"], ["catalogs", "x: {a: 1}"]])("pnpm-workspace.yaml %s edit caps", (k, v) => {
+    expect(capsOn("pnpm-workspace.yaml", "packages: [a]\n", `packages: [a]\n${k}:\n  ${v}\n`)).toEqual(["pnpm-workspace.yaml"]);
+  });
+  test.each([["yarnPath", ".yarn/releases/fake.cjs"], ["plugins", "[./fake.cjs]"]])(".yarnrc.yml %s edit caps", (k, v) => {
+    expect(capsOn(".yarnrc.yml", YARN, `${YARN}${k}: ${v}\n`)).toEqual([".yarnrc.yml"]);
+  });
+  test("runnerConfigNotes caps any edit", () => {
+    const r = repo({ "pnpm-workspace.yaml": PNPM });
+    r.edit("pnpm-workspace.yaml", PNPM.replace("foo: 1.0.0", "foo: 2.0.0")); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(r.dir, r.base, sh(r.dir, ["rev-parse", "HEAD"]), ["pnpm-workspace.yaml"]).length).toBe(1);
+    r.edit("pnpm-workspace.yaml", PNPM.replace("foo: 1.0.0", "foo: 2.0.0").replace('"pkgs/*"', '"z/*"')); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "d"]);
+    expect(runnerConfigNotes(r.dir, sh(r.dir, ["rev-parse", "HEAD~1"]), sh(r.dir, ["rev-parse", "HEAD"]), ["pnpm-workspace.yaml"]).length).toBe(1);
+  });
+});
