@@ -164,6 +164,9 @@ function _loki {
                 completions)
                     _arguments '1:shell:(bash zsh install)'
                     ;;
+                version)
+                    _arguments '--json[Print version, runtime and install path as JSON]' '--help[Show help]'
+                    ;;
                 monitor)
                     _directories
                     ;;
@@ -345,7 +348,7 @@ function _loki_commands {
         'bench:Run benchmarks'
         'open:Open a project resource'
         'rc:Release candidate commands'
-        'version:Show version'
+        'version:Show version (--json for machine-readable)'
         'completions:Output shell completions'
         'help:Show help'
     )

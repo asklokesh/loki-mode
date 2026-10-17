@@ -335,6 +335,10 @@ _loki_completion() {
             _filedir -d
             ;;
 
+        version)
+            COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
+            ;;
+
         completions)
             COMPREPLY=( $(compgen -W "bash zsh install" -- "$cur") )
             ;;

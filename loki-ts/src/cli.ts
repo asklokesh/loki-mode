@@ -20,7 +20,7 @@ const HELP = `Loki Mode (TypeScript port, Phase 2 of bash->Bun migration)
 Usage: loki <command> [args...]
 
 Bun-native commands:
-  version                Print Loki Mode version
+  version [--json]       Print Loki Mode version (--json: version, runtime, install_path)
   status [--json|--badge|--probe]  Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
   pause | resume | cancel  Ask the active Loki 10 run to pause, resume or cancel at the next stage boundary
@@ -83,7 +83,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "version":
     case "--version":
     case "-v":
-      return await runVersion();
+      return await runVersion(rest);
 
     case "provider":
       return runProvider(rest);
