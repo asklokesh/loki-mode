@@ -283,6 +283,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   { // D61-11b: unit intake first (fails closed, so a unit is never split into a group); its frozen spec and cost cap reach the worker env
     const u = (await import("../features/speed/unit_mode.ts")).unitIntake(process.env, repoDir, cap.usd);
     if (u && !u.ok) { process.stderr.write(`engine10: ${u.note}\n`); return 2; }
+    if (u?.ok && u.note) process.stderr.write(`engine10: ${u.note}\n`);
     if (u) { Object.assign(env, u.env); cap.usd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? cap.usd; }
   }
   if (process.env.LOKI_SPEED !== "0" && !isIssue) { const [rt, sl, vc] = await Promise.all([import("../features/speed/route.ts"), import("./stages/seal.ts"), import("./verify_cmd.ts")]); const g = await rt.maybeRunGroup(task, repoDir, groupEnv(process.env, cap.usd, repoDir), { provider, seal: { receiptSha256: sl.receiptSha256, verifyReceipt: vc.verifyReceipt } }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
