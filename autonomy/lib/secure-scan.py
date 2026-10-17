@@ -18,7 +18,7 @@ The scanner is honest by construction:
     .git, vendor, bundled dist of dependencies) and oversized files, so it is
     cheap and deterministic.
 
-The v1 rules (rules 6, 7 and 8 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
+The v1 rules (rules 6, 7, 8, 9 and 10 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
   1. private-key-committed   (HIGH)   a PEM private-key block in any text file
   2. secret-in-client-file   (HIGH)   a real secret literal in a browser-served file
   3. world-open-datastore    (HIGH)   a literal world-open datastore rule
@@ -47,7 +47,7 @@ import re
 import subprocess
 import sys
 
-RULES_VERSION = "1.4"
+RULES_VERSION = "1.7"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -133,6 +133,12 @@ _SECRET_PATTERNS = [
     ("stripe-key", re.compile(r"(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}")),
     # SendGrid API key: SG.<22>.<43>
     ("sendgrid-key", re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")),
+    # AWS temporary (STS) access key id
+    ("aws-sts-key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
+    # Azure storage connection string account key: 86 base64 chars + ==
+    ("azure-account-key", re.compile(r"AccountKey=[A-Za-z0-9+/]{86}==")),
+    # Twilio API key SID: SK + 32 hex
+    ("twilio-key", re.compile(r"(?<![A-Za-z0-9])SK[0-9a-f]{32}(?![A-Za-z0-9])")),
 ]
 
 # Placeholder / example markers. If the matched secret (or its surrounding
@@ -462,6 +468,42 @@ def _shell_injection_hit(text, node_file):
 
 
 # ---------------------------------------------------------------------------
+# rule 9: unsafe deserialization (Python files)
+# ---------------------------------------------------------------------------
+# pickle.load/loads (also cPickle, _pickle), marshal.load/loads, and yaml.load
+# without a Safe loader on the same line. yaml.safe_load and
+# yaml.load(..., Loader=yaml.SafeLoader) are never flagged. Same path
+# exclusions as rules 6 and 7. Python files only (.py).
+_UNSAFE_DESERIALIZE = re.compile(
+    r"""\b(?:c?[pP]ickle|_pickle|marshal)\.loads?\s*\("""
+)
+_YAML_LOAD = re.compile(r"""\byaml\.load(?:_all)?\s*\(""")
+_YAML_SAFE_LOADER = re.compile(r"""\bC?SafeLoader\b""")
+
+
+def _deserialize_hit(text):
+    if _UNSAFE_DESERIALIZE.search(text):
+        return True
+    return bool(_YAML_LOAD.search(text) and not _YAML_SAFE_LOADER.search(text))
+
+
+# ---------------------------------------------------------------------------
+# rule 10: SQL built by string formatting and passed to execute() (Python)
+# ---------------------------------------------------------------------------
+# .execute( / .executemany( whose first argument is an interpolated f-string
+# (with a {placeholder}), a string literal followed by % or +, or a string
+# literal followed by .format(. A literal followed by a comma (parameter
+# tuple or list) is the safe form and is never flagged. Same line only; same
+# path exclusions as rules 6, 7 and 9. Python files only (.py).
+_SQL_EXEC_FORMATTED = re.compile(
+    r"""\.execute(?:many)?\s*\(\s*(?:"""
+    r"""[rR]?[fF]"[^"]*\{|[rR]?[fF]'[^']*\{"""
+    r"""|[rR]?"[^"]*"\s*(?:%|\+|\.format\s*\()"""
+    r"""|[rR]?'[^']*'\s*(?:%|\+|\.format\s*\())"""
+)
+
+
+# ---------------------------------------------------------------------------
 # rule 8: committed real env file with a secret assignment
 # ---------------------------------------------------------------------------
 # Only real env files (.env, .env.local, .env.production and the prod/staging
@@ -578,6 +620,8 @@ def _scan_file(rel_path, lines, secrets_everywhere=False, env_tracked=None):
     env_in_git = env_tracked is not None
     if real_envfile and env_in_git and rel_path not in env_tracked:
         real_envfile = False
+    deser_scan = shell_scan and rel_path.lower().endswith(".py")
+    sqli_scan = deser_scan
     node_file = shell_scan and any(_NODE_CP_FILE.search(t) for _, t in lines)
 
     # rule 3 / rule 5 need whole-file context for the AND conditions.
@@ -721,6 +765,30 @@ def _scan_file(rel_path, lines, secrets_everywhere=False, env_tracked=None):
                 "Pass an argv list without shell=True (subprocess.run([cmd, "
                 "arg])) or use execFile/spawn with an args array; never "
                 "interpolate input into a command string.",
+            ))
+
+        # --- rule 9: unsafe deserialization ------------------------------
+        if (deser_scan and not _COMMENT_OR_DOC_LINE.match(text)
+                and _deserialize_hit(text)):
+            findings.append(_finding(
+                "unsafe-deserialization", rel_path, lineno, "HIGH",
+                "Untrusted bytes or YAML passed to pickle, marshal or an "
+                "unsafe yaml.load can execute arbitrary code on load.",
+                "Use yaml.safe_load (or Loader=yaml.SafeLoader) and a data "
+                "format such as JSON; never unpickle or unmarshal data from "
+                "an untrusted source.",
+            ))
+
+        # --- rule 10: SQL built by string formatting ---------------------
+        if (sqli_scan and not _COMMENT_OR_DOC_LINE.match(text)
+                and _SQL_EXEC_FORMATTED.search(text)):
+            findings.append(_finding(
+                "sql-string-formatting", rel_path, lineno, "HIGH",
+                "SQL built with an f-string, % formatting, .format or "
+                "concatenation and passed to execute() is open to SQL "
+                "injection.",
+                "Pass values as bound parameters: "
+                "cursor.execute(\"... WHERE id = %s\", (value,)).",
             ))
 
         # --- rule 8: committed real env file with a secret value ---------
