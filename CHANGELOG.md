@@ -5,6 +5,34 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.33 (2026-10-17)
+
+Wave W and wave AB: 16 reviewed slices.
+
+### Added
+- `loki tour` verifies a bundled sealed receipt offline, then tampers a copy and shows TAMPERED (TEN-ADOPTION-01).
+- One-click Cursor and VS Code MCP install links in README and docs/INSTALLATION.md; deprecated npm keywords dropped (TEN-ADOPTION-06).
+- `LOKI_E10_REPRO=1` adds a reproduce-first sentence to the lean implement brief when no plan exists (TEN-QUALITY-08).
+- `loki doctor --fix` offers a consent-gated claude install and `claude login` (TEN-UX-04).
+- Seal VERIFIED now requires agent-independent proof, default on; every receipt check carries a `provenance` key and receipt.md splits agent-independent from advisory checks. Opt out with `LOKI_EXOGENOUS_PROOF=0`. Recorded as D104 (TEN-GATES-02).
+- `loki start` reads `cost.profile` from loki.yaml as the team default (TEN-COST-27).
+- bench-suite times `loki verify --fast` and records p95_ms (TEN-SPEED-02).
+- The run summary Time line marks the first sealed PR in a repo (TEN-UX-11).
+- The reviewer PR body gives a copyable receipt-check `uses:` line pinned to the current version (TEN-ADOPTION-10).
+- `loki status --probe` re-probes the last deploy health URL (TEN-DEPLOY-10).
+
+### Fixed
+- Doctor provider spawns reuse `withholdGithubTokens`, closing the P9 rule-of-two gap on the login probe (TEN-P9-FIX-F1).
+- local-ci gitleaks uses first-parent diff-merges, and G1 reads the mode at any indentation (TEN-SEC-GITLEAKS-01-F1).
+- The build_verified funnel payload is asserted to carry only headline and route (TEN-UX-03-F1).
+- `scripts/release.sh --ship` commits only HEAD plus its own edits (TEN-RELEASE-FAST).
+- The bench task venv inherits system site-packages so pytest runs (TEN-COST-21).
+- Relevance ranks tracked traceback paths past the 2000-file repo map cap (TEN-QUALITY-10).
+
+### Known
+- Two tests are red on the combined tree and have a P0 fix-forward open: seal.test.ts "verifies end to end through loki verify" (rc 4) and doctor.test.ts "(f) real entry path" (TEN-UX-04). Each passed in its own slice worktree.
+- The TEN-GATES-02 merge hand-resolved a DECISIONS.md append conflict (D103 and D104 both kept, no content change).
+
 ## v11.17.32 (2026-10-17)
 
 ### Added

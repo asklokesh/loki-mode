@@ -144,3 +144,8 @@ fd027051c4ee351a9c1c9d26cf4d71e395ea25c1:loki-ts/tests/engine10/check_result.tes
 fd027051c4ee351a9c1c9d26cf4d71e395ea25c1:loki-ts/tests/engine10/check_result.test.ts:aws-access-token:345
 bc0e97c6308c658927b3d540375e5bcba5807b0b:loki-ts/tests/engine10/check_result.test.ts:aws-access-token:342
 bc0e97c6308c658927b3d540375e5bcba5807b0b:loki-ts/tests/engine10/check_result.test.ts:aws-access-token:345
+# TEN-ADOPTION-01 demo receipt fixture: public EdDSA JWS signature and a project_model cache hash, no secret (pubkey.jwk has no d member)
+710d1289b90f8faf44a6fdeb6186322801dd156e:skills/fixtures/demo-receipt/receipt.json:jwt:114
+710d1289b90f8faf44a6fdeb6186322801dd156e:skills/fixtures/demo-receipt/events.jsonl:generic-api-key:6
+5eb2d7df8f75e7309244c2179c1ad10c8eea002b:skills/fixtures/demo-receipt/receipt.json:jwt:114
+5eb2d7df8f75e7309244c2179c1ad10c8eea002b:skills/fixtures/demo-receipt/events.jsonl:generic-api-key:6

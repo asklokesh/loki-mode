@@ -2476,3 +2476,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:25Z (CoS) v11.17.32
 - Wave AA all APPROVE: COST-25 89f9108c0 (39 pass, help mutation red), GATES-12 fe1f31d46 HIGH (proof.test 15 pass, 7 mutations red), GATES-13 6553224cd HIGH (generate.py --check rc=0 401 files, moat run.sh rc=0 7 of 9, 2 mutations red), UX-10 6c7549979 (test-control-plane 33 passed, mutation 2 failed), COST-08 d86b9d40f (dry run rc=0, drift 3 passed), COST-19 822236dc5. v11.17.27 and v11.17.28 Release runs success while overlapping; npm latest=next=11.17.29 at 06:23Z.
+
+## 2026-10-17T06:42Z (CoS) v11.17.33
+- Wave W 9 of 9 and wave AB 7 of 7 approved. 16 merged; GATES-02 needed a hand-merge of a DECISIONS.md append conflict. Smoke on combined main (bun test seal, implement, doctor, spawn_env_guard, budget): 213 pass, 2 fail (seal e2e verifyMain rc 4, doctor UX-04 shim e2e). P0 fix-forward agent dispatched under D96.
