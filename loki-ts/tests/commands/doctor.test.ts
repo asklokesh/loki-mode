@@ -31,6 +31,7 @@ import {
   type ReqTable,
   buildDoctorJson,
   checkDisk,
+  lowestVolume,
   checkSkills,
   checkTool,
   httpReachable,
@@ -153,6 +154,31 @@ describe("doctor.checkDisk", () => {
       expect(d.available_gb).toBeGreaterThanOrEqual(0);
     }
     expect(["pass", "fail", "warn"]).toContain(d.status);
+  });
+
+  it("reports the minimum across home, cwd and tmp and names the low volume", () => {
+    const d = checkDisk();
+    expect(d.volumes!.length).toBeGreaterThan(0);
+    const min = Math.min(...d.volumes!.map((v) => v.available_gb));
+    expect(d.available_gb).toBe(min);
+    expect(d.volumes!.find((v) => v.available_gb === min)!.name).toBe(d.low_volume!);
+    expect(d.volumes!.map((v) => v.name)).toEqual(["home", "cwd", "tmp"]);
+  });
+
+  it("lowestVolume picks the smallest volume by name", () => {
+    const r = lowestVolume([
+      { name: "home", path: "/h", available_gb: 200 },
+      { name: "cwd", path: "/c", available_gb: 3.5 },
+      { name: "tmp", path: "/t", available_gb: 40 },
+    ]);
+    expect(r).toEqual({ available_gb: 3.5, low_volume: "cwd" });
+    expect(lowestVolume([])).toEqual({ available_gb: null, low_volume: null });
+  });
+
+  it("skips unreadable volumes and keeps null when none are readable", () => {
+    const d = checkDisk([{ name: "cwd", path: "/nonexistent-loki-path-xyz" }]);
+    expect(d.available_gb).toBeNull();
+    expect(d.low_volume).toBeNull();
   });
 });
 

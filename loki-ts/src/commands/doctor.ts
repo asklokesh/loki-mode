@@ -13,7 +13,7 @@
 // the value is never read or echoed.
 import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
@@ -209,9 +209,15 @@ export type ToolCheck = {
   path: string | null;
 };
 
+export type DiskVolume = { name: "home" | "cwd" | "tmp"; path: string; available_gb: number };
+
+// available_gb is the MINIMUM free GB across the home, cwd and tmp volumes.
+// low_volume names the volume that produced it; volumes lists each readable one.
 export type DiskCheck = {
   available_gb: number | null;
   status: Status;
+  low_volume?: DiskVolume["name"] | null;
+  volumes?: DiskVolume[];
 };
 
 // v7.5.15: sentrux architectural-drift gate state exposed in --json output.
@@ -351,22 +357,44 @@ export async function checkTool(
 // ---------- Disk check --------------------------------------------------------
 
 // JSON form of disk check (bash cmd_doctor_json uses round(..., 1) -- 1 decimal).
-export function checkDisk(): DiskCheck {
+export function lowestVolume(volumes: DiskVolume[]): { available_gb: number | null; low_volume: DiskVolume["name"] | null } {
   let available_gb: number | null = null;
-  try {
-    const stats = statfsSync(homedir());
-    const bytes = Number(stats.bavail) * Number(stats.bsize);
-    available_gb = Math.round((bytes / (1024 ** 3)) * 10) / 10;
-  } catch {
-    available_gb = null;
+  let low_volume: DiskVolume["name"] | null = null;
+  for (const v of volumes) {
+    if (available_gb === null || v.available_gb < available_gb) {
+      available_gb = v.available_gb;
+      low_volume = v.name;
+    }
   }
+  return { available_gb, low_volume };
+}
+
+export function checkDisk(
+  targets: Array<{ name: DiskVolume["name"]; path: string }> = [
+    { name: "home", path: homedir() },
+    { name: "cwd", path: process.cwd() },
+    { name: "tmp", path: tmpdir() },
+  ],
+): DiskCheck {
+  const volumes: DiskVolume[] = [];
+  for (const t of targets) {
+    try {
+      const stats = statfsSync(t.path);
+      const bytes = Number(stats.bavail) * Number(stats.bsize);
+      volumes.push({ name: t.name, path: t.path, available_gb: Math.round((bytes / (1024 ** 3)) * 10) / 10 });
+    } catch {
+      // unreadable volume is skipped
+    }
+  }
+
+  const { available_gb, low_volume } = lowestVolume(volumes);
 
   let status: Status = "pass";
   if (available_gb !== null) {
     if (available_gb < 1) status = "fail";
     else if (available_gb < 5) status = "warn";
   }
-  return { available_gb, status };
+  return { available_gb, status, low_volume, volumes };
 }
 
 // ---------- Network probes ----------------------------------------------------
@@ -1555,18 +1583,19 @@ async function runText(): Promise<number> {
   // Bash text uses `df -g` (integer GB, floored). JSON uses round(_, 1).
   // checkDisk() returns the JSON-friendly float; floor it here for text-mode parity.
   const diskTextGb = disk.available_gb === null ? null : Math.floor(disk.available_gb);
+  const diskVol = disk.status !== "pass" && disk.low_volume ? ` on ${disk.low_volume} volume` : "";
   if (diskTextGb === null) {
     process.stdout.write(`  ${badge("warn")}  Disk space: unable to determine\n`);
     bump(tally, "warn");
   } else if (disk.status === "fail") {
     process.stdout.write(
-      `  ${badge("fail")}  Disk space: ${diskTextGb}GB available (need >= 1GB)\n`,
+      `  ${badge("fail")}  Disk space: ${diskTextGb}GB available${diskVol} (need >= 1GB)\n`,
     );
     bump(tally, "fail");
-    tally.blockers.push(`Free up disk: ${diskTextGb}GB available, need >= 1GB`);
+    tally.blockers.push(`Free up disk: ${diskTextGb}GB available${diskVol}, need >= 1GB`);
   } else if (disk.status === "warn") {
     process.stdout.write(
-      `  ${badge("warn")}  Disk space: ${diskTextGb}GB available (low)\n`,
+      `  ${badge("warn")}  Disk space: ${diskTextGb}GB available${diskVol} (low)\n`,
     );
     bump(tally, "warn");
   } else {
