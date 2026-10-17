@@ -12,7 +12,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   const env = (o.env ?? process.env) as Record<string, string>; const warnings: string[] = []; const git = (a: string[]) => safeGitRun(o.repoDir, a, { env, timeoutMs: 10000 }); // FC-25: the supervisor holds the token; the repo config is untrusted
   let wt0 = await git(["rev-parse", "--is-inside-work-tree"]); let initFatal: string | undefined; // TEN-UX-01: only a truly empty folder is initialised
   if (wt0.exitCode !== 0 || wt0.stdout.trim() !== "true") { const i = await initEmptyRepo(o.repoDir, env); if (i.notice) { warnings.push(i.notice); wt0 = await git(["rev-parse", "--is-inside-work-tree"]); } else initFatal = i.fatal; }
-  const [wt, name, email] = await Promise.all([Promise.resolve(wt0), git(["config", "user.name"]), git(["config", "user.email"])]);
+  const [wt, name, email, head] = await Promise.all([Promise.resolve(wt0), git(["config", "user.name"]), git(["config", "user.email"]), git(["rev-parse", "--verify", "-q", "HEAD^{commit}"])]); // TEN-STABILITY-35: git init with nothing committed has no HEAD and dies later in worktree creation
   const envVar = CLI_ENV_VAR[o.provider]; const cli = (envVar && env[envVar]?.trim()) || o.provider; const cliOk = envVar ? !!Bun.which(cli, { PATH: env.PATH ?? process.env.PATH ?? "" }) : true; // resolve against the given env's PATH, never the process's
   const fatal =
     wt.exitCode !== 0 || wt.stdout.trim() !== "true" ? (initFatal ?? NOT_A_REPO(o.repoDir)) :
@@ -20,6 +20,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     !envVar ? `the v10 engine has no ${o.provider} invoker yet` :
     o.provider !== "claude" && truthy(env["LOKI_HOST_GUARD"]) ? `LOKI_HOST_GUARD=1 is set but provider '${o.provider}' has no enforced PreToolUse hook; unset LOKI_HOST_GUARD or use --provider claude` :
     !cliOk ? `provider CLI '${cli}' is not on PATH; install it or set ${envVar} to its path${requirementFix(o.provider) ? `. Fix: ${requirementFix(o.provider)}` : ""}` :
+    head.exitCode !== 0 ? "repository has no commits; run: git add . && git commit -m init" :
     null;
   if (fatal) return { fatal, warnings };
   if (o.provider === "claude" && !env["ANTHROPIC_API_KEY"] && !env["CLAUDE_CODE_OAUTH_TOKEN"]) { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning

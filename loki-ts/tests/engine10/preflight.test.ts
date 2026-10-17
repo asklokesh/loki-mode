@@ -30,10 +30,11 @@ function tmpRoot(prefix: string): string {
   return d;
 }
 
-function bareRepo(): { dir: string; env: Record<string, string> } {
+function bareRepo(commit = true): { dir: string; env: Record<string, string> } {
   const dir = tmpRoot("e10-pf-repo-");
   const home = tmpRoot("e10-pf-home-");
   execFileSync("git", ["init", "-q", dir]);
+  if (commit) execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.test", "commit", "-q", "--allow-empty", "-m", "init"]); // no repo-level identity is left behind
   return { dir, env: { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } };
 }
 
@@ -66,6 +67,21 @@ describe("checkPreflight", () => {
     const dir = tmpRoot("e10-pf-notrepo-"); writeFileSync(join(dir, "f.txt"), "x");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { PATH: process.env.PATH ?? "" } });
     expect(r.fatal).toContain("not a git repository");
+  });
+
+  test("TEN-STABILITY-35: a repo with no commits is fatal and names the fix", async () => {
+    const { dir, env } = bareRepo(false);
+    execFileSync("git", ["-C", dir, "config", "user.name", "t"]); execFileSync("git", ["-C", dir, "config", "user.email", "t@t.test"]);
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli() } });
+    expect(r.fatal).toBe("repository has no commits; run: git add . && git commit -m init");
+  });
+
+  test("TEN-STABILITY-35: the no-commits fatal comes through the real preflight() entry", () => {
+    const { dir, env } = bareRepo(false);
+    execFileSync("git", ["-C", dir, "config", "user.name", "t"]); execFileSync("git", ["-C", dir, "config", "user.email", "t@t.test"]);
+    const code = `const { preflight } = await import(${JSON.stringify(PREFLIGHT_TS)}); await preflight({ repoDir: ${JSON.stringify(dir)}, provider: "claude", pr: false, env: ${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli() })} });`;
+    const r = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", timeout: 60000 });
+    expect(r.status).toBe(2); expect(r.stderr).toContain("repository has no commits; run: git add . && git commit -m init");
   });
 
   test("missing git identity is fatal", async () => {
