@@ -2075,58 +2075,106 @@ inj_run_bun_default() {
     fi
 }
 
-p9_at_comma() {
-    perl -0777 -ne '
-            while (/\b(?:safeGitEnv|safeGitArgs)\s*\(/g) {
-                my ($d, $q, $i) = (0, "", pos());
-                for (; $i < length($_); $i++) {
-                    my $c = substr($_, $i, 1);
-                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
-                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
-                    if ($c =~ /[(\[{]/) { $d++; next }
-                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
-                    if ($c eq "," && $d == 0) {
-                        if (substr($_, $i + 1) =~ /\A\s*\)/) { last }
-                        exit 0;
-                    }
-                }
-            }
-            exit 1'
+# Real-grammar scanner for the allowToken guard (Q18-03e). Hand-rolled comment and
+# regex stripping cannot tell a regex literal from division (`export default /re/`,
+# `if (a) /re/` vs `(4) / 2`), so every call-site check parses with the TypeScript
+# compiler API (the typescript package web-app already depends on, as P2 and P7
+# do). Comments, strings, regex literals, templates and JSX are the real grammar's
+# job. A file that does not parse is reported as PARSE and fails the case.
+#   scan  <ts.js>  (NUL-separated paths on stdin): FLAG<TAB>comma|import|indirect<TAB>file
+#   strip <ts.js>  (one path on stdin): the file with comments replaced by blanks
+P9_AST_JS='
+const fs = require("fs"), ts = require(process.argv[1]), mode = process.argv[2];
+const files = fs.readFileSync(0, "utf8").split("\0").filter(Boolean);
+const H = new Set(["safeGitEnv", "safeGitArgs"]);
+const K = ts.SyntaxKind;
+function sk(f) {
+  if (/\.tsx$/.test(f)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/.test(f)) return ts.ScriptKind.JSX;
+  if (/\.(js|mjs|cjs)$/.test(f)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
 }
-
-p9_at_import() {
-    perl -0777 -ne '
-            exit 0 if /\bimport\s*\*\s*as\s+\w+\s+from\s*["\x27][^"\x27]*safe_git/
-                || /\bimport\s*(?:type\s*)?\{[^}]*\bas\b[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
-                || /\brequire\s*\(\s*["\x27][^"\x27]*safe_git/
-                || /\bimport\s*\(\s*["\x27][^"\x27]*safe_git/
-                || /\bexport\s*(?:type\s*)?\{[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
-                || /\bexport\s*(?:type\s*)?\{[^}]*\b(?:safeGitEnv|safeGitArgs)\b[^}]*\}\s*from\s*["\x27]/
-                || /\bexport\s*\*\s*(?:as\s+\w+\s+)?from\s*["\x27][^"\x27]*safe_git/;
-            exit 1'
+function parse(f) {
+  const text = fs.readFileSync(f, "utf8");
+  const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, sk(f));
+  return { text, sf, bad: sf.parseDiagnostics.length > 0 };
 }
-
-p9_at_indirect() {
-    perl -0777 -ne '
-            s/\b(?:import|export)\s*(?:type\s*)?\{[^}]*\}\s*from\s*["\x27][^"\x27]*["\x27]//g;
-            exit 0 if /\b(?:safeGitEnv|safeGitArgs)\b(?!\s*\()/;
-            while (/\b(?:safeGitEnv|safeGitArgs)\s*\(/g) {
-                my ($d, $q) = (0, "");
-                for (my $i = pos(); $i < length($_); $i++) {
-                    my $c = substr($_, $i, 1);
-                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
-                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
-                    if ($c =~ /[(\[{]/) { $d++; next }
-                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
-                    exit 0 if $d == 0 && substr($_, $i, 3) eq "...";
-                }
-            }
-            exit 1'
+const lit = (n) => n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) ? n.text : null;
+const sg = (s) => s !== null && s.includes("safe_git");
+function stripComments({ text, sf }) {
+  const seen = new Map();
+  (function walk(n) {
+    if (n.kind >= K.FirstJSDocNode && n.kind <= K.LastJSDocNode) return;
+    if (n.getChildCount(sf) === 0) {
+      for (const r of [...(ts.getLeadingCommentRanges(text, n.pos) || []), ...(ts.getTrailingCommentRanges(text, n.pos) || [])]) seen.set(r.pos, r);
+      return;
+    }
+    n.getChildren(sf).forEach(walk);
+  })(sf);
+  let out = "", at = 0;
+  for (const r of [...seen.values()].sort((x, y) => x.pos - y.pos)) {
+    out += text.slice(at, r.pos) + " ";
+    at = r.end;
+  }
+  return out + text.slice(at);
 }
+function scan(P) {
+  const flags = new Set();
+  const args = (c) => {
+    if (c.arguments.length >= 2) flags.add("comma");
+    if (c.arguments.some(ts.isSpreadElement)) flags.add("indirect");
+  };
+  function ident(n) {
+    const p = n.parent;
+    if (ts.isImportSpecifier(p)) return;
+    if (ts.isExportSpecifier(p)) { if (!p.parent.parent.moduleSpecifier) flags.add("indirect"); return; }
+    if (ts.isCallExpression(p) && p.expression === n && !p.questionDotToken) return args(p);
+    if (ts.isPropertyAccessExpression(p) && p.name === n && !p.questionDotToken
+        && ts.isCallExpression(p.parent) && p.parent.expression === p && !p.parent.questionDotToken) return args(p.parent);
+    flags.add("indirect");
+  }
+  (function visit(n) {
+    if (ts.isIdentifier(n) && H.has(n.text)) ident(n);
+    if (ts.isCallExpression(n)) {
+      const e = n.expression;
+      if (e.kind === K.ImportKeyword && sg(lit(n.arguments[0]))) flags.add("import");
+      if (ts.isIdentifier(e) && e.text === "require" && sg(lit(n.arguments[0]))) flags.add("import");
+    }
+    if (ts.isImportDeclaration(n)) {
+      const from = lit(n.moduleSpecifier), nb = n.importClause && n.importClause.namedBindings;
+      if (nb && ts.isNamespaceImport(nb) && sg(from)) flags.add("import");
+      if (nb && ts.isNamedImports(nb)) for (const el of nb.elements)
+        if (el.propertyName && (sg(from) || H.has(el.propertyName.text))) flags.add("import");
+    }
+    if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)
+        && sg(lit(n.moduleReference.expression))) flags.add("import");
+    if (ts.isExportDeclaration(n) && n.moduleSpecifier) {
+      const from = lit(n.moduleSpecifier);
+      if (sg(from)) flags.add("import");
+      if (n.exportClause && ts.isNamedExports(n.exportClause))
+        for (const el of n.exportClause.elements) if (H.has((el.propertyName || el.name).text)) flags.add("import");
+    }
+    ts.forEachChild(n, visit);
+  })(P.sf);
+  return flags;
+}
+if (mode === "strip") {
+  const P = parse(files[0]);
+  if (P.bad) { process.stderr.write("PARSE " + files[0] + "\n"); process.exit(3); }
+  process.stdout.write(stripComments(P));
+} else {
+  for (const f of files) {
+    const P = parse(f);
+    if (P.bad) { console.log("PARSE\t" + f); continue; }
+    for (const k of scan(P)) console.log("FLAG\t" + k + "\t" + f);
+  }
+}
+'
 
-p9_at_either() {  # <scan fn> <file> <stripped text>: 0 if raw OR stripped trips it
-    "$1" < "$2" && return 0
-    printf '%s\n' "$3" | "$1"
+p9_ts_path() {
+    local ts="$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"
+    [ -f "$ts" ] || return 1
+    printf '%s\n' "$ts"
 }
 
 allowtoken_scan() {
@@ -2144,45 +2192,37 @@ allowtoken_scan() {
     done <<EOF_HITS
 $hits
 EOF_HITS
-    local strip='
-        my ($s, $o, $q, $n) = (do { local $/; <STDIN> }, "", "", 0);
-        for (my $i = 0; $i < length $s; $i++) {
-            my $c = substr($s, $i, 1); my $d = substr($s, $i + 1, 1);
-            if ($q ne "") { $o .= $c; if ($c eq "\\") { $o .= $d; $i++ } elsif ($c eq $q) { $q = "" } next }
-            if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; $o .= $c; next }
-            if ($c eq "/" && $d eq "/") { $i++ while $i < length $s && substr($s, $i, 1) ne "\n"; $o .= "\n"; next }
-            if ($c eq "/" && $d eq "*") { $i += 2; $i++ while $i < length $s && substr($s, $i, 2) ne "*/"; $i++; $o .= " "; next }
-            $o .= $c;
-        }
-        print $o;'
-    # Per-file scans trip on EITHER the raw text OR the comment-stripped text (OR, never
-    # AND). The strip helper ignores regex literals and template ${} nesting, so on its
-    # own it can delete a real call; the raw pass keeps that failure fail-closed.
+    local ts_js code kind rest f2
+    ts_js="$(p9_ts_path)" || { nok "prerequisite missing: web-app/node_modules/typescript (npm ci in web-app of this checkout); allowToken scan cannot parse"; return; }
+    command -v node >/dev/null 2>&1 || { nok "prerequisite missing: node"; return; }
+    # Per-file scans parse with the real TypeScript grammar and fail closed on a
+    # parse diagnostic.
     # (1) Positional opt-in: any safeGitEnv/safeGitArgs call outside safe_git.ts with
-    # a second argument (top-level comma, quote/bracket aware, multi-line, nested).
+    # a second argument (multi-line, nested; comments and regex literals irrelevant).
     # (2) Alias, namespace, require, dynamic import and any re-export of safe_git or
     # of its opt-in helpers (barrel, with or without "as") fail closed.
-    # (3) Indirect use: any mention outside an import list that is not a direct call
-    # (alias const, .apply/.call/.bind, optional call) or a spread-argument call.
-    local code
-    while IFS= read -r -d '' f; do
-        code="$(perl -e "$strip" < "$f")"
-        if p9_at_either p9_at_comma "$f" "$code"; then
-            nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
+    # (3) Indirect use: any identifier mention outside an import list that is not a
+    # direct call (alias const, .apply/.call/.bind, optional call) or a spread-argument call.
+    while IFS=$'\t' read -r kind rest f2; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" != FLAG ]; then
+            nok "allowToken scan could not parse (fail closed): ${rest#"$REPO_ROOT"/}"
+            continue
         fi
-        if p9_at_either p9_at_import "$f" "$code"; then
-            nok "safe_git imported by alias, namespace, require or dynamic import, or its opt-in helpers re-exported (call names hidden from the scan): ${f#"$REPO_ROOT"/}"
-        fi
-        if p9_at_either p9_at_indirect "$f" "$code"; then
-            nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f#"$src"/}"
-        fi
-    done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0)
+        case "$rest" in
+            comma)    nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f2#"$REPO_ROOT"/}" ;;
+            import)   nok "safe_git imported by alias, namespace, require or dynamic import, or its opt-in helpers re-exported (call names hidden from the scan): ${f2#"$REPO_ROOT"/}" ;;
+            indirect) nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f2#"$src"/}" ;;
+        esac
+    done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
+        | node -e "$P9_AST_JS" "$ts_js" scan 2>&1)
     # Fetch-only pin: exactly one allowToken occurrence (raw and comment-stripped),
     # and across the whole comment-stripped file it is followed by the fetch-only
     # expression and then , or } (newlines allowed), so a widened or second use fails.
-    local raw_n code_n code sig
+    local raw_n code_n sig
     for f in base_guard modernize_unit; do
-        code="$(perl -e "$strip" < "$src/util/$f.ts")"
+        code="$(printf '%s\0' "$src/util/$f.ts" | node -e "$P9_AST_JS" "$ts_js" strip)" \
+            || { nok "$f.ts could not be parsed (fail closed)"; continue; }
         raw_n="$(grep -o 'allowToken' "$src/util/$f.ts" | grep -c .)"
         code_n="$(printf '%s\n' "$code" | grep -o 'allowToken' | grep -c .)"
         if [ "$raw_n" -ne 1 ] || [ "$code_n" -ne 1 ] \
@@ -2214,12 +2254,12 @@ EOF_HITS
 # Positive controls: each synthetic bypass tree (the real util files plus one
 # offender) must make the scan fail, so a blind guard cannot pass quietly.
 allowtoken_controls() {
-    local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu
+    local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse"
     for name in $names; do
-        t="$T_AT/$name"
+        t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
         cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
         case "$name" in
@@ -2255,15 +2295,53 @@ const a = `${"`"}`; const b = "//"; safeGitEnv(process.env, true);' ;;
             comment-only-strip) # raw text hides the comma behind a quote inside the comment; only stripping sees it
                             body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(process.env /* '\'' */, true);' ;;
+            regex-comment-call) # Q18-03e: a regex plus a quote inside a comment used to hide the call from both passes
+                            body='import { safeGitEnv } from "./util/safe_git.ts";
+const re = /\/*/; safeGitEnv(process.env /* '\'' */, true);' ;;
+            regex-div-quote) body='import { safeGitEnv } from "./util/safe_git.ts";
+const q = (4) / 2; const re = /'\''/; safeGitEnv(process.env /* '\'' */, true);' ;;
+            probe-of)       body='import { safeGitEnv } from "./util/safe_git.ts";
+for (const x of [1]) /'\''/.test("a"); safeGitEnv(process.env /* '\'' */, true);' ;;
+            probe-jsx)      ext=tsx; body='import { safeGitEnv } from "./util/safe_git.ts";
+const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
+            probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
+safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             argv-prefix-mu) printf '%s\n' "$real_mu" | sed 's/safeGit(dest, args, {/safeGit(dest, ["push", "origin"], {/' > "$t/util/modernize_unit.ts"; body='export {};' ;;
         esac
-        printf '%s\n' "$body" > "$t/offender.ts"
+        printf '%s\n' "$body" > "$t/offender.$ext"
         saved_fails="$CASE_FAILS"; CASE_FAILS=""
         allowtoken_scan "$t"
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # Negative control: look-alikes the scan must NOT flag (names in comments, strings
+    # and regex literals, and a plain one-argument call), so a scan that flags every
+    # file cannot pass the positive controls above by being blind the other way.
+    t="$T_AT/clean"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    cat > "$t/clean.ts" <<'EOF_CLEAN'
+import { safeGitEnv } from "./util/safe_git.ts";
+// safeGitEnv(process.env, true) in a comment
+/* safeGitArgs.apply(null, []) */
+const s = "safeGitEnv(process.env, true)";
+const re = /safeGitEnv\(a, b\)/;
+const half = (4) / 2;
+export const env = safeGitEnv(process.env);
+EOF_CLEAN
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    [ -z "$CASE_FAILS" ] || { local why="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a clean tree: $why"; return; }
+    CASE_FAILS="$saved_fails"
+    # A comment (with a quote and slashes) inside the real pin must not hide it: the
+    # stripped text is what the fetch-only pin is matched against.
+    printf '%s\n' "$real_bg" | sed 's|allowToken: args|allowToken: /* it'\''s // */ args|' > "$t/util/base_guard.ts"
+    grep -q "it's //" "$t/util/base_guard.ts" || { nok "negative control setup: comment not inserted into the pin"; return; }
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    [ -z "$CASE_FAILS" ] || { local why2="$CASE_FAILS"; CASE_FAILS="$saved_fails"; nok "negative control flagged a pin with an inner comment: $why2"; return; }
+    CASE_FAILS="$saved_fails"
 }
 
 case_allowtoken() {
