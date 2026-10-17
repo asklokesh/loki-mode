@@ -406,6 +406,37 @@ export function isBashOnlyStart(args: readonly string[]): boolean {
   return args.some((a) => a === "--workspace" || a.startsWith("--workspace=") || a === "--deploy");
 }
 
+/** TEN-DEPLOY-19: --health-url must be http(s) with a host and --domain a bare hostname; null when valid or absent (a missing value is left to the bash parser). */
+export function deployFlagError(args: readonly string[]): string | null {
+  const val = (name: string): string | undefined => {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i] ?? "";
+      if (a.startsWith(`${name}=`)) return a.slice(name.length + 1);
+      if (a === name) {
+        const n = args[i + 1];
+        return n !== undefined && !n.startsWith("-") ? n : undefined;
+      }
+    }
+    return undefined;
+  };
+  const health = val("--health-url");
+  if (health !== undefined) {
+    let ok = false;
+    try {
+      const u = new URL(health);
+      ok = (u.protocol === "http:" || u.protocol === "https:") && u.hostname !== "";
+    } catch {
+      ok = false;
+    }
+    if (!ok) return `start: --health-url must be an http or https URL with a host, got '${health}'\n`;
+  }
+  const domain = val("--domain");
+  if (domain !== undefined && !/^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(domain)) {
+    return `start: --domain must be a bare hostname (no scheme, path or port), got '${domain}'\n`;
+  }
+  return null;
+}
+
 const START_ENV_NAMES = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "LANG", "TZ", "CI", "NO_COLOR", "SSH_AUTH_SOCK", "LOKI_RUN_TMP"]);
 const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
 /** Scoped child env for the bash divert: an explicit allowlist (plan section 3), never the whole env plus unrelated secrets. */
@@ -427,6 +458,11 @@ export async function capSourceLine(budgetLimit: number | undefined, repoDir: st
 
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
+    const deployErr = deployFlagError(args);
+    if (deployErr) {
+      process.stderr.write(deployErr);
+      return 2;
+    }
     const { spawn } = await import("node:child_process");
     return await new Promise<number>((resolveExit) => {
       const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: scopedStartEnv(process.env), stdio: "inherit" });

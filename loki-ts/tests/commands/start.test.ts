@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capSourceLine, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { capSourceLine, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -464,6 +464,37 @@ describe("cap source line (TEN-COST-41)", () => {
       const env = { ...process.env, PATH: "/usr/bin:/bin", LOKI_BUDGET_LIMIT: "" };
       const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "prd.md", "--budget-limit", "7"], { cwd: dir, encoding: "utf8", timeout: 8_000, env });
       expect(r.stdout).toContain("[runner] cap $7.00 (--budget-limit)");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("deploy flag validation (TEN-DEPLOY-19)", () => {
+  it("deploy flag validation: bad health-url and domain are named", () => {
+    for (const u of ["notaurl", "ftp://x.io/h", "http://", "x.io/health", "javascript:alert(1)"]) {
+      expect(deployFlagError(["p.md", "--deploy", "--health-url", u])).toContain("--health-url");
+      expect(deployFlagError([`--health-url=${u}`, "--deploy"])).toContain("--health-url");
+    }
+    for (const d of ["https://x.io", "x.io/path", "x.io:8080", "bad host", "x-.io", "x..io"]) {
+      expect(deployFlagError(["p.md", "--deploy", "--domain", d])).toContain("--domain");
+      expect(deployFlagError([`--domain=${d}`, "--deploy"])).toContain("--domain");
+    }
+  });
+  it("deploy flag validation: valid values and absent flags are unchanged", () => {
+    expect(deployFlagError(["p.md", "--deploy"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--health-url", "https://app.example.com:8443/health?x=1", "--domain", "app.example.com"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--health-url=http://localhost:3000", "--domain=localhost"])).toBeNull();
+  });
+  it("deploy flag validation: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d19-"));
+    try {
+      for (const [a, flag] of [[["--health-url", "notaurl"], "--health-url"], [["--domain", "https://x.io"], "--domain"]] as const) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(flag);
+        expect(r.stderr.trim().split("\n").length).toBe(1);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
