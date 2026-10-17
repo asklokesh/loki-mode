@@ -11,6 +11,7 @@
 //   loki rollback show <id>               -- print metadata for one checkpoint
 //   loki rollback to <id>                 -- restore to that checkpoint
 //   loki rollback latest                  -- restore to the most recent checkpoint
+//   loki rollback deploy                  -- print the provider rollback command for the last deploy
 
 import {
   listCheckpoints,
@@ -18,7 +19,10 @@ import {
   rollbackToCheckpoint,
   executeRollbackWithSnapshot,
 } from "../runner/checkpoint.ts";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
+import { lokiDir } from "../util/paths.ts";
 
 const HELP = `Usage: loki rollback <subcommand>
 
@@ -27,6 +31,8 @@ Subcommands:
   show <id>              Print metadata for one checkpoint
   to <id>                Restore .loki/ state + context to that checkpoint
   latest                 Restore to the most recent checkpoint
+  deploy                 Print the provider rollback command for the last deploy
+                         record (read-only; never runs it)
 
 Restored automatically (safe, non-code):
   .loki/state/orchestrator.json
@@ -107,6 +113,9 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
       return await executePlan(latest.id, rest.includes("--force"));
     }
 
+    case "deploy":
+      return printDeployRollback();
+
     default:
       process.stderr.write(`Unknown subcommand: ${sub}\n`);
       process.stderr.write(HELP);
@@ -156,5 +165,52 @@ async function executePlan(id: string, force = false): Promise<number> {
     );
   }
   process.stdout.write(`Run \`loki start\` to resume from the restored state.\n`);
+  return 0;
+}
+
+// Rollback verbs by deploy command, mirroring _deploy_options_for_type in autonomy/loki. Only these
+// fixed strings are printed; the record's own command text and any environment are never echoed.
+const DEPLOY_ROLLBACKS: ReadonlyArray<{ prefix: string; provider: string; cmd?: string; manual?: string }> = [
+  { prefix: "vercel", provider: "Vercel", cmd: "vercel rollback" },
+  { prefix: "fly", provider: "Fly.io", cmd: "fly releases rollback <previous-version>" },
+  { prefix: "netlify", provider: "Netlify", manual: "Netlify documents no CLI rollback; restore the previous deploy from the Netlify dashboard" },
+  { prefix: "wrangler", provider: "Cloudflare", manual: "roll back from the Cloudflare dashboard or with the provider CLI yourself" },
+];
+
+// loki rollback deploy: read-only. Reads the newest .loki/deploys/*.json (loki.deploy/1) and prints the
+// provider rollback command for its deploy command. Exit 0 with a note when there is nothing to print.
+function printDeployRollback(): number {
+  const ddir = resolve(lokiDir(), "deploys");
+  let files: string[] = [];
+  try {
+    files = readdirSync(ddir).filter((f) => f.endsWith(".json")).sort();
+  } catch {
+    files = [];
+  }
+  const newest = files[files.length - 1];
+  if (newest === undefined) {
+    process.stdout.write("No deploy to roll back: no deploy record\n");
+    return 0;
+  }
+  let command = "";
+  try {
+    const rec = JSON.parse(readFileSync(resolve(ddir, newest), "utf-8")) as Record<string, unknown>;
+    if (rec["schema"] !== "loki.deploy/1") throw new Error("schema");
+    command = typeof rec["command"] === "string" ? rec["command"].trim() : "";
+  } catch {
+    process.stdout.write("No deploy to roll back: last deploy record unreadable\n");
+    return 0;
+  }
+  const first = command.split(/\s+/)[0] ?? "";
+  const hit = DEPLOY_ROLLBACKS.find((r) => r.prefix === first);
+  if (hit === undefined) {
+    process.stdout.write("No rollback command known for the last deploy's provider; roll back with the provider's own tooling\n");
+    return 0;
+  }
+  if (hit.cmd !== undefined) {
+    process.stdout.write(`Last deploy: ${hit.provider}. Roll back with (not run by loki): ${hit.cmd}\n`);
+  } else {
+    process.stdout.write(`Last deploy: ${hit.provider}. No CLI rollback: ${hit.manual}\n`);
+  }
   return 0;
 }
