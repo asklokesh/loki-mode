@@ -745,26 +745,27 @@ function lastRunLine(dir: string): string {
 
 // Newest .loki/deploys/*.json (loki.deploy/1): target, head, health, rollback and the signature
 // verdict from the one existing verify path (verify_cmd main; its stdout is muted here). Silent when none.
-async function renderLastDeploy(dir: string): Promise<void> {
+interface LastDeploy { path: string; newest: string; rec: Record<string, unknown> | null; verdict: string }
+
+// Loads the newest loki.deploy/1 record and its signature verdict. rec is null when unreadable.
+async function loadLastDeploy(dir: string): Promise<LastDeploy | null> {
   const ddir = resolve(dir, "deploys");
   let files: string[] = [];
   try {
     files = readdirSync(ddir).filter((f) => f.endsWith(".json")).sort();
   } catch {
-    return;
+    return null;
   }
   const newest = files[files.length - 1];
-  if (newest === undefined) return;
+  if (newest === undefined) return null;
   const path = resolve(ddir, newest);
   let rec: Record<string, unknown>;
   try {
     rec = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
   } catch {
-    process.stdout.write(`${DIM}Last deploy: record unreadable (${newest})${NC}\n`);
-    return;
+    return { path, newest, rec: null, verdict: "UNCHECKED" };
   }
-  if (rec["schema"] !== "loki.deploy/1") return;
-  const str = (k: string): string => (typeof rec[k] === "string" ? (rec[k] as string) : "");
+  if (rec["schema"] !== "loki.deploy/1") return null;
   let verdict = "UNCHECKED";
   const realWrite = process.stdout.write.bind(process.stdout);
   const realErr = process.stderr.write.bind(process.stderr);
@@ -780,6 +781,22 @@ async function renderLastDeploy(dir: string): Promise<void> {
     process.stdout.write = realWrite;
     process.stderr.write = realErr;
   }
+  return { path, newest, rec, verdict };
+}
+
+// Newest .loki/deploys/*.json (loki.deploy/1): target, head, health, rollback and the signature
+// verdict from the one existing verify path (verify_cmd main; its stdout is muted here). Silent when none.
+async function renderLastDeploy(dir: string): Promise<void> {
+  const d = await loadLastDeploy(dir);
+  if (d === null) return;
+  if (d.rec === null) {
+    process.stdout.write(`${DIM}Last deploy: record unreadable (${d.newest})${NC}\n`);
+    return;
+  }
+  const rec = d.rec;
+  const path = d.path;
+  const verdict = d.verdict;
+  const str = (k: string): string => (typeof rec[k] === "string" ? (rec[k] as string) : "");
   const health = str("health_status") || "unchecked";
   const bad = health === "FAILED_HEALTH";
   let rb = "no rollback";
@@ -790,6 +807,40 @@ async function renderLastDeploy(dir: string): Promise<void> {
   const colour = bad || verdict === "TAMPERED" ? RED : DIM;
   process.stdout.write(`${colour}Last deploy: ${str("target") || "unknown"} at ${str("head_sha").slice(0, 12) || "unknown"}, health ${health}, ${rb}, record ${verdict}${NC}\n`);
   if (bad) process.stdout.write(`${RED}  UNHEALTHY: the last deploy failed its health check. Record: ${path}${NC}\n`);
+}
+
+// loki status --badge: markdown shields badge for the newest deploy record. Green ONLY when the
+// signature verifies (verify path) AND the signed live_binding field is VERIFIED; red for TAMPERED
+// or FAILED_HEALTH; anything else omits the badge with a one-line reason. Colors match renderProofBadge.
+async function runStatusBadge(): Promise<number> {
+  const d = await loadLastDeploy(lokiDir());
+  const omit = (why: string): number => {
+    process.stdout.write(`No deploy badge: ${why}\n`);
+    return 0;
+  };
+  if (d === null) return omit("no deploy record");
+  if (d.rec === null) return omit("deploy record unreadable");
+  const rec = d.rec;
+  const url = typeof rec["deployed_url"] === "string" ? (rec["deployed_url"] as string).trim() : "";
+  if (!/^https?:\/\/\S+$/.test(url)) return omit("record has no deployed_url");
+  const bad = rec["health_status"] === "FAILED_HEALTH";
+  let message: string;
+  let color: string;
+  if (d.verdict === "TAMPERED" || bad) {
+    message = "deployed: unverified";
+    color = "red";
+  } else if (d.verdict !== "VERIFIED") {
+    return omit(`record signature is ${d.verdict}`);
+  } else if (rec["live_binding"] !== "VERIFIED") {
+    return omit("live_binding is not VERIFIED");
+  } else {
+    message = "deployed: verified";
+    color = "brightgreen";
+  }
+  const enc = (x: string): string => encodeURIComponent(x.replace(/-/g, "--"));
+  const link = `${url.replace(/\/+$/, "")}/.well-known/loki-provenance.json`;
+  process.stdout.write(`[![${message}](https://img.shields.io/badge/${enc("Loki")}-${enc(message)}-${color})](${link})\n`);
+  return 0;
 }
 
 // v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
@@ -925,6 +976,9 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
     const flag = args[0];
     if (flag === "--json") {
       return runStatusJson();
+    }
+    if (flag === "--badge") {
+      return runStatusBadge();
     }
     if (flag === "--help" || flag === "-h") {
       process.stdout.write(`Usage: loki status [--json]\n`);
