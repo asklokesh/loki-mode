@@ -297,8 +297,49 @@ def _read_engine(loki_dir):
     return "legacy"
 
 
+LEVER_ENV_KEY = re.compile(r"^LOKI_[A-Z0-9_]+$")
+
+
+def validate_lever_env(extra_env):
+    """Return a clean {KEY: str(value)} lever dict. Only LOKI_* keys are allowed;
+    anything else raises ValueError so a bench run never forwards arbitrary env."""
+    out = {}
+    for k, v in (extra_env or {}).items():
+        if not isinstance(k, str) or not LEVER_ENV_KEY.match(k):
+            raise ValueError("lever env key %r must match LOKI_[A-Z0-9_]+" % (k,))
+        out[k] = str(v)
+    return out
+
+
+def _cache_tokens_by_phase(loki_dir, cost, eff):
+    """{phase: {cache_read, cache_creation}} so cache economics are comparable
+    across lever configs. Ledger records give child phases; the remainder of the
+    collected total is the main session. None when no cache field was recorded."""
+    cr, cc = cost.get("cache_read_tokens"), cost.get("cache_creation_tokens")
+    if cr is None and cc is None:
+        return None
+    records = None
+    if eff is not None:
+        try:
+            records, _bad = eff.read_child_ledger(loki_dir)
+        except Exception:
+            records = None
+    per = {}
+    for rec in records or []:
+        ph = str(rec.get("phase") or "unknown")
+        slot = per.setdefault(ph, {"cache_read": 0, "cache_creation": 0})
+        for key, src in (("cache_read", "cache_read_tokens"),
+                         ("cache_creation", "cache_creation_tokens")):
+            v = rec.get(src)
+            if isinstance(v, int) and not isinstance(v, bool):
+                slot[key] += v
+    main = {"cache_read": max(0, (cr or 0) - sum(p["cache_read"] for p in per.values())),
+            "cache_creation": max(0, (cc or 0) - sum(p["cache_creation"] for p in per.values()))}
+    return {("main_session" if per else "total"): main, **per}
+
+
 def run(workdir, spec, *, model="claude", timeout=900, runner=None,
-        provider="claude"):
+        provider="claude", profile=None, extra_env=None):
     """Run Loki on `spec` inside `workdir` and return the adapter-output dict.
 
     Args:
@@ -308,7 +349,12 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
       timeout: hard wall-clock cap in seconds.
       runner: injectable subprocess.run-compatible callable (tests mock the CLI).
       provider: provider passed to `loki start --provider`.
+      profile: cost profile exported as LOKI_COST_PROFILE ("lean" or "off");
+        None leaves the env untouched. Recorded as provenance.cost_profile.
+      extra_env: LOKI_* lever overrides for one-lever ablations; recorded as
+        provenance.lever_env so rows from different configs never pool.
     """
+    lever_env = validate_lever_env(extra_env)
     tool_version = _detect_loki_version(runner=runner, cwd=workdir)
 
     cmd = [
@@ -336,6 +382,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     # top, so an unconditional set here would clobber the caller's real pin with
     # the task label ("claude-sonnet-5") and silently dispatch sonnet. Only pin
     # from the `model` arg when the parent env did NOT already choose a model.
+    if profile:
+        run_env["LOKI_COST_PROFILE"] = str(profile)
+    run_env.update(lever_env)
     _pin = (model or "").strip().lower()
     _REAL_MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")
     if (
@@ -359,12 +408,14 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     # Cost: shared with the proof generator. None usd == not recorded.
     cost = {"usd": None, "input_tokens": None, "output_tokens": None}
     model_used = None
+    cache_by_phase = None
     eff = _base.load_efficiency_cost()
     if eff is not None:
         try:
             collected, model_from_eff = eff.collect_efficiency(loki_dir)
             cost = collected
             model_used = model_from_eff or None
+            cache_by_phase = _cache_tokens_by_phase(loki_dir, cost, eff)
         except Exception:
             pass
 
@@ -409,6 +460,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # efficiency_cost collector.
             "cost_by_phase": phases,
             "ledger": cost.get("ledger"),
+            "cost_profile": profile or None,
+            "lever_env": lever_env,
+            "cache_tokens_by_phase": cache_by_phase,
             # True when the usd is a lower bound (token-only main session or
             # unpriced child sessions); a consumer must not treat it as complete.
             "cost_partial": bool(cost.get("cost_partial")),
