@@ -1027,11 +1027,12 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON (includes requirements grouped by execution path)\n`);
   process.stdout.write(`  --requirements  Print requirements per execution path (required or optional, present or missing, one-line fix)\n`);
-  process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); print commands for the rest\n`);
+  process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); on a TTY offer the claude install and login (y/N); print commands for the rest\n`);
+  process.stdout.write(`  --yes     With --fix: run the claude install and login without asking (also -y)\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
   process.stdout.write(`  --repo    Print the repo profile (.loki/state/repo-profile.json): discovered\n`);
   process.stdout.write(`            test/lint/typecheck/build commands, the baseline test run and a\n`);
@@ -1831,6 +1832,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
   let roundTrip = false;
   let json = false;
   let fix = false;
+  let yes = false;
   let repo = false;
   let reqs = false;
   for (const arg of argv) {
@@ -1842,6 +1844,8 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       json = true;
     } else if (arg === "--fix") {
       fix = true;
+    } else if (arg === "--yes" || arg === "-y") {
+      yes = true;
     } else if (arg === "--requirements") {
       reqs = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -1849,7 +1853,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
       return 1;
     }
   }
@@ -1889,8 +1893,8 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
   if (fix) {
     const code = await runText();
     const { runDoctorFix } = await import("./doctor_fix.ts");
-    runDoctorFix();
-    return code;
+    const fixCode = runDoctorFix({ yes });
+    return code !== 0 ? code : fixCode;
   }
   // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
   process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);

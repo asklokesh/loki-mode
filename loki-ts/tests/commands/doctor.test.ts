@@ -1076,3 +1076,112 @@ describe("doctor claude CLI compat (P12-24)", () => {
     });
   });
 });
+
+describe("doctor --fix consent-gated installs (TEN-UX-04)", () => {
+  const NPM = ["npm", "install", "-g", "@anthropic-ai/claude-code"];
+  const mk = (): { cwd: string; home: string } => ({
+    cwd: mkdtempSync(join(tmpdir(), "docfix-cwd-")),
+    home: mkdtempSync(join(tmpdir(), "docfix-home-")),
+  });
+  const missing = (...gone: string[]) => (c: string) => !gone.includes(c);
+  const recorder = (status = 0, stderr = "") => {
+    const calls: string[][] = [];
+    return { calls, run: (argv: readonly string[]) => { calls.push([...argv]); return { status, stderr }; } };
+  };
+
+  it("(a) claude missing, no tty, no --yes: runner never called, npm command printed", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const { cwd, home } = mk();
+    const r = recorder();
+    const out = applyDoctorFixes(cwd, home, { has: missing("claude"), runner: r.run, tty: false, yes: false, loggedIn: () => "yes" });
+    expect(r.calls).toEqual([]);
+    expect(out.manual.join("\n")).toContain("npm install -g @anthropic-ai/claude-code");
+  });
+
+  it("(b) claude missing, --yes: runner gets exactly the npm install argv", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const { cwd, home } = mk();
+    const r = recorder();
+    const out = applyDoctorFixes(cwd, home, { has: missing("claude"), runner: r.run, tty: false, yes: true, loggedIn: () => "yes" });
+    expect(r.calls).toEqual([NPM]);
+    expect(out.applied).toContain(NPM.join(" "));
+  });
+
+  it("(b2) tty without --yes asks first: declined runs nothing, accepted runs npm", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const { cwd, home } = mk();
+    const no = recorder();
+    applyDoctorFixes(cwd, home, { has: missing("claude"), runner: no.run, tty: true, confirm: () => false });
+    expect(no.calls).toEqual([]);
+    const yes = recorder();
+    applyDoctorFixes(cwd, home, { has: missing("claude"), runner: yes.run, tty: true, confirm: () => true });
+    expect(yes.calls).toEqual([NPM]);
+  });
+
+  it("(c) runner failure: output has failed: and exit code is non-zero", async () => {
+    const { runDoctorFix } = await import("../../src/commands/doctor_fix.ts");
+    const r = recorder(1, "npm ERR! EACCES permission denied\nsecond line");
+    const { cwd, home } = mk();
+    const { result, cap } = await captureStdio(async () =>
+      runDoctorFix({ cwd, home, has: missing("claude"), runner: r.run, yes: true, loggedIn: () => "yes" }));
+    expect(cap.out).toContain("failed: npm install -g @anthropic-ai/claude-code: npm ERR! EACCES permission denied");
+    expect(cap.out).not.toContain("second line");
+    expect(result).toBe(1);
+  });
+
+  it("(c2) success exits 0 with fixed:", async () => {
+    const { runDoctorFix } = await import("../../src/commands/doctor_fix.ts");
+    const r = recorder();
+    const { cwd, home } = mk();
+    const { result, cap } = await captureStdio(async () =>
+      runDoctorFix({ cwd, home, has: missing("claude"), runner: r.run, yes: true, loggedIn: () => "yes" }));
+    expect(cap.out).toContain("fixed: npm install -g @anthropic-ai/claude-code");
+    expect(result).toBe(0);
+  });
+
+  it("(d) jq missing with --yes: system package is never run, command printed", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const { cwd, home } = mk();
+    const r = recorder();
+    const out = applyDoctorFixes(cwd, home, { has: missing("jq"), runner: r.run, yes: true, loggedIn: () => "yes" });
+    expect(r.calls).toEqual([]);
+    expect(out.manual.join("\n")).toContain("brew install jq");
+  });
+
+  it("(e) claude present and logged out with --yes: runner gets [claude, login]", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const { cwd, home } = mk();
+    const r = recorder();
+    applyDoctorFixes(cwd, home, { has: () => true, runner: r.run, yes: true, loggedIn: () => "no" });
+    expect(r.calls).toEqual([["claude", "login"]]);
+  });
+
+  it("(e2) logged in or unknown login state: no login run", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    for (const state of ["yes", ""] as const) {
+      const { cwd, home } = mk();
+      const r = recorder();
+      applyDoctorFixes(cwd, home, { has: () => true, runner: r.run, yes: true, loggedIn: () => state });
+      expect(r.calls).toEqual([]);
+    }
+  });
+
+  it("(f) real entry path: bin/loki doctor --fix --yes runs claude login via the shim", () => {
+    const { cwd, home } = mk();
+    const shim = mkdtempSync(join(tmpdir(), "docfix-shim-"));
+    const log = join(shim, "calls.log");
+    writeFileSync(join(shim, "claude"), `#!/bin/sh\nif [ "$1" = auth ]; then echo '{"loggedIn":false}'; exit 0; fi\necho "$@" >> "${log}"\nexit 0\n`);
+    chmodSync(join(shim, "claude"), 0o755);
+    const r = spawnSync(join(REPO_ROOT, "bin", "loki"), ["doctor", "--fix", "--yes"], {
+      cwd, encoding: "utf8", timeout: 120000,
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("LOKI_"))),
+        HOME: home, PATH: `${shim}:${process.env.PATH ?? ""}`,
+      },
+    });
+    if (!r.stdout.includes("fixed: claude login")) console.error(r.stdout.slice(-1500), r.stderr.slice(-500));
+    expect(r.stdout).toContain("fixed: claude login");
+    expect(readFileSync(log, "utf8").trim().split("\n").filter((l) => l === "login")).toEqual(["login"]);
+    rmSync(shim, { recursive: true, force: true });
+  });
+});
