@@ -212,6 +212,8 @@ export function parseStartArgs(
   // `--` ends options: the next token is the spec regardless of leading dashes.
   let spec: string | undefined;
   let endOfOpts = false;
+  const seenValueFlags = new Set<string>();
+  const valueFlagSet = specMode ? SPEC_VALUE_FLAGS : attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (!a) continue;
@@ -235,6 +237,14 @@ export function parseStartArgs(
         err(`start: flag ${name} is not supported by loki start.${near ? ` Did you mean ${near}?` : ""}\n`);
         err("Run 'loki start --help' to see the supported flags.\n");
         return 2;
+      }
+      // TEN-UX-56: a repeated single-value flag is refused, never silently first-wins.
+      if (valueFlagSet.has(name)) {
+        if (seenValueFlags.has(name)) {
+          err(`start: ${name} was given more than once; pass it a single time\n`);
+          return 2;
+        }
+        seenValueFlags.add(name);
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
       if (boolEnv) {
