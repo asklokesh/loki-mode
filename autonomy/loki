@@ -19079,7 +19079,7 @@ cmd_verify() {
     local _pk_arg
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            --pubkey|--pubkey=*) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
+            --pubkey|--pubkey=*|--require-exogenous) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
         esac
     done
     # PATH slice: a workspace composite (composite.json, or --seal-composite RUN_DIR) is

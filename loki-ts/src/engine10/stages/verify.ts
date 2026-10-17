@@ -43,9 +43,9 @@ export interface VerifyCheck {
 // else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
 function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
-  const venvEnv = process.env["VIRTUAL_ENV"];
+  const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
-  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && Bun.which("uv") ? ["uv", "project", ["run", "--", bin]] : [Bun.which(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
+  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
