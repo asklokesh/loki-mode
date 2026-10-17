@@ -139,3 +139,32 @@ test("FV-pr-loop-4: a blocked merge shows the gate and waiting at, never merged;
     expect(renderHandoff(composeHandoff(f))).toContain("Merge: not recorded");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+// TEN-UX-02: failure-specific Next line. Reason literals are copied from engine10/output.ts reasonOf.
+import { nextOf } from "../../src/util/run_summary.ts";
+const NEXT_ROWS: [string, "failed" | "stopped", number | null, string][] = [
+  ["provider authentication failed", "failed", 2, "claude login"],
+  ["provider credit exhausted", "failed", null, "check provider billing, or loki start --provider <other>"],
+  ["pytest failed: 2 errors", "failed", null, "loki chat --attach (ask why)"],
+  ["pytest failed: 2 errors", "failed", 3, "loki chat --attach (ask why); loki undo to revert"],
+  ["spec conflict: R1 vs R2", "stopped", 1, 'loki answer --text "<your decision>"'],
+  ["stalled: same failure 3 times", "stopped", 1, "loki chat --attach"],
+  ["engine ended before sealing a receipt", "failed", 1, "loki doctor"],
+];
+test.each(NEXT_ROWS)("nextOf %s (%s, files %p)", (reason, result, files, want) => { expect(nextOf(result, files, reason)).toBe(want); });
+test("nextOf default outputs do not drift", () => {
+  expect(nextOf("verified", 2)).toBe("loki diff");
+  expect(nextOf("verified", 0)).toBe("loki status");
+  expect(nextOf("done-unverified", 1, "x failed: y")).toBe("loki verify");
+  expect(nextOf("stopped", 1)).toBe("loki status");
+  expect(nextOf("failed", 1)).toBe("loki undo");
+  expect(nextOf("failed", null)).toBe("loki doctor");
+  expect(nextOf("failed", 1, "cost/time cap reached")).toBe("loki undo");
+});
+test("every reason literal in output.ts reasonOf has a nextOf mapping row", () => {
+  const src = readFileSync(join(import.meta.dir, "../../src/engine10/output.ts"), "utf8").split("\n").find((l) => l.includes("const r = EXIT[outcome] === 0"))!;
+  const lits = [...src.matchAll(/"((?:provider|engine ended|stalled)[^"]*)"|`(spec conflict)|\$\{bad\.name\}( failed)/g)].map((m) => m[1] ?? m[2] ?? "<check> failed");
+  expect(lits.length).toBeGreaterThanOrEqual(5);
+  const rowFor = (l: string): boolean => NEXT_ROWS.some(([r]) => r === l || r.startsWith(l) || (l === "<check> failed" && / failed: /.test(r)));
+  for (const l of lits) expect(rowFor(l), `no nextOf row for reason: ${l}`).toBe(true);
+});
