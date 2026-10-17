@@ -135,7 +135,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p9.XXXXXX")" || { echo "p9: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials"
+MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.allowtoken-only-fetch-callers"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -2075,6 +2075,19 @@ inj_run_bun_default() {
     fi
 }
 
+case_allowtoken() {
+    # FC-25c / SAFEGIT-REPOCONFIG 1+2: allowToken keeps the credential, so only
+    # the two fetch callers may pass it to safeGit. Any other src file is a leak.
+    local src="$REPO_ROOT/loki-ts/src" hits f n
+    [ -d "$src" ] || { nok "vacuous: $src is missing"; return; }
+    n="$(grep -rl 'allowToken' "$src" | grep -c .)"
+    [ "$n" -ge 3 ] || nok "vacuous: expected allowToken in safe_git, base_guard and modernize_unit, found $n files"
+    hits="$(grep -rl 'allowToken' "$src" | grep -v -e '/util/safe_git\.ts$' -e '/util/base_guard\.ts$' -e '/util/modernize_unit\.ts$')"
+    for f in $hits; do
+        nok "allowToken used outside the allowed fetch callers: ${f#"$REPO_ROOT"/}"
+    done
+}
+
 moat_run "P9.issue-workflows-separate-untrusted-from-push" \
     "no workflow job or shipped action that untrusted text can reach combines it with write access or secrets and push/PR" \
     case_rule2
@@ -2087,4 +2100,7 @@ moat_run "P9.injection-cannot-reach-token" \
 moat_run "P9.checkout-no-persisted-credentials" \
     "actions/checkout sets persist-credentials: false in issue/comment/review-triggered and agent-running jobs" \
     case_checkout
+moat_run "P9.allowtoken-only-fetch-callers" \
+    "allowToken is passed to safeGit only by base_guard.ts and modernize_unit.ts (plus its definition in safe_git.ts)" \
+    case_allowtoken
 exit 0
