@@ -186,6 +186,12 @@ function _loki {
                         '--auto-rollback[Roll back on a failed health probe]' \
                         '--help[Show help]'
                     ;;
+                verify-pr)
+                    _arguments \
+                        '--out[Result directory]:dir:_files -/' \
+                        '--json[Print the verdict object on stdout]' \
+                        '--help[Show help]'
+                    ;;
                 verify)
                     _arguments \
                         '--pubkey[Check against this public key only]:key file:_files' \
