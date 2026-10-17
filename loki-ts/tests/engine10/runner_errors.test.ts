@@ -150,3 +150,34 @@ describe("FC-17 Wall no-op precheck", () => {
     } finally { rmSync(repoDir, { recursive: true, force: true }); }
   });
 });
+
+describe("TEN-COST-09 Wall skipped when no project interpreter", () => {
+  const run = async (venv: boolean): Promise<{ r: Awaited<ReturnType<typeof runWall>>; called: number }> => {
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-c09-")), savedVenv = process.env["VIRTUAL_ENV"]; delete process.env["VIRTUAL_ENV"];
+    try {
+      const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      if (venv) { mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true }); writeFileSync(join(repoDir, ".venv", "bin", "python"), ""); }
+      const ref = join(runDir, "repomap.json");
+      writeFileSync(ref, JSON.stringify({ files: ["app.py", "tests/test_app.py"], entries: [], truncated: false }));
+      let called = 0;
+      const sessions: SessionRunner = { async run() { called++; return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+      const tm = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_app.py" }] };
+      const ctx = { ...ctxFor(repoDir, []), runId: "r1", runDir, sessions, tests: { async detect() { return tm; }, impacted: () => [] }, outputs: () => ({ intake: { task: "add a feature to the app with new behavior across modules", testmap: tm, repomap_ref: ref } }) } as unknown as RunContext;
+      process.env["LOKI_E10_PLAN"] = "always";
+      const r = await runWall(ctx, sig());
+      return { r, called };
+    } finally { delete process.env["LOKI_E10_PLAN"]; if (savedVenv !== undefined) process.env["VIRTUAL_ENV"] = savedVenv; rmSync(repoDir, { recursive: true, force: true }); }
+  };
+  test("pytest repo without a venv: no session, skip names the reason and carries not_proven", async () => {
+    const { r, called } = await run(false);
+    expect(r.status).toBe("skipped");
+    expect(r.reason).toBe("Wall skipped: no project test interpreter");
+    expect(r.data["not_proven"]).toEqual(["Wall skipped: no project test interpreter"]);
+    expect(called).toBe(0);
+  });
+  test("pytest repo with a .venv: the Wall session still starts", async () => {
+    const { r, called } = await run(true);
+    expect(called).toBe(1);
+    expect(r.reason ?? "").not.toContain("no project test interpreter");
+  });
+});
