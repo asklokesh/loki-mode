@@ -131,6 +131,9 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("show", "Show a receipt", { positionals: [runId] }),
       sub("open", "Open a receipt", { positionals: [runId] }),
       sub("share", "Share a receipt", { positionals: [runId] }),
+      sub("badge", "Print the Verified by Loki badge", { positionals: [runId] }),
+      sub("md", "Print badge markdown for a README", { positionals: [runId] }),
+      sub("bundle", "Write a self-verifying receipt bundle", { positionals: [runId] }),
     ],
   }),
   cmd("wiki", "KEEP-MODERN", "both", "Cited codebase wiki and Q&A", "Bun-native knowledge feature", {

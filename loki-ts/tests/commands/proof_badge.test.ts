@@ -213,13 +213,14 @@ describe("loki proof badge/bundle/share: sealed engine10 run, no .loki/proofs", 
     };
   }
 
-  function sealRun(verdict: string, signed = true): string {
+  function sealRun(verdict: string, signed = true, note?: string): string {
     const id = `e10-pb-${n++}`;
     const dir = join(scratch, "runs", id);
     const ev = join(dir, "events.jsonl");
     mkdirSync(dir, { recursive: true });
     const log = new SupervisorLog(ev, id);
     log.append("run.started", null, { provider: "claude" });
+    if (note) log.append("run.note", null, { note });
     const evSha = new Bun.CryptoHasher("sha256").update(readFileSync(ev)).digest("hex");
     const body = { schema: "loki.v10.receipt/1", run_id: id, verdict, events_sha256: evSha, time: { wall_s: 0, stages: {} }, log_seal: true };
     const hash = receiptSha256(body as never);
@@ -346,5 +347,23 @@ describe("loki proof badge/bundle/share: sealed engine10 run, no .loki/proofs", 
     expect(line).not.toContain(scratch + "/runs");
     expect(cap.stdout).toContain("gist.github.com/x/abc");
     expect(cap.stdout).toContain("brightgreen");
+  });
+
+  it("share refuses (even with --yes) when events.jsonl holds a GitHub token, and never calls gh gist", async () => {
+    const tok = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+    const id = sealRun("VERIFIED", true, tok);
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const log = join(scratch, "gh.log");
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$@" >> "${log}"\nexit 0\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    process.env["PATH"] = `${bin}:${saved["PATH"] ?? ""}`;
+    capture();
+    const code = await runProof(["share", id, "--yes"]);
+    restore();
+    expect(code).toBe(1);
+    expect(cap.stderr).toContain("Share refused");
+    expect(cap.stderr).toContain("events.jsonl");
+    expect(readFileSync(log, "utf8")).not.toContain("gist create");
   });
 });
