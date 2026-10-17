@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { usdFor } from "../../src/providers/price_table.ts";
+import { priceFor, usdFor } from "../../src/providers/price_table.ts";
 import { buildProviderCost } from "../../src/providers/provider_cost.ts";
 
 describe("usdFor clamps", () => {
@@ -24,5 +24,31 @@ describe("usdFor clamps", () => {
     const rec = buildProviderCost("codex", "gpt-5", "x".repeat(400), "y".repeat(40));
     expect(rec).not.toBeNull();
     expect(Number.isFinite(rec!.total_cost_usd as number)).toBe(true);
+  });
+});
+
+describe("price table tiers", () => {
+  test("mini and nano priced separately", () => {
+    const pairs: Array<[string, string]> = [
+      ["gpt-4o-mini", "gpt-4o"],
+      ["gpt-4.1-mini", "gpt-4.1"],
+      ["gpt-4.1-nano", "gpt-4.1"],
+      ["gpt-5-mini", "gpt-5"],
+      ["gpt-5-nano", "gpt-5"],
+    ];
+    for (const [small, full] of pairs) {
+      const s = priceFor(small);
+      expect(s.matched).toBe(true);
+      expect(s.price.input).toBeLessThan(priceFor(full).price.input);
+      expect(s.price.output).toBeLessThan(priceFor(full).price.output);
+    }
+    expect(usdFor("gpt-5-mini", 1_000_000, 1_000_000)).toBe(2.25);
+    expect(usdFor("gpt-5-nano", 1_000_000, 1_000_000)).toBe(0.45);
+    expect(usdFor("gpt-4o-mini-2024-07-18", 1_000_000, 1_000_000)).toBe(0.75);
+  });
+  test("provider cost entry path uses the mini price", () => {
+    const mini = buildProviderCost("codex", "gpt-5-mini", "x".repeat(4000), "y".repeat(4000));
+    const full = buildProviderCost("codex", "gpt-5", "x".repeat(4000), "y".repeat(4000));
+    expect(mini!.total_cost_usd as number).toBeLessThan(full!.total_cost_usd as number);
   });
 });

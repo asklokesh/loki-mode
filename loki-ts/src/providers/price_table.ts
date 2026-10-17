@@ -8,6 +8,13 @@ export interface Price { input: number; output: number; cachedInput?: number }
 export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
   "gpt-5.3-codex": { input: 1.75, output: 14.0, cachedInput: 0.175 },
   "gpt-5-codex": { input: 1.25, output: 10.0, cachedInput: 0.125 },
+  // Mini and nano tiers: OpenAI API pricing page https://openai.com/api/pricing/ (per 1M tokens).
+  // Longest-substring match means these must exist or "gpt-5-mini" resolves to the full "gpt-5" entry.
+  "gpt-5-mini": { input: 0.25, output: 2.0, cachedInput: 0.025 },
+  "gpt-5-nano": { input: 0.05, output: 0.4, cachedInput: 0.005 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cachedInput: 0.1 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4, cachedInput: 0.025 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cachedInput: 0.075 },
   "gpt-5": { input: 1.25, output: 10.0, cachedInput: 0.125 },
   "gpt-4.1": { input: 2.0, output: 8.0, cachedInput: 0.5 },
   "gpt-4o": { input: 2.5, output: 10.0, cachedInput: 1.25 },
