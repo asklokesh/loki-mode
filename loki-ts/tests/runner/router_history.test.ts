@@ -2,9 +2,10 @@
 // Sonnet evidence floor (code-owned losses only), and the shipped shape-defaults reader.
 // Pure logic plus file IO on a temp cache root; no provider is called.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   HISTORY_FILE,
@@ -134,6 +135,28 @@ describe("run history atomic write", () => {
     for (let i = 0; i < 205; i++) appendRunOutcome(HISTORY_KEY, run({ wallS: i }), root);
     expect(readRunHistory(HISTORY_KEY, root)).toHaveLength(200);
     expect(readdirSync(repoCacheDir(HISTORY_KEY, root)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+});
+
+describe("run history concurrency", () => {
+  it("concurrent append keeps all", async () => {
+    const N = 8;
+    const src = resolve(import.meta.dir, "../../src/runner/router/history.ts");
+    const script = `import { appendRunOutcome } from ${JSON.stringify(src)};
+const i = Number(process.env.H_I);
+const ok = appendRunOutcome(${JSON.stringify(HISTORY_KEY)}, { shape: "s", executor: "haiku", verdict: "pass", owner: null, escalated: false, usd: 0, wallS: i }, process.env.H_ROOT);
+process.exit(ok ? 0 : 3);`;
+    const codes = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        new Promise<number | null>((res) => {
+          const c = spawn(process.execPath, ["-e", script], { stdio: "ignore", env: { ...process.env, H_I: String(i), H_ROOT: root } });
+          c.on("close", res);
+        }),
+      ),
+    );
+    expect(codes).toEqual(Array(N).fill(0));
+    const walls = readRunHistory(HISTORY_KEY, root).map((r) => r.wallS).sort((a, b) => a - b);
+    expect(walls).toEqual(Array.from({ length: N }, (_, i) => i));
   });
 });
 

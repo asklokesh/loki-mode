@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { repoCacheDir } from "../../engine10/cache.ts";
+import { withFileLockSync } from "../../util/atomic.ts";
 
 // H4 (R1-16): per-repo, per-shape outcome history, appended at seal. Local runs only; the
 // router reads it as an evidence floor. A missing or corrupt file is a cold read; a write
@@ -67,18 +68,21 @@ export function readRunHistory(key: string, cacheRoot?: string): RunOutcome[] {
 /** Appends one outcome, keeping the newest HISTORY_CAP entries. Returns false when the write fails. */
 export function appendRunOutcome(key: string, outcome: RunOutcome, cacheRoot?: string): boolean {
   try {
-    const runs = [...readRunHistory(key, cacheRoot), outcome].slice(-HISTORY_CAP);
     mkdirSync(repoCacheDir(key, cacheRoot), { recursive: true });
-    // Temp file in the same directory, then rename: a crash mid-write cannot truncate the history.
     const target = historyPath(key, cacheRoot);
-    const tmp = `${target}.${process.pid}.tmp`;
-    try {
-      writeFileSync(tmp, JSON.stringify({ runs }));
-      renameSync(tmp, target);
-    } catch (e) {
-      rmSync(tmp, { force: true, recursive: false });
-      throw e;
-    }
+    // Serialize the read-modify-write across processes: two concurrent runs on one repo must not lose an outcome.
+    withFileLockSync(target, () => {
+      const runs = [...readRunHistory(key, cacheRoot), outcome].slice(-HISTORY_CAP);
+      // Temp file in the same directory, then rename: a crash mid-write cannot truncate the history.
+      const tmp = `${target}.${process.pid}.tmp`;
+      try {
+        writeFileSync(tmp, JSON.stringify({ runs }));
+        renameSync(tmp, target);
+      } catch (e) {
+        rmSync(tmp, { force: true, recursive: false });
+        throw e;
+      }
+    });
     return true;
   } catch {
     return false;
