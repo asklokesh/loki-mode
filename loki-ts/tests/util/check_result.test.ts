@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { classifyRisk, diffFiles, manifestDepsChanged, markExecuted } from "../../src/util/check_result.ts";
+import { classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -69,5 +69,43 @@ describe("TEN-GATES-18 manifest without lockfile", () => {
   });
   test("manifestDepsChanged: unparseable package.json counts as changed", () => {
     expect(manifestDepsChanged("package.json", "{}", "{bad", "")).toBe(true);
+  });
+});
+
+
+// TEN-QUALITY-17: flaky classification for a test that fails then passes on one immediate rerun.
+
+const RED: ClassifyInput = { kind: "test", ok: false, out: "Ran 3 tests in 0.002s\n\nFAILED (failures=1)\n" };
+const GREEN: ClassifyInput = { kind: "test", ok: true, out: "Ran 3 tests in 0.002s\n\nOK\n" };
+
+describe("classifyWithRerun", () => {
+  test("fail then pass on rerun is flaky with rerun evidence", () => {
+    const c = classifyWithRerun(RED, () => GREEN);
+    expect(c.result).toBe("flaky");
+    expect(c.rerun).toEqual({ first: "fail", second: "pass", n: 3 });
+    expect(c.n).toBeUndefined();
+  });
+  test("deterministic fail stays fail", () => {
+    expect(classifyWithRerun(RED, () => RED).result).toBe("fail");
+  });
+  test("fail then not_run on rerun stays fail", () => {
+    expect(classifyWithRerun(RED, () => ({ ...GREEN, out: "Ran 0 tests in 0.000s\n\nOK\n" })).result).toBe("fail");
+  });
+  test("a first pass is never rerun", () => {
+    let calls = 0;
+    expect(classifyWithRerun(GREEN, () => { calls++; return RED; }).result).toBe("pass");
+    expect(calls).toBe(0);
+  });
+  test("static and not_run are never rerun", () => {
+    let calls = 0;
+    const rr = (): ClassifyInput => { calls++; return GREEN; };
+    expect(classifyWithRerun({ kind: "static", ok: false, out: "" }, rr).result).toBe("fail");
+    expect(classifyWithRerun({ ...RED, cut: true }, rr).result).toBe("not_run");
+    expect(calls).toBe(0);
+  });
+  test("flaky is never executed or exogenous proof", () => {
+    const c = classifyWithRerun(RED, () => GREEN);
+    expect(hasExecutedProof([c])).toBe(false);
+    expect(hasExogenousProof([{ name: "pytest:tests/a.py", ...c }], { addedFiles: [], wallFiles: [] })).toBe(false);
   });
 });
