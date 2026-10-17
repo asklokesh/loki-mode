@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { guardedBackstop, validBase } from "../../src/e10ext/commit_filter.ts";
 
 let dir = "";
@@ -37,4 +37,69 @@ test("a tampered log runs no backstop (zero git spawns)", () => {
 test("an intact log with a valid base still runs the backstop", () => {
   expect(guardedBackstop(true, dir, env, "run1", "a".repeat(40), undefined)).toBeNull();
   expect(calls()).toContain("add -A");
+});
+
+// TEN-QUALITY-16: the commit stage formats only the run's own kept files with a formatter the repo already configures.
+import { mkdirSync } from "node:fs";
+import { commitStage } from "../../src/engine10/stages/seal.ts";
+import type { RunContext } from "../../src/engine10/types.ts";
+
+function sh(argv: string[], cwd: string): string {
+  const p = Bun.spawnSync({ cmd: argv, cwd, stdout: "pipe", stderr: "pipe" });
+  if (p.exitCode !== 0) throw new Error(`${argv.join(" ")} -> ${p.exitCode}: ${p.stderr.toString()}`);
+  return p.stdout.toString();
+}
+let n = 0;
+/** Repo with `base` files committed, a fake `ruff` first on PATH (rewrites each file arg to "FORMATTED"), then `edit` applied and commitStage run. */
+async function commitRun(base: Record<string, string>, edit: Record<string, string>): Promise<{ repo: string; show: (f: string) => string; files: string[] }> {
+  const repo = join(dir, `r${n++}`), bin = join(dir, `bin${n}`);
+  mkdirSync(repo, { recursive: true }); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "ruff"), `#!/bin/sh\necho "$@" >> "${repo}/../ruff.calls"\nshift\nfor f in "$@"; do echo FORMATTED > "$f"; done\n`); chmodSync(join(bin, "ruff"), 0o755);
+  sh(["git", "init", "-q", "-b", "main"], repo); sh(["git", "config", "user.name", "t"], repo); sh(["git", "config", "user.email", "t@test.invalid"], repo);
+  for (const [f, c] of Object.entries(base)) writeFileSync(join(repo, f), c);
+  sh(["git", "add", "-A"], repo); sh(["git", "commit", "-q", "-m", "base"], repo);
+  const baseSha = sh(["git", "rev-parse", "HEAD"], repo).trim();
+  for (const [f, c] of Object.entries(edit)) { if (c === "DELETE") { rmSync(join(repo, f)); continue; } mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
+  mkdirSync(join(repo, ".loki/runs/r1"), { recursive: true });
+  const outputs = { intake: { title: "t" } };
+  const ctx = { runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha, branch: "loki/r1", provider: "claude", model: "m", deep: false, capS: 900, emit: () => {}, sessions: { run: async () => { throw new Error("none"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] }, cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 }, outputs: () => outputs } as unknown as RunContext;
+  const pre = process.env["PATH"];
+  process.env["PATH"] = `${bin}:${pre}`;
+  try { expect((await commitStage.run(ctx, new AbortController().signal)).status).toBe("completed"); } finally { process.env["PATH"] = pre; }
+  return { repo, show: (f) => { try { return sh(["git", "show", `HEAD:${f}`], repo); } catch { return ""; } }, files: sh(["git", "show", "--name-only", "--format=", "HEAD"], repo).split("\n").filter(Boolean) };
+}
+const RUFF_CFG = "[tool.ruff]\nline-length = 88\n";
+
+test("T16 configured ruff: the run's unformatted py file is committed formatted", async () => {
+  const r = await commitRun({ "pyproject.toml": RUFF_CFG }, { "a.py": "x=1\n" });
+  expect(r.show("a.py")).toBe("FORMATTED\n");
+  expect(r.files).toEqual(["a.py"]);
+});
+
+test("T16 unchanged files are untouched, and a non-owned extension is not handed to the formatter", async () => {
+  const r = await commitRun({ "pyproject.toml": RUFF_CFG, "old.py": "y=2\n" }, { "a.py": "x=1\n", "notes.txt": "hi\n" });
+  expect(readFileSync(join(r.repo, "old.py"), "utf8")).toBe("y=2\n");
+  expect(r.show("notes.txt")).toBe("hi\n");
+  expect(readFileSync(join(r.repo, "..", "ruff.calls"), "utf8")).not.toContain("old.py");
+  expect(r.files.sort()).toEqual(["a.py", "notes.txt"]);
+});
+
+test("T16 no formatter config means no spawn and the file commits as written", async () => {
+  const r = await commitRun({ "README.md": "r\n" }, { "a.py": "x=1\n" });
+  expect(r.show("a.py")).toBe("x=1\n");
+  expect(existsSync(join(r.repo, "..", "ruff.calls"))).toBe(false);
+});
+
+test("T16 a deleted file and a .loki file are never formatted", async () => {
+  const r = await commitRun({ "pyproject.toml": RUFF_CFG, "gone.py": "z=3\n" }, { "a.py": "x=1\n", "gone.py": "DELETE", ".loki/state/s.py": "q=1\n" });
+  const calls = readFileSync(join(r.repo, "..", "ruff.calls"), "utf8");
+  expect(calls).toContain("a.py");
+  expect(calls).not.toContain(".loki");
+  expect(calls).not.toContain("gone.py");
+});
+
+test("T16 real gofmt via go.mod formats the run's go file", async () => {
+  if (Bun.spawnSync({ cmd: ["gofmt", "-h"], stdout: "ignore", stderr: "ignore" }).exitCode === undefined) return;
+  const r = await commitRun({ "go.mod": "module x\n" }, { "m.go": "package main\nfunc  main( ){\n}\n" });
+  expect(r.show("m.go")).toBe("package main\n\nfunc main() {\n}\n");
 });

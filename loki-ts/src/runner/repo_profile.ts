@@ -25,7 +25,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, isAbsolute } from "node:path";
 import { failIds } from "../engine10/failures.ts";
 import { plainTestEnv, stripAnsi } from "../util/check_result.ts";
@@ -324,6 +324,36 @@ export function discoverCommands(repoDir: string): ProfileCommand[] {
     }
   }
   return out;
+}
+
+/** TEN-QUALITY-16: a formatter the repo ITSELF configures. `argv` is the command before the file list; `exts` selects the files it owns. Config detection only, never an install. */
+export interface RepoFormatter { tool: string; argv: string[]; exts: RegExp }
+export function detectFormatters(repoDir: string): RepoFormatter[] {
+  const out: RepoFormatter[] = [];
+  const has = (...fs: string[]): boolean => fs.some((f) => existsSync(join(repoDir, f)));
+  const pp = read(join(repoDir, "pyproject.toml")), pj = read(join(repoDir, "package.json"));
+  if (/\[tool\.ruff/.test(pp) || has("ruff.toml", ".ruff.toml")) out.push({ tool: "ruff", argv: ["ruff", "format"], exts: /\.pyi?$/ });
+  let prettierKey = false;
+  try { prettierKey = pj !== "" && "prettier" in (JSON.parse(pj) as object); } catch { /* malformed manifest: no formatter */ }
+  const local = join(repoDir, "node_modules", ".bin", "prettier"); // a repo-local binary only: nothing is fetched
+  if ((prettierKey || readdirSync(repoDir).some((f) => /^(\.prettierrc(\.[a-z0-9]+)?|prettier\.config\.[cm]?[jt]s)$/.test(f))) && existsSync(local)) out.push({ tool: "prettier", argv: [local, "--write"], exts: /\.(?:[cm]?[jt]sx?|json|css|scss|md|ya?ml|html)$/ });
+  if (has("go.mod")) out.push({ tool: "gofmt", argv: ["gofmt", "-w"], exts: /\.go$/ });
+  if (has("rustfmt.toml", ".rustfmt.toml")) {
+    const ed = /^\s*edition\s*=\s*"(\d+)"/m.exec(read(join(repoDir, "Cargo.toml")))?.[1];
+    out.push({ tool: "rustfmt", argv: ["rustfmt", ...(ed ? ["--edition", ed] : [])], exts: /\.rs$/ });
+  }
+  return out;
+}
+
+/** Runs each detected formatter once over the regular files (no symlinks) it owns. A missing binary or nonzero exit is a no-op; returns the files a formatter exited 0 on. env must already be token-free. */
+export function runFormatters(repoDir: string, files: string[], env: NodeJS.ProcessEnv): string[] {
+  const fmts = detectFormatters(repoDir);
+  const mine = fmts.length ? files.filter((f) => { try { return lstatSync(join(repoDir, f)).isFile(); } catch { return false; } }) : [];
+  return fmts.flatMap((fm) => {
+    const own = mine.filter((f) => fm.exts.test(f));
+    const r = own.length ? spawnSync(fm.argv[0]!, [...fm.argv.slice(1), ...own.map((f) => `./${f}`)], { cwd: repoDir, env, stdio: "ignore", timeout: 30000 }) : null;
+    return r && !r.error && r.status === 0 ? own : [];
+  });
 }
 
 /** Default runner: `sh -c` in repoDir, an explicit scoped env (token-free, no color, no bytecode litter), SIGKILL on timeout. */
