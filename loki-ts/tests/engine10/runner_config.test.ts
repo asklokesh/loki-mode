@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
-import { runnerConfigNotes, testConfigChanged } from "../../src/features/runner_config.ts";
+import { RUNNER_CONFIGS, runnerConfigNotes, testConfigChanged } from "../../src/features/runner_config.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 
 const dirs: string[] = [];
@@ -560,5 +560,56 @@ describe("FC-09u pnpm-workspace and yarnrc key-level caps", () => {
     expect(runnerConfigNotes(r.dir, r.base, sh(r.dir, ["rev-parse", "HEAD"]), ["pnpm-workspace.yaml"]).length).toBe(1);
     r.edit("pnpm-workspace.yaml", PNPM.replace("foo: 1.0.0", "foo: 2.0.0").replace('"pkgs/*"', '"z/*"')); sh(r.dir, ["add", "."]); sh(r.dir, ["commit", "-qm", "d"]);
     expect(runnerConfigNotes(r.dir, sh(r.dir, ["rev-parse", "HEAD~1"]), sh(r.dir, ["rev-parse", "HEAD"]), ["pnpm-workspace.yaml"]).length).toBe(1);
+  });
+});
+
+describe("FC-09w case-insensitive registry, .npmrc, patchedDependencies targets", () => {
+  const NAMES = ["PNPM-Workspace.yaml", ".YARNRC.yml", "Jest.Config.js", "VITEST.config.ts", "Bunfig.TOML", "ConfTest.py", "Tox.INI", "PyTest.ini", ".Mocharc.json", ".CARGO/Config.toml", "Babel.Config.js", ".PnpmFile.cjs", "Patches/a.diff", "x.PATCH", ".NPMRC", "sub/.Npmrc"];
+  const commit = (d: string, m: string): string => { sh(d, ["add", "."]); sh(d, ["commit", "-qm", m]); return sh(d, ["rev-parse", "HEAD"]); };
+  test.each(NAMES.map((n) => [n]))("capitalized %s: edit caps in both entry points", (f) => {
+    const r = repo({ [f]: "a = 1\n", "x.txt": "1" });
+    r.edit(f, "a = 2\n");
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+    const head = commit(r.dir, "e");
+    expect(runnerConfigNotes(r.dir, r.base, head, [f]).length).toBe(1);
+  });
+  test.each(NAMES.map((n) => [n]))("capitalized %s: add caps in both entry points", (f) => {
+    const r = repo({ "x.txt": "1" });
+    r.edit(f, "a = 1\n");
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+    const head = commit(r.dir, "a");
+    expect(runnerConfigNotes(r.dir, r.base, head, [f]).length).toBe(1);
+  });
+  test("capitalized shared manifest compares by section, not by bytes", () => {
+    const r = repo({ "Package.JSON": pkg({ test: "t" }, { version: "1" }) });
+    r.edit("Package.JSON", pkg({ test: "t" }, { version: "2" }));
+    expect(testConfigChanged(r.dir, r.base, ["Package.JSON"])).toEqual([]);
+    r.edit("Package.JSON", pkg({ test: "t", pretest: "x" }));
+    expect(testConfigChanged(r.dir, r.base, ["Package.JSON"])).toEqual(["Package.JSON"]);
+  });
+  test("a byte-identical .npmrc does not cap", () => {
+    const r = repo({ ".npmrc": "registry=a\n", "x.txt": "1" });
+    r.edit("x.txt", "2");
+    expect(runnerConfigNotes(r.dir, r.base, commit(r.dir, "c"), ["x.txt"])).toEqual([]);
+  });
+  test("every registry regex is case-insensitive", () => {
+    for (const s of RUNNER_CONFIGS) expect(s.re.flags).toContain("i");
+  });
+  test.each([
+    ["package.json pnpm key", "package.json", pkg({ test: "t" }, { pnpm: { patchedDependencies: { "foo@1.0.0": "vendor/foo.js" } } }), "vendor/foo.js"],
+    ["package.json top-level key", "package.json", pkg({ test: "t" }, { patchedDependencies: { "foo@1.0.0": "./vendor/foo.txt" } }), "vendor/foo.txt"],
+    ["pnpm-workspace.yaml", "pnpm-workspace.yaml", 'packages:\n  - a\npatchedDependencies:\n  foo@1.0.0: vendor/foo.js\n  "bar@2": "other/bar.js"\n', "other/bar.js"],
+    ["nested manifest resolves relative to it", "sub/package.json", pkg({ test: "t" }, { pnpm: { patchedDependencies: { "foo@1": "v/foo.js" } } }), "sub/v/foo.js"],
+  ])("patchedDependencies target outside patches/ caps when edited: %s", (_n, cfg, text, target) => {
+    const r = repo({ [cfg]: text, [target]: "old\n" });
+    r.edit(target, "new\n");
+    const notes = runnerConfigNotes(r.dir, r.base, commit(r.dir, "p"), [target]);
+    expect(notes.length).toBe(1);
+    expect(notes[0]).toContain(target);
+  });
+  test("an unrelated file next to a patchedDependencies manifest does not cap", () => {
+    const r = repo({ "package.json": pkg({ test: "t" }, { pnpm: { patchedDependencies: { "foo@1": "vendor/foo.js" } } }), "vendor/foo.js": "a", "vendor/other.js": "a" });
+    r.edit("vendor/other.js", "b");
+    expect(runnerConfigNotes(r.dir, r.base, commit(r.dir, "u"), ["vendor/other.js"])).toEqual([]);
   });
 });
