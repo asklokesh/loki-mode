@@ -13,7 +13,7 @@ import { STEER_MAX_BYTES, withSteer } from "../../src/util/steer.ts";
 import { intentRevisionsBlock } from "../../src/util/run_outputs.ts";
 import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -134,6 +134,20 @@ describe("engine10 seal", () => {
       const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
       expect((r as unknown as { route: { requests_total: number } }).route.requests_total).toBe(8);
     } finally { if (prev === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = prev; }
+  });
+  test("atomic receipt: receipt.json and receipt.md are replaced by rename, never truncated in place", async () => {
+    const { repo, base } = makeRepo("atomic-receipt");
+    const { ctx } = ctxFor(repo, base);
+    mkdirSync(ctx.runDir, { recursive: true });
+    // A hard link shares the inode: an in-place write (the old behavior) would rewrite it; temp + rename leaves it intact.
+    for (const f of ["receipt.json", "receipt.md"]) { writeFileSync(join(ctx.runDir, f), "OLD"); linkSync(join(ctx.runDir, f), join(ctx.runDir, `${f}.witness`)); }
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("completed");
+    expect(readFileSync(join(ctx.runDir, "receipt.json.witness"), "utf8")).toBe("OLD");
+    expect(readFileSync(join(ctx.runDir, "receipt.md.witness"), "utf8")).toBe("OLD");
+    const raw = readFileSync(join(ctx.runDir, "receipt.json"), "utf8");
+    expect((JSON.parse(raw) as { receipt_sha256: string }).receipt_sha256).toBe(s.data.receipt_sha256 as string);
+    expect(readdirSync(ctx.runDir).filter((n) => n.includes(".tmp."))).toEqual([]);
   });
   test("signed: JWT verifies through verify_attestation and the hash recomputes", async () => {
     // Fail loudly rather than skip: a skip here would be a false green.
