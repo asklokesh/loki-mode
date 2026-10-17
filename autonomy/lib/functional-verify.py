@@ -69,18 +69,27 @@ def derive_endpoint_assertions(spec_text: str) -> list[dict]:
 # Wording that marks an endpoint as protected. Matched on the endpoint's own line
 # or on the nearest enclosing markdown heading (its section).
 _PROTECTED_RE = re.compile(
-    r'\b(requires?\s+(auth\w*|login|a\s+login|credentials|a\s+token|a\s+valid\s+token)'
+    r'\b(requires?\s+(auth\w*|login|a\s+login|credentials|a\s+(bearer\s+|valid\s+)?token)'
     r'|(must|needs?\s+to)\s+be\s+(logged[ -]in|authenticated)'
     r'|login\s+required|auth(entication)?\s+required'
-    r'|authenticated(\s+users?)?(\s+only)?|admin[ -]only|admins?\s+only|protected)\b',
+    r'|authenticated(\s+users?)?(\s+only)?|admin[ -]only|admins?\s+only'
+    r'|protected\s+(endpoint|route|resource|api|path|page)s?|is\s+protected'
+    r'|(without|no|missing)\s+(\w+\s+)?(auth\w*|credentials|token)\b[^.;]*?\b40[13])\b',
     re.IGNORECASE)
-_NEGATED_RE = re.compile(
-    r'\b(no|not|without|never|unauthenticated|public)\s+'
-    r'(\w+\s+){0,2}(auth\w*|login|credentials|protected)', re.IGNORECASE)
+_NEGATION_WORDS = {"no", "not", "never", "without", "unauthenticated", "public",
+                   "isn't", "doesn't", "don't", "cannot", "can't"}
 
 
 def _is_protected_text(text: str) -> bool:
-    return bool(_PROTECTED_RE.search(text)) and not _NEGATED_RE.search(text)
+    """True when a protected-wording match is not directly negated. Negation
+    cancels only the match it modifies: one of the two words right before it,
+    inside the same clause (no ; , . or : between)."""
+    for m in _PROTECTED_RE.finditer(text or ""):
+        clause = re.split(r'[;,.:]', text[:m.start()])[-1]
+        prev = re.findall(r"[\w']+", clause.lower())[-2:]
+        if not any(w in _NEGATION_WORDS for w in prev):
+            return True
+    return False
 
 
 def derive_auth_assertions(spec_text: str) -> list[dict]:
@@ -273,7 +282,7 @@ def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[di
         elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
             st, detail = "failed", f"served without credentials (HTTP {code})"
         elif code is not None and 300 <= code < 400 and re.search(
-                r'login|signin|sign-in|auth', extra, re.IGNORECASE):
+                r'(^|/)(login|signin|sign-in|auth|oauth)\b', extra, re.IGNORECASE):
             st, detail = "passed", f"HTTP {code} redirect to {extra}"
         elif code is None:
             st, detail = "inconclusive", f"unreachable: {extra}"
@@ -307,7 +316,7 @@ def run(spec_text: str, base_url: str) -> dict:
     if not assertions:
         return {"spec_behaviors": [], "summary": {"passed": 0, "failed": 0,
                 "inconclusive": 0, "functional_status": "inconclusive"},
-                "note": "no HTTP endpoint behaviors derivable from the spec"}
+                "auth_behaviors": [], "note": "no HTTP endpoint behaviors derivable from the spec"}
     results = verify_crud_lifecycle(base_url, assertions)
     summ = summarize(results + auth)
     return {"assertions_derived": assertions, "spec_behaviors": results,

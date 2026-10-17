@@ -208,6 +208,39 @@ class AuthBehaviors(unittest.TestCase):
         self.assertEqual(FV.derive_auth_assertions(spec),
                          [{"method": "GET", "path": "/api/admin/users"}])
 
+    def test_negation_only_cancels_adjacent_match(self):
+        # "requires authentication" must not be cancelled by a later "without credentials".
+        spec = ("GET /api/admin requires authentication; "
+                "requests without credentials get 401")
+        out = FV.run(spec, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+        self.assertEqual(out["functional_status"], "failed", out)
+        out = FV.run("GET /api/admin: Calls without auth return 401", self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+
+    def test_directly_negated_stays_unprotected(self):
+        for spec in ("GET /api/x needs no auth required", "GET /api/x does not require auth",
+                     "GET /api/x is public, no auth required"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_bare_protected_word_is_not_auth(self):
+        out = FV.run("GET /api/posts returns posts; protected fields hidden", self._serve(200))
+        self.assertEqual(out["auth_behaviors"], [])
+        self.assertEqual(out["functional_status"], "verified", out)
+        self.assertEqual(len(FV.derive_auth_assertions("GET /api/a is a protected route")), 1)
+
+    def test_bearer_token_is_protected(self):
+        self.assertEqual(len(FV.derive_auth_assertions("GET /api/me requires a bearer token")), 1)
+
+    def test_redirect_must_be_login_path_segment(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/authors/1"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="https://x.io/auth/start?next=/a"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_early_return_has_auth_behaviors_key(self):
+        self.assertEqual(FV.run("static page", "http://127.0.0.1:1")["auth_behaviors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
