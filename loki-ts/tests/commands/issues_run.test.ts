@@ -169,6 +169,28 @@ describe("loki issues run", () => {
     expect(after).toContain("LOKIWITHHELDsentinel");
   });
 
+  test("hung gh call times out as a nonzero rc instead of stalling", async () => {
+    const bin = join(dir, "bin-hung");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(join(bin, "gh"), 0o755);
+    const h = harness({});
+    delete h.inject.gh;
+    const saved = { ...process.env };
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    process.env.LOKI_ISSUES_GH_TIMEOUT_MS = "300";
+    const t0 = Date.now();
+    let rc: number;
+    try {
+      rc = await runIssues(["run", SLUG, "--dry-run"], h.inject);
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+    expect(Date.now() - t0).toBeLessThan(10000);
+    expect(rc).not.toBe(0);
+  });
+
   test("dedupe skips an issue with an open loki/issue-N PR or a linking Loki PR body", async () => {
     const h = harness({
       issues: [issue(1), issue(2), issue(3), issue(4)],

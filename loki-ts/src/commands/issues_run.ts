@@ -504,6 +504,12 @@ export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
   };
 }
 
+// A hung gh call must not stall the whole batch: bounded, returned as rc 124.
+function ghTimeoutMs(): number {
+  const n = Number(process.env["LOKI_ISSUES_GH_TIMEOUT_MS"]);
+  return Number.isFinite(n) && n > 0 ? n : 120000;
+}
+
 export function askYesNo(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((res) => rl.question(question, (ans) => {
@@ -530,7 +536,10 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
     repoDir,
     lokiDir,
     gh: inject?.gh ?? ((ghArgs) => {
-      const r = spawnSync("gh", [...ghArgs], { cwd: repoDir, env: userEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      const r = spawnSync("gh", [...ghArgs], { cwd: repoDir, env: userEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: ghTimeoutMs(), killSignal: "SIGKILL" });
+      if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+        return { rc: 124, stdout: r.stdout ?? "", stderr: `gh ${ghArgs[0] ?? ""} timed out after ${ghTimeoutMs()}ms` };
+      }
       return { rc: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? (r.error ? String(r.error) : "") };
     }),
     triage: inject?.triage ?? makeSessionTriage(repoDir, lokiDir, provider),
