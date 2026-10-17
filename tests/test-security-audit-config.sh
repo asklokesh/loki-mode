@@ -777,7 +777,7 @@ _audit_mode="$(grep -o -e '--diff-merges=[a-z-]*' "$REPO_ROOT/scripts/security-a
 # use that variable, and its value is what is compared against the audit script.
 _g1_hook="$REPO_ROOT/.githooks/pre-push"
 _g1_check() { # <hook file>; prints the effective mode of the real gitleaks call, empty if none
-  local f="$1" call var val
+  local f="$1" call val
   call="$(grep -e '"\$_gitleaks_bin" git ' "$f" | grep -e '--log-opts=' | head -1)"
   [ -n "$call" ] || return 0
   if printf '%s' "$call" | grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"'; then
