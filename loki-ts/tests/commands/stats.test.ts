@@ -290,12 +290,19 @@ describe("stats: glob handling for iteration files", () => {
   });
 });
 
-describe("stats: unknown flags are ignored (matches bash case *)", () => {
-  it("does not error on unknown flag", () => {
+describe("stats: unknown flag is rejected (exit 2, one line)", () => {
+  it("unknown flag exits 2", () => {
     process.env["LOKI_DIR"] = FIXTURE;
     const r = computeStats(["--bogus", "--json"]);
-    expect(r.exitCode).toBe(0);
-    expect(() => JSON.parse(r.stdout)).not.toThrow();
+    expect(r.exitCode).toBe(2);
+    expect(r.stdout).toBe("Unknown option: --bogus (see: loki stats --help)");
+  });
+  it("known flags and --help still exit 0", () => {
+    process.env["LOKI_DIR"] = FIXTURE;
+    expect(computeStats(["--json", "--efficiency"]).exitCode).toBe(0);
+    const h = computeStats(["--help"]);
+    expect(h.exitCode).toBe(0);
+    expect(h.stdout).toContain("Usage: loki stats");
   });
 });
 

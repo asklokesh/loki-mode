@@ -14,7 +14,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { isGroupCostRecord } from "../metrics/kpis.ts";
-import { YELLOW, NC } from "../util/colors.ts";
+import { BOLD, YELLOW, NC } from "../util/colors.ts";
 
 // ---- Types ----
 
@@ -464,13 +464,39 @@ export type StatsResult = {
   stdout: string;
 };
 
+const STATS_HELP = [
+  `${BOLD}Loki Mode -- session statistics${NC}`,
+  "",
+  "Usage: loki stats [options]",
+  "",
+  "Prints session-level statistics: tasks completed, iterations,",
+  "tokens used, cost, council votes, gate verdicts.",
+  "",
+  "Options:",
+  "  --json          JSON output (machine-readable)",
+  "  --efficiency    Include cost/token efficiency breakdown",
+  "  --help, -h      Show this help and exit",
+  "",
+  "See also: loki kpis, loki status",
+].join("\n");
+
 export function computeStats(argv: readonly string[]): StatsResult {
   let showJson = false;
   let showEfficiency = false;
   for (const arg of argv) {
+    if (arg === "--help" || arg === "-h" || arg === "help") {
+      return { exitCode: 0, stdout: STATS_HELP };
+    }
+  }
+  for (const arg of argv) {
     if (arg === "--json") showJson = true;
     else if (arg === "--efficiency") showEfficiency = true;
-    // unknown flags ignored to match bash behavior (case *) shift)
+    else {
+      return {
+        exitCode: 2,
+        stdout: `Unknown option: ${arg} (see: loki stats --help)`,
+      };
+    }
   }
 
   const loki = lokiDir();
@@ -497,6 +523,7 @@ export async function runStats(argv: readonly string[]): Promise<number> {
   const { emitDeprecatedAlias } = await import("../util/deprecated_alias.ts");
   emitDeprecatedAlias("stats", "report session", argv);
   const r = computeStats(argv);
-  console.log(r.stdout);
+  if (r.exitCode === 0) console.log(r.stdout);
+  else console.error(r.stdout);
   return r.exitCode;
 }
