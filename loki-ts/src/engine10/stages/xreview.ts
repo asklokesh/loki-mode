@@ -7,7 +7,7 @@ import { loadReviewStageAgent } from "../../council/role_agents.ts";
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags } from "../../providers/claude_flags.ts";
-import { safeGitRun } from "../../util/safe_git.ts";
+import { safeGitRun } from "../../util/safe_git.ts"; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts";
 import type { RunContext, Verdict } from "../types.ts";
 
@@ -98,7 +98,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model : undefined), { cwd: ctx.repoDir, timeoutMs: TIMEOUT_MS });

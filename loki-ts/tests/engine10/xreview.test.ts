@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, utimesSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { acceptanceLines, acceptancePromptBlock } from "../../src/util/intent_card.ts";
 import { crossReview, minVerdict, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
@@ -130,5 +131,40 @@ describe("TEN-COST-06 lean claude judge", () => {
       expect(existsSync(f)).toBe(true);
       const lines = readFileSync(f, "utf8").trim().split("\n"); expect(lines.length).toBe(1); expect(JSON.parse(lines[0]!).phase).toBe("xreview");
     } finally { delete process.env["LOKI_REVIEW_PROVIDER"]; delete process.env["LOKI_CLAUDE_CLI"]; }
+  });
+});
+
+describe("TEN-QUALITY-13 acceptance lines in the reviewer prompt", () => {
+  const card = ["Intent: add a flag", "Acceptance: --json prints valid JSON", "Out of scope: docs"];
+  it("no card gives no lines and no prompt block", () => {
+    expect(acceptanceLines(undefined)).toEqual([]); expect(acceptanceLines({})).toEqual([]);
+    expect(acceptancePromptBlock([])).toEqual([]);
+  });
+  it("only Acceptance lines are extracted", () => expect(acceptanceLines({ intent_card: card })).toEqual(["Acceptance: --json prints valid JSON"]));
+  it("block carries the lines and asks for UNMET", () => {
+    const p = acceptancePromptBlock(acceptanceLines({ intent_card: card })).join("\n");
+    expect(p).toContain("Acceptance: --json prints valid JSON"); expect(p).toContain("- UNMET: ");
+  });
+  it("verdict notes name the unmet line", () => {
+    const r = parseReview("codex", "VERDICT: FLAG\n- UNMET: Acceptance: --json prints valid JSON");
+    expect(r.notes.join(" ")).toContain("UNMET: Acceptance: --json prints valid JSON");
+  });
+  const stubRun = async (outputs: unknown) => {
+    const d = mkdtempSync(join(root, "acc-")), bd = mkdtempSync(join(root, "bin-"));
+    const sh = (...a: string[]) => Bun.spawnSync(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+    sh("init", "-q"); writeFileSync(join(d, "a"), "1"); sh("add", "a"); sh("commit", "-qm", "c");
+    const stub = join(bd, "codex"); writeFileSync(stub, `#!/bin/sh\nprintf '%s' "$*" > "${d}/argv.txt"\nprintf 'VERDICT: FLAG\\n- UNMET: Acceptance: x\\n'\n`); chmodSync(stub, 0o755);
+    const ctx = { repoDir: d, provider: "claude", baseSha: "HEAD", runDir: d, ...(outputs ? { outputs: () => outputs } : {}) } as never;
+    process.env["LOKI_REVIEW_PROVIDER"] = "codex"; process.env["LOKI_CODEX_CLI"] = stub;
+    try { const r = await crossReview(ctx, "VERIFIED", "HEAD"); return { r, argv: readFileSync(join(d, "argv.txt"), "utf8") }; }
+    finally { delete process.env["LOKI_REVIEW_PROVIDER"]; delete process.env["LOKI_CODEX_CLI"]; }
+  };
+  it("crossReview sends the lines through the real stub CLI and surfaces UNMET", async () => {
+    const { r, argv } = await stubRun({ plan: { intent_card: ["Intent: i", "Acceptance: x"] } });
+    expect(argv).toContain("Acceptance: x"); expect(r?.notes.join(" ")).toContain("UNMET: Acceptance: x");
+  });
+  it("no card or no outputs: prompt has no acceptance block", async () => {
+    expect((await stubRun(undefined)).argv).not.toContain("UNMET: ` followed");
+    expect((await stubRun({ plan: {} })).argv).not.toContain("intent card");
   });
 });
