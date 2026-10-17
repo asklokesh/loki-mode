@@ -2470,3 +2470,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:18Z (CoS) v11.17.30
 - Ships TEN-STABILITY-09 (TL APPROVE 57e3aa1f6: bun test 87 pass 0 fail, 2 stub mutations red) and TEN-STABILITY-10 (TL APPROVE f8b625ca1: tests/test-v10-pulse.sh 171 passed, 2 mutations red at T51b). v11.17.29 landed 1e4c2da03.
+
+## 2026-10-17T06:19Z (CoS) v11.17.31
+- Correction: v11.17.30 (9dcae642a) shipped only TEN-STABILITY-10; TEN-STABILITY-09 hit a FAILURE-CLASSES.md conflict in the merge loop, yet the release notes and BOARD named it. Conflict resolved as a union of both appended rows, merged, and shipped here. ship.sh notes are now written only after the merge loop reports every slice merged.
