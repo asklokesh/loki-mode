@@ -336,10 +336,15 @@ class SharedPredicate(unittest.TestCase):
 
     def test_the_tool_imports_the_shared_predicate(self):
         src = _TOOL.read_text(encoding="utf-8")
-        self.assertIn(
-            "from efficiency_cost import record_is_measured", src,
+        # Match the import by name, not one exact line: the tool may import
+        # other helpers from efficiency_cost on the same line.
+        self.assertRegex(
+            src, r"(?m)^from efficiency_cost import [^\n]*\brecord_is_measured\b",
             "cost-summary.py restates the measured/unmeasured rule instead of "
             "importing it; a second copy is how the rule drifts")
+        self.assertNotRegex(
+            src, r"(?m)^def record_is_measured\b",
+            "cost-summary.py defines its own record_is_measured")
 
 
 if __name__ == "__main__":
