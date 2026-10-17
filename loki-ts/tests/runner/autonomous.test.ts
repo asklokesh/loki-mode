@@ -896,4 +896,44 @@ describe("runAutonomous", () => {
     // Hits max retries on the failing iterations -- council ignored.
     expect(code).toBe(1);
   });
+
+  it("repo profile cache hit: resumed run does not rescan; new commit rebuilds", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const sh = (...a: string[]): void => {
+      spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: tmpRoot, stdio: "ignore" });
+    };
+    writeFileSync(resolve(tmpRoot, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
+    sh("init", "-q");
+    sh("add", "package.json");
+    sh("commit", "-q", "-m", "init");
+    const profPath = resolve(lokiDir, "profile", "repo-profile.json");
+    const prev = { flag: process.env["LOKI_REPO_PROFILE"], dir: process.env["LOKI_DIR"] };
+    process.env["LOKI_REPO_PROFILE"] = "1";
+    process.env["LOKI_DIR"] = lokiDir;
+    const runOnce = async (): Promise<void> => {
+      const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+      await runAutonomous(baseOpts({ providerOverride: provider, council: new FakeCouncil([true]) }));
+    };
+    try {
+      await runOnce();
+      const first = JSON.parse(readFileSync(profPath, "utf8")) as Record<string, unknown>;
+      expect(typeof first["cache_key"]).toBe("string");
+      // Sentinel: a rescan rewrites the file and drops it.
+      writeFileSync(profPath, JSON.stringify({ ...first, sentinel: 1 }));
+      await runOnce();
+      expect((JSON.parse(readFileSync(profPath, "utf8")) as Record<string, unknown>)["sentinel"]).toBe(1);
+      writeFileSync(resolve(tmpRoot, "a.txt"), "a");
+      sh("add", "a.txt");
+      sh("commit", "-q", "-m", "second");
+      await runOnce();
+      const third = JSON.parse(readFileSync(profPath, "utf8")) as Record<string, unknown>;
+      expect(third["sentinel"]).toBeUndefined();
+      expect(third["cache_key"]).not.toBe(first["cache_key"]);
+    } finally {
+      for (const [k, v] of [["LOKI_REPO_PROFILE", prev.flag], ["LOKI_DIR", prev.dir]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });
