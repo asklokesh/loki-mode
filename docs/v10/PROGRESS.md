@@ -2448,3 +2448,8 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - v11.17.23 published: npm latest=11.17.23 next=11.17.23 (npm view dist-tags). Release gate stayed red on P9 for v11.17.22 and v11.17.23, so tags, GitHub release, docker, homebrew and SDK jobs were skipped for both (git tag -l shows v11.17.21 as newest).
 - v11.17.24 ships TEN-P9-FIX (opus HIGH APPROVE cc74ce7cc; culprit 08a8ae052 from TEN-UX-01, preflight spawned claude auth status with the unwithheld env; reviewer: base probe FAIL, fix probe 5 CASE PASS, revert mutation red), TEN-SEC-GITLEAKS-01 (opus HIGH r2 APPROVE d39b7b8af; 54 passed config suite, evil-merge case refused), TEN-UX-03 (TL APPROVE 5a4ffa9a9) and TEN-DEPLOY-04-F1 (TL APPROVE 50579a177).
 - TEN-UX-08 r1 TL BLOCK 7b061f7c8 found TEN-UX-01 not wired end to end (supervisor exits before preflight); FC-TEN-UX-01 recurrence recorded; TEN-UX-01-F1 then TEN-UX-08 r2 building (workflow wplxouy32). Follow-ups queued ready: TEN-P9-FIX-F1, TEN-SEC-GITLEAKS-01-F1, TEN-UX-03-F1.
+
+## 2026-10-17T05:39Z (CoS) v11.17.25
+- v11.17.24 Release run 39006796098: gate=success, release=success, publish-npm=success, homebrew and both SDKs success; tags resume after the P9 fix.
+- Ships UX-01-F1 (TL APPROVE e7d57b1f6), UX-08 r2 (TL APPROVE 46f0d3774), GATES-03-F1 (4a47a5b6f), ADOPTION-03-F1 (05d9cbbf3), QUALITY-03-F1 (24d55b07a), COST-01 (40ee12bb6), COST-24 (e4462cd41). COST-16 BLOCK r1 (haiku-first missing from modelDowngrades, L1); r2 building.
+- D103 committed 4eb9ee299: bash tests/test-v10-pulse.sh 170 passed, 0 failed, rc=0. Wave W (9 slices incl. TEN-RELEASE-FAST, GATES-02, P9-FIX-F1 on opus) building.

@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.24. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.25. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -37,6 +37,9 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki proof show` | Show a receipt |
 | `loki proof open` | Open a receipt |
 | `loki proof share` | Share a receipt |
+| `loki proof badge` | Print the Verified by Loki badge |
+| `loki proof md` | Print badge markdown for a README |
+| `loki proof bundle` | Write a self-verifying receipt bundle |
 | `loki wiki` | Cited codebase wiki and Q&A |
 | `loki wiki generate` | Generate the wiki |
 | `loki wiki show` | Show a section |
