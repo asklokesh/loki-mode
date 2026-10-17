@@ -5,7 +5,7 @@
 //     network is hit at most once a day;
 //   - the network fetch has a short timeout and is fully fail-silent;
 //   - the check is skipped entirely in non-TTY / CI contexts and when opted
-//     out via LOKI_NO_UPDATE_CHECK=1;
+//     out via LOKI_NO_UPDATE_CHECK=1 (or true/yes);
 //   - the hint is written to stderr so stdout stays byte-for-byte stable for
 //     scripts/parsers (and the bash<->bun version parity test).
 //
@@ -59,7 +59,8 @@ export function isNewer(latest: string, current: string): boolean {
 // True when an update check should be skipped without touching disk or network.
 // Exported for tests.
 export function shouldSkipUpdateCheck(): boolean {
-  if (process.env["LOKI_NO_UPDATE_CHECK"] === "1") return true;
+  const optOut = (process.env["LOKI_NO_UPDATE_CHECK"] ?? "").trim().toLowerCase();
+  if (optOut === "1" || optOut === "true" || optOut === "yes") return true;
   // Common CI signal: most CI providers set CI=true/1/anything non-empty.
   if (process.env["CI"]) return true;
   // Only nudge interactive users; never in pipes, redirects, or daemons.
@@ -226,6 +227,17 @@ export function maybePrintWhatsNew(
   }
 }
 
+// Pick the update command from where the running copy lives. Bun is the
+// default so an unknown layout keeps the historical hint.
+// Exported for tests.
+export function updateCommandFor(installPath: string): string {
+  const p = installPath.replace(/\\/g, "/");
+  if (p.includes("/Cellar/") || p.includes("/homebrew/")) return "brew upgrade loki-mode";
+  if (p.includes("/.bun/")) return "bun install -g loki-mode  (or npm i -g loki-mode)";
+  if (p.includes("/lib/node_modules/")) return "npm i -g loki-mode  (or bun install -g loki-mode)";
+  return "bun install -g loki-mode  (or npm i -g loki-mode)";
+}
+
 // Top-level entry: print the nudge to stderr if (and only if) a successful,
 // non-fabricated check reports a strictly newer release. Never throws.
 //
@@ -239,6 +251,7 @@ export async function maybePrintUpdateHint(
     write?: (msg: string) => void;
     cacheFile?: string;
     env?: NodeJS.ProcessEnv;
+    installPath?: string;
   } = {},
 ): Promise<void> {
   try {
@@ -283,7 +296,7 @@ export async function maybePrintUpdateHint(
 
     write(
       `A newer Loki Mode is available: ${latest} (you have ${current}). ` +
-        `Update: bun install -g loki-mode  (or npm i -g loki-mode)\n`,
+        `Update: ${updateCommandFor(opts.installPath ?? process.argv[1] ?? "")}\n`,
     );
   } catch {
     // a nudge must never break the command it is attached to
