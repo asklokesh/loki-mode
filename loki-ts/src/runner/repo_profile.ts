@@ -436,6 +436,25 @@ export function attributeStatic(tool: string, headOut: string, baseOut: string |
   return { preExisting: introduced.length === 0, introduced, reason: introduced.length ? `${introduced.length} new diagnostic(s)` : "all diagnostics present on base" };
 }
 
+/** TEN-QUALITY-03: is every static diagnostic of `files` already present on base? One head run over all files, one stdin run per file on its base content
+ *  (`io.base` returns null for a file absent from base). `prefix` is the tool's own leading args (ruff "check", eslint "eslint"). Fail-closed: a run that does
+ *  not execute, or a file with head diagnostics and no base content (new on head), is never excused. */
+export async function staticPreExisting(tool: StaticTool, prefix: string[], files: string[], io: { run(args: string[], stdin?: string): Promise<{ out: string } | null>; base(f: string): string | null }): Promise<boolean> {
+  const fmt = tool === "ruff" ? ["--output-format=concise"] : tool === "shellcheck" ? ["-f", "gcc"] : ["-f", "unix"];
+  const head = await io.run([...prefix, ...fmt, ...files]);
+  if (!head) return false;
+  let baseOut = "";
+  for (const f of files) {
+    const content = io.base(f);
+    if (content === null) { if (head.out.includes(`${f}:`)) return false; continue; }
+    const stdin = tool === "ruff" ? ["--stdin-filename", f, "-"] : tool === "eslint" ? ["--stdin", "--stdin-filename", f] : ["-"];
+    const r = await io.run([...prefix, ...fmt, ...stdin], content);
+    if (!r) return false;
+    baseOut += (tool === "shellcheck" ? r.out.replace(/^-:/gm, `${f}:`) : r.out) + "\n";
+  }
+  return attributeStatic(tool, head.out, baseOut, 1).preExisting;
+}
+
 /** Stable text for the implementer brief: fixed order, no timestamps, so the bytes change only when the profile's content does. */
 export function profileBrief(repoDir: string): string {
   const p = loadProfile(repoDir);

@@ -16,7 +16,7 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -216,26 +216,31 @@ const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintr
 /** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint
  *  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set
  *  gets a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
+/** TEN-QUALITY-03: a failed ruff/shellcheck/eslint check whose every diagnostic is also on the base content (git show, fed on stdin, same per-check timeout) is pre-existing. */
+const excuseLint = (ctx: RunContext, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { const r = await runOnce(cmd, a, cwd, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null } = {},
-): Promise<void> {
-  const { api, ...runOpts } = opts; opts = runOpts;
+): Promise<string[]> {
+  const { api, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) {
     const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
-    await runCheck(ctx, "lint:ruff", ruffCmd, ["check", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
+    const c = await runCheck(ctx, "lint:ruff", ruffCmd, ["check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
+    if (await excuseLint(ctx, c, "ruff", ruffCmd, ["check"], ctx.repoDir, py, opts)) pre.push(c.name);
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
     await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, { ...opts, kind: "static" });
-    await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, { ...opts, kind: "static" });
+    const c = await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, { ...opts, kind: "static" });
+    if (await excuseLint(ctx, c, "shellcheck", "shellcheck", [], ctx.repoDir, sh, opts)) pre.push(c.name);
   }
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
     if (existsSync(join(g.cwd, "tsconfig.json"))) await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" });
-    if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["eslint", ...g.rel], signal, checks, { ...co, kind: "static" });
+    if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, c, "eslint", "npx", ["eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
+  return pre;
 }
 export const verifyStage: Stage = {
   name: "verify",
@@ -288,7 +293,9 @@ export const verifyStage: Stage = {
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      await runLintChecks(ctx, changed, signal, checks, { api, wall: wallPaths });
+      const lintPre = await runLintChecks(ctx, changed, signal, checks, { api, wall: wallPaths });
+      preRed.names.push(...lintPre); // TEN-QUALITY-03: the same pre-existing path tests use
+      if (lintPre.length) attr.line = [attr.line, `baseline: ${lintPre.join(", ")} static diagnostics already on base (not blocking)`].filter(Boolean).join("; ");
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {
