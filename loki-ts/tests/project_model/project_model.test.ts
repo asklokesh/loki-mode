@@ -10,6 +10,7 @@ import { projectApi } from "../../src/project_model/api.ts";
 import { discoverProjectModel, loadCached, PROJECT_FILE } from "../../src/project_model/discover.ts";
 import { GATHER_CAPS, gather } from "../../src/project_model/gather.ts";
 import { validateAnswer } from "../../src/project_model/schema.ts";
+import { fastTierModel } from "../../src/runner/model_downgrades.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -115,6 +116,30 @@ describe("discovery", () => {
     expect(out.model.status).toBe("ok");
     expect(m.briefs[1]).toContain("REJECTED");
     expect(m.briefs[1]).toContain("needs at least one citation");
+  });
+
+  test("TEN-COST-07: attempt 1 on the fast tier, retry on the run model, override pins both", async () => {
+    const saved = process.env["LOKI_MODEL_OVERRIDE"];
+    const run = async (): Promise<{ models: (string | undefined)[]; out: Awaited<ReturnType<typeof discoverProjectModel>> }> => {
+      const d = repo();
+      const bad = clone();
+      bad.packages[0].commands.test.cite = [];
+      const m = mock([bad, RECORDED]);
+      const models: (string | undefined)[] = [];
+      const wrapped = { run: (o: SessionRunOptions) => { models.push(o.model); return m.runner.run(o); } };
+      return { models, out: await discoverProjectModel(ctxFor(d, wrapped), sig) };
+    };
+    try {
+      delete process.env["LOKI_MODEL_OVERRIDE"];
+      const a = await run();
+      expect(a.models).toEqual([fastTierModel(), undefined]);
+      expect(a.out.sessionModel).toBe("run");
+      process.env["LOKI_MODEL_OVERRIDE"] = "opus";
+      const b = await run();
+      expect(b.models).toEqual(["opus", "opus"]);
+    } finally {
+      if (saved === undefined) delete process.env["LOKI_MODEL_OVERRIDE"]; else process.env["LOKI_MODEL_OVERRIDE"] = saved;
+    }
   });
 
   test("two rejections end as a typed unknown model, never invented, never cached", async () => {
