@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { classifyRunnerOutput } from "../../src/runner/runner_errors.ts";
 import { runCheck, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { runWall } from "../../src/engine10/stages/wall.ts";
+import { removeHoldout } from "../../src/util/holdout.ts";
 import type { RunContext, SessionRunner } from "../../src/engine10/types.ts";
 
 const FX = join(import.meta.dir, "fixtures", "runner-outputs");
@@ -166,7 +167,7 @@ describe("TEN-COST-09 Wall skipped when no project interpreter", () => {
       process.env["LOKI_E10_PLAN"] = "always";
       const r = await runWall(ctx, sig());
       return { r, called };
-    } finally { delete process.env["LOKI_E10_PLAN"]; if (savedHo === undefined) delete process.env["LOKI_WALL_HOLDOUT"]; else process.env["LOKI_WALL_HOLDOUT"] = savedHo; if (savedVenv !== undefined) process.env["VIRTUAL_ENV"] = savedVenv; rmSync(repoDir, { recursive: true, force: true }); }
+    } finally { delete process.env["LOKI_E10_PLAN"]; if (savedHo === undefined) delete process.env["LOKI_WALL_HOLDOUT"]; else process.env["LOKI_WALL_HOLDOUT"] = savedHo; if (savedVenv !== undefined) process.env["VIRTUAL_ENV"] = savedVenv; removeHoldout("r1", repoDir); rmSync(repoDir, { recursive: true, force: true }); }
   };
   test("holdout off, pytest repo without a venv: no session, skip names the reason and carries not_proven", async () => {
     const { r, called } = await run(false);
