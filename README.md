@@ -158,7 +158,7 @@ macOS and Linux are supported.
 - Agent Change Receipt format: [docs/AGENT-CHANGE-RECEIPT.md](docs/AGENT-CHANGE-RECEIPT.md)
 - Issue to PR from GitHub Actions, no hosted service: [docs/examples/loki-issue-to-pr.yml.example](docs/examples/loki-issue-to-pr.yml.example)
 - Jira and Linear intake: [docs/trackers.md](docs/trackers.md). Two-way Slack: [docs/slack.md](docs/slack.md). Multi-repo runs and composite receipts: [docs/WORKSPACES.md](docs/WORKSPACES.md). Deploy: [docs/DEPLOY-PLAN.md](docs/DEPLOY-PLAN.md)
-- MCP: the bundled server exposes 47 tools over stdio (`loki mcp`), including starting a run, reading its status and verifying its receipt.
+- MCP: the bundled server exposes 47 tools over stdio (`loki mcp`), including starting a run, reading its status and verifying its receipt. One-click install: [Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=loki-mode&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImxva2ktbW9kZSIsIm1jcCJdfQ==), [VS Code](vscode:mcp/install?%7B%22name%22%3A%22loki-mode%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22loki-mode%22%2C%22mcp%22%5D%7D). Or run `loki mcp install --client claude|cursor|vscode|windsurf`.
 - Claude Code plugin: `claude plugin marketplace add asklokesh/loki-mode`, then `claude plugin install loki-mode@loki-mode`. The same marketplace ships [loki-seal](packages/loki-seal/README.md), a Stop hook that refuses "done" when tests newly fail or were weakened.
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Upgrading: [UPGRADING.md](UPGRADING.md)
 
