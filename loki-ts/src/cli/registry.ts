@@ -167,7 +167,9 @@ export const REGISTRY: readonly CmdSpec[] = [
     ],
   }),
   cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { subcommands: [sub("detail", "Trust metrics detail")] }),
-  cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing"),
+  cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing", {
+    subcommands: [sub("list", "List stored crash reports"), sub("show", "Show one scrubbed crash report"), sub("submit", "Submit a scrubbed crash report"),sub("help", "Show crash usage")],
+  }),
   cmd("contract", "KEEP-MODERN", "bun", "Print the spec delivery contract", "v10 delivery contract", { positionals: [{ name: "spec", type: "path" }] }),
   cmd("start", "UPDATE", "both", "Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md)", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),

@@ -175,6 +175,15 @@ describe("completions", () => {
     return r.stdout.split("\n").filter(Boolean);
   }
 
+  test("crash subcommands", () => {
+    const src = readFileSync(join(REPO_ROOT, "loki-ts", "src", "commands", "crash.ts"), "utf8");
+    const decl = /const CRASH_SUBCOMMANDS = \[([^\]]+)\]/.exec(src)?.[1] ?? "";
+    const names = [...decl.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+    expect(names.length).toBeGreaterThan(0);
+    expect((findCommand("crash")?.subcommands ?? []).map((c) => c.name)).toEqual(names);
+    expect(complete(["loki", "crash", ""])).toEqual(expect.arrayContaining(names));
+  });
+
   test("bash: commands, subcommands, flag values, exclusivity", () => {
     expect(complete(["loki", "sta"])).toContain("start");
     expect(complete(["loki", "control", ""])).toEqual(expect.arrayContaining(["serve", "prune"]));
