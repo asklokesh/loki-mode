@@ -61,7 +61,7 @@ function pathWithOnlyGit(): string {
 
 describe("checkPreflight", () => {
   test("not a git work tree is fatal", async () => {
-    const dir = tmpRoot("e10-pf-notrepo-");
+    const dir = tmpRoot("e10-pf-notrepo-"); writeFileSync(join(dir, "f.txt"), "x");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { PATH: process.env.PATH ?? "" } });
     expect(r.fatal).toContain("not a git repository");
   });
@@ -158,7 +158,7 @@ describe("runSupervisor forwards opts.env to preflight", () => {
 
 describe("preflight() wrapper", () => {
   test("exits 2 with the fatal line on stderr and leaves no .loki/runs dir", () => {
-    const dir = tmpRoot("e10-pf-wrapper-"); // deliberately not a git repo
+    const dir = tmpRoot("e10-pf-wrapper-"); writeFileSync(join(dir, "f.txt"), "x"); // non-empty so never auto-initialised; deliberately not a git repo
     const code = [
       `const { preflight } = await import(${JSON.stringify(PREFLIGHT_TS)});`,
       `await preflight({ repoDir: ${JSON.stringify(dir)}, provider: "claude", pr: false, env: { PATH: process.env.PATH } });`,
@@ -169,5 +169,81 @@ describe("preflight() wrapper", () => {
     expect(res.stderr).toContain("not a git repository");
     expect(res.stdout).not.toContain("UNREACHABLE");
     expect(existsSync(join(dir, ".loki", "runs"))).toBe(false);
+  });
+});
+
+describe("first run (TEN-UX-01)", () => {
+  function emptyFolder(): { dir: string; env: Record<string, string> } {
+    const dir = tmpRoot("e10-pf-empty-");
+    const home = tmpRoot("e10-pf-home-");
+    const gc = join(home, "gitconfig");
+    writeFileSync(gc, "[user]\n\tname = t\n\temail = t@t.test\n");
+    return { dir, env: { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_GLOBAL: gc, GIT_CONFIG_SYSTEM: "/dev/null" } };
+  }
+  function fakeClaude(out: string, exit = 0): { cli: string; marker: string } {
+    const d = tmpRoot("e10-pf-claude-");
+    const marker = join(d, "called");
+    const cli = join(d, "claude");
+    writeFileSync(cli, `#!/bin/sh\ntouch '${marker}'\n${out ? `echo '${out}'\n` : ""}exit ${exit}\n`);
+    chmodSync(cli, 0o755);
+    return { cli, marker };
+  }
+  const opts = (dir: string, env: Record<string, string>) => ({ repoDir: dir, provider: "claude", pr: false, env });
+
+  test("empty folder, no repo: initialised with a commit and one notice", async () => {
+    const { dir, env } = emptyFolder();
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: stubCli() }));
+    expect(r.fatal).toBeNull();
+    expect(existsSync(join(dir, ".git"))).toBe(true);
+    expect(execFileSync("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8", env }).trim()).toBe("main");
+    expect(r.warnings.filter((w) => w.startsWith("initialized a new git repository in"))).toEqual([`initialized a new git repository in ${dir} (LOKI_AUTO_GIT_INIT=0 to refuse)`]);
+  });
+
+  test("folder with a file and no repo stays fatal and untouched", async () => {
+    const { dir, env } = emptyFolder();
+    writeFileSync(join(dir, "a.txt"), "x");
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: stubCli() }));
+    expect(r.fatal).toContain("git init && git add . && git commit -m init");
+    expect(existsSync(join(dir, ".git"))).toBe(false);
+  });
+
+  test("LOKI_AUTO_GIT_INIT=0 refuses on an empty folder", async () => {
+    const { dir, env } = emptyFolder();
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_AUTO_GIT_INIT: "0", LOKI_CLAUDE_CLI: stubCli() }));
+    expect(r.fatal).toContain("not a git repository");
+    expect(existsSync(join(dir, ".git"))).toBe(false);
+  });
+
+  test("claude loggedIn:false is fatal and names the fix", async () => {
+    const { dir, env } = identifiedRepo();
+    const { cli } = fakeClaude('{"loggedIn":false}');
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: cli }));
+    expect(r.fatal).toContain("claude login (or set ANTHROPIC_API_KEY)");
+  });
+
+  test("unknown login answer is a warning, never fatal", async () => {
+    const { dir, env } = identifiedRepo();
+    for (const f of [fakeClaude("{}"), fakeClaude("", 1)]) {
+      const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: f.cli }));
+      expect(r.fatal).toBeNull();
+      expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(1);
+    }
+  });
+
+  test("loggedIn:true is clean", async () => {
+    const { dir, env } = identifiedRepo();
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: fakeClaude('{"loggedIn":true}').cli }));
+    expect(r.fatal).toBeNull();
+    expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(0);
+  });
+
+  test("ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN skips the probe", async () => {
+    const { dir, env } = identifiedRepo();
+    for (const k of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+      const f = fakeClaude('{"loggedIn":false}');
+      const r = await checkPreflight(opts(dir, { ...env, [k]: "x", LOKI_CLAUDE_CLI: f.cli }));
+      expect(r.fatal).toBeNull();
+      expect(existsSync(f.marker)).toBe(false);
+    }
   });
 });

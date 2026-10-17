@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.22 (2026-10-17)
+
+### Added
+- Deploy badge (TEN-DEPLOY-04): `loki status --badge` prints a green badge only when the last deploy record verifies and its signed live binding is VERIFIED, a red badge for TAMPERED or FAILED_HEALTH, and otherwise no badge with the reason.
+- First run in an empty folder (TEN-UX-01): `loki start` in an empty folder with no repo initialises one (branch main, empty commit) with a one-line notice; a non-empty folder still stops with the exact git commands, and LOKI_AUTO_GIT_INIT=0 refuses. For the Claude provider, a logged-out CLI stops before any spend.
+- Nightly flake classification (TEN-STABILITY-07): the nightly run classifies Bun test failures as FLIP or STABLE-FAIL at one SHA and labels bun latest legs as drift; the job is informational and never changes the run conclusion.
+
+### Changed
+- Relevant files (TEN-QUALITY-05): ranking is identifier aware. Traceback, file:line and dotted module paths rank first, then exact identifier matches weighted by file stem, symbol and path segment, with stopwords dropped and ties kept in repo-map order.
+
+### Fixed
+- Security Audit (fix-forward): gitleaks fingerprints for the TEN-QUALITY-01 redaction fixture as re-added by slice-branch merges fd027051c and bc0e97c63 under first-parent merge diffs are listed. A local scan of e2b6b77d2..HEAD with --diff-merges=first-parent reports no leaks.
+
 ## v11.17.21 (2026-10-17)
 
 ### Fixed
