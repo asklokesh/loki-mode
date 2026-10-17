@@ -171,6 +171,7 @@ test("TEN-COST-32: budget stop next names --max-cost and the run id", () => {
   expect(n).toContain("--max-cost");
   expect(n).toContain("run-abc123");
   expect(nextOf("stopped", 1, "cost/time cap reached")).toContain("--max-cost");
+  expect(nextOf("stopped", 1, "cost/time cap reached")).toContain("time cap");
   expect(nextOf("stopped", 1, "cost/time cap reached")).not.toContain("stopped run");
   expect(nextOf("failed", 1, "cost/time cap reached")).toBe("loki undo");
   expect(nextOf("stopped", 1, "stalled: same failure 3 times")).toBe("loki chat --attach");
