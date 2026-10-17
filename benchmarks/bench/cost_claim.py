@@ -141,13 +141,19 @@ def _map_row(r):
 
 
 def _load_rows(paths):
+    """Return (object rows, count of non-object rows skipped)."""
     rows = []
+    skipped = 0
     for p in paths:
         with open(p) as f:
             for line in f:
                 if line.strip():
-                    rows.append(json.loads(line))
-    return rows
+                    r = json.loads(line)
+                    if isinstance(r, dict):
+                        rows.append(r)
+                    else:
+                        skipped += 1
+    return rows, skipped
 
 
 def main(argv=None):
@@ -160,18 +166,22 @@ def main(argv=None):
     ap.add_argument("--exclude-task", action="append", default=[])
     try:
         a = ap.parse_args(argv)
-        rows = _load_rows(a.rows)
+        rows, skipped = _load_rows(a.rows)
     except SystemExit as e:
         return 2 if e.code else 0
     except (OSError, ValueError) as e:
         print("usage error: %s" % e, file=sys.stderr)
         return 2
+    if skipped:
+        print("warning: skipped %d non-object row(s)" % skipped,
+              file=sys.stderr)
     excl = set(a.exclude_task)
     rows = [_map_row(r) for r in rows if r.get("task") not in excl]
     loki = [r for r in rows if r.get("arm") == a.loki_arm]
     floor = [r for r in rows if r.get("arm") == a.floor_arm]
     v = cost_claim_verdict(loki, floor, a.target)
     v["excluded_tasks"] = sorted(excl)
+    v["skipped_non_object_rows"] = skipped
     print(json.dumps(v, indent=2, sort_keys=True))
     return 0 if v["verdict"].startswith("PROVEN_AT") else 1
 
