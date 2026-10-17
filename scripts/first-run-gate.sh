@@ -11,19 +11,26 @@
 #                       checks, and the legacy fallback line must be printed naming bun. Run it with bun off PATH.
 #   --installed <spec>  npm-install that exact package into a temp prefix and run IT
 #
-# Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path.
+#   --entry start-empty TEN-UX-08: empty folder + `loki doctor` + `loki start "<brief>"`; asserts repo init, VERIFIED,
+#                       sealed receipt, Next line, and install+doctor+start wall time <= FRG_BUDGET_S (default 120)
+#                       recorded as install_to_first_success_s. --real also rewrites the METRICS.md "Time to first
+#                       sealed PR" row; the stub never writes METRICS.
+#
+# Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path; FRG_BUDGET_S the start-empty budget.
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-MODE=stub SPEC="" ENGINE=v10
+MODE=stub SPEC="" ENGINE=v10 ENTRY=quick
+T0=$(date +%s)
 while [ $# -gt 0 ]; do
     case "$1" in
         --stub) MODE=stub ;;
         --real) MODE=real ;;
         --engine) ENGINE="${2:-}"; case "$ENGINE" in v10|legacy) ;; *) echo "--engine needs v10 or legacy" >&2; exit 2 ;; esac; shift ;;
         --installed) SPEC="${2:-}"; [ -n "$SPEC" ] || { echo "--installed needs a spec" >&2; exit 2; }; shift ;;
-        *) echo "usage: $0 [--stub|--real] [--engine v10|legacy] [--installed <npm spec>]" >&2; exit 2 ;;
+        --entry) ENTRY="${2:-}"; case "$ENTRY" in quick|start-empty) ;; *) echo "--entry needs quick or start-empty" >&2; exit 2 ;; esac; shift ;;
+        *) echo "usage: $0 [--stub|--real] [--engine v10|legacy] [--entry quick|start-empty] [--installed <npm spec>]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -96,6 +103,51 @@ STUB
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1
     # D48: `loki quick` is the Loki 10 engine now; the stub is a CLI, so select the CLI invoker (no SDK, no keys).
     export LOKI_E10_INVOKER=cli
+fi
+
+# --- TEN-UX-08: empty-folder `loki start` leg --------------------------------
+if [ "$ENTRY" = start-empty ]; then
+    BRIEF="a tiny node CLI that prints hello"
+    BUDGET="${FRG_BUDGET_S:-120}"
+    EMPTY="$T/empty"; mkdir -p "$EMPTY"
+    # Identity through env only: no git config is written anywhere.
+    export GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@example.invalid GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@example.invalid
+    echo "ENTRY: loki doctor; loki start \"$BRIEF\"  (mode=$MODE${SPEC:+, installed=$SPEC}, empty folder)"
+    FAILS=0; : > "$REPORT"
+    res() { printf '%s %s: %s\n' "$1" "$2" "$3" | tee -a "$REPORT"; [ "$1" = PASS ] || FAILS=$((FAILS + 1)); }
+    ( cd "$EMPTY" && "$LOKI" doctor ) < /dev/null > "$T/doctor.log" 2>&1
+    ( cd "$EMPTY" && "$LOKI" start "$BRIEF" ) < /dev/null > "$T/start.log" 2>&1; SRC=$?
+    TOTAL=$(( $(date +%s) - T0 ))
+    OUTC=$(sed 's/\x1b\[[0-9;]*m//g' "$T/start.log")
+    if git -C "$EMPTY" rev-parse --is-inside-work-tree >/dev/null 2>&1; then res PASS repo-init "empty folder is now a git work tree"
+    else res FAIL repo-init "empty folder was not set up as a git repo (start rc=$SRC)"; fi
+    if grep -Eq '^Outcome: *VERIFIED' <<<"$OUTC"; then res PASS outcome-verified "$(grep -E '^Outcome:' <<<"$OUTC" | head -1)"
+    else res FAIL outcome-verified "no Outcome: VERIFIED (rc=$SRC): $(grep -E '^Outcome:' <<<"$OUTC" | head -1)"; fi
+    if grep -Eq '^Receipt:.*[0-9a-f]{64}' <<<"$OUTC"; then res PASS receipt-sealed "full receipt digest printed"
+    else res FAIL receipt-sealed "no sealed receipt digest printed"; fi
+    if grep -Eq '(^|[[:space:]])Next:' <<<"$OUTC"; then res PASS next-line "Next present"
+    else res FAIL next-line "no Next line in start output"; fi
+    echo "install_to_first_success_s=$TOTAL" | tee -a "$REPORT"
+    case "$BUDGET$TOTAL" in
+        *[!0-9]*|"") res FAIL first-success-budget "non-integer budget ($BUDGET) or time ($TOTAL)" ;;
+        *) if [ "$TOTAL" -le "$BUDGET" ]; then res PASS first-success-budget "${TOTAL}s <= ${BUDGET}s"
+           else res FAIL first-success-budget "${TOTAL}s > ${BUDGET}s"; fi ;;
+    esac
+    if [ "$MODE" = real ] && [ "$FAILS" -eq 0 ]; then
+        python3 -c '
+import sys
+p, secs, day = sys.argv[1:4]
+rows = open(p).read().split("\n")
+for i, r in enumerate(rows):
+    if r.startswith("| Time to first sealed PR |"):
+        rows[i] = "| Time to first sealed PR | %ss | - | - | %s: bash scripts/first-run-gate.sh --real --entry start-empty |" % (secs, day)
+        break
+open(p, "w").write("\n".join(rows))
+' "$REPO_ROOT/docs/v10/METRICS.md" "$TOTAL" "$(date -u +%Y-%m-%d)"
+    fi
+    [ "$FAILS" -eq 0 ] || { echo "--- start output (first 12 lines) ---"; head -12 <<<"$OUTC"; }
+    echo "GATE: $FAILS assertion(s) failed, wall ${TOTAL}s"
+    [ "$FAILS" -eq 0 ]; exit $?
 fi
 
 # --- run the default entry point ---------------------------------------------
