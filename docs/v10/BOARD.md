@@ -1081,7 +1081,7 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | TEN-GROUP-AUTH-F1 | kpis iteration_count does not count group cost records | loki-ts kpis | LOW | see note | released@2026-10-17T04:31Z | r1 BLOCK 1c59103ad (writer kind unasserted); r2 adds writer-reader test and stats.ts sibling |
 | TEN-COST-09 | Skip a Wall that cannot run | engine10 wall stage | HIGH | see note | released@2026-10-17T04:48Z | architect cost plan |
 | TEN-COST-10 | Plan on haiku for small and normal tasks | engine10 plan stage | MEDIUM | see note | rejected@2026-10-17T04:35Z | D99: FC-35 pins the router-on plan to opus and router-off must stay byte-identical, so the haiku plan pin was dead code (HIGH BLOCK bc80a88b6); quality outranks cost. architect cost plan |
-| TEN-COST-11 | Wall on haiku, re-authored on sonnet on failure | engine10 wall stage | HIGH | see note | building@2026-10-17T05:48Z (r4) | architect cost plan |
+| TEN-COST-11 | Wall on haiku, re-authored on sonnet on failure | engine10 wall stage | HIGH | see note | released v11.17.27 | architect cost plan |
 | TEN-COST-12 | 5-minute cache TTL by default | runner cache settings | MEDIUM | see note | released@2026-10-17T04:35Z | architect cost plan |
 | TEN-COST-13 | Lean prefix by default | runner prompt prefix | MEDIUM | see note | released@2026-10-17T04:31Z | architect cost plan |
 | TEN-COST-14 | Wall brief output budget | engine10 wall brief | LOW | see note | released@2026-10-17T04:24Z | architect cost plan |

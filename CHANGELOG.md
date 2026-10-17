@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.27 (2026-10-17)
+
+### Changed
+- Wall on haiku (TEN-COST-11): the engine10 wall stage authors checks on haiku first and re-authors on sonnet only when the haiku wall fails, when stage time allows. A green wall that could not be re-checked within budget is marked distrusted (base_run not_run and unproven), so seal never reports ALREADY_SATISFIED and commit never discards implement's work on an unproven green. Seal and wall share one green-on-base test and one distrust helper.
+- Board: 20 new slices toward 10/10 across cost, speed, UX, adoption, gates, deploy, stability and quality.
+
 ## v11.17.26 (2026-10-17)
 
 ### Added

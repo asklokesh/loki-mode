@@ -2458,3 +2458,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - Ships COST-16 (TL APPROVE r2 ceca06bf6), DEPLOY-02 (HIGH APPROVE r3 b3bba9745), GATES-07 (TL APPROVE ac4728a89).
 - COST-11 r3 BLOCK (wall.ts fail-closed left base_run green; reproduced seal_verdict=ALREADY_SATISFIED); r4 on opus. GATES-06 builder used origin/main as base and committed nothing; re-dispatched from local main.
 - Wave Y dispatched: GATES-06, GATES-10, DEPLOY-05, DEPLOY-08, DEPLOY-09. DEPLOY-03 and DEPLOY-06 wait for DEPLOY-05 (same function).
+
+## 2026-10-17T06:02Z (CoS) v11.17.27
+- Ships TEN-COST-11 (HIGH r4 APPROVE 4014f37ee: r3 blockers N1 and N2 closed, reviewer reproduced red mutations for each; bun test wall, seal, machine, spawn_env_guard, budget, discard_proto 225 pass 0 fail) and the 20 Architect BOARD rows (871a2ef35). v11.17.25 Release run 39007241890 success, npm latest=next=11.17.25. Non-blocking follow-up: machine.ts distrust call has no direct test (pre-existing from WC-01b).
