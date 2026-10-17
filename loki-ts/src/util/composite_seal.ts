@@ -29,7 +29,7 @@ function toolVersion(bin: string): string | null {
   } catch { return null; }
 }
 export const collectToolchain = (probe: (bin: string) => string | null = toolVersion): Toolchain =>
-  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node") ?? process.versions.node ?? null, python3: probe("python3"), git: probe("git") });
+  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") });
 /** Problem with a stated toolchain field (wrong shape), or null. */
 const toolchainProblem = (t: unknown): string | null =>
   isObj(t) && Object.keys(t).length === TOOLCHAIN_KEYS.length && TOOLCHAIN_KEYS.every((k) => t[k] === null || typeof t[k] === "string") ? null : "toolchain section is malformed";

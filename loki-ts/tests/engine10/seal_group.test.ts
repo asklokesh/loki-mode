@@ -365,8 +365,12 @@ describe("composite receipt", () => {
     const p = await seal(writeWs("tc", KIDS));
     const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, any>;
     expect(Object.keys(c["toolchain"]).sort()).toEqual(["bun", "git", "node", "python3"]);
-    expect(typeof c["toolchain"]["node"]).toBe("string");
-    expect(collectToolchain(() => null).python3).toBeNull();
+    // bun stays: process.versions.bun is genuine evidence. node is never taken from bun's Node-compat version.
+    const none = collectToolchain(() => null);
+    expect(none.node).toBeNull();
+    expect(none.python3).toBeNull();
+    expect(none.git).toBeNull();
+    expect(typeof none.bun).toBe("string");
     const nulls = writeWs("tc-null", KIDS);
     const body = composeComposite(nulls, computeReceiptHash, { bun: null, node: null, python3: null, git: null });
     expect(body.toolchain).toEqual({ bun: null, node: null, python3: null, git: null });
