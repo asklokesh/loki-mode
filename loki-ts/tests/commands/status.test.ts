@@ -84,6 +84,16 @@ describe("status: --help", () => {
   });
 });
 
+describe("status trailing flag", () => {
+  for (const argv of [["--json", "--bogus"], ["--badge", "--bogus"], ["--probe", "--bogus"]]) {
+    it(`rejects ${argv.join(" ")} with exit 1`, async () => {
+      const r = await runWithCapture(argv);
+      expect(r.exitCode).toBe(1);
+      expect(stripAnsi(r.stdout)).toContain("Unknown flag: --bogus");
+    });
+  }
+});
+
 describe("status: unknown flag", () => {
   it("rejects unknown flags with exit 1", async () => {
     const r = await runWithCapture(["--bogus"]);
