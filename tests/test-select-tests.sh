@@ -446,6 +446,19 @@ expect_contains "R8 attempts.ts diff selects structural checks" "$out" "tests/te
 out="$(cd "$REPO_ROOT" && bash "$SELECT" --guards-only)"
 expect_contains "R8 --guards-only lists the guards with no diff" "$out" "$(printf 'R8\tmoat\ttests/moat/p9-rule-of-two.sh')"
 
+# TEN-STABILITY-04: each repo-wide guard that reached main red on 2026-10-16 is a declared R8 row (not only a
+# marker pickup) and --guards-only lists it, so deleting a row turns this red.
+guards_out="$(cd "$REPO_ROOT" && bash "$SELECT" --guards-only)"
+for g in "shell_test	tests/cli/test-completions-coverage.sh" \
+    "bun_test	loki-ts/tests/engine10/budget.test.ts" \
+    "bun_test	loki-ts/tests/engine10/l2_destructive_registry.test.ts" \
+    "bun_test	loki-ts/tests/engine10/pr_body_golden.test.ts" \
+    "bun_test	loki-ts/tests/commands/cli_help_routes.test.ts" \
+    "shell_test	tests/test-select-tests.sh"; do
+    if grep -qxF -- "$g" "$REPO_ROOT/scripts/global-guards.tsv"; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL: global-guards.tsv lacks row: $g"; fi
+    expect_contains "TEN-STABILITY-04 --guards-only lists ${g#*	}" "$guards_out" "$(printf 'R8\t%s' "$g")"
+done
+
 # FASTGATE-GLOBAL-GUARDS (FC-89): a bun test that walks the whole loki-ts/src tree names no src stem, so R4 never
 # selected it (WALL-COLOR, FC-69, shipped a red). Such tests carry the marker `// select: walk-all-src` and the
 # selector picks every marked file up for any diff, no hard-coded list. A diff touching only

@@ -19,3 +19,9 @@ shell_test	tests/test-help-changelog-drift.sh
 shell_test	tests/test-no-tmp-sweep.sh
 shell_test	tests/test-hard-deadline-confinement.sh
 shell_test	tests/test-cli-commands.sh
+shell_test	tests/cli/test-completions-coverage.sh
+bun_test	loki-ts/tests/engine10/budget.test.ts
+bun_test	loki-ts/tests/engine10/l2_destructive_registry.test.ts
+bun_test	loki-ts/tests/engine10/pr_body_golden.test.ts
+bun_test	loki-ts/tests/commands/cli_help_routes.test.ts
+shell_test	tests/test-select-tests.sh
