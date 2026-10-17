@@ -200,7 +200,7 @@ export const hasExecutedProof = (checks: ReadonlyArray<{ result?: unknown; n?: u
  *  independent = a Wall file or the holdout; agent_authored = a runner on a path ADDED in the diff; llm_judge = council-style reviewers.
  *  Unknown names are exogenous (fail-closed toward the existing behaviour, same direction as proof-generator.py:286-292). Pure, no wiring. */
 export type CheckProvenance = "exogenous" | "independent" | "agent_authored" | "llm_judge";
-export interface ProvenanceCtx { addedFiles: readonly string[]; wallFiles: readonly string[]; holdout?: boolean }
+export interface ProvenanceCtx { addedFiles: readonly string[]; wallFiles: readonly string[]; holdout?: boolean; modifiedFiles?: readonly string[] } // modifiedFiles: pre-existing paths the run edited, deleted or renamed (TEN-GATES-17)
 const LLM_JUDGES = new Set(["council", "xreview", "code_review", "devils_advocate", "magic_debate"]);
 const NON_RUNNER = new Set(["lint", "typecheck", "holdout", "select-tests"]); // heads verify.ts emits that are not test runners
 const normPath = (p: string): string => p.replace(/^(?:\.\/)+/, "");
@@ -212,6 +212,7 @@ export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenan
     const p = normPath(name.slice(name.indexOf(":") + 1));
     if (ctx.wallFiles.some((w) => normPath(w) === p)) return "independent";
     if (ctx.addedFiles.some((a) => normPath(a) === p)) return "agent_authored";
+    if (ctx.modifiedFiles?.some((m) => normPath(m) === p)) return "agent_authored"; // TEN-GATES-17: a pre-existing test the run edited is no longer the original proof (same direction as the A-119 edit rule)
   }
   return "exogenous";
 }

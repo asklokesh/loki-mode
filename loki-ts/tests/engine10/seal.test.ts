@@ -1404,12 +1404,16 @@ describe("TEN-GATES-02 seal requires agent-independent proof", () => {
     expect(md).toContain("### Agent-independent checks\n- pass: pytest:tests/test_x.py");
     expect(md).toContain("### Agent-authored / advisory checks\n- none\n");
   }, 30000);
-  test("a PRE-EXISTING test edited in the run (status M, in the diff) stays exogenous: only status A is agent-authored", async () => {
-    const { s, r } = await sealWith("gates02-edited-old", true, {}, true);
-    expect(r.checks[0]!.provenance).toBe("exogenous");
-    expect(r.not_proven).toContain("weakened test: tests/test_x.py"); // the A-119 edit rule still caps it, independently of provenance
-    expect(r.not_proven).not.toContain(AGENT_ONLY);
+  test("TEN-GATES-17: a PRE-EXISTING test edited in the run (status M) is agent_authored, advisory; verify --require-exogenous exits 4", async () => {
+    const { s, r } = await sealWith("gates17-edited-old", true, {}, true);
+    expect(r.checks[0]!.provenance).toBe("agent_authored");
+    expect(r.not_proven).toContain("weakened test: tests/test_x.py"); // the A-119 edit rule still caps it
+    expect(r.not_proven).toContain(AGENT_ONLY);
     expect(s.data.verdict).toBe("PARTIAL");
+    sealedLog(dirname(s.data.receipt_path as string), r.receipt_sha256);
+    const w = process.stdout.write.bind(process.stdout); process.stdout.write = (() => true) as typeof process.stdout.write;
+    let rc = -1; try { rc = await verifyMain(["r1", "--require-exogenous"], { runsRoot: dirname(dirname(s.data.receipt_path as string)) }); } finally { process.stdout.write = w; }
+    expect(rc).toBe(4);
   }, 30000);
   test("LOKI_EXOGENOUS_PROOF=0 restores the old verdict (VERIFIED) and only the opt-out (\"00\" or \"false\" stay on)", async () => {
     expect((await sealWith("gates02-optout", false, { LOKI_EXOGENOUS_PROOF: "0" })).s.data.verdict).toBe("VERIFIED");
