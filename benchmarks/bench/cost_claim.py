@@ -8,6 +8,10 @@ the point estimate.
 
 Row shape (dict): task_id, accepted (bool), cost_usd (float), and optionally
 cost_partial (bool), unmeasured (bool), engine (str), loki_version (str).
+Rows may also carry elapsed_s; the verdict adds an informational paired time
+ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
+Rows without a usable elapsed_s are excluded from it and counted. The time
+ratio never changes the verdict.
 Unmeasured rows are excluded; their count is reported and, when the verdict is
 NOT PROVEN, listed among the reasons.
 
@@ -16,6 +20,7 @@ No emojis. No em dashes.
 
 import argparse
 import json
+import math
 import random
 import sys
 
@@ -70,6 +75,48 @@ def bootstrap_ratio_ci(loki_rows, floor_rows, seed=DEFAULT_SEED,
             _percentile(ratios, 0.975))
 
 
+def _has_elapsed(r):
+    v = r.get("elapsed_s")
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v) and v >= 0)
+
+
+def _mean_elapsed(rows):
+    """Mean elapsed_s over rows; None when there are no rows."""
+    return sum(r["elapsed_s"] for r in rows) / len(rows) if rows else None
+
+
+def bootstrap_time_ratio_ci(loki_rows, floor_rows, seed=DEFAULT_SEED,
+                            iters=BOOTSTRAP_ITERS):
+    """Paired bootstrap of mean elapsed_s, floor / loki. (point, lo, hi) or None.
+
+    Only rows with a usable elapsed_s count, and only tasks timed in both arms.
+    """
+    lg = _group([r for r in loki_rows if _has_elapsed(r)])
+    fg = _group([r for r in floor_rows if _has_elapsed(r)])
+    tasks = sorted((t for t in lg if t in fg), key=str)
+    if not tasks:
+        return None
+    point_l = _mean_elapsed([r for t in tasks for r in lg[t]])
+    point_f = _mean_elapsed([r for t in tasks for r in fg[t]])
+    if not point_l or point_f is None:
+        return None
+    rng = random.Random(seed)
+    ratios = []
+    for _ in range(iters):
+        pick = [tasks[rng.randrange(len(tasks))] for _ in tasks]
+        a = _mean_elapsed([r for t in pick for r in lg[t]])
+        b = _mean_elapsed([r for t in pick for r in fg[t]])
+        if not a:
+            continue
+        ratios.append(b / a)
+    if not ratios:
+        return None
+    ratios.sort()
+    return (point_f / point_l, _percentile(ratios, 0.025),
+            _percentile(ratios, 0.975))
+
+
 def _acc_rate(rows):
     return sum(1 for r in rows if r.get("accepted")) / len(rows) if rows else 0.0
 
@@ -117,6 +164,9 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     elif loki and floor:
         reasons.append("ci: not computable (no accepted work or no paired tasks)")
 
+    time_excluded = sum(1 for r in rows if not _has_elapsed(r))
+    tci = bootstrap_time_ratio_ci(loki, floor, seed, iters)
+
     if reasons and unmeasured:
         reasons.append("unmeasured: %d row(s) excluded" % unmeasured)
 
@@ -128,6 +178,9 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         "ci_high": hi,
         "unmeasured": unmeasured,
         "reasons": reasons,
+        "time_ratio": tci[0] if tci else None,
+        "time_ci": [tci[1], tci[2]] if tci else None,
+        "time_rows_excluded": time_excluded,
     }
 
 
