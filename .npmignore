@@ -55,7 +55,7 @@ benchmarks/*
 benchmarks/seeded-defects/*
 !benchmarks/seeded-defects/manifest.json
 !benchmarks/seeded-defects/results/
-!benchmarks/seeded-defects/results/wrong-pass.json
+!benchmarks/seeded-defects/results/*.json
 examples/
 
 # Large binary assets (excluded from docs/ allowlist)
