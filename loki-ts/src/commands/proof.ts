@@ -43,7 +43,7 @@ const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
 Usage: loki proof <subcommand> [args]
 
 Subcommands:
-  list                 List proof-of-run artifacts in .loki/proofs/
+  list [--json]        List proof-of-run artifacts in .loki/proofs/
   show <id> [--json]   Compact reviewer summary; --json prints the full proof.json
   verify <id>          Re-check a receipt against your code (tamper + drift)
                        [--jwks <url|file>] also checks its attestation; [--human]
@@ -98,8 +98,43 @@ function pad(s: string, w: number): string {
   return s.length >= w ? s : s + " ".repeat(w - s.length);
 }
 
-function listProofs(): number {
+function listProofsJson(dir: string): number {
+  const out: Array<{ id: string; verdict: string | null; created: string | null }> = [];
+  let names: string[] = [];
+  try {
+    names = existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+      : [];
+  } catch {
+    names = [];
+  }
+  for (const id of names) {
+    const d = readProof(id);
+    if (d === null) continue;
+    const verdict = obj(d["honesty"])["headline"] ?? obj(d["council"])["final_verdict"];
+    const created = d["generated_at"];
+    out.push({
+      id,
+      verdict: verdict === undefined || verdict === null ? null : String(verdict),
+      created: created === undefined || created === null ? null : String(created),
+    });
+  }
+  // Newest first; ISO timestamps sort lexically. Missing created sorts last.
+  out.sort((a, b) => {
+    const ca = a.created ?? "";
+    const cb = b.created ?? "";
+    if (ca !== cb) return ca < cb ? 1 : -1;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
+  process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  return 0;
+}
+
+function listProofs(asJson = false): number {
   const dir = proofsDir();
+  if (asJson) return listProofsJson(dir);
   if (!existsSync(dir)) {
     process.stdout.write(`${YELLOW}No proofs found.${NC} Run 'loki start' to generate one.\n`);
     return 0;
@@ -905,7 +940,7 @@ export async function runProof(argv: readonly string[]): Promise<number> {
 
   switch (sub) {
     case "list":
-      return listProofs();
+      return listProofs(rest.includes("--json"));
     case "show":
       return showProof(rest);
     case "verify":
