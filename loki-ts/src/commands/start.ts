@@ -417,6 +417,14 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+/** TEN-COST-41: the one-line effective run cap and its source; null when the runner's own `[runner] cap` note already names it (env, loki.yaml, default). */
+export async function capSourceLine(budgetLimit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
+  const c = resolveCap(budgetLimit !== undefined ? String(budgetLimit) : null, repoDir, env);
+  if ("error" in c) return null;
+  return budgetLimit !== undefined || c.source === "subscription" ? capNote(c.usd, c.source).replace("(--max-cost)", "(--budget-limit)") : null; // the start flag is --budget-limit, not engine10's --max-cost
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
     const { spawn } = await import("node:child_process");
@@ -435,6 +443,8 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
+    const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
+    if (capLine) process.stdout.write(`[runner] ${capLine}\n`);
     return runAutonomous(parsed);
   }
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);

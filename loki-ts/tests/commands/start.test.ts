@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { capSourceLine, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -437,6 +437,33 @@ describe("missing prd path (TEN-STABILITY-30)", () => {
         expect(r.status).toBe(2);
         expect(r.stderr).toContain("PRD file not found:");
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("cap source line (TEN-COST-41)", () => {
+  it("cap source line: flag names --budget-limit", async () => {
+    expect(await capSourceLine(7, tmpdir(), {})).toBe("cap $7.00 (--budget-limit)");
+  });
+  it("cap source line: env and default are named by the runner note, not repeated", async () => {
+    const { runnerBudget } = await import("../../src/e10ext/budget_cap.ts");
+    expect(await capSourceLine(undefined, tmpdir(), { LOKI_BUDGET_LIMIT: "5" })).toBeNull();
+    expect(runnerBudget(undefined, tmpdir(), { LOKI_BUDGET_LIMIT: "5" }).note).toBe("cap $5.00 (env)");
+    expect(await capSourceLine(undefined, tmpdir(), { ANTHROPIC_API_KEY: "k" })).toBeNull();
+    expect(runnerBudget(undefined, tmpdir(), { ANTHROPIC_API_KEY: "k" }).note).toBe("cap $100.00 (default)");
+  });
+  it("cap source line: subscription run says no dollar cap", async () => {
+    expect(await capSourceLine(undefined, tmpdir(), {})).toBe("no dollar cap (subscription)");
+  });
+  it("cap source line: real entry (cli.ts start --budget-limit) prints the line before the run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-c41-"));
+    try {
+      writeFileSync(join(dir, "prd.md"), "# x\n");
+      const env = { ...process.env, PATH: "/usr/bin:/bin", LOKI_BUDGET_LIMIT: "" };
+      const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "prd.md", "--budget-limit", "7"], { cwd: dir, encoding: "utf8", timeout: 8_000, env });
+      expect(r.stdout).toContain("[runner] cap $7.00 (--budget-limit)");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
