@@ -21,8 +21,14 @@ import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+  // First occurrence wins; both "--flag value" and "--flag=value" forms (TEN-COST-35).
+  const eq = `${flag}=`;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === flag) return i + 1 < args.length ? args[i + 1] : undefined;
+    if (a.startsWith(eq)) return a.slice(eq.length);
+  }
+  return undefined;
 }
 
 // RUNNER value-flags: consume the next token, map to a ParsedStartOpts field.
@@ -299,6 +305,16 @@ export function parseStartArgs(
   } catch (e) {
     err(`start: ${(e as Error).message}\n`);
     return 2;
+  }
+
+  // TEN-COST-36: a present numeric flag with a missing, non-numeric, zero or negative value is an error, not a silent default.
+  for (const f of ["--max-iterations", "--max-retries", "--budget-limit", "--budget", "--base-wait", "--max-wait"]) {
+    if (!accepted.has(f) || !args.some((a) => a === f || a.startsWith(`${f}=`))) continue;
+    const v = argVal(args, f);
+    if (posNum(v) === undefined) {
+      err(`start: ${f} must be a positive number, got '${v ?? ""}'\n`);
+      return 2;
+    }
   }
 
   // --budget is an alias of --budget-limit (bash divergence closed).
