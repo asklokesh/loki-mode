@@ -109,6 +109,19 @@ describe("loki issues run", () => {
     expect(h.ghCalls[0]).toContain(evil);
   });
 
+  test("strict int flags: --limit and --parallel accept only plain decimal digits", async () => {
+    for (const flag of ["--limit", "--parallel"]) {
+      for (const bad of ["1e1", "0x10", "0b11", " 5", "5 ", "+5", "1.0", "-1", "0", "", "99999999999999999999"]) {
+        const h = harness({});
+        expect(await runIssues(["run", SLUG, flag, bad, "--dry-run"], h.inject)).toBe(2);
+        expect(h.err.join("")).toContain("needs a positive integer");
+        expect(h.ghCalls).toEqual([]);
+      }
+      const ok = harness({});
+      expect(await runIssues(["run", SLUG, flag, "3", "--dry-run"], ok.inject)).toBe(0);
+    }
+  });
+
   test("refuses a dash-leading label or milestone before calling gh", async () => {
     for (const bad of [["--label", "--repo=evil"], ["--milestone", "-x"]]) {
       const h = harness({});
