@@ -192,3 +192,15 @@ test("every reason literal in output.ts reasonOf has a nextOf mapping row", () =
   const rowFor = (l: string): boolean => NEXT_ROWS.some(([r]) => r === l || r.startsWith(l) || (l === "<check> failed" && / failed: /.test(r)));
   for (const l of lits) expect(rowFor(l), `no nextOf row for reason: ${l}`).toBe(true);
 });
+
+import { useColor } from "../../src/util/run_summary.ts";
+import { colorDisabled } from "../../src/util/colors.ts";
+
+test("useColor: NO_COLOR empty keeps color, non-empty or TERM=dumb disables", () => {
+  expect(useColor({ NO_COLOR: "" }, true)).toBe(true);
+  expect(useColor({}, true)).toBe(true);
+  expect(useColor({ NO_COLOR: "1" }, true)).toBe(false);
+  expect(useColor({ TERM: "dumb" }, true)).toBe(false);
+  expect(useColor({}, false)).toBe(false);
+  for (const e of [{ NO_COLOR: "" }, { NO_COLOR: "1" }, { TERM: "dumb" }, { TERM: "xterm" }, {}]) expect(useColor(e, true)).toBe(!colorDisabled(e));
+});
