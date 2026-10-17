@@ -1019,3 +1019,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: doctor.ts provider probe at the json route (already tokenFreeEnv); modernize/oracle/search.ts `--version` probe (already tokenFreeEnv); engine10 session spawns (worker env, assertWorkerEnv).
 - Mechanism: doctor.ts claudeAuthStatusLoggedIn, the one shared login probe, spawns with tokenFreeEnv plus GIT_SSH_COMMAND=false unless LOKI_ALLOW_AGENT_GITHUB_TOKEN=1.
 - Fixture: tests/engine10/preflight.test.ts "the login probe spawns the provider CLI without the GitHub token or SSH agent"; tests/moat/p9-rule-of-two.sh against a dist rebuilt from the tree.
+
+## FC-TEN-STABILITY-09 Engine10 stub claude CLIs do not answer `claude auth status`, so the login probe logs a stage or stalls (STUB-AUTH-STATUS-SILENT)
+- User-visible vs raw: raw (test infrastructure). main Tests failed on 11 of the last 13 runs after TEN-UX-01 added the preflight login probe: stub runs printed the extra "could not confirm the Claude login" line (A-130 8-line quiet cap, 9 seen), the issue-ref stub logged the probe as an "other" stage, and the SIGINT stub treated the probe as the implement session (slept 5s, never recorded cost).
+- Law broken: a stub provider must honour every CLI call the engine makes before a session, not only `-p`; a probe the stub does not answer is indistinguishable from a real unknown login.
+- Siblings: tests/engine10/fixtures/e2e/bin/claude, fixtures/issue-ref/bin/claude, inline stubs in supervisor_signal.test.ts and budget_stop_e2e.test.ts (all fixed). tests/engine10/fixtures/providers/bin/* are non-claude providers and are not probed. Two verify_lint.test.ts lint:tsc cases fail only in a worktree with no loki-ts/node_modules (environmental, not this class).
+- Mechanism: every stub claude answers `auth status` with {"loggedIn":true}, no side effects.
+- Fixture: tests/engine10/e2e.test.ts "every engine10 stub claude answers claude auth status as logged in".
