@@ -933,6 +933,21 @@ export function claudeLoginProbeCached(cli: string, env: NodeJS.ProcessEnv = pro
   return li;
 }
 
+// TEN-SPEED-08: same 10-minute reuse for the PR-run `gh auth status` probe.
+// Only a passing probe is stored; a failed one always re-probes. Keyed on the
+// resolved gh path; a missing or corrupt file means probe.
+export async function ghAuthProbeCached(env: NodeJS.ProcessEnv, probe: () => Promise<boolean>, now = Date.now()): Promise<boolean> {
+  const bin = "gh"; const gh = Bun.which(bin, { PATH: env.PATH ?? process.env.PATH ?? "" }) ?? bin; // lookup only, never a spawn
+  const file = join(env.HOME || homedir(), ".loki", "gh-auth-ok.json");
+  try {
+    const c = JSON.parse(readFileSync(file, "utf8"));
+    if (c?.gh === gh && typeof c.at === "number" && now - c.at >= 0 && now - c.at < CLAUDE_LOGIN_TTL_MS) return true;
+  } catch { /* no usable cache */ }
+  const ok = await probe();
+  if (ok) { try { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, JSON.stringify({ gh, at: now })); } catch { /* best effort */ } }
+  return ok;
+}
+
 export type ClaudeLoginResult = {
   status: Status;
   line: string;
