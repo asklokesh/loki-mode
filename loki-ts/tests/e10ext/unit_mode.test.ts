@@ -224,6 +224,20 @@ describe("unitIntake", () => {
     const tight = unitIntake({ ...on(specFile("i1b.json", good)), LOKI_UNIT_USD_PER_MTOK: "10" }, repo, 0.2) as { env: Record<string, string> };
     expect(tight.env["LOKI_E10_MAX_COST_USD"]).toBe("0.2");
   });
+  test("invalid rate note", () => {
+    for (const bad of ["abc", "0", "-5", "NaN"]) {
+      const r = unitIntake({ ...on(specFile("ir-" + bad + ".json", good)), LOKI_UNIT_USD_PER_MTOK: bad }, repo, 20) as { ok: true; env: Record<string, string>; note?: string };
+      expect(r.ok).toBe(true);
+      expect(r.note).toContain("NOT PROVEN");
+      expect(r.env["LOKI_E10_MAX_COST_USD"]).toBe("20");
+    }
+    const none = unitIntake({ ...on(specFile("ir-none.json", good)), LOKI_UNIT_USD_PER_MTOK: "abc" }, repo) as { env: Record<string, string>; note?: string };
+    expect(none.note).toContain("NOT PROVEN");
+    expect(none.env["LOKI_E10_MAX_COST_USD"]).toBeUndefined();
+    const ok = unitIntake({ ...on(specFile("ir-ok.json", good)), LOKI_UNIT_USD_PER_MTOK: "10" }, repo, 20) as { note?: string };
+    expect(ok.note).toBeUndefined();
+    expect("note" in unitIntake(on(specFile("ir-def.json", good)), repo, 20)!).toBe(false);
+  });
   test("requested but missing or invalid spec fails closed with a NOT PROVEN note", () => {
     for (const p of [join(tmp, "nope.json"), specFile("i2.json", "{bad"), specFile("i3.json", { ...good, writeSet: [] })]) {
       const r = unitIntake(on(p), repo, 20);

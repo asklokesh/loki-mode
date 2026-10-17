@@ -184,6 +184,64 @@ describe("crash: list", () => {
   });
 });
 
+describe("crash: list json", () => {
+  it("list --json and bare --json emit id, captured_at, error_class, fingerprint", async () => {
+    const { fingerprint } = seedReport();
+    for (const argv of [["list", "--json"], ["--json"]]) {
+      const r = await runWithCapture(argv);
+      expect(r.exitCode).toBe(0);
+      const rows = JSON.parse(r.stdout) as Record<string, unknown>[];
+      expect(rows).toEqual([
+        {
+          id: fingerprint,
+          captured_at: "2026-06-06T00:00:00Z",
+          error_class: "TypeError",
+          fingerprint,
+        },
+      ]);
+    }
+  });
+
+  it("emits [] when no reports and leaves text list unchanged", async () => {
+    const r = await runWithCapture(["--json"]);
+    expect(JSON.parse(r.stdout)).toEqual([]);
+    seedReport();
+    const t = await runWithCapture(["list"]);
+    expect(stripAnsi(t.stdout)).toContain("ERROR_CLASS");
+    expect(() => JSON.parse(t.stdout)).toThrow();
+  });
+
+  it("rejects unknown list option", async () => {
+    const r = await runWithCapture(["list", "--bogus"]);
+    expect(r.exitCode).toBe(2);
+  });
+});
+
+describe("crash: extra args", () => {
+  it("rejects extra args with usage and exit 2", async () => {
+    const { fingerprint } = seedReport();
+    const cases: [string[], string][] = [
+      [["show", fingerprint, "extra"], "loki crash show <id>"],
+      [["submit", fingerprint, "extra"], "loki crash submit [<id>]"],
+      [["list", "--json", "extra"], "loki crash list [--json]"],
+      [["--json", "extra"], "loki crash [--json]"],
+    ];
+    for (const [argv, usage] of cases) {
+      const r = await runWithCapture(argv);
+      expect(r.exitCode).toBe(2);
+      expect(stripAnsi(r.stderr)).toContain(`Usage: ${usage}`);
+      expect(r.stdout).toBe("");
+    }
+  });
+
+  it("keeps single-arg forms working", async () => {
+    const { fingerprint } = seedReport();
+    for (const argv of [["show", fingerprint], ["submit", fingerprint], ["submit"], ["list"]]) {
+      expect((await runWithCapture(argv)).exitCode).toBe(0);
+    }
+  });
+});
+
 describe("crash: show", () => {
   it("pretty-prints one report resolved by fingerprint", async () => {
     const { fingerprint } = seedReport();

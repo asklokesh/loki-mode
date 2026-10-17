@@ -73,6 +73,7 @@ function _loki {
                 doctor)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
+                        '(-q --quiet)'{-q,--quiet}'[Print only failed and warned checks plus the summary]' \
                         '--fix[Create state dirs and a default config; offer claude install and login]' \
                         '--yes[With --fix: run the claude install and login without asking]' \
                         '--help[Show help]'
@@ -164,6 +165,9 @@ function _loki {
                 completions)
                     _arguments '1:shell:(bash zsh install)'
                     ;;
+                version)
+                    _arguments '--json[Print version, runtime and install path as JSON]' '--help[Show help]'
+                    ;;
                 monitor)
                     _directories
                     ;;
@@ -184,6 +188,12 @@ function _loki {
                         '--allow-unanchored[Proceed when the receipt records no baseline]' \
                         '--health-url[Health probe URL]:url:' \
                         '--auto-rollback[Roll back on a failed health probe]' \
+                        '--help[Show help]'
+                    ;;
+                verify-pr)
+                    _arguments \
+                        '--out[Result directory]:dir:_files -/' \
+                        '--json[Print the verdict object on stdout]' \
                         '--help[Show help]'
                     ;;
                 verify)
@@ -345,7 +355,7 @@ function _loki_commands {
         'bench:Run benchmarks'
         'open:Open a project resource'
         'rc:Release candidate commands'
-        'version:Show version'
+        'version:Show version (--json for machine-readable)'
         'completions:Output shell completions'
         'help:Show help'
     )

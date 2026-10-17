@@ -82,6 +82,13 @@ describe("loki wiki show (Bun native)", () => {
     expect(bun.exitCode).not.toBe(0);
   });
 
+  it("two sections is a usage error with exit 1 and no output", async () => {
+    const bun = await sh(["bun", BUN_CLI, "wiki", "show", "architecture", "modules"], project);
+    expect(bun.exitCode).toBe(1);
+    expect(bun.stdout).toBe("");
+    expect(bun.stderr).toContain("Too many arguments");
+  });
+
   it("show with no wiki prints a hint and exits non-zero", async () => {
     const empty = mkdtempSync(join(tmpdir(), "loki-wiki-none-"));
     try {

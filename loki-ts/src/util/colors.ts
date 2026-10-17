@@ -6,7 +6,11 @@
 // resolve to empty strings so output stays plain text. Bash autonomy/loki
 // always emits ANSI escapes; this is one of two intentional deviations from
 // strict bash parity (the other is dist-vs-source path resolution).
-const NO_COLOR = (process.env["NO_COLOR"] ?? "").length > 0;
+/** One rule for every color decision: a non-empty NO_COLOR or TERM=dumb disables color. */
+export function colorDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env["NO_COLOR"] ?? "").length > 0 || env["TERM"] === "dumb";
+}
+const NO_COLOR = colorDisabled();
 
 function color(code: string): string {
   return NO_COLOR ? "" : code;

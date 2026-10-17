@@ -1,9 +1,12 @@
 // `loki queue`: an overnight queue of GitHub issue refs.
 //   loki queue add <issue...>   append refs to .loki/issue-queue.json
 //   loki queue list             show what is queued
-//   loki queue run [--no-pr]    process one at a time through issue-mode `loki start`,
+//   loki queue remove <issue...> take refs out of the queue (missing ref: "not queued", exit 0)
+//   loki queue clear            empty the queue
+//   loki queue run [--no-pr] [--max-total-cost <usd>]  process one at a time through issue-mode `loki start`,
 //                               consulting the usage governor before each item, then
-//                               write and print a morning digest.
+//                               write and print a morning digest. --max-total-cost stops
+//                               before the next item once cumulative recorded spend reaches the cap.
 // The runner and the governor are injectable so tests never call claude.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -140,6 +143,45 @@ export function queueAdd(refs: readonly string[], d: QueueDeps): number {
   return 0;
 }
 
+export function queueRemove(refs: readonly string[], d: QueueDeps): number {
+  if (refs.length === 0) {
+    d.err("usage: loki queue remove <issue...>   (owner/repo#N, #N, N or a GitHub issue URL)\n");
+    return 2;
+  }
+  const norm: string[] = [];
+  for (const r of refs) {
+    const n = normalizeRef(r);
+    if (!n) {
+      d.err(`loki queue remove: not an issue reference: ${r}\n`);
+      return 2;
+    }
+    norm.push(n);
+  }
+  quarantineCorruptQueue(d.lokiDir, d.now(), d.err);
+  let items = readQueue(d.lokiDir);
+  let removed = 0;
+  for (const ref of new Set(norm)) {
+    if (!items.some((i) => i.ref === ref)) {
+      d.out(`not queued: ${ref}\n`);
+      continue;
+    }
+    items = items.filter((i) => i.ref !== ref);
+    removed++;
+    d.out(`removed: ${ref}\n`);
+  }
+  if (removed > 0) writeQueue(d.lokiDir, items);
+  d.out(`${removed} removed, ${items.length} left\n`);
+  return 0;
+}
+
+export function queueClear(d: QueueDeps): number {
+  quarantineCorruptQueue(d.lokiDir, d.now(), d.err);
+  const n = readQueue(d.lokiDir).length;
+  if (n > 0) writeQueue(d.lokiDir, []);
+  d.out(`${n} removed, 0 left\n`);
+  return 0;
+}
+
 export function formatAge(addedAt: string, now: Date): string {
   const t = Date.parse(addedAt);
   if (!Number.isFinite(t)) return "unknown";
@@ -202,8 +244,27 @@ export function renderDigest(started: Date, finished: Date, rows: DigestRow[], s
   return L.join("\n") + "\n";
 }
 
+// --max-total-cost <usd> or --max-total-cost=<usd>: null when absent, NaN when present but not a positive number.
+export function parseMaxTotalCost(args: readonly string[]): number | null {
+  let raw: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--max-total-cost") raw = args[i + 1] ?? "";
+    else if (a.startsWith("--max-total-cost=")) raw = a.slice("--max-total-cost=".length);
+  }
+  if (raw === undefined) return null;
+  const n = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+  return n > 0 ? n : Number.NaN;
+}
+
 export async function queueRun(args: readonly string[], d: QueueDeps): Promise<number> {
   const pr = !args.includes("--no-pr");
+  const cap = parseMaxTotalCost(args);
+  if (cap !== null && Number.isNaN(cap)) {
+    d.err("loki queue run: --max-total-cost needs a positive USD amount, e.g. --max-total-cost 5\n");
+    return 2;
+  }
+  let spent = 0;
   const started = d.now();
   const rows: DigestRow[] = [];
   const skipped: Skipped[] = [];
@@ -218,6 +279,10 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
   const width = Math.max(1, Math.min(MAX_PARALLEL, Math.floor(d.parallel ?? 1)));
   const lane = async (): Promise<void> => {
     while (stopReason === null) {
+      if (cap !== null && spent >= cap) {
+        stopReason = `total cost cap $${cap.toFixed(2)} reached (spent $${spent.toFixed(2)})`;
+        return;
+      }
       const item = pending.shift();
       if (!item) return;
       const g = await d.governor();
@@ -246,6 +311,7 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
         note: g.ok ? "" : `governor unreadable (${g.reason}); proceeded`,
       };
       rows.push(row);
+      if (typeof res.costUsd === "number") spent += res.costUsd;
       // Advisory history: window consumed by this item, from two cached governor readings (best effort).
       if (g.usage) {
         try {
@@ -402,10 +468,15 @@ export async function runQueue(args: readonly string[], inject?: Partial<QueueDe
       return queueAdd(rest, d);
     case "list":
       return queueList(d);
+    case "remove":
+    case "rm":
+      return queueRemove(rest, d);
+    case "clear":
+      return queueClear(d);
     case "run":
       return queueRun(rest, d);
     default:
-      d.err("usage: loki queue <add <issue...> | list | run [--no-pr]>\n");
+      d.err("usage: loki queue <add <issue...> | list | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n");
       return 2;
   }
 }

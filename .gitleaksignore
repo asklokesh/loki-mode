@@ -162,3 +162,6 @@ bcd7a8214335dcbeb97b792cf5917b6a51b9f3e2:loki-ts/tests/commands/proof.test.ts:gi
 6da250f32a79e87bd1137daec452f53a028be0a1:loki-ts/tests/util/redact.test.ts:private-key:39
 719beb07763ef0975a4c74c6a19fb760c8208972:loki-ts/tests/commands/proof.test.ts:github-pat:359
 411c557f6118d6a7b57d4390d76af51692114ad4:loki-ts/tests/util/redact.test.ts:private-key:39
+# v11.17.44: TEN-SECURITY-09 export_sarif.test.ts synthetic vendor-key fixture (Ab1Cd2... pattern), not a real secret
+633c3ed4235b48d8cbaf24e0f9011c5692764b55:loki-ts/tests/commands/export_sarif.test.ts:generic-api-key:90
+f77445f3558e4c2b55f4404f213c71b22357220d:loki-ts/tests/commands/export_sarif.test.ts:generic-api-key:90

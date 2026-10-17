@@ -8,7 +8,8 @@
 // manual submission. Nothing is sent automatically in this version.
 //
 // Subcommands:
-//   loki crash                  -- list .loki/crash/*.json reports
+//   loki crash [--json]         -- list .loki/crash/*.json reports
+//   loki crash list [--json]    -- same; --json emits a JSON array
 //   loki crash show <id>        -- pretty-print one scrubbed report
 //   loki crash submit [<id>]    -- print the scrubbed payload + a prefilled
 //                                  github.com/asklokesh/loki-mode issue URL
@@ -31,6 +32,7 @@ Usage: loki crash [subcommand] [args]
 
 Subcommands:
   (none) | list        List crash reports in .loki/crash/
+                       --json emits id, captured_at, error_class, fingerprint
   show <id>            Pretty-print one scrubbed crash report
   submit [<id>]        Print the scrubbed payload and a prefilled GitHub
                        issue URL for manual submission
@@ -102,7 +104,25 @@ function readReport(id: string): CrashReport | null {
   }
 }
 
-function listCrashes(): number {
+function listCrashesJson(): number {
+  const rows = reportIds().map((id) => {
+    const d = readReport(id) ?? {};
+    const fp = d["fingerprint"];
+    return {
+      id: typeof fp === "string" && fp !== "" ? fp : id,
+      captured_at: d["captured_at"] ?? null,
+      error_class: d["error_class"] ?? null,
+      fingerprint: fp ?? null,
+    };
+  });
+  process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+  return 0;
+}
+
+function listCrashes(json = false): number {
+  if (json) {
+    return listCrashesJson();
+  }
   const ids = reportIds();
   if (ids.length === 0) {
     process.stdout.write(
@@ -225,20 +245,48 @@ function submitCrash(id: string | undefined): number {
   return 0;
 }
 
+// Reject surplus positional args with a usage line (exit 2) instead of
+// silently ignoring them.
+function extraArgs(usage: string, extra: readonly string[]): number {
+  process.stderr.write(
+    `${RED}Unexpected extra arguments: ${extra.join(" ")}${NC}\nUsage: ${usage}\n`,
+  );
+  return 2;
+}
+
 export async function runCrash(argv: readonly string[]): Promise<number> {
   const sub = argv[0];
   switch (sub) {
     case undefined:
-    case "list":
       return listCrashes();
+    case "--json":
+      if (argv.length > 1) {
+        return extraArgs("loki crash [--json]", argv.slice(1));
+      }
+      return listCrashes(true);
+    case "list":
+      if (argv.length > 2) {
+        return extraArgs("loki crash list [--json]", argv.slice(2));
+      }
+      if (argv[1] !== undefined && argv[1] !== "--json") {
+        process.stderr.write(`${RED}Unknown option for crash list: ${argv[1]}${NC}\n`);
+        return 2;
+      }
+      return listCrashes(argv[1] === "--json");
     case "--help":
     case "-h":
     case "help":
       process.stdout.write(HELP);
       return 0;
     case "show":
+      if (argv.length > 2) {
+        return extraArgs("loki crash show <id>", argv.slice(2));
+      }
       return showCrash(argv[1]);
     case "submit":
+      if (argv.length > 2) {
+        return extraArgs("loki crash submit [<id>]", argv.slice(2));
+      }
       return submitCrash(argv[1]);
     default:
       process.stderr.write(`${RED}Unknown crash subcommand: ${sub}${NC}\n`);

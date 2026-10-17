@@ -24,6 +24,27 @@ describe("FC-02 runner output classifier", () => {
   test("pytest collection ImportError is harness-owned", () => {
     expect(classifyRunnerOutput(fx("pytest/collection-error.txt")).kind).toBe("load_error");
   });
+  test("unittest import: 'Failed to import test module' is harness-owned", () => {
+    const out = [
+      "ERROR: test_foo (unittest.loader._FailedTest.test_foo)",
+      "----------------------------------------------------------------------",
+      "ImportError: Failed to import test module: test_foo",
+      "Traceback (most recent call last):",
+      "ModuleNotFoundError: No module named 'foo'",
+      "",
+      "Ran 1 test in 0.000s",
+      "",
+      "FAILED (errors=1)",
+    ].join("\n");
+    const o = classifyRunnerOutput(out);
+    expect(o.kind).toBe("load_error");
+    expect(o.owner).toBe("harness");
+    expect(o.reason).toContain("unittest test module import error");
+  });
+  test("unittest import error mixed with a real assertion failure stays a code failure", () => {
+    const out = "ImportError: Failed to import test module: a\nFAIL: test_b (t.T)\nAssertionError: 1 != 2\nFAILED (failures=1, errors=1)";
+    expect(classifyRunnerOutput(out).owner).toBe("code");
+  });
   test("a genuine vitest assertion failure stays a code failure", () => {
     expect(classifyRunnerOutput(fx("vitest/assertion-failure.txt"))).toEqual({ kind: "test_failure", owner: "code" });
   });

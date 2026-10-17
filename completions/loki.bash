@@ -147,7 +147,7 @@ _loki_completion() {
             ;;
         doctor)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --fix --yes --repo --requirements --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --quiet --fix --yes --repo --requirements --help" -- "$cur") )
                 return 0
             fi
             ;;
@@ -287,6 +287,13 @@ _loki_completion() {
             return 0
             ;;
 
+        verify-pr)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--out --json --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         undo)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--list --plan --dry-run --help" -- "$cur") )
@@ -337,6 +344,10 @@ _loki_completion() {
         monitor)
             # Complete with directories
             _filedir -d
+            ;;
+
+        version)
+            COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
             ;;
 
         completions)

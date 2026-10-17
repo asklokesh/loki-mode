@@ -34,6 +34,27 @@ describe("failover", () => {
     expect(calls).toEqual(["claude", "cline"]);
     expect(recs[0]!.reason).toBe("outage");
   });
+  test("529 and quota markers classify, plain app text does not", async () => {
+    const cases: Array<[string, "rate_limit" | "outage"]> = [
+      ["Error: HTTP 529 from provider", "outage"],
+      ["status: 529", "outage"],
+      ["Error: ETIMEDOUT connecting to api", "outage"],
+      ["{\"error\":{\"code\":\"insufficient_quota\"}}", "rate_limit"],
+      ["You have Quota Exceeded for this model", "rate_limit"],
+      ["429 RESOURCE_EXHAUSTED: try later", "rate_limit"],
+      ["RESOURCE_EXHAUSTED", "rate_limit"],
+    ];
+    for (const [line, reason] of cases) {
+      expect(classifyOutage(`noise\n${line}\n`, 1, false)?.reason).toBe(reason);
+      const { calls, recs, sessions } = setup(res(1, line));
+      await sessions.run(opts());
+      expect(calls).toEqual(["claude", "cline"]);
+      expect(recs[0]!.reason).toBe(reason);
+    }
+    for (const line of ["processed 5290 files", "wrote 1529 bytes", "quota helper module updated", "resource exhausted the loop budget in plan", "timed out waiting for the test"]) {
+      expect(classifyOutage(line, 1, false)).toBeNull();
+    }
+  });
   test("a code failure does not fail over", async () => {
     const { sessions, calls, recs } = setup(res(1, "TypeError: x is not a function\n3 tests failed\n"));
     await sessions.run(opts());

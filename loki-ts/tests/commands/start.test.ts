@@ -261,6 +261,47 @@ describe("parseStartArgs (Bun start flag subset)", () => {
 
 // FC-38 scoped (CTO ruling A): only `start --attempts` is engine10-only. Every other start keeps the
 // exact 11.3.0 flag surface and runner route; the moat P9 harness runs `start prd.md --max-iterations 2`.
+describe("equals form (TEN-COST-35)", () => {
+  it("equals form of value flags is read, not silently ignored", () => {
+    const r = parseStartArgs(
+      ["--prd=./prd.md", "--budget-limit=5", "--provider=claude", "--session-model=development", "--max-iterations=7"],
+      collect,
+      () => {},
+      () => {},
+    );
+    expect(typeof r).toBe("object");
+    const o = r as unknown as Record<string, unknown>;
+    expect(o["budgetLimitUsd"] ?? o["budget"] ?? JSON.stringify(o)).toBeDefined();
+    expect(JSON.stringify(o)).toContain("5");
+    expect(o["provider"]).toBe("claude");
+    expect(o["maxIterations"]).toBe(7);
+  });
+});
+
+describe("invalid numeric flags (TEN-COST-36)", () => {
+  const cases: string[][] = [
+    ["p.md", "--budget-limit", "abc"],
+    ["p.md", "--max-iterations", "-1"],
+    ["p.md", "--budget-limit", "0x"],
+    ["p.md", "--budget-limit", "0"],
+    ["p.md", "--max-retries=abc"],
+    ["p.md", "--budget-limit"],
+  ];
+  for (const c of cases) {
+    it(`invalid numeric: ${c.slice(1).join(" ")} exits 2 naming the flag`, () => {
+      const errs: string[] = [];
+      const r = parseStartArgs(c, (s) => errs.push(s), () => {}, () => {});
+      expect(r).toBe(2);
+      expect(errs.join("")).toMatch(/^start: --[a-z-]+ must be a positive number/);
+    });
+  }
+  it("valid numeric values unchanged", () => {
+    const r = parseStartArgs(["p.md", "--budget-limit", "2.5", "--max-iterations=3"], collect, () => {}, () => {}) as { budgetLimit?: number; maxIterations?: number };
+    expect(r.budgetLimit).toBe(2.5);
+    expect(r.maxIterations).toBe(3);
+  });
+});
+
 describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () => {
   const legacy: string[][] = [
     ["--max-iterations", "5"], ["--max-retries", "2"], ["--completion-promise", "x"], ["--base-wait", "1"],
