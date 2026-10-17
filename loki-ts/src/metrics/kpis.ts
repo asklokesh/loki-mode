@@ -176,7 +176,8 @@ function makeEmptyAccuracy(): KpiSnapshot["accuracy"] {
 function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["efficiency"] {
   const out = makeEmptyEfficiency();
   if (records.length === 0) return out;
-  out.iteration_count = records.length;
+  // Group cost records (run_group writeGroupCostRecord) carry cost, not an iteration: they feed cost but not the count.
+  out.iteration_count = records.filter((r) => (r as { kind?: unknown }).kind !== "group_cost").length;
   // ONE predicate for the whole snapshot -- cost and tokens are measured or
   // unmeasured together, exactly as Python nulls usd and the token counts on
   // the same condition. A second predicate is how the honesty rule drifts.
@@ -221,10 +222,10 @@ function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["ef
   // Explicit null check, never falsy: a measured total of 0 must still yield a
   // measured average of 0. `if (!total)` would turn that into "not measured".
   out.avg_cost_per_iteration =
-    out.total_cost_usd === null
+    out.total_cost_usd === null || out.iteration_count === 0
       ? null
       : Math.round((out.total_cost_usd / out.iteration_count) * 10000) / 10000;
-  out.avg_duration_ms_per_iteration = Math.round(out.total_duration_ms / out.iteration_count);
+  out.avg_duration_ms_per_iteration = out.iteration_count === 0 ? null : Math.round(out.total_duration_ms / out.iteration_count);
   return out;
 }
 
