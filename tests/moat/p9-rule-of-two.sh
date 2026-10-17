@@ -2443,6 +2443,18 @@ safeGitEnv(;' ;;
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # A BOM-prefixed JSON module defeats node JSON.parse but loads in bun: an
+    # unparseable *.json must fail closed, not be skipped.
+    t="$T_AT/json-parse"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    printf '\357\273\277{"allow\\u0054oken": true}\n' > "$t/offender.json"
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    case "$CASE_FAILS" in
+        *"could not parse JSON (fail closed)"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'json-parse' did not fail closed with 'could not parse JSON (fail closed)'" ;;
+    esac
     # Fail closed when the TypeScript compiler cannot be found.
     saved_fails="$CASE_FAILS"; CASE_FAILS=""
     P9_TS_CANDIDATES=/nonexistent allowtoken_scan "$src"
