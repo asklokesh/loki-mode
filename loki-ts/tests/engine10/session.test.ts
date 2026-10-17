@@ -82,6 +82,41 @@ describe("engine10 session", () => {
     expect(events.find((e) => e.type === "heartbeat")?.data["progress"]).toBeDefined();
   }, 10_000);
 
+  test("Q18-06: LOKI_E10_STALL_KILL_S kills a silent child; one session.ended with cause and reason stalled", async () => {
+    process.env["LOKI_E10_STALL_KILL_S"] = "0.1";
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    try {
+      const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", "sleep 20"]], heartbeatMs: 30, emit: (type, _s, data) => events.push({ type, data }) });
+      const res = await runner.run(baseOpts({ limitS: 30 }));
+      expect(res.killed).toBe(true);
+    } finally {
+      delete process.env["LOKI_E10_STALL_KILL_S"];
+    }
+    const ended = events.filter((e) => e.type === "session.ended");
+    expect(ended.length).toBe(1);
+    expect(ended[0]?.data["cause"]).toBe("stalled");
+    expect(ended[0]?.data["reason"]).toBe("stalled");
+  }, 15_000);
+
+  test("Q18-06: with the stall-kill knob unset or 0, a silent child is not killed and session.ended has no reason key", async () => {
+    for (const v of [undefined, "0"]) {
+      if (v === undefined) delete process.env["LOKI_E10_STALL_KILL_S"]; else process.env["LOKI_E10_STALL_KILL_S"] = v;
+      process.env["LOKI_E10_STALL_S"] = "0.1";
+      const events: { type: string; data: Record<string, unknown> }[] = [];
+      try {
+        const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", "sleep 0.6"]], heartbeatMs: 30, emit: (type, _s, data) => events.push({ type, data }) });
+        const res = await runner.run(baseOpts({ limitS: 30 }));
+        expect(res.killed).toBe(false);
+      } finally {
+        delete process.env["LOKI_E10_STALL_KILL_S"];
+        delete process.env["LOKI_E10_STALL_S"];
+      }
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended).toBeDefined();
+      expect("reason" in (ended?.data ?? {})).toBe(false);
+    }
+  }, 15_000);
+
   test("P12-09b: a rerun with the same iterationId keeps the earlier attempt's cost (summed, not overwritten)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-p1209b-cost-"));
     try {

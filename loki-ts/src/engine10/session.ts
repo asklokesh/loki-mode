@@ -1,6 +1,6 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
-import { createWatchdog, stallThresholdS } from "../runner/watchdog.ts";
+import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -132,7 +132,7 @@ const EXIT_CAUSES: Readonly<Record<number, string>> = {
 };
 // E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code:
 // killed always wins. killCause names which kill fired; it defaults to "limit".
-export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted"): string {
+export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled"): string {
   if (killed) return killCause ?? "limit";
   if (exit === null) return "external kill";
   return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
@@ -199,8 +199,8 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       // Which kill fired, from the engine's own point of view -- never guessed from the
       // child's exit code. First one wins: the limit timer and an external abort cannot
       // both be the cause of the same kill.
-      let killCause: "limit" | "aborted" | null = null;
-      const kill = (cause: "limit" | "aborted") => {
+      let killCause: "limit" | "aborted" | "stalled" | null = null;
+      const kill = (cause: "limit" | "aborted" | "stalled") => {
         if (killed) return;
         killed = true;
         killCause = cause;
@@ -210,11 +210,11 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const onAbort = () => kill("aborted");
       const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
-      const watchdog = createWatchdog(Date.now);
+      const watchdog = createWatchdog(Date.now), stallKill = stallKillS(); // FC-17: 0 (default) never kills
       const heartbeatTimer = setInterval(() => {
         const diff = diffShortstat(opts.cwd), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff));
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
-        if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() });
+        if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled");
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
       const untrack = trackSession(() => kill("aborted"));
@@ -232,7 +232,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);
           const durationS = (Date.now() - start) / 1000;
           cfg.emit?.("session.ended", opts.stage, {
-            session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
+            session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
