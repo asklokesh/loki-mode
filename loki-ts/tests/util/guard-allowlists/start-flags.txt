@@ -15,6 +15,7 @@
 --budget | both
 --budget-limit | bun-only real divergence: bash cmd_start has no --budget-limit label (only --budget); follow-up to add the alias on bash
 --cline-model | both
+--cost | both
 --completion-promise | bun-only declared on the Bun route only; bash cmd_start has no label for it
 --complex | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --compliance | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
