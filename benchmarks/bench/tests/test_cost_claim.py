@@ -1,6 +1,8 @@
 """Fixtures for cost_claim.py. FABRICATED rows, test only. No network."""
 
+import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -89,3 +91,84 @@ def test_unmeasured_excluded_and_counted():
     loki[0]["cost_partial"] = True
     bad = cc.cost_claim_verdict(loki, floor, 0.5)
     assert any(r.startswith("unmeasured") for r in bad["reasons"])
+
+
+# ---- CLI ----
+
+_CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "cost_claim.py")
+
+
+def _attr_rows(arm, cost, ntask=8, nrep=3, prefix="t"):
+    return [{"task": "%s%d" % (prefix, t), "arm": arm, "accepted": True,
+             "cost_usd": cost, "status": "completed", "engine": "e1",
+             "loki_version": "11.0.0"}
+            for t in range(ntask) for _ in range(nrep)]
+
+
+def _write(path, rows):
+    with open(path, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def _run(*args):
+    p = subprocess.run([sys.executable, "-I", _CLI, *args],
+                       capture_output=True, text=True)
+    return p.returncode, p.stdout
+
+
+def _base_args(f):
+    return ["--rows", str(f), "--loki-arm", "loki", "--floor-arm", "raw-lean",
+            "--target", "0.5"]
+
+
+def test_cli_proven_exit_0(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    rc, out = _run(*_base_args(f))
+    assert rc == 0, out
+    assert json.loads(out)["verdict"] == "PROVEN_AT(0.5)"
+
+
+def test_cli_not_proven_exit_1_and_multiple_files(tmp_path):
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    _write(a, _attr_rows("loki", 0.9))
+    _write(b, _attr_rows("raw-lean", 1.0))
+    rc, out = _run("--rows", str(a), str(b), "--loki-arm", "loki",
+                   "--floor-arm", "raw-lean", "--target", "0.5")
+    assert rc == 1, out
+    assert json.loads(out)["verdict"] == "NOT PROVEN"
+
+
+def test_cli_usage_error_exit_2(tmp_path):
+    args = _base_args(tmp_path / "missing.jsonl")
+    assert _run(*args)[0] == 2
+    assert _run("--loki-arm", "loki")[0] == 2
+
+
+def test_cli_maps_unmeasured_and_partial(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows.append({"task": "t0", "arm": "loki", "status": "harness_error"})
+    rows.append({"task": "t1", "arm": "loki", "status": "unmeasured"})
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    assert json.loads(out)["unmeasured"] == 2
+    rows[0]["cost_partial"] = True
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    assert rc == 1
+    assert any(r.startswith("partial") for r in json.loads(out)["reasons"])
+
+
+def test_cli_exclude_task_printed(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows += _attr_rows("loki", 5.0, 1, prefix="bad")
+    rows += _attr_rows("raw-lean", 1.0, 1, prefix="bad")
+    _write(f, rows)
+    assert _run(*_base_args(f))[0] == 1
+    rc, out = _run(*_base_args(f), "--exclude-task", "bad0")
+    assert rc == 0, out
+    assert json.loads(out)["excluded_tasks"] == ["bad0"]

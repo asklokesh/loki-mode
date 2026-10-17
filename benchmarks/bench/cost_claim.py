@@ -14,7 +14,10 @@ NOT PROVEN, listed among the reasons.
 No emojis. No em dashes.
 """
 
+import argparse
+import json
 import random
+import sys
 
 MIN_N_PER_TASK = 3
 BOOTSTRAP_ITERS = 2000
@@ -126,3 +129,52 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         "unmeasured": unmeasured,
         "reasons": reasons,
     }
+
+
+def _map_row(r):
+    """Attribution row to verdict row."""
+    out = dict(r)
+    out["task_id"] = r.get("task")
+    if r.get("status") in ("unmeasured", "harness_error"):
+        out["unmeasured"] = True
+    return out
+
+
+def _load_rows(paths):
+    rows = []
+    for p in paths:
+        with open(p) as f:
+            for line in f:
+                if line.strip():
+                    rows.append(json.loads(line))
+    return rows
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Cost claim verdict over attribution rows")
+    ap.add_argument("--rows", nargs="+", required=True)
+    ap.add_argument("--loki-arm", required=True)
+    ap.add_argument("--floor-arm", required=True)
+    ap.add_argument("--target", type=float, required=True)
+    ap.add_argument("--exclude-task", action="append", default=[])
+    try:
+        a = ap.parse_args(argv)
+        rows = _load_rows(a.rows)
+    except SystemExit as e:
+        return 2 if e.code else 0
+    except (OSError, ValueError) as e:
+        print("usage error: %s" % e, file=sys.stderr)
+        return 2
+    excl = set(a.exclude_task)
+    rows = [_map_row(r) for r in rows if r.get("task") not in excl]
+    loki = [r for r in rows if r.get("arm") == a.loki_arm]
+    floor = [r for r in rows if r.get("arm") == a.floor_arm]
+    v = cost_claim_verdict(loki, floor, a.target)
+    v["excluded_tasks"] = sorted(excl)
+    print(json.dumps(v, indent=2, sort_keys=True))
+    return 0 if v["verdict"].startswith("PROVEN_AT") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
