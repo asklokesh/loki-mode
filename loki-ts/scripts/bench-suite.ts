@@ -10,9 +10,10 @@
 //   bun run scripts/bench-suite.ts [--runs N] [--warmup K]
 //   bun run scripts/bench-suite.ts --compare-dist [--runs N] [--warmup K]
 import { run } from "../src/util/shell.ts";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
-import { mkdir, appendFile } from "node:fs/promises";
+import { mkdir, appendFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 const SHIM = resolve(REPO_ROOT, "bin", "loki");
@@ -46,6 +47,63 @@ interface PairedResult {
   timestamp: string;
 }
 
+// hyperfine 1.20 rejects a leading VAR=1 in a positional command, so env is
+// passed through env(1), which works on 1.18 and 1.20 alike.
+export function benchPairArgv(
+  shim: string,
+  cmd: string,
+  runs: string,
+  warmup: string,
+  outPath: string,
+): string[] {
+  return [
+    "hyperfine",
+    "--warmup",
+    warmup,
+    "--runs",
+    runs,
+    "--ignore-failure",
+    "--export-json",
+    outPath,
+    `${shim} ${cmd}`,
+    `env LOKI_LEGACY_BASH=1 ${shim} ${cmd}`,
+  ];
+}
+
+export function benchRouteArgv(
+  shim: string,
+  cmd: string,
+  route: Route,
+  runs: string,
+  warmup: string,
+  outPath: string,
+): string[] {
+  let invocation: string;
+  switch (route) {
+    case "bash":
+      invocation = `env LOKI_LEGACY_BASH=1 ${shim} ${cmd}`;
+      break;
+    case "bun-source":
+      invocation = `env BUN_FROM_SOURCE=1 ${shim} ${cmd}`;
+      break;
+    case "bun-dist":
+      invocation = `${shim} ${cmd}`;
+      break;
+  }
+  return ["hyperfine", "--warmup", warmup, "--runs", runs, "--ignore-failure", "--export-json", outPath, invocation];
+}
+
+// Any skipped command means hyperfine refused or failed; do not hide it.
+export function skipExitCode(total: number, skipped: number): number {
+  return total === 0 || skipped > 0 ? 1 : 0;
+}
+
+let exportDirPromise: Promise<string> | null = null;
+function exportDir(): Promise<string> {
+  exportDirPromise ??= mkdtemp(join(tmpdir(), "loki-bench-"));
+  return exportDirPromise;
+}
+
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(name);
   if (i >= 0 && i + 1 < process.argv.length) return process.argv[i + 1]!;
@@ -62,19 +120,8 @@ async function benchPair(
   runs: string,
   warmup: string,
 ): Promise<PairedResult | null> {
-  const outPath = `/tmp/bench-${label.replace(/\s+/g, "_")}.json`;
-  const r = await run([
-    "hyperfine",
-    "--warmup",
-    warmup,
-    "--runs",
-    runs,
-    "--ignore-failure",
-    "--export-json",
-    outPath,
-    `${SHIM} ${cmd}`,
-    `LOKI_LEGACY_BASH=1 ${SHIM} ${cmd}`,
-  ]);
+  const outPath = join(await exportDir(), `pair-${label.replace(/\s+/g, "_")}.json`);
+  const r = await run(benchPairArgv(SHIM, cmd, runs, warmup, outPath));
   if (r.exitCode !== 0) {
     process.stderr.write(`bench failed for "${label}": ${r.stderr}\n`);
     return null;
@@ -101,30 +148,8 @@ async function benchRoute(
   runs: string,
   warmup: string,
 ): Promise<BenchRecord | null> {
-  const outPath = `/tmp/bench-${route}-${label.replace(/\s+/g, "_")}.json`;
-  let invocation: string;
-  switch (route) {
-    case "bash":
-      invocation = `LOKI_LEGACY_BASH=1 ${SHIM} ${cmd}`;
-      break;
-    case "bun-source":
-      invocation = `BUN_FROM_SOURCE=1 ${SHIM} ${cmd}`;
-      break;
-    case "bun-dist":
-      invocation = `${SHIM} ${cmd}`;
-      break;
-  }
-  const r = await run([
-    "hyperfine",
-    "--warmup",
-    warmup,
-    "--runs",
-    runs,
-    "--ignore-failure",
-    "--export-json",
-    outPath,
-    invocation,
-  ]);
+  const outPath = join(await exportDir(), `${route}-${label.replace(/\s+/g, "_")}.json`);
+  const r = await run(benchRouteArgv(SHIM, cmd, route, runs, warmup, outPath));
   if (r.exitCode !== 0) {
     process.stderr.write(`bench failed for "${label}" route=${route}: ${r.stderr}\n`);
     return null;
@@ -156,6 +181,7 @@ async function writeJsonl(records: ReadonlyArray<object>): Promise<string> {
 
 async function runDefault(runs: string, warmup: string): Promise<void> {
   const results: PairedResult[] = [];
+  let skipped = 0;
   process.stdout.write(`Phase 2 benchmark suite (runs=${runs}, warmup=${warmup})\n\n`);
   for (const [label, cmd] of COMMANDS) {
     process.stdout.write(`> ${label}... `);
@@ -164,6 +190,7 @@ async function runDefault(runs: string, warmup: string): Promise<void> {
       results.push(r);
       process.stdout.write(`${r.speedup}x  (bun=${r.bun_mean_ms}ms, bash=${r.bash_mean_ms}ms)\n`);
     } else {
+      skipped++;
       process.stdout.write(`SKIPPED\n`);
     }
   }
@@ -181,6 +208,10 @@ async function runDefault(runs: string, warmup: string): Promise<void> {
 
   const out = await writeJsonl(results);
   process.stdout.write(`Recorded to ${out}\n`);
+  if (skipExitCode(results.length, skipped) !== 0) {
+    process.stderr.write(`\n${skipped} command(s) SKIPPED.\n`);
+    process.exit(1);
+  }
 }
 
 async function runCompareDist(runs: string, warmup: string): Promise<void> {
@@ -202,6 +233,7 @@ async function runCompareDist(runs: string, warmup: string): Promise<void> {
   process.stdout.write("\n");
 
   const records: BenchRecord[] = [];
+  let skipped = 0;
   // command -> route -> mean_ms
   const matrix = new Map<string, Map<Route, number>>();
 
@@ -216,6 +248,7 @@ async function runCompareDist(runs: string, warmup: string): Promise<void> {
         perCmd.set(route, r.mean_ms);
         process.stdout.write(`${r.mean_ms}ms (+/-${r.stddev_ms}ms)\n`);
       } else {
+        skipped++;
         process.stdout.write("SKIPPED\n");
       }
     }
@@ -283,6 +316,11 @@ async function runCompareDist(runs: string, warmup: string): Promise<void> {
     process.exit(1);
   }
 
+  if (skipExitCode(records.length, skipped) !== 0) {
+    process.stderr.write(`\n${skipped} command(s) SKIPPED.\n`);
+    process.exit(1);
+  }
+
   if (!distAvailable) {
     process.stdout.write("\nNote: bun-dist route was skipped (dist artifact missing).\n");
   } else {
@@ -300,4 +338,6 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+if (import.meta.main) {
+  void main();
+}
