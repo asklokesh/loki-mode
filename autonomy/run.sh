@@ -568,12 +568,22 @@ RESOURCE_MEM_THRESHOLD=${LOKI_RESOURCE_MEM_THRESHOLD:-80}     # Memory % thresho
 # LM-002: the default value is read from default_max_cost_usd in loki-ts/data/model-pricing.json, the same
 # file the Loki 10 engine reads (docs/cost-controls.md). "100.00" is only the
 # fallback when that file is absent, and budget_cap.test.ts pins it to the file.
-_loki_budget_default="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' \
-    "${SCRIPT_DIR}/../loki-ts/data/model-pricing.json" 2>/dev/null | head -n 1)"
-case "$_loki_budget_default" in
-    '' | *[!0-9.]*) _loki_budget_default="100.00" ;;
-    *) _loki_budget_default="$(awk -v v="$_loki_budget_default" 'BEGIN{printf "%.2f", v}')" ;;
-esac
+_loki_budget_default_from() {
+    local f="$1" v=""
+    if [ ! -e "$f" ]; then
+        printf '%s\n' "100.00"
+        return 0
+    fi
+    v="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$f" 2>/dev/null | head -n 1)"
+    case "$v" in
+        '' | *[!0-9.]*)
+            printf '%s\n' "loki: warning: cannot read default_max_cost_usd from $f (unreadable or no parsable key); using fallback 100.00" >&2
+            printf '%s\n' "100.00"
+            ;;
+        *) awk -v v="$v" 'BEGIN{printf "%.2f\n", v}' ;;
+    esac
+}
+_loki_budget_default="$(_loki_budget_default_from "${SCRIPT_DIR}/../loki-ts/data/model-pricing.json")"
 # Where the active cap came from: flag (loki start --budget), config (settings.json),
 # env (LOKI_BUDGET_LIMIT set by the caller), or default. Printed once at run start.
 if [ "${LOKI_BUDGET_LIMIT+set}" = "set" ]; then
