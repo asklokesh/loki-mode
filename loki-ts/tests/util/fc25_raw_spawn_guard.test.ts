@@ -1,5 +1,5 @@
 // select: walk-all-src
-// FC-25 guard: every git spawn in loki-ts/src, bin/ and autonomy/ (JS/TS) goes through util/safe_git.ts
+// FC-25 guard: every git spawn in loki-ts/src, bin/, autonomy/ and packages/control-plane/src (JS/TS) goes through util/safe_git.ts
 // (safeGit, safeGitSpawn, safeGitRun). There is NO allowlist: "this file only runs in the worker" was the
 // reasoning that let project_model/gather.ts run git ls-files in the supervisor holding the real token,
 // so a core.fsmonitor plant fired 4 times with it (moat P9 [planted], 2026-10-08). safe_git.ts is the
@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
-const DIRS = ["loki-ts/src", "bin", "autonomy"].map((d) => join(ROOT, d));
+const DIRS = ["loki-ts/src", "bin", "autonomy", "packages/control-plane/src"].map((d) => join(ROOT, d));
 const MECHANISM = "loki-ts/src/util/safe_git.ts";
 
 // A spawn helper called with "git" (or a shell string starting with git), Bun.spawn(["git", ...]),
@@ -45,7 +45,7 @@ function rawGitSites(text: string): string[] {
   });
 }
 
-test("no raw git spawn in loki-ts/src, bin/ or autonomy/ outside safe_git.ts (no allowlist)", () => {
+test("no raw git spawn in loki-ts/src, bin/, autonomy/ or packages/control-plane/src outside safe_git.ts (no allowlist)", () => {
   const hits: string[] = [];
   for (const f of DIRS.flatMap((d) => walk(d))) {
     const rel = relative(ROOT, f);
