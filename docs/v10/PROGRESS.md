@@ -2482,3 +2482,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:50Z (CoS) v11.17.34
 - P0 fix-forward: seal.test roundtrip red root-caused to checksOf dropping n (TEN-GATES-03-F1 interaction); HIGH reviewer APPROVE c958f563c with revert-red 90/2 and 226 pass 0 fail across seal, roundtrip, verify_cmd, budget, spawn_env_guard. Cherry-picked (parent was the pre-amend release commit). Doctor red was stale dist. PO refill e9d9b63c8 added 24 rows; TEN-GATES-17 added from the review's remaining forgery path.
+
+## 2026-10-17T07:09Z (CoS) v11.17.35
+- Wave Y: GATES-06, GATES-10, DEPLOY-05, DEPLOY-08 HIGH APPROVE; DEPLOY-09 not built (deps DEPLOY-05/06 were unmerged; its row names a wrong completions path and a missing help-drift test). GATES-10 hand-merge renumbered D104 to D105; pytest -k ExogenousEvidence 10 passed after the merge.

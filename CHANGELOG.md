@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.35 (2026-10-17)
+
+Wave Y: 4 HIGH slices.
+
+### Added
+- engine10 deep stage runs a real app boot through `app_probe` and applies the secure-scan rules to changed files in the security check; a HIGH finding fails, a missing scanner is not_run (TEN-GATES-06).
+- Proof generator: VERIFIED needs one agent-independent fact beside the agent's own suite (an exogenous gate, a security scan that found something to check, or a healthcheck that answered). Recorded as D105 (TEN-GATES-10).
+- `loki deploy --env-file FILE` with provider verbs for Fly, Netlify and Cloudflare; env values are never written to the deploy record and the deploy argv is never evaluated (TEN-DEPLOY-05).
+
+### Fixed
+- web-app GitHub push runs the receipt-stamped `loki github publish`; fabricated fallback URLs (vercel.app, netlify.app, github.io) are gone (TEN-DEPLOY-08).
+
+### Known
+- The TEN-GATES-10 merge hand-resolved a DECISIONS.md collision: TEN-GATES-02 and TEN-GATES-10 both took D104. GATES-10 is now D105, and its two code comments were updated to match. No logic change.
+
 ## v11.17.34 (2026-10-17)
 
 ### Fixed
