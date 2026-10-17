@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { commandExists, commandVersion } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
+import { suggestWord } from "../cli/registry.ts";
 
 type Provider = "claude" | "cline" | "codex" | "aider" | "opencode";
 
@@ -206,10 +207,16 @@ export async function runProvider(argv: readonly string[]): Promise<number> {
       return printProviderHelp();
     default:
       process.stderr.write(`loki provider: unknown subcommand '${sub}' (see 'loki provider help')\n`);
+      {
+        const hint = suggestWord(sub, PROVIDER_SUBCOMMANDS);
+        if (hint) process.stderr.write(`Did you mean '${hint}'?\n`);
+      }
       printProviderHelp();
       return 2;
   }
 }
+
+const PROVIDER_SUBCOMMANDS = ["show", "current", "list", "matrix", "info", "set", "models", "help"] as const;
 
 // Hand off to autonomy/loki for commands that aren't in this phase yet.
 // Defined here to avoid a circular import; cli.ts also exports a copy.

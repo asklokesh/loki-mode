@@ -342,6 +342,20 @@ export function levenshtein(a: string, b: string): number {
   return prev[b.length]!;
 }
 
+/** Closest of `names` within distance 2 (ties keep the first), else undefined. */
+export function suggestWord(typo: string, names: readonly string[]): string | undefined {
+  let best: string | undefined;
+  let bestD = 3;
+  for (const n of names) {
+    const d = levenshtein(typo, n);
+    if (d < bestD) {
+      bestD = d;
+      best = n;
+    }
+  }
+  return best;
+}
+
 /** Closest visible command name within distance 2, else undefined. */
 export function suggestCommand(typo: string): string | undefined {
   let best: string | undefined;
