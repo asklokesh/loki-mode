@@ -158,6 +158,18 @@ def test_usage_detail_total_only_and_absent():
     assert claude_code.parse_usage_detail("")["num_turns"] is None
 
 
+def test_usage_detail_total_derived_from_split_only():
+    from adapters import claude_code
+    d = claude_code.parse_usage_detail(
+        '{"usage":{"cache_creation":{"ephemeral_5m_input_tokens":6000,'
+        '"ephemeral_1h_input_tokens":3000}}}')
+    assert d["cache_creation_total"] == 9000
+    d = claude_code.parse_usage_detail(
+        '{"usage":{"cache_creation":{"ephemeral_1h_input_tokens":3000}}}')
+    assert d["cache_creation_total"] == 3000
+    assert d["cache_creation_5m"] is None and d["cache_creation_1h"] == 3000
+
+
 def test_adapter_run_carries_usage_detail():
     from adapters import claude_code
 
