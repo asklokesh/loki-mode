@@ -437,3 +437,31 @@ def test_unmatched_exclusion_warned_and_listed(tmp_path):
     assert "bad0" not in p.stderr
     rc, out = _run(*_base_args(f), "--exclude-task", "bad0")
     assert json.loads(out)["unmatched_exclusions"] == []
+
+
+def test_task_set_mismatch_blocks():
+    loki, floor = _tight(0.4)
+    floor = [r for r in floor if r["task_id"] != "t7"]
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert any(r.startswith("tasks: arms cover different task sets")
+               and "t7" in r for r in v["reasons"]), v["reasons"]
+
+
+def test_task_set_mismatch_both_directions_and_match_clean():
+    loki, floor = _tight(0.4)
+    extra = [dict(r, task_id="tx") for r in floor if r["task_id"] == "t0"]
+    v = cc.cost_claim_verdict(loki, floor + extra, 0.5)
+    assert any(r.startswith("tasks:") and "tx" in r for r in v["reasons"])
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert not any(r.startswith("tasks:") for r in v["reasons"])
+
+
+def test_cli_task_set_mismatch_not_proven(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows += _attr_rows("loki", 0.4, 1, prefix="only")
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    v = json.loads(out)
+    assert rc == 1 and any(r.startswith("tasks:") for r in v["reasons"]), out

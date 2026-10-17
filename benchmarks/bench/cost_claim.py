@@ -180,6 +180,13 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         reasons.append("acceptance: loki %.3f below floor %.3f"
                        % (_acc_rate(loki), _acc_rate(floor)))
 
+    if loki and floor:
+        lt, ft = set(_group(loki)), set(_group(floor))
+        if lt != ft:
+            only = sorted(str(t) for t in lt ^ ft)
+            reasons.append("tasks: arms cover different task sets (%s)"
+                           % ",".join(only))
+
     cost_profile = _loki_cost_profile(loki)
     if cost_profile == "mixed":
         reasons.append("cost_profile: loki arm mixes profiles or lacks "
