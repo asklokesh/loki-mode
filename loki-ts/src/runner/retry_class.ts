@@ -58,7 +58,7 @@ const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 // quota-adjacent wording, but it absolutely does clear with time, and treating
 // it as permanent would abandon healthy builds.
 const TRANSIENT_OVERRIDE =
-  /\b(?:rate[_ -]?limit|429\b|overloaded|please try again|temporarily unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|502\b|503\b|504\b|service unavailable)/i;
+  /\b(?:rate[_ -]?limit|429\b|overloaded|please try again|temporarily unavailable|timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|502\b|503\b|504\b|529\b|bad gateway|gateway time-?out|service unavailable)/i;
 
 // Provider billing wording that is unambiguous even when sent with a 429: OpenAI
 // and Gemini both return exhausted-funds errors under 429, so this must beat the

@@ -159,6 +159,24 @@ describe("exceeded current quota vs rate limit wording", () => {
   });
 });
 
+describe("HTTP 529 and gateway words are transient", () => {
+  const cases = [
+    "HTTP 529 invalid_request_error: upstream",
+    "529 authentication_error from edge proxy",
+    "bad gateway invalid_request_error",
+    "gateway timeout authentication_failed",
+  ];
+  for (const c of cases) {
+    it(`transient: ${c}`, () => {
+      expect(classifyFailure(c).klass).toBe("transient");
+      expect(classifyFailure(c).reason).toBe("transient_marker");
+    });
+  }
+  it("a bare 5290 number is not a 529 marker", () => {
+    expect(classifyFailure("code 5290 invalid_request_error").klass).toBe("non_retryable");
+  });
+});
+
 describe("shouldStopRetrying: LOKI_SMART_RETRY=0 restores retry-everything", () => {
   it("never stops when disabled, even for a positively-identified failure", () => {
     const d = classifyFailure("Error: invalid x-api-key");
