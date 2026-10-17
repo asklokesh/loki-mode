@@ -1,4 +1,4 @@
-// PARITY-COST: cost measurement for non-Claude providers (codex, cline, aider) in engine10.
+// PARITY-COST: cost measurement for non-Claude providers (codex, cline, aider, opencode) in engine10.
 // Claude writes result-cost-<iter>.json itself. These providers do not, so cost.ts read them as "not measured" (usd null),
 // which meant the per-run dollar cap (e10ext/budget_cap.ts) never applied. This module writes the SAME result-cost file
 // shape (see cost.ts header) so the existing cost event, efficiency record and cap path work unchanged:
@@ -68,7 +68,7 @@ export function parseUsage(provider: string, text: string): ParsedUsage | null {
   return null;
 }
 
-export const ESTIMATED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline", "aider"]);
+export const ESTIMATED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline", "aider", "opencode"]);
 
 export interface ProviderCostRecord {
   total_cost_usd: number | null; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
