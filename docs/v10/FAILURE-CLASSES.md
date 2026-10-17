@@ -1040,3 +1040,31 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: util/outbox.ts runOnce (TEN-STABILITY-12, already quarantines); queue run reads the queue and returns "queue is empty" without writing, so it cannot overwrite; its end-of-run writeQueue only follows a successful read.
 - Mechanism: queueAdd calls quarantineCorruptQueue, which renames the bad file to issue-queue.json.corrupt-<ts> and warns once on stderr before the read.
 - Fixture: loki-ts/tests/commands/queue.test.ts "add on a corrupt queue file quarantines it".
+
+## FC-TEN-STABILITY-18a Test pins a literal that an intentional change moved, and the pin is not updated in the same slice (STALE-PIN-AFTER-INTENT)
+- User-visible vs raw: raw (test infrastructure). Nightly 39016259458 stayed red on main e32ee1b5d: pr_body_golden producer registry (util/check_result.ts moved the gate line there, TEN-STABILITY-13), sizing wall brief cap (710 measured vs 600; TEN-COST-14 output budget plus TEN-QUALITY-14 negative-case sentence), router_optout_golden (TEN-COST-11 haiku-first Wall), test-ui-bare-loki (TEN-UX-10 next-step lines), test-local-ci-gitleaks (TEN-SEC-GITLEAKS-01-F1 first-parent log-opts).
+- Law broken: a slice that changes an asserted surface owns the guards that assert it; green on the slice branch is not green on main when the change landed after the pin.
+- Siblings: the five pins above (all fixed). The sizing cap now records its measured number; the router golden pins LOKI_E10_WALL_FIRST=0 so it isolates router behavior (wall.test.ts owns haiku-first).
+- Mechanism: each guard names the owning change in a comment and asserts the intended new shape (first line plus next-step lines; the exact log-opts string), never a weaker match.
+- Fixture: tests/test-ui-bare-loki.sh "the URL is followed by the start and stop next-step lines"; tests/test-local-ci-gitleaks.sh exact log-opts grep and live invocation mirror.
+
+## FC-TEN-STABILITY-18b Bun.which reads the PATH captured at process start, so a test or caller that mutates process.env.PATH is ignored (BUN-WHICH-STALE-PATH)
+- User-visible vs raw: raw (CI only). verify.test.ts TEN-QUALITY-11 cases passed on a machine with uv installed and failed in CI without it: resolveTool asked Bun.which("uv") and never saw the fake uv prepended to process.env.PATH.
+- Law broken: tool resolution must use the same PATH the child process will receive.
+- Siblings: verify.ts resolveTool (fixed, both uv and fallback lookups); provider_failover.ts defaultInstalled, deep.ts:104 and modernize/lang/java.ts:159 call Bun.which without the live PATH when no path option is given (named, not changed: production PATH is fixed at start, no test mutates it).
+- Mechanism: resolveTool's onPath helper passes {PATH: process.env.PATH}.
+- Fixture: verify.test.ts TEN-QUALITY-11 cases, run with PATH=/usr/bin:/bin plus the bun directory (no uv): red before the fix (2 fail), green after.
+
+## FC-TEN-STABILITY-18c A verify flag exists in the engine10 verifier and completions but the dispatcher rejects it and help omits it (VERIFY-FLAG-NOT-ROUTED)
+- User-visible vs raw: user-visible. `loki verify --require-exogenous` (the CHANGELOG form) printed "[verify][error] unknown option" from the legacy verifier, and `loki verify --help` did not list the flag.
+- Law broken: a documented flag must reach the implementation that owns it, and its help must list it.
+- Siblings: --allow-unsigned and --export-dsse also lack a flag-first route in bin/loki (they work after a run id or receipt path); named, not changed here.
+- Mechanism: bin/loki and autonomy/loki cmd_verify route --require-exogenous to engine10 like --pubkey; autonomy/verify.sh help lists it.
+- Fixture: tests/test-help-changelog-drift.sh (flag in help); `bash bin/loki verify --require-exogenous` now reaches engine10 ("no runs found") instead of the unknown-option error.
+
+## FC-TEN-STABILITY-18d The legacy echo-into-grep-q ratchet is breached by new tests and the ceiling is the only guard (SIGPIPE-RATCHET-BREACH)
+- User-visible vs raw: raw (test infrastructure). tests/test-sigpipe-guard.sh counted 1737 legacy forms against a ceiling of 1728.
+- Law broken: the ceiling is lowered when a suite is converted, never raised (the guard's own header).
+- Siblings: 15 forms converted in test-next-resume-agree.sh (7), test-security-audit-config.sh (6) and test-doctor-ux.sh (2); the ceiling now equals the new count, 1722. Large holders remain (test-v10-pulse.sh 321, test-deploy-receipt-gate.sh 38).
+- Mechanism: grep -q PATTERN <<<"$var" here-string form.
+- Fixture: tests/test-sigpipe-guard.sh; SIGPIPE_GUARD_CEILING=1721 turns it red (count 1722 exceeds ceiling 1721).
