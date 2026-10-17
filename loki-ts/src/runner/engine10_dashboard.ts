@@ -6,6 +6,8 @@ import { eventsPath, listRunIds, runsRoot } from "../commands/run_status.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 import { getVersion } from "../version.ts";
 import { groupRoute, renderPage } from "../util/dashboard_page.ts";
+import { formatDuration, outcomeOf, reasonOf } from "../engine10/output.ts";
+import { nextOf, resultOf } from "../util/run_summary.ts";
 export const DEFAULT_PORT = 57375;
 const HOSTNAME = "127.0.0.1"; // section 12: localhost only; never configurable
 const DASHBOARD_IDENT = "loki-v10"; // /version's "dashboard" field, identifies a v10 occupant
@@ -24,10 +26,16 @@ export interface RunSummary {
   measuredSessions: number;
   totalSessions: number;
   wallS: number | null;
+  // TEN-UX-07: same cause and next step the console prints (reasonOf, nextOf); null when the run
+  // has not finished or finished cleanly (no reason).
+  reason: string | null;
+  next: string | null;
+  running: boolean;
+  stageElapsedS: number | null; // seconds since the current stage's stage.started; null when unmeasured
 }
 /** Folds one run's events into the summary the dashboard renders. A field the
  *  run has not reached yet is left null (section 12: never a fake 0). */
-export function summarizeRun(repoDir: string, runId: string): RunSummary {
+export function summarizeRun(repoDir: string, runId: string, nowMs: number = Date.now()): RunSummary {
   const events = readEvents(eventsPath(runsRoot(process.env, repoDir), runId));
   const folded = fold(events);
   const sealData = folded.stages["seal"]?.data as { not_proven?: string[] } | undefined;
@@ -41,6 +49,21 @@ export function summarizeRun(repoDir: string, runId: string): RunSummary {
     folded.run.completed && startedMs != null ? (Date.parse(folded.run.completed.ts) - startedMs) / 1000 : null;
   const prUrl = prData?.url ?? prData?.pr_url ?? null;
   const pc = partialCost(events, folded.run.tampered);
+  const running = !folded.run.completed;
+  let reason: string | null = null;
+  let next: string | null = null;
+  if (!running && folded.run.verdict) {
+    const stopRaw = folded.run.escalated?.data["stop"];
+    const stop = typeof stopRaw === "string" ? stopRaw : null;
+    const capHit = events.some((e) => e.type === "cap.hit");
+    const sealed = events.some((e) => e.type === "receipt.sealed");
+    const outcome = outcomeOf(folded.run.verdict, capHit, stop, folded.run.tampered, sealed);
+    reason = reasonOf(events, folded.run.tampered, stop, outcome) ?? null;
+    next = nextOf(resultOf(outcome), null, reason ?? undefined);
+  }
+  const curStage = running ? (lastEvent?.stage ?? null) : null;
+  const stageStart = curStage ? events.findLast((e) => e.type === "stage.started" && e.stage === curStage) : undefined;
+  const stageElapsedS = stageStart ? Math.max(0, (nowMs - Date.parse(stageStart.ts)) / 1000) : null;
   return {
     runId,
     verdict: folded.run.verdict,
@@ -52,6 +75,10 @@ export function summarizeRun(repoDir: string, runId: string): RunSummary {
     measuredSessions: pc.measured,
     totalSessions: pc.total,
     wallS,
+    reason,
+    next,
+    running,
+    stageElapsedS,
   };
 }
 export function listRuns(repoDir: string): RunSummary[] {
@@ -64,6 +91,14 @@ export function formatPanels(r: RunSummary): { label: string; value: string }[] 
   const panels: { label: string; value: string }[] = [];
   if (r.verdict) panels.push({ label: "Verdict", value: r.verdict });
   else if (r.currentStage) panels.push({ label: "Verdict", value: `running (${r.currentStage})` });
+  if (r.reason) panels.push({ label: "Reason", value: r.reason });
+  if (r.next) panels.push({ label: "Next", value: r.next });
+  if (r.running) {
+    panels.push({
+      label: "Stage",
+      value: r.stageElapsedS != null && r.currentStage ? `${r.currentStage}, ${formatDuration(r.stageElapsedS)}` : "not measured",
+    });
+  }
   if (r.pr) panels.push({ label: "PR", value: r.pr.url + (r.pr.draft ? " (draft)" : "") });
   else if (r.verdict) panels.push({ label: "PR", value: "none" });
   if (r.notProven) panels.push({ label: "NOT PROVEN", value: r.notProven.length ? r.notProven.join(", ") : "none" });
