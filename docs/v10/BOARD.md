@@ -1076,8 +1076,8 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | TEN-COST-17 | Raw token classes in the Claude Code ledger | C-F1 harness ledger, test_model_pin.py | HIGH | pytest test_model_pin.py | merged@2026-10-17T03:30Z | HIGH r2 APPROVE 232f1fbec |
 | TEN-RELEASE-INSTANT | Every release publishes npm latest and next immediately (D102) | .github/workflows/release.yml, promote.yml removed | HIGH | see note | merged@2026-10-17T03:30Z | HIGH r3 APPROVE 7e0e38c77; D98 round-limit exception recorded under D99 |
 | TEN-GATES-05b | Spec-derived auth probe: negation window fixes | autonomy/lib/functional-verify.py, tests/test_functional_verify.py | HIGH | pytest tests/test_functional_verify.py | building@2026-10-17T03:30Z | HIGH r2 BLOCK aaf27e569: trailing-slash redirect false green, curly apostrophe and article negation false reds; r3 under D99 |
-| TEN-RELEASE-INSTANT-F1 | Empty CUR from a failed npm view fails closed; rename the stale publish step | .github/workflows/release.yml | LOW | see note | ready@2026-10-17T03:30Z | follow-up from RELEASE-INSTANT review |
-| TEN-COST-18-F1 | cost_claim: a non-object JSON row is skipped, not an AttributeError | C-F1 harness cost_claim | LOW | see note | ready@2026-10-17T03:30Z | follow-up |
+| TEN-RELEASE-INSTANT-F1 | Empty CUR from a failed npm view fails closed; rename the stale publish step | .github/workflows/release.yml | LOW | see note | merged@2026-10-17T03:45Z | TL APPROVE 29ca496f1, ships v11.17.16 |
+| TEN-COST-18-F1 | cost_claim: a non-object JSON row is skipped, not an AttributeError | C-F1 harness cost_claim | LOW | see note | merged@2026-10-17T03:45Z | TL APPROVE 924cec1c8, ships v11.17.16 |
 | TEN-GROUP-AUTH-F1 | kpis iteration_count does not count group cost records | loki-ts kpis | LOW | see note | ready@2026-10-17T03:30Z | follow-up |
 | TEN-COST-09 | Skip a Wall that cannot run | engine10 wall stage | HIGH | see note | ready@2026-10-17T03:30Z | architect cost plan |
 | TEN-COST-10 | Plan on haiku for small and normal tasks | engine10 plan stage | MEDIUM | see note | ready@2026-10-17T03:30Z | architect cost plan |

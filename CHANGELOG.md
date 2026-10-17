@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.16 (2026-10-17)
+
+### Fixed
+- Docker images build again: the deep stage imported the review denylist from the runner module that loads the Anthropic SDK, so the control-plane server bundle failed to resolve `@anthropic-ai/sdk` and the 11.17.15 images were not published. The denylist now lives in the Claude flags module, and a control-plane test fails if the server bundle ever reaches the SDK invoker again.
+- Release safety (TEN-RELEASE-INSTANT-F1): if npm cannot report the current `latest`, the release still publishes under `next` but refuses to move `latest`, so a registry hiccup can never move `latest` backwards.
+- Cost claim (TEN-COST-18-F1): `cost_claim` skips non-object rows with a counted warning instead of crashing, and never counts them toward the ratio.
+
 ## v11.17.15 (2026-10-17)
 
 ### Fixed
