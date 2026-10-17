@@ -19,8 +19,22 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
-/** LOKI_E10_CAP_S as a usable cap: finite and positive, else null ("Infinity", NaN, 0, negatives are rejected). */
-export function envCapS(raw: string | undefined): number | null { const n = Number(raw); return Number.isFinite(n) && n > 0 ? n : null; }
+const warnedCap = new Set<string>();
+/** Warn once per source+value on stderr that a set cap is unusable and the default applies. Never loosens the cap. */
+export function warnBadCap(source: string, raw: string): void {
+  const key = `${source}=${raw}`;
+  if (warnedCap.has(key)) return;
+  warnedCap.add(key);
+  process.stderr.write(`loki: ignoring invalid ${source}="${raw}" (need a number > 0); using the default cap of ${DEFAULT_CAP_S}s\n`);
+}
+/** LOKI_E10_CAP_S as a usable cap: finite and positive, else null ("Infinity", NaN, 0, negatives are rejected). A set but unusable value warns once on stderr; unset or blank is silent. */
+export function envCapS(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  warnBadCap("LOKI_E10_CAP_S", raw);
+  return null;
+}
 export const BACKSTOP_GRACE_S = 30;
 export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); } // supervisor.ts's backstop; machine.ts's soft cap stays under it
 export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
