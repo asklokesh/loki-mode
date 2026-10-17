@@ -7514,7 +7514,17 @@ cmd_provider() {
         models)
             cmd_provider_models
             ;;
+        help|--help|-h)
+            _cmd_provider_help
+            ;;
         *)
+            echo "loki provider: unknown subcommand '${subcommand}' (see 'loki provider help')" >&2
+            return 2
+            ;;
+    esac
+}
+
+_cmd_provider_help() {
             echo -e "${BOLD}Loki Mode Provider Management${NC}"
             echo ""
             echo "Usage: loki provider <command>"
@@ -7543,8 +7553,6 @@ cmd_provider() {
             echo "  loki provider list"
             echo "  loki provider info codex"
             echo "  loki provider models"
-            ;;
-    esac
 }
 
 cmd_provider_show() {

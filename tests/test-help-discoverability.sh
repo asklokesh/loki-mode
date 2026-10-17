@@ -154,5 +154,17 @@ for needle in "prune" "stop" "status [--json]"; do
     fi
 done
 
+# Unknown `loki provider` subcommand must exit 2 with one stderr line; help stays 0.
+PROV_ERR="$(bash "$LOKI" provider frobnicate 2>&1 >/dev/null)"; PROV_RC=$?
+if [ "$PROV_RC" -eq 2 ] && printf '%s' "$PROV_ERR" | grep -q "unknown subcommand"; then
+    ok "'loki provider frobnicate' exits 2 with an unknown-subcommand line"
+else
+    bad "'loki provider frobnicate' rc=${PROV_RC} (want 2): ${PROV_ERR}"
+fi
+for a in "--help" "help"; do
+    bash "$LOKI" provider $a >/dev/null 2>&1; rc=$?
+    if [ "$rc" -eq 0 ]; then ok "'loki provider ${a}' exits 0"; else bad "'loki provider ${a}' rc=${rc}"; fi
+done
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
