@@ -37,10 +37,11 @@ export type PrContext = RunContext & {
 };
 export interface PrOptions {
   /** Injectable for tests; defaults to the real script next to this checkout. */
-  pushScriptPath?: string;
+  pushScriptPath?: string; gitlabPushScriptPath?: string; // the GitLab twin (TEN-ADOPTION-09), same injection rule
 }
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 export const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
+export const DEFAULT_PUSH_GITLAB_SH = join(REPO_ROOT, "autonomy/lib/engine10-push-gitlab.sh"); export const MR_URL_RE = /^https:\/\/gitlab\.com\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\/-\/merge_requests\/\d+$/; export const isGitlabOrigin = (o: string): boolean => /^(?:https:\/\/gitlab\.com\/|git@gitlab\.com:|ssh:\/\/git@gitlab\.com\/)/i.test(o); // TEN-ADOPTION-09: a literal gitlab.com pinned origin routes to engine10-push-gitlab.sh push-mr (the script re-validates the URL), whose MR URL must match MR_URL_RE.
 const SHA_RE = /^[0-9a-f]{40}$/;
 function lastNonEmptyLine(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0); return lines[lines.length - 1] ?? "";
@@ -61,8 +62,8 @@ function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
 }
 /** The one credentialed push-pr call (env, bot token, spawn, URL check incl. E-41 local://); stage and modernize ship share it. */
 export type PushPrResult = { ok: true; url: string; existing: boolean | null; localOk: boolean } | { ok: false; reason: string };
-export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string; env?: NodeJS.ProcessEnv }): PushPrResult {
-  const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
+export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string; gitlabScriptPath?: string; env?: NodeJS.ProcessEnv }): PushPrResult {
+  if (isGitlabOrigin(a.pinnedOrigin)) return runPushMr(a); const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
   const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, ...args], { env, encoding: "utf8" });
   if (r.status !== 0) return { ok: false, reason: `engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
@@ -72,6 +73,7 @@ export function runPushPr(a: { repoDir: string; branch: string; title: string; b
   if (!localOk && !PR_URL_RE.test(url)) return { ok: false, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
   return { ok: true, url, localOk, existing: markers.includes("reused") ? true : markers.includes("created") ? false : null }; // null = unknown, never fabricated
 }
+function runPushMr(a: Parameters<typeof runPushPr>[0]): PushPrResult { if (a.base) return { ok: false, reason: "engine10-push-gitlab.sh push-mr has no --base: refusing a stacked push to a gitlab.com origin" }; const r = spawnSync("bash", [a.gitlabScriptPath ?? DEFAULT_PUSH_GITLAB_SH, "push-mr", a.repoDir, a.branch, a.title, a.bodyFile, ...(a.draft ? ["--draft"] : [])], { env: a.env ?? pushEnv(a.repoDir, a.pinnedOrigin), encoding: "utf8" }); if (r.status !== 0) return { ok: false, reason: `engine10-push-gitlab.sh push-mr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` }; const url = lastNonEmptyLine(r.stdout ?? ""); return MR_URL_RE.test(url) ? { ok: true, url, localOk: false, existing: null } : { ok: false, reason: `engine10-push-gitlab.sh push-mr printed no valid MR URL (got: ${url || "(empty)"})` }; } // TEN-ADOPTION-09: runPushPr's GitLab twin. push-mr has no --base (refused, never dropped) and prints only the MR URL, so existing stays null (never fabricated).
 /** M-21 N3: replace a reused PR's body and mark it ready through engine10-push.sh pr-ready (same pinned origin and token scoping as push-pr). */
 export function runPrReady(a: { repoDir: string; branch: string; bodyFile: string; url: string; pinnedOrigin: string; scriptPath?: string; env?: NodeJS.ProcessEnv }): { ok: true } | { ok: false; reason: string } {
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
@@ -97,9 +99,7 @@ export function issueLink(runDir: string, verdict: Verdict): string {
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
   const pinnedOrigin = ctx.pinnedOrigin;
-  if (!pinnedOrigin) {
-    return { status: "failed", data: {}, reason: "no pinned origin: refusing to push (Rule of Two)" };
-  }
+  if (!pinnedOrigin) return { status: "failed", data: {}, reason: "no pinned origin: refusing to push (Rule of Two)" };
   const seal = (ctx.outputs().seal ?? {}) as { verdict?: Verdict; not_proven?: string[]; receipt_path?: string; receipt_sha256?: string; signed?: boolean; route_line?: string; mutation_line?: string };
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
   const notProven = [...(seal.not_proven ?? [])];
@@ -115,7 +115,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
-  const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
+  const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
   if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
@@ -124,7 +124,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   if (localOk) {
     // A local bare origin (the eval harness) has no commit status API.
     notProvenOut.push("commit status loki/deep-verify not set (local origin)");
-  } else if (SHA_RE.test(headSha)) {
+  } else if (isGitlabOrigin(pinnedOrigin)) { notProvenOut.push("commit status loki/deep-verify not set (gitlab origin)"); } else if (SHA_RE.test(headSha)) { // engine10-push-gitlab.sh has no status mode; a GitLab sha never reaches the GitHub status call
     const statusShellArgs = pushArgv({ cmd: "status", sha: headSha, state: "pending", description: "Loki 10 deep verify pending" });
     const statusResult = spawnSync("bash", [scriptPath, ...statusShellArgs], { env, encoding: "utf8" });
     // Non-fatal: the PR is already open. A failed status call is recorded, not a red PR stage.
