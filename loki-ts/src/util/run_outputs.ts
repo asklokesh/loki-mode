@@ -446,7 +446,7 @@ export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: stri
 /** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
 export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
   if (policyFile(repoDir, env) === null) return { decision: "allow", reason: "no policy file" };
-  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
+  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "policy NOT evaluated: node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
   if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
   const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
   const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
@@ -455,9 +455,10 @@ export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessE
   return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
 }
 /** One PR-egress decision shared by the supervisor pr callback and resumePublish: deny = no PR plus a not-proven line; approval = draft via ctx.draft (never process.env). */
-export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
+export function prGate(repoDir: string): { deny: string } | { draft: boolean; note?: string } {
   const gate = policyGate(repoDir, "pr");
-  return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
+  if (gate.decision === "deny") return { deny: `PR not opened: policy denied (${gate.reason})` };
+  return gate.decision === "allow" && gate.reason.startsWith("policy NOT evaluated") ? { draft: false, note: gate.reason } : { draft: gate.decision === "approval" };
 }
 /** MASS-2: a stacked slice's PR targets its parent slice's run branch (LOKI_PR_BASE, set by `loki issues run`).
  *  undefined = no stacking (the default branch); null = set but not a safe branch name, so the stage fails closed. */

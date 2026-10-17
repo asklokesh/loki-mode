@@ -29,6 +29,16 @@ describe("policyGate", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), stub(0, "ok")).decision).toBe("allow");
   });
+  test("policy not evaluated: node opt-out without node says so in reason and prGate note", () => {
+    withPolicy();
+    const bare = join(root, "bare"); mkdirSync(bare);
+    const e = { ...env(), PATH: bare, LOKI_POLICY_REQUIRE_NODE: "0" };
+    const g = policyGate(root, "pr", e, join(root, "missing.js"));
+    expect(g.decision).toBe("allow");
+    expect(g.reason).toContain("policy NOT evaluated");
+    const saved = { ...process.env }; Object.assign(process.env, e);
+    try { expect(prGate(root)).toEqual({ draft: false, note: g.reason }); } finally { for (const k of Object.keys(e)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  });
   test("policy present and check.js missing fails closed", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), join(root, "missing.js")).decision).toBe("deny");
