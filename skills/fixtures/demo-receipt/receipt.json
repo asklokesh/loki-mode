@@ -1,0 +1,117 @@
+{
+  "schema": "loki.v10.receipt/1",
+  "run_id": "e10-20261017T054044Z-8877",
+  "task": {
+    "source": "text",
+    "sha256": "c9bfaf4e68ae440dc6f6fb124800603369e06fe274ce8bf2616819940a6f0cfc"
+  },
+  "repo": "",
+  "base_sha": "7b054a41a78f06db68c51917e049f62e04b4430f",
+  "head_sha": "3321417c16d471bd7f9978771e22dd9c9519e85f",
+  "tree": "8b73ce8c9bd52dae34b06a05a5010161e10107c7",
+  "diff_sha256": "521dd6447ed0243cb16e8c194b713b415b3a39365d764ca4f7e22ad6f527bbee",
+  "wall": {
+    "files": [],
+    "passed": null
+  },
+  "checks": [
+    {
+      "name": "node:tests/add.test.js",
+      "cmd": "node --test ./tests/add.test.js",
+      "result": "pass",
+      "duration_s": 0.093
+    }
+  ],
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "scope not determined; all edits committed",
+    "repo not recorded by intake",
+    "visual evidence skipped: no dev, preview or start script"
+  ],
+  "verdict": "VERIFIED",
+  "evidence": [],
+  "cost": {
+    "usd": 0.05356140000000001,
+    "input_tokens": 4253,
+    "output_tokens": 1449,
+    "cache_read_tokens": 40060,
+    "cache_creation_tokens": 5685,
+    "sdk_duration_ms": 25056,
+    "turns": 7,
+    "cache_creation_main_loop": {
+      "ephemeral_5m_tokens": 5685,
+      "ephemeral_1h_tokens": 0
+    },
+    "per_model": {
+      "claude-haiku-5-5": {
+        "input_tokens": 4239,
+        "output_tokens": 38,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cost_usd": 0.00044290000000000003
+      },
+      "claude-opus-5-5": {
+        "input_tokens": 8,
+        "output_tokens": 879,
+        "cache_read_tokens": 23139,
+        "cache_creation_tokens": 3180,
+        "cost_usd": 0.0381398
+      },
+      "claude-sonnet-5-5": {
+        "input_tokens": 6,
+        "output_tokens": 532,
+        "cache_read_tokens": 16921,
+        "cache_creation_tokens": 2505,
+        "cost_usd": 0.014978700000000001
+      }
+    },
+    "tokens_scope": "all-models",
+    "measured_sessions": 2,
+    "total_sessions": 2,
+    "partial_usd": 0.05356140000000001
+  },
+  "time": {
+    "wall_s": 27.652,
+    "total_s": 27.877,
+    "stages": {
+      "intake": 7.715,
+      "plan+wall": 0.001,
+      "implement": 19.439,
+      "verify": 0.377,
+      "commit": 0.12,
+      "setup": 0.089,
+      "orchestration": 0.008,
+      "seal": 0.128
+    },
+    "stage_s": {
+      "intake": 7.715,
+      "plan": 0.001,
+      "wall": 0.001,
+      "implement": 19.439,
+      "verify": 0.377,
+      "commit": 0.12
+    }
+  },
+  "provider": "claude",
+  "model": "claude (provider default)",
+  "resumed": false,
+  "events_sha256": "073806c566c00c82a00a653e6659b9025f3262383a18d4f9c4473fa0543d4905",
+  "log_seal": true,
+  "cost_preview": {
+    "estimate": "NOT AVAILABLE (no project shape recorded for this repo)",
+    "actual": {
+      "usd": 0.05356140000000001,
+      "wall_s": 27.877
+    }
+  },
+  "mutation_proof": "test fails without the fix: inconclusive (no Wall tests)",
+  "mutation_outcome": "inconclusive",
+  "receipt_sha256": "a1f0080ffca6fd2d572135d7e3999951eaae591d8ae3b178846da9cf2d71b1f7",
+  "verification": {
+    "jwt": "eyJhbGciOiJFZERTQSIsImtpZCI6InMtX2l2Ry1lNHNxNzJFdnlpdVJzcWdQS2psOGlfcXRBNGJRZ1BKSFFYU0UiLCJ0eXAiOiJKV1QifQ.eyJpYXQiOjE3OTIyMTU2NzIsImpvYl9pZCI6ImUxMC0yMDI2MTAxN1QwNTQwNDRaLTg4NzciLCJyZWNlaXB0X3NoYTI1NiI6ImExZjAwODBmZmNhNmZkMmQ1NzIxMzVkN2UzOTk5OTUxZWFhZTU5MWQ4YWUzYjE3ODg0NmRhOWNmMmQ3MWIxZjciLCJydW5faWQiOiJlMTAtMjAyNjEwMTdUMDU0MDQ0Wi04ODc3In0.ZlhuBMk20fhuIm7BJxEXMMWB0fFx75K2eTCOp54tvRQTLcRJvtR-7VZ0QDOzr_w6lj02rwf3zHIq22a8L9soAA",
+    "kid": "s-_ivG-e4sq72EvyiuRsqgPKjl8i_qtA4bQgPJHQXSE"
+  }
+}
