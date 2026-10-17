@@ -43,6 +43,12 @@ function defaultProvider(positional: string | undefined, saved: string): string 
 }
 
 export function runProviderShow(positional?: string): number {
+  if (positional && !(ALL_PROVIDERS as readonly string[]).includes(positional)) {
+    process.stderr.write(
+      `${RED}Error: unknown provider '${positional}'. Valid providers: ${ALL_PROVIDERS.join(", ")}${NC}\n`,
+    );
+    return 2;
+  }
   const saved = readSavedProvider();
   const current = defaultProvider(positional, saved);
 

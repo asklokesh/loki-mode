@@ -35,6 +35,22 @@ describe("provider show", () => {
   });
 });
 
+describe("provider show unknown provider", () => {
+  it("unknown provider exits 2 and lists valid providers", async () => {
+    const a = await bunCmd(["provider", "show", "nopeprovider"]);
+    expect(a.exitCode).toBe(2);
+    const err = stripAnsi(a.stderr);
+    expect(err).toContain("unknown provider 'nopeprovider'");
+    for (const p of ["claude", "cline", "codex", "aider", "opencode"]) expect(err).toContain(p);
+    expect(stripAnsi(a.stdout)).not.toContain("Current Provider");
+  });
+
+  it("known provider argument still exits 0", async () => {
+    const a = await bunCmd(["provider", "show", "codex"]);
+    expect(a.exitCode).toBe(0);
+  });
+});
+
 describe("provider list", () => {
   it("byte-for-byte parity with bash", async () => {
     const a = await bunCmd(["provider", "list"]);
