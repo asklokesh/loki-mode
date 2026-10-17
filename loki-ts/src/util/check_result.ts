@@ -544,9 +544,11 @@ export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => P
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. */
 export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number }): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
-    let output = "", error = false, done = false; const fin = (status: number | null) => { if (!done) { done = true; resolve({ status: error ? null : status, output }); } };
-    const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, timeout: o.timeoutMs });
-    c.stdout?.on("data", (d) => { output += d; }); c.stderr?.on("data", (d) => { output += d; });
+    let out = "", err = "", error = false, done = false; const MAX = 1024 * 1024; // spawnSync parity: stdin EOF, default maxBuffer, "stdout\nstderr" join
+    const fin = (status: number | null) => { if (!done) { done = true; resolve({ status: error ? null : status, output: `${out}\n${err}` }); } };
+    const c = spawn(cmd, args, { cwd: o.cwd, env: o.env, timeout: o.timeoutMs, stdio: ["ignore", "pipe", "pipe"] });
+    const over = () => { if (out.length > MAX || err.length > MAX) { error = true; c.kill("SIGTERM"); } };
+    c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
     c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
   });
 }

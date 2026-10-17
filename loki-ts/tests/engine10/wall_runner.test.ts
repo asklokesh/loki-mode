@@ -173,4 +173,15 @@ describe("TEN-SPEED-19 base jobs", () => {
     const norm = (d: Record<string, unknown>) => JSON.stringify({ files: (d.files as { path: string }[]).map((f) => f.path.split("/").pop()), ro: (d.readOnlyFiles as { path: string }[]).map((f) => f.path.split("/").pop()), nr: d.not_run_files ?? d.notRunFiles ?? null, base: d.base_run, sat: d.already_satisfied });
     expect(norm(par.d)).toBe(norm(seq.d));
   }, 60_000);
+
+  test("spawnCollect matches spawnSync for a child that reads stdin (EOF, not a hang) and splits stdout/stderr", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { spawnCollect } = await import("../../src/util/check_result.ts");
+    const args = ["-e", "require('fs').readFileSync(0); process.stdout.write('o'); process.stderr.write('e'); process.exit(1)"];
+    const sync = spawnSync("node", args, { encoding: "utf8", timeout: 10_000 });
+    const t0 = Date.now(), a = await spawnCollect("node", args, { timeoutMs: 10_000 });
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(a.status).toBe(sync.status);
+    expect(a.output).toBe(`${sync.stdout}\n${sync.stderr}`);
+  }, 30_000);
 });
