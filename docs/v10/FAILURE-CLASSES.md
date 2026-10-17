@@ -890,3 +890,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every reader of cost_partial (autonomy/lib/cost-summary.py, the C-F1 benchmark row_true_spend, dashboard cost views).
 - Mechanism: when main records exist and cost_available is false, set cost_partial true in the one reader; siblings consume that flag.
 - Fixture: tests/test_efficiency_cost_availability.py case with token-only main record plus a priced ledger line asserts cost_partial true.
+
+## FC-REALRUN-FIXTURE A pinned scenario expectation changed without the fixture receipt that the harness self-test checks it against (REALRUN-FIXTURE-DRIFT)
+- User-visible vs raw: v11.17.8 never published; Tests run 38986362613 failed only "real-run harness scenarios, dry install, doctored receipt" with `FAIL wall-guard: expected check "node:sum.test.js" executed in checks[]`.
+- Law broken: a change to an expectation must update every fixture that exercises it in the same slice.
+- Cause (measured 2026-10-17): Q17-04b (e1bdde7d3) set SC_EXPECT_CHECKS=node:sum.test.js in tests/real-run/scenarios/trivial-sum.sh; tests/test-real-run.sh good.json still named its checks "a" and "b". The slice gate ran tests/test-wall-executed-guard.sh but not tests/test-real-run.sh.
+- Siblings to sweep: every user of --check-receipt or SC_EXPECT_CHECKS (grep finds only tests/test-real-run.sh, tests/test-wall-executed-guard.sh, scripts/real-run.sh).
+- Mechanism: the fixture names the pinned check; slice cards touching tests/real-run/scenarios list tests/test-real-run.sh in their commands.
+- Fixture: tests/test-real-run.sh good receipt passes (13 PASS, rc=0 locally after the fix).
