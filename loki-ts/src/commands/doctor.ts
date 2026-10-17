@@ -891,8 +891,12 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 // parse so the bash and Bun doctor routes render the identical login line.
 export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv = process.env): "yes" | "no" | "" {
   try {
+    // P9 (TEN-P9-FIX): this spawns the provider CLI, so it gets the withheld env a provider session gets: no GitHub
+    // token, gh store or credential helper (tokenFreeEnv), no SSH agent, and git's ssh transport off. The operator opt-out
+    // (LOKI_ALLOW_AGENT_GITHUB_TOKEN=1, see runner/github_token.ts) keeps the env untouched, as it does for the session.
+    const optOut = env["LOKI_ALLOW_AGENT_GITHUB_TOKEN"] === "1";
     const r = spawnSync(cli, ["auth", "status"], {
-      env: { ...env },
+      env: optOut ? { ...env } : { ...tokenFreeEnv(env), GIT_SSH_COMMAND: "false" },
       encoding: "utf8",
       timeout: 5000,
     });
