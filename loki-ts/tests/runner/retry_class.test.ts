@@ -139,6 +139,16 @@ describe("rate limits are never permanent", () => {
 });
 
 describe("exceeded current quota vs rate limit wording", () => {
+  it("real 429-prefixed billing bodies are quota_exhausted", () => {
+    for (const body of [
+      "Error code: 429 - You exceeded your current quota, please check your plan and billing details.",
+      "429 RESOURCE_EXHAUSTED: You exceeded your current quota, please check your plan and billing details.",
+      "Error code: 429 - {'error': {'code': 'insufficient_quota'}}",
+    ]) {
+      expect(classifyFailure(body)).toEqual({ klass: "non_retryable", reason: "quota_exhausted" });
+    }
+  });
+
   it("exceeded current quota with a rate limit marker stays transient", () => {
     const d = classifyFailure("429 Too Many Requests: rate limit reached, you exceeded your current quota per minute");
     expect(d.klass).toBe("transient");
