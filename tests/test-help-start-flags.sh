@@ -86,5 +86,13 @@ check "--domain without --deploy exits 2" test "$rc" -eq 2
 check "start --help lists --domain" grep -q -e '--domain' "$WORK/start.txt"
 check "start --help lists --env-file for deploy" grep -q -e 'env-file.*deploy\|deploy.*env-file' "$WORK/start.txt"
 
+# chat /deploy text names the same deploy flags and the live-URL verify (TEN-DEPLOY-09b)
+CHAT="$REPO_ROOT/autonomy/lib/chat.sh"
+check "chat /deploy help lists --domain and --env-file" \
+    grep -q -e '/deploy .*--env-file .*--domain' "$CHAT"
+check "chat system prompt names loki verify --url" grep -q -e '_LOKI_CHAT_SYSTEM_PROMPT=.*loki verify --url' "$CHAT"
+check "docs/DEPLOYMENT.md has the brief to verified URL section" \
+    grep -q -e '^## From brief to verified URL' "$REPO_ROOT/docs/DEPLOYMENT.md"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
