@@ -63,6 +63,18 @@ class ReleasePublishesLatestAndNext(unittest.TestCase):
         r = "\n".join(_runs(jobs["publish-npm"]))
         self.assertIn("never backwards", r)
 
+    def test_empty_current_latest_fails_closed(self):
+        jobs = _doc()["jobs"]
+        for name in ("publish-npm", "publish-ts-sdk"):
+            r = "\n".join(_runs(jobs[name]))
+            m = re.search(r'if \[ -z "\$CUR" \]; then\n(.*?)\n\s*fi\n', r, re.S)
+            self.assertIsNotNone(m, name)
+            self.assertIn("::error::", m.group(1), name)
+            self.assertIn("exit 1", m.group(1), name)
+            self.assertNotIn("dist-tag add", m.group(1), name)
+            self.assertNotRegex(r, r'-z "\$CUR" \]\s*\|\|', name)
+            self.assertLess(r.index("npm publish"), r.index('-z "$CUR"'), name)
+
     def test_rerun_never_retags_without_the_guard(self):
         r = "\n".join(_runs(_doc()["jobs"]["publish-npm"]))
         self.assertEqual(r.count("dist-tag add"), 2)
