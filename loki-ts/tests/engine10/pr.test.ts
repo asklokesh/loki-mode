@@ -166,6 +166,22 @@ describe("engine10 pr stage", () => {
     expect(emitted).toHaveLength(0);
   });
 
+  test("hung push script: the stage fails with a timeout reason instead of blocking", async () => {
+    const script = join(stubDir, "hang.sh");
+    writeFileSync(script, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+    const { ctx, emitted } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+    const prev = process.env.LOKI_PR_PUSH_TIMEOUT_MS;
+    process.env.LOKI_PR_PUSH_TIMEOUT_MS = "500";
+    try {
+      const t0 = Date.now();
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      expect(result.status).toBe("failed");
+      expect(result.reason).toContain("timed out after 500ms");
+      expect(emitted.some((e) => e.type === "pr.opened")).toBe(false);
+    } finally { if (prev === undefined) delete process.env.LOKI_PR_PUSH_TIMEOUT_MS; else process.env.LOKI_PR_PUSH_TIMEOUT_MS = prev; }
+  });
+
   test("a failing push-pr call gives failed, no pr.opened, no status call", async () => {
     const script = writeStub(stubDir, logPath, "push-pr");
     const { ctx, emitted } = makeCtx(repoDir, runDir);
