@@ -1,7 +1,7 @@
 import { statfsSync } from "node:fs";
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts";
-import { claudeLoginProbeCached, ghAuthProbeCached, requirementFix } from "../commands/doctor.ts";
+import { claudeLoginProbeCached, ghAuthProbeCached, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
 const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
@@ -34,6 +34,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     if (li === "no") return { fatal: "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)", warnings };
     if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing");
   }
+  if (o.provider !== "claude") { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) return { fatal: pl.fatal, warnings }; if (pl?.warn) warnings.push(pl.warn); } // TEN-ADOPTION-34
   if (o.pr && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {
     const ghOk = await ghAuthProbeCached(env, async () => (await sh(["gh", "--version"], { env, timeoutMs: 5000 })).exitCode === 0 && (await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 })).exitCode === 0); // TEN-SPEED-08: 10-min cache of a passing probe
     if (!ghOk) return { fatal: `gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr`, warnings };

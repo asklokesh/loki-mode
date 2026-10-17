@@ -538,3 +538,37 @@ describe("TEN-SPEED-14: parallel git reads", () => {
     expect(r.fatal).toBeNull(); expect(r.warnings.length).toBeGreaterThan(0);
   });
 });
+
+describe("TEN-ADOPTION-34: provider login probe", () => {
+  function cli(body: string): string {
+    const dir = tmpRoot("e10-pf-login-"); const p = join(dir, "fake-cli");
+    writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p;
+  }
+  const run = (provider: string, envVar: string, c: string, extra: Record<string, string> = {}) => {
+    const { dir, env } = identifiedRepo();
+    return checkPreflight({ repoDir: dir, provider, pr: false, env: { ...env, [envVar]: c, ...extra } });
+  };
+
+  test("codex logged out is fatal and names the login command", async () => {
+    const r = await run("codex", "LOKI_CODEX_CLI", cli('[ "$1" = login ] && { echo "Not logged in"; exit 1; }; exit 0'));
+    expect(r.fatal).toContain("codex is not logged in; run: codex login");
+  });
+  test("codex logged in and codex with an API key pass", async () => {
+    expect((await run("codex", "LOKI_CODEX_CLI", cli("exit 0"))).fatal).toBeNull();
+    expect((await run("codex", "LOKI_CODEX_CLI", cli('echo "Not logged in"; exit 1'), { OPENAI_API_KEY: "k" })).fatal).toBeNull();
+  });
+  test("codex unknown probe answer only warns", async () => {
+    const r = await run("codex", "LOKI_CODEX_CLI", cli("exit 3"));
+    expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain("could not confirm the Codex login");
+  });
+  test("aider, cline, opencode without any key warn by name, never fatal", async () => {
+    for (const [p, v] of [["aider", "LOKI_AIDER_CLI"], ["cline", "LOKI_CLINE_CLI"], ["opencode", "LOKI_OPENCODE_CLI"]] as const) {
+      const r = await run(p, v, cli("exit 0"));
+      expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain(`no ${p} login or API key found`);
+    }
+  });
+  test("a provider API key silences the warning", async () => {
+    const r = await run("aider", "LOKI_AIDER_CLI", cli("exit 0"), { ANTHROPIC_API_KEY: "k" });
+    expect(r.warnings.join("\n")).not.toContain("login or API key");
+  });
+});

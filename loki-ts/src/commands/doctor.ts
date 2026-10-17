@@ -1048,6 +1048,20 @@ export function providerProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
   return out;
 }
 
+// TEN-ADOPTION-34: non-claude login state for preflight. codex has `login status` (exit code; fatal only on "Not logged in"); cline, aider and opencode keep varied keys/files, so they only warn.
+const PROVIDER_API_KEY_VARS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"];
+export function providerLoginIssue(provider: string, cli: string, env: Record<string, string | undefined>): { fatal?: string; warn?: string } | null {
+  const home = env.HOME || homedir(); const key = (k: string) => !!env[k]?.trim();
+  if (provider === "codex") {
+    if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return null;
+    const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000 });
+    if (r.status === 0) return null;
+    return /not logged in/i.test(`${r.stdout}${r.stderr}`) ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
+  }
+  if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) || (provider === "cline" && existsSync(join(home, ".cline")))) return null;
+  return provider === "aider" || provider === "opencode" || provider === "cline" ? { warn: `no ${provider} login or API key found (set a provider API key such as ANTHROPIC_API_KEY or OPENAI_API_KEY${provider === "opencode" ? ", or run: opencode auth login" : ""}); continuing` } : null;
+}
+
 // v7.104.2 parity with bash doctor: the durable login signal is `claude auth
 // status` (local, zero-network, ~0.2s, JSON with "loggedIn"), which recognizes
 // BOTH the file-based AND the native/macOS-Keychain login (the native install
