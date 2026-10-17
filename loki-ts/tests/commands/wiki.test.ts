@@ -82,6 +82,16 @@ describe("loki wiki show (Bun native)", () => {
     expect(bun.exitCode).not.toBe(0);
   });
 
+  it("bad section lists valid sections and exits 2", async () => {
+    const bun = await sh(["bun", BUN_CLI, "wiki", "show", "bogus"], project);
+    expect(bun.exitCode).toBe(2);
+    expect(bun.stdout).toBe("");
+    expect(bun.stderr).toContain("No such section: bogus");
+    expect(bun.stderr).toContain("Valid sections: architecture, modules, data-flow");
+    const ok = await sh(["bun", BUN_CLI, "wiki", "show", "data-flow"], project);
+    expect(ok.exitCode).toBe(0);
+  });
+
   it("two sections is a usage error with exit 1 and no output", async () => {
     const bun = await sh(["bun", BUN_CLI, "wiki", "show", "architecture", "modules"], project);
     expect(bun.exitCode).toBe(1);

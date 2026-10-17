@@ -76,9 +76,9 @@ function runShow(args: string[]): number {
   if (section) {
     if (!SECTIONS.has(section)) {
       process.stderr.write(
-        `${RED}No such section: ${section} (try: architecture, modules, data-flow)${NC}\n`,
+        `${RED}No such section: ${section}${NC}\nValid sections: ${[...SECTIONS].join(", ")}\n`,
       );
-      return 1;
+      return 2;
     }
     const f = join(dir, `${section}.md`);
     if (!existsSync(f)) {
