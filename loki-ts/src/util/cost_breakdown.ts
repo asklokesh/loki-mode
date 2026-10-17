@@ -51,6 +51,10 @@ export function costBreakdown(recs: { iter: string; rec: Record<string, unknown>
  *  exactly 100 (largest remainder); a stage with an unpriced or unmetered session says "unmetered", never 0. null when nothing was metered
  *  or only one stage exists (a share of 100% says nothing). */
 export function stageShareText(events: { type: string; stage: string | null; data: Record<string, unknown> }[]): string | null {
+  const shares = shareLine(events), cold = cacheColdText(events);
+  return shares && cold ? `${shares}\n${" ".repeat(12)}${cold}` : shares ?? cold; // 12 = output.ts LABEL_WIDTH: the hint lines up under the Spend value
+}
+function shareLine(events: { type: string; stage: string | null; data: Record<string, unknown> }[]): string | null {
   const order: string[] = [], usd = new Map<string, number>(), unmetered = new Set<string>();
   for (const e of events) {
     if (e.type !== "cost") continue;
@@ -68,4 +72,20 @@ export function stageShareText(events: { type: string; stage: string | null; dat
   const top = metered.reduce((a, s) => (usd.get(s)! > usd.get(a)! ? s : a), metered[0]!);
   const parts = order.map((s) => { const i = metered.indexOf(s); return i >= 0 ? `${s} ${pct[i]}%` : `${s} unmetered`; });
   return `${parts.join(", ")}; top: ${top}`;
+}
+
+/** TEN-COST-29: stages whose prefix cache ran cold (cache read under 30 percent of input-side tokens) as one "cache cold: a, b" line, for the
+ *  cost summary. Only metered sessions with token figures count; an unmetered or token-less stage is skipped, never called cold. null when all warm. */
+function cacheColdText(events: { type: string; stage: string | null; data: Record<string, unknown> }[]): string | null {
+  const order: string[] = [], read = new Map<string, number>(), all = new Map<string, number>();
+  for (const e of events) {
+    if (e.type !== "cost" || e.data["source"] === "cli-invoker-unmetered" || typeof e.data["input_tokens"] !== "number") continue;
+    const stage = e.stage || UNATTRIBUTED;
+    if (!all.has(stage)) { order.push(stage); read.set(stage, 0); all.set(stage, 0); }
+    const r = Math.max(0, tok(e.data["cache_read_tokens"]));
+    read.set(stage, read.get(stage)! + r);
+    all.set(stage, all.get(stage)! + Math.max(0, tok(e.data["input_tokens"])) + r + Math.max(0, tok(e.data["cache_creation_tokens"])));
+  }
+  const cold = order.filter((s) => all.get(s)! > 0 && read.get(s)! / all.get(s)! < 0.3);
+  return cold.length > 0 ? `cache cold: ${cold.join(", ")}` : null;
 }
