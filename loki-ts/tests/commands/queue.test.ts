@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runQueue, readQueue, normalizeRef, type GovernorReading, type RunResult } from "../../src/commands/queue.ts";
+import { runQueue, readQueue, itemTimeoutMin, makeDefaultRunner, normalizeRef, type GovernorReading, type RunResult } from "../../src/commands/queue.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -297,4 +297,33 @@ describe("loki queue list --json (TEN-ADOPTION-25)", () => {
     expect(h.out.join("")).toBe("ID     AGE  STATUS\no/r#1  0s   queued\n1 queued\n");
     expect(await runQueue(["list", "--json", "--bogus"], h.inject)).toBe(2);
   });
+});
+
+describe("queue item timeout", () => {
+  test("negative item timeout falls back to 120 with one note; valid values unchanged", () => {
+    for (const bad of ["-5", "0", "abc", "Infinity", "NaN", "99999999999"]) {
+      const notes: string[] = [];
+      expect(itemTimeoutMin(bad, (s) => void notes.push(s))).toBe(120);
+      expect(notes.length).toBe(1);
+      expect(notes[0]).toContain("LOKI_QUEUE_ITEM_TIMEOUT_MIN");
+    }
+    const quiet: string[] = [];
+    expect(itemTimeoutMin("30", (s) => void quiet.push(s))).toBe(30);
+    expect(itemTimeoutMin("0.5", (s) => void quiet.push(s))).toBe(0.5);
+    expect(itemTimeoutMin(undefined, (s) => void quiet.push(s))).toBe(120);
+    expect(itemTimeoutMin("", (s) => void quiet.push(s))).toBe(120);
+    expect(quiet).toEqual([]);
+  });
+
+  test("negative item timeout does not kill the real runner child at once", async () => {
+    const prev = process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"];
+    process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"] = "-5";
+    try {
+      const r = await makeDefaultRunner(dir)("not-a-ref", {} as never);
+      expect([143, 137, -15]).not.toContain(r.rc);
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"];
+      else process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"] = prev;
+    }
+  }, 60000);
 });
