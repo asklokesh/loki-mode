@@ -173,11 +173,16 @@ function makeEmptyAccuracy(): KpiSnapshot["accuracy"] {
   };
 }
 
+/** Group cost records (run_group writeGroupCostRecord) carry cost, not an iteration. Shared by kpis and stats. */
+export function isGroupCostRecord(r: unknown): boolean {
+  return typeof r === "object" && r !== null && (r as { kind?: unknown }).kind === "group_cost";
+}
+
 function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["efficiency"] {
   const out = makeEmptyEfficiency();
   if (records.length === 0) return out;
   // Group cost records (run_group writeGroupCostRecord) carry cost, not an iteration: they feed cost but not the count.
-  out.iteration_count = records.filter((r) => (r as { kind?: unknown }).kind !== "group_cost").length;
+  out.iteration_count = records.filter((r) => !isGroupCostRecord(r)).length;
   // ONE predicate for the whole snapshot -- cost and tokens are measured or
   // unmeasured together, exactly as Python nulls usd and the token counts on
   // the same condition. A second predicate is how the honesty rule drifts.
