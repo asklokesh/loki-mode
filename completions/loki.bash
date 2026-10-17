@@ -72,6 +72,10 @@ _loki_completion() {
             ;;
 
         provider)
+            if [[ $cword -ge 3 && ( "${words[2]}" == "list" || "${words[2]}" == "info" ) ]]; then
+                COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+                return 0
+            fi
             local provider_cmds="show set list info matrix help"
             COMPREPLY=( $(compgen -W "${provider_cmds}" -- "$cur") )
             ;;
