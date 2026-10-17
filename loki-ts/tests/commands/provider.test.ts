@@ -113,6 +113,18 @@ describe("provider unknown subcommand", () => {
     expect(stripAnsi(a.stdout)).toContain("Loki Mode Provider Management");
   });
 
+  it("did you mean: close typo gets a suggestion, exit 2", async () => {
+    const a = await bunCmd(["provider", "lst"]);
+    expect(a.exitCode).toBe(2);
+    expect(stripAnsi(a.stderr)).toContain("Did you mean 'list'?");
+  });
+
+  it("did you mean: no suggestion when nothing within distance 2", async () => {
+    const a = await bunCmd(["provider", "definitelynotacommand"]);
+    expect(a.exitCode).toBe(2);
+    expect(stripAnsi(a.stderr)).not.toContain("Did you mean");
+  });
+
   it("help, -h, --help stay exit 0", async () => {
     for (const w of ["help", "-h", "--help"]) {
       const a = await bunCmd(["provider", w]);

@@ -14,6 +14,7 @@
 // LOKI_LEGACY_BASH=1 escape hatch; `show` is kept at parity with the bash
 // route (see loki-ts/tests/commands/wiki.test.ts).
 
+import { suggestWord } from "../cli/registry.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
@@ -147,6 +148,8 @@ async function delegateToBash(sub: string, args: string[]): Promise<number> {
   }
 }
 
+const WIKI_SUBCOMMANDS = ["show", "generate", "ask", "help"] as const;
+
 export async function runWiki(argv: string[]): Promise<number> {
   const sub = argv[0];
   const rest = argv.slice(1);
@@ -166,7 +169,11 @@ export async function runWiki(argv: string[]): Promise<number> {
       return delegateToBash("ask", rest);
     default:
       process.stderr.write(`${RED}Unknown wiki command: ${sub}${NC}\n`);
-      process.stdout.write(HELP);
-      return 1;
+      {
+        const hint = suggestWord(sub, WIKI_SUBCOMMANDS);
+        if (hint) process.stderr.write(`Did you mean '${hint}'?\n`);
+      }
+      process.stderr.write(HELP);
+      return 2;
   }
 }
