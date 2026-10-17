@@ -220,7 +220,11 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
   const rest = [...args];
   let outDir = join(process.cwd(), ".loki", "verify-pr");
   const oi = rest.indexOf("--out");
-  if (oi >= 0) { outDir = rest[oi + 1] ?? ""; rest.splice(oi, 2); }
+  if (oi >= 0) {
+    const v = rest[oi + 1];
+    if (v === undefined || v === "" || v.startsWith("-")) return (err(USAGE), 2);
+    outDir = v; rest.splice(oi, 2);
+  }
   const ji = rest.indexOf("--json");
   const asJson = ji >= 0;
   if (asJson) rest.splice(ji, 1);
