@@ -185,6 +185,33 @@ describe("v7.5.2 loki rollback CLI", () => {
     expect(code).toBe(2);
   });
 
+  it("unknown flag on list/show/to/latest/deploy exits 2 and restores nothing", async () => {
+    seedCheckpoint("cp-7-1700000007", 7);
+    const before = listCheckpointIds();
+    for (const argv of [
+      ["list", "--bogus"],
+      ["show", "cp-7-1700000007", "--bogus"],
+      ["to", "cp-7-1700000007", "--dry-runn"],
+      ["latest", "--bogus"],
+      ["deploy", "--bogus"],
+    ]) {
+      const stop = captureOutput();
+      const code = await runRollback(argv);
+      const out = stop();
+      expect(code).toBe(2);
+      expect(out.stderr).toContain("Unknown flag");
+    }
+    expect(listCheckpointIds()).toEqual(before);
+  });
+
+  it("`rollback to <id> --force` still accepted", async () => {
+    seedCheckpoint("cp-8-1700000008", 8);
+    const stop = captureOutput();
+    const code = await runRollback(["to", "cp-8-1700000008", "--force"]);
+    stop();
+    expect(code).toBe(0);
+  });
+
   // R6: re-undoability invariant. A `rollback to` must first capture a forced
   // pre-rollback snapshot of CURRENT state, so the rollback is itself undoable.
   it("`rollback to <id>` creates a pre-rollback snapshot (re-undoable)", async () => {
@@ -208,6 +235,43 @@ describe("v7.5.2 loki rollback CLI", () => {
     expect(added.length).toBeGreaterThanOrEqual(1);
     // The CLI tells the user how to undo the undo.
     expect(out.stdout).toContain("undo this rollback");
+  });
+});
+
+describe("TEN-DEPLOY-17 loki rollback list json", () => {
+  it("list json emits a newest-first JSON array", async () => {
+    seedCheckpoint("cp-1-1700000001", 1);
+    seedCheckpoint("cp-2-1700000002", 2);
+    const stop = captureOutput();
+    const code = await runRollback(["list", "--json"]);
+    const out = stop();
+    expect(code).toBe(0);
+    const arr = JSON.parse(out.stdout) as Array<{ id: string }>;
+    expect(arr.map((m) => m.id)).toEqual(["cp-2-1700000002", "cp-1-1700000001"]);
+  });
+
+  it("list json with no checkpoints emits []", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["list", "--json"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual([]);
+  });
+
+  it("list text output unchanged without --json", async () => {
+    seedCheckpoint("cp-1-1700000001", 1);
+    const stop = captureOutput();
+    await runRollback(["list"]);
+    const out = stop();
+    expect(out.stdout).toContain("Checkpoints");
+    expect(out.stdout.trimStart().startsWith("[")).toBe(false);
+  });
+
+  it("--json stays rejected on other subcommands", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["latest", "--json"]);
+    stop();
+    expect(code).toBe(2);
   });
 });
 
@@ -236,6 +300,24 @@ describe("TEN-DEPLOY-11 loki rollback deploy", () => {
     const out = stop();
     expect(code).toBe(0);
     expect(out.stdout).toContain("No CLI rollback");
+  });
+
+  it("more providers", async () => {
+    const cases: Array<[string, string]> = [
+      ["heroku releases:rollback", "heroku container:release web"],
+      ["Railway dashboard", "railway up"],
+      ["Render dashboard", "render deploys create"],
+      ["gcloud run revisions list", "gcloud run deploy svc --source ."],
+    ];
+    for (const [want, command] of cases) {
+      seedDeploy("20260103T000000Z-3.json", { schema: "loki.deploy/1", command });
+      const stop = captureOutput();
+      const code = await runRollback(["deploy"]);
+      const out = stop();
+      expect(code).toBe(0);
+      expect(out.stdout).toContain(want);
+      expect(out.stdout).not.toContain("No rollback command known");
+    }
   });
 
   it("prints nothing runnable when there is no record", async () => {
