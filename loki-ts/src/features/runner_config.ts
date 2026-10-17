@@ -6,13 +6,14 @@ import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
-export const RUNNER_CONFIGS: Spec[] = [
+// FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
+const RAW_CONFIGS: Spec[] = [
   { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
   { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.(cjs|mjs))$/ },
   { re: /(^|\/)package\.json$/, shared: PKG_KEYS },
-  { re: /(^|\/)(pnpm-workspace\.yaml|\.yarnrc\.yml)$/ }, // D101: YAML parsers disagree (Bun.YAML vs js-yaml 4), so any byte change caps, no parsed comparison
+  { re: /(^|\/)(pnpm-workspace\.yaml|\.yarnrc\.yml|\.npmrc)$/ }, // D101: YAML parsers disagree (Bun.YAML vs js-yaml 4), so any byte change caps, no parsed comparison
   { re: /(^|\/)patches\/|\.patch$/ }, // patchedDependencies targets: a changed patch rewrites installed dependency code
   { re: /(^|\/)pyproject\.toml$/, shared: /^\[tool\.pytest/ },
   { re: /(^|\/)setup\.cfg$/, shared: /^\[tool:pytest\]/ },
@@ -20,6 +21,7 @@ export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)Cargo\.toml$/, shared: "cargo" },
   { re: /(^|\/)[jt]sconfig(\.[\w-]+)?\.json$/, shared: "tsconfig" },
 ];
+export const RUNNER_CONFIGS: Spec[] = RAW_CONFIGS.map((s) => ({ ...s, re: new RegExp(s.re.source, "i") }));
 const DEP_MAPS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const, RUNNER_DEP = /^(jest|vitest|mocha|ava|c8|nyc|pytest[\w-]*|@jest\/.*|ts-jest|babel-jest)$/, LOCAL_SPEC = /^(file|link|npm|workspace):/;
 /** Dependency entries that can swap the runner or redirect code: runner-named keys, or any key resolved to a local or aliased spec. */
 const depGuard = (j: Record<string, unknown>): unknown[] => DEP_MAPS.map((m) => Object.entries((j[m] ?? {}) as Record<string, unknown>).filter(([k, v]) => RUNNER_DEP.test(k) || LOCAL_SPEC.test(String(v))));
@@ -74,6 +76,24 @@ export function testConfigChanged(repoDir: string, baseSha: string, changed: str
 }
 const REFS = /["']?\b(?:preload|setupFiles|setupFilesAfterEnv|setupFilesAfterFramework|globalSetup|globalTeardown)\b["']?\s*[:=]\s*(\[[^\]]*\]|"[^"\n]*"|'[^'\n]*')/g, MAPPER = /moduleNameMapper["']?\s*[:=]\s*\{([^}]*)\}/g, ROOT_DIR = /\brootDir["']?\s*[:=]\s*(?:["']([^"'\n]*)["'])?/, QUOTED = /["']([^"'\n]+)["']/g;
 const EXT = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json", ".py", "/index.ts", "/index.js"];
+/** FC-09w: pnpm patchedDependencies targets (package.json top-level or pnpm key; pnpm-workspace.yaml block or flow map), relative to the config's folder. Absolute targets are skipped. A malformed manifest is already failed closed by relevant(). */
+function patchedTargets(cfg: string, text: string): string[] {
+  const out: string[] = [], unq = (v: string): string => v.replace(/^["']|["']$/g, "");
+  if (/package\.json$/i.test(cfg)) {
+    try { const j = JSON.parse(text) as { pnpm?: { patchedDependencies?: unknown }; patchedDependencies?: unknown }; for (const m of [j.patchedDependencies, j.pnpm?.patchedDependencies]) if (m && typeof m === "object") for (const v of Object.values(m)) if (typeof v === "string") out.push(v); } catch { /* relevant() fails closed */ }
+  } else if (/pnpm-workspace\.yaml$/i.test(cfg)) {
+    let on = false;
+    for (const l of text.split("\n")) {
+      const h = /^patchedDependencies\s*:(.*)$/.exec(l);
+      if (h) { const rest = h[1]!.trim(); on = !rest || rest.startsWith("#"); for (const m of rest.matchAll(/:\s*("[^"]*"|'[^']*'|[^\s,}#]+)/g)) out.push(unq(m[1]!)); continue; }
+      if (!on) continue;
+      if (/^\S/.test(l)) { on = false; continue; }
+      const m = /^\s+(?:"[^"]*"|'[^']*'|[^\s:'"][^:]*?)\s*:\s*("[^"]*"|'[^']*'|[^\s#]+)/.exec(l);
+      if (m) out.push(unq(m[1]!));
+    }
+  }
+  return out.filter((t) => t && !t.startsWith("/"));
+}
 /** Repo-relative candidates for every file a config loads (preload, setupFiles, globalSetup, exact-file moduleNameMapper target). Wildcard mapper targets map a tree, not a mock, so they are skipped.
  *  Jest's rootDir is the folder holding the config; an explicit rootDir is unknowable here, so every plausible root is tried (fail closed). */
 function referenced(cfg: string, text: string): string[] {
@@ -81,7 +101,7 @@ function referenced(cfg: string, text: string): string[] {
   for (const m of text.matchAll(MAPPER)) for (const kv of m[1]!.split(",")) { const v = [...kv.matchAll(QUOTED)][1]?.[1]; if (v && !/[$*]/.test(v)) raw.push(v); }
   const dir = dirname(cfg), explicit = ROOT_DIR.exec(text), roots = [dir];
   if (explicit) roots.push("", ...(explicit[1] ? [join(dir, explicit[1])] : []));
-  return raw.flatMap((r) => r.startsWith("/") ? [normalize(r.slice(1))] : roots.map((root) => normalize(join(root, r.replace(/^<rootDir>\/?/, "")))));
+  return [...raw.flatMap((r) => r.startsWith("/") ? [normalize(r.slice(1))] : roots.map((root) => normalize(join(root, r.replace(/^<rootDir>\/?/, ""))))), ...patchedTargets(cfg, text).map((t) => normalize(join(dir, t)))];
 }
 const gitOut = (dir: string, args: string[], signal?: AbortSignal): string => safeGit(dir, args, { timeout: 20000, maxBuffer: 64 << 20, ...(signal ? { signal } : {}) }); const NON_SOURCE = /(^|\/)(tests?|__tests__|spec|\.loki)\/|\.(test|spec)\.[\w.]+$|(^|\/)test_[^/]*\.py$|_test\.(go|py)$/;
 /** FC-09 seal side: NOT PROVEN lines for every runner config, and every file one loads, that the run added, changed or deleted between base and head
@@ -104,7 +124,7 @@ export function runnerConfigNotes(repoDir: string, baseSha: string, head: string
         for (const c of referenced(cfg, t)) refs.add(EXT.map((e) => c + e).find((p) => tree.has(p)) ?? c);
       }
       const e = typeof spec.shared === "string" && spec.shared !== "tsconfig" ? "" : "{}";
-      if (!bad && !same) changedHere = !spec.shared || /conftest\.py$/.test(cfg) || relevant(spec.shared, texts[0] || e) !== relevant(spec.shared, texts[1] || e);
+      if (!bad && !same) changedHere = !spec.shared || /conftest\.py$/i.test(cfg) || relevant(spec.shared, texts[0] || e) !== relevant(spec.shared, texts[1] || e);
     } catch { bad = true; }
     if (bad) {
       const dir = dirname(cfg), loaded = [...ch].find((c) => c !== cfg && (dir === "." || c.startsWith(dir + "/")) && !NON_SOURCE.test(c));
