@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.28. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.29. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -44,10 +44,11 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki wiki generate` | Generate the wiki |
 | `loki wiki show` | Show a section |
 | `loki wiki ask` | Ask a question |
-| `loki control` | Control Plane (serve, backfill, prune, status) |
+| `loki control` | Control Plane (serve, backfill, prune, stop, status) |
 | `loki control serve` | Run the control plane and UI |
 | `loki control backfill` | Ship DIR/.loki/runs to the control plane |
 | `loki control prune` | Delete matching runs |
+| `loki control stop` | Stop the running control plane |
 | `loki control status` | Show control plane reachability |
 | `loki intent` | Show a past run's intent card |
 | `loki intent show` | Print the intent card and answer |

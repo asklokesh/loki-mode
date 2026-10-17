@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.29 (2026-10-17)
+
+### Added
+- Stop the control plane (TEN-UX-09): `loki control stop` stops the detached control plane using the PID in instance.json, only after its /health endpoint confirms it is the Loki control service. A mismatched identity or an invalid PID is refused and nothing is signalled.
+- Load-bearing proof (TEN-GATES-11): autonomy/lib/ablation.py reverts each changed unit, reruns the checks and restores the tree, so the proof marks a change load-bearing only when removing it turns a check red. Dead code is never sealed as load-bearing, and docs-only changes report not applicable. Moat property P8 now runs in the suite instead of pending.
+- Speed ratio (TEN-SPEED-01): the cost claim reports a paired elapsed time ratio (raw over loki) with the same bootstrap confidence interval as the cost ratio. It never changes the cost verdict.
+- Sizing knobs (TEN-COST-26): LOKI_E10_SMALL_MAX_CHARS sets the small-task brief length (default 600, unchanged) and LOKI_E10_SMALL_NO_RUNNER=1 lets a repo without a test runner still size as small.
+
+### Fixed
+- Session model downgrades (TEN-COST-16-F1): the L1 session downgrade list follows the same precedence as implement (router off, cascade first, then haiku-first), so the two paths no longer disagree on which model runs first.
+
 ## v11.17.28 (2026-10-17)
 
 ### Added
