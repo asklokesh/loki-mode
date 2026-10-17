@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daybook - a plain list of what needs doing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <p class="dateline" id="dateline"></p>
+      <h1>What needs doing</h1>
+    </header>
+
+    <div class="layout">
+      <section class="column" aria-labelledby="list-heading">
+        <h2 id="list-heading" class="visually-hidden">Your list</h2>
+
+        <form id="add-form" class="add" autocomplete="off">
+          <label class="visually-hidden" for="new-title">New item</label>
+          <input id="new-title" name="title" type="text" maxlength="200" placeholder="Write the next thing down" required>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </form>
+
+        <nav class="filters" aria-label="Filter items">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="active" aria-pressed="false">Open</button>
+          <button type="button" data-filter="done" aria-pressed="false">Done</button>
+        </nav>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <ul id="todo-list" class="todos"></ul>
+        <p id="empty" class="empty" hidden></p>
+
+        <footer class="footer">
+          <button type="button" id="clear-done" class="btn btn-quiet" hidden>Clear finished</button>
+        </footer>
+      </section>
+
+      <aside class="margin" aria-label="Summary">
+        <p class="margin-figure" id="open-count">0</p>
+        <p class="margin-note" id="open-note">items open</p>
+        <p class="margin-detail" id="done-note"></p>
+      </aside>
+    </div>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

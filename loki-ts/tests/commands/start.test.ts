@@ -24,6 +24,25 @@ const collect = (s: string) => {
 };
 
 describe("parseStartArgs (Bun start flag subset)", () => {
+  it("value flag swallows flag: a missing, empty or dash-leading value is exit 2 naming the flag", () => {
+    for (const f of ["--brief", "--prd", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model"]) {
+      for (const argv of [["./prd.md", f, "--yes"], ["./prd.md", f], ["./prd.md", f, ""], ["./prd.md", `${f}=`]]) {
+        errs.length = 0;
+        expect(parseStartArgs(argv, collect, () => {}, () => {})).toBe(2);
+        expect(errs.join("")).toContain(`start: ${f} needs a value`);
+      }
+    }
+    const r = parseStartArgs(["--brief=-x"], collect, () => {}, () => {});
+    expect(typeof r).toBe("object");
+    expect((r as { prdPath: string }).prdPath).toBe("-x");
+  });
+
+  it("value flag swallows flag: real CLI entry exits 2 without starting a run", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "./prd.md", "--brief", "--yes"], { cwd: tmpdir(), encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("start: --brief needs a value");
+  });
+
   it("no spec -> exit 2", () => {
     errs.length = 0;
     expect(parseStartArgs(["--max-iterations", "3"], collect)).toBe(2);
@@ -153,8 +172,8 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect((r as Exclude<typeof r, number>).budgetLimit).toBe(3.25);
   });
 
-  it("--prd and --brief override the positional spec", () => {
-    const r1 = parseStartArgs(["ignored.md", "--prd", "real.md"], collect);
+  it("--prd and --brief supply the spec when given alone", () => {
+    const r1 = parseStartArgs(["--prd", "real.md"], collect);
     expect((r1 as Exclude<typeof r1, number>).prdPath).toBe("real.md");
     const r2 = parseStartArgs(["--brief", "build a todo app"], collect);
     expect((r2 as Exclude<typeof r2, number>).prdPath).toBe("build a todo app");
@@ -470,6 +489,39 @@ describe("cap source line (TEN-COST-41)", () => {
   });
 });
 
+describe("deploy flags fail before build (TEN-DEPLOY-21)", () => {
+  const bad: Array<[string[], string]> = [
+    [["--deploy", "--destination", "prod"], "--destination"],
+    [["--deploy", "--destination=prod"], "--destination"],
+    [["--deploy", "--auto-rollback"], "--health-url"],
+    [["--deploy", "--health-match", "ok"], "--health-url"],
+    [["--deploy", "--canary", "--destination", "staging"], "--canary"],
+    [["--deploy", "--canary", "--destination=preview"], "--canary"],
+  ];
+  it("deploy flags fail before build: each invalid combination is named", () => {
+    for (const [a, flag] of bad) expect(deployFlagError(["p.md", ...a])).toContain(flag);
+  });
+  it("deploy flags fail before build: valid combinations unchanged", () => {
+    const h = ["--health-url", "https://x.io/h"];
+    expect(deployFlagError(["--deploy", "--destination", "staging"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--canary"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--canary", "--destination", "production"])).toBeNull();
+    expect(deployFlagError(["--deploy", ...h, "--auto-rollback", "--health-match", "ok"])).toBeNull();
+  });
+  it("deploy flags fail before build: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d21-"));
+    try {
+      for (const [a, flag] of bad) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(flag);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("deploy flag validation (TEN-DEPLOY-19)", () => {
   it("deploy flag validation: bad health-url and domain are named", () => {
     for (const u of ["notaurl", "ftp://x.io/h", "http://", "x.io/health", "javascript:alert(1)"]) {
@@ -526,5 +578,49 @@ describe("env-file missing (TEN-DEPLOY-20)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("conflicting spec sources (TEN-UX-32)", () => {
+  it("conflicting spec sources: different positional, --prd, --brief exit 2 naming all", () => {
+    const e: string[] = [];
+    const r = parseStartArgs(["./a.md", "--prd", "./b.md", "--brief", "x"], (s) => e.push(s), () => {}, () => {});
+    expect(r).toBe(2);
+    const m = e.join("");
+    for (const t of ["./a.md", "./b.md", '"x"', "--prd", "--brief"]) expect(m).toContain(t);
+  });
+  it("conflicting spec sources: single source and --prd equal to positional are unchanged", () => {
+    const noop = () => {};
+    expect(typeof parseStartArgs(["./a.md"], noop, noop, noop)).toBe("object");
+    expect(typeof parseStartArgs(["--brief", "x"], noop, noop, noop)).toBe("object");
+    expect(typeof parseStartArgs(["./a.md", "--prd", "./a.md"], noop, noop, noop)).toBe("object");
+  });
+  it("conflicting spec sources: real entry (cli.ts start) exits 2", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--brief", "other thing"], { encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("conflicting spec sources");
+  });
+});
+
+describe("conflicting budget flags (TEN-COST-43)", () => {
+  it("conflicting budget flags: differing values exit 2 naming both flags", () => {
+    const e: string[] = [];
+    const r = parseStartArgs(["./a.md", "--budget-limit", "5", "--budget", "50"], (s) => e.push(s), () => {}, () => {});
+    expect(r).toBe(2);
+    const m = e.join("");
+    expect(m).toContain("--budget-limit");
+    expect(m).toContain("--budget 50");
+  });
+  it("conflicting budget flags: equal values and a single flag unchanged", () => {
+    const noop = () => {};
+    const a = parseStartArgs(["./a.md", "--budget-limit", "5", "--budget", "5"], noop, noop, noop);
+    expect(typeof a === "object" && a.budgetLimit).toBe(5);
+    const b = parseStartArgs(["./a.md", "--budget", "7"], noop, noop, noop);
+    expect(typeof b === "object" && b.budgetLimit).toBe(7);
+  });
+  it("conflicting budget flags: real entry (cli.ts start) exits 2", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--budget-limit", "5", "--budget", "50"], { encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("conflicting budget flags");
   });
 });

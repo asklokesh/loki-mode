@@ -52,6 +52,9 @@ const VALUE_FLAGS = new Set([
   "--cost", // TEN-COST-01: cost profile (lean|off); also LOKI_COST_PROFILE
 ]);
 
+// TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model"]);
+
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
 const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
@@ -235,6 +238,14 @@ export function parseStartArgs(
         continue;
       }
       if ((specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS).has(name)) continue;
+      if (TEXT_VALUE_FLAGS.has(name)) {
+        const inline = a.includes("=");
+        const v = inline ? a.slice(a.indexOf("=") + 1) : args[i + 1];
+        if (v === undefined || v === "" || (!inline && v.startsWith("-"))) {
+          err(`start: ${name} needs a value, got ${v === undefined ? "nothing" : v === "" ? "an empty value" : `'${v}'`} (use ${name}=VALUE for a dash-leading value)\n`);
+          return 2;
+        }
+      }
       // value-flag: skip its value token (unless inline --flag=value)
       if ((specMode ? SPEC_VALUE_FLAGS : attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS).has(name) && !a.includes("=")) i++;
       continue;
@@ -250,6 +261,15 @@ export function parseStartArgs(
   const specFirst = args.includes("--spec-first");
   if (specFlag !== undefined && specFirst) {
     err("start: --spec and --spec-first cannot be combined\n");
+    return 2;
+  }
+  // TEN-UX-32: two or more different spec sources are refused, never silently dropped.
+  const sources: Array<[string, string]> = [];
+  if (spec !== undefined) sources.push(["positional spec", spec]);
+  if (prdFlag !== undefined) sources.push(["--prd", prdFlag]);
+  if (briefFlag !== undefined) sources.push(["--brief", briefFlag]);
+  if (new Set(sources.map(([, v]) => v)).size > 1) {
+    err(`start: conflicting spec sources, pick one: ${sources.map(([n, v]) => `${n} ${JSON.stringify(v)}`).join(", ")}\n`);
     return 2;
   }
   const resolvedSpec = prdFlag ?? briefFlag ?? spec ?? (specFlag !== undefined ? "" : undefined);
@@ -319,7 +339,14 @@ export function parseStartArgs(
   }
 
   // --budget is an alias of --budget-limit (bash divergence closed).
-  const budget = posNum(argVal(args, "--budget-limit") ?? argVal(args, "--budget"));
+  // TEN-COST-43: both spellings with different values is an error, never first-wins.
+  const bl = argVal(args, "--budget-limit");
+  const bb = argVal(args, "--budget");
+  if (bl !== undefined && bb !== undefined && posNum(bl) !== posNum(bb)) {
+    err(`start: conflicting budget flags, pick one: --budget-limit ${bl}, --budget ${bb}\n`);
+    return 2;
+  }
+  const budget = posNum(bl ?? bb);
 
   let attempts: number | undefined;
   if (attemptsMode) {
@@ -445,6 +472,12 @@ export function deployFlagError(args: readonly string[]): string | null {
     }
     if (!ok) return `start: --env-file '${envFile}' does not exist or is not a readable file\n`;
   }
+  // TEN-DEPLOY-21: mirror loki deploy's destination enum, health-url requirement and canary rule before the paid build
+  const dest = val("--destination");
+  if (dest !== undefined && !["preview", "staging", "production"].includes(dest)) return `start: --destination must be one of: preview, staging, production, got '${dest}'\n`;
+  if (args.includes("--auto-rollback") && health === undefined) return "start: --auto-rollback requires --health-url (no health signal, no rollback)\n";
+  if (val("--health-match") !== undefined && health === undefined) return "start: --health-match requires --health-url\n";
+  if (args.includes("--canary") && dest !== undefined && dest !== "production") return "start: --canary only applies to --destination production\n";
   return null;
 }
 
