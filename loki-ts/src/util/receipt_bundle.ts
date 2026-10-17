@@ -1,7 +1,7 @@
 // TEN-ADOPTION-02: package a sealed run as a self-contained directory a third party can verify offline.
 import { createPublicKey } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, normalize } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
 import { kidOf, loadSigningKey } from "./receipt_signer.ts";
 
@@ -20,11 +20,33 @@ export async function buildReceiptBundle(runDir: string, outDir: string): Promis
   const v = await verifyReceipt(receiptPath, { pubkey: pub });
   if (v.verdict !== "VERIFIED") return { ok: false, error: `receipt is ${v.verdict}${v.reasons.length ? `: ${v.reasons.join("; ")}` : ""}; only a locally VERIFIED signed receipt can be bundled` };
   if (!existsSync(eventsPath)) return { ok: false, error: `events.jsonl missing in ${runDir}` };
+  if (existsSync(outDir) && readdirSync(outDir).length > 0) return { ok: false, error: `${outDir} already exists and is not empty; refusing to overwrite` };
   const { kty, crv, x } = pub.export({ format: "jwk" });
-  mkdirSync(outDir, { recursive: true });
-  copyFileSync(receiptPath, join(outDir, "receipt.json"));
-  copyFileSync(eventsPath, join(outDir, "events.jsonl"));
-  writeFileSync(join(outDir, "pubkey.jwk"), `${JSON.stringify({ kty, crv, x, kid, alg: "EdDSA", use: "sig" })}\n`);
-  writeFileSync(join(outDir, "VERIFY.md"), `# Verify this Loki receipt\n\nRun from this directory. No Loki install or account is needed.\n\n\`\`\`\n${VERIFY_COMMAND}\n\`\`\`\n\nExpected: VERIFIED (exit 0). Key id: ${kid}\n\nreceipt.json and events.jsonl must stay together: verify checks the signed event log beside the receipt.\n`);
-  return { ok: true, outDir, kid };
+  const stage = `${outDir}.tmp-${process.pid}`;
+  rmSync(stage, { recursive: true, force: true });
+  mkdirSync(stage, { recursive: true });
+  try {
+    copyFileSync(receiptPath, join(stage, "receipt.json"));
+    copyFileSync(eventsPath, join(stage, "events.jsonl"));
+    // Files verify reads beside the receipt: evidence screenshots and the group/ unit tree.
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as { evidence_screens?: { path?: unknown }[] };
+    for (const s of Array.isArray(receipt.evidence_screens) ? receipt.evidence_screens : []) {
+      if (typeof s?.path !== "string") continue;
+      const rel = normalize(s.path);
+      mkdirSync(dirname(join(stage, rel)), { recursive: true });
+      copyFileSync(join(runDir, rel), join(stage, rel));
+    }
+    if (existsSync(join(runDir, "group"))) cpSync(join(runDir, "group"), join(stage, "group"), { recursive: true });
+    writeFileSync(join(stage, "pubkey.jwk"), `${JSON.stringify({ kty, crv, x, kid, alg: "EdDSA", use: "sig" })}\n`);
+    writeFileSync(join(stage, "VERIFY.md"), `# Verify this Loki receipt\n\nRun from this directory. No Loki install or account is needed.\n\n\`\`\`\n${VERIFY_COMMAND}\n\`\`\`\n\nExpected: VERIFIED (exit 0). Key id: ${kid}\n\nreceipt.json and events.jsonl must stay together: verify checks the signed event log beside the receipt.\n`);
+    const again = await verifyReceipt(join(stage, "receipt.json"), { pubkey: pub });
+    if (again.verdict !== "VERIFIED") throw new Error(`bundle does not verify on its own: ${again.verdict}${again.reasons.length ? `: ${again.reasons.join("; ")}` : ""}`);
+    if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true }); // empty dir only, checked above
+    mkdirSync(dirname(outDir), { recursive: true });
+    renameSync(stage, outDir);
+    return { ok: true, outDir, kid };
+  } catch (e) {
+    rmSync(stage, { recursive: true, force: true });
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
