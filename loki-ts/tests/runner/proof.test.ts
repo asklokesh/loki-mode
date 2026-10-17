@@ -58,6 +58,7 @@ function makeCtx(overrides: Partial<RunnerContext> = {}): RunnerContext {
 }
 
 beforeEach(() => {
+  delete process.env["_LOKI_RUN_START_SHA"];
   scratch = mkdtempSync(join(tmpdir(), "loki-runner-proof-"));
   mkdirSync(join(scratch, ".loki"), { recursive: true });
 });
@@ -65,6 +66,8 @@ beforeEach(() => {
 afterEach(() => {
   if (scratch && existsSync(scratch)) rmSync(scratch, { recursive: true, force: true });
   delete process.env["LOKI_PROOF"];
+  delete process.env["_LOKI_RUN_START_SHA"];
+  delete process.env["LOKI_PROOF_ABLATION"];
 });
 
 describe("maybeGenerateProof (runner proof-of-run hook)", () => {
@@ -157,5 +160,145 @@ describe("maybeGenerateProof (runner proof-of-run hook)", () => {
       }
       expect(called).toBe(0);
     });
+  });
+
+  // TEN-GATES-12: the proof path runs ablation.py before the generator so
+  // quality/ablation.json exists and reaches facts.ablation on real runs.
+  describe("ablation before the proof (TEN-GATES-12)", () => {
+    const noProbe = async () => ({});
+    const ablationFile = () => join(scratch, ".loki", "quality", "ablation.json");
+    const readAblation = () => JSON.parse(readFileSync(ablationFile(), "utf8")) as Record<string, unknown>;
+    function proofFacts(): Record<string, unknown> {
+      const dir = join(scratch, ".loki", "proofs");
+      const id = readdirSync(dir)[0] as string;
+      return JSON.parse(readFileSync(join(dir, id, "proof.json"), "utf8")).facts;
+    }
+    function git(...args: string[]): string {
+      const r = Bun.spawnSync(["git", "-C", scratch, ...args], { stdout: "pipe", stderr: "pipe" });
+      if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+      return r.stdout.toString().trim();
+    }
+    // A repo whose recorded check exercises a changed function: f() returns 2
+    // after the change, the check asserts 2, so no-oping f fails the check.
+    function loadBearingRepo(): string {
+      writeFileSync(join(scratch, ".gitignore"), ".loki/\n");
+      writeFileSync(join(scratch, "m.py"), "def f():\n    return 1\n");
+      git("init", "-q");
+      git("add", ".gitignore", "m.py");
+      git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      writeFileSync(join(scratch, "m.py"), "def f():\n    return 2\n");
+      writeTestResults();
+      return base;
+    }
+    function writeTestResults(): void {
+      mkdirSync(join(scratch, ".loki", "quality"), { recursive: true });
+      writeFileSync(join(scratch, ".loki", "quality", "test-results.json"), JSON.stringify({
+        command: "python3 -c \"import m, sys; sys.exit(0 if m.f() == 2 else 1)\"",
+        exit_code: 0,
+      }));
+    }
+
+    it("load-bearing change: ablation.json is load_bearing and lands in facts.ablation", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe })).toBe(true);
+      expect(readAblation()["status"]).toBe("load_bearing");
+      expect((proofFacts()["ablation"] as Record<string, unknown>)["status"]).toBe("load_bearing");
+      // ablation.py restored the working tree byte-for-byte.
+      expect(readFileSync(join(scratch, "m.py"), "utf8")).toBe("def f():\n    return 2\n");
+    });
+
+    it("reads the base from .loki/state/start-sha when the env var is absent", async () => {
+      const base = loadBearingRepo();
+      mkdirSync(join(scratch, ".loki", "state"), { recursive: true });
+      writeFileSync(join(scratch, ".loki", "state", "start-sha"), base + "\n");
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe })).toBe(true);
+      expect(readAblation()["status"]).toBe("load_bearing");
+    });
+
+    it("no run start sha: records not_applicable, proof still generated", async () => {
+      loadBearingRepo();
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe })).toBe(true);
+      const rec = readAblation();
+      expect(rec["status"]).toBe("not_applicable");
+      expect(String(rec["reason"])).toContain("no run start sha");
+      expect((proofFacts()["ablation"] as Record<string, unknown>)["status"]).toBe("not_applicable");
+    });
+
+    it("ablation script failure (exit 2, no record) is recorded not_applicable and never blocks the proof", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      const bad = join(scratch, "bad_ablation.py");
+      writeFileSync(bad, "import sys\nsys.stderr.write('boom\\n')\nsys.exit(2)\n");
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe, ablationScript: bad })).toBe(true);
+      const rec = readAblation();
+      expect(rec["status"]).toBe("not_applicable");
+      expect(String(rec["reason"])).toContain("ablation exited 2: boom");
+      expect(existsSync(join(scratch, ".loki", "proofs"))).toBe(true);
+    });
+
+    it("a stale record from an earlier run is never copied into this proof", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      writeFileSync(ablationFile(), JSON.stringify({ status: "load_bearing", reason: "stale" }));
+      const silent = join(scratch, "silent_ablation.py");
+      writeFileSync(silent, "import sys\nsys.exit(0)\n");
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe, ablationScript: silent })).toBe(true);
+      const rec = readAblation();
+      expect(rec["status"]).toBe("not_applicable");
+      expect(rec["reason"]).not.toBe("stale");
+    });
+
+    it("a record with an unknown status (case differs) is replaced by not_applicable", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      const odd = join(scratch, "odd_ablation.py");
+      writeFileSync(odd, `import json\nopen(${JSON.stringify(ablationFile())}, "w").write(json.dumps({"status": "LOAD_BEARING"}))\n`);
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe, ablationScript: odd })).toBe(true);
+      const rec = readAblation();
+      expect(rec["status"]).toBe("not_applicable");
+      expect(String(rec["reason"])).toContain("no valid status (LOAD_BEARING)");
+    });
+
+    it("LOKI_PROOF_ABLATION=0 skips ablation and leaves no record", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      process.env["LOKI_PROOF_ABLATION"] = "0";
+      expect(await maybeGenerateProof(makeCtx(), { probe: noProbe })).toBe(true);
+      expect(existsSync(ablationFile())).toBe(false);
+    });
+
+    it("real entry path: runAutonomous (loki start runner) leaves a load_bearing ablation.json", async () => {
+      process.env["_LOKI_RUN_START_SHA"] = loadBearingRepo();
+      const savedLokiDir = process.env["LOKI_DIR"];
+      const savedProbe = process.env["LOKI_PROOF_APP_PROBE"];
+      delete process.env["LOKI_DIR"];
+      process.env["LOKI_PROOF_APP_PROBE"] = "0";
+      let checks = 0;
+      let invoked = 0;
+      try {
+        const { runAutonomous } = await import("../../src/runner/autonomous.ts");
+        const code = await runAutonomous({
+          cwd: scratch, provider: "claude", autonomyMode: "checkpoint", maxRetries: 3, maxIterations: 3,
+          baseWaitSeconds: 0, maxWaitSeconds: 0, sessionModel: "sonnet",
+          loggerStream: { write: () => true } as unknown as NodeJS.WritableStream,
+          clock: { now: () => Date.now(), sleep: async () => {} },
+          // One iteration, then STOP: the runner clears the previous session's
+          // test-results.json at start, so the iteration records this run's
+          // passing check, and the finally hook generates the proof.
+          signals: { checkHumanIntervention: async () => (checks++ === 0 ? 0 : 2), isBudgetExceeded: async () => false },
+          providerOverride: {
+            invoke: async (call: { iterationOutputPath?: string }) => {
+              invoked++;
+              writeTestResults();
+              return { exitCode: 0, capturedOutputPath: call.iterationOutputPath };
+            },
+          } as never,
+        });
+        expect(code).toBe(0);
+      } finally {
+        if (savedLokiDir === undefined) delete process.env["LOKI_DIR"]; else process.env["LOKI_DIR"] = savedLokiDir;
+        if (savedProbe === undefined) delete process.env["LOKI_PROOF_APP_PROBE"]; else process.env["LOKI_PROOF_APP_PROBE"] = savedProbe;
+      }
+      expect(invoked).toBe(1);
+      expect(readAblation()["status"]).toBe("load_bearing");
+      expect((proofFacts()["ablation"] as Record<string, unknown>)["status"]).toBe("load_bearing");
+    }, 60_000);
   });
 });
