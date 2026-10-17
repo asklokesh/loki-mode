@@ -399,11 +399,13 @@ while read -r _lref _lsha _rref _rsha; do
         _full_config_arg=(--config "$_full_config_file")
     fi
 
-    echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts\" ($_lref, every pushed path)"
+    # Same merge-diff mode as scripts/security-audit-gitleaks.sh (CI); a guard in
+    # tests/test-security-audit-config.sh keeps them from diverging.
+    echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts --diff-merges=first-parent\" ($_lref, every pushed path)"
     # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array is
     # an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"} is the
     # portable guard.
-    if _full_out="$(${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
+    if _full_out="$(${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts --diff-merges=first-parent" \
             ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
             --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
         _full_gl_rc=0
