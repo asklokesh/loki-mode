@@ -115,3 +115,34 @@ describe("loki queue", () => {
     expect(h.out.join("")).toContain("governor unreadable (timeout); proceeded");
   });
 });
+
+describe("loki queue list columns (TEN-UX-14)", () => {
+  test("prints id, age, status columns and an N queued footer", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#3", "o/r#10"], h.inject);
+    const later = { ...h.inject, now: () => new Date("2026-10-08T05:00:00.000Z") };
+    h.out.length = 0;
+    expect(await runQueue(["list"], later)).toBe(0);
+    const lines = h.out.join("").split("\n");
+    expect(lines[0]).toMatch(/^ID\s+AGE\s+STATUS$/);
+    expect(lines[1]).toMatch(/^o\/r#3\s+2h\s+queued$/);
+    expect(lines[2]).toMatch(/^o\/r#10\s+2h\s+queued$/);
+    expect(lines[3]).toBe("2 queued");
+  });
+
+  test("age uses seconds, minutes and days units", async () => {
+    const { formatAge } = await import("../../src/commands/queue.ts");
+    const n = new Date("2026-10-08T03:00:00.000Z");
+    expect(formatAge("2026-10-08T02:59:30.000Z", n)).toBe("30s");
+    expect(formatAge("2026-10-08T02:57:00.000Z", n)).toBe("3m");
+    expect(formatAge("2026-10-05T03:00:00.000Z", n)).toBe("3d");
+    expect(formatAge("garbage", n)).toBe("unknown");
+  });
+
+  test("empty queue prints a next step", async () => {
+    const h = harness({});
+    await runQueue(["list"], h.inject);
+    expect(h.out.join("")).toContain("queue is empty");
+    expect(h.out.join("")).toContain("loki queue add");
+  });
+});
