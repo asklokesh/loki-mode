@@ -606,10 +606,12 @@ def scan(target_dir, secrets_everywhere=False):
         raise ValueError("not a directory: %s" % target_dir)
 
     findings = []
+    files_scanned = 0
     for abs_path, rel_path in _iter_files(target_dir):
         lines = _read_lines(abs_path)
         if lines is None:
             continue
+        files_scanned += 1
         findings.extend(_scan_file(rel_path, lines, secrets_everywhere))
 
     # deterministic ordering: by file, then line, then rule
@@ -625,6 +627,7 @@ def scan(target_dir, secrets_everywhere=False):
         "summary": {
             "total": len(findings),
             "by_severity": by_severity,
+            "files_scanned": files_scanned,
         },
     }
 

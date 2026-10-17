@@ -23,6 +23,10 @@ export interface SecureScanResult {
   ok: boolean;
   findings: SecureScanFinding[];
   error?: string;
+  /** Files the scanner actually read (summary.files_scanned); absent when the scanner did not report it. */
+  filesScanned?: number;
+  /** True when the scanner reported zero scanned files: no evidence either way, never a clean pass (ok is false). */
+  notRun?: boolean;
 }
 
 export interface SecureScanOpts {
@@ -74,11 +78,16 @@ export async function runSecureScan(targetDir: string, opts: SecureScanOpts = {}
     // Exit code and payload must agree; a mismatch is a broken scanner.
     if ((res.exitCode === 1) !== (findings.length > 0)) return fail(`secure-scan exit ${res.exitCode} disagrees with ${findings.length} findings`);
     // A share bundle already applies the token rule everywhere; no diff to scan.
-    if (opts.secretsEverywhere || opts.diffBase === false) return { ok: true, findings };
+    const summary = obj.summary && typeof obj.summary === "object" ? (obj.summary as Record<string, unknown>) : undefined;
+    const filesScanned = typeof summary?.["files_scanned"] === "number" ? (summary["files_scanned"] as number) : undefined;
+    // Zero files read is no evidence: not_run (ok:false, so every consumer reports inconclusive), never a clean pass.
+    if (filesScanned === 0 && findings.length === 0) return { ok: false, findings: [], error: "secure-scan scanned 0 files (not_run)", filesScanned: 0, notRun: true };
+    const meta = filesScanned === undefined ? {} : { filesScanned };
+    if (opts.secretsEverywhere || opts.diffBase === false) return { ok: true, findings, ...meta };
     const added = await scanAddedLines(targetDir, { ...opts, scriptPath: script, timeoutMs });
     if (!added.ok) return added;
     const seen = new Set(findings.map((f) => `${f.file}|${f.line}`));
-    return { ok: true, findings: [...findings, ...added.findings.filter((f) => !seen.has(`${f.file}|${f.line}`))] };
+    return { ok: true, findings: [...findings, ...added.findings.filter((f) => !seen.has(`${f.file}|${f.line}`))], ...meta };
   }
   if (res.exitCode !== 0 && res.exitCode !== 1 && res.exitCode !== 2 && elapsed >= timeoutMs) {
     return fail(`secure-scan timed out after ${timeoutMs}ms`);
