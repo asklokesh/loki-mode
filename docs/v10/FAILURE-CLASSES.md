@@ -1097,3 +1097,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: swept 24 bash commands with `<cmd> frobnicate`; only config and api (fixed here) returned 0, plus `loki voice`, a stub with no subcommands that prints a planned-feature notice (left as is).
 - Mechanism: explicit help|--help|-h arm, default arm prints `loki <cmd>: unknown subcommand` to stderr and returns 2.
 - Fixture: tests/test-help-discoverability.sh; restoring the old default arm turns the frobnicate assertions red.
+
+## FC-TEN-STABILITY-50 A credentialed push/pr-ready child is spawned with spawnSync and no timeout, so one hung script blocks the run (UNBOUNDED-PUSH-CHILD)
+- User-visible vs raw: user-visible. A hung engine10-push.sh froze the PR stage with no failure surfaced.
+- Law broken: every child process is bounded and a timeout is a named stage failure.
+- Sibling sweep: pr.ts push-pr, push-mr, pr-ready and status now share spawnBounded (LOKI_PR_PUSH_TIMEOUT_MS, default 50s). Still unbounded: src/util/pr_lessons.ts:348, src/runner/attempts.ts:376, src/engine10/supervisor.ts:374.
+- One shared mechanism: spawnBounded and failReason in loki-ts/src/engine10/stages/pr.ts.
+- Regression fixture: loki-ts/tests/engine10/pr.test.ts "hung push script".

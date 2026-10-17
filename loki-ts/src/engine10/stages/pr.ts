@@ -52,6 +52,10 @@ export function toPushShellArgs(args: PushArgs): string[] {
   const flag = built.pop(); if (flag === "1") built.push("--draft");
   return built;
 }
+/** TEN-STABILITY-50: every push/pr-ready/status child is bounded so one hung script cannot block the run. LOKI_PR_PUSH_TIMEOUT_MS overrides (default 50s, inside the 60s stage limit). */
+export function prChildTimeoutMs(environ: NodeJS.ProcessEnv = process.env): number { const n = Number(environ.LOKI_PR_PUSH_TIMEOUT_MS); return Number.isFinite(n) && n >= 100 ? Math.floor(n) : 50_000; }
+function spawnBounded(args: string[], env: NodeJS.ProcessEnv) { return spawnSync("bash", args, { env, encoding: "utf8", timeout: prChildTimeoutMs(), killSignal: "SIGKILL" }); }
+function failReason(script: string, mode: string, r: ReturnType<typeof spawnBounded>): string { const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"; return timedOut ? `${script} ${mode} timed out after ${prChildTimeoutMs()}ms (hung script killed)` : `${script} ${mode} failed (exit ${r.status}): ${(r.stderr ?? "").trim()}`; }
 function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   if (resolvePrAuthor(repoDir) === "bot") {
@@ -65,20 +69,20 @@ export type PushPrResult = { ok: true; url: string; existing: boolean | null; lo
 export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string; gitlabScriptPath?: string; env?: NodeJS.ProcessEnv }): PushPrResult {
   if (isGitlabOrigin(a.pinnedOrigin)) return runPushMr(a); const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
-  const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, ...args], { env, encoding: "utf8" });
-  if (r.status !== 0) return { ok: false, reason: `engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
+  const r = spawnBounded([a.scriptPath ?? DEFAULT_PUSH_SH, ...args], env);
+  if (r.status !== 0) return { ok: false, reason: failReason("engine10-push.sh", "push-pr", r) };
   const url = lastNonEmptyLine(r.stdout ?? ""), markers = (r.stdout ?? "").split("\n").map((l) => l.trim());
   // E-41: for a local bare origin (the eval harness) push-pr prints exactly local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
   const localOk = a.pinnedOrigin.startsWith("/") && !a.pinnedOrigin.includes(":") && url === `local://${a.pinnedOrigin}#${a.branch}`;
   if (!localOk && !PR_URL_RE.test(url)) return { ok: false, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
   return { ok: true, url, localOk, existing: markers.includes("reused") ? true : markers.includes("created") ? false : null }; // null = unknown, never fabricated
 }
-function runPushMr(a: Parameters<typeof runPushPr>[0]): PushPrResult { if (a.base) return { ok: false, reason: "engine10-push-gitlab.sh push-mr has no --base: refusing a stacked push to a gitlab.com origin" }; const r = spawnSync("bash", [a.gitlabScriptPath ?? DEFAULT_PUSH_GITLAB_SH, "push-mr", a.repoDir, a.branch, a.title, a.bodyFile, ...(a.draft ? ["--draft"] : [])], { env: a.env ?? pushEnv(a.repoDir, a.pinnedOrigin), encoding: "utf8" }); if (r.status !== 0) return { ok: false, reason: `engine10-push-gitlab.sh push-mr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` }; const url = lastNonEmptyLine(r.stdout ?? ""); return MR_URL_RE.test(url) ? { ok: true, url, localOk: false, existing: null } : { ok: false, reason: `engine10-push-gitlab.sh push-mr printed no valid MR URL (got: ${url || "(empty)"})` }; } // TEN-ADOPTION-09: runPushPr's GitLab twin. push-mr has no --base (refused, never dropped) and prints only the MR URL, so existing stays null (never fabricated).
+function runPushMr(a: Parameters<typeof runPushPr>[0]): PushPrResult { if (a.base) return { ok: false, reason: "engine10-push-gitlab.sh push-mr has no --base: refusing a stacked push to a gitlab.com origin" }; const r = spawnBounded([a.gitlabScriptPath ?? DEFAULT_PUSH_GITLAB_SH, "push-mr", a.repoDir, a.branch, a.title, a.bodyFile, ...(a.draft ? ["--draft"] : [])], a.env ?? pushEnv(a.repoDir, a.pinnedOrigin)); if (r.status !== 0) return { ok: false, reason: failReason("engine10-push-gitlab.sh", "push-mr", r) }; const url = lastNonEmptyLine(r.stdout ?? ""); return MR_URL_RE.test(url) ? { ok: true, url, localOk: false, existing: null } : { ok: false, reason: `engine10-push-gitlab.sh push-mr printed no valid MR URL (got: ${url || "(empty)"})` }; } // TEN-ADOPTION-09: runPushPr's GitLab twin. push-mr has no --base (refused, never dropped) and prints only the MR URL, so existing stays null (never fabricated).
 /** M-21 N3: replace a reused PR's body and mark it ready through engine10-push.sh pr-ready (same pinned origin and token scoping as push-pr). */
 export function runPrReady(a: { repoDir: string; branch: string; bodyFile: string; url: string; pinnedOrigin: string; scriptPath?: string; env?: NodeJS.ProcessEnv }): { ok: true } | { ok: false; reason: string } {
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
-  const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, "pr-ready", a.repoDir, a.branch, a.bodyFile, a.url], { env, encoding: "utf8" });
-  if (r.status !== 0) return { ok: false, reason: `engine10-push.sh pr-ready failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
+  const r = spawnBounded([a.scriptPath ?? DEFAULT_PUSH_SH, "pr-ready", a.repoDir, a.branch, a.bodyFile, a.url], env);
+  if (r.status !== 0) return { ok: false, reason: failReason("engine10-push.sh", "pr-ready", r) };
   return { ok: true };
 }
 function briefSection(ctx: PrContext): string {
@@ -126,7 +130,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
     notProvenOut.push("commit status loki/deep-verify not set (local origin)");
   } else if (isGitlabOrigin(pinnedOrigin)) { notProvenOut.push("commit status loki/deep-verify not set (gitlab origin)"); } else if (SHA_RE.test(headSha)) { // engine10-push-gitlab.sh has no status mode; a GitLab sha never reaches the GitHub status call
     const statusShellArgs = pushArgv({ cmd: "status", sha: headSha, state: "pending", description: "Loki 10 deep verify pending" });
-    const statusResult = spawnSync("bash", [scriptPath, ...statusShellArgs], { env, encoding: "utf8" });
+    const statusResult = spawnBounded([scriptPath, ...statusShellArgs], env);
     // Non-fatal: the PR is already open. A failed status call is recorded, not a red PR stage.
     if (statusResult.status !== 0) notProvenOut.push("commit status loki/deep-verify not set");
   } else {
