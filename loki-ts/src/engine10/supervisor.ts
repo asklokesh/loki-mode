@@ -4,7 +4,7 @@
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
-import { redactDeep } from "../util/redact.ts"; import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
+import { redactEventData } from "../util/redact.ts"; import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
@@ -99,8 +99,8 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
   private implementOpen = false; // P12-07j: implement started and not yet settled; the only window a deferred already-done hit can be genuine
-  append(type: string, stage: StageName | null, data: Record<string, unknown>, sealFields = false): EventEnvelope {
-    const e = this.log.append(type, stage, (sealFields ? data : redactDeep(data)) as Record<string, unknown>); // EL-FC08b: redact before the line is written, hashed and sealed, so the CP hashes the same bytes
+  append(type: string, stage: StageName | null, data: Record<string, unknown>): EventEnvelope {
+    const e = this.log.append(type, stage, redactEventData(type, data) as Record<string, unknown>); // EL-FC08b: redact before the line is written, hashed and sealed, so the CP hashes the same bytes; seal crypto fields are exempt by type
     this.hash.update(JSON.stringify(e) + "\n");
     if (stage === "implement") { if (type === "stage.started") this.implementOpen = true; else if (type === "stage.completed" || type === "stage.failed" || type === "stage.skipped") this.implementOpen = false; }
     return e;
@@ -125,7 +125,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     const key = loadSigningKey(false);
     if (!key) return;
     const sha = this.hash.copy().digest("hex");
-    this.append("log.sealed", null, { kid: kidOf(createPublicKey(key)), events_sha256: sha, tampered: this.tampered, sig: sign(null, Buffer.from(`${sha}:${this.tampered}`), key).toString("base64url") }, true); // supervisor-built crypto fields are base64url and can match a token rule; redacting them forges TAMPERED
+    this.append("log.sealed", null, { kid: kidOf(createPublicKey(key)), events_sha256: sha, tampered: this.tampered, sig: sign(null, Buffer.from(`${sha}:${this.tampered}`), key).toString("base64url") });
   }
   verify(): boolean { // re-hashes the file; on mismatch (once) emits tamper.detected; returns true when intact
     if (this.tampered) return false;

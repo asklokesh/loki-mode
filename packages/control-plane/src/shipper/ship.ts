@@ -6,7 +6,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
-import { redactDeep } from "../../../../loki-ts/src/util/redact.ts";
+import { redactEnvelope } from "../../../../loki-ts/src/util/redact.ts";
 
 export const BATCH = 200;
 const MAX_BYTES = 800_000; // the service rejects a body over 1 MB
@@ -18,7 +18,7 @@ export function sourceId(repoDir: string): string {
   return createHash("sha256").update(`${hostname()}\0${real}`).digest("hex").slice(0, 16);
 }
 
-export const redactEvent = (e: EventEnvelope): EventEnvelope => ({ ...e, data: redactDeep(e.data) as EventEnvelope["data"] });
+export const redactEvent = (e: EventEnvelope): EventEnvelope => redactEnvelope(e); // Q17-05b: the same redaction the engine wrote with, so it is a no-op on an engine-written line
 
 /** Backoff 1, 2, 4 ... 60 s with up to 25% jitter. */
 export const backoffMs = (failures: number, rnd: () => number = Math.random): number =>

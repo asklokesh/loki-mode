@@ -2,13 +2,14 @@
 // B1 appended verdict, B2 unknown/mismatched kid, B3 no keys, S5 redaction, plus signed parity against the engine's verifyReceipt.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash, createPrivateKey, createPublicKey, sign, type KeyObject } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { kidOf as engineKidOf } from "../../../../loki-ts/src/engine10/stages/seal.ts";
 import { computeReceiptHash, verifyReceipt } from "../../../../loki-ts/src/engine10/verify_cmd.ts";
 import { redactDeep } from "../../../../loki-ts/src/util/redact.ts";
-import { redactEvent } from "../../src/shipper/ship.ts";
+import { redactEvent, shipRun } from "../../src/shipper/ship.ts";
+import { SupervisorLog } from "../../../../loki-ts/src/engine10/supervisor.ts";
 import { createApp } from "../../src/server/app.ts";
 import { effectiveVerdict, kidOf, UNCHECKED_SIG, verifyRunIntegrity } from "../../src/server/integrity.ts";
 
@@ -394,4 +395,63 @@ test("local key: LOKI_CP_RECEIPT_PUBKEYS is merged with the local key, so a team
     expect(local.effective_verdict).toBe("VERIFIED");
     expect(remote.effective_verdict).toBe("VERIFIED");
   });
+});
+
+// --- Q17-05b round 3: seal crypto fields survive every redaction layer (engine writer, shipper, ingest) ---
+const TOKEN_RULE = /AI[a-zA-Z0-9_-]{30,}/; // GOOGLE_KEY: matches about 1.7% of base64url log.sealed signatures
+/** A real engine run (SupervisorLog writes events.jsonl and seals it) shipped by the real shipper into the real /v1/ingest; returns the run detail. */
+async function engineShipIngest(signer: KeyObject, id: string, accept: (seal: any, sealed: any) => boolean): Promise<{ detail: any; seal: any; sealed: any } | null> {
+  const saved = { k: process.env["LOKI_RECEIPT_SIGNING_KEY"], p: process.env["LOKI_CP_RECEIPT_PUBKEYS"] };
+  process.env["LOKI_RECEIPT_SIGNING_KEY"] = signer.export({ type: "pkcs8", format: "pem" }) as string;
+  const pub = join(tmp, `${id}.pem`);
+  writeFileSync(pub, createPublicKey(signer).export({ type: "spki", format: "pem" }));
+  process.env["LOKI_CP_RECEIPT_PUBKEYS"] = pub;
+  try {
+    const dir = join(tmp, "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude", note: "key sk-abcdefghijklmnopqrstuvwxyz0123456789" });
+    log.append("receipt.sealed", "seal", { path: join(dir, "receipt.json"), receipt_sha256: "a".repeat(64), signed: true, kid: engineKidOf(createPublicKey(signer)), verdict: "VERIFIED" });
+    log.append("run.completed", null, { verdict: "VERIFIED", not_proven: [] });
+    log.sealLog();
+    const lines = readFileSync(ev, "utf8").trim().split("\n").map((l: string) => JSON.parse(l));
+    const seal = lines.at(-1), sealed = lines[1];
+    if (!accept(seal, sealed)) return null;
+    const { app } = createApp({ dbPath: ":memory:" });
+    const r = await shipRun({ runDir: dir, url: "http://cp", source: SRC, fetchImpl: ((u: string, init: RequestInit) => app.request(new URL(u).pathname, init)) as unknown as typeof fetch });
+    expect(r).toMatchObject({ ok: true, sent: 4 });
+    const detail = (await (await app.request(`/v1/runs/${SRC}/${id}`)).json()) as any;
+    return { detail, seal, sealed };
+  } finally {
+    if (saved.k === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = saved.k;
+    if (saved.p === undefined) delete process.env["LOKI_CP_RECEIPT_PUBKEYS"]; else process.env["LOKI_CP_RECEIPT_PUBKEYS"] = saved.p;
+  }
+}
+
+test("Q17-05b: an honest signed run whose log.sealed sig matches a token rule ships and ingests VERIFIED, never TAMPERED", async () => {
+  let got: Awaited<ReturnType<typeof engineShipIngest>> = null;
+  for (let i = 0; i < 1000 && !got; i++) got = await engineShipIngest(privateKey, `q05b-sig-${i}`, (seal) => TOKEN_RULE.test(seal.data.sig));
+  expect(got).not.toBeNull();
+  expect(redactEvent(got!.seal)).toEqual(got!.seal); // the shipper keeps the seal bytes
+  expect([got!.detail.tampered, got!.detail.effective_verdict]).toEqual([false, "VERIFIED"]);
+}, 120000);
+
+test("Q17-05b: an honest signed run whose kid matches a token rule (both receipt.sealed and log.sealed) ships and ingests VERIFIED, never TAMPERED", async () => {
+  let tag = 0;
+  while (!TOKEN_RULE.test(engineKidOf(seeded(`kid-${tag}`).publicKey))) tag++;
+  const got = await engineShipIngest(seeded(`kid-${tag}`).privateKey, "q05b-kid", () => true);
+  expect(TOKEN_RULE.test(got!.sealed.data.kid) && TOKEN_RULE.test(got!.seal.data.kid)).toBe(true);
+  expect([got!.detail.tampered, got!.detail.effective_verdict]).toEqual([false, "VERIFIED"]);
+}, 120000);
+
+test("Q17-05b: the seal exemption is shape-bound; a token in a seal field of the wrong shape, or in any other field, is still redacted at ingest", async () => {
+  const b = honest("q05b-smuggle", "VERIFIED");
+  const token = "sk-ant-" + "a".repeat(40);
+  b.events[1].data.path = `/x/${token}`;
+  b.events[3].data.sig = token;
+  const out = redactEvent(b.events[1]), seal = redactEvent(b.events[3]);
+  expect(JSON.stringify([out, seal])).not.toContain(token);
+  const { detail } = await viaApi(b.events, true);
+  expect(JSON.stringify(detail)).not.toContain(token);
+  expect([detail.tampered, detail.effective_verdict]).toEqual([true, "TAMPERED"]);
 });

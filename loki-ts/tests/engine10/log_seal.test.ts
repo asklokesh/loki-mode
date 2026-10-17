@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
-import { redactSecrets } from "../../src/util/redact.ts";
+import { redactEnvelope, redactSecrets } from "../../src/util/redact.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "e10-logseal-"));
@@ -54,16 +54,22 @@ describe("Q17-05b redact at source", () => {
 });
 
 describe("Q17-05b seal fields are not redacted", () => {
-  test("sealLog output keeps a signature that matches a token rule; the same data via a normal append is redacted", () => {
-    const risky = "xxAI" + "b".repeat(40);
+  test("seal crypto fields of the engine shape keep their bytes even when they match a token rule; the same values elsewhere, or a wrong shape, are redacted", () => {
+    const sig = "xxAI" + "b".repeat(82), kid = "AI" + "c".repeat(41), token = "sk-ant-" + "a".repeat(40);
     const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
     mkdirSync(dir, { recursive: true });
     const log = new SupervisorLog(ev, id);
-    log.append("log.sealed", null, { kid: "k", events_sha256: "0", tampered: false, sig: risky }, true);
-    log.append("worker.note", null, { sig: risky });
-    const [sealed, normal] = readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    expect(sealed.data.sig).toBe(risky);
+    log.append("receipt.sealed", "seal", { path: `/x/${token}`, receipt_sha256: "0".repeat(64), signed: true, kid });
+    log.append("log.sealed", null, { kid, events_sha256: "0".repeat(64), tampered: false, sig });
+    log.append("worker.note", null, { sig, kid });
+    log.append("log.sealed", null, { kid: "k", events_sha256: "0", tampered: false, sig: token });
+    const [receipt, sealed, normal, smuggled] = readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect([receipt.data.kid, sealed.data.kid, sealed.data.sig]).toEqual([kid, kid, sig]);
+    expect(receipt.data.path).not.toContain(token);
     expect(normal.data.sig).toContain("[REDACTED:GOOGLE_KEY]");
+    expect(normal.data.kid).toContain("[REDACTED:GOOGLE_KEY]");
+    expect(smuggled.data.sig).not.toContain(token);
+    for (const e of [receipt, sealed, normal, smuggled]) expect(redactEnvelope(e)).toEqual(e); // the shipper and ingest redaction is a no-op on every engine-written line
   });
   test("600 honest signed runs all VERIFY (about 1.7% of signatures match the Google key rule)", async () => {
     let hit = 0;
