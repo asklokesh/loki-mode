@@ -38,8 +38,14 @@ export interface BoundaryOpts { sleep?: () => Promise<void>; alive?: () => boole
 /** Pause timeout in ms: LOKI_PAUSE_TIMEOUT_S (seconds, 0 = unlimited), default one hour. */
 export function pauseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.LOKI_PAUSE_TIMEOUT_S, n = Number(raw);
-  return (raw !== undefined && raw !== "" && Number.isFinite(n) && n >= 0 ? n : PAUSE_TIMEOUT_DEFAULT_S) * 1000;
+  const ok = raw !== undefined && raw !== "" && Number.isFinite(n) && n >= 0;
+  if (!ok && raw !== undefined && raw !== "" && !pauseTimeoutWarned.has(raw)) {
+    pauseTimeoutWarned.add(raw);
+    process.stderr.write(`loki: LOKI_PAUSE_TIMEOUT_S="${raw}" is not a non-negative number of seconds; using the default ${PAUSE_TIMEOUT_DEFAULT_S}s\n`);
+  }
+  return (ok ? n : PAUSE_TIMEOUT_DEFAULT_S) * 1000;
 }
+const pauseTimeoutWarned = new Set<string>();
 
 /** Called at a stage boundary. Blocks while paused; returns true when the run must stop (cancel, or a pause that outlived its timeout or its run), emitting the lifecycle events in order. */
 export async function runControlBoundary(runDir: string, emit: (type: string) => void, o: BoundaryOpts | (() => Promise<void>) = {}): Promise<boolean> {

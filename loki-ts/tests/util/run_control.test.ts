@@ -154,6 +154,19 @@ describe("run_control pause liveness (P12-10b)", () => {
     expect(pauseTimeoutMs({} as NodeJS.ProcessEnv)).toBe(3600000);
     expect(pauseTimeoutMs({ LOKI_PAUSE_TIMEOUT_S: "x" } as NodeJS.ProcessEnv)).toBe(3600000);
   });
+  it("pause timeout warn once on garbage env", () => {
+    const orig = process.stderr.write, seen: string[] = [];
+    process.stderr.write = ((c: string | Uint8Array) => { seen.push(String(c)); return true; }) as typeof process.stderr.write;
+    try {
+      const env = { LOKI_PAUSE_TIMEOUT_S: "bogus-warn" } as NodeJS.ProcessEnv;
+      expect(pauseTimeoutMs(env)).toBe(3600000);
+      expect(pauseTimeoutMs(env)).toBe(3600000);
+      expect(pauseTimeoutMs({ LOKI_PAUSE_TIMEOUT_S: "5" } as NodeJS.ProcessEnv)).toBe(5000);
+      expect(pauseTimeoutMs({ LOKI_PAUSE_TIMEOUT_S: "" } as NodeJS.ProcessEnv)).toBe(3600000);
+    } finally { process.stderr.write = orig; }
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toContain("LOKI_PAUSE_TIMEOUT_S");
+  });
   it("resume before the timeout continues", async () => {
     const d = mk();
     try {
