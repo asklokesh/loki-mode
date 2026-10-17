@@ -2239,3 +2239,76 @@ describe("gate inconclusive marker (gate-dark is not a silent clean pass)", () =
     }
   });
 });
+
+// COST-WALL-c: claudeReviewer is a real provider child session on three paths; each must leave exactly one
+// line in <LOKI_DIR>/metrics/child-sessions.jsonl. Removing any withChildLedger wrapper or the SDK ledger param turns this red.
+describe("COST-WALL-c claudeReviewer ledger wiring", () => {
+  const RESULT = JSON.stringify({ type: "result", total_cost_usd: 0.0123, usage: { input_tokens: 5, output_tokens: 6 }, structured_output: { verdict: "PASS", findings: [] } });
+  const KEYS = ["PATH", "LOKI_DIR", "LOKI_SDK_CODE_REVIEW", "LOKI_REVIEW_JSON_SCHEMA", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let root = "";
+  let loki = "";
+  const lines = (): Record<string, unknown>[] => {
+    try { return readFileSync(join(loki, "metrics", "child-sessions.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  };
+  const review = () => claudeReviewer({ reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "review this" });
+
+  beforeEach(async () => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    root = mkdtempSync(join(tmpdir(), "loki-cwc-"));
+    loki = join(root, ".loki");
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nfor a in "$@"; do if [ "$a" = "json" ]; then printf '%s' '${RESULT}'; exit 0; fi; done\nprintf 'VERDICT: PASS\\nFINDINGS:\\n- None\\n'\n`, { mode: 0o755 });
+    process.env["PATH"] = `${bin}:${saved["PATH"]}`;
+    process.env["LOKI_DIR"] = loki;
+    delete process.env["LOKI_SDK_CODE_REVIEW"];
+    delete process.env["LOKI_REVIEW_JSON_SCHEMA"];
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+  });
+  afterEach(async () => {
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+    const { __resetSdkClientForTests } = await import("../../src/runner/sdk_invoker.ts");
+    __resetSdkClientForTests();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("structured --json-schema path records the result JSON cost", async () => {
+    await review();
+    const l = lines();
+    expect(l.length).toBe(1);
+    expect(l[0]!["phase"]).toBe("reviewer");
+    expect(l[0]!["usd"]).toBe(0.0123);
+  });
+
+  it("plain text path (schema off) records one unmeasured line, never a zero usd", async () => {
+    process.env["LOKI_REVIEW_JSON_SCHEMA"] = "off";
+    await review();
+    const l = lines();
+    expect(l.length).toBe(1);
+    expect(l[0]!["phase"]).toBe("reviewer");
+    expect(l[0]!["cost_status"]).toBe("unmeasured");
+    expect("usd" in l[0]!).toBe(false);
+  });
+
+  it("SDK reviewer path (LOKI_SDK_CODE_REVIEW=1) records a priced sdk-judge line", async () => {
+    const body = JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ verdict: "PASS", findings: [] }) }], usage: { input_tokens: 1000, output_tokens: 500 } });
+    const srv = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-type": "application/json" } }) });
+    try {
+      process.env["LOKI_SDK_CODE_REVIEW"] = "1";
+      process.env["ANTHROPIC_API_KEY"] = "sk-test";
+      process.env["ANTHROPIC_BASE_URL"] = `http://127.0.0.1:${srv.port}`;
+      const { __resetSdkClientForTests } = await import("../../src/runner/sdk_invoker.ts");
+      __resetSdkClientForTests();
+      await review();
+      const l = lines();
+      expect(l.length).toBe(1);
+      expect(l[0]!["phase"]).toBe("reviewer");
+      expect(l[0]!["source"]).toBe("sdk-judge");
+      expect(typeof l[0]!["usd"]).toBe("number");
+    } finally { srv.stop(true); }
+  });
+});

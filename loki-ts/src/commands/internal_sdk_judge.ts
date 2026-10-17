@@ -39,7 +39,7 @@ export function cliLedger(args: string[], fallbackPhase: string): { lokiDir: str
   return { lokiDir: lokiDir(), phase: argVal(args, "--phase") ?? fallbackPhase };
 }
 
-const VALID_EFFORT =new Set(["low", "medium", "high", "xhigh", "max"]);
+const VALID_EFFORT = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const promptFile = argVal(args, "--prompt-file");

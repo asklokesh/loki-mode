@@ -15,7 +15,7 @@
 // It NEVER throws for a normal failure -- null is the single failure signal.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { appendChildLedger, recordFromUsage } from "../util/child_ledger.ts";
+import { appendChildLedger, recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
 import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth_dev.js";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -66,6 +66,12 @@ export interface JudgeParams {
   timeoutMs?: number;
   system?: string;
   ledger?: { lokiDir: string; phase: string }; // COST-WALL: append this call's usage to .loki/metrics/child-sessions.jsonl
+}
+
+/** COST-WALL: a judge call that threw may still have spent (timeout after the request was accepted): record an unmeasured line, a lower bound never a zero. No-op without params.ledger. */
+export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string): void {
+  if (!ledger) return;
+  appendChildLedger(ledger.lokiDir, unmeasuredRecord(ledger.phase, model, "sdk-judge"));
 }
 
 /** COST-WALL: one ledger line per SDK judge call, priced from the response usage (the API returns tokens, not dollars). No-op without params.ledger. */
@@ -167,6 +173,7 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
 
   const { prompt, schema, model, effort, maxTokens = 4096, timeoutMs = 120_000, system } = params;
 
+  let noted = false;
   try {
     // messages.create with output_config.format = { type: 'json_schema', schema }
     // constrains the model to emit JSON matching the schema. Verified against
@@ -185,6 +192,7 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
       { timeout: timeoutMs },
     );
     noteJudgeUsage(params.ledger, model, msg);
+    noted = true;
 
     // A structured turn ends with the JSON in a text block. Concatenate text
     // blocks and JSON.parse. (parse() would type this, but create() keeps us
@@ -207,6 +215,7 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
     return obj as Record<string, unknown>;
   } catch {
     // Transport / auth / rate-limit / refusal -> single null failure signal.
+    if (!noted) noteJudgeFailure(params.ledger, model);
     return null;
   }
 }
@@ -224,6 +233,7 @@ export async function judgeText(params: TextParams): Promise<string | null> {
 
   const { prompt, model, effort, maxTokens = 4096, timeoutMs = 120_000, system } = params;
 
+  let noted = false;
   try {
     const msg = await c.messages.create(
       {
@@ -237,12 +247,14 @@ export async function judgeText(params: TextParams): Promise<string | null> {
       { timeout: timeoutMs },
     );
     noteJudgeUsage(params.ledger, model, msg);
+    noted = true;
     const text = (msg.content ?? [])
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("");
     return text.trim() ? text : null;
   } catch {
+    if (!noted) noteJudgeFailure(params.ledger, model);
     return null;
   }
 }
