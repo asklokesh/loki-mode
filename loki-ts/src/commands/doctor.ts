@@ -409,6 +409,10 @@ export function checkDisk(
     }
   }
 
+  return diskCheckFromVolumes(volumes);
+}
+
+export function diskCheckFromVolumes(volumes: DiskVolume[]): DiskCheck {
   const { available_gb, low_volume } = lowestVolume(volumes);
 
   let status: Status = "pass";
@@ -937,13 +941,29 @@ async function requirementsSection(): Promise<RequirementsReport & { first_task_
   return { ...rep, first_task_ready: firstTaskReady(rep) };
 }
 
+// Test seam: wraps the three independent async JSON probes so a test can stub
+// slow ones and prove they overlap (TEN-SPEED-10).
+const jsonProbeImpl: {
+  sentrux: () => Promise<SentruxCheck>;
+  memory: () => Promise<MemoryHealth>;
+  requirements: () => Promise<RequirementsReport & { first_task_ready: boolean }>;
+} = { sentrux: checkSentrux, memory: checkMemoryHealth, requirements: requirementsSection };
+export function _setJsonProbesForTest(fns: Partial<typeof jsonProbeImpl> | null): void {
+  jsonProbeImpl.sentrux = fns?.sentrux ?? checkSentrux;
+  jsonProbeImpl.memory = fns?.memory ?? checkMemoryHealth;
+  jsonProbeImpl.requirements = fns?.requirements ?? requirementsSection;
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
-  const sentrux = await checkSentrux();
-  const memory = await checkMemoryHealth();
+  const [sentrux, memory, requirements] = await Promise.all([
+    jsonProbeImpl.sentrux(),
+    jsonProbeImpl.memory(),
+    jsonProbeImpl.requirements(),
+  ]);
 
   const statuses: Status[] = checks.map((c) => c.status);
   statuses.push(disk.status);
@@ -995,7 +1015,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
     model_catalog: describeCatalogFreshness(),
-    requirements: await requirementsSection(),
+    requirements,
     summary: summarizeStatuses(statuses),
   };
 }
@@ -1222,7 +1242,7 @@ function emitFirstRunBlocked(blockers: string): void {
   emitFunnel("first_run_blocked", key);
 }
 
-async function runText(): Promise<number> {
+async function runText(deps: DoctorDeps = {}): Promise<number> {
   process.stdout.write(`${BOLD}Loki Mode Doctor${NC}\n\n`);
   process.stdout.write(`Checking system prerequisites...\n\n`);
 
@@ -1601,7 +1621,7 @@ async function runText(): Promise<number> {
     bump(tally, bunCheck.status);
   }
 
-  const disk = checkDisk();
+  const disk = deps.diskVolumes ? diskCheckFromVolumes(deps.diskVolumes) : checkDisk();
   // Bash text uses `df -g` (integer GB, floored). JSON uses round(_, 1).
   // checkDisk() returns the JSON-friendly float; floor it here for text-mode parity.
   const diskTextGb = disk.available_gb === null ? null : Math.floor(disk.available_gb);
@@ -1953,7 +1973,7 @@ else:
 
 export interface RoundTripResult { ok: boolean; detail: string }
 export type RoundTripRunner = () => Promise<RoundTripResult>;
-export interface DoctorDeps { roundTrip?: RoundTripRunner }
+export interface DoctorDeps { roundTrip?: RoundTripRunner; diskVolumes?: DiskVolume[] }
 
 // Default harmless round-trip: one tiny prompt through the active provider CLI.
 const defaultRoundTrip: RoundTripRunner = async () => {
@@ -1983,15 +2003,28 @@ export function filterQuietDoctor(text: string): string {
   return out.join("\n");
 }
 
-async function runTextQuiet(): Promise<number> {
+async function runTextQuiet(deps: DoctorDeps = {}): Promise<number> {
   const orig = process.stdout.write.bind(process.stdout);
   let buf = "";
   (process.stdout as { write: unknown }).write = (chunk: string | Uint8Array): boolean => {
     buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   };
+  // TEN-UX-27: route "Install:" hints (stderr in full mode, for bun-parity) into
+  // the same buffer so each hint stays directly under its row.
+  const origErr = process.stderr.write.bind(process.stderr);
+  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    if (/^\s+(\x1b\[[0-9;]*m)*Install:/.test(text)) { buf += text; return true; }
+    return (origErr as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+  };
   let code: number;
-  try { code = await runText(); } finally { (process.stdout as { write: unknown }).write = orig; }
+  try {
+    code = await runText(deps);
+  } finally {
+    (process.stdout as { write: unknown }).write = orig;
+    (process.stderr as { write: unknown }).write = origErr;
+  }
   orig(filterQuietDoctor(buf));
   return code;
 }
@@ -2062,12 +2095,12 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
     return result.summary.ok ? 0 : 1;
   }
   if (fix) {
-    const code = quiet ? await runTextQuiet() : await runText();
+    const code = quiet ? await runTextQuiet(deps) : await runText(deps);
     const { runDoctorFix } = await import("./doctor_fix.ts");
     const fixCode = runDoctorFix({ yes });
     return code !== 0 ? code : fixCode;
   }
   // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
   process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);
-  return quiet ? runTextQuiet() : runText();
+  return quiet ? runTextQuiet(deps) : runText(deps);
 }
