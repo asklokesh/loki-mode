@@ -16,10 +16,11 @@ export function takePubkey(args: readonly string[]): { args: string[]; pubkey?: 
   } catch (e) { return { args: [], error: file ? `cannot read an Ed25519 public key from ${file}` : (e as Error).message.replace(/^./, (c) => c.toLowerCase()) }; }
 }
 export async function main(args: readonly string[]): Promise<number> {
-  const priv = args[0] === "export" ? loadSigningKey(false) : null;
-  if (args[0] !== "export" || !priv) {
-    process.stderr.write(args[0] === "export" ? "loki keys export: no signing key found (run a sealed build first or set LOKI_RECEIPT_SIGNING_KEY_FILE)\n" : "Usage: loki keys export\nPrint the receipt-signing PUBLIC key as a JWK with its kid. Use: loki verify --pubkey <file> <receipt|run-id>\n");
-    return args[0] === "export" ? 66 : args[0] === "--help" || args[0] === "-h" ? 0 : 2;
+  const extra = args[0] === "export" && args.length > 1;
+  const priv = args[0] === "export" && !extra ? loadSigningKey(false) : null;
+  if (args[0] !== "export" || extra || !priv) {
+    process.stderr.write(args[0] === "export" && !extra ? "loki keys export: no signing key found (run a sealed build first or set LOKI_RECEIPT_SIGNING_KEY_FILE)\n" : (extra ? `loki keys export: unexpected argument ${args[1]}\n` : "") + "Usage: loki keys export\nPrint the receipt-signing PUBLIC key as a JWK with its kid. Use: loki verify --pubkey <file> <receipt|run-id>\n");
+    return extra ? 2 : args[0] === "export" ? 66 : args[0] === "--help" || args[0] === "-h" ? 0 : 2;
   }
   const pub = createPublicKey(priv), { kty, crv, x } = pub.export({ format: "jwk" });
   process.stdout.write(`${JSON.stringify({ kty, crv, x, kid: kidOf(pub), alg: "EdDSA", use: "sig" })}\n`);

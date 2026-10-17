@@ -1534,3 +1534,27 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
     }
   });
 });
+
+// TEN-GATES-28: keys export read args[0] only, so `export extra --bogus` printed the key and exited 0.
+describe("keys export rejects extra args (TEN-GATES-28)", () => {
+  const CLI = resolve(import.meta.dir, "../../src/cli.ts");
+  function keysCli(args: string[]): { code: number; out: string; err: string } {
+    const home = mkdtempSync(join(tmpdir(), "loki-run-k28-"));
+    try {
+      const r = spawnSync("bun", [CLI, "engine10", "keys", ...args], { env: { ...process.env, HOME: home, LOKI_RECEIPT_SIGNING_KEY_FILE: "" }, encoding: "utf8", timeout: 60000 });
+      return { code: r.status ?? -1, out: r.stdout, err: r.stderr };
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }
+  test("keys export extra --bogus exits 2 with the usage line and prints no key", () => {
+    for (const a of [["export", "extra"], ["export", "extra", "--bogus"], ["export", "--bogus"]]) {
+      const r = keysCli(a);
+      expect(r.code).toBe(2);
+      expect(r.out).toBe("");
+      expect(r.err).toContain("Usage: loki keys export");
+    }
+  });
+  test("export alone, --help and -h are unchanged", () => {
+    expect(keysCli(["export"]).code).toBe(66);
+    for (const h of ["--help", "-h"]) { const r = keysCli([h]); expect(r.code).toBe(0); expect(r.err).toContain("Usage: loki keys export"); }
+  });
+});
