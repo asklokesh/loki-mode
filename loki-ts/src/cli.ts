@@ -27,7 +27,7 @@ Bun-native commands:
   intent show <run>      Print a past run's intent card and answer
   provider show [name]   Show current provider
   provider list          List available providers and install status
-  memory list            Cross-project learnings counts
+  memory list [--json]   Cross-project learnings counts
   memory lessons [--json] PR review lessons with their uses and outcomes
   memory forget <prl-id> Delete one PR lesson and print its text
   memory learn <o/r#PR>  Learn lessons from a merged PR's review comments (or --recent N, max 20)

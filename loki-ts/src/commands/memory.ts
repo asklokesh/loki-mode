@@ -28,12 +28,17 @@ function countDescriptionLines(file: string): number {
   }
 }
 
-export async function runMemoryList(): Promise<number> {
+export async function runMemoryList(json = false): Promise<number> {
   await mkdir(LEARNINGS_DIR, { recursive: true });
 
   const patterns = countDescriptionLines(resolve(LEARNINGS_DIR, "patterns.jsonl"));
   const mistakes = countDescriptionLines(resolve(LEARNINGS_DIR, "mistakes.jsonl"));
   const successes = countDescriptionLines(resolve(LEARNINGS_DIR, "successes.jsonl"));
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ patterns, mistakes, successes, learnings_path: LEARNINGS_DIR }, null, 2)}\n`);
+    return 0;
+  }
 
   process.stdout.write(`${BOLD}Cross-Project Learnings${NC}\n`);
   process.stdout.write(`\n`);
@@ -122,6 +127,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       // INJECT: the exact block an engine10 run injects, so `loki chat` can show it. No new retrieval.
       const i = argv.indexOf("--task");
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
+      if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
       process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
       return 0;
     }
@@ -135,7 +141,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     }
     case "list":
     case "ls":
-      return runMemoryList();
+      return runMemoryList(argv.slice(1).includes("--json"));
     case "learn": {
       const usage = "Usage: loki memory learn <owner/repo#PR> | --recent N [--repo owner/repo]\n";
       if (argv[1] === "--recent") {
