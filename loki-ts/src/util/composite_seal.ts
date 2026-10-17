@@ -2,9 +2,7 @@
 // line caps, and util/ is uncapped. Reuses seal_group's exported helpers; no second sealer.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { canonicalJson } from "./receipt_signer.ts";
-import { plainTestEnv } from "./check_result.ts";
+import { canonicalJson, collectToolchain, TOOLCHAIN_KEYS, type Toolchain } from "./receipt_signer.ts";
 import { compositeVerdict, dirNames, ID_RE, isObj, readJson, sha, text, type RecHash, type VerifyOne } from "../features/speed/seal_group.ts";
 import type { VerifyDeps } from "../engine10/verify_cmd.ts";
 
@@ -18,18 +16,7 @@ export const COMPOSITE_SCHEMA = "loki.v10.composite/1";
 export interface CompositeChild { repo: string; run_id: string; receipt_path: string; receipt_file_sha256: string; receipt_sha256: string; head_sha: string; verdict: string }
 export interface CompositeIntegration { status: string; exit_code: number | null; log_sha256: string | null; heads: Record<string, string | null> }
 export interface CompositeBody { schema: string; workspace: string; run_id: string; integration_sha256: string; integration: CompositeIntegration; children: CompositeChild[]; verdict: string; toolchain?: Toolchain }
-/** Versions of the tools that ran the checks; an absent tool is null. Optional on the body, so receipts sealed before it existed still verify. */
-export interface Toolchain { bun: string | null; node: string | null; python3: string | null; git: string | null }
-export const TOOLCHAIN_KEYS = ["bun", "node", "python3", "git"] as const;
-/** First version-looking token of `<bin> --version` output, or null when the tool is missing or prints nothing usable. */
-function toolVersion(bin: string): string | null {
-  try {
-    const r = spawnSync(bin, ["--version"], { env: plainTestEnv(), encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
-    return r.status === 0 ? /\d+(\.\d+)+\S*/.exec(String(r.stdout))?.[0] ?? null : null;
-  } catch { return null; }
-}
-export const collectToolchain = (probe: (bin: string) => string | null = toolVersion): Toolchain =>
-  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") });
+export { collectToolchain, TOOLCHAIN_KEYS, type Toolchain }; // moved to receipt_signer.ts so the per-run receipt records it too
 /** Problem with a stated toolchain field (wrong shape), or null. */
 const toolchainProblem = (t: unknown): string | null =>
   isObj(t) && Object.keys(t).length === TOOLCHAIN_KEYS.length && TOOLCHAIN_KEYS.every((k) => t[k] === null || typeof t[k] === "string") ? null : "toolchain section is malformed";
