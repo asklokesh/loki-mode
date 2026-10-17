@@ -39,13 +39,6 @@ function _loki {
                         '--repo[Repository to backfill]:repo:_files -/' \
                         '1:subcommand:(serve status help)'
                     ;;
-                report)
-                    _arguments \
-                        '--json[Machine-readable JSON output]' \
-                        '--since[Window for kpis (Nd or YYYY-MM-DD)]:since:' \
-                        '--efficiency[Include efficiency totals]' \
-                        '--help[Show help]'
-                    ;;
                 config)
                     _loki_config
                     ;;
@@ -164,8 +157,8 @@ function _loki {
                 report)
                     _arguments \
                         '--json[Machine-readable JSON output]' \
-                        '--since[Only include runs since this time]:since:' \
-                        '--efficiency[Show efficiency metrics]' \
+                        '--since[Window for kpis (Nd or YYYY-MM-DD)]:since:' \
+                        '--efficiency[Include efficiency totals]' \
                         '--help[Show help]' \
                         '1:subcommand:(session metrics cost kpis export share dogfood)'
                     ;;
