@@ -5,7 +5,7 @@
 // With no probe, replay re-posts, so the poster itself must tolerate duplicates (pr.ts push-pr
 // reuses an existing PR for the branch).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteJson } from "./atomic.ts";
 
@@ -20,7 +20,17 @@ export function runOnce<T>(a: { dir: string; key: string; post: (key: string) =>
   mkdirSync(a.dir, { recursive: true });
   const file = join(a.dir, `outbox-${a.key}.json`);
   let rec: Rec<T> | null = null;
-  if (existsSync(file)) { try { rec = JSON.parse(readFileSync(file, "utf8")) as Rec<T>; } catch { rec = null; } }
+  if (existsSync(file)) {
+    try {
+      rec = JSON.parse(readFileSync(file, "utf8")) as Rec<T>;
+      if (rec === null || typeof rec !== "object") throw new Error("not a record");
+    } catch {
+      // A crash left a truncated entry: move it aside (kept for inspection), warn once, treat as absent.
+      rec = null;
+      const q = `${file}.corrupt-${Date.now()}`;
+      try { renameSync(file, q); process.stderr.write(`warn: outbox entry ${file} is corrupt; quarantined as ${q}\n`); } catch { /* best effort */ }
+    }
+  }
   if (rec?.state === "done") return rec.result as T;
   if (rec?.state === "pending" && a.probe) {
     const found = a.probe(a.key);
