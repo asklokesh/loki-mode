@@ -169,6 +169,8 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
 
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go" }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string }
+/** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
+export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
 export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
@@ -190,6 +192,16 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };
   if (n === null) return { result: "not_run", reason: UNMEASURED_REASON };
   return { result: "pass", n };
+}
+/** TEN-QUALITY-17: a test check that fails and then passes on ONE immediate rerun is flaky, not fail, so fix rounds are not spent on it.
+ *  Only a test whose first attempt classified fail is rerun (static, not_run and pass never are); a rerun that is not a pass keeps the first fail.
+ *  flaky carries no n, so it is never executed proof (isExecutedProof needs result "pass"), exogenous or otherwise. */
+export function classifyWithRerun(first: ClassifyInput, rerun: () => ClassifyInput): ClassifiedRerun {
+  const a = classifyCheck(first);
+  if (first.kind !== "test" || a.result !== "fail") return a;
+  const b = classifyCheck(rerun());
+  if (b.result !== "pass") return a;
+  return { result: "flaky", reason: "failed once, passed on one immediate rerun", rerun: { first: "fail", second: "pass", ...(b.n !== undefined ? { n: b.n } : {}) } };
 }
 /** True when a check is Loki-executed proof: a pass with n>0. */
 export const isExecutedProof = (c: { result?: unknown; n?: unknown }): boolean => c.result === "pass" && typeof c.n === "number" && c.n > 0;
