@@ -163,6 +163,74 @@ export function __resetSdkClientForTests(): void {
   _client = null;
 }
 
+// TEN-COST-24: opt-in Message Batches path (50 percent price) for the one-shot
+// judge calls. Active ONLY when LOKI_JUDGE_BATCH=1 AND a real ANTHROPIC_API_KEY
+// is set (never the dev-OAuth / subscription login). Any error or timeout
+// returns null and the caller runs the existing synchronous messages.create.
+function judgeBatchEnabled(): boolean {
+  const v = (process.env["LOKI_JUDGE_BATCH"] ?? "").trim().toLowerCase();
+  if (!(v === "1" || v === "true" || v === "yes" || v === "on")) return false;
+  return !!process.env["ANTHROPIC_API_KEY"];
+}
+
+function envMs(name: string, dflt: number): number {
+  const n = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
+async function batchMessage(
+  c: Anthropic,
+  body: Anthropic.MessageCreateParamsNonStreaming,
+): Promise<Anthropic.Message | null> {
+  const budgetMs = envMs("LOKI_JUDGE_BATCH_TIMEOUT_MS", 90_000);
+  const pollMs = envMs("LOKI_JUDGE_BATCH_POLL_MS", 3_000);
+  const deadline = Date.now() + budgetMs;
+  let id: string | null = null;
+  try {
+    const b = await c.messages.batches.create({ requests: [{ custom_id: "judge-1", params: body }] }, { timeout: budgetMs });
+    id = b.id;
+    for (;;) {
+      const st = await c.messages.batches.retrieve(id, undefined, { timeout: budgetMs });
+      if (st.processing_status === "ended") break;
+      if (Date.now() + pollMs >= deadline) throw new Error("batch timeout");
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    const dec = await c.messages.batches.results(id);
+    for await (const row of dec) {
+      if (row.custom_id === "judge-1" && row.result.type === "succeeded") return row.result.message;
+    }
+    return null;
+  } catch {
+    if (id) {
+      try {
+        await c.messages.batches.cancel(id);
+      } catch {
+        /* best effort */
+      }
+    }
+    return null;
+  }
+}
+
+// One call site for both judges: batch when opted in, else (or on any batch
+// failure) the synchronous request.
+async function createJudgeMessage(
+  c: Anthropic,
+  body: Anthropic.MessageCreateParamsNonStreaming,
+  timeoutMs: number,
+): Promise<Anthropic.Message> {
+  if (judgeBatchEnabled()) {
+    const m = await batchMessage(c, body);
+    if (m) return m;
+  }
+  return c.messages.create(body, { timeout: timeoutMs });
+}
+
+/** TEST SEAM: inject a stub client. Production code must never call this. */
+export function __setSdkClientForTests(stub: unknown): void {
+  _client = stub as Anthropic;
+}
+
 /**
  * Run a one-shot schema-constrained judge call via the raw Anthropic SDK.
  * Returns the parsed object (typed loosely as Record) or null on any failure.
@@ -178,7 +246,8 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
     // messages.create with output_config.format = { type: 'json_schema', schema }
     // constrains the model to emit JSON matching the schema. Verified against
     // @anthropic-ai/sdk@0.111.0 (JSONOutputFormat, OutputConfig).
-    const msg = await c.messages.create(
+    const msg = await createJudgeMessage(
+      c,
       {
         model,
         max_tokens: maxTokens,
@@ -189,7 +258,7 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
           format: { type: "json_schema", schema },
         },
       },
-      { timeout: timeoutMs },
+      timeoutMs,
     );
     noteJudgeUsage(params.ledger, model, msg);
     noted = true;
@@ -235,7 +304,8 @@ export async function judgeText(params: TextParams): Promise<string | null> {
 
   let noted = false;
   try {
-    const msg = await c.messages.create(
+    const msg = await createJudgeMessage(
+      c,
       {
         model,
         max_tokens: maxTokens,
@@ -244,7 +314,7 @@ export async function judgeText(params: TextParams): Promise<string | null> {
         // No output_config.format: a plain text turn. effort still applies.
         ...(effort ? { output_config: { effort } } : {}),
       },
-      { timeout: timeoutMs },
+      timeoutMs,
     );
     noteJudgeUsage(params.ledger, model, msg);
     noted = true;
