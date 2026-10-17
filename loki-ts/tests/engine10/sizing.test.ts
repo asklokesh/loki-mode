@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallTaskPath, wallFirstModel, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallMaxChars, smallTaskPath, wallFirstModel, wallModel } from "../../src/engine10/sizing.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -403,5 +403,28 @@ describe("engine10 TEN-COST-26 sizing knobs", () => {
     process.env.LOKI_E10_SMALL_MAX_CHARS = "800";
     const { events } = await run("fix the off-by-one in mod1.ts " + "x".repeat(670), files(10));
     expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "small" });
+  });
+});
+
+describe("clamp note", () => {
+  const capture = (fn: () => unknown): string => {
+    const orig = process.stderr.write.bind(process.stderr); let out = "";
+    (process.stderr as { write: unknown }).write = (c: string | Uint8Array) => { out += String(c); return true; };
+    try { fn(); } finally { (process.stderr as { write: unknown }).write = orig; }
+    return out;
+  };
+  it("notes a wall limit above 300 once and still returns 300", () => {
+    let v = 0;
+    const err = capture(() => { v = wallLimitS("normal", { LOKI_E10_WALL_LIMIT_S: "777" } as NodeJS.ProcessEnv); wallLimitS("normal", { LOKI_E10_WALL_LIMIT_S: "777" } as NodeJS.ProcessEnv); });
+    expect(v).toBe(300);
+    expect(err).toContain('LOKI_E10_WALL_LIMIT_S="777"');
+    expect(err.match(/LOKI_E10_WALL_LIMIT_S/g)?.length).toBe(1);
+  });
+  it("notes an invalid small max chars and still returns 600; unset and valid are silent", () => {
+    let v = 0;
+    const err = capture(() => { v = smallMaxChars({ LOKI_E10_SMALL_MAX_CHARS: "zzz" } as NodeJS.ProcessEnv); });
+    expect(v).toBe(600);
+    expect(err).toContain('LOKI_E10_SMALL_MAX_CHARS="zzz"');
+    expect(capture(() => { smallMaxChars({} as NodeJS.ProcessEnv); smallMaxChars({ LOKI_E10_SMALL_MAX_CHARS: "50" } as NodeJS.ProcessEnv); wallLimitS("small", { LOKI_E10_WALL_LIMIT_S: "120" } as NodeJS.ProcessEnv); })).toBe("");
   });
 });
