@@ -585,6 +585,18 @@ describe("M-27E coordinator wiring", () => {
     f.done(); ran.done();
   });
 
+  it("M-25w-c: a codemod tool that is found but exits non-zero is logged as codemod.skipped", () => {
+    const f = fx();
+    const fake = (() => proven("u-1")) as unknown as typeof runUnit;
+    const runners = makeUnitRunners({ target: "python3", session: () => ({ status: 0 }) });
+    const unit = unit1("u-1", ["pkg/a.py"]);
+    makeAttemptRunner({ mid: MID, target: "python3", log: f.log, repoDir: "/base/repo", units: [unit], runners, runUnit: fake, codemod: () => ({ found: true, code: 2 }) })({ unit, model: "sonnet", variant: 0, worker: 1, worktree: "/wt/u-1", baseSha: "abc123" });
+    const ev = readModernizeEvents(f.dir, MID).filter((e) => e.type === "codemod.skipped");
+    expect(ev.length).toBe(1);
+    expect(ev[0]!.data).toMatchObject({ unit: "u-1", tool: "futurize", reason: "futurize exited non-zero" });
+    f.done();
+  });
+
   it("two waves with real merge ops: wave 2 worktree is based on HEAD after wave 1's merge", async () => {
     const repo = gitRepo(["a.py", "b.py"]);
     const f = fx();

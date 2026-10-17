@@ -423,7 +423,7 @@ def execute_repo(r, budget, loki_bin, source_dir=None):
             status = "ok"
         return make_run(r["id"], "execute", status, a["units"], a["proven"], a["first_pass"], lines, a["cost"],
                         a["touches"], a["resliced"], time.time() - t0,
-                        note="mid=%s; cost %s; units_resliced not measured (no writer emits unit.resliced)" % (
+                        note="mid=%s; cost %s; units_resliced not measured (this reader does not count unit.resliced events)" % (
                             a["mid"], "from budget.hit.spent_usd (lower bound: spend after the hit is not counted)" if a["cost"] is not None else "not measured"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
