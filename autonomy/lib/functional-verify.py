@@ -300,9 +300,11 @@ def _is_login_redirect(location: str, probe_path: str, base_url: str = "") -> bo
     path segment (optional extension, optional trailing slash). A redirect to
     the request path (base_url path prefix included) differing only by a trailing
     slash, case-insensitively, is a canonical-slash redirect, never a login page."""
-    loc_path = urllib.parse.urlsplit(location).path
     probe = re.sub(r'(:[A-Za-z_]\w*|\{[^}]*\})', 'loki-auth-probe', probe_path)
-    req_path = urllib.parse.urlsplit(base_url.rstrip("/") + probe).path
+    req_url = base_url.rstrip("/") + probe
+    req_path = urllib.parse.urlsplit(req_url).path
+    # Resolve relative Location values (auth/, ./auth/, ../api/auth/) against the request URL.
+    loc_path = urllib.parse.urlsplit(urllib.parse.urljoin(req_url, location)).path
     if loc_path.rstrip("/").lower() == req_path.rstrip("/").lower():
         return False
     return bool(re.search(

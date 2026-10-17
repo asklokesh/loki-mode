@@ -311,7 +311,44 @@ class _SlashRedirectApp:
         return H
 
 
+class _RelSlashRedirectApp(_SlashRedirectApp):
+    """Like the slash redirect, but Location is the relative last segment + slash."""
+
+    def handler(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.endswith("/"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"me": 1}')
+                else:
+                    self.send_response(301)
+                    self.send_header("Location", self.path.rsplit("/", 1)[1] + "/")
+                    self.end_headers()
+
+        return H
+
+
 class Round3Regressions(unittest.TestCase):
+    def test_relative_location_slash_redirect_not_passed(self):
+        srv = HTTPServer(("127.0.0.1", 0), _RelSlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        root = f"http://127.0.0.1:{srv.server_address[1]}"
+        for base in (root, root + "/app"):
+            out = FV.run("GET /api/auth requires auth", base)
+            self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", (base, out))
+
+    def test_relative_location_resolved(self):
+        for loc in ("auth/", "./auth/", "../api/auth/"):
+            self.assertFalse(FV._is_login_redirect(loc, "/api/auth"), loc)
+        self.assertFalse(FV._is_login_redirect("auth/", "/api/auth", "http://h/app"))
+        self.assertTrue(FV._is_login_redirect("login", "/api/me"))
+        self.assertTrue(FV._is_login_redirect("../login", "/api/me"))
+
     def test_trailing_slash_redirect_is_not_login(self):
         srv = HTTPServer(("127.0.0.1", 0), _SlashRedirectApp().handler())
         threading.Thread(target=srv.serve_forever, daemon=True).start()
