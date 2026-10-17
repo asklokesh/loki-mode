@@ -444,13 +444,13 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
 }
 export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
 /** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
-export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
+export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js"), timeoutMs: number = 30000): PolicyGate {
   if (policyFile(repoDir, env) === null) return { decision: "allow", reason: "no policy file" };
   if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "policy NOT evaluated: node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
   if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
   const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
-  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
-  if (r.error) return { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
+  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: timeoutMs });
+  if (r.error) return (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT" ? { decision: "deny", reason: `policy check timed out after ${timeoutMs}ms: cannot evaluate policy (fail-closed)` } : { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
   let why = ""; try { why = String((JSON.parse(r.stdout || "{}") as { reason?: string }).reason ?? ""); } catch { /* keep empty */ }
   return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
 }

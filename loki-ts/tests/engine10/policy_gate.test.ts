@@ -39,6 +39,15 @@ describe("policyGate", () => {
     const saved = { ...process.env }; Object.assign(process.env, e);
     try { expect(prGate(root)).toEqual({ draft: false, note: g.reason }); } finally { for (const k of Object.keys(e)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
   });
+  test("policy timeout reason: a slow check.js is a timeout, not node unavailable", () => {
+    withPolicy();
+    const slow = join(root, "slow.js"); writeFileSync(slow, "setTimeout(()=>{},10000);");
+    const g = policyGate(root, "pr", env(), slow, 300);
+    expect(g.decision).toBe("deny");
+    expect(g.reason).toContain("timed out");
+    expect(g.reason).not.toContain("node is unavailable");
+    expect(policyGate(root, "pr", { ...env(), PATH: join(root, "nobin") }, stub(0, "ok")).reason).toContain("node is unavailable");
+  });
   test("policy present and check.js missing fails closed", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), join(root, "missing.js")).decision).toBe("deny");
