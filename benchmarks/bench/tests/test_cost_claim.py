@@ -16,7 +16,8 @@ def _arm(costs_by_task, accepted=None, **extra):
             ok = True if accepted is None else accepted(ti, ri)
             rows.append({"task_id": "t%d" % ti, "accepted": ok, "cost_usd": c,
                          "engine": "e1", "loki_version": "11.0.0",
-                         "model_used": "m1", **extra})
+                         "model_used": "m1", "cost_source": "src",
+                         **extra})
     return rows
 
 
@@ -103,7 +104,8 @@ _CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 def _attr_rows(arm, cost, ntask=8, nrep=3, prefix="t"):
     return [{"task": "%s%d" % (prefix, t), "arm": arm, "accepted": True,
              "cost_usd": cost, "status": "completed", "engine": "e1",
-             "loki_version": "11.0.0", "model_used": "m1"}
+             "loki_version": "11.0.0", "model_used": "m1",
+             "cost_source": "claude_json.total_cost_usd"}
             for t in range(ntask) for _ in range(nrep)]
 
 
@@ -465,3 +467,33 @@ def test_cli_task_set_mismatch_not_proven(tmp_path):
     rc, out = _run(*_base_args(f))
     v = json.loads(out)
     assert rc == 1 and any(r.startswith("tasks:") for r in v["reasons"]), out
+
+
+def test_cost_source_missing_blocks():
+    loki, floor = _tight(0.4)
+    del loki[0]["cost_source"]
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert any(r.startswith("cost_source: missing") for r in v["reasons"])
+
+
+def test_cost_source_mixed_within_arm_blocks_but_arms_may_differ():
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r["cost_source"] = "loki.efficiency_cost"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "PROVEN_AT(0.5)", v["reasons"]
+    floor[0]["cost_source"] = "loki.efficiency_cost"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert any(r.startswith("cost_source: floor mixes") for r in v["reasons"])
+
+
+def test_cli_cost_source_missing_not_proven(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows[0]["cost_source"] = None
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    v = json.loads(out)
+    assert rc == 1 and any(r.startswith("cost_source:") for r in v["reasons"]), out

@@ -7,7 +7,7 @@ about the cost-per-accepted ratio (loki / floor). A paired bootstrap over tasks
 the point estimate.
 
 Row shape (dict): task_id, accepted (bool), cost_usd (float), and optionally
-cost_partial (bool), unmeasured (bool), cost_profile (str), engine (str), loki_version (str), model_used (str).
+cost_partial (bool), unmeasured (bool), cost_profile (str), engine (str), loki_version (str), model_used (str), cost_source (str; required, one per arm).
 Rows may also carry elapsed_s; the verdict adds an informational paired time
 ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
 Rows without a usable elapsed_s are excluded from it and counted. The time
@@ -186,6 +186,15 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
             only = sorted(str(t) for t in lt ^ ft)
             reasons.append("tasks: arms cover different task sets (%s)"
                            % ",".join(only))
+
+    if rows and any(not r.get("cost_source") for r in rows):
+        reasons.append("cost_source: missing cost_source on a row")
+    else:
+        for name, arm in (("loki", loki), ("floor", floor)):
+            srcs = {r.get("cost_source") for r in arm}
+            if len(srcs) > 1:
+                reasons.append("cost_source: %s mixes sources (%s)"
+                               % (name, ",".join(sorted(srcs))))
 
     cost_profile = _loki_cost_profile(loki)
     if cost_profile == "mixed":
