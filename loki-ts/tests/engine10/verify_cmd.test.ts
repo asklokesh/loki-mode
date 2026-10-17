@@ -1164,3 +1164,75 @@ describe("seal drift review fixes (P12-01)", () => {
     } finally { rmSync(repo, { recursive: true, force: true }); rmSync(away, { recursive: true, force: true }); }
   });
 });
+
+// TEN-GATES-03: agent-independent evidence line and --require-exogenous.
+describe("main() agent-independent evidence (TEN-GATES-03)", () => {
+  const prev: Record<string, string | undefined> = {};
+  const ENV = ["HOME", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_VERIFY_REQUIRE_EXOGENOUS"];
+  beforeEach(() => { for (const k of ENV) prev[k] = process.env[k]; delete process.env["LOKI_VERIFY_REQUIRE_EXOGENOUS"]; delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; });
+  afterEach(() => { for (const k of ENV) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } });
+  type Chk = { name: string; cmd: string; result: string; duration_s: number; provenance?: string };
+  const chk = (name: string, provenance?: string, result = "pass"): Chk => ({ name, cmd: "x", result, duration_s: 1, ...(provenance ? { provenance } : {}) });
+  // Writes a receipt signed with a fresh test key (VERIFIED under that key); returns the temp dirs.
+  function signed(runId: string, checks: Chk[], tamper = false): { dir: string; home: string; runs: string } {
+    const dir = tmpDir(), home = tmpDir();
+    const fields = baseReceiptFields();
+    fields["run_id"] = runId; fields["checks"] = checks;
+    const hash = computeReceiptHash(fields);
+    const { pem, jwt, kid } = signWithFreshKey(hash, runId);
+    const runDir = join(dir, "runs", runId);
+    mkdirSync(runDir, { recursive: true });
+    const body: Record<string, unknown> = { ...fields, receipt_sha256: hash, verification: { jwt, kid } };
+    if (tamper) body["provider"] = "tampered";
+    writeFileSync(join(runDir, "receipt.json"), JSON.stringify(body));
+    process.env["HOME"] = home; process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
+    return { dir, home, runs: join(dir, "runs") };
+  }
+  const done = (...ds: string[]) => ds.forEach((d) => rmSync(d, { recursive: true, force: true }));
+
+  test("only agent_authored checks: line shows 0 of 1, --require-exogenous exits 4, without the flag exits 0", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx1", [chk("bun:tests/new.test.ts", "agent_authored")]);
+    try {
+      const plain = await runMain(["gx1"], s.runs);
+      expect(plain.code).toBe(0);
+      expect(plain.out).toContain("agent-independent: 0 of 1 passing checks (wall/holdout/pre-existing/static/probe); advisory: 1");
+      const req = await runMain(["gx1", "--require-exogenous"], s.runs);
+      expect(req.code).toBe(4);
+      process.env["LOKI_VERIFY_REQUIRE_EXOGENOUS"] = "1";
+      expect((await runMain(["gx1"], s.runs)).code).toBe(4);
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("one exogenous pass beside agent_authored and llm_judge exits 0 with the flag", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx2", [chk("bun:tests/new.test.ts", "agent_authored"), chk("typecheck", "exogenous"), chk("council", "llm_judge")]);
+    try {
+      const r = await runMain(["gx2", "--require-exogenous"], s.runs);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("agent-independent: 1 of 3 passing checks (wall/holdout/pre-existing/static/probe); advisory: 2");
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("no provenance (older receipt): printed as not recorded, never as zero; flag exits 4, no flag exits 0", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx3", [chk("unit")]);
+    try {
+      const plain = await runMain(["gx3"], s.runs);
+      expect(plain.code).toBe(0);
+      expect(plain.out).toContain("agent-independent: provenance not recorded");
+      expect(plain.out).not.toContain("0 of");
+      expect((await runMain(["gx3", "--require-exogenous"], s.runs)).code).toBe(4);
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("tampered receipt still exits 1 with the flag", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx4", [chk("typecheck", "exogenous")], true);
+    try {
+      const r = await runMain(["gx4", "--require-exogenous"], s.runs);
+      expect(r.code).toBe(1);
+      expect(r.out).not.toContain("agent-independent");
+    } finally { done(s.dir, s.home); }
+  });
+});
