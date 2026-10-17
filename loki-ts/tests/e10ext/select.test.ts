@@ -1,7 +1,8 @@
 // S41-05 Wall check (docs/v10/SCORECARD-PLAN.md section 4, docs/v10/DECISIONS.md D42 (1)).
 // One test per rank key, per disqualifier, early accept, and "attempt-authored test ignored".
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "bun:test";
-import { isEarlyAccept, selectAttempt, type AttemptCandidate, type AttemptCheck } from "../../src/e10ext/select.ts";
+import { failedFirst, isEarlyAccept, selectAttempt, type AttemptCandidate, type AttemptCheck } from "../../src/e10ext/select.ts";
 import type { TestRef } from "../../src/engine10/types.ts";
 
 const S: TestRef[] = [
@@ -521,4 +522,27 @@ describe("selectAttempt: pytest collection exits 3, 4 and 5 are not deterministi
       expect(r.reason).toBe("rank: deterministicFails");
     });
   }
+});
+
+describe("failedFirst (TEN-SPEED-07)", () => {
+  const T = (runner: TestRef["runner"], path: string): TestRef => ({ runner, path });
+  const tests = [T("bun", "a.test.ts"), T("pytest", "tests/test_b.py"), T("jest", "c.test.js"), T("node", "d.test.js")];
+  const paths = (xs: TestRef[]): string[] => xs.map((t) => t.path);
+  it("puts last-round failing bun, pytest and jest files first, keeping the rest in order", () => {
+    const out = failedFirst(tests, [{ name: "jest:c.test.js", result: "fail" }, { name: "pytest:tests/test_b.py", result: "fail" }, { name: "bun:a.test.ts", result: "pass" }]);
+    expect(paths(out)).toEqual(["tests/test_b.py", "c.test.js", "a.test.ts", "d.test.js"]);
+  });
+  it("is unchanged with no prior checks, no failures, or a failure that is not in the list", () => {
+    expect(failedFirst(tests, undefined)).toBe(tests);
+    expect(failedFirst(tests, [])).toBe(tests);
+    expect(failedFirst(tests, [{ name: "bun:a.test.ts", result: "pass" }, { name: "bun:gone.test.ts", result: "fail" }])).toEqual(tests);
+  });
+  it("ignores malformed check rows and moves an unknown runner only when it failed", () => {
+    expect(paths(failedFirst(tests, [{ result: "fail" }, { name: 5, result: "fail" }]))).toEqual(paths(tests));
+    expect(paths(failedFirst(tests, [{ name: "node:d.test.js", result: "fail" }]))[0]).toBe("d.test.js");
+  });
+  it("is wired into the verify stage test selection", () => {
+    const src = readFileSync(new URL("../../src/engine10/stages/verify.ts", import.meta.url), "utf8");
+    expect(src).toContain("failedFirst(dedupeTests(");
+  });
 });
