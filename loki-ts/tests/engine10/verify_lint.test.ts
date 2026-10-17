@@ -231,4 +231,19 @@ describe("engine10 verify: pre-existing static lint (LINT-DRIVES-FIX)", () => {
     const only = await fixture({ "README.md": "x\n" }, { "new.py": "import os\n" }).run();
     expect(JSON.stringify(only.failures_grouped)).toContain("lint:ruff");
   }, 60_000);
+  test("abort mid-run: baseline reruns stop, elapsed far below N x sleep", async () => {
+    const dir = mkRepo(), bin = mkRepo(), files = ["a.py", "b.py", "c.py"];
+    writeFileSync(join(bin, "ruff"), ["#!/bin/sh", "for a in \"$@\"; do [ \"$a\" = - ] && sleep 3; done", "echo 'a.py:1:8: F401 unused'; exit 1"].join("\n") + "\n"); chmodSync(join(bin, "ruff"), 0o755);
+    git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
+    for (const f of files) writeFileSync(join(dir, f), "import os\n");
+    git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
+    const baseSha = git(dir, ["rev-parse", "HEAD"]);
+    process.env["PATH"] = `${bin}:${oldPath}`;
+    const ac = new AbortController(), t0 = Date.now();
+    setTimeout(() => ac.abort(), 1500);
+    const checks: VerifyCheck[] = [];
+    const pre = await runLintChecks({ ...fakeCtx(dir).ctx, baseSha }, files, ac.signal, checks, {});
+    expect(pre).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(5000);
+  }, 60_000);
 });
