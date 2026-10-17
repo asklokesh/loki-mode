@@ -140,5 +140,74 @@ class SpecParsing(unittest.TestCase):
         self.assertEqual(out["summary"]["functional_status"], "inconclusive")
 
 
+class _AuthApp:
+    def __init__(self, code, body=b'{"secret": 1}', location=None):
+        self.code, self.body, self.location = code, body, location
+
+    def handler(self):
+        app = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _do(self):
+                self.send_response(app.code)
+                if app.location:
+                    self.send_header("Location", app.location)
+                self.end_headers()
+                if 200 <= app.code < 300:
+                    self.wfile.write(app.body)
+
+            do_GET = do_POST = do_DELETE = _do
+
+        return H
+
+
+class AuthBehaviors(unittest.TestCase):
+    SPEC_AUTH = "GET /api/admin requires auth"
+
+    def _serve(self, code, **kw):
+        srv = HTTPServer(("127.0.0.1", 0), _AuthApp(code, **kw).handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def test_served_without_credentials_is_failed(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+        self.assertIn("served without credentials", out["auth_behaviors"][0]["detail"])
+        self.assertEqual(out["functional_status"], "failed", out)
+
+    def test_401_and_403_pass(self):
+        for code in (401, 403):
+            out = FV.run(self.SPEC_AUTH, self._serve(code))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_redirect_to_login_passes_other_redirect_inconclusive(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/login"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/home"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_5xx_inconclusive(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(500))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_no_protected_wording_no_auth_behavior(self):
+        out = FV.run("GET /api/admin lists things", self._serve(200))
+        self.assertEqual(out["auth_behaviors"], [])
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x is public, no auth"), [])
+
+    def test_server_down_inconclusive_never_passed(self):
+        out = FV.run(self.SPEC_AUTH, "http://127.0.0.1:1")
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_section_heading_marks_protected(self):
+        spec = "## Admin (admin only)\n- GET /api/admin/users\n## Public\n- GET /api/pub\n"
+        self.assertEqual(FV.derive_auth_assertions(spec),
+                         [{"method": "GET", "path": "/api/admin/users"}])
+
+
 if __name__ == "__main__":
     unittest.main()
