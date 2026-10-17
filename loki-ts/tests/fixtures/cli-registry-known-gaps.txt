@@ -49,6 +49,7 @@ export share
 github export
 github help
 github pr
+github publish
 github status
 github sync
 import help
