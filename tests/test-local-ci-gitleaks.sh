@@ -54,7 +54,7 @@ else
   bad "local-ci.sh's gitleaks step does not reference .gitleaksignore"
 fi
 
-if grep -q 'log-opts="origin/main..HEAD"' "$CI"; then
+if grep -q 'log-opts="origin/main..HEAD --diff-merges=first-parent"' "$CI"; then
   ok "local-ci.sh scopes the fast-tier scan to origin/main..HEAD"
 else
   bad "local-ci.sh does not scope the gitleaks scan to origin/main..HEAD"
@@ -84,7 +84,7 @@ trap cleanup EXIT
 _run_gitleaks_scope() {
   local repo="$1"
   (cd "$repo" && "$GITLEAKS_BIN" git . \
-    --log-opts="origin/main..HEAD" \
+    --log-opts="origin/main..HEAD --diff-merges=first-parent" \
     --gitleaks-ignore-path .gitleaksignore \
     --no-banner --redact >/dev/null 2>&1)
 }

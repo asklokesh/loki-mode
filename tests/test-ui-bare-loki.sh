@@ -87,13 +87,14 @@ cprun() { env -u CI -u LOKI_CONTROL_DEFAULT HOME="$T/cp-home" PATH="$T/bin:$PATH
 echo "TEST: Control Plane is the default for bare loki"
 rm -f "$T/open.log"
 out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
-[ "$out" = "$CP_URL" ] && ok "LOKI_NO_BROWSER=1 prints the Control Plane URL" || bad "control output: '$out'"
+[ "${out%%$'\n'*}" = "$CP_URL" ] && ok "LOKI_NO_BROWSER=1 prints the Control Plane URL" || bad "control output: '$out'"
+[ "$out" = "$CP_URL"$'\n''Give it work:   loki start "<brief>"'$'\n''Stop the UI:    loki control stop' ] && ok "the URL is followed by the start and stop next-step lines (TEN-UX-10)" || bad "next-step lines: '$out'"
 out=$(cprun LOKI_HEADLESS=1 bash "$LOKI_BIN")
-[ "$out" = "$CP_URL" ] && ok "LOKI_HEADLESS=1 prints the Control Plane URL" || bad "headless control output: '$out'"
+[ "${out%%$'\n'*}" = "$CP_URL" ] && ok "LOKI_HEADLESS=1 prints the Control Plane URL" || bad "headless control output: '$out'"
 out=$(cprun bash "$LOKI_BIN" --no-open)
-[ "$out" = "$CP_URL" ] && ok "--no-open prints the Control Plane URL" || bad "--no-open control output: '$out'"
+[ "${out%%$'\n'*}" = "$CP_URL" ] && ok "--no-open prints the Control Plane URL" || bad "--no-open control output: '$out'"
 out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN" dashboard open)
-[ "$out" = "$CP_URL" ] && ok "loki dashboard open reuses the Control Plane URL" || bad "dashboard open output: '$out'"
+[ "${out%%$'\n'*}" = "$CP_URL" ] && ok "loki dashboard open reuses the Control Plane URL" || bad "dashboard open output: '$out'"
 [ ! -s "$T/open.log" ] && ok "open recorded zero calls" || bad "open was invoked: $(cat "$T/open.log")"
 out=$(cprun LOKI_CONTROL_DEFAULT=0 LOKI_HEADLESS=1 bash "$LOKI_BIN")
 [ "$out" = "$URL" ] && ok "LOKI_CONTROL_DEFAULT=0 restores the classic dashboard" || bad "opt-out output: '$out'"
@@ -109,7 +110,7 @@ for bad_url in "http://127.0.0.1:${CP_PORT}/x?\$(id)" "http://127.0.0.1:${CP_POR
 done
 printf '{"pid":%s,"port":%s,"url":"%s/","version":"x"}\n' "$SLEEP_PID" "$CP_PORT" "$CP_URL" > "$INST"
 out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
-[ "$out" = "$CP_URL" ] && ok "bare origin with trailing slash accepted" || bad "trailing slash output: '$out'"
+[ "${out%%$'\n'*}" = "$CP_URL" ] && ok "bare origin with trailing slash accepted" || bad "trailing slash output: '$out'"
 
 # [::1] leg: bind a stub on ::1 when the host supports it.
 cat > "$T/cp6.py" <<'PY'
@@ -133,7 +134,7 @@ if [ -n "$CP6_PORT" ]; then
     CP6_URL="http://[::1]:${CP6_PORT}"
     printf '{"pid":%s,"port":%s,"url":"%s","version":"x"}\n' "$SLEEP_PID" "$CP6_PORT" "$CP6_URL" > "$INST"
     out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
-    [ "$out" = "$CP6_URL" ] && ok "[::1] Control Plane URL accepted and health-checked" || bad "[::1] output: '$out'"
+    [ "${out%%$'\n'*}" = "$CP6_URL" ] && ok "[::1] Control Plane URL accepted and health-checked" || bad "[::1] output: '$out'"
     kill "$CP6_PID" 2>/dev/null
 else
     echo "  SKIP: ::1 not bindable on this host"

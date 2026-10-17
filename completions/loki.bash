@@ -72,6 +72,10 @@ _loki_completion() {
             ;;
 
         provider)
+            if [[ $cword -ge 3 && ( "${words[2]}" == "list" || "${words[2]}" == "info" ) ]]; then
+                COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+                return 0
+            fi
             local provider_cmds="show set list info matrix help"
             COMPREPLY=( $(compgen -W "${provider_cmds}" -- "$cur") )
             ;;
@@ -274,6 +278,22 @@ _loki_completion() {
             _filedir -d
             ;;
 
+        report)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--json --since --efficiency --help" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "session metrics cost kpis export share dogfood" -- "$cur") )
+            return 0
+            ;;
+
+        undo)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--list --plan --dry-run --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         metrics)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --last --save --share --help" -- "$cur") )
@@ -305,7 +325,7 @@ _loki_completion() {
 
         proof)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--yes --private --hosted --out --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--yes --private --hosted --dry-run --out --help" -- "$cur") )
                 return 0
             fi
             if [[ $cword -eq 2 ]]; then

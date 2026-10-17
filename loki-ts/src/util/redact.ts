@@ -8,12 +8,21 @@ const RULES: [RegExp, string][] = [
   [/AKIA[0-9A-Z]{16}/g, "[REDACTED:AWS_KEY]"],
   [/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED:JWT]"],
   [/AI[a-zA-Z0-9_-]{30,}/g, "[REDACTED:GOOGLE_KEY]"],
+  [/glpat-[A-Za-z0-9_-]{20,}/g, "[REDACTED:GITLAB_TOKEN]"],
+  [/npm_[A-Za-z0-9]{36}/g, "[REDACTED:NPM_TOKEN]"],
+  [/hf_[A-Za-z0-9]{30,}/g, "[REDACTED:HF_TOKEN]"],
+  [/[sr]k_live_[A-Za-z0-9]{16,}/g, "[REDACTED:STRIPE_KEY]"],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[REDACTED:PRIVATE_KEY]"],
   [/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED:OPENAI_KEY]"],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
-export const redactSecrets = (s: string): string => RULES.reduce((a, [re, to]) => a.replace(re, to), s);
+const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;
+const SECRET_PARAM = /([?&](?:access_token|token|api_key|apikey|password|secret|sig)=)[^&\s#"']*/gi;
+const redactQuery = (s: string): string =>
+  s.replace(QUERY_SEGMENT, (q) => q.replace(SECRET_PARAM, "$1[REDACTED]"));
+export const redactSecrets = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => a.replace(re, to), s));
 /** Redacts every string value and object key (arrays and objects recursed); non-strings pass through. Idempotent, so redacting at source and again at ship or ingest is a no-op. */
 export const redactDeep = (x: unknown): unknown =>
   typeof x === "string" ? redactSecrets(x)

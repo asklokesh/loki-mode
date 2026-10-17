@@ -68,7 +68,8 @@ async function withEnv<T>(env: Record<string, string | undefined>, fn: () => Pro
 const baseEnv = (extra: Record<string, string>): Record<string, string | undefined> => {
   const e: Record<string, string | undefined> = { ...process.env };
   for (const k of Object.keys(e)) if (k.startsWith("LOKI_") || k === "ANTHROPIC_API_KEY" || k === "OPENAI_API_KEY" || k.startsWith("CLAUDE_CODE_USE_") || k === "ANTHROPIC_BASE_URL") delete e[k];
-  return { ...e, LOKI_NO_BROWSER: "1", ...extra };
+  // TEN-COST-11 haiku-first Wall is a router-independent cost default added after 11.0.3; pinned off so this golden isolates router behavior (wall.test.ts covers haiku-first).
+  return { ...e, LOKI_NO_BROWSER: "1", LOKI_E10_WALL_FIRST: "0", ...extra };
 };
 
 interface CallRecord { stage: string; tier: string; model_arg: string | null; child_env: Record<string, string>; sdk: { model: string; fallbackModel: string | null; settings: unknown } }

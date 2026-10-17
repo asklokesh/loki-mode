@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
-import { harnessLoadReason } from "../../runner/load_owner.ts";
+import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
 import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
@@ -43,9 +43,9 @@ export interface VerifyCheck {
 // else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
 function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
-  const venvEnv = process.env["VIRTUAL_ENV"];
+  const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
-  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && Bun.which("uv") ? ["uv", "project", ["run", "--", bin]] : [Bun.which(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
+  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
@@ -278,7 +278,7 @@ export const verifyStage: Stage = {
     const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
     const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", loadRepoMap(intake?.repomap_ref)));
-    const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]);
+    const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
     for (const t of tests) {

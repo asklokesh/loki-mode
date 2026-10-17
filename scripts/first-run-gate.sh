@@ -92,6 +92,9 @@ if [ "$MODE" = stub ]; then
     cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
+# TEN-STABILITY-19: the engine preflight (TEN-UX-01) probes `claude auth status` in the repo before Intake. The real CLI
+# answers read-only JSON; a stub that treats the probe as a work session edits sum.js and Intake refuses a dirty tree.
+case " $* " in *" auth status "*) echo '{"loggedIn": true, "authMethod": "stub"}'; exit 0;; esac
 if [ -n "${FRG_SKIP:-}" ]; then # G8: skip the target test instead of fixing it (the node equivalent of a conftest skip; this repo has no pytest)
     sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
 elif [ -f sum.js ]; then
@@ -254,9 +257,13 @@ if not g:
     print("null no v10 run dir")
     sys.exit(0)
 d = g[0]
-ev = [json.loads(l) for l in open(d + "events.jsonl") if l.strip()]
-cost = [e["data"] for e in ev if e["type"] == "cost"]
-rc = json.load(open(d + "receipt.json"))["cost"]["usd"]
+try:  # a run that failed before sealing has no receipt: a FAIL line naming why, never a traceback
+    ev = [json.loads(l) for l in open(d + "events.jsonl") if l.strip()]
+    cost = [e["data"] for e in ev if e["type"] == "cost"]
+    rc = json.load(open(d + "receipt.json"))["cost"]["usd"]
+except (OSError, ValueError, KeyError, TypeError) as e:
+    print("null unreadable run record in %s: %s" % (d, e.__class__.__name__))
+    sys.exit(0)
 ok = bool(cost) and all(isinstance(c.get("usd"), (int, float)) for c in cost) and isinstance(rc, (int, float))
 print(("ok" if ok else "null") + " events=" + ",".join(str(c.get("usd")) + ":" + str(c.get("source")) for c in cost) + " receipt=" + str(rc))
 PY

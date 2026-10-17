@@ -446,6 +446,40 @@ EOF
     [ "$l_pat" -gt "$c_pat" ]
 }
 
+# _loki_latest_published_version: print the latest published version (fresh
+# cache first, else one short registry fetch that refreshes the cache), or
+# nothing when offline. Optional $1 = curl timeout seconds (default 3).
+# Never fabricates, always returns 0.
+_loki_latest_published_version() {
+    local timeout="${1:-3}" cache_file latest="" checked_at now age
+    cache_file=$(_loki_update_cache_path)
+    if [ -f "$cache_file" ]; then
+        checked_at=$(sed -n 's/.*"checkedAt"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        latest=$(sed -n 's/.*"latest"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        now=$(date +%s 2>/dev/null || echo 0)
+        if [ -n "$checked_at" ] && [ -n "$latest" ]; then
+            age=$(( now - checked_at ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt 86400 ]; then
+                printf '%s\n' "$latest"
+                return 0
+            fi
+        fi
+        latest=""
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        latest=$(curl -fsS --max-time "$timeout" "https://registry.npmjs.org/loki-mode/latest" 2>/dev/null \
+            | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    fi
+    case "$latest" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 0 ;;
+    esac
+    ( mkdir -p "$(dirname "$cache_file")" 2>/dev/null \
+        && printf '{"checkedAt":%s,"latest":"%s"}\n' "$(date +%s 2>/dev/null || echo 0)" "$latest" > "$cache_file" 2>/dev/null ) || true
+    printf '%s\n' "$latest"
+    return 0
+}
+
 # maybe_print_update_hint: print the one-line update nudge to stderr if (and
 # only if) a successful, non-fabricated check reports a strictly newer release.
 # Never blocks, never slows the command, never touches stdout. Always returns 0.
@@ -462,44 +496,11 @@ maybe_print_update_hint() {
         *) return 0 ;;  # "unknown" or non-semver -> never nudge
     esac
 
-    local cache_file latest=""
-    cache_file=$(_loki_update_cache_path)
-
-    # Fast path: a fresh (< 24h) cache means zero network.
-    if [ -f "$cache_file" ]; then
-        local checked_at now age
-        checked_at=$(sed -n 's/.*"checkedAt"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$cache_file" 2>/dev/null | head -1)
-        latest=$(sed -n 's/.*"latest"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$cache_file" 2>/dev/null | head -1)
-        if [ -n "$checked_at" ] && [ -n "$latest" ]; then
-            now=$(date +%s 2>/dev/null || echo 0)
-            age=$(( now - checked_at ))
-            if [ "$age" -ge 0 ] && [ "$age" -lt 86400 ]; then
-                if _loki_semver_newer "$latest" "$current"; then
-                    printf 'A newer loki-mode is available (%s). Update: bun install -g loki-mode\n' "$latest" >&2
-                fi
-                return 0
-            fi
-        fi
-        latest=""  # stale cache -> fall through to a fresh fetch
-    fi
-
-    # Cache miss/stale: query the registry. Hard timeout, fail-silent.
-    if command -v curl >/dev/null 2>&1; then
-        latest=$(curl -fsS --max-time 1.5 "https://registry.npmjs.org/loki-mode/latest" 2>/dev/null \
-            | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
-    fi
-    # No usable result -> print nothing, write nothing (never fabricate).
-    case "$latest" in
-        [0-9]*.[0-9]*.[0-9]*) ;;
-        *) return 0 ;;
-    esac
-
-    # Persist the fresh result (best-effort; a non-writable HOME must not break).
-    local now2
-    now2=$(date +%s 2>/dev/null || echo 0)
-    ( mkdir -p "$(dirname "$cache_file")" 2>/dev/null \
-        && printf '{"checkedAt":%s,"latest":"%s"}\n' "$now2" "$latest" > "$cache_file" 2>/dev/null ) || true
-
+    # Fresh cache means zero network; otherwise one short fail-silent fetch.
+    # No usable result -> print nothing (never fabricate).
+    local latest
+    latest=$(_loki_latest_published_version 1.5)
+    [ -n "$latest" ] || return 0
     if _loki_semver_newer "$latest" "$current"; then
         printf 'A newer loki-mode is available (%s). Update: bun install -g loki-mode\n' "$latest" >&2
     fi
@@ -1854,6 +1855,7 @@ show_help_all() {
     echo "  ultracode \"task\" Run a task as a native Claude Code Dynamic Workflow (opt-in, Claude-only)"
     echo "  trust [cmd]      Visible trust trajectory; 'trust detail' for metrics"
     echo "  undo <run> [--plan|--dry-run]  Plan or apply (LOKI_UNDO=1) an undo of a run; verifies the receipt"
+    echo "  undo --list                    List recent runs with verdict, files changed and age"
     echo ""
     echo "Observe:"
     echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"
@@ -1927,6 +1929,7 @@ show_help_all() {
     echo "  loki status [--json]          # Current status"
     echo "  loki report session --efficiency   # Token + cost stats"
     echo "  loki report kpis [--json]     # Accuracy + efficiency KPI snapshot"
+    echo "  loki report kpis --since 7d   # Window KPI totals (Nd or YYYY-MM-DD)"
     echo "  loki doctor [--json]          # System prereq + skill symlinks"
     echo "  loki logs                     # Tail recent log output"
     echo "  loki report export json|markdown|csv|timeline   # Export session"
@@ -7493,6 +7496,9 @@ cmd_provider() {
             cmd_provider_set "$@"
             ;;
         list)
+            case " $* " in
+                *" --json "*) _loki_bun_delegate provider list "$@" || { echo "loki provider list --json needs bun: ${_LOKI_DELEGATE_WHY}" >&2; return 1; } ;;
+            esac
             cmd_provider_list
             ;;
         info)
@@ -7515,7 +7521,7 @@ cmd_provider() {
             echo "Commands:"
             echo "  show     Show current provider (default)"
             echo "  set      Set provider for this project"
-            echo "  list     List available providers"
+            echo "  list     List available providers (--json: name, tier, installed, version)"
             echo "  info     Show provider details (--json: capability contract)"
             echo "  matrix   Show the capability matrix per provider and engine"
             echo "  models   Show resolved model configuration for all providers"
@@ -14702,7 +14708,7 @@ cmd_setup_skill() {
 #   loki self-update --to bun       Switch from current to Bun
 #   loki self-update --to npm       Switch from current to npm
 #   loki self-update --to brew      Switch from current to Homebrew
-#   loki self-update --check        Print detection result + exit 0
+#   loki self-update --check        Print detection result, installed vs latest version + exit 0
 #
 cmd_self_update() {
     local target_manager=""
@@ -14731,7 +14737,7 @@ Usage:
   loki self-update --to bun           Switch to Bun (recommended for v8)
   loki self-update --to npm           Switch to npm
   loki self-update --to brew          Switch to Homebrew
-  loki self-update --check            Print detected manager and exit
+  loki self-update --check            Print detected manager, installed vs latest version, and exit
   loki self-update --help             Show this help
 
 Auto-detection looks at the resolved path of the `loki` binary:
@@ -14801,6 +14807,15 @@ EOF
         echo "loki binary:    $resolved"
         echo "package dir:    $pkg_dir"
         echo "current mgr:    $current_mgr"
+        local installed_v latest_v="" update_flag="unknown"
+        installed_v=$(get_version)
+        latest_v=$(_loki_latest_published_version)
+        if [ -z "$latest_v" ]; then
+            echo "installed $installed_v, latest unknown"
+        else
+            if _loki_semver_newer "$latest_v" "$installed_v"; then update_flag="yes"; else update_flag="no"; fi
+            echo "installed $installed_v, latest $latest_v, update available $update_flag"
+        fi
         return 0
     fi
 
@@ -19079,7 +19094,7 @@ cmd_verify() {
     local _pk_arg
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            --pubkey|--pubkey=*) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
+            --pubkey|--pubkey=*|--require-exogenous) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
         esac
     done
     # PATH slice: a workspace composite (composite.json, or --seal-composite RUN_DIR) is

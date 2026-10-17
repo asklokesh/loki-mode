@@ -179,12 +179,12 @@ if out="$(bash -c 'source "$1"; _chat_steer "$2" go' _ "$CHAT_SH" "$CHAT_STUB/lo
 else
     bad "P12-16: /steer ack missing: $out"
 fi
-if out="$(bash -c 'source "$1"; _chat_steer "$2" go' _ "$CHAT_SH" "$CHAT_STUB/loki-quiet" 2>&1)" && grep -q '^Steer not confirmed: quiet$' <<<"$out" && ! echo "$out" | grep -q received; then
+if out="$(bash -c 'source "$1"; _chat_steer "$2" go' _ "$CHAT_SH" "$CHAT_STUB/loki-quiet" 2>&1)" && grep -q '^Steer not confirmed: quiet$' <<<"$out" && ! grep -q received <<<"$out"; then
     ok "P12-16: /steer without a rev line says 'not confirmed', never 'received'"
 else
     bad "P12-16: /steer fallback missing: $out"
 fi
-if out="$(bash -c 'source "$1"; _chat_steer "$2" help' _ "$CHAT_SH" "$CHAT_STUB/loki" 2>&1)" && grep -q '^usage: /steer' <<<"$out" && ! echo "$out" | grep -q received; then
+if out="$(bash -c 'source "$1"; _chat_steer "$2" help' _ "$CHAT_SH" "$CHAT_STUB/loki" 2>&1)" && grep -q '^usage: /steer' <<<"$out" && ! grep -q received <<<"$out"; then
     ok "P12-16: /steer refuses bare help without calling loki steer"
 else
     bad "P12-16: /steer help guard missing: $out"

@@ -83,3 +83,31 @@ describe("export --sarif uris", () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+describe("export --sarif vendor keys", () => {
+  const J = (...p: string[]) => p.join("");
+  const cases: [string, string][] = [
+    ["anthropic-api-key", J("sk-", "ant-", "api03-", "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv_-wX")],
+    ["openai-project-key", J("sk-", "proj-", "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0")],
+    ["npm-token", J("npm", "_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8")],
+    ["stripe-key", J("sk", "_live_", "a1B2c3D4e5F6g7H8i9J0k1L2m3")],
+    ["jwt", J("eyJ", "hbGciOiJIUzI1NiJ9", ".eyJ", "zdWIiOiIxMjM0NTY3ODkwIn0", ".dBjftJeZ4CVPmB92K27uhbUJU1p1r")],
+  ];
+  const mk = (line: string) => `diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n@@ -1,0 +1,1 @@\n+const t = "${line}";\n`;
+  test.each(cases)("vendor keys: %s is reported through main without the value", async (label, key) => {
+    const { root, runs } = fixture();
+    try {
+      expect(scanDiff(mk(key)).map((f) => f.key)).toEqual([label]);
+      const r = await run(["--sarif", "e10-1-aaaa"], { runsRoot: runs, diff: async () => mk(key) });
+      expect(r.rc).toBe(0);
+      const sarif = readFileSync(join(runs, "e10-1-aaaa", "findings.sarif"), "utf8");
+      expect(sarif.match(/"ruleId": "loki\/secret-scan"/g)?.length).toBe(1);
+      expect(sarif).not.toContain(key);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test("vendor keys: clean lookalikes report 0", () => {
+    for (const clean of ["risk-assessment-framework-documentation", "task-management-workflow-orchestrator", "const npm_config = 1;", "sk_live_ placeholder", "eyJ.short.tok", "sk-ant-api03-short"]) {
+      expect(scanDiff(mk(clean))).toEqual([]);
+    }
+  });
+});

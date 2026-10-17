@@ -112,3 +112,7 @@ src/engine10/modernize/wave.ts	pytest
 # Cost S4 python_build_check mirrors the run.sh python gate (S3): it reads the target repo package.json only to skip Node projects and runs the target own pytest or unittest suite; it labels and runs the repo as data, never hardcodes a runner for the harness. Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
 src/util/python_build_check.ts	package.json
 src/util/python_build_check.ts	pytest
+# TEN-GATES-18 check_result flags a dependency manifest change (package.json, go.mod, pyproject.toml) that lacks a matching lockfile change; it labels files the agent changed (git diff data) and never runs them. Goes away with Project Model sourcing of manifest knowledge (11.3.3 L4).
+src/util/check_result.ts	go.mod
+src/util/check_result.ts	package.json
+src/util/check_result.ts	pyproject.toml

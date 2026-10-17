@@ -127,6 +127,18 @@ describe("TEN-UX-07 Reason, Next, Stage panels", () => {
     expect(panel(s, "Next")).toEqual({ label: "Next", value: nextOf("failed", null, "provider authentication failed") });
   });
 
+  test("TEN-COST-32: a cap stop's Next names --max-cost and the run id through the real caller", () => {
+    writeRun(repoDir, "rcap", [
+      ev(0, "run.started", null, {}),
+      ev(1, "cap.hit", "implement", { elapsed_s: 5 }),
+      ev(2, "run.completed", null, { verdict: "FAILED" }),
+    ]);
+    const s = summarizeRun(repoDir, "rcap");
+    const v = String(panel(s, "Next")?.value);
+    expect(v).toContain("--max-cost");
+    expect(v).toContain("rcap");
+  });
+
   test("a failed verify check: Reason is '<name> failed: <first_error>'", () => {
     repoDir = mkRepo();
     writeRun(repoDir, "r1", [

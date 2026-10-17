@@ -161,7 +161,11 @@ export const START_USAGE =
   "       loki start <spec> --attempts N [--no-pr] [--provider P] [--budget USD] [--session-model T]\n" +
   "  --attempts N  run N (1-5) independent Loki 10 engine attempts in separate git worktrees; the one with\n" +
   "                the most executed passing checks is applied and every loser is recorded on the attempts\n" +
-  "                receipt. Without --no-pr the winner alone is pushed and opened as a draft PR. Runner-only flags are refused with --attempts.\n";
+  "                receipt. Without --no-pr the winner alone is pushed and opened as a draft PR. Runner-only flags are refused with --attempts.\n" +
+  "\nExamples:\n" +
+  "  loki start \"build a todo app\"      # brief\n" +
+  "  loki start ./prd.md                 # PRD file\n" +
+  "  loki start owner/repo#123           # GitHub issue ref\n";
 
 // Parse the reconciled flag surface into RunnerOpts (+ apply env-mapping flags to
 // process.env), or return an error/terminal exit code. Value 0 = handled+exit

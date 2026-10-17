@@ -189,7 +189,7 @@ if [ "$_rc_a" -ne 0 ]; then
 else
   bad "the fixed script did NOT refuse a range that adds a zero-rule .gitleaks.toml"
 fi
-if printf '%s' "$_out_a" | grep -q 'founder review'; then
+if grep -q 'founder review' <<<"$_out_a"; then
   ok "the refusal names the dedicated-PR founder-review path (no automatic bypass)"
 else
   bad "the refusal message does not point to founder review through a dedicated PR"
@@ -250,12 +250,12 @@ if [ "$_rc_c" -eq 0 ]; then
 else
   bad "a .gitleaksignore addition alone was blocked (exit $_rc_c) -- should only warn"
 fi
-if printf '%s' "$_out_c" | grep -qF "::warning::.gitleaksignore gained a line"; then
+if grep -qF "::warning::.gitleaksignore gained a line" <<<"$_out_c"; then
   ok "the step prints a ::warning:: annotation for the .gitleaksignore addition"
 else
   bad "no ::warning:: annotation was printed for the .gitleaksignore addition"
 fi
-if printf '%s' "$_out_c" | grep -qF "$_added_line"; then
+if grep -qF "$_added_line" <<<"$_out_c"; then
   ok "the warning quotes the exact added .gitleaksignore line"
 else
   bad "the warning does not quote the exact added line"
@@ -297,7 +297,7 @@ if [ "$_rc_d" -eq 0 ]; then
 else
   bad "a clean train merge was refused (exit $_rc_d) -- per-commit config detection false-positives on merges: $_out_d"
 fi
-if printf '%s' "$_out_d" | grep -q "base commit's .gitleaks.toml"; then
+if grep -q "base commit's .gitleaks.toml" <<<"$_out_d"; then
   ok "the merge scenario exercises the base-has-a-config --config path"
 else
   bad "the merge scenario did not report using the base commit's .gitleaks.toml"
@@ -339,7 +339,7 @@ if [ "$_rc_e" -ne 0 ]; then
 else
   bad "r2 repro: GITLEAKS_BEFORE=<unaudited commit> was trusted directly -- the two-push bypass is NOT closed"
 fi
-if printf '%s' "$_out_e" | grep -q 'founder review'; then
+if grep -q 'founder review' <<<"$_out_e"; then
   ok "r2 repro: the refusal still names the founder-review path"
 else
   bad "r2 repro: no founder-review message on refusal"
@@ -780,7 +780,7 @@ _g1_check() { # <hook file>; prints the effective mode of the real gitleaks call
   local f="$1" call val
   call="$(grep -e '"\$_gitleaks_bin" git ' "$f" | grep -e '--log-opts=' | head -1)"
   [ -n "$call" ] || return 0
-  if printf '%s' "$call" | grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"'; then
+  if grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"' <<<"$call"; then
     val="$(grep -m1 -e '^[[:space:]]*_gitleaks_merge_mode=' "$f" | sed 's/^[[:space:]]*_gitleaks_merge_mode="\(.*\)"$/\1/')"
     printf '%s ' "$val"
   else

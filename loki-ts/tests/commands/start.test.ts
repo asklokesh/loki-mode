@@ -171,6 +171,21 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(parseStartArgs(["-h"], collect, (s) => outs.push(s))).toBe(0);
   });
 
+  it("--help ends with an Examples section: brief, PRD file, issue ref (TEN-UX-19)", () => {
+    const outs: string[] = [];
+    expect(parseStartArgs(["--help"], collect, (s) => outs.push(s))).toBe(0);
+    const text = outs.join("");
+    const idx = text.indexOf("\nExamples:\n");
+    expect(idx).toBeGreaterThan(0);
+    const lines = text.slice(idx).split("\n").filter((l) => l.trim().startsWith("loki start"));
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toContain('loki start "build a todo app"');
+    expect(lines[1]).toContain("loki start ./prd.md");
+    expect(lines[2]).toContain("loki start owner/repo#123");
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text.trimEnd().split("\n").pop()).toContain("owner/repo#123");
+  });
+
   it("accept-and-ignore no-ops (--yes, --no-plan) do not reject and take no value", () => {
     const r = parseStartArgs(["--yes", "--no-plan", "./prd.md"], collect);
     expect((r as Exclude<typeof r, number>).prdPath).toBe("./prd.md");
