@@ -82,6 +82,18 @@ describe("shouldSkipUpdateCheck", () => {
     process.env["LOKI_NO_UPDATE_CHECK"] = "1";
     expect(shouldSkipUpdateCheck()).toBe(true);
   });
+  it("opt out true and yes also skip", async () => {
+    await withTTY(true, async () => {
+      delete process.env["CI"];
+      expect(shouldSkipUpdateCheck()).toBe(false);
+      for (const v of ["1", "true", "TRUE", "yes"]) {
+        process.env["LOKI_NO_UPDATE_CHECK"] = v;
+        expect(shouldSkipUpdateCheck()).toBe(true);
+      }
+      process.env["LOKI_NO_UPDATE_CHECK"] = "0";
+      expect(shouldSkipUpdateCheck()).toBe(false);
+    });
+  });
   it("skips in CI", () => {
     process.env["CI"] = "true";
     expect(shouldSkipUpdateCheck()).toBe(true);
@@ -150,6 +162,27 @@ describe("maybePrintUpdateHint", () => {
     expect(lines[0]).toContain("A newer Loki Mode is available: 7.99.0 (you have 7.88.0)");
     expect(lines[0]).toContain("bun install -g loki-mode");
     expect(lines[0]!.endsWith("\n")).toBe(true);
+  });
+
+  it("picks the update hint from the install path", async () => {
+    const hint = async (installPath: string) => {
+      const lines: string[] = [];
+      await withTTY(true, async () => {
+        await maybePrintUpdateHint("7.88.0", {
+          now: 10_500_000,
+          fetcher: async () => "7.99.0",
+          write: (m) => lines.push(m),
+          cacheFile,
+          installPath,
+        });
+      });
+      return lines[0] ?? "";
+    };
+    expect(await hint("/opt/homebrew/Cellar/loki-mode/1/bin/loki")).toContain("brew upgrade loki-mode");
+    expect(await hint("/usr/local/lib/node_modules/loki-mode/bin/loki")).toContain("Update: npm i -g loki-mode");
+    expect(await hint("/opt/homebrew/lib/node_modules/loki-mode/bin/loki")).toContain("Update: npm i -g loki-mode");
+    expect(await hint("/Users/a/.bun/install/global/node_modules/loki-mode/x")).toContain("Update: bun install -g loki-mode");
+    expect(await hint("/src/loki")).toContain("Update: bun install -g loki-mode");
   });
 
   it("prints nothing when already on the latest version", async () => {
