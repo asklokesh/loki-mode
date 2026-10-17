@@ -147,6 +147,16 @@ def test_cli_usage_error_exit_2(tmp_path):
     assert _run("--loki-arm", "loki")[0] == 2
 
 
+def test_cli_same_arm_refused_exit_2(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    for target in ("0.5", "1.0", "2.0"):
+        rc, out = _run("--rows", str(f), "--loki-arm", "loki",
+                       "--floor-arm", "loki", "--target", target)
+        assert rc == 2, (target, rc, out)
+        assert "PROVEN" not in out, (target, out)
+
+
 def test_cli_target_must_be_finite_and_positive(tmp_path):
     f = tmp_path / "a.jsonl"
     _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))

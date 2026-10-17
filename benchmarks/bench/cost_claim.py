@@ -236,6 +236,10 @@ def main(argv=None):
     except (OSError, ValueError) as e:
         print("usage error: %s" % e, file=sys.stderr)
         return 2
+    if a.loki_arm == a.floor_arm:
+        print("usage error: --loki-arm and --floor-arm must differ: %r"
+              % a.loki_arm, file=sys.stderr)
+        return 2
     if skipped:
         print("warning: skipped %d non-object row(s)" % skipped,
               file=sys.stderr)
