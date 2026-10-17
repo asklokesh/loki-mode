@@ -1,4 +1,5 @@
 // M-01: modernize event types, log wrapper and state paths.
+// select: walk-all-src
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
