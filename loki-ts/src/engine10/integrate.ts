@@ -24,6 +24,8 @@ export interface IntegrateResult {
   branch: string;
   /** null when the suite did not run (conflict, nothing merged, or git failure). */
   suiteExit: number | null;
+  /** tail of the suite stdout+stderr when the suite ran and failed; lets a fix unit skip re-running the suite. */
+  suiteOutput?: string;
   conflictUnit?: string;
   ok: boolean;
   reason?: string;
@@ -93,11 +95,12 @@ export function integrate(o: IntegrateOpts): IntegrateResult {
 
   const env: NodeJS.ProcessEnv = {};
   for (const k of SUITE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k];
-  const s = spawnSync(o.testCmd[0]!, o.testCmd.slice(1), { cwd: o.repoDir, env, stdio: "ignore", timeout: o.suiteTimeoutMs ?? 600_000 });
+  const s = spawnSync(o.testCmd[0]!, o.testCmd.slice(1), { cwd: o.repoDir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024, timeout: o.suiteTimeoutMs ?? 600_000 });
   const suiteExit = typeof s.status === "number" ? s.status : null;
   if (suiteExit !== 0) {
     for (const id of merged) perUnit[id] = "fail";
-    return res({ suiteExit, reason: suiteExit === null ? "suite did not complete" : `suite exit ${suiteExit}` });
+    const suiteOutput = `${String(s.stdout ?? "")}\n${String(s.stderr ?? "")}`.slice(-16_000);
+    return res({ suiteExit, suiteOutput, reason: suiteExit === null ? "suite did not complete" : `suite exit ${suiteExit}` });
   }
   const allPass = Object.values(perUnit).every((v) => v === "pass");
   return res({ suiteExit, ok: allPass, ...(allPass ? {} : { reason: "a unit failed its own run" }) });
