@@ -2,7 +2,7 @@
 // Rules: a repo path named in the task (traceback frame, file:line:col, dotted module) ranks first;
 // otherwise exact identifier tokens only (camelCase, snake_case, dots, slashes split), weights
 // basename stem 3, symbol 2, path segment 1; fixed stopwords; ties keep repo map order.
-import type { RepoMap } from "../engine10/repomap.ts";
+import { listRepoFiles, type RepoMap } from "../engine10/repomap.ts";
 
 export interface PickedFile { path: string; reason: string }
 type Entry = RepoMap["entries"][number];
@@ -61,8 +61,17 @@ function namedPaths(task: string, entries: Entry[]): Map<string, string> {
   return hits;
 }
 
-export function rankRelevant(task: string, repoMap: RepoMap, max: number): PickedFile[] {
-  const entries = repoMap.entries;
+/** Truncated map (cap hit): tracked files past the cap that the task names join the ranking as symbol-less entries. */
+function withTrackedNamed(task: string, repoMap: RepoMap, repoDir: string): Entry[] {
+  const known = new Set(repoMap.files);
+  const rest = listRepoFiles(repoDir, Number.MAX_SAFE_INTEGER).files.filter((f) => !known.has(f)).map((path) => ({ path, symbols: [] as string[] }));
+  if (rest.length === 0) return repoMap.entries;
+  const hits = namedPaths(task, rest);
+  return hits.size === 0 ? repoMap.entries : [...repoMap.entries, ...rest.filter((e) => hits.has(e.path))];
+}
+
+export function rankRelevant(task: string, repoMap: RepoMap, max: number, repoDir?: string): PickedFile[] {
+  const entries = repoMap.truncated && repoDir ? withTrackedNamed(task, repoMap, repoDir) : repoMap.entries;
   const words = taskKeywords(task);
   const named = namedPaths(task, entries);
   if (words.length === 0 && named.size === 0) return [];

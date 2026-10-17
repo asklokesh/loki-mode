@@ -5,7 +5,8 @@
 // RunContext/SessionRunner/RepoMap shapes, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
 import { selectRelevantFilesWithReason } from "../../src/engine10/relevant_files.ts";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +15,7 @@ import {
   selectRelevantFiles,
   truncatePlan,
 } from "../../src/engine10/stages/plan.ts";
+import { buildRepoMap } from "../../src/engine10/repomap.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type {
   RunContext,
@@ -141,6 +143,49 @@ describe("engine10 plan: relevant-file selection", () => {
     const m = qmap([{ path: "db/a.py", symbols: ["Other"] }, { path: "db/query.py", symbols: ["QuerySet.bulk_create"] }, { path: "cfg/c.py", symbols: ["parse_config"] }]);
     expect(selectRelevantFiles("bulk_create is slow", m)).toEqual(["db/query.py"]);
     expect(selectRelevantFiles("fix parseConfig", m)).toEqual(["cfg/c.py"]);
+  });
+
+  describe("TEN-QUALITY-10: named path past the 2000-file repo map cap", () => {
+    const mk = (): string => {
+      const repo = mkdtempSync(join(tmpdir(), "loki-q10-"));
+      mkdirSync(join(repo, "d"), { recursive: true });
+      for (let i = 0; i < 2500; i++) writeFileSync(join(repo, "d", `f${String(i).padStart(4, "0")}.py`), `def fn${i}(): pass\n`);
+      const g = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
+      g("init", "-q"); g("add", "-A");
+      g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x");
+      writeFileSync(join(repo, "d", "untracked_9999.py"), "def u(): pass\n");
+      return repo;
+    };
+    const tb = (p: string) => `Traceback\n  File "${p}", line 3, in run\n    boom`;
+
+    test("tracked file 2400 beyond the cap ranks first; untracked and absent paths are ignored", () => {
+      const repo = mk();
+      try {
+        const map = buildRepoMap(repo);
+        expect(map.truncated).toBe(true);
+        expect(map.files).not.toContain("d/f2400.py");
+        expect(selectRelevantFiles(tb("d/f2400.py"), map, 8, repo)[0]).toBe("d/f2400.py");
+        expect(selectRelevantFiles(tb("d/f2400.py"), map)).toEqual([]); // no repoDir: old behavior
+        expect(selectRelevantFiles(tb("d/untracked_9999.py"), map, 8, repo)).toEqual([]);
+        expect(selectRelevantFiles(tb("d/f9999.py"), map, 8, repo)).toEqual([]);
+        expect(selectRelevantFiles(tb("d/f2400.py"), { ...map, truncated: false }, 8, repo)).toEqual([]);
+      } finally { rmSync(repo, { recursive: true, force: true }); }
+    });
+
+    test("planStage passes ctx.repoDir so the real path ranks the beyond-cap file", async () => {
+      const repo = mk(), dir = mkdtempSync(join(tmpdir(), "loki-q10r-")), prev = process.env.LOKI_E10_PLAN;
+      process.env.LOKI_E10_PLAN = "always";
+      try {
+        writeFileSync(join(dir, "repomap.json"), JSON.stringify(buildRepoMap(repo)));
+        const sessions = new FakeSessionRunner(doneResult, () => writeFileSync(join(dir, "plan-output.txt"), "step", "utf8"));
+        const ctx = { ...fakeCtx(dir, sessions, { intake: { task: tb("d/f2400.py"), repomap_ref: join(dir, "repomap.json") } }), repoDir: repo };
+        const result = await planStage.run(ctx, new AbortController().signal);
+        expect(result.data.relevant_files).toEqual(["d/f2400.py"]);
+      } finally {
+        if (prev === undefined) delete process.env.LOKI_E10_PLAN; else process.env.LOKI_E10_PLAN = prev;
+        rmSync(repo, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   test("no keyword overlap in the task yields no relevant files", () => {
