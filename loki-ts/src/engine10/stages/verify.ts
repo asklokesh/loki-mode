@@ -245,6 +245,8 @@ export async function runLintChecks(
   }
   return pre;
 }
+/** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */
+export const verifyJobs = (): number => { const n = Number.parseInt(process.env["LOKI_E10_VERIFY_JOBS"] ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; };
 export const verifyStage: Stage = {
   name: "verify",
   targetS: STAGE_BUDGETS.verify.targetS,
@@ -281,11 +283,9 @@ export const verifyStage: Stage = {
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
-    for (const t of tests) {
-      if (signal.aborted) break;
-      const tc = commandFor(t, ctx.repoDir, api);
-      await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) });
-    }
+    const slots = tests.map(() => [] as VerifyCheck[]); let next = 0; // TEN-SPEED-18: LOKI_E10_VERIFY_JOBS bounds concurrent test processes; slots keep the selected (failed-first) order whatever order they finish in
+    const work = async (): Promise<void> => { while (next < tests.length && !signal.aborted) { const i = next++, t = tests[i]!, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slots[i]!, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } };
+    await Promise.all(Array.from({ length: Math.min(verifyJobs(), tests.length) }, work)); checks.push(...slots.flat());
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log

@@ -631,3 +631,45 @@ describe("engine10 verify: full-suite evidence (P12-01)", () => {
     for (const c of full) expect(emitted.some((e) => e.type === "test.result" && e.stage === "verify" && e.data["name"] === c.name && e.data["result"] === c.result)).toBe(true);
   });
 });
+
+describe("engine10 verify: verify jobs (TEN-SPEED-18)", () => {
+  const slow = 'import { expect, test } from "bun:test";\ntest("slow", async () => { await Bun.sleep(1500); expect(1).toBe(1); });\n';
+  const fast = 'import { expect, test } from "bun:test";\ntest("fast", () => { expect(1).toBe(1); });\n';
+  async function runJobs(jobs: string | undefined): Promise<{ names: string[]; emitted: string[]; ms: number; results: string[] }> {
+    const repoDir = mkRepo();
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "a_slow.test.ts"), slow);
+    writeFileSync(join(repoDir, "b_slow.test.ts"), slow.replace('"slow"', '"slow2"'));
+    writeFileSync(join(repoDir, "c_fast.test.ts"), fast);
+    const tests: TestRef[] = ["a_slow.test.ts", "b_slow.test.ts", "c_fast.test.ts"].map((path) => ({ runner: "bun", path }));
+    const { ctx, emitted } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["bun"], tests }), impacted: () => tests });
+    const prev = process.env["LOKI_E10_VERIFY_JOBS"];
+    if (jobs === undefined) delete process.env["LOKI_E10_VERIFY_JOBS"]; else process.env["LOKI_E10_VERIFY_JOBS"] = jobs;
+    try {
+      const t0 = Date.now();
+      const r = await verifyStage.run(ctx, sig());
+      const ms = Date.now() - t0;
+      const checks = (r.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"));
+      return { names: checks.map((c) => c.name), results: checks.map((c) => c.result), emitted: emitted.filter((e) => e.type === "test.result" && String(e.data["name"]).startsWith("bun:")).map((e) => String(e.data["name"])), ms };
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_E10_VERIFY_JOBS"]; else process.env["LOKI_E10_VERIFY_JOBS"] = prev;
+    }
+  }
+  test("verify jobs: default runs sequentially in selected order", async () => {
+    const r = await runJobs(undefined);
+    expect(r.names).toEqual(["bun:a_slow.test.ts", "bun:b_slow.test.ts", "bun:c_fast.test.ts"]);
+    expect(r.emitted).toEqual(r.names);
+    expect(r.results).toEqual(["pass", "pass", "pass"]);
+  }, 60_000);
+  test("verify jobs: LOKI_E10_VERIFY_JOBS=3 overlaps processes yet records checks in selected order", async () => {
+    const seq = await runJobs("1");
+    const par = await runJobs("3");
+    expect(par.names).toEqual(["bun:a_slow.test.ts", "bun:b_slow.test.ts", "bun:c_fast.test.ts"]);
+    expect(par.results).toEqual(["pass", "pass", "pass"]);
+    expect(par.emitted[0]).toBe("bun:c_fast.test.ts"); // the fast one finishes first: real overlap
+    expect(par.ms).toBeLessThan(seq.ms - 1000);
+  }, 90_000);
+  test("verify jobs: an invalid value falls back to 1", async () => {
+    for (const v of ["0", "abc", "-2", ""]) expect((await runJobs(v)).emitted[0]).toBe("bun:a_slow.test.ts");
+  }, 120_000);
+});
