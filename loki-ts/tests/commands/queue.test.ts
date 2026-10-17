@@ -343,3 +343,20 @@ describe("queue item timeout", () => {
     expect(h3.err.join("")).not.toContain("unknown subcommand");
   });
 });
+
+describe("loki queue run arg hint (TEN-UX-44)", () => {
+  test("unknown run argument suggests the closest valid flag", async () => {
+    const h = harness({});
+    expect(await runQueue(["run", "--no-pir"], h.inject)).toBe(2);
+    const msg = h.err.join("");
+    expect(msg).toContain("unknown argument '--no-pir'");
+    expect(msg).toContain("did you mean '--no-pr'?");
+    const h2 = harness({});
+    expect(await runQueue(["run", "--max-total-cots=5"], h2.inject)).toBe(2);
+    expect(h2.err.join("")).toContain("did you mean '--max-total-cost'?");
+    const h3 = harness({});
+    expect(await runQueue(["run", "zzzzzzzz"], h3.inject)).toBe(2);
+    expect(h3.err.join("")).toContain("unknown argument 'zzzzzzzz'");
+    expect(h3.err.join("")).not.toContain("did you mean");
+  });
+});

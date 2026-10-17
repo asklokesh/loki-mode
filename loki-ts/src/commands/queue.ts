@@ -264,6 +264,7 @@ export function parseMaxTotalCost(args: readonly string[]): number | null {
 }
 
 const QUEUE_SUBCOMMANDS = ["add", "list", "remove", "rm", "clear", "run"] as const;
+const QUEUE_RUN_FLAGS = ["--no-pr", "--max-total-cost"] as const;
 const QUEUE_USAGE = "usage: loki queue <add <issue...> | list [--json] | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n";
 
 // First argument queue run does not understand (so a mistyped --no-pr cannot open PRs), or null when all are valid.
@@ -283,7 +284,9 @@ function unknownRunArg(args: readonly string[]): string | null {
 export async function queueRun(args: readonly string[], d: QueueDeps): Promise<number> {
   const bad = unknownRunArg(args);
   if (bad !== null) {
-    d.err(`loki queue run: unknown argument '${bad}'\n${QUEUE_USAGE}`);
+    const flagPart = bad.split("=")[0] as string;
+    const guess = suggestWord(flagPart, QUEUE_RUN_FLAGS);
+    d.err(`loki queue run: unknown argument '${bad}'${guess ? ` (did you mean '${guess}'?)` : ""}\n${QUEUE_USAGE}`);
     return 2;
   }
   const pr = !args.includes("--no-pr");
