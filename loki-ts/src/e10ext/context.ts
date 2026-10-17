@@ -7,6 +7,7 @@ import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
 import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
+import { signatureDigest } from "../util/ts_signatures.ts";
 import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts";
 
 export interface ContextDeps {
@@ -53,8 +54,10 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);
   const cmds = refs.map((t) => { const [c, a, , dir] = d.cmd(t, ctx.repoDir); return `${dir && dir !== "." ? `cd ${shq(dir)} && ` : ""}${[rel(c), ...a].map(shq).join(" ")}`; });
   const verified = readVerifiedCommand(repoCacheDir(repoKey(null, ctx.repoDir)));
+  const sigs = process.env["LOKI_E10_SIGS"] === "0" || !files.length ? "" : signatureDigest(ctx.repoDir, files.slice(0, 5));
   return [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",
+    sigs ? `Key signatures (read the files for bodies):\n${sigs}` : "",
     cmds.length ? `Impacted test commands:\n${cmds.join("\n")}` : "",
     verified ? `Last verified test command: ${verified}` : "",
     profileBrief(ctx.repoDir), // REPOMEM: validated repo commands + baseline-red tests; byte-stable for an unchanged profile
