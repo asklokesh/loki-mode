@@ -158,3 +158,53 @@ describe("budget: cache token pricing", () => {
     expect(calculateCostFromRecords([MEASURED])).toBeCloseTo(bash, 4);
   });
 });
+
+// Every numeric tier of every file row, compared to the loaded table. Returns
+// the list of mismatches so the same check can be run against a doctored copy.
+const TIERS = [
+  "input",
+  "output",
+  "cache_read",
+  "cache_write",
+  "cache_write_5m",
+  "cache_write_1h",
+] as const;
+function tierMismatches(
+  loaded: Record<string, Record<string, unknown>>,
+  file: Record<string, Record<string, unknown>>,
+): string[] {
+  const bad: string[] = [];
+  for (const [model, row] of Object.entries(file)) {
+    if (typeof row.input !== "number" || typeof row.output !== "number") continue;
+    for (const t of TIERS) {
+      if (typeof row[t] === "number" && loaded[model]?.[t] !== row[t]) {
+        bad.push(`${model}.${t}`);
+      }
+    }
+    const o = row.over_100k as Record<string, unknown> | undefined;
+    if (o && JSON.stringify(loaded[model]?.over_100k) !== JSON.stringify(o)) {
+      bad.push(`${model}.over_100k`);
+    }
+  }
+  return bad;
+}
+const FILE_PRICING = JSON.parse(
+  readFileSync(join(import.meta.dir, "../data/model-pricing.json"), "utf-8"),
+).pricing as Record<string, Record<string, unknown>>;
+
+describe("budget: loader keeps every pricing tier", () => {
+  test("loaded PRICING matches every tier of every file row", () => {
+    expect(
+      tierMismatches(PRICING as unknown as Record<string, Record<string, unknown>>, FILE_PRICING),
+    ).toEqual([]);
+  });
+
+  test("mutation leg: a loader that drops one cache tier is detected", () => {
+    const doctored = JSON.parse(JSON.stringify(PRICING)) as Record<string, Record<string, unknown>>;
+    delete doctored["sonnet"]!.cache_write_1h;
+    expect(tierMismatches(doctored, FILE_PRICING)).toContain("sonnet.cache_write_1h");
+    const noOver = JSON.parse(JSON.stringify(PRICING)) as Record<string, Record<string, unknown>>;
+    for (const m of Object.keys(noOver)) delete noOver[m]!.over_100k;
+    expect(tierMismatches(noOver, FILE_PRICING).some((x) => x.endsWith(".over_100k"))).toBe(true);
+  });
+});
