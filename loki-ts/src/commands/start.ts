@@ -382,7 +382,9 @@ export function missingPrdMessage(args: readonly string[], spec: string, exists:
   const fromFlag = argVal(args, "--prd") !== undefined || args.some((a) => a.startsWith("--prd="));
   if (!fromFlag) {
     if (argVal(args, "--brief") !== undefined || args.some((a) => a.startsWith("--brief="))) return null;
-    const pathShaped = !/\s|#|^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec) && (spec.includes("/") || /\.(md|txt|ya?ml|json)$/i.test(spec));
+    const noRef = !/#|^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec);
+    const spacedPath = /\s/.test(spec) && !/[\r\n]/.test(spec) && spec.includes("/") && /\.(md|txt|pdf|ya?ml|json)$/i.test(spec); // TEN-UX-50: "My Docs/prd.md"
+    const pathShaped = noRef && (spacedPath || (!/\s/.test(spec) && (spec.includes("/") || /\.(md|txt|ya?ml|json)$/i.test(spec))));
     if (!pathShaped) return null;
   }
   return exists(spec) ? null : `PRD file not found: ${spec}\n`;

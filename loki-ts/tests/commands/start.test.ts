@@ -450,6 +450,21 @@ describe("missing prd path (TEN-STABILITY-30)", () => {
       expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
     }
   });
+  it("spaced prd path: slash-containing token ending in a doc extension is a path even with spaces", () => {
+    for (const p of ["My Docs/prd.md", "docs/my spec.pdf", "a b/c d.yaml"]) {
+      expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
+      expect(missingPrdMessage([p], p, yes)).toBeNull();
+    }
+    for (const b of ["add docs/readme.md support", "build a thing", "write notes.md for me"]) expect(missingPrdMessage([b], b, none)).toBeNull();
+  });
+  it("spaced prd path: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-ux50-"));
+    try {
+      const r = spawnSync("bun", [join(import.meta.dir, "../../src/cli.ts"), "start", "My Docs/prd.md"], { cwd: dir, encoding: "utf8", timeout: 60000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr + r.stdout).toContain("PRD file not found: My Docs/prd.md");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it("missing prd path: --prd FILE and --prd=FILE always require the file", () => {
     expect(missingPrdMessage(["--prd", "plain"], "plain", none)).toBe("PRD file not found: plain\n");
     expect(missingPrdMessage(["--prd=plain"], "plain", none)).toBe("PRD file not found: plain\n");
