@@ -213,6 +213,7 @@ export interface DigestRow {
   pr: string | null;
   cost: string;
   note: string;
+  position?: string; // "n/m" place in this run, shown in the digest next to the ref
 }
 
 export interface Skipped {
@@ -231,7 +232,7 @@ export function renderDigest(started: Date, finished: Date, rows: DigestRow[], s
   L.push("Results");
   if (rows.length === 0) L.push("  (none)");
   for (const r of rows) {
-    L.push(`  ${r.ref}`);
+    L.push(r.position ? `  [${r.position}] ${r.ref}` : `  ${r.ref}`);
     L.push(`    verdict: ${r.verdict}`);
     L.push(`    pr:      ${r.pr ?? "none"}`);
     L.push(`    cost:    ${r.cost}`);
@@ -276,6 +277,8 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
   }
   let forecastShown = false;
   const pending = [...remaining];
+  const total = pending.length;
+  let begun = 0;
   const width = Math.max(1, Math.min(MAX_PARALLEL, Math.floor(d.parallel ?? 1)));
   const lane = async (): Promise<void> => {
     while (stopReason === null) {
@@ -294,6 +297,8 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
         forecastShown = true;
         await printForecast(d.lokiDir, async () => g.usage ?? null, d.err);
       }
+      const position = `${++begun}/${total}`;
+      d.err(`[${position}] ${item.ref}\n`);
       const t0 = Date.now();
       let res: RunResult;
       try {
@@ -305,6 +310,7 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
       const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
       const row: DigestRow = {
         ref: item.ref,
+        position,
         verdict,
         pr: prUrl,
         cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED",
