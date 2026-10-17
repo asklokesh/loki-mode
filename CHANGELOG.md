@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.44 (2026-10-17)
+
+### Added
+- `loki provider list --json` and `loki control status --json` emit machine-readable output; unknown runs report null, never 0 (TEN-ADOPTION-17, TEN-ADOPTION-16).
+- `loki queue remove` and `loki queue clear`, plus a validated `--max-total-cost` cap for `loki queue run` (TEN-UX-16, TEN-COST-33).
+- `loki doctor --quiet` prints only WARN and FAIL rows with their fixes; doctor flags orphaned runs whose owner is dead and prints resume and undo commands (TEN-UX-18, TEN-STABILITY-17).
+- Rollback, memory, crash, version, wiki, update-check, run-summary and dashboard-entry improvements across TEN-DEPLOY-16/17/18, TEN-UX-21/22/23, TEN-ADOPTION-18/19/20/21, TEN-QUALITY-20 and TEN-STABILITY-23.
+- Start-path cost controls, budget-cap and unit-mode speedups (TEN-COST-35/36/37, TEN-SPEED-09).
+
+### Fixed
+- Secret scan in `loki export --sarif` now catches Anthropic API keys, JWTs and Stripe live keys (TEN-SECURITY-09); redaction covers more vendor secret shapes (TEN-SECURITY-10).
+- secure-scan flags `subprocess` calls with `shell=True` outside tests and comments (TEN-SECURITY-07).
+- `loki run status` hardening and `loki cancel` refuses with "no live run" (exit 1) when the supervisor is dead instead of printing "requested" (TEN-SECURITY-08, TEN-STABILITY-22).
+- Retry classification: 429-prefixed billing bodies are quota_exhausted (non-retryable); 529, bad gateway and gateway timeout are transient (TEN-COST-38, TEN-STABILITY-25).
+- `loki provider <unknown>` and `loki control serve --port` without a value now exit 2 with a usage line (TEN-UX-20, TEN-STABILITY-21).
+- doctor disk check reports the lowest-free volume (TEN-DEPLOY-15); provider failover, runner error and spec-file fixes (TEN-STABILITY-24, TEN-QUALITY-21, TEN-QUALITY-19); verify-pr gate fix (TEN-GATES-21).
+
 ## v11.17.43 (2026-10-17)
 
 ### Fixed
