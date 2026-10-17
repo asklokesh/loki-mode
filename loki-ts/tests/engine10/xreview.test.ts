@@ -3,7 +3,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, utimesSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { crossReview, minVerdict, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { crossReview, minVerdict, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -95,5 +96,39 @@ describe("crossReview COST-4 risk gate", () => {
   });
   it("unknown risk (no record) still attempts the review", async () => {
     expect((await run())?.notes.join(" ")).not.toContain("skipped: low risk");
+  });
+});
+
+describe("TEN-COST-06 lean claude judge", () => {
+  const sup = () => true;
+  it("claude argv carries lean flags and json output", () => {
+    const a = reviewArgv("claude", "p", {}, undefined, sup).join(" ");
+    expect(a).toContain("--setting-sources project"); expect(a).toContain("--output-format json");
+  });
+  it("claude argv uses --bare with an API key", () => {
+    expect(reviewArgv("claude", "p", { ANTHROPIC_API_KEY: "k" }, undefined, sup)).toContain("--bare");
+  });
+  it("codex argv is unchanged", () => expect(reviewArgv("codex", "p", {}, undefined, sup)).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]));
+  it("JSON result with BLOCK verdict parses to block", () => {
+    expect(parseReview("claude", JSON.stringify({ type: "result", result: "VERDICT: BLOCK\n- x" })).level).toBe("block");
+  });
+  it("non-JSON claude stdout is not_run, never pass", () => {
+    expect(parseReview("claude", "VERDICT: PASS").level).toBe("not_run");
+    expect(parseReview("claude", "{not json").level).toBe("not_run");
+  });
+  it("a stubbed claude run writes one xreview ledger line", async () => {
+    const d = mkdtempSync(join(root, "led-")), bd = mkdtempSync(join(root, "bin-"));
+    const git = (...a: string[]) => Bun.spawnSync(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+    git("init", "-q"); writeFileSync(join(d, "a"), "1"); git("add", "a"); git("commit", "-qm", "c");
+    const stub = join(bd, "claude"); writeFileSync(stub, `#!/bin/sh\nprintf '%s\n' '{"type":"result","result":"VERDICT: BLOCK\\n- x","total_cost_usd":0.01}'\n`); chmodSync(stub, 0o755);
+    const ctx = { repoDir: d, provider: "codex", baseSha: "HEAD", runDir: d } as never;
+    process.env["LOKI_REVIEW_PROVIDER"] = "claude"; process.env["LOKI_CLAUDE_CLI"] = stub;
+    try {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.level).toBe("block");
+      const f = join(d, ".loki", "metrics", "child-sessions.jsonl");
+      expect(existsSync(f)).toBe(true);
+      const lines = readFileSync(f, "utf8").trim().split("\n"); expect(lines.length).toBe(1); expect(JSON.parse(lines[0]!).phase).toBe("xreview");
+    } finally { delete process.env["LOKI_REVIEW_PROVIDER"]; delete process.env["LOKI_CLAUDE_CLI"]; }
   });
 });
