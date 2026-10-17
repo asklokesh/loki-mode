@@ -86,10 +86,15 @@ describe("loki undo unknown flag", () => {
       const r = await list(args);
       expect(r.rc).toBe(2);
       const bad = args.find((a) => a === "--bogus" || a === "--dry-rn" || a === "-x")!;
-      expect(r.err).toBe(`loki undo: unknown flag ${bad} (see loki undo --help)\n`);
+      const hint = bad === "--dry-rn" ? "Did you mean '--dry-run'?\n" : "";
+      expect(r.err).toBe(`loki undo: unknown flag ${bad} (see loki undo --help)\n${hint}`);
       expect(r.calls.length).toBe(0);
     });
   }
+  test("flag hint: closest known flag suggested, none when far", async () => {
+    expect((await list(["run1", "--plam"])).err).toBe("loki undo: unknown flag --plam (see loki undo --help)\nDid you mean '--plan'?\n");
+    expect((await list(["run1", "--zzzzzzzz"])).err).toBe("loki undo: unknown flag --zzzzzzzz (see loki undo --help)\n");
+  });
   test("valid flags still accepted", async () => {
     expect((await list(["run1", "--plan", "--help"])).rc).toBe(0);
     expect((await list(["--list"])).rc).toBe(0);
