@@ -5233,175 +5233,207 @@ async def restart_service(session_id: str, req: dict = Body(...)) -> JSONRespons
 # ---------------------------------------------------------------------------
 
 
+# The deploy endpoint runs the receipt-gated CLI (`loki deploy --execute`)
+# and reports only what that run recorded. It never invents a URL: a deploy
+# whose output carried no URL returns url null.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_DEPLOY_PLATFORM_PROVIDERS = {"vercel": "Vercel", "netlify": "Netlify"}
+_DEPLOY_TIMEOUT_S = 600
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text or "")
+
+
+def _deploy_detected_provider(advisory_output: str) -> Optional[str]:
+    """First provider the print-only `loki deploy` advisory lists (the one --execute runs)."""
+    seen_header = False
+    for line in _strip_ansi(advisory_output).splitlines():
+        if "Deploy options" in line:
+            seen_header = True
+            continue
+        if seen_header:
+            m = re.match(r"^  (\S[^:]*):\s*$", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _cli_refused_reasons(output: str, fallback: str) -> list:
+    """Every reason line a gated loki command printed for a refusal, never an empty list."""
+    lines = _strip_ansi(output).splitlines()
+    reasons = [l.strip()[2:].strip() for l in lines if l.startswith("  - ")]
+    if not reasons:
+        reasons = [l.strip() for l in lines if "REFUSED" in l or "Refused" in l]
+    if not reasons:
+        tail = [l.strip() for l in lines if l.strip()]
+        reasons = [tail[-1] if tail else fallback]
+    return reasons
+
+
 @app.post("/api/sessions/{session_id}/deploy")
 async def deploy_session(session_id: str, req: dict = Body(...)) -> JSONResponse:
-    """Deploy a project to a hosting platform (Vercel, Netlify, GitHub Pages)."""
+    """Deploy through the receipt-gated `loki deploy --execute` and return its record."""
     if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
         return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
     target = _find_session_dir(session_id)
     if target is None:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
-
-    platform = req.get("platform", "")
-    if platform not in ("vercel", "netlify", "github-pages"):
-        return JSONResponse(status_code=400, content={"error": f"Unsupported platform: {platform}"})
+    loki = _find_loki_cli()
+    if loki is None:
+        return JSONResponse(status_code=500, content={"error": "loki CLI not found", "url": None})
 
     project_dir = str(target)
+    deploys_dir = Path(project_dir) / ".loki" / "deploys"
+    env = {**os.environ, "LOKI_DIR": str(Path(project_dir) / ".loki")}
     loop = asyncio.get_running_loop()
+    platform = str(req.get("platform") or "")
 
     try:
-        if platform == "vercel":
-            # Try to deploy via Vercel CLI
-            result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["npx", "vercel", "--yes", "--prod"],
-                capture_output=True, text=True, cwd=project_dir, timeout=120,
-                env={**os.environ, "CI": "1"},
+        if platform:
+            # The platform is a hint only. It must name the provider the CLI
+            # itself would run; the print-only advisory runs no cloud CLI.
+            expected = _DEPLOY_PLATFORM_PROVIDERS.get(platform)
+            if expected is None:
+                reason = f"loki deploy has no provider for platform: {platform}"
+                return JSONResponse(status_code=409, content={
+                    "error": reason, "url": None, "refused_reasons": [reason],
+                })
+            advisory = await loop.run_in_executor(None, lambda: subprocess.run(
+                [loki, "deploy", "--dir", project_dir, "--no-clip"],
+                capture_output=True, text=True, cwd=project_dir, timeout=60, env=env,
             ))
-            output = (result.stdout or "") + (result.stderr or "")
-            if result.returncode == 0:
-                # Extract URL from Vercel output (last line is typically the URL)
-                lines = [l.strip() for l in output.strip().split("\n") if l.strip()]
-                url = ""
-                for line in reversed(lines):
-                    if line.startswith("http"):
-                        url = line
-                        break
-                return JSONResponse(content={"url": url or "https://vercel.app", "output": output})
-            else:
-                return JSONResponse(content={"error": output or "Vercel deploy failed", "output": output})
+            detected = _deploy_detected_provider((advisory.stdout or "") + (advisory.stderr or ""))
+            if detected != expected:
+                reason = (
+                    f"platform {platform} does not match the provider loki deploy detected: "
+                    f"{detected or 'none'}"
+                )
+                return JSONResponse(status_code=409, content={
+                    "error": reason, "url": None, "refused_reasons": [reason],
+                    "detected_provider": detected,
+                })
 
-        elif platform == "netlify":
-            # Build first, then deploy
-            build_result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["npm", "run", "build"],
-                capture_output=True, text=True, cwd=project_dir, timeout=120,
-            ))
-            # Deploy via Netlify CLI
-            deploy_dir = "dist"
-            for d in ["build", "out", "dist", ".next"]:
-                if (Path(project_dir) / d).is_dir():
-                    deploy_dir = d
-                    break
-            result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["npx", "netlify", "deploy", "--prod", "--dir", deploy_dir],
-                capture_output=True, text=True, cwd=project_dir, timeout=120,
-            ))
-            output = (result.stdout or "") + (result.stderr or "")
-            if result.returncode == 0:
-                # Extract URL from netlify output
-                url = ""
-                for line in output.split("\n"):
-                    if "Website URL:" in line or "Unique Deploy URL:" in line:
-                        parts = line.split("http")
-                        if len(parts) > 1:
-                            url = "http" + parts[-1].strip()
-                            break
-                return JSONResponse(content={"url": url or "https://netlify.app", "output": output})
-            else:
-                return JSONResponse(content={"error": output or "Netlify deploy failed", "output": output})
+        before = {p.name for p in deploys_dir.glob("*.json")} if deploys_dir.is_dir() else set()
+        result = await loop.run_in_executor(None, lambda: subprocess.run(
+            [loki, "deploy", "--execute", "--dir", project_dir],
+            capture_output=True, text=True, cwd=project_dir,
+            timeout=_DEPLOY_TIMEOUT_S, env=env,
+        ))
+        output = _strip_ansi((result.stdout or "") + (result.stderr or ""))
+        new_records = sorted(
+            p for p in (deploys_dir.glob("*.json") if deploys_dir.is_dir() else [])
+            if p.name not in before
+        )
+        if not new_records:
+            if result.returncode != 0:
+                # No record means the gate refused: nothing was executed.
+                reasons = _cli_refused_reasons(output, "loki deploy exited non-zero with no output")
+                return JSONResponse(status_code=422, content={
+                    "error": "Deploy refused: " + "; ".join(reasons),
+                    "url": None, "health_status": None, "live_binding": None,
+                    "record_path": None, "refused_reasons": reasons, "output": output,
+                })
+            return JSONResponse(status_code=500, content={
+                "error": "loki deploy exited 0 but wrote no deploy record",
+                "url": None, "health_status": None, "live_binding": None,
+                "record_path": None, "refused_reasons": [], "output": output,
+            })
 
-        elif platform == "github-pages":
-            # Use gh-pages or manual git push to gh-pages branch
-            build_result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["npm", "run", "build"],
-                capture_output=True, text=True, cwd=project_dir, timeout=120,
-            ))
-            result = await loop.run_in_executor(None, lambda: subprocess.run(
-                ["npx", "gh-pages", "-d", "dist"],
-                capture_output=True, text=True, cwd=project_dir, timeout=120,
-            ))
-            output = (result.stdout or "") + (result.stderr or "")
-            if result.returncode == 0:
-                # Try to infer the pages URL from git remote
-                remote_result = await loop.run_in_executor(None, lambda: subprocess.run(
-                    ["git", "remote", "get-url", "origin"],
-                    capture_output=True, text=True, cwd=project_dir, timeout=10,
-                ))
-                url = ""
-                if remote_result.returncode == 0:
-                    remote = remote_result.stdout.strip()
-                    # Parse github.com/user/repo
-                    m = re.search(r"github\.com[:/]([^/]+)/([^/.]+)", remote)
-                    if m:
-                        url = f"https://{m.group(1)}.github.io/{m.group(2)}/"
-                return JSONResponse(content={"url": url or "https://github.io", "output": output})
-            else:
-                return JSONResponse(content={"error": output or "GitHub Pages deploy failed", "output": output})
+        record_path = new_records[-1]
+        try:
+            record = json.loads(record_path.read_text())
+        except (OSError, ValueError) as exc:
+            return JSONResponse(status_code=500, content={
+                "error": f"Deploy record unreadable: {exc}", "url": None,
+                "record_path": str(record_path), "refused_reasons": [], "output": output,
+            })
+        url = str(record.get("deployed_url") or "").strip() or None
+        body = {
+            "url": url,
+            "health_status": record.get("health_status"),
+            "live_binding": {
+                "target": record.get("target"),
+                "destination": record.get("destination"),
+                "anchor_sha": record.get("anchor_sha"),
+                "anchor_state": record.get("anchor_state"),
+                "receipt_sha256": record.get("receipt_sha256"),
+                "health_url": record.get("health_url"),
+            },
+            "record_path": str(record_path),
+            "refused_reasons": [],
+            "output": output,
+        }
+        if result.returncode != 0 or record.get("exit_code") not in (0, None):
+            body["error"] = f"Deploy failed (loki deploy exited {result.returncode})"
+            return JSONResponse(status_code=502, content=body)
+        if url is None:
+            body["message"] = "Deploy ran but its output carried no URL; none is reported."
+        return JSONResponse(content=body)
 
     except subprocess.TimeoutExpired:
-        return JSONResponse(status_code=500, content={"error": "Deploy timed out after 120 seconds"})
-    except FileNotFoundError as exc:
-        return JSONResponse(status_code=500, content={"error": f"CLI tool not found: {exc}"})
+        return JSONResponse(status_code=504, content={
+            "error": f"Deploy timed out after {_DEPLOY_TIMEOUT_S} seconds", "url": None,
+        })
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": f"loki CLI failed to run: {exc}", "url": None})
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": f"Deploy failed: {exc}"})
+        return JSONResponse(status_code=500, content={"error": f"Deploy failed: {exc}", "url": None})
 
 
 @app.post("/api/sessions/{session_id}/github/push")
 async def github_push_session(session_id: str) -> JSONResponse:
-    """Create a GitHub repo and push the project code."""
+    """Publish the session through the receipt-stamped `loki github publish` (private)."""
     if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
         return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
     target = _find_session_dir(session_id)
     if target is None:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
+    loki = _find_loki_cli()
+    if loki is None:
+        return JSONResponse(status_code=500, content={"error": "loki CLI not found", "repo_url": None})
 
     project_dir = str(target)
+    env = {**os.environ, "LOKI_DIR": str(Path(project_dir) / ".loki")}
     loop = asyncio.get_running_loop()
 
     try:
-        # Ensure git repo is initialized
-        git_dir = Path(project_dir) / ".git"
-        if not git_dir.is_dir():
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "init"],
-                capture_output=True, text=True, cwd=project_dir, timeout=10,
-            ))
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "add", "-A"],
-                capture_output=True, text=True, cwd=project_dir, timeout=30,
-            ))
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "commit", "-m", "Initial commit from Purple Lab"],
-                capture_output=True, text=True, cwd=project_dir, timeout=30,
-            ))
-
-        # Use gh CLI to create repo and push
-        repo_name = Path(project_dir).name
+        # Never stages files and never passes --public: the CLI refuses a dirty
+        # tree, publishes private by default and stamps the loki/receipt status.
         result = await loop.run_in_executor(None, lambda: subprocess.run(
-            ["gh", "repo", "create", repo_name, "--public", "--source", ".", "--push"],
-            capture_output=True, text=True, cwd=project_dir, timeout=60,
+            [loki, "github", "publish", "--dir", project_dir],
+            capture_output=True, text=True, cwd=project_dir, timeout=120, env=env,
         ))
-        output = (result.stdout or "") + (result.stderr or "")
-
-        if result.returncode == 0:
-            # Extract repo URL from output
-            repo_url = ""
-            for line in output.split("\n"):
-                if "github.com" in line:
-                    # Extract the URL
-                    m = re.search(r"https://github\.com/[^\s]+", line)
-                    if m:
-                        repo_url = m.group(0)
-                        break
-            if not repo_url:
-                # Fallback: get from git remote
-                remote_result = await loop.run_in_executor(None, lambda: subprocess.run(
-                    ["git", "remote", "get-url", "origin"],
-                    capture_output=True, text=True, cwd=project_dir, timeout=10,
-                ))
-                if remote_result.returncode == 0:
-                    repo_url = remote_result.stdout.strip()
-
-            return JSONResponse(content={"repo_url": repo_url, "output": output})
-        else:
-            return JSONResponse(content={"error": output or "GitHub push failed", "output": output})
+        output = _strip_ansi((result.stdout or "") + (result.stderr or ""))
+        if result.returncode != 0:
+            reasons = _cli_refused_reasons(output, "loki github publish exited non-zero with no output")
+            refused = any("Refused" in l or "REFUSED" in l for l in output.splitlines())
+            return JSONResponse(status_code=422 if refused else 502, content={
+                "error": ("GitHub publish refused: " if refused else "GitHub publish failed: ")
+                + "; ".join(reasons),
+                "repo_url": None, "refused_reasons": reasons if refused else [],
+                "output": output,
+            })
+        repo_url = None
+        receipt_status = None
+        for line in output.splitlines():
+            m = re.match(r"^Repository: (\S+)\s*$", line)
+            if m:
+                repo_url = m.group(1)
+            m = re.match(r"^loki/receipt status: (\S+)", line)
+            if m:
+                receipt_status = m.group(1)
+        return JSONResponse(content={
+            "repo_url": repo_url, "receipt_status": receipt_status,
+            "refused_reasons": [], "output": output,
+        })
 
     except subprocess.TimeoutExpired:
-        return JSONResponse(status_code=500, content={"error": "GitHub push timed out"})
-    except FileNotFoundError as exc:
-        return JSONResponse(status_code=500, content={"error": f"CLI tool not found (gh or git): {exc}"})
+        return JSONResponse(status_code=504, content={"error": "GitHub publish timed out", "repo_url": None})
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": f"loki CLI failed to run: {exc}", "repo_url": None})
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": f"GitHub push failed: {exc}"})
+        return JSONResponse(status_code=500, content={"error": f"GitHub publish failed: {exc}", "repo_url": None})
 
 
 # ---------------------------------------------------------------------------
