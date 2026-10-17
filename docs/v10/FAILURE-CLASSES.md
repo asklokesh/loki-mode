@@ -1089,3 +1089,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: swept the other newest-window invocations (proof list --json, proof share --dry-run, queue add, start --help, status --probe/--json); all already pass. completions/_loki carries no per-flag lists for report or undo; its undo description now names --list.
 - Mechanism: autonomy/loki help text lists both flags; completions/loki.bash gains report and undo cases. The drift test already guards both.
 - Fixture: tests/test-help-changelog-drift.sh (22 passed, 0 failed); removing the `undo --list` help line turns it red.
+
+## FC-TEN-UX-26 Bash commands whose default case arm printed help and exited 0 on an unknown subcommand
+
+- User-visible vs raw: user-visible. `loki config frobnicate` and `loki api frobnicate` printed usage and returned 0, so scripts could not detect a typo (same class as `loki provider`, TEN-UX-25).
+- Law broken: an unknown subcommand must fail non-zero with a one-line error; help stays reachable via help, --help and -h.
+- Siblings: swept 24 bash commands with `<cmd> frobnicate`; only config and api (fixed here) returned 0, plus `loki voice`, a stub with no subcommands that prints a planned-feature notice (left as is).
+- Mechanism: explicit help|--help|-h arm, default arm prints `loki <cmd>: unknown subcommand` to stderr and returns 2.
+- Fixture: tests/test-help-discoverability.sh; restoring the old default arm turns the frobnicate assertions red.

@@ -14149,7 +14149,7 @@ cmd_config() {
         validate)
             cmd_config_validate "$@"
             ;;
-        *)
+        help|--help|-h)
             echo -e "${YELLOW}Usage: loki config [show|list|init|edit|path|set|get|example|schema|validate]${NC}"
             echo ""
             echo "  show            Show current configuration (default)"
@@ -14178,6 +14178,10 @@ cmd_config() {
             echo "  notify.slack         Slack webhook URL"
             echo "  notify.discord       Discord webhook URL"
             echo "  budget               Cost budget limit in USD"
+            ;;
+        *)
+            echo "loki config: unknown subcommand '${subcommand}' (see 'loki config help')" >&2
+            return 2
             ;;
     esac
 }
@@ -15937,7 +15941,7 @@ cmd_api() {
             fi
             ;;
 
-        *)
+        help|--help|-h)
             echo -e "${BOLD}Loki Mode Dashboard/API Server${NC}"
             echo ""
             echo "Usage: loki api <command>"
@@ -15959,6 +15963,10 @@ cmd_api() {
             echo "  POST /api/stop    - Stop session"
             echo "  POST /api/pause   - Pause session"
             echo "  POST /api/resume  - Resume session"
+            ;;
+        *)
+            echo "loki api: unknown subcommand '${subcommand}' (see 'loki api help')" >&2
+            return 2
             ;;
     esac
 }
