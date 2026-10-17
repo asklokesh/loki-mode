@@ -42,4 +42,32 @@ describe("watchdog progress classes", () => {
     for (const v of [undefined, "", "abc", "-5", "0", "Infinity"]) expect(stallKillS(v)).toBe(0);
     expect(stallKillS("5")).toBe(5);
   });
+  it("invalid stall env warns", () => {
+    const orig = process.stderr.write.bind(process.stderr);
+    const out: string[] = [];
+    (process.stderr as any).write = (c: any) => { out.push(String(c)); return true; };
+    const prevS = process.env["LOKI_E10_STALL_S"], prevK = process.env["LOKI_E10_STALL_KILL_S"];
+    try {
+      process.env["LOKI_E10_STALL_S"] = "junk-val";
+      process.env["LOKI_E10_STALL_KILL_S"] = "-7";
+      expect(stallThresholdS()).toBe(DEFAULT_STALL_S);
+      expect(stallThresholdS()).toBe(DEFAULT_STALL_S);
+      expect(stallKillS()).toBe(0);
+      expect(out.length).toBe(2);
+      expect(out[0]).toContain("LOKI_E10_STALL_S");
+      expect(out[0]).toContain("junk-val");
+      expect(out[1]).toContain("LOKI_E10_STALL_KILL_S");
+      expect(out[1]).toContain("-7");
+      out.length = 0;
+      process.env["LOKI_E10_STALL_S"] = "60";
+      process.env["LOKI_E10_STALL_KILL_S"] = "";
+      expect(stallThresholdS()).toBe(60);
+      expect(stallKillS()).toBe(0);
+      expect(out.length).toBe(0);
+    } finally {
+      (process.stderr as any).write = orig;
+      if (prevS === undefined) delete process.env["LOKI_E10_STALL_S"]; else process.env["LOKI_E10_STALL_S"] = prevS;
+      if (prevK === undefined) delete process.env["LOKI_E10_STALL_KILL_S"]; else process.env["LOKI_E10_STALL_KILL_S"] = prevK;
+    }
+  });
 });

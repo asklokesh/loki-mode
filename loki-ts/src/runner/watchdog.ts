@@ -5,15 +5,29 @@ export const DEFAULT_STALL_S = 900; // below the 1800s run_outputs STALE_S
 export const IDLE_S = 120;
 export const LOOP_TICKS = 3;
 
-export function stallThresholdS(env: string | undefined = process.env["LOKI_E10_STALL_S"]): number {
-  const n = Number(env);
-  return env !== undefined && env.trim() !== "" && Number.isFinite(n) && n > 0 ? n : DEFAULT_STALL_S;
+const warned = new Set<string>();
+function warnInvalid(name: string, raw: string, used: number): void {
+  const key = `${name}=${raw}`;
+  if (warned.has(key)) return;
+  warned.add(key);
+  process.stderr.write(`loki: ignoring invalid ${name}="${raw}" (need a number > 0); using ${used}${used === 0 ? " (off)" : "s"}\n`);
 }
 
-/** LOKI_E10_STALL_KILL_S: idle seconds after which the session's own child is terminated. Unset, blank, non-numeric or <= 0 means 0 (off). */
-export function stallKillS(env: string | undefined = process.env["LOKI_E10_STALL_KILL_S"]): number {
+function positiveEnv(name: string, env: string | undefined, dflt: number): number {
+  if (env === undefined || env.trim() === "") return dflt;
   const n = Number(env);
-  return env !== undefined && env.trim() !== "" && Number.isFinite(n) && n > 0 ? n : 0;
+  if (Number.isFinite(n) && n > 0) return n;
+  warnInvalid(name, env, dflt);
+  return dflt;
+}
+
+export function stallThresholdS(env: string | undefined = process.env["LOKI_E10_STALL_S"]): number {
+  return positiveEnv("LOKI_E10_STALL_S", env, DEFAULT_STALL_S);
+}
+
+/** LOKI_E10_STALL_KILL_S: idle seconds after which the session's own child is terminated. Unset or blank means 0 (off); non-numeric or <= 0 also means 0 and warns once on stderr. */
+export function stallKillS(env: string | undefined = process.env["LOKI_E10_STALL_KILL_S"]): number {
+  return positiveEnv("LOKI_E10_STALL_KILL_S", env, 0);
 }
 
 export interface Watchdog {
