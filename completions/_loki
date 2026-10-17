@@ -73,6 +73,7 @@ function _loki {
                 doctor)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
+                        '(-q --quiet)'{-q,--quiet}'[Print only failed and warned checks plus the summary]' \
                         '--fix[Create state dirs and a default config; offer claude install and login]' \
                         '--yes[With --fix: run the claude install and login without asking]' \
                         '--help[Show help]'
