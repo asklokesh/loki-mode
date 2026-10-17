@@ -1,7 +1,7 @@
 // D61-14: group events, unit table rendering (TTY repaint, plain lines otherwise), group fields in the envelope.
 import { describe, expect, test } from "bun:test";
 import { makeEvent, validateEnvelope } from "../../src/engine10/events.ts";
-import { createGroupRenderer, foldGroup, formatUnitTable, formatUnitLine } from "../../src/features/speed/group_output.ts";
+import { createGroupFeed, createGroupRenderer, foldGroup, formatUnitTable, formatUnitLine } from "../../src/features/speed/group_output.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 
 const ev = (seq: number, type: string, data: Record<string, unknown>): EventEnvelope => makeEvent("g1", seq, type, null, data, "2026-10-03T00:00:00Z");
@@ -70,5 +70,23 @@ describe("snapshots", () => {
     r.stop();
     expect(cleared).toBe(true);
     expect(out.slice(2).join("")).toBe("\x1b[3A\x1b[J" + table + "\n");
+  });
+});
+
+describe("createGroupFeed (backlog output producer)", () => {
+  const mk = () => {
+    const out: string[] = [];
+    let t = 0;
+    const feed = createGroupFeed("g9", [{ id: "a", deps: [] }, { id: "b", deps: ["a"] }], createGroupRenderer({ write: (s) => out.push(s), isTTY: false }), () => (t += 5000));
+    return { out, feed };
+  };
+  test("emits group.started then group.unit per backlog status line, across split chunks", () => {
+    const { out, feed } = mk();
+    feed.feed("backlog: unit-g9-1 VERI");
+    feed.feed("FIED\nnoise\nbacklog: unit-g9-2 FAILED: x\nbacklog: unit-gOTHER-1 VERIFIED\n");
+    expect(feed.events.map((e) => e.type)).toEqual(["group.started", "group.unit", "group.unit"]);
+    expect(foldGroup(feed.events).map((u) => `${u.id}:${u.status}`)).toEqual(["a:done", "b:failed"]);
+    expect(out.join("")).toContain("unit a done");
+    expect(out.join("")).toContain("unit b failed");
   });
 });

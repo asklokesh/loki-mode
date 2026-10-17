@@ -3,6 +3,7 @@
 // output never touches this module. Group events: group.started {group_id, units:[{unit_id, deps}]} and group.unit {group_id, unit_id, status, stage, elapsed_s}.
 import type { EventEnvelope } from "../../engine10/types.ts";
 import { formatDuration } from "../../engine10/output.ts";
+import { makeEvent } from "../../engine10/events.ts";
 
 export type UnitStatus = "pending" | "running" | "done" | "failed" | "blocked";
 export interface UnitRow { id: string; deps: string[]; status: UnitStatus; stage: string; elapsedS: number }
@@ -76,6 +77,34 @@ export function createGroupRenderer(o: GroupRendererOpts) {
     },
     stop(): void {
       if (timer !== null) { clearT(timer); timer = null; paint(); }
+    },
+  };
+}
+
+/** Producer: turns `backlog: unit-<group>-<n> <status>` lines (n is the 1-based DAG position) into group.started / group.unit events and feeds the renderer. */
+export function createGroupFeed(groupId: string, dagUnits: { id: string; deps?: string[] }[], r: { update(u: UnitRow[]): void }, now: () => number = Date.now) {
+  const events: EventEnvelope[] = [];
+  const t0 = now();
+  let buf = "";
+  const emit = (type: string, data: Record<string, unknown>): void => {
+    events.push(makeEvent(groupId, events.length, type, null, { group_id: groupId, ...data }, new Date(now()).toISOString()));
+    r.update(foldGroup(events));
+  };
+  emit("group.started", { units: dagUnits.map((u) => ({ unit_id: u.id, deps: u.deps ?? [] })) });
+  const line = new RegExp(`^backlog: unit-${groupId}-(\\d+) (.+)$`);
+  return {
+    events,
+    feed(chunk: string): void {
+      const parts = (buf + chunk).split("\n");
+      buf = parts.pop() ?? "";
+      for (const l of parts) {
+        const m = line.exec(l);
+        const u = m ? dagUnits[Number(m[1]) - 1] : undefined;
+        if (!m || !u) continue;
+        const st = m[2]!;
+        const status: UnitStatus = /^(VERIFIED|PR )/.test(st) ? "done" : /^SKIPPED/.test(st) ? "blocked" : /^(FAILED|BLOCKED|BUDGET_STOP)/.test(st) ? "failed" : "running";
+        emit("group.unit", { unit_id: u.id, status, stage: (st.split(/\s/)[0] ?? "-").toLowerCase(), elapsed_s: (now() - t0) / 1000 });
+      }
     },
   };
 }
