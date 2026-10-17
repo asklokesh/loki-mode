@@ -139,11 +139,35 @@ describe("resolveLatest caching", () => {
     expect(calls).toBe(2);
   });
 
-  it("returns null and writes no cache when the fetcher fails (offline)", async () => {
+  it("returns null when the fetcher fails (offline)", async () => {
     const fetcher = async () => null;
     const got = await resolveLatest(3_000_000, fetcher, cacheFile);
     expect(got).toBeNull();
-    expect(existsSync(cacheFile)).toBe(false);
+  });
+
+  it("negative cache: a failed fetch is not retried within 15 min, then is", async () => {
+    let calls = 0;
+    const fetcher = async () => {
+      calls++;
+      return null;
+    };
+    const t0 = 4_000_000;
+    expect(await resolveLatest(t0, fetcher, cacheFile)).toBeNull();
+    expect(calls).toBe(1);
+    expect(await resolveLatest(t0 + 60_000, fetcher, cacheFile)).toBeNull();
+    expect(calls).toBe(1);
+    expect(await resolveLatest(t0 + 15 * 60_000 + 1, fetcher, cacheFile)).toBeNull();
+    expect(calls).toBe(2);
+  });
+
+  it("negative cache: success after the window still caches normally", async () => {
+    let calls = 0;
+    const fetcher = async () => (++calls === 1 ? null : "7.99.0");
+    const t0 = 5_000_000;
+    await resolveLatest(t0, fetcher, cacheFile);
+    expect(await resolveLatest(t0 + 16 * 60_000, fetcher, cacheFile)).toBe("7.99.0");
+    expect(await resolveLatest(t0 + 17 * 60_000, fetcher, cacheFile)).toBe("7.99.0");
+    expect(calls).toBe(2);
   });
 });
 
