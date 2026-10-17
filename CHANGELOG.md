@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.34 (2026-10-17)
+
+### Fixed
+- Seal: receipt checks now carry the verify stage's passing-test count `n`, so `loki verify --require-exogenous` counts real sealed receipts. Since TEN-GATES-03-F1 every real receipt counted 0 agent-independent checks and the flag always exited 4. The key is additive and hashed; receipts without it verify unchanged. P0 fix-forward from the v11.17.33 combined-tree red (HIGH APPROVE c958f563c).
+- The v11.17.33 doctor `--fix` real-entry-path red was a stale dist only; the v11.17.33 release build already carries TEN-UX-04, no code change.
+
+### Board
+- 24 new ready slices from the Product Owner refill (D91), plus TEN-GATES-17 (HIGH): an edited pre-existing test must not count as agent-independent proof.
+
 ## v11.17.33 (2026-10-17)
 
 Wave W and wave AB: 16 reviewed slices.

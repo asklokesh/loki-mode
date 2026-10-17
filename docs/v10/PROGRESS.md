@@ -2479,3 +2479,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:42Z (CoS) v11.17.33
 - Wave W 9 of 9 and wave AB 7 of 7 approved. 16 merged; GATES-02 needed a hand-merge of a DECISIONS.md append conflict. Smoke on combined main (bun test seal, implement, doctor, spawn_env_guard, budget): 213 pass, 2 fail (seal e2e verifyMain rc 4, doctor UX-04 shim e2e). P0 fix-forward agent dispatched under D96.
+
+## 2026-10-17T06:50Z (CoS) v11.17.34
+- P0 fix-forward: seal.test roundtrip red root-caused to checksOf dropping n (TEN-GATES-03-F1 interaction); HIGH reviewer APPROVE c958f563c with revert-red 90/2 and 226 pass 0 fail across seal, roundtrip, verify_cmd, budget, spawn_env_guard. Cherry-picked (parent was the pre-amend release commit). Doctor red was stale dist. PO refill e9d9b63c8 added 24 rows; TEN-GATES-17 added from the review's remaining forgery path.
