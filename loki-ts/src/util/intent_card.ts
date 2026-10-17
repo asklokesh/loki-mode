@@ -101,3 +101,12 @@ export async function applyIntent(raw: string, on: boolean, runDir: string, emit
   const declined = await workerConfirm(card, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
   return { rest, data: { intent_enabled: true, intent_card: card, ...(declined ? { intent_declined: true } : {}) } };
 }
+
+/** The Acceptance lines of a recorded plan output's intent card (what the user asked), cleaned and bounded; empty when there is no card. */
+export function acceptanceLines(plan: unknown): string[] {
+  const card = (plan as { intent_card?: unknown } | undefined)?.intent_card;
+  return Array.isArray(card) ? card.map((l) => String(l).replace(/[\x00-\x1f\x7f`]+/g, " ").trim()).filter((l) => /^acceptance\b/i.test(l)).map((l) => l.slice(0, 500)).slice(0, 10) : [];
+}
+
+/** Reviewer prompt lines asking the diff be checked against the acceptance lines and each unmet one named; empty for no lines, so a prompt without a card is unchanged. */
+export const acceptancePromptBlock = (lines: string[]): string[] => lines.length ? ["", "The user asked for the following (intent card). Check the diff against each line:", ...lines, "For each line the diff leaves unmet, add a reason line starting `- UNMET: ` followed by that line. Do not use VERDICT: PASS while a line is unmet."] : [];
