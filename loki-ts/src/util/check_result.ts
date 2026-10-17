@@ -3,9 +3,10 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
+import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets } from "./redact.ts";
 
@@ -407,4 +408,64 @@ export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CA
   if (!body) body = lines.filter((l) => l.trim()).slice(-6).join("\n");
   body = redactSecrets(body);
   return truncateBytes(body, cap);
+}
+
+// Wall base-run exit classification, moved from engine10/stages/wall.ts (core line budget); this module owns result classification.
+// B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
+export function pytestCollectionIsRed(output: string, repoDir: string): boolean {
+  if (/ModuleNotFoundError/.test(output)) return false;
+  const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
+  const repoReal = real(repoDir); const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
+  // pytest reports an ImportError from `from x import y` via its own (short-summary-less) path; the message always carries the module's own (absolute) file, so a direct scan is unambiguous.
+  const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); if (imp) return under(imp[1]!);
+  // B3 (r4): captured stdout prints ABOVE the short summary, so trust only the LAST ERROR line after the final summary header, and E lines only from the first collecting block, cut at its first Captured separator. No header: fail closed.
+  const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop(); if (!hdr) return false;
+  const cls = [...output.slice(hdr.index).matchAll(/^ERROR \S+ - (\w+Error): /gm)].pop()?.[1]; if (cls !== "AttributeError" && cls !== "NameError") return false;
+  const start = output.search(/^_+ ERROR collecting /m); if (start < 0 || start > hdr.index) return false; const block = output.slice(start, hdr.index).split(/^-+ Captured .*$/m)[0]!;
+  const eLines = [...block.matchAll(new RegExp(`^E {3}${cls}: (.*)$`, "gm"))]; const eLine = eLines[eLines.length - 1]; if (!eLine) return false;
+  // B1 (r3): an AttributeError's frame is only where the dotted access sits, not who owns the missing attribute -- go by the message instead.
+  if (cls === "AttributeError") { const m = /^module ['"]([\w.]+)['"] has no attribute/.exec(eLine[1]!); return !!m && moduleUnderRepo(repoDir, m[1]!); }
+  // NameError: the raise site must be repo code, not merely an import line naming an outside module. B2 (r3): a frame path may contain a space.
+  const frames = [...block.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
+  return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
+}
+function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
+// E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.
+function pytestExit1IsRed(output: string): boolean {
+  if (/^!+ _pytest\.outcomes\.Exit\b/m.test(output)) return false; // pytest.exit(...) can print any text, incl. "1 failed"
+  if (/^=*\s*(\d+ \w+(, )?)*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
+  const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop();
+  return !!hdr && /^FAILED \S+/m.test(output.slice(hdr.index));
+}
+// B2 (r2): jest/vitest/bun red requires a parsed failed-test count above 0; unparseable output stays 0 (not_run).
+function parsedFailCount(runner: RunnerName, output: string): number {
+  const m = runner === "bun" ? /^\s*(\d+)\s+fail\s*$/m.exec(output)
+    : runner === "jest" ? /Tests:\s*(\d+)\s+failed/i.exec(output)
+    : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : null;
+  return m ? Number(m[1]) : 0;
+}
+// A-103 node:test red, mirroring pytest: a missing module inside the repo or an error thrown by code under test is red; a missing bare package, or an error thrown from the Wall file itself (Jest globals), is not. A missing-module crash is not_run only when the file itself failed (no named subtest failed, spec or TAP), and any failing subtest whose error is not a Wall-file Reference/SyntaxError makes the file red, so a child process crash or printed footer cannot hide a real red. Only node's own lines count (col-0 crash text, or a failing-tests block's error line and first frame), never an assertion diff.
+function nodeIsRed(f: TestRef, raw: string): boolean {
+  // node 20/22 off a TTY print TAP: crash text is "# "-prefixed and a failure is a yaml block (name: 'X', stack: |-). Strip the prefix from non-counter lines so the spec-shape regexes apply.
+  const o = raw.replace(/^# (?!(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms|Subtest)\b)/gm, "");
+  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'(?:(?!\u2716)[\s\S])*?\nNode\.js v/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n?(?:ReferenceError|SyntaxError)\b/m.exec(o);
+  const named = [...o.matchAll(/^(?:\u2716|\s*not ok \d+ -) (?!failing tests:)(.+?)(?: \(|$)/gm)].some((m) => !f.path.endsWith(m[1]!) && !m[1]!.endsWith(f.path)), blk = o.split("failing tests:")[1] ?? "", esm = /^SyntaxError: The requested module '([^']+)' does not provide an export named/m.exec(o), errs = [...blk.matchAll(/^ {2}(\w+Error): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/gm), ...o.matchAll(/^ +name: '(\w+Error)'\n(?:.*\n)*? +stack: \|-\n\s+(?:.*\()?([^\s()]+?):\d+:\d+/gm)];
+  return /^(?:#|\u2139) fail [1-9]/m.test(raw) && (/^ {2}AssertionError\b/m.test(blk) || /^ +name: 'AssertionError'/m.test(o) || (mod && !named ? /^[./]/.test(mod[1]!) : esm ? /^[./]/.test(esm[1]!) : top ? !top[1]!.endsWith(f.path) : !errs.length || errs.some((e) => !/^(?:Reference|Syntax)Error$/.test(e[1]!) || !(e[2]!.startsWith("node:") || e[2]!.endsWith(f.path))))); // ESM "cannot import name": red for a repo path, not_run for a bare package
+}
+// D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
+// Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.
+/** FC-69: why a base run was not_run, for the receipt and console ("Wall test not executed: <file>: <reason>"). */
+export function notRunReason(status: number | null, interpreter?: "project" | "system"): string {
+  if (interpreter === "system") return "ran under the system interpreter, not the project's, so the result proves nothing";
+  if (status === null) return "the test runner did not start or timed out";
+  if (status === 126 || status === 127) return `the test runner command was not found or not executable (exit ${status})`;
+  return status === 0 ? "exit 0 but no executed test count could be confirmed" : `exit ${status} but the runner output showed no readable failing test`;
+}
+export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
+  if (interpreter === "system") return "not_run";
+  output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
+  if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return classifyCheck({ kind: "test", ok: true, out: output, path: f.path, ...(f.runner === "go" ? { runner: "go" as const } : {}) }).result === "pass" ? "pass" : "not_run"; // FC-16: exit 0 with zero or unknown executed tests is not a pass
+  if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
+  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
+  return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
 }
