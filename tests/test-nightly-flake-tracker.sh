@@ -57,5 +57,37 @@ check "no arguments is a usage error (exit 2)" "$([ "$?" = 2 ] && echo 0 || echo
 "$TRACKER" "$SHA_A:x:$FX/does-not-exist.log" >/dev/null 2>&1
 check "missing log is a usage error (exit 2)" "$([ "$?" = 2 ] && echo 0 || echo 1)"
 
+# --gh-run: stub gh serving a jobs list and two job logs at one SHA.
+STUB="$FX/stub"
+mkdir -p "$STUB"
+cat >"$STUB/gh" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$*" in
+    *"/jobs?"*)
+        printf '{"jobs":[{"id":101,"name":"Bun tests on macos-latest bun=1.3.13 (nightly)","head_sha":"%s"},{"id":102,"name":"Bun tests on ubuntu-latest bun=latest (nightly)","head_sha":"%s"},{"id":103,"name":"first-run gate (stub)","head_sha":"%s"}]}\n' "$STUB_SHA" "$STUB_SHA" "$STUB_SHA" ;;
+    *"/jobs/101/logs") cat "$STUB_LOG1" ;;
+    *"/jobs/102/logs") cat "$STUB_LOG2" ;;
+    *) exit 1 ;;
+esac
+STUBEOF
+chmod +x "$STUB/gh"
+printf '2026-10-17T01:00:00.0Z (pass) WC-01b [12.00ms]\n' >"$FX/gh1.txt"
+printf '2026-10-17T01:00:00.0Z (fail) WC-01b [5004.82ms]\n' >"$FX/gh2.txt"
+printf '2026-10-17T01:00:00.0Z (fail) WC-01b [7.00ms]\n' >"$FX/gh3.txt"
+export STUB_SHA="$SHA_A" STUB_LOG1="$FX/gh1.txt" STUB_LOG2="$FX/gh2.txt"
+out3="$(PATH="$STUB:$PATH" "$TRACKER" --gh-run 4242)"
+rc3=$?
+check "--gh-run flip exits 1" "$([ "$rc3" = 1 ] && echo 0 || echo 1)"
+case "$out3" in *"FLIP a0d599d WC-01b "*) r=0 ;; *) r=1 ;; esac
+check "--gh-run reports FLIP with [ms] suffix stripped" "$r"
+case "$out3" in *"fail=102-ubuntu-latest_bun=latest-drift"*) r=0 ;; *) r=1 ;; esac
+check "--gh-run labels bun=latest leg as drift" "$r"
+out4="$(STUB_LOG1="$FX/gh3.txt" PATH="$STUB:$PATH" "$TRACKER" --gh-run 4242)"
+rc4=$?
+case "$out4" in *"STABLE-FAIL a0d599d WC-01b"*) r=0 ;; *) r=1 ;; esac
+check "--gh-run both failing is STABLE-FAIL, exit 0" "$([ "$r$rc4" = "00" ] && echo 0 || echo 1)"
+PATH="$STUB:$PATH" "$TRACKER" --gh-run abc >/dev/null 2>&1
+check "--gh-run with non-numeric id is a usage error" "$([ "$?" = 2 ] && echo 0 || echo 1)"
+
 echo "=== nightly-flake-tracker: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
