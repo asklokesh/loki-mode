@@ -60,6 +60,12 @@ describe("MARK-1 commit trailers", () => {
     const keys = sh(["git", "interpret-trailers", "--parse"], repo, msg).trim().split("\n").map((l) => l.split(":")[0]);
     expect(keys).toEqual(["Loki-Run", "AI-Generated", "AI-Provider", "AI-Model", "Loki-Receipt"]);
   });
+  test("true enables: 1, true and yes in any case turn marking on; unset, 0 and other text stay off", () => {
+    const i = { runId: "r", provider: "p", model: "m", receiptRel: "x" };
+    for (const v of ["1", "true", "TRUE", "Yes", " yes "]) expect(aiTrailers(i, { LOKI_AI_MARKING: v }).length).toBe(4);
+    for (const v of [undefined, "", "0", "false", "no", "2"]) expect(aiTrailers(i, v === undefined ? {} : { LOKI_AI_MARKING: v })).toEqual([]);
+    expect(aiMarkerLine(i, { LOKI_AI_MARKING: "true" })).not.toBeNull();
+  });
   test("aiTrailers is empty unless the flag is exactly 1", () => {
     expect(aiTrailers({ runId: "r", provider: "p", model: "m", receiptRel: "x" }, {})).toEqual([]);
     expect(aiTrailers({ runId: "r", provider: "p", model: "m", receiptRel: "x" }, { LOKI_AI_MARKING: "0" })).toEqual([]);
