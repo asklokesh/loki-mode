@@ -9,7 +9,7 @@
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
-import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
+import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
@@ -1114,5 +1114,17 @@ describe("providers truthy", () => {
         expect(truthy(v)).toBe(false);
       }
     });
+  });
+});
+
+describe("TEN-COST-12 engine10 5-minute cache TTL", () => {
+  test("engine10 stage session forces the 5-minute TTL", () => {
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "implement" })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+  });
+  test("main RARV loop env is untouched", () => {
+    expect(engine10CacheTtlEnv({})).toEqual({});
+  });
+  test("LOKI_E10_CACHE_TTL=1h opts out", () => {
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "plan", LOKI_E10_CACHE_TTL: "1h" })).toEqual({});
   });
 });

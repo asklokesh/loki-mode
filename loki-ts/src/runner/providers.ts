@@ -201,6 +201,14 @@ function claudeTierToModel(tier: SessionTier): string {
 // is still planning, so a capability-router or recovery tier change wins.
 // Known divergence: LOKI_MODEL_OVERRIDE (below) still wins over the pin here;
 // run.sh lets the pin overwrite the override.
+// TEN-COST-12: engine10 stage sessions last 10-17s, so the 1-hour cache TTL ($4/M write) buys nothing over
+// 5 minutes ($2.50/M). Claude Code honors FORCE_PROMPT_CACHING_5M=1. Engine10 children only (LOKI_E10_STAGE is
+// set by engine10/session.ts); the main RARV loop is untouched. Opt out with LOKI_E10_CACHE_TTL=1h.
+export function engine10CacheTtlEnv(env: Record<string, string | undefined>): Record<string, string> {
+  if (!env["LOKI_E10_STAGE"] || env["LOKI_E10_CACHE_TTL"] === "1h") return {};
+  return { FORCE_PROMPT_CACHING_5M: "1" };
+}
+
 // EL-W0-06 (D86, FC-04, L1): an engine10 child with nothing configured passes NO model, so the
 // claude CLI uses its own default exactly like raw `claude -p`. session.ts sets LOKI_E10_MODEL_DEFAULT=1
 // only when no override or pin exists; any explicit tier pin, ceiling or routing here still wins.
@@ -539,7 +547,7 @@ export function claudeProvider(): ProviderInvoker {
           : undefined;
       const r = await shellRun(argv, {
         cwd: call.cwd,
-        env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env) },
+        env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env), ...engine10CacheTtlEnv(process.env) },
         timeoutMs: _callTimeoutMs,
       });
       await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
@@ -792,7 +800,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // process.env or PATH/HOME/ANTHROPIC_API_KEY vanish and query() fails.
         const env: Record<string, string> = { ...(process.env as Record<string, string>) };
         if (cavemanLvl) env["CAVEMAN_DEFAULT_MODE"] = cavemanLvl;
-        Object.assign(env, otelPassthroughEnv(process.env), modelRouteEnv(process.env)); // OC-MODELS: child-only route env
+        Object.assign(env, otelPassthroughEnv(process.env), modelRouteEnv(process.env), engine10CacheTtlEnv(process.env)); // OC-MODELS: child-only route env; TEN-COST-12
         // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
         // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
         for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
