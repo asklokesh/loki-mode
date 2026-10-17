@@ -21,6 +21,7 @@ Commands:
   backfill [DIR]                 Ship DIR/.loki/runs (default: current directory) to the control plane
   prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]
                                  Delete matching runs, their events and orphaned sources (works with the server up or down)
+  stop                           Stop the running control plane (PID from ~/.loki/control/instance.json, verified via /health)
   status                         Show whether the control plane is reachable and how many runs it holds
 
 The control plane URL comes from LOKI_CONTROL_URL, else http://127.0.0.1:\${LOKI_CONTROL_PORT:-${DEFAULT_PORT}}.
@@ -69,6 +70,35 @@ export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: 
   const until = Date.now() + (opts.waitMs ?? 8000);
   while (alive(pid) && Date.now() < until) await sleep(50);
   return alive(pid) ? null : pid;
+}
+
+/** `loki control stop`: SIGTERMs only the PID recorded in instance.json, and only after that instance's /health answers as loki-control.
+ *  A dead or missing record is not an error (exit 0); a live PID whose /health does not match is refused (exit 1) and never signalled. */
+export async function stopControlPlane(env: NodeJS.ProcessEnv, opts: { alive?: (pid: number) => boolean; waitMs?: number } = {}): Promise<number> {
+  const alive = opts.alive ?? pidAlive;
+  const file = instancePath(env);
+  let inst: { pid?: unknown; url?: unknown };
+  try { inst = JSON.parse(readFileSync(file, "utf8")); } catch { process.stdout.write("loki control: not running\n"); return 0; }
+  const pid = inst.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1 || pid === process.pid || typeof inst.url !== "string" || !alive(pid)) {
+    rmSync(file, { force: true });
+    process.stdout.write("loki control: not running (removed stale instance record)\n");
+    return 0;
+  }
+  try {
+    const h = (await (await fetch(`${inst.url}/health`, { signal: AbortSignal.timeout(3000) })).json()) as { service?: string };
+    if (h.service !== "loki-control") throw new Error("health identity is not loki-control");
+  } catch (e) {
+    process.stderr.write(`loki control: refusing to stop pid ${pid}: ${(e as Error).message}\n`);
+    return 1;
+  }
+  try { process.kill(pid, "SIGTERM"); } catch (e) { process.stderr.write(`loki control: could not signal pid ${pid}: ${(e as Error).message}\n`); return 1; }
+  const until = Date.now() + (opts.waitMs ?? 8000);
+  while (alive(pid) && Date.now() < until) await sleep(50);
+  if (alive(pid)) { process.stderr.write(`loki control: pid ${pid} did not exit after SIGTERM\n`); return 1; }
+  rmSync(file, { force: true });
+  process.stdout.write(`loki control: stopped (pid ${pid})\n`);
+  return 0;
 }
 
 async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
@@ -176,6 +206,7 @@ export async function runControl(args: string[], env: NodeJS.ProcessEnv = proces
   if (env.LOKI_CONTROL === "0") { process.stdout.write(`${OFF_LINE}\n`); return 0; }
   switch (sub) {
     case "serve": return serve(rest, env);
+    case "stop": return stopControlPlane(env);
     case "status": return status(env);
     case "prune": return prune(rest, env);
     case "backfill": {

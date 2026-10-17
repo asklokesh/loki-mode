@@ -143,11 +143,12 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("ask", "Ask a question", { positionals: [{ name: "question", type: "string" }] }),
     ],
   }),
-  cmd("control", "KEEP-MODERN", "both", "Control Plane (serve, backfill, prune, status)", "D56 control plane, on by default", {
+  cmd("control", "KEEP-MODERN", "both", "Control Plane (serve, backfill, prune, stop, status)", "D56 control plane, on by default", {
     subcommands: [
       sub("serve", "Run the control plane and UI", { flags: [port, dbFlag] }),
       sub("backfill", "Ship DIR/.loki/runs to the control plane", { positionals: [{ name: "dir", type: "path" }] }),
       sub("prune", "Delete matching runs", { flags: [str("--repo", "<owner/name>", "Repository to prune"), str("--before", "<iso-date>", "Prune runs before this date"), bool("--dry-run", "Report only"), dbFlag] }),
+      sub("stop", "Stop the running control plane"),
       sub("status", "Show control plane reachability"),
     ],
   }),
