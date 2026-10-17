@@ -37,6 +37,9 @@ import {
   lowestVolume,
   checkSkills,
   checkTool,
+  readEffectiveProvider,
+  readProviderAvailability,
+  renderProviderAvailability,
   httpReachable,
   pythonImportOk,
   runDoctor,
@@ -1442,4 +1445,44 @@ describe("doctor orphan runs", () => {
     expect(out).not.toContain("e10-live");
     expect(out).not.toContain("e10-done");
   });
+});
+
+describe("doctor hung helper (TEN-STABILITY-47)", () => {
+  let dir = "";
+  let prevPath: string | undefined;
+  let prevTimeout: string | undefined;
+  beforeEach(() => {
+    stubPythonImportOk();
+    dir = mkdtempSync(join(tmpdir(), "doctor-hung-"));
+    for (const name of ["bash", "python3"]) {
+      writeFileSync(join(dir, name), "#!/bin/sh\nexec sleep 30\n");
+      chmodSync(join(dir, name), 0o755);
+    }
+    prevPath = process.env.PATH;
+    prevTimeout = process.env.LOKI_DOCTOR_HELPER_TIMEOUT_MS;
+    process.env.PATH = `${dir}:${prevPath ?? ""}`;
+    process.env.LOKI_DOCTOR_HELPER_TIMEOUT_MS = "300";
+  });
+  afterEach(() => {
+    restorePythonImportOk();
+    if (prevPath === undefined) delete process.env.PATH; else process.env.PATH = prevPath;
+    if (prevTimeout === undefined) delete process.env.LOKI_DOCTOR_HELPER_TIMEOUT_MS;
+    else process.env.LOKI_DOCTOR_HELPER_TIMEOUT_MS = prevTimeout;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("provider helpers return skipped values when the helper hangs", () => {
+    const t0 = Date.now();
+    expect(readEffectiveProvider()).toBeNull();
+    expect(readProviderAvailability()).toBeNull();
+    expect(renderProviderAvailability()).toBe("");
+    expect(Date.now() - t0).toBeLessThan(10000);
+  });
+
+  it("runDoctor finishes and reports hung probes as skipped", async () => {
+    const t0 = Date.now();
+    const { cap } = await captureStdio(() => runDoctor([]));
+    expect(Date.now() - t0).toBeLessThan(25000);
+    expect(cap.out).toContain("timed out (skipped)");
+  }, 30000);
 });
