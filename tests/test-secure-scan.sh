@@ -179,7 +179,7 @@ const c = "SKtooshort";
 EOT
 scan "$SAFE"; assert_silent "secret-in-client-file" "sec18-safe"
 rv=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rules_version"))' "$WORK/last.json")
-if [ "$rv" = "1.6" ]; then ok "sec18: rules_version is 1.6"; else bad "sec18: rules_version $rv" ""; fi
+if [ "$rv" = "1.7" ]; then ok "sec18: rules_version is 1.7"; else bad "sec18: rules_version $rv" ""; fi
 SAFE="$WORK/sec14-placeholder"; mkdir -p "$SAFE/public"
 cat > "$SAFE/public/app.js" <<EOT
 const a = "${_gp}xxxxxxxxxxxxxxxxxxxx";
@@ -643,6 +643,32 @@ printf 'import yaml, json\na = yaml.safe_load(s)\nb = yaml.load(s, Loader=yaml.S
 printf 'import pickle\nx = pickle.loads(b)\n' > "$SAFE/tests/test_x.py"
 printf 'x = pickle.loads(b)\n' > "$SAFE/notes.md"
 scan "$SAFE"; assert_silent "unsafe-deserialization" "r9-safe-and-excluded"
+
+# ---------------------------------------------------------------------------
+# rule 10: sql-string-formatting (TEN-SECURITY-20)
+# ---------------------------------------------------------------------------
+BAD="$WORK/r10-bad"; mkdir -p "$BAD"
+printf 'def f(c, u):\n    c.execute(f"SELECT * FROM t WHERE id = {u}")\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "sql-string-formatting" "r10-fstring"
+d10=$(python3 -c 'import json,sys; f=[x for x in json.load(open(sys.argv[1]))["findings"] if x["rule"]=="sql-string-formatting"]; print(f[0]["file"]+":"+str(f[0]["line"]))' "$WORK/last.json" 2>/dev/null)
+if [ "$d10" = "a.py:2" ]; then ok "r10: finding carries file and line"; else bad "r10: expected a.py:2 got $d10"; fi
+printf 'c.execute("SELECT * FROM t WHERE id = %%s" %% uid)\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "sql-string-formatting" "r10-percent"
+printf 'c.execute("SELECT * FROM t WHERE n = \x27" + name + "\x27")\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "sql-string-formatting" "r10-concat"
+printf 'c.execute("SELECT * FROM t WHERE id = {}".format(uid))\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "sql-string-formatting" "r10-format"
+# entry path: run_secure_scan (the run.sh gate) blocks on it under block mode
+if type run_secure_scan >/dev/null 2>&1; then
+    rc=0; ( TARGET_DIR="$BAD"; export TARGET_DIR; LOKI_SECURE_GATE=block; export LOKI_SECURE_GATE; run_secure_scan ) || rc=$?
+    [ "$rc" -eq 1 ] && ok "r10-gate-blocks-sql-formatting" || bad "r10-gate-blocks-sql-formatting" "rc=$rc"
+fi
+
+SAFE="$WORK/r10-safe"; mkdir -p "$SAFE/tests"
+printf 'c.execute("SELECT * FROM t WHERE id = %%s", (uid,))\nc.execute("SELECT 1")\nc.execute(f"SELECT 1")\n# c.execute(f"x {y}")\n' > "$SAFE/ok.py"
+printf 'c.execute(f"SELECT {x}")\n' > "$SAFE/tests/test_x.py"
+printf 'c.execute(f"SELECT {x}")\n' > "$SAFE/notes.md"
+scan "$SAFE"; assert_silent "sql-string-formatting" "r10-safe-and-excluded"
 
 # ===========================================================================
 echo

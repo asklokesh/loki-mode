@@ -18,7 +18,7 @@ The scanner is honest by construction:
     .git, vendor, bundled dist of dependencies) and oversized files, so it is
     cheap and deterministic.
 
-The v1 rules (rules 6, 7, 8 and 9 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
+The v1 rules (rules 6, 7, 8, 9 and 10 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
   1. private-key-committed   (HIGH)   a PEM private-key block in any text file
   2. secret-in-client-file   (HIGH)   a real secret literal in a browser-served file
   3. world-open-datastore    (HIGH)   a literal world-open datastore rule
@@ -47,7 +47,7 @@ import re
 import subprocess
 import sys
 
-RULES_VERSION = "1.6"
+RULES_VERSION = "1.7"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -488,6 +488,22 @@ def _deserialize_hit(text):
 
 
 # ---------------------------------------------------------------------------
+# rule 10: SQL built by string formatting and passed to execute() (Python)
+# ---------------------------------------------------------------------------
+# .execute( / .executemany( whose first argument is an interpolated f-string
+# (with a {placeholder}), a string literal followed by % or +, or a string
+# literal followed by .format(. A literal followed by a comma (parameter
+# tuple or list) is the safe form and is never flagged. Same line only; same
+# path exclusions as rules 6, 7 and 9. Python files only (.py).
+_SQL_EXEC_FORMATTED = re.compile(
+    r"""\.execute(?:many)?\s*\(\s*(?:"""
+    r"""[rR]?[fF]"[^"]*\{|[rR]?[fF]'[^']*\{"""
+    r"""|[rR]?"[^"]*"\s*(?:%|\+|\.format\s*\()"""
+    r"""|[rR]?'[^']*'\s*(?:%|\+|\.format\s*\())"""
+)
+
+
+# ---------------------------------------------------------------------------
 # rule 8: committed real env file with a secret assignment
 # ---------------------------------------------------------------------------
 # Only real env files (.env, .env.local, .env.production and the prod/staging
@@ -605,6 +621,7 @@ def _scan_file(rel_path, lines, secrets_everywhere=False, env_tracked=None):
     if real_envfile and env_in_git and rel_path not in env_tracked:
         real_envfile = False
     deser_scan = shell_scan and rel_path.lower().endswith(".py")
+    sqli_scan = deser_scan
     node_file = shell_scan and any(_NODE_CP_FILE.search(t) for _, t in lines)
 
     # rule 3 / rule 5 need whole-file context for the AND conditions.
@@ -760,6 +777,18 @@ def _scan_file(rel_path, lines, secrets_everywhere=False, env_tracked=None):
                 "Use yaml.safe_load (or Loader=yaml.SafeLoader) and a data "
                 "format such as JSON; never unpickle or unmarshal data from "
                 "an untrusted source.",
+            ))
+
+        # --- rule 10: SQL built by string formatting ---------------------
+        if (sqli_scan and not _COMMENT_OR_DOC_LINE.match(text)
+                and _SQL_EXEC_FORMATTED.search(text)):
+            findings.append(_finding(
+                "sql-string-formatting", rel_path, lineno, "HIGH",
+                "SQL built with an f-string, % formatting, .format or "
+                "concatenation and passed to execute() is open to SQL "
+                "injection.",
+                "Pass values as bound parameters: "
+                "cursor.execute(\"... WHERE id = %s\", (value,)).",
             ))
 
         # --- rule 8: committed real env file with a secret value ---------
