@@ -127,8 +127,8 @@ run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && 
 
 
 # TEN-UX-08: --entry start-empty
-run_empty() { # run_empty <mode> [budget]: sets OUT and RC
-    OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" ${2:+FRG_BUDGET_S=$2} FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-E$1.txt" bash "$GATE" --stub --entry start-empty 2>&1); RC=$?
+run_empty() { # run_empty <mode> [budget] [injected measured seconds]: sets OUT and RC
+    OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" ${2:+FRG_BUDGET_S=$2} ${3:+FRG_FAKE_TOTAL_S=$3} FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-E$1.txt" bash "$GATE" --stub --entry start-empty 2>&1); RC=$?
 }
 run_empty sgood
 for a in repo-init outcome-verified receipt-sealed next-line first-success-budget; do expect start-empty-good $a PASS; done
@@ -137,8 +137,10 @@ printf '%s\n' "$OUT" | grep -Eq '^install_to_first_success_s=[0-9]+$' && ok "sta
 run_empty srepo;  expect srepo repo-init FAIL;  [ "$RC" -ne 0 ] && ok "srepo: exits non-zero" || bad "srepo: exit 0"
 run_empty sslow 1; expect sslow first-success-budget FAIL; [ "$RC" -ne 0 ] && ok "sslow: exits non-zero" || bad "sslow: exit 0"
 run_empty snonext; expect snonext next-line FAIL; [ "$RC" -ne 0 ] && ok "snonext: exits non-zero" || bad "snonext: exit 0"
-# integer compare, not string: a budget of 9 against a 10s run must fail (string compare would pass "10" < "9"? no: "10" <= "9" is true lexically)
-run_empty sslow 2; expect sslow-b2 first-success-budget FAIL
+# integer compare, not string: lexically "10" < "9" is true, so a string compare would pass a 10s run against a 9s budget
+run_empty sgood 9 10; expect sgood-10v9 first-success-budget FAIL; [ "$RC" -ne 0 ] && ok "10s vs budget 9: exits non-zero" || bad "10s vs budget 9: exit 0"
+# and the reverse: lexically "9" > "10", so a string compare would fail a 9s run against a 10s budget
+run_empty sgood 10 9; expect sgood-9v10 first-success-budget PASS
 # stub mode never writes METRICS
 M0=$(git -C "$SCRIPT_DIR/.." hash-object docs/v10/METRICS.md 2>/dev/null || true)
 run_empty sgood

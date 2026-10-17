@@ -16,7 +16,8 @@
 #                       recorded as install_to_first_success_s. --real also rewrites the METRICS.md "Time to first
 #                       sealed PR" row; the stub never writes METRICS.
 #
-# Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path; FRG_BUDGET_S the start-empty budget.
+# Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path; FRG_BUDGET_S the start-empty budget;
+# FRG_FAKE_TOTAL_S injects the measured start-empty seconds.
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -93,8 +94,11 @@ if [ "$MODE" = stub ]; then
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
 if [ -n "${FRG_SKIP:-}" ]; then # G8: skip the target test instead of fixing it (the node equivalent of a conftest skip; this repo has no pytest)
     sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
-else
-    [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+elif [ -f sum.js ]; then
+    sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+else # start-empty leg: an empty folder, so build the tiny hello CLI the brief asks for
+    printf 'console.log("hello");\n' > hello.js
+    printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { execFileSync } = require('node:child_process');\ntest('prints hello', () => { assert.strictEqual(execFileSync('node', ['hello.js']).toString().trim(), 'hello'); });\n" > hello.test.js
 fi
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 echo "stub claude done"
@@ -111,13 +115,17 @@ if [ "$ENTRY" = start-empty ]; then
     BUDGET="${FRG_BUDGET_S:-120}"
     EMPTY="$T/empty"; mkdir -p "$EMPTY"
     # Identity through env only: no git config is written anywhere.
+    # The preflight reads `git config user.name`, so also expose the identity as config via GIT_CONFIG_COUNT.
     export GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@example.invalid GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@example.invalid
+    export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=gate GIT_CONFIG_KEY_1=user.email GIT_CONFIG_VALUE_1=gate@example.invalid
     echo "ENTRY: loki doctor; loki start \"$BRIEF\"  (mode=$MODE${SPEC:+, installed=$SPEC}, empty folder)"
     FAILS=0; : > "$REPORT"
     res() { printf '%s %s: %s\n' "$1" "$2" "$3" | tee -a "$REPORT"; [ "$1" = PASS ] || FAILS=$((FAILS + 1)); }
-    ( cd "$EMPTY" && "$LOKI" doctor ) < /dev/null > "$T/doctor.log" 2>&1
+    # doctor drops .loki state in its cwd, which would make EMPTY non-empty before start; run it from a sibling dir.
+    mkdir -p "$T/doctor-cwd"
+    ( cd "$T/doctor-cwd" && "$LOKI" doctor ) < /dev/null > "$T/doctor.log" 2>&1
     ( cd "$EMPTY" && "$LOKI" start "$BRIEF" ) < /dev/null > "$T/start.log" 2>&1; SRC=$?
-    TOTAL=$(( $(date +%s) - T0 ))
+    TOTAL="${FRG_FAKE_TOTAL_S:-$(( $(date +%s) - T0 ))}" # FRG_FAKE_TOTAL_S: test hook, injects the measured seconds
     OUTC=$(sed 's/\x1b\[[0-9;]*m//g' "$T/start.log")
     if git -C "$EMPTY" rev-parse --is-inside-work-tree >/dev/null 2>&1; then res PASS repo-init "empty folder is now a git work tree"
     else res FAIL repo-init "empty folder was not set up as a git repo (start rc=$SRC)"; fi
