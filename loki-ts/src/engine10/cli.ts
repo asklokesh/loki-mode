@@ -96,5 +96,7 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
     return 2;
   }
   const code = await (fn as (a: string[]) => unknown)(r.args);
-  return typeof code === "number" ? code : 0;
+  const rc = typeof code === "number" ? code : 0;
+  if (r.module === "supervisor.ts" && !r.args.some((a) => a === "--help" || a === "-h")) await (await import("../util/funnel.ts")).funnelAfterRun(rc, process.cwd()); // TEN-UX-03
+  return rc;
 }
