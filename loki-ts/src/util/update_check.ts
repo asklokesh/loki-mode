@@ -180,6 +180,52 @@ export function findShadowedNewerInstall(
   return null;
 }
 
+// Post-upgrade notice (TEN-ADOPTION-12): print a one-line what-is-new once per
+// version, the first time a newer loki runs after an upgrade. No network call:
+// it compares the running version against the last version this machine saw,
+// stored in ~/.loki/cache/last-seen-version.json. A first run (no record) only
+// records the version and prints nothing. Skipped like the update nudge (opt-out
+// via LOKI_NO_UPDATE_CHECK, CI, non-TTY), and a skipped run does not record, so
+// the notice still appears at the next interactive run. Returns true if printed.
+export function defaultSeenPath(): string {
+  return resolve(homeLokiDir(), "cache", "last-seen-version.json");
+}
+
+export function maybePrintWhatsNew(
+  current: string,
+  opts: { write?: (msg: string) => void; seenFile?: string } = {},
+): boolean {
+  try {
+    if (shouldSkipUpdateCheck()) return false;
+    if (parseSemver(current) === null) return false;
+    const file = opts.seenFile ?? defaultSeenPath();
+    let seen: string | null = null;
+    try {
+      const v = (JSON.parse(readFileSync(file, "utf-8")) as { version?: unknown }).version;
+      if (typeof v === "string" && parseSemver(v) !== null) seen = v;
+    } catch {
+      // missing/corrupt record -> treat as first run
+    }
+    // Same version (once-only) and downgrades never print or overwrite the record.
+    if (seen !== null && !isNewer(current, seen)) return false;
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ version: current }), "utf-8");
+    } catch {
+      return false; // cannot persist -> stay silent rather than repeat every run
+    }
+    if (seen === null) return false;
+    const write = opts.write ?? ((m: string) => process.stderr.write(m));
+    write(
+      `Loki Mode upgraded ${seen} -> ${current}. ` +
+        `What is new: https://github.com/asklokesh/loki-mode/releases/tag/v${current}\n`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Top-level entry: print the nudge to stderr if (and only if) a successful,
 // non-fabricated check reports a strictly newer release. Never throws.
 //
@@ -199,6 +245,10 @@ export async function maybePrintUpdateHint(
     if (shouldSkipUpdateCheck()) return;
     if (parseSemver(current) === null) return; // e.g. "unknown" -> never nudge
     const write = opts.write ?? ((m: string) => process.stderr.write(m));
+    maybePrintWhatsNew(current, {
+      write,
+      ...(opts.cacheFile ? { seenFile: join(dirname(opts.cacheFile), "last-seen-version.json") } : {}),
+    });
 
     // SHADOW CHECK RUNS FIRST, BEFORE any registry lookup.
     //
