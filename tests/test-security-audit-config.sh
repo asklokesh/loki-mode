@@ -781,7 +781,7 @@ _g1_check() { # <hook file>; prints the effective mode of the real gitleaks call
   call="$(grep -e '"\$_gitleaks_bin" git ' "$f" | grep -e '--log-opts=' | head -1)"
   [ -n "$call" ] || return 0
   if printf '%s' "$call" | grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"'; then
-    val="$(grep -m1 -e '^_gitleaks_merge_mode=' "$f" | sed 's/^_gitleaks_merge_mode="\(.*\)"$/\1/')"
+    val="$(grep -m1 -e '^[[:space:]]*_gitleaks_merge_mode=' "$f" | sed 's/^[[:space:]]*_gitleaks_merge_mode="\(.*\)"$/\1/')"
     printf '%s ' "$val"
   else
     printf '%s' "$call" | grep -o -e '--diff-merges=[a-z-]*' | sort -u | tr '\n' ' '
@@ -793,6 +793,33 @@ if [ -n "$_audit_mode" ] && [ "$_audit_mode" = "$_hook_mode" ]; then
 else
   bad "G1: merge-diff mode differs (audit='$_audit_mode' hook call='$_hook_mode')"
 fi
+# local-ci.sh fast-tier gitleaks step joins the comparison set.
+_g1_lci="$REPO_ROOT/scripts/local-ci.sh"
+_g1_lci_mode() { # <file>; effective mode on the real gitleaks call line, empty if none
+  grep -e "gitleaks git \." "$1" | grep -e '--log-opts=' | head -1 | grep -o -e '--diff-merges=[a-z-]*' | sort -u | tr '\n' ' '
+}
+if [ -n "$_audit_mode" ] && [ "$_audit_mode" = "$(_g1_lci_mode "$_g1_lci")" ]; then
+  ok "G1: local-ci.sh gitleaks step uses the same --diff-merges mode ($_audit_mode)"
+else
+  bad "G1: local-ci.sh gitleaks mode differs (audit='$_audit_mode' local-ci='$(_g1_lci_mode "$_g1_lci")')"
+fi
+_g1_lf="$TMP_ROOT/g1-mut-local-ci"
+sed '/gitleaks git \./s/ --diff-merges=first-parent//' "$_g1_lci" > "$_g1_lf"
+if cmp -s "$_g1_lci" "$_g1_lf"; then bad "G1 local-ci mutation did not change the script"
+elif [ "$_audit_mode" != "$(_g1_lci_mode "$_g1_lf")" ]; then ok "G1 mutation (flag dropped from local-ci.sh) goes red"
+else bad "G1 local-ci mutation stayed green"; fi
+# Indentation: the same definition indented must still be read (equal mode, green); an indented
+# definition with a different value must be read too (differs, red). An anchored read would see
+# neither and return an empty mode.
+_g1_if="$TMP_ROOT/g1-indent-ok"
+sed 's/^_gitleaks_merge_mode=/    _gitleaks_merge_mode=/' "$_g1_hook" > "$_g1_if"
+if cmp -s "$_g1_hook" "$_g1_if"; then bad "G1 indent fixture did not change the hook"
+elif [ "$_audit_mode" = "$(_g1_check "$_g1_if")" ]; then ok "G1: an indented mode definition is still read (same mode)"
+else bad "G1: an indented mode definition was not read (got '$(_g1_check "$_g1_if")')"; fi
+_g1_im="$TMP_ROOT/g1-indent-mut"
+sed 's/^_gitleaks_merge_mode=.*$/    _gitleaks_merge_mode="--diff-merges=separate"/' "$_g1_hook" > "$_g1_im"
+if [ "$_audit_mode" != "$(_g1_check "$_g1_im")" ] && [ -n "$(_g1_check "$_g1_im")" ]; then ok "G1 mutation (indented different mode) is read and goes red"
+else bad "G1 indented different mode was ignored (got '$(_g1_check "$_g1_im")')"; fi
 # Mutation: flag removed from the call line only (echo line and definition untouched).
 _g1_mf="$TMP_ROOT/g1-mut-pre-push"
 sed '/"\$_gitleaks_bin" git /s/ \$_gitleaks_merge_mode"/"/' "$_g1_hook" > "$_g1_mf"

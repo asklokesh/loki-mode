@@ -1019,7 +1019,7 @@ fi
 # PARALLEL: read-only (reads .git objects; touches nothing).
 if command -v gitleaks >/dev/null 2>&1; then
   run_check_bg "gitleaks (secrets, origin/main..HEAD)" \
-    'gitleaks git . --log-opts="origin/main..HEAD" --gitleaks-ignore-path .gitleaksignore --no-banner --redact'
+    'gitleaks git . --log-opts="origin/main..HEAD --diff-merges=first-parent" --gitleaks-ignore-path .gitleaksignore --no-banner --redact'
 else
   skip_check "gitleaks (secrets, origin/main..HEAD)" "gitleaks not installed (brew install gitleaks) -- this is a SKIP, not a pass"
 fi
