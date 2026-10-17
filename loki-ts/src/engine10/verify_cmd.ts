@@ -9,6 +9,7 @@ import { lokiDir } from "../util/paths.ts";
 import { applyMaxAge, deployAttestCmd, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
+import { isExecutedProof } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
@@ -149,11 +150,11 @@ function sealCompositeCmd(runDir: string): number {
 /** TEN-GATES-03: count passing checks by the provenance seal recorded (GATES-02). exogenous and independent are agent-independent; agent_authored and llm_judge are advisory.
  *  Absent or unknown provenance never counts as agent-independent (k=null prints "provenance not recorded"). */
 function independentLine(receiptPath: string): { line: string; k: number } {
-  let checks: Array<{ result?: unknown; provenance?: unknown }> = [];
+  let checks: Array<{ result?: unknown; provenance?: unknown; n?: unknown }> = [];
   try { const c = (JSON.parse(readFileSync(receiptPath, "utf8")) as { checks?: unknown }).checks; if (Array.isArray(c)) checks = c; } catch { /* unreadable: no provenance */ }
   const pass = checks.filter((c) => c?.result === "pass");
   if (!pass.some((c) => typeof c.provenance === "string")) return { line: "agent-independent: provenance not recorded", k: 0 };
-  const k = pass.filter((c) => c.provenance === "exogenous" || c.provenance === "independent").length, m = pass.filter((c) => c.provenance === "agent_authored" || c.provenance === "llm_judge").length;
+  const k = pass.filter((c) => isExecutedProof(c) && (c.provenance === "exogenous" || c.provenance === "independent")).length, m = pass.filter((c) => c.provenance === "agent_authored" || c.provenance === "llm_judge").length;
   return { line: `agent-independent: ${k} of ${pass.length} passing checks (wall/holdout/pre-existing/static/probe); advisory: ${m}`, k };
 }
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
@@ -196,6 +197,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); } catch { /* unreadable: the verdict above already says so */ }
   if (result.verdict === "UNSIGNED") {
     if (deps.pubkey) { process.stdout.write("attestation: UNSIGNED, but --pubkey asked for a signature check; refusing\n"); return EXIT_BY_VERDICT.UNSIGNED; }
+    if (requireExo) { const ind = independentLine(receiptPath); process.stdout.write(`${ind.line}\n`); if (allowUnsigned && ind.k === 0) return (process.stdout.write("require-exogenous: refused, no agent-independent passing check\n"), 4); } // TEN-GATES-03-F1
     process.stdout.write(allowUnsigned ? "attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n" : "attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)\n");
     return allowUnsigned ? 0 : EXIT_BY_VERDICT.UNSIGNED;
   } else if (result.verdict === "VERIFIED") {
