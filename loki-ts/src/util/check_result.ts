@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
+import { redactSecrets } from "./redact.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -343,4 +344,36 @@ export function recordRisk(repoDir: string, a: RiskAssessment): string | null {
     writeFileSync(`${p}.tmp`, JSON.stringify(a, null, 2) + "\n"); renameSync(`${p}.tmp`, p);
     return p;
   } catch { return null; }
+}
+
+/** TEN-QUALITY-01: the decisive block of a failed check's output for the fix brief. Pure: ANSI stripped, absolute repo paths made
+ *  repo-relative, secrets redacted, capped at `cap` bytes. pytest "E " lines + last frame, jest/vitest Expected/Received, node/bun
+ *  AssertionError, go "--- FAIL" + next lines, tsc/ruff diagnostics. Unknown shapes fall back to the last few lines. */
+export const EXCERPT_GROUP_CAP = 1500;
+export const EXCERPT_TOTAL_CAP = 6144;
+/** Cut to at most cap UTF-8 bytes without leaving a partial code point (a trailing U+FFFD from the cut is stripped). */
+export function truncateBytes(s: string, cap: number): string {
+  const buf = Buffer.from(s, "utf8");
+  return buf.length <= cap ? s : buf.subarray(0, Math.max(0, cap)).toString("utf8").replace(/\uFFFD$/, "");
+}
+export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CAP): string {
+  let t = stripAnsi(out.slice(-65536)).replace(/\r/g, "");
+  if (repoDir) t = t.split(repoDir.replace(/\/+$/, "") + "/").join("");
+  const lines = t.split("\n").map((l) => l.replace(/\s+$/, ""));
+  const pick = new Set<number>();
+  const take = (i: number, n = 1): void => { for (let k = 0; k < n && i + k < lines.length; k++) if (lines[i + k]!.trim()) pick.add(i + k); };
+  lines.forEach((l, i) => {
+    if (/^E\s/.test(l)) take(i);
+    else if (/^\s*(Expected|Received)\b/.test(l) || /^\s*expect\(.*\)\.\w+/.test(l)) take(i);
+    else if (/^[\w./@-]+\.py:\d+: /.test(l)) take(i);
+    else if (/AssertionError|^\s*(expected|actual)\b.*[:=]|^\s*(not ok|FAILED)\b/.test(l)) take(i, 3);
+    else if (/^\s*--- FAIL/.test(l)) take(i, 4);
+    else if (/^[\w./@-]+\.\w+(\(\d+,\d+\)|:\d+(:\d+)?)[:\s].*\b(error|TS\d+|[A-Z]{1,3}\d{3,4})\b/.test(l)) take(i);
+  });
+  const lastFrame = lines.map((l, i) => (/^[\w./@-]+\.py:\d+: /.test(l) ? i : -1)).filter((i) => i >= 0).pop();
+  if (lastFrame !== undefined && [...pick].some((i) => /^E\s/.test(lines[i]!))) take(lastFrame);
+  let body = [...pick].sort((a, b) => a - b).map((i) => lines[i]!).join("\n");
+  if (!body) body = lines.filter((l) => l.trim()).slice(-6).join("\n");
+  body = redactSecrets(body);
+  return truncateBytes(body, cap);
 }
