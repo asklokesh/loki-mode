@@ -1,7 +1,7 @@
 // D51-A4: Slack notifications for the v10 engine (PR opened, BLOCKED, finished). One entry point.
 // Payload mirrors autonomy/notify.sh _notify_slack. The webhook URL comes from the env var named by LOKI_SLACK_WEBHOOK_ENV (default LOKI_SLACK_WEBHOOK_URL) and is never logged.
 export type SlackEvent = "pr_opened" | "blocked" | "finished";
-export interface SlackFields { repo?: string; issue?: string; prUrl?: string; outcome?: string; question?: string; cost?: string; time?: string; summary?: string }
+export interface SlackFields { repo?: string; issue?: string; prUrl?: string; outcome?: string; question?: string; cost?: string; time?: string; summary?: string; receipt?: string }
 const COLORS: Record<SlackEvent, string> = { finished: "#36a64f", pr_opened: "#2eb886", blocked: "#ff9800" };
 
 export function slackPayload(event: SlackEvent, f: SlackFields): { text: string; attachments: unknown[] } {
@@ -10,8 +10,9 @@ export function slackPayload(event: SlackEvent, f: SlackFields): { text: string;
   if (event !== "finished") fields.push(["Repo", f.repo || "unknown"], ["Issue", f.issue || "none"]);
   if (event === "pr_opened") fields.push(["PR", f.prUrl ?? "none"], ["Outcome", f.outcome ?? ""]);
   if (event === "blocked") fields.push(["Question", f.question ?? ""]);
-  if (event === "finished") fields.push(["Outcome", f.outcome ?? ""], ["Cost", f.cost ?? "not measured"], ["Time", f.time ?? ""]);
-  const text = f.summary ?? (event === "pr_opened" ? `${title}: ${f.prUrl} (${f.outcome})` : `${title}: ${f.question}`);
+  if (event === "finished") fields.push(["Outcome", f.outcome ?? ""], ["Cost", f.cost ?? "not measured"], ["Time", f.time ?? ""], ["Receipt", f.receipt || "(unattested)"]);
+  const rcpt = event === "finished" ? `\nreceipt ${f.receipt || "(unattested)"}` : "";
+  const text = (f.summary ?? (event === "pr_opened" ? `${title}: ${f.prUrl} (${f.outcome})` : `${title}: ${f.question}`)) + rcpt;
   return { text, attachments: [{ color: COLORS[event], title: `Loki Mode: ${title}`, text, fields: fields.map(([title, value]) => ({ title, value, short: true })), footer: "Loki Mode", ts: Math.floor(Date.now() / 1000) }] };
 }
 
