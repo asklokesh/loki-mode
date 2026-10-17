@@ -10,7 +10,7 @@
 // failure".
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -104,7 +104,7 @@ function baseOpts(over: Partial<DeepOptions> = {}): DeepOptions {
   return {
     pushScriptPath: PUSH_STUB,
     secretScanShPath: DEFAULT_SECRET_SCAN_SH,
-    discoverGraph: () => null,
+    appProbe: async () => ({ checks: [{ name: "app boot", cmd: "fake", result: "not_run", duration_s: 0, reason: "fake probe" }], pid: null, url: null }),
     env: { PATH: process.env["PATH"] ?? "" }, // clean env by default: no real token
     ...over,
   };
@@ -150,6 +150,142 @@ describe("engine10 deep: secret scan", () => {
     expect(result.data.status_state).toBe("success");
     const checks = result.data.checks as { name: string; result: string }[];
     expect(checks.find((c) => c.name === "security scan")?.result).toBe("pass");
+  });
+});
+
+const PEM = "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA " + "PRIVATE KEY-----\n";
+const OPEN_RULES = '{\n  "rules": {\n    ".read": true,\n    ".write": true\n  }\n}\n';
+/** A fake secure-scan.py: prints `stdout` and exits `code`, whatever it is asked to scan. */
+function stubScanner(stdout: string, code: number): string {
+  const d = mkdtempSync(join(tmpdir(), "e10-deep-scan-")); cleanupDirs.push(d);
+  const p = join(d, "secure-scan.py");
+  writeFileSync(p, `import sys\nsys.stdout.write(${JSON.stringify(stdout)})\nsys.exit(${code})\n`);
+  return p;
+}
+type Chk = { name: string; cmd?: string; result: string; reason?: string };
+
+describe("engine10 deep: secure scan rules (TEN-GATES-06)", () => {
+  test("a changed file with a committed PEM private key fails with the secure-scan rule id", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "server.txt", PEM);
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts());
+    const scan = (result.data.checks as Chk[]).find((c) => c.name === "security scan");
+    expect(scan?.result).toBe("fail");
+    expect(scan?.reason).toMatch(/private-key-committed: server\.txt:1/);
+    expect(result.data.status_state).toBe("failure");
+  });
+
+  test("a HIGH rule only secure-scan knows (world-open datastore) fails the check", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "database.rules.json", OPEN_RULES);
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts());
+    const scan = (result.data.checks as Chk[]).find((c) => c.name === "security scan");
+    expect(scan?.result).toBe("fail");
+    expect(scan?.reason).toMatch(/world-open-datastore: database\.rules\.json:3/);
+    expect(scan?.reason).not.toMatch(/secret match/);
+  });
+
+  test("a finding in an unchanged base file is out of scope (only changed files are scanned)", async () => {
+    const { dir } = mkRepo();
+    commitChange(dir, "database.rules.json", OPEN_RULES);
+    const base = git(dir, ["rev-parse", "HEAD"]);
+    commitChange(dir, "app.js", "const greeting = 'hello';\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts());
+    expect((result.data.checks as Chk[]).find((c) => c.name === "security scan")?.result).toBe("pass");
+  });
+
+  test("a changed symlink is never followed out of the repo into the secure-scan copy", async () => {
+    const { dir, base } = mkRepo();
+    const outside = mkdtempSync(join(tmpdir(), "e10-deep-outside-")); cleanupDirs.push(outside);
+    writeFileSync(join(outside, "rules.json"), OPEN_RULES);
+    symlinkSync(join(outside, "rules.json"), join(dir, "database.rules.json"));
+    git(dir, ["add", "-A"]);
+    git(dir, ["commit", "-q", "-m", "symlink"]);
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts());
+    expect((result.data.checks as Chk[]).find((c) => c.name === "security scan")?.reason ?? "").not.toMatch(/world-open-datastore/);
+  });
+
+  test("secure-scan missing is not_run and NOT PROVEN, never pass", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "app.js", "const greeting = 'hello';\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts({ secureScanPath: join(dir, "no-such-secure-scan.py") }));
+    expect((result.data.checks as Chk[]).find((c) => c.name === "security scan")?.result).toBe("not_run");
+    expect((result.data.not_proven as string[]).some((n) => n.startsWith("not run: security scan (secure-scan script not found"))).toBe(true);
+    expect(result.data.status_state).toBe("success");
+  });
+
+  test("a broken secure-scan exit is not_run, never a silent pass", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "app.js", "const greeting = 'hello';\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts({ secureScanPath: stubScanner("", 7) }));
+    expect((result.data.checks as Chk[]).find((c) => c.name === "security scan")?.result).toBe("not_run");
+    expect((result.data.not_proven as string[]).some((n) => n.startsWith("not run: security scan (secure-scan failed (exit 7)"))).toBe(true);
+  });
+
+  test("a MEDIUM-only finding does not fail; a lowercase high does", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "app.js", "const greeting = 'hello';\n");
+    const f = (severity: string) => JSON.stringify({ findings: [{ rule: "debug-in-prod", file: "app.js", line: 1, severity, message: "m", fix: "f" }] });
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const med = await runDeep(ctx, sig(), baseOpts({ secureScanPath: stubScanner(f("MEDIUM"), 1) }));
+    expect((med.data.checks as Chk[]).find((c) => c.name === "security scan")?.result).toBe("pass");
+    const high = await runDeep(ctx, sig(), baseOpts({ secureScanPath: stubScanner(f("high"), 1) }));
+    expect((high.data.checks as Chk[]).find((c) => c.name === "security scan")?.result).toBe("fail");
+  });
+});
+
+describe("engine10 deep: app boot via util/app_probe.ts (TEN-GATES-06)", () => {
+  test("an injected appProbe pass becomes a passing app boot and http probe, absent from NOT PROVEN", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    let seen: string[] = [];
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await runDeep(ctx, sig(), baseOpts({
+      appProbe: async (repoDir, lokiDir) => {
+        seen = [repoDir, lokiDir];
+        return { checks: [
+          { name: "app boot", cmd: "autonomy/app-runner.sh", result: "pass", duration_s: 1, reason: "app process started" },
+          { name: "http probe", cmd: "autonomy/app-runner.sh", result: "pass", duration_s: 1, reason: "health.json ok" },
+        ], pid: 123, url: "http://127.0.0.1:1" };
+      },
+    }));
+    expect(seen).toEqual([dir, join(dir, ".loki")]);
+    const checks = result.data.checks as Chk[];
+    expect(checks.find((c) => c.name === "app boot")?.result).toBe("pass");
+    expect(checks.find((c) => c.name === "http probe")?.result).toBe("pass");
+    expect((result.data.not_proven as string[]).some((n) => n.includes("app boot"))).toBe(false);
+  });
+
+  test("a failing boot fails the run; a not_run boot is NOT PROVEN with its reason", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const failed = await runDeep(ctx, sig(), baseOpts({ appProbe: async () => ({ checks: [
+      { name: "app boot", cmd: "x", result: "fail", duration_s: 0, reason: "app start command failed or exited" },
+      { name: "http probe", cmd: "x", result: "not_run", duration_s: 0, reason: "app not booted" },
+    ], pid: null, url: null }) }));
+    expect(failed.data.status_state).toBe("failure");
+    expect(failed.data.not_proven as string[]).toContain("not run: http probe (app not booted)");
+    const skipped = await runDeep(ctx, sig(), baseOpts());
+    expect(skipped.data.not_proven as string[]).toContain("not run: app boot (fake probe)");
+    expect(skipped.data.status_state).toBe("success");
+  });
+
+  test("a throwing or empty probe is NOT PROVEN, never a pass", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const threw = await runDeep(ctx, sig(), baseOpts({ appProbe: async () => { throw new Error("boom"); } }));
+    expect((threw.data.checks as Chk[]).find((c) => c.name === "app boot")?.result).toBe("not_run");
+    expect(threw.data.not_proven as string[]).toContain("not run: app boot (app probe threw: boom)");
+    const empty = await runDeep(ctx, sig(), baseOpts({ appProbe: async () => ({ checks: [], pid: null, url: null }) }));
+    expect(empty.data.not_proven as string[]).toContain("not run: app boot (app probe reported no result)");
   });
 });
 
@@ -292,5 +428,20 @@ describe("engine10 deep: stage export", () => {
     const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
     const result = await deepStage.run(ctx, sig());
     expect(result.status).toBe("completed");
+  });
+
+  test("TEN-GATES-06: the registry-loaded stage runs the real app probe and secure scan defaults", async () => {
+    const { REGISTRY } = await import("../../src/engine10/registry.ts");
+    const mod = await REGISTRY["./stages/deep.ts"]!();
+    const { dir, base } = mkRepo();
+    commitChange(dir, "database.rules.json", OPEN_RULES);
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const result = await (mod["stage"] as typeof deepStage).run(ctx, sig());
+    const checks = result.data.checks as Chk[];
+    const boot = checks.find((c) => c.name === "app boot");
+    expect(boot?.cmd).toBe("autonomy/app-runner.sh"); // util/app_probe.ts, not the old hard-coded discoverProjectGraph stub
+    expect(boot?.result).toBe("not_run"); // a rules file is no runnable app
+    expect((result.data.not_proven as string[]).some((n) => n.startsWith("not run: app boot ("))).toBe(true);
+    expect(checks.find((c) => c.name === "security scan")?.reason).toMatch(/world-open-datastore: database\.rules\.json:3/);
   });
 });
