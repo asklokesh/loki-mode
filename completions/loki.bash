@@ -150,7 +150,7 @@ _loki_completion() {
 
         deploy)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--execute --destination --canary --env-file --health-url --health-match --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--execute --destination --canary --env-file --domain --health-url --health-match --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
                 return 0
             fi
             ;;
