@@ -133,7 +133,7 @@ export function formatSummary(input: SummaryInput): string {
       : input.cost.measuredSessions
         ? `${labelCol("Cost")}partial: $${(input.cost.partialUsd ?? 0).toFixed(2)} for ${input.cost.measuredSessions} of ${input.cost.totalSessions ?? input.cost.measuredSessions} sessions`
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
-  const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
+  const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ") + ((slow) => (slow ? `; slowest: ${slow.label} ${Math.min(100, Math.round((slow.seconds / input.wallS) * 100))}%` : ""))(input.wallS > 0 ? input.stages.filter((s) => s.seconds > 0).reduce<{ label: string; seconds: number } | null>((a, s) => (a && a.seconds >= s.seconds ? a : s), null) : null); // TEN-SPEED-03: slowest stage share of wall; needs real durations and wall
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
   return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
 }

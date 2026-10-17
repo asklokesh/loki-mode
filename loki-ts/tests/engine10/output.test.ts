@@ -158,7 +158,7 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
       "PR:         https://github.com/o/r/pull/12 (draft: fix rounds exhausted)\n" +
       "NOT PROVEN: full suite, app boot, council, security scan (deep verify running); flaky tests/test_x.py::t\n" +
       "Cost:       $0.84 (claude, 212k tokens)\n" +
-      "Time:       4m12s (intake 11s, plan+wall 38s, implement 2m41s, verify 29s, seal+pr 13s)",
+      "Time:       4m12s (intake 11s, plan+wall 38s, implement 2m41s, verify 29s, seal+pr 13s; slowest: implement 64%)",
     );
   });
 
@@ -188,14 +188,23 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
       "PR:         https://github.com/o/r/pull/34\n" +
       "NOT PROVEN: full suite (deep verify running), app boot (deep verify running), council (deep verify running), security scan (deep verify running)\n" +
       "Cost:       $0.42 (claude, 98k tokens)\n" +
-      "Time:       5m00s (intake 10s, plan+wall 40s, implement 3m20s, verify 35s, seal+pr 15s)",
+      "Time:       5m00s (intake 10s, plan+wall 40s, implement 3m20s, verify 35s, seal+pr 15s; slowest: implement 67%)",
     );
+  });
+
+  test("Time line names the slowest stage and its share of wall time; omitted without durations (TEN-SPEED-03)", () => {
+    const base = { pr: null, verdict: "VERIFIED" as const, notProven: [], flaky: [], cost: { usd: 0.1, provider: "claude", tokens: 1000 } };
+    const timeOf = (wallS: number, stages: { label: string; seconds: number }[]): string => formatSummary({ ...base, wallS, stages } as never).split("\n").at(-1) as string;
+    expect(timeOf(100, [{ label: "a", seconds: 10 }, { label: "b", seconds: 70 }, { label: "c", seconds: 20 }])).toBe("Time:       1m40s (a 10s, b 1m10s, c 20s; slowest: b 70%)");
+    expect(timeOf(100, [])).toBe("Time:       1m40s ()");
+    expect(timeOf(0, [{ label: "a", seconds: 10 }])).not.toContain("slowest");
+    expect(timeOf(100, [{ label: "a", seconds: Number.NaN }])).not.toContain("slowest");
   });
 
   test("firstSealed marks the Time line only when literally true (TEN-UX-11)", () => {
     const base = { pr: null, verdict: "VERIFIED" as const, notProven: [], flaky: [], cost: { usd: 0.1, provider: "claude", tokens: 1000 }, wallS: 60, stages: [{ label: "intake", seconds: 5 }] };
     const timeOf = (extra: object): string => formatSummary({ ...base, ...extra } as never).split("\n").at(-1) as string;
-    const plain = "Time:       1m00s (intake 5s)";
+    const plain = "Time:       1m00s (intake 5s; slowest: intake 8%)";
     expect(timeOf({})).toBe(plain);
     expect(timeOf({ firstSealed: false })).toBe(plain);
     expect(timeOf({ firstSealed: "false" })).toBe(plain);
