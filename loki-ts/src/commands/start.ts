@@ -290,7 +290,7 @@ export function parseStartArgs(
 
   const providerRaw = argVal(args, "--provider");
   if (providerRaw && !VALID_PROVIDERS.has(providerRaw)) {
-    err(`start: unknown --provider '${providerRaw}'\n`);
+    err(`start: unknown --provider '${providerRaw}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`);
     return 2;
   }
   // Generic capability vocabulary (small|medium|high) is translated onto the

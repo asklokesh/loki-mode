@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { capSourceLine, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { VALID_PROVIDERS } from "../../src/runner/router/cost_preview.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -245,6 +246,14 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     errs.length = 0;
     expect(parseStartArgs(["./prd.md", "--provider", "gemini"], collect)).toBe(2);
     expect(errs.join("")).toContain("unknown --provider");
+  });
+
+  it("unknown provider lists valid", () => {
+    errs.length = 0;
+    expect(parseStartArgs(["./prd.md", "--provider", "gemini"], collect)).toBe(2);
+    const msg = errs.join("");
+    expect(msg).toContain("unknown --provider 'gemini' (use one of: ");
+    for (const p of VALID_PROVIDERS) expect(msg).toContain(p);
   });
 
   it("direct Bun start accepts opencode (a supported provider since v11.4)", () => {
