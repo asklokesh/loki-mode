@@ -5,9 +5,10 @@
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { capSourceLine, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -406,5 +407,124 @@ describe("writebackEnv (tracker ref exports LOKI_WRITEBACK_ISSUE)", () => {
     expect(writebackEnv("linear:ENG-42", {}).LOKI_WRITEBACK_KIND).toBe("linear");
     expect(writebackEnv("jira:PROJ-123", {}).LOKI_WRITEBACK_KIND).toBe("jira");
     expect(writebackEnv("add a login page", {}).LOKI_WRITEBACK_ISSUE).toBeUndefined();
+  });
+});
+
+describe("missing prd path (TEN-STABILITY-30)", () => {
+  const none = () => false;
+  const yes = () => true;
+  it("missing prd path: path-shaped positional that does not exist -> message", () => {
+    for (const p of ["./prd.md", "prd.md", "docs/spec", "x.yaml", "x.JSON", "a.txt", "a.yml"]) {
+      expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
+    }
+  });
+  it("missing prd path: --prd FILE and --prd=FILE always require the file", () => {
+    expect(missingPrdMessage(["--prd", "plain"], "plain", none)).toBe("PRD file not found: plain\n");
+    expect(missingPrdMessage(["--prd=plain"], "plain", none)).toBe("PRD file not found: plain\n");
+  });
+  it("existing files, plain briefs, issue refs, URLs, --brief and empty spec are unchanged", () => {
+    expect(missingPrdMessage(["./prd.md"], "./prd.md", yes)).toBeNull();
+    for (const b of ["build a todo app", "build a CRUD/REST api", "owner/repo#123", "jira:ABC-12", "https://x.io/a.md", "todo", ""]) {
+      expect(missingPrdMessage([b], b, none)).toBeNull();
+    }
+    expect(missingPrdMessage(["--brief", "./prd.md"], "./prd.md", none)).toBeNull();
+  });
+  it("missing prd path: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-s30-"));
+    try {
+      for (const a of [["start", "./nope/prd.md"], ["start", "--prd", "nope"]]) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain("PRD file not found:");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("cap source line (TEN-COST-41)", () => {
+  it("cap source line: flag names --budget-limit", async () => {
+    expect(await capSourceLine(7, tmpdir(), {})).toBe("cap $7.00 (--budget-limit)");
+  });
+  it("cap source line: env and default are named by the runner note, not repeated", async () => {
+    const { runnerBudget } = await import("../../src/e10ext/budget_cap.ts");
+    expect(await capSourceLine(undefined, tmpdir(), { LOKI_BUDGET_LIMIT: "5" })).toBeNull();
+    expect(runnerBudget(undefined, tmpdir(), { LOKI_BUDGET_LIMIT: "5" }).note).toBe("cap $5.00 (env)");
+    expect(await capSourceLine(undefined, tmpdir(), { ANTHROPIC_API_KEY: "k" })).toBeNull();
+    expect(runnerBudget(undefined, tmpdir(), { ANTHROPIC_API_KEY: "k" }).note).toBe("cap $100.00 (default)");
+  });
+  it("cap source line: subscription run says no dollar cap", async () => {
+    expect(await capSourceLine(undefined, tmpdir(), {})).toBe("no dollar cap (subscription)");
+  });
+  it("cap source line: real entry (cli.ts start --budget-limit) prints the line before the run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-c41-"));
+    try {
+      writeFileSync(join(dir, "prd.md"), "# x\n");
+      const env = { ...process.env, PATH: "/usr/bin:/bin", LOKI_BUDGET_LIMIT: "" };
+      const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "prd.md", "--budget-limit", "7"], { cwd: dir, encoding: "utf8", timeout: 8_000, env });
+      expect(r.stdout).toContain("[runner] cap $7.00 (--budget-limit)");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("deploy flag validation (TEN-DEPLOY-19)", () => {
+  it("deploy flag validation: bad health-url and domain are named", () => {
+    for (const u of ["notaurl", "ftp://x.io/h", "http://", "x.io/health", "javascript:alert(1)"]) {
+      expect(deployFlagError(["p.md", "--deploy", "--health-url", u])).toContain("--health-url");
+      expect(deployFlagError([`--health-url=${u}`, "--deploy"])).toContain("--health-url");
+    }
+    for (const d of ["https://x.io", "x.io/path", "x.io:8080", "bad host", "x-.io", "x..io"]) {
+      expect(deployFlagError(["p.md", "--deploy", "--domain", d])).toContain("--domain");
+      expect(deployFlagError([`--domain=${d}`, "--deploy"])).toContain("--domain");
+    }
+  });
+  it("deploy flag validation: valid values and absent flags are unchanged", () => {
+    expect(deployFlagError(["p.md", "--deploy"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--health-url", "https://app.example.com:8443/health?x=1", "--domain", "app.example.com"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--health-url=http://localhost:3000", "--domain=localhost"])).toBeNull();
+  });
+  it("deploy flag validation: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d19-"));
+    try {
+      for (const [a, flag] of [[["--health-url", "notaurl"], "--health-url"], [["--domain", "https://x.io"], "--domain"]] as const) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(flag);
+        expect(r.stderr.trim().split("\n").length).toBe(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("env-file missing (TEN-DEPLOY-20)", () => {
+  it("env-file missing: absent path and directory are named, existing file is accepted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d20-"));
+    try {
+      const f = join(dir, "ok.env");
+      writeFileSync(f, "A=1\n");
+      expect(deployFlagError(["p.md", "--deploy", "--env-file", join(dir, "missing.env")])).toContain("--env-file");
+      expect(deployFlagError([`--env-file=${join(dir, "missing.env")}`, "--deploy"])).toContain("--env-file");
+      expect(deployFlagError(["--deploy", "--env-file", dir])).toContain("--env-file");
+      expect(deployFlagError(["--deploy", "--env-file", f])).toBeNull();
+      expect(deployFlagError(["--deploy"])).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("env-file missing: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d20-"));
+    try {
+      const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", "--env-file", "./missing.env"], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("--env-file");
+      expect(r.stderr.trim().split("\n").length).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

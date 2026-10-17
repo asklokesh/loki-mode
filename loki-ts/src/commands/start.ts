@@ -13,6 +13,7 @@
 // (--compliance, mirofish) are rejected loudly and documented. See
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
+import { accessSync, constants as fsConstants, existsSync as pathExists, statSync } from "node:fs";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
@@ -347,6 +348,18 @@ export function parseStartArgs(
   };
 }
 
+/** TEN-STABILITY-30: a path-shaped spec (or any --prd value) that does not exist is an error, never a paid run on the path string as an inline brief. Issue refs, URLs and multi-word briefs are not path-shaped. Returns the message, or null. */
+export function missingPrdMessage(args: readonly string[], spec: string, exists: (p: string) => boolean = pathExists): string | null {
+  if (spec === "") return null;
+  const fromFlag = argVal(args, "--prd") !== undefined || args.some((a) => a.startsWith("--prd="));
+  if (!fromFlag) {
+    if (argVal(args, "--brief") !== undefined || args.some((a) => a.startsWith("--brief="))) return null;
+    const pathShaped = !/\s|#|^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec) && (spec.includes("/") || /\.(md|txt|ya?ml|json)$/i.test(spec));
+    if (!pathShaped) return null;
+  }
+  return exists(spec) ? null : `PRD file not found: ${spec}\n`;
+}
+
 /** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
 export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" {
   if (o.specPath !== undefined || o.specFirst) return "spec";
@@ -393,6 +406,48 @@ export function isBashOnlyStart(args: readonly string[]): boolean {
   return args.some((a) => a === "--workspace" || a.startsWith("--workspace=") || a === "--deploy");
 }
 
+/** TEN-DEPLOY-19: --health-url must be http(s) with a host and --domain a bare hostname; null when valid or absent (a missing value is left to the bash parser). */
+export function deployFlagError(args: readonly string[]): string | null {
+  const val = (name: string): string | undefined => {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i] ?? "";
+      if (a.startsWith(`${name}=`)) return a.slice(name.length + 1);
+      if (a === name) {
+        const n = args[i + 1];
+        return n !== undefined && !n.startsWith("-") ? n : undefined;
+      }
+    }
+    return undefined;
+  };
+  const health = val("--health-url");
+  if (health !== undefined) {
+    let ok = false;
+    try {
+      const u = new URL(health);
+      ok = (u.protocol === "http:" || u.protocol === "https:") && u.hostname !== "";
+    } catch {
+      ok = false;
+    }
+    if (!ok) return `start: --health-url must be an http or https URL with a host, got '${health}'\n`;
+  }
+  const domain = val("--domain");
+  if (domain !== undefined && !/^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(domain)) {
+    return `start: --domain must be a bare hostname (no scheme, path or port), got '${domain}'\n`;
+  }
+  const envFile = val("--env-file"); // TEN-DEPLOY-20: fail before the build, not after
+  if (envFile !== undefined) {
+    let ok = false;
+    try {
+      accessSync(envFile, fsConstants.R_OK);
+      ok = statSync(envFile).isFile();
+    } catch {
+      ok = false;
+    }
+    if (!ok) return `start: --env-file '${envFile}' does not exist or is not a readable file\n`;
+  }
+  return null;
+}
+
 const START_ENV_NAMES = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "LANG", "TZ", "CI", "NO_COLOR", "SSH_AUTH_SOCK", "LOKI_RUN_TMP"]);
 const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
 /** Scoped child env for the bash divert: an explicit allowlist (plan section 3), never the whole env plus unrelated secrets. */
@@ -404,8 +459,21 @@ export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+/** TEN-COST-41: the one-line effective run cap and its source; null when the runner's own `[runner] cap` note already names it (env, loki.yaml, default). */
+export async function capSourceLine(budgetLimit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
+  const c = resolveCap(budgetLimit !== undefined ? String(budgetLimit) : null, repoDir, env);
+  if ("error" in c) return null;
+  return budgetLimit !== undefined || c.source === "subscription" ? capNote(c.usd, c.source).replace("(--max-cost)", "(--budget-limit)") : null; // the start flag is --budget-limit, not engine10's --max-cost
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
+    const deployErr = deployFlagError(args);
+    if (deployErr) {
+      process.stderr.write(deployErr);
+      return 2;
+    }
     const { spawn } = await import("node:child_process");
     return await new Promise<number>((resolveExit) => {
       const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: scopedStartEnv(process.env), stdio: "inherit" });
@@ -415,8 +483,15 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
+  const missing = missingPrdMessage(args, parsed.prdPath);
+  if (missing) {
+    process.stderr.write(missing);
+    return 2;
+  }
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
+    const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
+    if (capLine) process.stdout.write(`[runner] ${capLine}\n`);
     return runAutonomous(parsed);
   }
   if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
