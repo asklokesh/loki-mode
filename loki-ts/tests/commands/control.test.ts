@@ -218,3 +218,26 @@ describe("loki control backfill repo DIR", () => {
     expect(out).toContain("backfill 2 runs");
   });
 });
+
+describe("loki control status extra args", () => {
+  let err = "";
+  let realErr: typeof process.stderr.write;
+  beforeEach(() => { err = ""; realErr = process.stderr.write; process.stderr.write = ((s: string | Uint8Array) => { err += String(s); return true; }) as typeof process.stderr.write; });
+  afterEach(() => { process.stderr.write = realErr; });
+  test("status --jsno rejected with usage, exit 2, no human form", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    expect(await runControl(["status", "--jsno"], env)).toBe(2);
+    expect(err).toContain("Usage: loki control status [--json]");
+    expect(out).toBe("");
+  });
+  test("status extra rejected", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    expect(await runControl(["status", "extra"], env)).toBe(2);
+    expect(err).toContain("unexpected argument 'extra'");
+  });
+  test("stop extra rejected before touching anything", async () => {
+    expect(await runControl(["stop", "extra"], env)).toBe(2);
+    expect(err).toContain("Usage: loki control stop");
+    expect(out).toBe("");
+  });
+});

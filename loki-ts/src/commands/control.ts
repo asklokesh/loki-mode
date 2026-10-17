@@ -221,14 +221,22 @@ function prune(args: string[], env: NodeJS.ProcessEnv): number {
   } finally { sqlite?.close(); }
 }
 
+// stop and status take no positional args; status takes only --json. Anything else is a typo, not something to ignore.
+function rejectExtra(sub: "stop" | "status", rest: string[]): boolean {
+  const bad = rest.find((a) => !(sub === "status" && a === "--json"));
+  if (bad === undefined) return false;
+  process.stderr.write(`loki control ${sub}: unexpected argument '${bad}'\nUsage: loki control ${sub === "status" ? "status [--json]" : "stop"}\n`);
+  return true;
+}
+
 export async function runControl(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") { process.stdout.write(HELP); return 0; }
   if (env.LOKI_CONTROL === "0") { process.stdout.write(`${OFF_LINE}\n`); return 0; }
   switch (sub) {
     case "serve": return serve(rest, env);
-    case "stop": return stopControlPlane(env);
-    case "status": return status(rest, env);
+    case "stop": return rejectExtra("stop", rest) ? 2 : stopControlPlane(env);
+    case "status": return rejectExtra("status", rest) ? 2 : status(rest, env);
     case "prune": return prune(rest, env);
     case "backfill": {
       if (missingValue(rest, "--repo")) { process.stderr.write("loki control backfill: --repo needs a value\nUsage: loki control backfill [--repo DIR | DIR]\n"); return 2; }
