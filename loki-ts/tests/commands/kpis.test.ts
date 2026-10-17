@@ -231,8 +231,19 @@ describe("runKpis --since window (TEN-COST-31)", () => {
     expect(r.stdout).toContain("Iterations:           3");
   });
 
+  it("since missing value: names the flag, exits 1, never swallows the next flag", () => {
+    for (const bad of [["--since"], ["--since", "--json"], ["--json", "--since"], ["--since", "--quiet"], ["--since", "-q"]]) {
+      const r = run(bad);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("--since requires a value");
+      expect(r.stderr).not.toContain("''");
+    }
+    expect(run(["--since", "7d", "--json"]).code).toBe(0);
+    expect(run(["--since=7d", "--json"]).code).toBe(0);
+  });
+
   it("bad, missing, or impossible values exit 1 and say so", () => {
-    for (const bad of [["--since", "banana"], ["--since"], ["--since", "7"], ["--since", "2026-02-31"], ["--since", "-3d"]]) {
+    for (const bad of [["--since", "banana"], ["--since", "7"], ["--since", "2026-02-31"], ["--since", "-3d"]]) {
       const r = run(bad);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("invalid --since value");

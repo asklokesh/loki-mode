@@ -84,7 +84,14 @@ export function runKpis(args: readonly string[], opts: RunKpisOptions = {}): num
       continue;
     }
     if (a === "--since" || a.startsWith("--since=")) {
-      const raw = a === "--since" ? (args[++i] ?? "") : a.slice("--since=".length);
+      if (a === "--since") {
+        const next = args[i + 1];
+        if (next === undefined || next.startsWith("--") || next === "-q" || next === "-h") {
+          process.stderr.write("loki kpis: --since requires a value (use <N>d such as 7d, or YYYY-MM-DD)\n");
+          return 1;
+        }
+      }
+      const raw = a === "--since" ? args[++i]! : a.slice("--since=".length);
       const ms = parseSince(raw);
       if (ms === null) {
         process.stderr.write(`loki kpis: invalid --since value: '${raw}' (use <N>d such as 7d, or YYYY-MM-DD)\n`);
