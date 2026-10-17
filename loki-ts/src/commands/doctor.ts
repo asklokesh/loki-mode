@@ -888,10 +888,10 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 // parseable output -> caller reports UNKNOWN (warn), never a false
 // fail). Kept byte-faithful with autonomy/loki's inline `claude auth status`
 // parse so the bash and Bun doctor routes render the identical login line.
-function claudeAuthStatusLoggedIn(): "yes" | "no" | "" {
+export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv = process.env): "yes" | "no" | "" {
   try {
-    const r = spawnSync("claude", ["auth", "status"], {
-      env: { ...process.env },
+    const r = spawnSync(cli, ["auth", "status"], {
+      env: { ...env },
       encoding: "utf8",
       timeout: 5000,
     });
