@@ -25,7 +25,7 @@ import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
-import { tokenFreeEnv } from "../util/safe_git.ts";
+import { withholdGithubTokens } from "../runner/github_token.ts";
 import { GATEWAY_LANE_LOSS, gatewayLaneLabel } from "../providers/model_routes.ts";
 
 // ---------- Setup requirements per execution path -----------------------------
@@ -881,6 +881,16 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 
 // ---------- Text mode rendering ----------------------------------------------
 
+// P9 (TEN-P9-FIX, TEN-P9-FIX-F1): every doctor spawn of a provider CLI gets the env a provider session gets, built by the
+// same withholdGithubTokens the session uses (never a hand-built copy), so a channel added there is withheld here too.
+// The operator opt-out (LOKI_ALLOW_AGENT_GITHUB_TOKEN=1) keeps the env untouched, as it does for the session. Warnings are
+// dropped: the session prints its own, and a probe must not add stderr lines to doctor output. Never mutates its argument.
+export function providerProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  withholdGithubTokens(out, () => {});
+  return out;
+}
+
 // v7.104.2 parity with bash doctor: the durable login signal is `claude auth
 // status` (local, zero-network, ~0.2s, JSON with "loggedIn"), which recognizes
 // BOTH the file-based AND the native/macOS-Keychain login (the native install
@@ -891,12 +901,8 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 // parse so the bash and Bun doctor routes render the identical login line.
 export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv = process.env): "yes" | "no" | "" {
   try {
-    // P9 (TEN-P9-FIX): this spawns the provider CLI, so it gets the withheld env a provider session gets: no GitHub
-    // token, gh store or credential helper (tokenFreeEnv), no SSH agent, and git's ssh transport off. The operator opt-out
-    // (LOKI_ALLOW_AGENT_GITHUB_TOKEN=1, see runner/github_token.ts) keeps the env untouched, as it does for the session.
-    const optOut = env["LOKI_ALLOW_AGENT_GITHUB_TOKEN"] === "1";
     const r = spawnSync(cli, ["auth", "status"], {
-      env: optOut ? { ...env } : { ...tokenFreeEnv(env), GIT_SSH_COMMAND: "false" },
+      env: providerProbeEnv(env),
       encoding: "utf8",
       timeout: 5000,
     });
@@ -1822,7 +1828,7 @@ const defaultRoundTrip: RoundTripRunner = async () => {
   const prompt = "Reply with the single word OK";
   const args = provider === "claude" ? ["-p", prompt] : provider === "codex" ? ["exec", prompt] : null;
   if (!args) return { ok: false, detail: `round-trip unsupported for provider ${provider}` };
-  const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: tokenFreeEnv() });
+  const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: providerProbeEnv() });
   if (r.error) return { ok: false, detail: String(r.error.message).slice(0, 200) };
   return { ok: r.status === 0, detail: (r.status === 0 ? r.stdout : r.stderr || `exit ${r.status}`).trim().slice(0, 200) };
 };
