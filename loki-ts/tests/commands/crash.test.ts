@@ -217,6 +217,31 @@ describe("crash: list json", () => {
   });
 });
 
+describe("crash: extra args", () => {
+  it("rejects extra args with usage and exit 2", async () => {
+    const { fingerprint } = seedReport();
+    const cases: [string[], string][] = [
+      [["show", fingerprint, "extra"], "loki crash show <id>"],
+      [["submit", fingerprint, "extra"], "loki crash submit [<id>]"],
+      [["list", "--json", "extra"], "loki crash list [--json]"],
+      [["--json", "extra"], "loki crash [--json]"],
+    ];
+    for (const [argv, usage] of cases) {
+      const r = await runWithCapture(argv);
+      expect(r.exitCode).toBe(2);
+      expect(stripAnsi(r.stderr)).toContain(`Usage: ${usage}`);
+      expect(r.stdout).toBe("");
+    }
+  });
+
+  it("keeps single-arg forms working", async () => {
+    const { fingerprint } = seedReport();
+    for (const argv of [["show", fingerprint], ["submit", fingerprint], ["submit"], ["list"]]) {
+      expect((await runWithCapture(argv)).exitCode).toBe(0);
+    }
+  });
+});
+
 describe("crash: show", () => {
   it("pretty-prints one report resolved by fingerprint", async () => {
     const { fingerprint } = seedReport();

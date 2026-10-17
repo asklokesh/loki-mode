@@ -245,14 +245,29 @@ function submitCrash(id: string | undefined): number {
   return 0;
 }
 
+// Reject surplus positional args with a usage line (exit 2) instead of
+// silently ignoring them.
+function extraArgs(usage: string, extra: readonly string[]): number {
+  process.stderr.write(
+    `${RED}Unexpected extra arguments: ${extra.join(" ")}${NC}\nUsage: ${usage}\n`,
+  );
+  return 2;
+}
+
 export async function runCrash(argv: readonly string[]): Promise<number> {
   const sub = argv[0];
   switch (sub) {
     case undefined:
       return listCrashes();
     case "--json":
+      if (argv.length > 1) {
+        return extraArgs("loki crash [--json]", argv.slice(1));
+      }
       return listCrashes(true);
     case "list":
+      if (argv.length > 2) {
+        return extraArgs("loki crash list [--json]", argv.slice(2));
+      }
       if (argv[1] !== undefined && argv[1] !== "--json") {
         process.stderr.write(`${RED}Unknown option for crash list: ${argv[1]}${NC}\n`);
         return 2;
@@ -264,8 +279,14 @@ export async function runCrash(argv: readonly string[]): Promise<number> {
       process.stdout.write(HELP);
       return 0;
     case "show":
+      if (argv.length > 2) {
+        return extraArgs("loki crash show <id>", argv.slice(2));
+      }
       return showCrash(argv[1]);
     case "submit":
+      if (argv.length > 2) {
+        return extraArgs("loki crash submit [<id>]", argv.slice(2));
+      }
       return submitCrash(argv[1]);
     default:
       process.stderr.write(`${RED}Unknown crash subcommand: ${sub}${NC}\n`);
