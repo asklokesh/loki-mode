@@ -40,6 +40,7 @@
 // retained for tests only and is injected through opts.reviewer; it is never the
 // production default.
 
+import { REVIEW_GUARD_DENYLIST } from "../providers/claude_flags.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -1565,8 +1566,10 @@ export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 //     autonomy/lib/claude-flags.sh.
 //   - CAVEMAN_DEFAULT_MODE=off: this is a parsed trust-gate subcall; a globally
 //     active caveman would reword the VERDICT line and flip the verdict.
-export const REVIEW_GUARD_DENYLIST =
-  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+// The value lives in providers/claude_flags.ts, a leaf module, so engine10
+// stages can import it without pulling this file's SDK invoker into bundles
+// that ship without loki-ts deps (the control-plane server, v11.17.14 FC).
+export { REVIEW_GUARD_DENYLIST };
 
 // v8.x: absolute path to the code-review verdict schema (distinct from the
 // council finding-schema; this one speaks PASS/FAIL + severity).

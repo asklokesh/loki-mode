@@ -19,6 +19,13 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
 
+// --disallowedTools tree-mutation guard for reviewer sessions. Byte-identical to
+// loki_review_guard_denylist in autonomy/lib/claude-flags.sh. Kept in this leaf
+// module so engine10 stages and runner/quality_gates.ts share one value without
+// the stages importing the SDK invoker.
+export const REVIEW_GUARD_DENYLIST =
+  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 // Mirror of loki_effort_for_tier in autonomy/lib/claude-flags.sh.

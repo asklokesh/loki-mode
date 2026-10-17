@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
 import { runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
 import { childEnv } from "../../src/engine10/session.ts";
-import { REVIEW_GUARD_DENYLIST } from "../../src/runner/quality_gates.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import { deepStage } from "../../src/engine10/stages/deep.ts";
 import type { RunContext, SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
