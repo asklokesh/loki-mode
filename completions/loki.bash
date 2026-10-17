@@ -287,6 +287,13 @@ _loki_completion() {
             return 0
             ;;
 
+        verify-pr)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--out --json --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         undo)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--list --plan --dry-run --help" -- "$cur") )

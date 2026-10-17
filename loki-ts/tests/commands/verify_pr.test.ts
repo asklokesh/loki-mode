@@ -44,10 +44,10 @@ const hostSandbox = (d: string, cmd: string) => {
 const TRUSTED = { author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", repo: "o/r" };
 const noSuites = () => ({ suites: [] as string[], removed: [] as string[] });
 
-function run(meta: PrMeta, over: Partial<VerifyPrDeps> = {}, issueBody = ISSUE) {
+function run(meta: PrMeta, over: Partial<VerifyPrDeps> = {}, issueBody = ISSUE, extra: string[] = []) {
   const out: string[] = [], err: string[] = [];
   const outDir = join(dir, "out");
-  const p = runVerifyPr(["o/r#7", "--out", outDir], {
+  const p = runVerifyPr(["o/r#7", "--out", outDir, ...extra], {
     env: { LOKI_VERIFY_PR: "1" }, out: (s) => void out.push(s), err: (s) => void err.push(s),
     prMeta: () => meta, issue: () => ({ body: issueBody, ...TRUSTED }), sandbox: hostSandbox, packageSuites: noSuites, ...over,
   });
@@ -217,6 +217,28 @@ echo "unexpected: $*" >&2; exit 2
     const r = await run(f.meta, { checkout: defaultCheckout, sandbox: () => ({ status: "BLOCKED", exit_code: null, detail: "daemon down" }) });
     expect(r.rc).toBe(2);
     expect(r.json.blocked).toBe(true);
+  });
+
+  test("json stdout: --json prints the verdict object, exit codes unchanged", async () => {
+    const fx = fixture("fix").meta;
+    const ok = await run(fx, { checkout: defaultCheckout }, ISSUE, ["--json"]);
+    expect(ok.rc).toBe(0);
+    expect(JSON.parse(ok.out)).toEqual(ok.json);
+    expect(ok.out).not.toContain("verdict: ");
+    const np = await run(fixture("noop").meta, { checkout: defaultCheckout }, ISSUE, ["--json"]);
+    expect(np.rc).toBe(4);
+    expect(JSON.parse(np.out).verdict).toBe("NOT PROVEN");
+    const bl = await run(fx, { checkout: defaultCheckout, sandbox: () => ({ status: "BLOCKED", exit_code: null }) }, ISSUE, ["--json"]);
+    expect(bl.rc).toBe(2);
+    expect(JSON.parse(bl.out).blocked).toBe(true);
+    const plain = await run(fx, { checkout: defaultCheckout });
+    expect(plain.out).toContain("verdict: VERIFIED");
+  });
+
+  test("json stdout: through bin/loki the flag is not a usage error", () => {
+    const r = spawnSync(join(__dirname, "../../../bin/loki"), ["verify-pr", "--json", "nope"], { encoding: "utf8", env: { ...process.env, LOKI_VERIFY_PR: "1" } });
+    expect(r.stderr).toContain("not a PR url");
+    expect(r.status).toBe(2);
   });
 
   test("off by default and bad refs exit 2", async () => {
