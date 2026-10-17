@@ -20,6 +20,7 @@ import { tokenFreeEnv } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
+import { VALID_PROVIDERS } from "../runner/router/cost_preview.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   // First occurrence wins; both "--flag value" and "--flag=value" forms (TEN-COST-35).
@@ -102,7 +103,6 @@ function hasSpecFlag(args: readonly string[]): boolean {
   return args.some((a) => a === "--spec" || a.startsWith("--spec=") || a === "--spec-first");
 }
 
-const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]);
 // The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
 // tier names plus the Claude aliases (opus is the top-only setting; bash
 // dispatches it as opus, not as the sonnet-defaulted planning tier).

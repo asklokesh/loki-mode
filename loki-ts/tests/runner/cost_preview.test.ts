@@ -146,7 +146,7 @@ describe("loki estimate is the same estimator as the loki start preview (ESTIMAT
     return { rc, out, err };
   };
   test("prints exactly the start-line estimate text for the same input", () => {
-    for (const [args, model] of [[[], "claude-sonnet-5-5"], [["--model", "claude-haiku-4-5"], "claude-haiku-4-5"], [["--model=zzz"], "zzz"]] as const) {
+    for (const [args, model] of [[[], "claude-sonnet-5-5"], [["--model", "claude-haiku-4-5"], "claude-haiku-4-5"], [["--model=claude-opus-4-1"], "claude-opus-4-1"]] as const) {
       const start = startText(JSON.parse(encodeEstimate({}, root, root, model)!));
       expect(run([...args]).out).toBe(`${start}\n`);
     }
@@ -160,6 +160,16 @@ describe("loki estimate is the same estimator as the loki start preview (ESTIMAT
   });
   test("LOKI_COST_PREVIEW=0 prints OFF, no number", () => {
     expect(run([], { LOKI_COST_PREVIEW: "0" }).out).toBe("estimate: OFF (LOKI_COST_PREVIEW=0)\n");
+  });
+  test("unknown provider and unknown claude model are rejected with one error line, exit 1", () => {
+    const a = run(["--provider", "bogus"]);
+    expect(a.rc).toBe(1); expect(a.out).toBe(""); expect(a.err).toContain("unknown --provider 'bogus'"); expect(a.err.trim().split("\n").length).toBe(1);
+    const b = run(["--model", "nosuchmodel"]);
+    expect(b.rc).toBe(1); expect(b.out).toBe(""); expect(b.err).toContain("unknown --model 'nosuchmodel'");
+    expect(run(["--provider=bogus"]).rc).toBe(1);
+    expect(run(["--provider", "codex", "--model", "gpt-5.3-codex"]).rc).toBe(0);
+    expect(run(["--provider", "claude"]).rc).toBe(0);
+    expect(run([], { LOKI_PROVIDER: "bogus" }).rc).toBe(1);
   });
   test("--iterations is removed and says so; unknown flags fail; --help documents the change", () => {
     const a = run(["--iterations", "10"]);
