@@ -124,3 +124,14 @@ test("vendor tokens: PyPI, Shopify, Postman, Databricks, Mailgun are redacted", 
     expect(redactSecrets(benign)).toBe(benign);
   }
 });
+
+test("asia and azure: AWS temporary ASIA keys and Azure AccountKey values are redacted", () => {
+  const asia = "ASIA" + "ABCDEFGHIJKLMNOP";
+  const azKey = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6+/ab==";
+  expect(redactSecrets(`id ${asia} end`)).toBe("id [REDACTED:AWS_KEY] end");
+  const conn = `DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=${azKey};EndpointSuffix=core.windows.net`;
+  const out = redactSecrets(conn);
+  expect(out).toBe("DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=[REDACTED:AZURE_KEY];EndpointSuffix=core.windows.net");
+  expect(redactSecrets(out)).toBe(out);
+  for (const benign of ["ASIA-pacific", "ASIAshort", "AccountKey=short", "AccountName=acct"]) expect(redactSecrets(benign)).toBe(benign);
+});
