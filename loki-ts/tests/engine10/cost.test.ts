@@ -565,3 +565,32 @@ describe("P12-21 cost attribution breakdown", () => {
     }
   });
 });
+
+describe("TEN-COST-28 per-stage spend share in the summary", () => {
+  const ev = (stage: string, usd: number | null, source = "x") => ({ type: "cost", stage, data: { usd, source } });
+  test("shares sum to 100 and the top stage is named", async () => {
+    const { stageShareText } = await import("../../src/util/cost_breakdown.ts");
+    const t = stageShareText([ev("plan", 1), ev("implement", 1), ev("fix", 1), ev("implement", 1)])!;
+    expect(t).toBe("plan 25%, implement 50%, fix 25%; top: implement");
+    const odd = stageShareText([ev("plan", 1), ev("wall", 1), ev("fix", 1)])!;
+    expect(odd.match(/(\d+)%/g)!.reduce((a, p) => a + parseInt(p, 10), 0)).toBe(100);
+  });
+  test("unpriced or unmetered stages say unmetered, never 0; nothing metered is null", async () => {
+    const { stageShareText } = await import("../../src/util/cost_breakdown.ts");
+    expect(stageShareText([ev("plan", 3), ev("xreview", null), ev("fix", 0, "cli-invoker-unmetered"), ev("implement", 1)]))
+      .toBe("plan 75%, xreview unmetered, fix unmetered, implement 25%; top: plan");
+    expect(stageShareText([ev("plan", null), ev("fix", null)])).toBeNull();
+    expect(stageShareText([ev("plan", 2)])).toBeNull();
+  });
+  test("renderMainOutput prints a Spend line under Cost and omits it when absent", async () => {
+    const { renderMainOutput } = await import("../../src/engine10/supervisor.ts");
+    const { stageShareText } = await import("../../src/util/cost_breakdown.ts");
+    const events = [{ v: 1, seq: 1, ts: "t", run: "r", ...ev("plan", 1) }, { v: 1, seq: 2, ts: "t", run: "r", ...ev("fix", 3) }] as never[];
+    const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], wallS: 1, stages: [] };
+    const withS = renderMainOutput(events, { ...base, cost: { usd: 4, provider: "claude", tokens: 1, stageShares: stageShareText(events) } } as never);
+    expect(withS).toContain("Spend:");
+    expect(withS).toContain("plan 25%, fix 75%; top: fix");
+    expect(withS.indexOf("Cost:")).toBeLessThan(withS.indexOf("Spend:"));
+    expect(renderMainOutput(events, { ...base, cost: { usd: 4, provider: "claude", tokens: 1 } } as never)).not.toContain("Spend:");
+  });
+});
