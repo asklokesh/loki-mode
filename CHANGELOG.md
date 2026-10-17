@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.20 (2026-10-17)
+
+### Added
+- Failure excerpts in fix rounds (TEN-QUALITY-01): each failing visible check now hands the fix session a redacted excerpt of its decisive output lines (pytest, jest and vitest, node assertions, go, tsc and ruff, with a last-lines fallback), capped at 1500 bytes per group and 6 KB in total by UTF-8 bytes. Holdout check output never reaches the fix brief, and failure signatures are unchanged, so stall detection is unaffected.
+
+### Changed
+- 5-minute cache TTL for engine10 sessions (TEN-COST-12): engine10 stage sessions request the 5-minute prompt cache by default on both the CLI and SDK routes; LOKI_E10_CACHE_TTL=1h opts out, and the main RARV loop is unchanged.
+
+### Fixed
+- Group decomposition (TEN-COST-23): items that name no files fold into a unit that owns files instead of becoming empty units, so a fully file-less plan falls back to the sequential run.
+- CI on main (P0 fix-forward): repaired the red Tests workflow (registry known gaps for `github publish`, the never-below-raw guard regex, test selection, shellcheck, the stale future-version guard and `loki proof` help drift).
+
 ## v11.17.19 (2026-10-17)
 
 ### Changed
