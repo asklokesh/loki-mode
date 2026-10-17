@@ -91,10 +91,48 @@ def test_claude_adapter_bare_without_key_raises_not_falls_back():
             os.environ["ANTHROPIC_API_KEY"] = old
 
 
+def test_claude_adapter_lean_exact_argv():
+    base = _claude_cmd()
+    lean = _claude_cmd(lean=True)
+    assert lean[:len(base)] == base
+    assert lean[len(base):] == [
+        "--setting-sources", "project", "--strict-mcp-config",
+        "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
+        "--tools", "Bash,Read,Edit,Write,Glob,Grep",
+    ]
+    assert "--strict-mcp-config" not in base
+
+
+def test_claude_adapter_lean_with_bare_raises():
+    from adapters import claude_code
+    try:
+        claude_code.run(tempfile.mkdtemp(), "spec.md", bare=True, lean=True,
+                        runner=lambda *a, **k: None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("lean+bare must raise")
+
+
+def test_claude_adapter_lean_recorded_in_command():
+    from adapters import claude_code
+
+    class R:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+    out = claude_code.run(tempfile.mkdtemp(), "spec.md", lean=True, timeout=10,
+                          runner=lambda *a, **k: R())
+    assert "--strict-mcp-config" in out["provenance"]["command"]
+
+
 if __name__ == "__main__":
     test_real_alias_pins_session_model()
     test_full_claude_id_pins()
     test_provider_label_default_does_not_pin()
     test_claude_adapter_bare_flag_only_when_requested()
     test_claude_adapter_bare_without_key_raises_not_falls_back()
+    test_claude_adapter_lean_exact_argv()
+    test_claude_adapter_lean_with_bare_raises()
+    test_claude_adapter_lean_recorded_in_command()
     print("ALL GREEN")

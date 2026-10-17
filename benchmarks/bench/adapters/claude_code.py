@@ -90,13 +90,28 @@ def _parse_json_result(stdout):
     return cost, t_in, t_out, model
 
 
-def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False):
+LEAN_ARGS = (
+    "--setting-sources", "project",
+    "--strict-mcp-config",
+    "--mcp-config", '{"mcpServers":{}}',
+    "--disable-slash-commands",
+    "--tools", "Bash,Read,Edit,Write,Glob,Grep",
+)
+
+
+def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
+        lean=False):
     """Run Claude Code on `spec` inside `workdir`; return adapter-output dict.
 
     `spec` is read as the prompt body (a path inside workdir or absolute).
     `bare=True` adds `--bare` (no hooks, skills, CLAUDE.md or OAuth); it needs
     ANTHROPIC_API_KEY and raises rather than silently running configured.
+    `lean=True` is the OAuth-safe raw baseline: project settings only, no MCP,
+    no slash commands, and the same 6 tools as ENGINE10_TOOLS (providers.ts).
+    It cannot combine with `bare`; that raises ValueError.
     """
+    if lean and bare:
+        raise ValueError("claude lean and bare are mutually exclusive")
     if bare and not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("claude --bare requires ANTHROPIC_API_KEY")
     tool_version = _detect_claude_version(runner=runner, cwd=workdir)
@@ -116,6 +131,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False):
     ]
     if bare:
         cmd.append("--bare")
+    if lean:
+        cmd += list(LEAN_ARGS)
     rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
     )
@@ -147,8 +164,9 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False):
             "kind": "automated",
             "verified": True,
             "harness": "claude.headless",
-            "command": "claude -p <prompt> --output-format json --model %s%s"
-                       % (model, " --bare" if bare else ""),
+            "command": "claude -p <prompt> --output-format json --model %s%s%s"
+                       % (model, " --bare" if bare else "",
+                          " " + " ".join(LEAN_ARGS) if lean else ""),
             "cost_basis": ("native" if native_cost else
                            ("priced_from_tokens" if cost_usd is not None
                             else "not_recorded")),
