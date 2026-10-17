@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.12 (2026-10-17)
+
+### Fixed
+- AI bill of materials (Q18-05b): credential-looking path segments are matched case-insensitively against a wider prefix list, scoped package names with one interior slash are accepted, and the sealed hook now receives a deep-frozen copy of the receipt, so a contrib hook can no longer alter the sealed receipt.
+- Partial cost reporting (COST-WALL-f): `loki trust`, the Evidence Receipt hero and cost card, the proof fallback page, the social hook and `loki cost` summary now show a partial cost as a lower bound ("at least") or as n/a for cost per accepted, instead of presenting it as a complete total. The TypeScript and Python trust calculations now agree.
+
 ## v11.17.11 (2026-10-17)
 
 v11.17.10 never published: its Tests run was green, but the Release gate (run 38989985829) found that the committed loki-ts/dist/loki.js.map was not a fresh build of that commit. This release ships the v11.17.10 content with a freshly built dist and source map.
