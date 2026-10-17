@@ -5383,70 +5383,57 @@ async def deploy_session(session_id: str, req: dict = Body(...)) -> JSONResponse
 
 @app.post("/api/sessions/{session_id}/github/push")
 async def github_push_session(session_id: str) -> JSONResponse:
-    """Create a GitHub repo and push the project code."""
+    """Publish the session through the receipt-stamped `loki github publish` (private)."""
     if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
         return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
     target = _find_session_dir(session_id)
     if target is None:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
+    loki = _find_loki_cli()
+    if loki is None:
+        return JSONResponse(status_code=500, content={"error": "loki CLI not found", "repo_url": None})
 
     project_dir = str(target)
+    env = {**os.environ, "LOKI_DIR": str(Path(project_dir) / ".loki")}
     loop = asyncio.get_running_loop()
 
     try:
-        # Ensure git repo is initialized
-        git_dir = Path(project_dir) / ".git"
-        if not git_dir.is_dir():
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "init"],
-                capture_output=True, text=True, cwd=project_dir, timeout=10,
-            ))
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "add", "-A"],
-                capture_output=True, text=True, cwd=project_dir, timeout=30,
-            ))
-            await loop.run_in_executor(None, lambda: subprocess.run(
-                ["git", "commit", "-m", "Initial commit from Purple Lab"],
-                capture_output=True, text=True, cwd=project_dir, timeout=30,
-            ))
-
-        # Use gh CLI to create repo and push
-        repo_name = Path(project_dir).name
+        # Never stages files and never passes --public: the CLI refuses a dirty
+        # tree, publishes private by default and stamps the loki/receipt status.
         result = await loop.run_in_executor(None, lambda: subprocess.run(
-            ["gh", "repo", "create", repo_name, "--public", "--source", ".", "--push"],
-            capture_output=True, text=True, cwd=project_dir, timeout=60,
+            [loki, "github", "publish", "--dir", project_dir],
+            capture_output=True, text=True, cwd=project_dir, timeout=120, env=env,
         ))
-        output = (result.stdout or "") + (result.stderr or "")
-
-        if result.returncode == 0:
-            # Extract repo URL from output
-            repo_url = ""
-            for line in output.split("\n"):
-                if "github.com" in line:
-                    # Extract the URL
-                    m = re.search(r"https://github\.com/[^\s]+", line)
-                    if m:
-                        repo_url = m.group(0)
-                        break
-            if not repo_url:
-                # Fallback: get from git remote
-                remote_result = await loop.run_in_executor(None, lambda: subprocess.run(
-                    ["git", "remote", "get-url", "origin"],
-                    capture_output=True, text=True, cwd=project_dir, timeout=10,
-                ))
-                if remote_result.returncode == 0:
-                    repo_url = remote_result.stdout.strip()
-
-            return JSONResponse(content={"repo_url": repo_url, "output": output})
-        else:
-            return JSONResponse(content={"error": output or "GitHub push failed", "output": output})
+        output = _strip_ansi((result.stdout or "") + (result.stderr or ""))
+        if result.returncode != 0:
+            reasons = _cli_refused_reasons(output, "loki github publish exited non-zero with no output")
+            refused = any("Refused" in l or "REFUSED" in l for l in output.splitlines())
+            return JSONResponse(status_code=422 if refused else 502, content={
+                "error": ("GitHub publish refused: " if refused else "GitHub publish failed: ")
+                + "; ".join(reasons),
+                "repo_url": None, "refused_reasons": reasons if refused else [],
+                "output": output,
+            })
+        repo_url = None
+        receipt_status = None
+        for line in output.splitlines():
+            m = re.match(r"^Repository: (\S+)\s*$", line)
+            if m:
+                repo_url = m.group(1)
+            m = re.match(r"^loki/receipt status: (\S+)", line)
+            if m:
+                receipt_status = m.group(1)
+        return JSONResponse(content={
+            "repo_url": repo_url, "receipt_status": receipt_status,
+            "refused_reasons": [], "output": output,
+        })
 
     except subprocess.TimeoutExpired:
-        return JSONResponse(status_code=500, content={"error": "GitHub push timed out"})
-    except FileNotFoundError as exc:
-        return JSONResponse(status_code=500, content={"error": f"CLI tool not found (gh or git): {exc}"})
+        return JSONResponse(status_code=504, content={"error": "GitHub publish timed out", "repo_url": None})
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": f"loki CLI failed to run: {exc}", "repo_url": None})
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": f"GitHub push failed: {exc}"})
+        return JSONResponse(status_code=500, content={"error": f"GitHub publish failed: {exc}", "repo_url": None})
 
 
 # ---------------------------------------------------------------------------

@@ -2169,3 +2169,84 @@ class TestTenDeploy08DeployGated:
         assert body["refused_reasons"]
         deploys = tmp_path / ".loki" / "deploys"
         assert not deploys.exists() or not list(deploys.glob("*.json"))
+
+
+# ============================================================================
+# TEN-DEPLOY-08 (b): GitHub push goes through `loki github publish`
+# ============================================================================
+
+
+class TestTenDeploy08GithubPublish:
+    """github_push_session runs the receipt-stamped CLI, private by default."""
+
+    async def _call(self, tmp_path, rc=0, out=""):
+        import server
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(list(argv))
+            res = MagicMock()
+            res.returncode, res.stdout, res.stderr = rc, out, ""
+            return res
+
+        with patch("server._find_session_dir", return_value=tmp_path), \
+             patch("server._find_loki_cli", return_value="/x/loki"), \
+             patch("server.subprocess.run", side_effect=run):
+            resp = await server.github_push_session("s1")
+        return resp, calls
+
+    @pytest.mark.asyncio
+    async def test_argv_is_github_publish_only(self, tmp_path):
+        out = "loki/receipt status: success (receipt VERIFIED)\nRepository: https://github.com/o/r\n"
+        resp, calls = await self._call(tmp_path, out=out)
+        assert calls == [["/x/loki", "github", "publish", "--dir", str(tmp_path)]]
+        for argv in calls:
+            joined = " ".join(argv)
+            assert "add -A" not in joined and "--public" not in argv
+            assert argv[0] not in ("git", "gh")
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 200
+        assert body["repo_url"] == "https://github.com/o/r"
+        assert body["receipt_status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_never_initialises_or_stages_a_repo(self, tmp_path):
+        resp, calls = await self._call(tmp_path, rc=1, out="Refused: no HEAD commit to publish\n")
+        assert len(calls) == 1
+        assert not (tmp_path / ".git").exists()
+
+    @pytest.mark.asyncio
+    async def test_refusal_is_4xx_with_reasons(self, tmp_path):
+        out = "\x1b[0;31mRefused: working tree has uncommitted changes\x1b[0m\n"
+        resp, _ = await self._call(tmp_path, rc=1, out=out)
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 422
+        assert body["refused_reasons"] == ["Refused: working tree has uncommitted changes"]
+        assert body["repo_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_cli_failure_is_non_2xx(self, tmp_path):
+        resp, _ = await self._call(tmp_path, rc=1, out="gh repo create failed; nothing published.\n")
+        assert resp.status_code == 502
+        assert _ten_deploy08_body(resp)["repo_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_repository_line_returns_null(self, tmp_path):
+        resp, _ = await self._call(tmp_path, out="Repository URL could not be determined.\n")
+        assert resp.status_code == 200
+        assert _ten_deploy08_body(resp)["repo_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_real_cli_refuses_a_non_repo(self, tmp_path):
+        """Real entry path: autonomy/loki github publish runs and pushes nothing."""
+        import server
+        if not server.LOKI_CLI.exists():
+            pytest.skip("autonomy/loki not present")
+        (tmp_path / "index.html").write_text("<html></html>")
+        with patch("server._find_session_dir", return_value=tmp_path):
+            resp = await server.github_push_session("s1")
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 422, body
+        assert body["refused_reasons"]
+        assert body["repo_url"] is None
+        assert not (tmp_path / ".git").exists()
