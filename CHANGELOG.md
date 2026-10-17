@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.17 (2026-10-17)
+
+### Added
+- Agent-independent evidence in verify (TEN-GATES-03): `loki verify` prints how many passing checks are agent independent (k of n) from the receipt's check provenance, and says "provenance not recorded" when a receipt has none. `--require-exogenous` (or `LOKI_VERIFY_REQUIRE_EXOGENOUS=1`) exits 4 for a VERIFIED receipt with no agent-independent pass. Tamper and signature verdicts are unchanged.
+- Security scan gate on loki start (TEN-GATES-08): the engine10 route runs the secure scan as an exogenous gate, writes security-findings.json, fails on an active HIGH finding and reads inconclusive when the scanner or python3 is missing. `LOKI_GATE_SECURITY_SCAN=0` turns it off.
+- PR body verify line (TEN-ADOPTION-04): the receipt section shows the `loki proof bundle` and `npx loki-mode verify` commands so anyone can check the run on another machine. The Loki footer says verified only for a non-draft VERIFIED body, and `LOKI_PR_FOOTER=0` removes it. No network call, no telemetry.
+- Proof for loki start runs (TEN-ADOPTION-03): `loki proof` badge, bundle and share work for engine10 runs, not only legacy runs.
+- Dashboard run panels (TEN-UX-07): the dashboard shows Reason, Next and Stage panels for the selected run.
+
+### Fixed
+- Lint baseline (TEN-QUALITY-03): baseline lint reruns stop when the stage is aborted, so an aborted verify no longer waits on them, and an aborted rerun never excuses a lint failure.
+
 ## v11.17.16 (2026-10-17)
 
 ### Fixed

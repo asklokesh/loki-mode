@@ -2418,3 +2418,6 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 ## 2026-10-17T03:45Z (CoS) v11.17.16 released, docker green again
 - Release run on e3d445460: publish-docker-build amd64, publish-python-sdk, update-homebrew and notify-slack all success, so the SDK bundle leak fix (cd5aa32a8) cleared the v11.17.15 docker red. npm latest and next were 11.17.15 at 03:39Z; 11.17.16 is propagating.
 - Building (14 seats): batch J (QUALITY-03, GATES-03, ADOPTION-03, GATES-08, ADOPTION-04, UX-07), batch L (GATES-05b, COST-09, COST-10, COST-12, COST-13, COST-23), batch N (GROUP-AUTH-F1, COST-14).
+
+## 2026-10-17T04:08Z (CoS) v11.17.17: batch J merged
+- Batch J workflow w9sw9xytw: 6 of 6 TL APPROVE. Merged QUALITY-03 (a8d686b43), GATES-03 (d163dd812), GATES-08 (124b0cd70), ADOPTION-04 (6b5380bca), UX-07 (f3b4e9c3a). ADOPTION-03 (260474376) conflicted add/add with the merged ADOPTION-02 receipt_bundle; a clean cherry-pick onto main (029bdd1a6, same 4-file 322/20 diff, 48 pass 0 fail) merged.
