@@ -556,3 +556,56 @@ describe("TEN-SPEED-14: parallel git reads", () => {
     expect(r.fatal).toBeNull(); expect(r.warnings.length).toBeGreaterThan(0);
   });
 });
+
+describe("TEN-ADOPTION-34: provider login probe", () => {
+  function cli(body: string): string {
+    const dir = tmpRoot("e10-pf-login-"); const p = join(dir, "fake-cli");
+    writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p;
+  }
+  const run = (provider: string, envVar: string, c: string, extra: Record<string, string> = {}) => {
+    const { dir, env } = identifiedRepo();
+    return checkPreflight({ repoDir: dir, provider, pr: false, env: { ...env, [envVar]: c, ...extra } });
+  };
+
+  test("codex logged out is fatal and names the login command", async () => {
+    const r = await run("codex", "LOKI_CODEX_CLI", cli('[ "$1" = login ] && { echo "Not logged in"; exit 1; }; exit 0'));
+    expect(r.fatal).toContain("codex is not logged in; run: codex login");
+  });
+  test("codex logged in and codex with an API key pass", async () => {
+    expect((await run("codex", "LOKI_CODEX_CLI", cli("exit 0"))).fatal).toBeNull();
+    expect((await run("codex", "LOKI_CODEX_CLI", cli('echo "Not logged in"; exit 1'), { OPENAI_API_KEY: "k" })).fatal).toBeNull();
+  });
+  test("codex unknown probe answer only warns", async () => {
+    const r = await run("codex", "LOKI_CODEX_CLI", cli("exit 3"));
+    expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain("could not confirm the Codex login");
+  });
+  test("aider, cline, opencode without any key warn by name, never fatal", async () => {
+    for (const [p, v] of [["aider", "LOKI_AIDER_CLI"], ["cline", "LOKI_CLINE_CLI"], ["opencode", "LOKI_OPENCODE_CLI"]] as const) {
+      const r = await run(p, v, cli("exit 0"));
+      expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toContain(`no ${p} login or API key found`);
+    }
+  });
+  test("a provider API key silences the warning", async () => {
+    const r = await run("aider", "LOKI_AIDER_CLI", cli("exit 0"), { ANTHROPIC_API_KEY: "k" });
+    expect(r.warnings.join("\n")).not.toContain("login or API key");
+  });
+});
+
+describe("TEN-UX-55: repo writable", () => {
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  const env = (e: Record<string, string>) => ({ ...e, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" });
+  test.skipIf(isRoot)("read-only repo dir is fatal with a one-line fix", async () => {
+    const { dir, env: e } = identifiedRepo(); chmodSync(dir, 0o555);
+    try { const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: env(e) }); expect(r.fatal).toMatch(/is not writable; run: chmod u\+w/); expect(r.fatal).not.toContain("\n"); } finally { chmodSync(dir, 0o755); }
+  });
+  test("writable repo dir passes", async () => {
+    const { dir, env: e } = identifiedRepo(); expect((await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: env(e) })).fatal).toBeNull();
+  });
+  test.skipIf(isRoot)("real preflight() entry exits 2 on a read-only repo", () => {
+    const { dir, env: e } = identifiedRepo(); chmodSync(dir, 0o555);
+    try {
+      const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify(env(e))}});`], { encoding: "utf8" });
+      expect(r.status).toBe(2); expect(r.stderr).toContain("is not writable");
+    } finally { chmodSync(dir, 0o755); }
+  });
+});
