@@ -14,11 +14,11 @@ export function keywords(task: string): string[] {
 export const haystack = (entry: RepoMap["entries"][number]): string => `${entry.path} ${entry.symbols.join(" ")}`.toLowerCase();
 
 /** Identifier-aware overlap between task and repo map entry; zero-score files are dropped, ties keep repo map order. */
-export function selectRelevantFiles(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES): string[] {
-  return rankRelevant(task, repoMap, max).map((p) => p.path);
+export function selectRelevantFiles(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES, repoDir?: string): string[] {
+  return rankRelevant(task, repoMap, max, repoDir).map((p) => p.path);
 }
 
 /** Same picks as selectRelevantFiles, each with the matched tokens (the pick reason). */
-export function selectRelevantFilesWithReason(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES): PickedFile[] {
-  return rankRelevant(task, repoMap, max);
+export function selectRelevantFilesWithReason(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES, repoDir?: string): PickedFile[] {
+  return rankRelevant(task, repoMap, max, repoDir);
 }

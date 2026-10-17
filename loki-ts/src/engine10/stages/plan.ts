@@ -70,7 +70,7 @@ export const planStage: Stage = {
     if (skip) pr.record({ planModel: "none", skipReason: "plan stage skipped (LOKI_E10_PLAN=0)" });
     if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
 
-    const relevantFiles = selectRelevantFiles(task, repoMap);
+    const relevantFiles = selectRelevantFiles(task, repoMap, undefined, ctx.repoDir);
     const outputPath = planOutputPath(ctx.runDir);
 
     const iterationId = `${ctx.runId}-plan`;
