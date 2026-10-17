@@ -191,3 +191,14 @@ ab9fab7fdf8b2af6180723e7a5bf70559b202247:loki-ts/tests/util/redact.test.ts:priva
 179e564f55dd43e2140a97a3b528e1a626655ef6:tests/test-secure-scan.sh:generic-api-key:593
 179e564f55dd43e2140a97a3b528e1a626655ef6:tests/test-secure-scan.sh:generic-api-key:600
 179e564f55dd43e2140a97a3b528e1a626655ef6:tests/test-secure-scan.sh:generic-api-key:601
+
+# v11.17.50 rebuild: first-parent views of the wave AO board quote and the TEN-SECURITY-15 fixtures
+ec6dd47488fd107d82340d65bfdb112fd5923b97:docs/v10/BOARD.md:generic-api-key:1281
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:583
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:584
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:591
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:592
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:593
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:600
+9c403362adc7b3663b4593f53224e753ef9d27e5:tests/test-secure-scan.sh:generic-api-key:601
+6eb21ec60d102b26d76089bd85b76f1aa5e25863:docs/v10/BOARD.md:generic-api-key:1281
