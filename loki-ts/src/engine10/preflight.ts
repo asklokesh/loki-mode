@@ -23,7 +23,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     null;
   if (fatal) return { fatal, warnings };
   if (o.provider === "claude" && !env["ANTHROPIC_API_KEY"] && !env["CLAUDE_CODE_OAUTH_TOKEN"]) { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
-    const li = claudeAuthStatusLoggedIn(cli, env);
+    let li = claudeAuthStatusLoggedIn(cli, env); if (li === "") li = claudeAuthStatusLoggedIn(cli, env); // TEN-UX-12: one retry (as doctor does) so a slow first probe under load never adds a warning line to a quiet run
     if (li === "no") return { fatal: "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)", warnings };
     if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing");
   }
