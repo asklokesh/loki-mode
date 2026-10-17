@@ -209,6 +209,8 @@ Metrics, per arm and per task class, computed by `compute_metrics`; failures, ti
 
 Not measured: human effort, recovery success, review quality. Output: `--out-dir` (default `benchmarks/attribution/results/`) receives `attribution-<UTC stamp>.json` and the matching `.md`. Publish failures, timeouts and exclusions with the report; do not drop rows. Do not claim superiority from overlapping intervals on a handful of runs; use the pilot to size a larger run with `--repeats` above 1. Tests: `python3 benchmarks/bench/tests/test_attribution.py` (no model call).
 
+Cost proof run: the exact command, the five arms (`raw-configured`, `raw-lean`, `raw-bare`, `loki`, `loki-lean`), the verdict rule, the report-against-every-floor requirement and the loki-version validity rule are in the "Cost proof (C-F1)" section of [docs/v10/METRICS.md](v10/METRICS.md).
+
 ---
 
 ## 9. Factory-vs-Loki task set (reproducible, partly unmeasured)

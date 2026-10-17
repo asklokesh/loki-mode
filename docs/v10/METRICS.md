@@ -608,6 +608,32 @@ the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percent
 |---|---|---|---|
 | 2026-10-08T04:58Z | b9-ab n1-plumbing (SUPERSEDED) | trivial-sum | SUPERSEDED, do not cite. Used our own clock for wall and the old receipt fields: its loki wall (43s) was not the receipt `time.wall_s`/`total_s` and `time.wall_s` is invalid as a total (it is a stage sum that excludes boot and seal). Rerun on SDK `duration_ms` and receipt `time.total_s` once RECEIPT-TRUTH ships. Former text: cost_ratio=0.92 wall_ratio=3.07 n=1/1, not significant. |
 
+## Cost proof (C-F1)
+
+Owner of the "Loki costs at most half of the same model without Loki" claim. Until a run below says PROVEN_AT(0.5) the claim is NOT PROVEN, and no document may state a cost ratio without the run id and the floor it was measured against.
+
+Command (spends API budget; source checkout only):
+
+`python3 -I benchmarks/bench/attribution.py --execute --arms raw-configured,raw-lean,raw-bare,loki,loki-lean --repeats 3 --model <exact-model-id> --max-spend-usd <cap>`
+
+- n=3 per task per arm (`--repeats 3`) is the minimum: the verdict needs at least 3 runs per task in both arms (MIN_N_PER_TASK in `benchmarks/bench/cost_claim.py`). Pin the model with an exact id on every run; do not rely on the default.
+- `--max-spend-usd` aborts before the next cell once cumulative true spend (the larger of the reported cost and the Loki child-session ledger) reaches the cap. Always set it. The dry run `python3 -I benchmarks/bench/attribution.py --dry-run --arms raw-configured,raw-lean,raw-bare,loki,loki-lean` validates the task set and prints the plan with no model call.
+- Floors: `raw-configured` is `claude -p` with this host's hooks, skills and CLAUDE.md; `raw-lean` is the OAuth-safe same-config floor (TEN-COST-02); `raw-bare` is `claude -p --bare`. `loki` is the default profile and `loki-lean` runs with the lean cost profile.
+
+Verdict rule (`cost_claim_verdict`, TEN-COST-03; target fraction `COST_TARGET_FRACTION` = 0.5 in `attribution.py`). The verdict is `PROVEN_AT(0.5)` only when none of the reasons below applies; otherwise it is `NOT PROVEN` with the reasons listed:
+- the ratio is cost per accepted task, arm over floor, with a 2000-iteration paired bootstrap 95% interval; the upper bound must be at or below the target;
+- Loki acceptance rate must not be below the floor's;
+- at least 3 runs per task in each arm, no `cost_partial` row, one engine and one `loki_version` across all rows;
+- unmeasured rows are excluded and counted, never treated as zero.
+
+Report against all three floors (`raw-configured`, `raw-lean`, `raw-bare`), never only the favorable one. The report prints one verdict line per Loki arm per floor; publish every line, including NOT PROVEN ones, with the failed and excluded rows.
+
+Validity: a run counts only when the `loki_version` recorded in its result JSON equals `VERSION` of the tree under test. A run recorded against any other version is stale and must not be cited for the current release (the harness also refuses to start when the installed `loki version` does not match the checkout).
+
+Measured so far (cite only these): the first C-F1 run reported a 1.81x cost ratio, but the true child-session ledger cost was about 12.3x raw (docs/v10/PROGRESS.md, 2026-10-16T21:35Z entry, v11.17.2). The reported figure understated cost, which is why the verdict rejects `cost_partial` rows and spend caps use the larger of reported and ledger cost. No run has produced PROVEN_AT(0.5). Append each paid run here with its date, `loki_version`, model id, cap, and one verdict line per floor.
+
+How to read results: [docs/EVALUATING.md section 8](../EVALUATING.md).
+
 ## Release latency metric (WF-2MIN-3)
 
 Definition: seconds from the Release run's dispatch/push event to the `+ loki-mode@<version>` line of the `npm publish` step in the `release` job. Baseline run 37869841774: 2m46s (gate/required-ci 30s, release 68s, publish-npm 64s). Target: under 2m. npm registry lag is NOT part of this metric; the non-blocking `npm-visible` job records it separately in its job summary (`npm registry lag: ... visible after Ns`, or `NPM-LAG-TIMEOUT`). Post-Release Smoke polls for visibility itself (up to 15 min).
