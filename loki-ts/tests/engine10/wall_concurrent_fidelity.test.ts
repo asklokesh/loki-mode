@@ -102,4 +102,14 @@ describe("WC-01b snapshot bounds", () => {
     for (let i = 0; i < 4000; i++) writeFileSync(join(r, `f${i}.txt`), "x"); // enough entries that du cannot finish inside 1ms
     expect(await snapshotTree(r, new AbortController().signal, { timeoutMs: 1 })).toBeNull(); expect(leaked().length).toBe(before);
   });
+  it("negative snapshot env falls back to defaults instead of failing the snapshot", async () => {
+    const k = ["LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S", "LOKI_E10_WALL_SNAPSHOT_MAX_MB"], old = k.map((n) => process.env[n]);
+    try {
+      for (const bad of ["-5", "NaN", "Infinity", "0"]) {
+        for (const n of k) process.env[n] = bad;
+        const d = await snapshotTree(mkrepo(), new AbortController().signal);
+        expect(d).not.toBeNull(); dirs.push(d!);
+      }
+    } finally { k.forEach((n, i) => { if (old[i] === undefined) delete process.env[n]; else process.env[n] = old[i]; }); }
+  });
 });
