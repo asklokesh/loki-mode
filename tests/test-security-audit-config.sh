@@ -771,6 +771,58 @@ else
   bad "W10: smoke is not gated on a successful Release run"
 fi
 
+# TEN-SEC-GITLEAKS-01: pre-push and CI must scan with the same merge-diff mode.
+_audit_mode="$(grep -o -e '--diff-merges=[a-z-]*' "$REPO_ROOT/scripts/security-audit-gitleaks.sh" | sort -u | tr '\n' ' ')"
+# The hook defines the mode once in _gitleaks_merge_mode; the real scan call line must
+# use that variable, and its value is what is compared against the audit script.
+_g1_hook="$REPO_ROOT/.githooks/pre-push"
+_g1_check() { # <hook file>; prints the effective mode of the real gitleaks call, empty if none
+  local f="$1" call val
+  call="$(grep -e '"\$_gitleaks_bin" git ' "$f" | grep -e '--log-opts=' | head -1)"
+  [ -n "$call" ] || return 0
+  if printf '%s' "$call" | grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"'; then
+    val="$(grep -m1 -e '^_gitleaks_merge_mode=' "$f" | sed 's/^_gitleaks_merge_mode="\(.*\)"$/\1/')"
+    printf '%s ' "$val"
+  else
+    printf '%s' "$call" | grep -o -e '--diff-merges=[a-z-]*' | sort -u | tr '\n' ' '
+  fi
+}
+_hook_mode="$(_g1_check "$_g1_hook")"
+if [ -n "$_audit_mode" ] && [ "$_audit_mode" = "$_hook_mode" ]; then
+  ok "G1: pre-push gitleaks call and security-audit-gitleaks.sh use the same --diff-merges mode ($_audit_mode)"
+else
+  bad "G1: merge-diff mode differs (audit='$_audit_mode' hook call='$_hook_mode')"
+fi
+# Mutation: flag removed from the call line only (echo line and definition untouched).
+_g1_mf="$TMP_ROOT/g1-mut-pre-push"
+sed '/"\$_gitleaks_bin" git /s/ \$_gitleaks_merge_mode"/"/' "$_g1_hook" > "$_g1_mf"
+if cmp -s "$_g1_hook" "$_g1_mf"; then bad "G1 mutation did not change the hook"
+elif [ "$_audit_mode" != "$(_g1_check "$_g1_mf")" ]; then ok "G1 mutation (flag removed from the call line only) goes red"
+else bad "G1 mutation stayed green"; fi
+
+# TEN-SEC-GITLEAKS-01 (S2): lines a branch ADDS under tests/ or loki-ts/tests/ must not carry a
+# literal gitleaks' default rules flag. Older flagged literals are baselined by commit-qualified
+# .gitleaksignore fingerprints, which a stdin scan cannot apply, so only added lines are checked.
+_s2_flags() { # stdin = text; rc 0 = flagged
+  if command -v gitleaks >/dev/null 2>&1; then
+    ! gitleaks stdin --no-banner --redact >/dev/null 2>&1
+  else
+    grep -Eq 'AKIA[0-9A-Z]{16}'
+  fi
+}
+command -v gitleaks >/dev/null 2>&1 || echo "  NOTE: S2 uses the narrower AKIA regex (gitleaks not installed)"
+if git -C "$REPO_ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  _s2_added="$(git -C "$REPO_ROOT" diff -U0 origin/main...HEAD -- tests loki-ts/tests | grep '^+' || true)"
+  if printf '%s\n' "$_s2_added" | _s2_flags; then
+    bad "S2: this branch adds a gitleaks-flagged literal under tests/ or loki-ts/tests/"
+  else
+    ok "S2: no added test line carries a gitleaks-flagged literal"
+  fi
+else
+  echo "  SKIP: S2 (no origin/main to diff against)"
+fi
+if printf '+k = "%s%s"\n' "AKIA" "ABCDEFGHIJKLMNOP" | _s2_flags; then ok "S2 mutation (planted AWS key) goes red"; else bad "S2 mutation (planted AWS key) stayed green"; fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

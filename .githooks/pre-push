@@ -165,6 +165,8 @@ fi
 # what keeps the clone itself cheap either way. `git -C "$_top"` throughout:
 # REPO_ROOT/cd have not run yet at this point (same reason E-88 uses it).
 GITLEAKS_VERSION="8.30.0"
+# Defined once; the echo and the real scan below both use it.
+_gitleaks_merge_mode="--diff-merges=first-parent"
 
 # A hung gitleaks process (huge object, pathological regex backtrack) should
 # not hang the push forever. `timeout` is GNU coreutils; on a machine without
@@ -399,11 +401,13 @@ while read -r _lref _lsha _rref _rsha; do
         _full_config_arg=(--config "$_full_config_file")
     fi
 
-    echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts\" ($_lref, every pushed path)"
+    # Same merge-diff mode as scripts/security-audit-gitleaks.sh (CI); a guard in
+    # tests/test-security-audit-config.sh keeps them from diverging.
+    echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts $_gitleaks_merge_mode\" ($_lref, every pushed path)"
     # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array is
     # an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"} is the
     # portable guard.
-    if _full_out="$(${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
+    if _full_out="$(${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts $_gitleaks_merge_mode" \
             ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
             --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
         _full_gl_rc=0
