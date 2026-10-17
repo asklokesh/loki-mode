@@ -9973,7 +9973,7 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination]
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination] [deployed_url] [health_url_source]
 # Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
 # receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
 # authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
@@ -9997,6 +9997,7 @@ _deploy_record() {
     local rb_attempted="${9:-false}" rb_exit="${10:-}"
     local receipt_sha="${11:-}" started_at="${12:-}" finished_at="${13:-}" target="${14:-}" canary="${15:-false}"
     local post_rb="${16:-unchecked}" hcode_rec="${17:-}" hmatch="${18:-}" tree_sha="${19:-}" dest_rec="${20:-}"
+    local deployed_url="${21:-}" hsrc="${22:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
@@ -10004,7 +10005,7 @@ _deploy_record() {
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
     DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
-    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" DR_DEST="$dest_rec" \
+    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" DR_DEST="$dest_rec" DR_DURL="$deployed_url" DR_HSRC="$hsrc" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -10034,6 +10035,8 @@ json.dump({
     "health_match": os.environ.get("DR_HM", ""),
     "tree_sha": os.environ.get("DR_TREE", ""),
     "destination": os.environ.get("DR_DEST", ""),
+    "deployed_url": os.environ.get("DR_DURL", ""),
+    "health_url_source": os.environ.get("DR_HSRC", ""),
     "health_http_code": int(os.environ["DR_HC"]) if os.environ.get("DR_HC", "").isdigit() else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
@@ -10339,6 +10342,8 @@ _deploy_try_execute() {
 
     local rc=0 started_at finished_at purl="" canary_out=""
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local deployed_url="" health_src=""
+    [ -n "$health_url" ] && health_src="flag"
     local health_status="unchecked" rb_attempted=false rb_exit="" hcode="" rb_hcode="" post_rb="unchecked"
     if [ "$canary_kind" = vercel ]; then
         # Staged: a preview deploy (no --prod), probe the preview URL, promote only if healthy.
@@ -10349,7 +10354,7 @@ _deploy_try_execute() {
         printf '%s\n' "$canary_out"
         purl="$(grep -Eo 'https?://[^[:space:]]+' <<<"$canary_out" | tail -n 1)"
         if [ "$rc" -eq 0 ] && [ -n "$purl" ]; then
-            health_url="$purl"
+            health_url="$purl"; deployed_url="$purl"; health_src="captured"
             echo "Probing canary health: ${health_url}"
             if hcode="$(_deploy_probe_health "$health_url" "$health_match")"; then
                 health_status="healthy"
@@ -10365,7 +10370,16 @@ _deploy_try_execute() {
             rc=4
         fi
     else
-        ( cd "$dir" && eval "$exec_cmd" ) || rc=$?
+        canary_out="$( cd "$dir" && eval "$exec_cmd" )" || rc=$?
+        printf '%s\n' "$canary_out"
+        if [ "$rc" -eq 0 ]; then
+            # Same last-https-URL parse as the canary path; never invented.
+            deployed_url="$(grep -Eo 'https?://[^[:space:]]+' <<<"$canary_out" | tail -n 1)" || deployed_url=""
+            if [ -n "$deployed_url" ]; then
+                echo "Live at: ${deployed_url}"
+                if [ -z "$health_url" ]; then health_url="$deployed_url"; health_src="captured"; fi
+            fi
+        fi
     fi
 
     # Health probe only after a deploy that exited 0. Without a URL, or after a
@@ -10410,7 +10424,7 @@ _deploy_try_execute() {
     rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
     rec="$(_deploy_record "$dir" "$exec_cmd" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
         "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
-        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest")"
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest" "$deployed_url" "$health_src")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
