@@ -339,7 +339,14 @@ export function parseStartArgs(
   }
 
   // --budget is an alias of --budget-limit (bash divergence closed).
-  const budget = posNum(argVal(args, "--budget-limit") ?? argVal(args, "--budget"));
+  // TEN-COST-43: both spellings with different values is an error, never first-wins.
+  const bl = argVal(args, "--budget-limit");
+  const bb = argVal(args, "--budget");
+  if (bl !== undefined && bb !== undefined && posNum(bl) !== posNum(bb)) {
+    err(`start: conflicting budget flags, pick one: --budget-limit ${bl}, --budget ${bb}\n`);
+    return 2;
+  }
+  const budget = posNum(bl ?? bb);
 
   let attempts: number | undefined;
   if (attemptsMode) {

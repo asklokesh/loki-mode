@@ -568,3 +568,26 @@ describe("conflicting spec sources (TEN-UX-32)", () => {
     expect(r.stderr).toContain("conflicting spec sources");
   });
 });
+
+describe("conflicting budget flags (TEN-COST-43)", () => {
+  it("conflicting budget flags: differing values exit 2 naming both flags", () => {
+    const e: string[] = [];
+    const r = parseStartArgs(["./a.md", "--budget-limit", "5", "--budget", "50"], (s) => e.push(s), () => {}, () => {});
+    expect(r).toBe(2);
+    const m = e.join("");
+    expect(m).toContain("--budget-limit");
+    expect(m).toContain("--budget 50");
+  });
+  it("conflicting budget flags: equal values and a single flag unchanged", () => {
+    const noop = () => {};
+    const a = parseStartArgs(["./a.md", "--budget-limit", "5", "--budget", "5"], noop, noop, noop);
+    expect(typeof a === "object" && a.budgetLimit).toBe(5);
+    const b = parseStartArgs(["./a.md", "--budget", "7"], noop, noop, noop);
+    expect(typeof b === "object" && b.budgetLimit).toBe(7);
+  });
+  it("conflicting budget flags: real entry (cli.ts start) exits 2", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--budget-limit", "5", "--budget", "50"], { encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("conflicting budget flags");
+  });
+});
