@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -63,6 +64,64 @@ describe("mixed pytest plus vitest repo", () => {
 
   test("the map is JSON-safe for the per-repo cache", () => {
     expect(JSON.parse(JSON.stringify(map))).toEqual(map);
+  });
+});
+
+describe("directory entry files (TEN-QUALITY-39)", () => {
+  test("index source maps to directory", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ scripts: { test: "bun test" } }),
+      "bunfig.toml": "[test]\n",
+      "src/search/index.ts": "export const q = 1;\n",
+      "tests/search.test.ts": 'import { q } from "../src/search";\ntest("q", () => {});\n',
+    });
+    const map = buildTestMap(root);
+    expect(impactedRefs(map, ["src/search/index.ts"])).toEqual([{ runner: "bun", path: "tests/search.test.ts" }]);
+  });
+
+  test("index source still selects colocated and explicit /index importers", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ scripts: { test: "bun test" } }),
+      "bunfig.toml": "[test]\n",
+      "src/search/index.ts": "export const q = 1;\n",
+      "src/search/index.test.ts": 'import { q } from "./index";\ntest("q", () => {});\n',
+      "tests/query.test.ts": 'import { q } from "../src/search/index";\ntest("q", () => {});\n',
+      "tests/search.test.ts": 'import { q } from "../src/search";\ntest("q", () => {});\n',
+    });
+    const paths = impactedRefs(buildTestMap(root), ["src/search/index.ts"]).map((r) => r.path).sort();
+    expect(paths).toEqual(["src/search/index.test.ts", "tests/query.test.ts", "tests/search.test.ts"]);
+  });
+
+  test("python __init__ maps to package name", () => {
+    const root = repo({
+      "pytest.ini": "[pytest]\n",
+      "app/search/__init__.py": "x = 1\n",
+      "tests/test_s.py": "from app.search import x\n",
+    });
+    const refs = impactedRefs(buildTestMap(root), ["app/search/__init__.py"]);
+    expect(refs).toEqual([{ runner: "pytest", path: "tests/test_s.py" }]);
+  });
+});
+
+describe("package init maps to directory (TEN-QUALITY-32)", () => {
+  test("package init maps to directory: nested pkg/search/__init__.py selects tests/test_search.py", () => {
+    const root = repo({
+      "pytest.ini": "[pytest]\n",
+      "pkg/search/__init__.py": "a = 1\n",
+      "tests/test_search.py": "from pkg.search import a\n",
+    });
+    const map = buildTestMap(root);
+    expect(impactedRefs(map, ["pkg/search/__init__.py"])).toEqual([{ runner: "pytest", path: "tests/test_search.py" }]);
+  });
+
+  test("package init maps to directory: Rust mod.rs uses its directory name, mod.py does not", () => {
+    const map = {
+      runners: ["pytest"],
+      tests: [{ runner: "pytest", path: "tests/t.py" }],
+      sourceRefs: { search: ["tests/t.py"] },
+    } as unknown as Parameters<typeof impactedRefs>[0];
+    expect(impactedRefs(map, ["src/search/mod.rs"])).toEqual([{ runner: "pytest", path: "tests/t.py" }]);
+    expect(impactedRefs(map, ["src/search/mod.py"])).toEqual([]);
   });
 });
 
@@ -230,5 +289,32 @@ describe("git ls-files source (TEN-SPEED-13)", () => {
     const root = repo(files);
     git(root, "init", "-q");
     expect(buildTestMap(root).tests).toEqual(plain.tests);
+  });
+});
+
+describe("single read per test file (TEN-SPEED-22)", () => {
+  test("single read per test file: node:test probe and reference scan share one read", () => {
+    const root = repo({
+      "a.test.js": "import test from 'node:test';\nimport './src/x.js';\n",
+      "b.test.js": "import test from 'node:test';\n",
+      "c.test.js": "const x = 1;\n",
+      "src/x.js": "export const x = 1;\n",
+    });
+    const reads: string[] = [];
+    const orig = fs.readFileSync;
+    const spy = spyOn(fs, "readFileSync").mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      reads.push(String(p));
+      return (orig as (...a: unknown[]) => unknown)(p, ...rest);
+    }) as typeof fs.readFileSync);
+    try {
+      const map = buildTestMap(root);
+      expect(map.runners).toContain("node");
+      expect(map.tests.map((t) => t.path).sort()).toEqual(["a.test.js", "b.test.js", "c.test.js"]);
+      for (const f of ["a.test.js", "b.test.js", "c.test.js"]) {
+        expect(reads.filter((r) => r.endsWith(f)).length).toBe(1);
+      }
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
