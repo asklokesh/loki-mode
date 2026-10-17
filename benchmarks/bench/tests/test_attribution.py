@@ -779,6 +779,25 @@ class TaskSetTest(unittest.TestCase):
             self.assertTrue(self._accept(t, t["reference_dir"]),
                             "%s fails reference solution" % t["id"])
 
+    def test_every_seed_ships_a_passing_executable_test(self):
+        for t in self.tasks:
+            tests_dir = os.path.join(t["seed_dir"], "tests")
+            found = sorted(f for f in (os.listdir(tests_dir) if os.path.isdir(tests_dir) else [])
+                           if f.startswith("test_") and f.endswith(".py"))
+            self.assertTrue(found, "%s seed has no tests/test_*.py" % t["id"])
+            wd = tempfile.mkdtemp(prefix="loki-attr-test-")
+            try:
+                shutil.copytree(t["seed_dir"], wd, dirs_exist_ok=True)
+                r = subprocess.run(
+                    [sys.executable, "-I", "-m", "unittest", "discover",
+                     "-s", "tests", "-p", "test_*.py"],
+                    cwd=wd, capture_output=True, text=True, timeout=60)
+                self.assertEqual(r.returncode, 0,
+                                 "%s seed test fails on unmodified seed: %s" % (t["id"], r.stderr[-400:]))
+                self.assertNotIn("Ran 0 tests", r.stderr, t["id"])
+            finally:
+                shutil.rmtree(wd, ignore_errors=True)
+
     def test_acceptance_not_visible_before_grading(self):
         for t in self.tasks:
             wd = tempfile.mkdtemp(prefix="loki-attr-test-")
