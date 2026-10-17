@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.56 (2026-10-17)
+
+### Added
+- Redaction masks the value of key=value and key: value assignments whose name ends in password, secret, token or api_key, including flag forms (`--password=x`, `--db-password=x`, `--api-key=x`), separator-prefixed names (`_token=x`, `__SECRET=x`), quoted, JSON and YAML values; names that only contain a keyword mid-word (`mytoken=1`, `--max-tokens=5`) stay readable (TEN-SECURITY-25).
+
 ## v11.17.55 (2026-10-17)
 
 ### Added
