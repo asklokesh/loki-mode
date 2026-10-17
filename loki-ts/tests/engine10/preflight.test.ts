@@ -30,10 +30,11 @@ function tmpRoot(prefix: string): string {
   return d;
 }
 
-function bareRepo(): { dir: string; env: Record<string, string> } {
+function bareRepo(commit = true): { dir: string; env: Record<string, string> } {
   const dir = tmpRoot("e10-pf-repo-");
   const home = tmpRoot("e10-pf-home-");
   execFileSync("git", ["init", "-q", dir]);
+  if (commit) execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.test", "commit", "-q", "--allow-empty", "-m", "init"]); // no repo-level identity is left behind
   return { dir, env: { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } };
 }
 
@@ -66,6 +67,21 @@ describe("checkPreflight", () => {
     const dir = tmpRoot("e10-pf-notrepo-"); writeFileSync(join(dir, "f.txt"), "x");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { PATH: process.env.PATH ?? "" } });
     expect(r.fatal).toContain("not a git repository");
+  });
+
+  test("TEN-STABILITY-35: a repo with no commits is fatal and names the fix", async () => {
+    const { dir, env } = bareRepo(false);
+    execFileSync("git", ["-C", dir, "config", "user.name", "t"]); execFileSync("git", ["-C", dir, "config", "user.email", "t@t.test"]);
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli() } });
+    expect(r.fatal).toBe("repository has no commits; run: git add . && git commit -m init");
+  });
+
+  test("TEN-STABILITY-35: the no-commits fatal comes through the real preflight() entry", () => {
+    const { dir, env } = bareRepo(false);
+    execFileSync("git", ["-C", dir, "config", "user.name", "t"]); execFileSync("git", ["-C", dir, "config", "user.email", "t@t.test"]);
+    const code = `const { preflight } = await import(${JSON.stringify(PREFLIGHT_TS)}); await preflight({ repoDir: ${JSON.stringify(dir)}, provider: "claude", pr: false, env: ${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli() })} });`;
+    const r = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", timeout: 60000 });
+    expect(r.status).toBe(2); expect(r.stderr).toContain("repository has no commits; run: git add . && git commit -m init");
   });
 
   test("missing git identity is fatal", async () => {
@@ -433,6 +449,32 @@ describe("TEN-SPEED-05: login probe reuse", () => {
   });
 });
 
+describe("TEN-STABILITY-36: low disk", () => {
+  const mb = (n: number) => () => ({ bavail: n * 1024, bsize: 1024 });
+  const mk = (statfs: ((p: string) => { bavail: number; bsize: number }) | undefined, extra: Record<string, string> = {}) => {
+    const { dir, env } = identifiedRepo();
+    return checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", ...extra }, statfs });
+  };
+  test("under 2 GB warns naming the volume path", async () => {
+    const r = await mk(mb(1500)); expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toMatch(/low disk: 1500 MB free on the volume holding .*e10-pf-repo-/);
+  });
+  test("under 200 MB is fatal", async () => {
+    const r = await mk(mb(50)); expect(r.fatal).toMatch(/only 50 MB free on the volume holding/);
+  });
+  test("normal disk prints nothing; LOKI_MIN_FREE_MB overrides", async () => {
+    const r = await mk(mb(10000)); expect(r.fatal).toBeNull(); expect(r.warnings.filter((w) => w.includes("disk"))).toEqual([]);
+    expect((await mk(mb(500), { LOKI_MIN_FREE_MB: "1000" })).fatal).toContain("need 1000 MB");
+  });
+  test("unreadable statfs is ignored", async () => {
+    const r = await mk(() => { throw new Error("x"); }); expect(r.fatal).toBeNull();
+  });
+  test("real preflight() entry exits 2 on a full volume", () => {
+    const { dir, env } = identifiedRepo();
+    const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_MIN_FREE_MB: "999999999" })}});`], { encoding: "utf8" });
+    expect(r.status).toBe(2); expect(r.stderr).toContain("MB free on the volume holding");
+  });
+});
+
 describe("TEN-SPEED-08: gh auth probe reuse", () => {
   function ghDir(authExit: number): { path: string; count: () => number } {
     const d = tmpRoot("e10-pf-gh-"); const log = join(d, "log");
@@ -471,5 +513,28 @@ describe("TEN-SPEED-08: gh auth probe reuse", () => {
     await checkPreflight(o(dir, env)); expect(g.count()).toBe(3);
     writeFileSync(cacheFile(env), "{not json");
     expect((await checkPreflight(o(dir, env))).fatal).toBeNull(); expect(g.count()).toBe(4);
+  });
+});
+
+describe("TEN-SPEED-14: parallel git reads", () => {
+  // A git shim that logs S (start) and E (end) per call and sleeps in between, so serial vs parallel spawn order is visible.
+  function shim(): { path: string; log: string } {
+    const d = tmpRoot("e10-pf-shim-"); const log = join(d, "log"); const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    writeFileSync(join(d, "git"), `#!/bin/sh\necho S >> '${log}'\nsleep 0.4\n'${real}' "$@"\nrc=$?\necho E >> '${log}'\nexit $rc\n`); chmodSync(join(d, "git"), 0o755);
+    return { path: d, log };
+  }
+  test("parallel git reads: all four starts precede the first end", async () => {
+    const { dir, env } = identifiedRepo(); const s = shim();
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, PATH: `${s.path}:${env.PATH}`, LOKI_CLAUDE_CLI: stubCli() } });
+    expect(r.fatal).toBeNull();
+    const seq = readFileSync(s.log, "utf8").trim().split("\n").join("");
+    expect(seq.startsWith("SSSSEEEE")).toBe(true);
+  });
+  test("auto-init re-reads once and still passes", async () => {
+    const dir = tmpRoot("e10-pf-empty-"); const home = tmpRoot("e10-pf-home-"); const s = shim();
+    const env = { PATH: `${s.path}:${process.env.PATH ?? ""}`, HOME: home, GIT_CONFIG_GLOBAL: join(home, "gc"), GIT_CONFIG_SYSTEM: "/dev/null", LOKI_CLAUDE_CLI: stubCli() };
+    writeFileSync(join(home, "gc"), "[user]\n\tname = t\n\temail = t@t.test\n");
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env });
+    expect(r.fatal).toBeNull(); expect(r.warnings.length).toBeGreaterThan(0);
   });
 });
