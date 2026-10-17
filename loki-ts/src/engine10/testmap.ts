@@ -108,11 +108,12 @@ export function buildTestMap(root: string): EngineTestMap {
   const mark = (r: RunnerName, file: string): void => {
     if (!(r in evidence)) evidence[r] = file;
   };
+  const jsText = new Map<string, string>();
   for (const rel of files) {
     const name = basename(rel);
     const full = join(root, rel);
-    if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
-    else if (JS_TEST_RE.test(name) && /(?:from|require\()\s*['"]node:test['"]/.test(readText(full))) mark("node", rel);
+    if (JS_TEST_RE.test(name) && !evidence["node"] && /(?:from|require\()\s*['"]node:test['"]/.test(jsText.set(rel, readText(full)).get(rel)!)) mark("node", rel);
+    else if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
     else if (name === "bunfig.toml") mark("bun", rel);
     else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
     else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);
@@ -140,7 +141,7 @@ export function buildTestMap(root: string): EngineTestMap {
   const sourceRefs: Record<string, string[]> = Object.create(null);
   const specs: Record<string, string[]> = Object.create(null);
   for (const t of tests) {
-    const text = readText(join(root, t.path));
+    const text = jsText.get(t.path) ?? readText(join(root, t.path));
     specs[t.path] = [...text.matchAll(JS_SPEC_RE)].map((m) => m[1] ?? "");
     const names = referencedBasenames(text);
     names.add(coveredStem(t.path));

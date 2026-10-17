@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -288,5 +289,32 @@ describe("git ls-files source (TEN-SPEED-13)", () => {
     const root = repo(files);
     git(root, "init", "-q");
     expect(buildTestMap(root).tests).toEqual(plain.tests);
+  });
+});
+
+describe("single read per test file (TEN-SPEED-22)", () => {
+  test("single read per test file: node:test probe and reference scan share one read", () => {
+    const root = repo({
+      "a.test.js": "import test from 'node:test';\nimport './src/x.js';\n",
+      "b.test.js": "import test from 'node:test';\n",
+      "c.test.js": "const x = 1;\n",
+      "src/x.js": "export const x = 1;\n",
+    });
+    const reads: string[] = [];
+    const orig = fs.readFileSync;
+    const spy = spyOn(fs, "readFileSync").mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      reads.push(String(p));
+      return (orig as (...a: unknown[]) => unknown)(p, ...rest);
+    }) as typeof fs.readFileSync);
+    try {
+      const map = buildTestMap(root);
+      expect(map.runners).toContain("node");
+      expect(map.tests.map((t) => t.path).sort()).toEqual(["a.test.js", "b.test.js", "c.test.js"]);
+      for (const f of ["a.test.js", "b.test.js", "c.test.js"]) {
+        expect(reads.filter((r) => r.endsWith(f)).length).toBe(1);
+      }
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
