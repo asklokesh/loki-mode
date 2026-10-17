@@ -53,6 +53,29 @@ describe("Q17-05b redact at source", () => {
   });
 });
 
+describe("Q17-05b seal fields are not redacted", () => {
+  test("sealLog output keeps a signature that matches a token rule; the same data via a normal append is redacted", () => {
+    const risky = "xxAI" + "b".repeat(40);
+    const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("log.sealed", null, { kid: "k", events_sha256: "0", tampered: false, sig: risky }, true);
+    log.append("worker.note", null, { sig: risky });
+    const [sealed, normal] = readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(sealed.data.sig).toBe(risky);
+    expect(normal.data.sig).toContain("[REDACTED:GOOGLE_KEY]");
+  });
+  test("600 honest signed runs all VERIFY (about 1.7% of signatures match the Google key rule)", async () => {
+    let hit = 0;
+    for (let i = 0; i < 600; i++) {
+      const r = run(false);
+      if (/AI[a-zA-Z0-9_-]{30,}/.test(JSON.parse(r.lines().at(-1)!).data.sig)) hit++;
+      expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+    }
+    expect(hit).toBeGreaterThan(0);
+  }, 120000);
+});
+
 describe("A-117 log.sealed", () => {
   test("honest run VERIFIED; a run tampered in flight is TAMPERED", async () => {
     expect((await verifyReceipt(run(false).path)).verdict).toBe("VERIFIED");
