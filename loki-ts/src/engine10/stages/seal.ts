@@ -6,7 +6,7 @@
 // use. An empty token means UNSIGNED, never presented as attested.
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
@@ -32,6 +32,7 @@ import { type ContractSnapshot, sealContract } from "../../features/contract.ts"
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import { hooks } from "../hooks.ts";
+import { atomicWriteText } from "../../util/atomic.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts";
 
@@ -312,8 +313,8 @@ export const sealStage: Stage = {
 
     mkdirSync(ctx.runDir, { recursive: true });
     const path = join(ctx.runDir, "receipt.json");
-    writeFileSync(path, JSON.stringify(receipt, null, 2) + "\n");
-    writeFileSync(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
+    atomicWriteText(path, JSON.stringify(receipt, null, 2) + "\n"); // temp + rename: a kill mid-write never leaves a truncated receipt
+    atomicWriteText(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
 
     recordRun(process.env, ctx.repoDir, ranModel(o.implement, ctx.model, o.fix), verdict, cost.usd, cost.unmetered === true, totalS); try { hooks.sealed?.(ctx.runDir, JSON.parse(JSON.stringify(receipt), (_k, v) => (v && typeof v === "object" ? Object.freeze(v) : v))); } catch (e) { process.stderr.write(`ai-bom skipped: ${(e as Error).message}\n`); }
     const signed = sig.jwt !== null;
