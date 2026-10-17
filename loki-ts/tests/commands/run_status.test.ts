@@ -338,3 +338,68 @@ describe("issue status projector (FV-gh-steer-3)", () => {
     expect(existsSync(join(runDir, "status-comment.md"))).toBe(true);
   });
 });
+
+describe("run id traversal", () => {
+  const plant = (): void => {
+    const outside = join(dir, ".loki", "evil");
+    mkdirSync(outside, { recursive: true });
+    const log = new EventLog(join(outside, "events.jsonl"), "evil");
+    log.append("run.started", null, { issue_ref: "acme/widgets#66", task_source: "issue" });
+    mkdirSync(join(dir, ".loki", "runs"), { recursive: true });
+  };
+  const capture = async (fn: () => Promise<number>): Promise<{ code: number; out: string; err: string }> => {
+    const oo = process.stdout.write.bind(process.stdout), oe = process.stderr.write.bind(process.stderr);
+    let out = "", err = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try { return { code: await fn(), out, err }; } finally { process.stdout.write = oo; process.stderr.write = oe; }
+  };
+  test("status rejects a traversal run id with exit 2", async () => {
+    plant();
+    const r = await capture(() => runModernStatus(["../evil"], env()));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("invalid run id");
+    expect(r.out).not.toContain("acme/widgets#66");
+  });
+  test("intent show rejects a traversal run id with exit 2", async () => {
+    plant();
+    const r = await capture(() => runIntentShow(["show", "../evil"], env()));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("invalid run id");
+  });
+});
+
+describe("loki pause|cancel dead supervisor (TEN-STABILITY-22)", () => {
+  const plantRun = (id: string, pid: number, start: string): string => {
+    const runDir = join(dir, ".loki", "runs", id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "run.pid"), JSON.stringify({ pid, start, argv: ["x"], run_id: id }));
+    return runDir;
+  };
+  test("dead supervisor: refuse with no live run, exit 1, no request written", async () => {
+    const { runControlVerb } = await import("../../src/commands/run_status.ts");
+    const { readRunControl } = await import("../../src/util/run_control.ts");
+    const runDir = plantRun("e10-dead", 2_000_000_000, "never");
+    const oe = process.stderr.write.bind(process.stderr);
+    let err = "";
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try {
+      expect(runControlVerb("pause", env(), dir)).toBe(1);
+      expect(runControlVerb("cancel", env(), dir)).toBe(1);
+    } finally { process.stderr.write = oe; }
+    expect(err).toContain("no live run");
+    expect(readRunControl(runDir)).toBeNull();
+  });
+  test("live older run is targeted over a newer dead one", async () => {
+    const { runControlVerb } = await import("../../src/commands/run_status.ts");
+    const { readRunControl } = await import("../../src/util/run_control.ts");
+    const { processStartTime } = await import("../../src/util/run_pid.ts");
+    const liveDir = plantRun("e10-a-live", process.pid, processStartTime(process.pid) ?? "");
+    const deadDir = plantRun("e10-b-dead", 2_000_000_000, "never");
+    const oo = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    try { expect(runControlVerb("pause", env(), dir)).toBe(0); } finally { process.stdout.write = oo; }
+    expect(readRunControl(liveDir)).toBe("pause");
+    expect(readRunControl(deadDir)).toBeNull();
+  });
+});
