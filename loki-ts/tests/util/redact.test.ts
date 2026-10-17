@@ -80,13 +80,13 @@ test("non-secret query params and non-URL text are untouched", () => {
 // Q17-05b round 4: the engine hashes once-redacted bytes and the shipper and ingest redact again, so redaction must be a fixpoint.
 const hex32 = "0123456789abcdef".repeat(2);
 const SAMPLES = ["sk-ant-" + "a".repeat(24), "github_pat_" + "a".repeat(24), "ghp_" + "a".repeat(24), "xoxb-" + "a".repeat(12), "AKIA" + "A".repeat(16), "eyJa.b.c",
-  "SG." + "a".repeat(16) + "." + "b".repeat(16), "SK" + hex32, "dckr_pat_" + "a".repeat(20), "dop_v1_" + "ab".repeat(32), "ya29." + "a".repeat(20), "AI" + "x".repeat(30),
+  "SG." + "a".repeat(16) + "." + "b".repeat(16), "SK" + hex32, "dckr_pat_" + "a".repeat(20), "dop_v1_" + "ab".repeat(32), "ya29." + "a".repeat(20), "AIza" + "x".repeat(35),
   "glpat-" + "a".repeat(20), "npm_" + "A".repeat(36), "hf_" + "a".repeat(30), "sk_live_" + "a".repeat(16), "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
   "sk-" + "y".repeat(24), "Bearer " + "z".repeat(24), "https://u:p@h", "Authorization: Basic abc", "?token=abc", "[REDACTED:OPENAI_KEY]", "[REDACTED]"];
 const idem = (s: string) => { const once = redactSecrets(s); return redactSecrets(once) === once; };
 
 test("redaction is idempotent on the reviewer's adjacency cases (a \\b rule freed by a later rule's marker)", () => {
-  const cases = ["SK" + hex32 + "AI" + "x".repeat(30), "dop_v1_" + "ab".repeat(32) + "sk-" + "y".repeat(24), "SK" + hex32 + "sk-" + "z".repeat(24)];
+  const cases = ["SK" + hex32 + "AIza" + "x".repeat(35), "dop_v1_" + "ab".repeat(32) + "sk-" + "y".repeat(24), "SK" + hex32 + "sk-" + "z".repeat(24)];
   expect(cases.map(redactSecrets)).toEqual(["[REDACTED:TWILIO_KEY][REDACTED:GOOGLE_KEY]", "[REDACTED:DIGITALOCEAN_TOKEN][REDACTED:OPENAI_KEY]", "[REDACTED:TWILIO_KEY][REDACTED:OPENAI_KEY]"]);
   for (const c of cases) expect(idem(c)).toBe(true);
   const data = { task: cases[0], not_proven: [cases[1]], [cases[2]!]: 1 };
@@ -101,7 +101,7 @@ test("redaction is idempotent over every ordered pair and triple of rule samples
   const bad: string[] = [];
   for (const a of SAMPLES) for (const b of SAMPLES) for (const sep of seps) {
     if (!idem(a + sep + b)) bad.push(a + sep + b);
-    for (const c of ["SK" + hex32, "dop_v1_" + "ab".repeat(32), "AI" + "x".repeat(30)]) if (!idem(c + a + sep + b) || !idem(a + sep + b + c)) bad.push(c + "|" + a + sep + b);
+    for (const c of ["SK" + hex32, "dop_v1_" + "ab".repeat(32), "AIza" + "x".repeat(35)]) if (!idem(c + a + sep + b) || !idem(a + sep + b + c)) bad.push(c + "|" + a + sep + b);
   }
   expect(bad).toEqual([]);
 });
@@ -134,4 +134,13 @@ test("asia and azure: AWS temporary ASIA keys and Azure AccountKey values are re
   expect(out).toBe("DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=[REDACTED:AZURE_KEY];EndpointSuffix=core.windows.net");
   expect(redactSecrets(out)).toBe(out);
   for (const benign of ["ASIA-pacific", "ASIAshort", "AccountKey=short", "AccountName=acct"]) expect(redactSecrets(benign)).toBe(benign);
+});
+
+test("google key shape", () => {
+  const key = "AIza" + "C".repeat(35);
+  expect(redactSecrets(`key=${key} end`)).toBe("key=[REDACTED:GOOGLE_KEY] end");
+  const ident = "AIProviderRegistryConfigurationManager42";
+  expect(redactSecrets(ident)).toBe(ident);
+  const long = "AI" + "b".repeat(40);
+  expect(redactSecrets(`x ${long} y`)).toBe(`x ${long} y`);
 });
