@@ -731,6 +731,26 @@ describe("start --dry-run (TEN-UX-45)", () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 
+  const viaBin = (args: string[], cwd: string, env: Record<string, string> = {}) =>
+    spawnSync(join(import.meta.dir, "../../../bin/loki"), ["start", ...args], { cwd, encoding: "utf8", timeout: 40_000, env: { ...process.env, BUN_FROM_SOURCE: "1", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "", ...env } });
+
+  it("bin/loki: start --dry-run (PRD path and --attempts) reaches the Bun preview and starts no run", () => {
+    const d = repo();
+    try {
+      const fake = join(d, "fakeclaude");
+      writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      writeFileSync(join(d, "p.md"), "build a thing\n");
+      for (const a of [["--dry-run", "p.md"], ["--attempts", "2", "--dry-run", "p.md"]]) {
+        const r = viaBin(a, d, { CLAUDE_CODE_OAUTH_TOKEN: "x", LOKI_CLAUDE_CLI: fake });
+        expect(r.stderr).not.toContain("legacy engine");
+        expect(r.stderr).not.toContain("legacy flag");
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain("dry-run: provider claude");
+        expect(spawnSync("ls", [join(d, ".loki")], { encoding: "utf8" }).status).not.toBe(0);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
   it("dryRunStart reports a subscription run with no dollar cap", async () => {
     const d = repo();
     const out: string[] = [];
