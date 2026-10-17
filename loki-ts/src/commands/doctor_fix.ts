@@ -2,7 +2,7 @@
 // anything that needs sudo, a system package manager or a network install.
 // Safe = local, reversible, inside the user's own home or project dir.
 
-import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -124,7 +124,19 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
     try {
       JSON.parse(readFileSync(cfgFile, "utf8"));
     } catch {
-      manual.push(`${cfgFile} is not valid JSON; fix or delete it, then run: loki config set provider claude`);
+      const manualLine = `${cfgFile} is not valid JSON; fix or delete it, then run: loki config set provider claude`;
+      if (!yes && !(tty && confirm(`Back up invalid ${cfgFile} and rewrite defaults?`))) {
+        manual.push(manualLine);
+      } else {
+        const backup = `${cfgFile}.invalid-${Date.now()}`;
+        try {
+          copyFileSync(cfgFile, backup);
+          writeFileSync(cfgFile, JSON.stringify({ provider: seedProvider }, null, 2) + "\n");
+          applied.push(`backed up invalid ${cfgFile} to ${backup} and rewrote defaults (provider=${seedProvider})`);
+        } catch (e) {
+          manual.push(`${manualLine}   (${(e as Error).message})`);
+        }
+      }
     }
   }
 
