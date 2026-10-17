@@ -181,7 +181,7 @@ log_test "unknown provider (--provider gemini) lists the valid providers"
 run_loki "unknown" claude -- start --provider gemini --yes
 
 if [ -n "$RUN_OUT" ] && [ "$RUN_RC" -ne 0 ] \
-    && echo "$RUN_OUT" | grep -q "unknown provider 'gemini' (use one of: claude, codex, cline, aider, opencode)"; then
+    && grep -q "unknown provider 'gemini' (use one of: claude, codex, cline, aider, opencode)" <<<"$RUN_OUT"; then
     log_pass "unknown provider fails (rc=$RUN_RC) and lists the valid providers"
 else
     log_fail "expected 'unknown provider' with the valid list. rc=$RUN_RC out: $RUN_OUT"
