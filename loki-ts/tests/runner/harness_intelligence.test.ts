@@ -39,7 +39,7 @@ import {
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
 import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
-import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, cleanTreeId, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, flakyRerunSignal, cleanTreeId, failedCheckNames, failedChecksSignal, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -900,6 +900,17 @@ describe("P12-11 recovery classes (FC-REQ)", () => {
     const d = decideRecovery({ output: "invalid_api_key", rerun: { test: "t", failTree: T, passTree: T } }, { env: E, history: [] });
     expect(d.action).toBe("stop");
   });
+  it("Q17-03: flaky check alone reruns, a different real failing check still takes a fix round", () => {
+    const rerun = { test: "a", failTree: T, passTree: T };
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: ["a"] }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: ["a", "b"] }, { env: E, history: [] })).toMatchObject({ action: "revise", reason: "build_failed" });
+  });
+  it("Q17-03: absent or malformed failedChecks behaves exactly as before (flaky still wins)", () => {
+    const rerun = { test: "a", failTree: T, passTree: T };
+    for (const failedChecks of [undefined, "b", 7, null, [1, 2]] as unknown[]) {
+      expect(decideRecovery({ output: "x", buildExitCode: 1, rerun, failedChecks: failedChecks as never }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
+    }
+  });
   it("fingerprints persist across two runs and are bounded", () => {
     const dir = tmp();
     expect(recordFingerprints(dir, "run1", "flaky", ["a", "b"])).toEqual(["a", "b"]);
@@ -974,6 +985,28 @@ describe("P12-11b flaky rerun producer and summary wiring", () => {
     const dir = tmp();
     recordFingerprints(dir, "r1", "flaky", ["t/a.test.ts"], "");
     expect(flakyRerunSignal(dir, "tree1")).toBeUndefined();
+  });
+  it("Q17-03 production shape: verify output with one flaky plus one real failing check revises; flaky alone retries", () => {
+    const verifyChecks = [{ name: "bun:a.test.ts", result: "flaky" }, { name: "bun:b.test.ts", result: "fail" }, { name: "tsc", result: "pass" }, { name: "holdout", result: "not_run" }];
+    const dir = tmp();
+    recordFingerprints(dir, "r1", "flaky", ["bun:a.test.ts"], "tree1");
+    recordFingerprints(dir, "r1", "failed", failedCheckNames(verifyChecks), "tree1");
+    const sig = { output: "x", buildExitCode: 1, rerun: flakyRerunSignal(dir, "tree1"), failedChecks: failedChecksSignal(dir, "tree1") };
+    expect(sig.failedChecks).toEqual(["bun:b.test.ts"]);
+    expect(decideRecovery(sig, { env: E, history: [] })).toMatchObject({ action: "revise", reason: "build_failed" });
+    const dir2 = tmp();
+    recordFingerprints(dir2, "r1", "flaky", ["bun:a.test.ts"], "tree1");
+    recordFingerprints(dir2, "r1", "failed", failedCheckNames([verifyChecks[0]]), "tree1");
+    expect(failedChecksSignal(dir2, "tree1")).toBeUndefined();
+    expect(failedChecksSignal(dir, "")).toBeUndefined();
+    expect(failedCheckNames("junk")).toEqual([]);
+    expect(decideRecovery({ output: "x", buildExitCode: 1, rerun: flakyRerunSignal(dir2, "tree1"), failedChecks: failedChecksSignal(dir2, "tree1") }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
+  });
+  it("Q17-03: the real call sites pass failedChecks and record failed checks", () => {
+    const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
+    const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
+    expect(au).toMatch(/failedChecks: failedChecksSignal\(/);
+    expect(sv).toMatch(/"failed", failedCheckNames\(folded\.stages\["verify"\]/);
   });
   it("P12-11b-c: supervisor and autonomous derive the tree through cleanTreeId", () => {
     const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");

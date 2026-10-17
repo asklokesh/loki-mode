@@ -61,6 +61,12 @@ export interface RecoverySignals {
    * The only input that yields the flaky class; prose never does.
    */
   readonly rerun?: { readonly test: string; readonly failTree: string; readonly passTree: string };
+  /**
+   * Q17-03: names of the checks that really failed (verify result "fail"). When this is a
+   * string array holding any name other than rerun.test, a real failure exists beside the
+   * flaky check and the flaky rerun does not mask it. Absent or malformed means today's behavior.
+   */
+  readonly failedChecks?: readonly string[];
   /** Structured signal (not prose) that the agent/tool wire protocol was violated. */
   readonly protocolError?: boolean;
   /** Structured signal that two requirements cannot both hold; re-prompting cannot fix it. */
@@ -85,6 +91,12 @@ export interface RecoveryDecision {
 export type RecoveryClass = "flaky" | "protocol_error" | "conflicting_requirements";
 
 // flaky = fail-then-pass on one non-empty tree id. Different or unknown trees prove nothing.
+export function hasOtherRealFailure(sig: RecoverySignals): boolean {
+  const f = sig.failedChecks as unknown;
+  if (!Array.isArray(f) || !f.every((n) => typeof n === "string")) return false;
+  return f.some((n: string) => n !== sig.rerun?.test);
+}
+
 export function isFlaky(r: RecoverySignals["rerun"]): boolean {
   return r !== undefined && r.test !== "" && r.failTree !== "" && r.failTree === r.passTree;
 }
@@ -260,7 +272,8 @@ export function decideRecovery(sig: RecoverySignals, opts: DecideOpts = {}): Rec
 
   // (7a) flaky: fail-then-pass on an identical tree proves the failure is non-deterministic, so it
   // outranks build_failed (a revise would rewrite code that is not broken). Different or unknown trees prove nothing.
-  if (isFlaky(sig.rerun)) {
+  // Q17-03: a different, really failing check beside the flaky one still takes a fix round.
+  if (isFlaky(sig.rerun) && !hasOtherRealFailure(sig)) {
     return { action: "retry", reason: "flaky" };
   }
 

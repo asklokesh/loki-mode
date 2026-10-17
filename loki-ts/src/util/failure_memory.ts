@@ -133,3 +133,14 @@ export function flakyRerunSignal(dir: string, tree: string): { test: string; fai
   const row = readFingerprints(dir).findLast((r) => r.cls === "flaky" && r.tree === tree);
   return row ? { test: row.name, failTree: tree, passTree: tree } : undefined;
 }
+/** Q17-03: names of verify checks whose result is "fail" (flaky and not_run excluded). Junk input gives []. */
+export function failedCheckNames(checks: unknown): string[] {
+  if (!Array.isArray(checks)) return [];
+  return checks.flatMap((c) => (c && typeof c === "object" && (c as { result?: unknown }).result === "fail" && typeof (c as { name?: unknown }).name === "string" ? [(c as { name: string }).name] : []));
+}
+/** Q17-03: failed-check rows recorded on THIS known tree, for decideRecovery's failedChecks. undefined (no evidence) on an unknown tree or no rows, which keeps today's behavior. */
+export function failedChecksSignal(dir: string, tree: string): string[] | undefined {
+  if (tree === "") return undefined;
+  const names = readFingerprints(dir).filter((r) => r.cls === "failed" && r.tree === tree).map((r) => r.name);
+  return names.length > 0 ? [...new Set(names)] : undefined;
+}
