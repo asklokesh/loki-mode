@@ -82,6 +82,16 @@ loki doctor --json    # machine-readable
 
 ---
 
+## IDE and MCP client install
+
+Loki Mode ships an MCP server (`npx -y loki-mode mcp`, stdio). Register it in your editor with one click or one command.
+
+- Cursor: [install link](cursor://anysphere.cursor-deeplink/mcp/install?name=loki-mode&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImxva2ktbW9kZSIsIm1jcCJdfQ==)
+- VS Code: [install link](vscode:mcp/install?%7B%22name%22%3A%22loki-mode%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22loki-mode%22%2C%22mcp%22%5D%7D)
+- Command line, any supported client: `loki mcp install --client claude`, `--client cursor`, `--client vscode` or `--client windsurf`. Add `--project` or `--global` to pick the config scope, or `--print` to show the config and write nothing.
+
+---
+
 ## First run
 
 ```bash

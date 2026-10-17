@@ -84,6 +84,44 @@ else
 fi
 
 echo
+echo "T3 -- IDE deeplinks in README decode to the server.json launch"
+
+python3 - "$REPO_ROOT" <<'PY'
+import sys,re,json,base64,urllib.parse
+root=sys.argv[1]
+sj=json.load(open(root+'/server.json'))
+pk=sj['packages'][0]
+want_id=pk['identifier']
+want_args=[a['value'] for a in pk.get('packageArguments',[])]
+readme=open(root+'/README.md').read()
+fails=[]
+def check(label,cfg):
+    args=cfg.get('args',[])
+    if cfg.get('command')!='npx' or want_id not in args or args[-len(want_args):]!=want_args:
+        fails.append("%s: payload %r does not run %s %r" % (label,cfg,want_id,want_args))
+    else:
+        print("  [PASS] %s deeplink runs %s with args %r" % (label,want_id,want_args))
+m=re.search(r'cursor://anysphere\.cursor-deeplink/mcp/install\?name=loki-mode&config=([A-Za-z0-9+/=%_-]+)',readme)
+if not m: fails.append("README has no Cursor deeplink")
+else:
+    try: check("Cursor",json.loads(base64.b64decode(urllib.parse.unquote(m.group(1)))))
+    except Exception as e: fails.append("Cursor payload undecodable: %s" % e)
+m=re.search(r'vscode:mcp/install\?([^)\s]+)',readme)
+if not m: fails.append("README has no VS Code link")
+else:
+    try: check("VS Code",json.loads(urllib.parse.unquote(m.group(1))))
+    except Exception as e: fails.append("VS Code payload undecodable: %s" % e)
+kw=json.load(open(root+'/package.json')).get('keywords',[])
+bad=[k for k in kw if 'gemini' in k.lower()]
+if bad: fails.append("package.json keywords include deprecated provider terms: %r" % bad)
+else: print("  [PASS] package.json keywords have no deprecated provider name")
+for f in fails: print("  [FAIL] "+f)
+sys.exit(1 if fails else 0)
+PY
+rc=$?
+if [ "$rc" -eq 0 ]; then PASS=$((PASS+3)); else FAIL=$((FAIL+1)); fi
+
+echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS+FAIL)) total"
 [ "$FAIL" -eq 0 ]
