@@ -152,7 +152,9 @@ test("slack stripe redact", () => {
   const k = "A1b2C3d4E5f6G7h8I9j0K1l2";
   expect(redactSecrets(`sk_test_${k} rk_test_${k} rk_live_${k}`)).toBe("[REDACTED:STRIPE_KEY] [REDACTED:STRIPE_KEY] [REDACTED:STRIPE_KEY]");
   expect(redactSecrets(`whsec_${k}`)).toBe("[REDACTED:STRIPE_WEBHOOK_SECRET]");
-  for (const benign of ["sk_test_short", "whsec_short", "hooks.slack.com/services/help", "task_sk_test_" + k.toLowerCase().slice(0, 3), "https://hooks.slack.com/docs"]) expect(redactSecrets(benign)).toBe(benign);
+  expect(redactSecrets(`key%3Dsk_live_${k}`)).toBe("key%3D[REDACTED:STRIPE_KEY]");
+  expect(redactSecrets(`STRIPE_sk_live_${k} x9sk_live_${k}`)).toBe("STRIPE_[REDACTED:STRIPE_KEY] x9[REDACTED:STRIPE_KEY]");
+  for (const benign of ["sk_test_short", "whsec_short", "hooks.slack.com/services/help", "task_sk_test_" + k.toLowerCase().slice(0, 3), "https://hooks.slack.com/docs", "hooks.slack.com/services/T0/B0/short"]) expect(redactSecrets(benign)).toBe(benign);
   for (const s of [w, `sk_test_${k}`, `whsec_${k}`, `x ${w}${w}`]) expect(redactSecrets(redactSecrets(s))).toBe(redactSecrets(s));
   expect(redactEventData("run.started", { u: w, k: `whsec_${k}` })).toEqual({ u: "hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK]", k: "[REDACTED:STRIPE_WEBHOOK_SECRET]" });
 });
