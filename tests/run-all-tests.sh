@@ -1452,6 +1452,7 @@ run_test "pipe-to-grep-q under pipefail breaks on large output (FC-64)" "timeout
 run_test "release.sh version-bump preserves file mode (BACKLOG 22)" "$SCRIPT_DIR/test-release-sh.sh"
 run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
+run_test "loki self-update --check reports installed vs latest (TEN-ADOPTION-15)" "$SCRIPT_DIR/test-self-update.sh"
 run_test "loki help does not recurse into itself" "$SCRIPT_DIR/test-help-no-recursion.sh"
 run_test "loki status prints the newest sealed receipt verdict on bash and Bun (133-F4)" "timeout -k 10 300 bash $SCRIPT_DIR/test-status-last-verdict.sh"
 run_test "no test uses a platform-divergent construct" "$SCRIPT_DIR/test-ci-only-divergence.sh"
