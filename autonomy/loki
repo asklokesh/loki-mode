@@ -16090,14 +16090,55 @@ cmd_demo() {
         # the receipt's genuine honesty.headline.
         render_evidence_receipt_md "$sample_proof" "" ""
 
-        # The receipt prints a "verify it yourself" command. For a real build
-        # that command works against .loki/proofs/. This bundled sample is for
-        # display only (no local proof store entry, hash neutralized), so make
-        # that explicit rather than let a newcomer run a command that fails.
+        # The receipt above is the legacy proof sample. Below, the REAL verifier
+        # (the same one 'loki verify' runs) checks a bundled sealed engine10
+        # receipt offline against a bundled public key, then re-checks a copy
+        # with one byte flipped. The verdict words come from the verifier's own
+        # "verdict:" line; with no Bun the exact command is printed instead and
+        # no verdict is claimed.
+        local rcpt_dir="$SKILL_DIR/skills/fixtures/demo-receipt"
+        local rcpt="$rcpt_dir/receipt.json"
+        local rcpt_key="$rcpt_dir/pubkey.jwk"
+        local rcpt_cmd="loki verify --pubkey $rcpt_key $rcpt"
         echo ""
-        echo -e "${DIM}The 'verify it yourself' command above is what you run against the"
-        echo -e "real builds you create (their proofs live in .loki/proofs/). This"
-        echo -e "bundled sample is for display only.${NC}"
+        echo -e "${BOLD}Verify it yourself (offline, real verifier):${NC}"
+        if [ ! -f "$rcpt" ] || [ ! -f "$rcpt_dir/events.jsonl" ] || [ ! -f "$rcpt_key" ]; then
+            echo "UNCHECKED: the bundled sealed receipt, event log or public key is missing."
+            echo "  Command: $rcpt_cmd"
+        else
+            local v_out v_verdict t_dir t_out t_verdict t_content
+            v_out=$( ( _loki_bun_delegate engine10 verify --pubkey "$rcpt_key" "$rcpt" ) 2>&1 || true )
+            v_verdict=$(printf '%s\n' "$v_out" | sed -n 's/^verdict: \([A-Z]*\).*/\1/p' | head -n 1)
+            if [ -z "$v_verdict" ]; then
+                echo "No verdict (the Bun runtime that runs the verifier is not available)."
+                echo "  Install Bun (https://bun.sh), then run:"
+                echo "  $rcpt_cmd"
+            else
+                echo "  $rcpt_cmd"
+                echo "  Result: $v_verdict"
+                if [ "$v_verdict" = "VERIFIED" ]; then
+                    t_dir=$(mktemp -d "${TMPDIR:-/tmp}/loki-tour.XXXXXXXX" 2>/dev/null || true)
+                    if [ -n "$t_dir" ] && [ -d "$t_dir" ]; then
+                        cp "$rcpt_dir/events.jsonl" "$t_dir/events.jsonl"
+                        t_content=$(cat "$rcpt")
+                        # One byte: the first 'VERIFIED' in the receipt becomes 'VERIFIEE'.
+                        printf '%s\n' "${t_content/VERIFIED/VERIFIEE}" > "$t_dir/receipt.json"
+                        if [ "${t_content/VERIFIED/VERIFIEE}" = "$t_content" ]; then
+                            echo "  (tamper check skipped: the receipt has no byte to flip)"
+                            rm -f "$t_dir/receipt.json"
+                        fi
+                        t_out=$( ( _loki_bun_delegate engine10 verify --pubkey "$rcpt_key" "$t_dir/receipt.json" ) 2>&1 || true )
+                        t_verdict=$(printf '%s\n' "$t_out" | sed -n 's/^verdict: \([A-Z]*\).*/\1/p' | head -n 1)
+                        echo ""
+                        echo "Now the same receipt with one byte changed (a copy; the bundled file is untouched):"
+                        echo "  Result: ${t_verdict:-no verdict}"
+                        case "$t_dir" in
+                            "${TMPDIR:-/tmp}"/loki-tour.*) rm -rf "$t_dir" ;;
+                        esac
+                    fi
+                fi
+            fi
+        fi
 
         echo ""
         echo -e "${DIM}---------------------------------------${NC}"
