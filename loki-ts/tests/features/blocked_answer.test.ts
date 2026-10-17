@@ -89,6 +89,22 @@ describe("loki answer", () => {
     expect(await runAnswer(["e10-nope", "--text", "x"], t.d)).toBe(2);
     expect(t.calls.length).toBe(0);
   });
+  test("text needs a value: bare --text exits 2 even with a saved answer, and launches nothing", async () => {
+    const repo = repoWith("blocked"), ad = join(root, "answers-tnv");
+    mkdirSync(join(ad, "abc123"), { recursive: true });
+    writeFileSync(join(ad, "abc123", `${BLOCKED}.answer.txt`), "stale saved answer\n");
+    const t = deps(repo, ad);
+    expect(await runAnswer(["--text"], t.d)).toBe(2);
+    expect(await runAnswer([BLOCKED, "--text"], t.d)).toBe(2);
+    expect(t.err.join("\n")).toContain("--text needs a value");
+    expect(t.calls.length).toBe(0);
+    expect(await runAnswer(["--text", "x"], t.d)).toBe(0);
+    expect(await runAnswer(["--text=y"], t.d)).toBe(0);
+    expect(t.calls[0]!.argv[1]!).toContain(": x");
+    expect(t.calls[1]!.argv[1]!).toContain(": y");
+    expect(await runAnswer([], t.d)).toBe(0);
+    expect(t.calls[2]!.argv[1]!).toContain("stale saved answer");
+  });
   test("traversal run ids are rejected with exit 2", async () => {
     const repo = repoWith("blocked");
     mkdirSync(join(repo, ".loki", "evil"), { recursive: true });

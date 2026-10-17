@@ -60,7 +60,10 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
   let runId = "", text: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (a === "--text") text = args[++i];
+    if (a === "--text") {
+      if (i + 1 >= args.length) { d.err("loki answer: --text needs a value"); return 2; }
+      text = args[++i];
+    }
     else if (a.startsWith("--text=")) text = a.slice(7);
     else if (!runId && !a.startsWith("-")) runId = a;
     else { d.err("usage: loki answer [<run-id>] [--text \"...\"]"); return 2; }
