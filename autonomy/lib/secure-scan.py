@@ -46,7 +46,7 @@ import os
 import re
 import sys
 
-RULES_VERSION = "1.0"
+RULES_VERSION = "1.1"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -375,6 +375,40 @@ _ACAC_TRUE_CODE = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# rule 6: TLS certificate verification disabled
+# ---------------------------------------------------------------------------
+# Python requests/httpx verify=False, Node rejectUnauthorized: false, Go
+# InsecureSkipVerify: true, and NODE_TLS_REJECT_UNAUTHORIZED set to 0 (env file,
+# shell export or process.env assignment). Each turns off certificate checks and
+# leaves the connection open to man-in-the-middle interception.
+_TLS_VERIFY_DISABLED = re.compile(
+    r"""(?:
+        \bverify\s*=\s*False\b
+      | \brejectUnauthorized['"]?\s*:\s*false\b
+      | \bInsecureSkipVerify['"]?\s*:\s*true\b
+      | \bNODE_TLS_REJECT_UNAUTHORIZED\b['"\]]?\s*[=:]\s*['"]?0\b
+    )""",
+    re.VERBOSE,
+)
+# Test and fixture code legitimately disables verification against local
+# servers; rule 4's dev/test path markers apply, plus fixture directories.
+_TLS_FIXTURE_PATH_RE = re.compile(
+    r"(?:^|/)(?:fixtures?|__tests__|__mocks__|spec|specs)(?:/|$)|"
+    r"[._-](?:spec|fixtures?)[._-]",
+    re.IGNORECASE,
+)
+
+
+def _tls_rule_applies(rel_path):
+    """False for dev/test/fixture paths and prose docs, where a mention of a
+    disabled-verification flag is not a shipped misconfiguration."""
+    norm = rel_path.replace("\\", "/")
+    if _DEV_MARKER_RE.search(norm) or _TLS_FIXTURE_PATH_RE.search(norm):
+        return False
+    return not norm.lower().endswith((".md", ".mdx", ".rst", ".txt", ".adoc"))
+
+
+# ---------------------------------------------------------------------------
 # file walking / reading
 # ---------------------------------------------------------------------------
 
@@ -436,6 +470,7 @@ def _scan_file(rel_path, lines, secrets_everywhere=False):
     findings = []
     browser_served = _is_browser_served(rel_path)
     prod_config = _is_production_config(rel_path)
+    tls_scan = _tls_rule_applies(rel_path)
 
     # rule 3 / rule 5 need whole-file context for the AND conditions.
     saw_rls_disable = None  # lineno of a DISABLE ROW LEVEL SECURITY
@@ -555,6 +590,18 @@ def _scan_file(rel_path, lines, secrets_everywhere=False):
                     "environment variable that defaults to off), and keep "
                     "debug-on only in dev/local config.",
                 ))
+
+        # --- rule 6: TLS verification disabled ---------------------------
+        if (tls_scan and not _COMMENT_OR_DOC_LINE.match(text)
+                and _TLS_VERIFY_DISABLED.search(text)):
+            findings.append(_finding(
+                "tls-verify-disabled", rel_path, lineno, "HIGH",
+                "TLS certificate verification is disabled; the connection can "
+                "be intercepted by anyone on the network path.",
+                "Remove the override and trust the system CA store. For a "
+                "private CA, pass its bundle (verify=/path/ca.pem, ca option) "
+                "instead of turning verification off.",
+            ))
 
         # --- rule 5: CORS wildcard + credentials (whole-file AND) --------
         # Skip prose/doc lines (_rule3_skip = comment-only line or .md/.rst/.txt
