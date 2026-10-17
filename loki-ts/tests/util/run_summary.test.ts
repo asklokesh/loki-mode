@@ -166,6 +166,16 @@ test("nextOf auth failure names the active provider, not claude", () => {
   expect(nextOf("failed", 2, "provider authentication failed", "claude")).toBe("claude login");
   expect(nextOf("failed", 2, "provider authentication failed")).toBe("claude login");
 });
+test("TEN-COST-32: budget stop next names --max-cost and the run id", () => {
+  const n = nextOf("stopped", 1, "cost/time cap reached", "claude", "run-abc123");
+  expect(n).toContain("--max-cost");
+  expect(n).toContain("run-abc123");
+  expect(nextOf("stopped", 1, "cost/time cap reached")).toContain("--max-cost");
+  expect(nextOf("stopped", 1, "cost/time cap reached")).toContain("time cap");
+  expect(nextOf("stopped", 1, "cost/time cap reached")).not.toContain("stopped run");
+  expect(nextOf("failed", 1, "cost/time cap reached")).toBe("loki undo");
+  expect(nextOf("stopped", 1, "stalled: same failure 3 times")).toBe("loki chat --attach");
+});
 test("nextOf default outputs do not drift", () => {
   expect(nextOf("verified", 2)).toBe("loki diff");
   expect(nextOf("verified", 0)).toBe("loki status");
