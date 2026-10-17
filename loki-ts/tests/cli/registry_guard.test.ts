@@ -204,6 +204,14 @@ describe("completions", () => {
     expect(complete(["loki", "trust", "--"])).toContain("--json");
   });
 
+  test("memory json", () => {
+    const subs = findCommand("memory")?.subcommands ?? [];
+    for (const n of ["list", "lessons"]) {
+      expect((subs.find((c) => c.name === n)?.flags ?? []).map((f) => f.name)).toContain("--json");
+      expect(complete(["loki", "memory", n, "--"])).toContain("--json");
+    }
+  });
+
   test("undo flags", () => {
     const names = (findCommand("undo")?.flags ?? []).map((f) => f.name);
     expect(names).toEqual(expect.arrayContaining(["--list", "--dry-run"]));

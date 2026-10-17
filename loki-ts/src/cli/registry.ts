@@ -103,10 +103,10 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("memory", "UPDATE", "both", "Cross-project learnings", "Memory still carries legacy store paths", {
     subcommands: [
-      sub("list", "All learnings"),
+      sub("list", "All learnings", { flags: [bool("--json", "Print the learnings summary as JSON")] }),
       sub("index", "Show or rebuild the memory index", { positionals: [{ name: "action", type: "enum", values: ["rebuild"] }] }),
       sub("learn", "Learn lessons from a merged PR's review comments", { positionals: [{ name: "pr", type: "string" }] }),
-      sub("lessons", "List PR review lessons with uses and outcomes"),
+      sub("lessons", "List PR review lessons with uses and outcomes", { flags: [bool("--json", "Print the lessons as JSON")] }),
       sub("brief", "Print the lessons and learnings block an engine10 run injects", { flags: [str("--task", "text", "Task text used to pick relevant lessons")] }),
       sub("show", "Show one learning"),
       sub("search", "Search learnings"),
