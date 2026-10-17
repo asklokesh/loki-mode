@@ -33,6 +33,7 @@ export interface FixDeps {
   loggedIn?: () => "yes" | "no" | "";
 }
 
+const PROVIDER_CLIS = ["claude", "codex", "cline", "aider", "opencode"] as const;
 const CLAUDE_INSTALL = ["npm", "install", "-g", "@anthropic-ai/claude-code"] as const;
 const CLAUDE_LOGIN = ["claude", "login"] as const;
 
@@ -107,14 +108,15 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
     }
   }
 
-  // 2. Seed project config defaults (Claude Code is the default provider).
+  // 2. Seed project config defaults: first installed provider CLI, claude when none is installed.
+  const seedProvider = PROVIDER_CLIS.find((c) => has(c)) ?? "claude";
   const cfgDir = join(cwd, ".loki", "config");
   const cfgFile = join(cfgDir, "settings.json");
   if (!existsSync(cfgFile)) {
     try {
       mkdirSync(cfgDir, { recursive: true });
-      writeFileSync(cfgFile, JSON.stringify({ provider: "claude" }, null, 2) + "\n");
-      applied.push(`wrote default config ${cfgFile} (provider=claude)`);
+      writeFileSync(cfgFile, JSON.stringify({ provider: seedProvider }, null, 2) + "\n");
+      applied.push(`wrote default config ${cfgFile} (provider=${seedProvider})`);
     } catch (e) {
       manual.push(`loki config set provider claude   (${(e as Error).message})`);
     }
@@ -130,7 +132,7 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
   for (const tool of ["node", "python3", "jq", "git", "curl"]) {
     if (!has(tool)) manual.push(MANUAL[tool]!);
   }
-  const providers = ["claude", "codex", "cline", "aider", "opencode"];
+  const providers = PROVIDER_CLIS;
   if (!has("claude")) {
     const installed = has("npm") ? runStep(CLAUDE_INSTALL, `Install claude (${CLAUDE_INSTALL.join(" ")})?`) : null;
     if (installed === null) {

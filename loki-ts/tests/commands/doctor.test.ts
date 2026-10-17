@@ -9,7 +9,7 @@
 //     and invariants instead.
 import { afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
 import { createServer, type Server } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1220,6 +1220,38 @@ describe("doctor --fix consent-gated installs (TEN-UX-04)", () => {
       expect(r.calls).toEqual([]);
     }
   });
+
+  it("seed provider: first installed provider CLI is written, claude when none", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const seeded = (has: (c: string) => boolean): string => {
+      const { cwd, home } = mk();
+      applyDoctorFixes(cwd, home, { has, runner: recorder().run, tty: false, loggedIn: () => "yes" });
+      return JSON.parse(readFileSync(join(cwd, ".loki", "config", "settings.json"), "utf8")).provider;
+    };
+    expect(seeded((c) => c === "codex")).toBe("codex");
+    expect(seeded((c) => c === "aider" || c === "opencode")).toBe("aider");
+    expect(seeded(() => true)).toBe("claude");
+    expect(seeded(() => false)).toBe("claude");
+  });
+
+  it("seed provider: real entry path bin/loki doctor --fix seeds codex from a shim", () => {
+    const { cwd, home } = mk();
+    const shim = mkdtempSync(join(tmpdir(), "docfix-seed-"));
+    writeFileSync(join(shim, "codex"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(shim, "codex"), 0o755);
+    const noClaudePath = (process.env.PATH ?? "").split(":").filter((d) => d && !existsSync(join(d, "claude"))).join(":");
+    const r = spawnSync(join(REPO_ROOT, "bin", "loki"), ["doctor", "--fix"], {
+      cwd, encoding: "utf8", timeout: 120000,
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("LOKI_"))),
+        HOME: home, PATH: `${shim}:${noClaudePath}`,
+      },
+    });
+    const cfg = JSON.parse(readFileSync(join(cwd, ".loki", "config", "settings.json"), "utf8"));
+    expect(cfg.provider).toBe("codex");
+    expect(r.stdout).toContain("provider=codex");
+    rmSync(shim, { recursive: true, force: true });
+  }, 60000);
 
   it("(f) real entry path: bin/loki doctor --fix --yes runs claude login via the shim", () => {
     const { cwd, home } = mk();
