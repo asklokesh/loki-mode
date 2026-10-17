@@ -192,3 +192,111 @@ def test_non_object_rows_skipped_with_count(tmp_path, capsys):
     assert out["skipped_non_object_rows"] == 4, out
     assert "skipped 4 non-object" in cap.err
     assert out["verdict"] == "PROVEN_AT(0.5)", out
+
+
+def _timed(loki_s, floor_s, n_tasks=8):
+    loki = _arm([[0.4] * 3] * n_tasks)
+    floor = _arm([[1.0] * 3] * n_tasks)
+    for r in loki:
+        r["elapsed_s"] = loki_s
+    for r in floor:
+        r["elapsed_s"] = floor_s
+    return loki, floor
+
+
+def test_time_ratio_present_and_directional():
+    loki, floor = _timed(100.0, 250.0)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert abs(v["time_ratio"] - 2.5) < 1e-9, v
+    assert v["time_ci"] == [2.5, 2.5], v
+    assert v["time_rows_excluded"] == 0
+    assert v["verdict"] == "PROVEN_AT(0.5)"
+
+
+def test_time_ratio_numeric_not_string_compare():
+    # 9.0 vs 10.0 differ as strings and numbers: floor 10 / loki 9
+    loki, floor = _timed(9.0, 10.0)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert abs(v["time_ratio"] - 10.0 / 9.0) < 1e-9, v
+    lo, hi = v["time_ci"]
+    assert lo <= v["time_ratio"] + 1e-9 <= hi + 2e-9
+
+
+def test_time_ci_spans_when_tasks_vary():
+    loki, floor = _timed(100.0, 200.0)
+    for r in loki:
+        if r["task_id"] in ("t0", "t1"):
+            r["elapsed_s"] = 400.0
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    lo, hi = v["time_ci"]
+    assert lo < v["time_ratio"] < hi or lo < hi, v
+    assert lo < hi
+
+
+def test_rows_missing_elapsed_excluded_and_counted():
+    loki, floor = _timed(100.0, 200.0)
+    loki[0].pop("elapsed_s")
+    floor[1]["elapsed_s"] = None
+    floor[2]["elapsed_s"] = True
+    floor[3]["elapsed_s"] = float("nan")
+    loki[4]["elapsed_s"] = "12"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["time_rows_excluded"] == 5, v
+    assert abs(v["time_ratio"] - 2.0) < 1e-9, v
+
+
+def test_no_elapsed_rows_gives_null_time():
+    loki, floor = _tight(0.4)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["time_ratio"] is None and v["time_ci"] is None
+    assert v["time_rows_excluded"] == 48
+    assert v["verdict"] == "PROVEN_AT(0.5)"
+
+
+def test_unmeasured_rows_not_counted_in_time_excluded():
+    loki, floor = _timed(100.0, 200.0)
+    loki[0]["unmeasured"] = True
+    loki[0].pop("elapsed_s")
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["time_rows_excluded"] == 0 and v["unmeasured"] == 1
+
+
+def test_zero_loki_elapsed_not_computable():
+    loki, floor = _timed(0.0, 200.0)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["time_ratio"] is None
+
+
+def test_time_only_over_tasks_timed_in_both_arms():
+    loki, floor = _timed(100.0, 200.0)
+    for r in floor:
+        if r["task_id"] == "t0":
+            r.pop("elapsed_s")
+    for r in loki:
+        if r["task_id"] == "t1":
+            r["elapsed_s"] = 9999.0
+            r["task_id"] = "tx"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert abs(v["time_ratio"] - 2.0) < 1e-9, v
+
+
+def test_cli_emits_time_ratio(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    for r in rows:
+        r["elapsed_s"] = 50.0 if r["arm"] == "loki" else 150.0
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    j = json.loads(out)
+    assert rc == 0, out
+    assert abs(j["time_ratio"] - 3.0) < 1e-9, j
+    assert len(j["time_ci"]) == 2
+
+
+def test_negative_and_infinite_elapsed_excluded():
+    loki, floor = _timed(100.0, 200.0)
+    floor[0]["elapsed_s"] = -5.0
+    floor[1]["elapsed_s"] = float("inf")
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["time_rows_excluded"] == 2, v
+    assert abs(v["time_ratio"] - 2.0) < 1e-9, v
