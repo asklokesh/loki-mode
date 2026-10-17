@@ -21,6 +21,16 @@ describe("cap resolution", () => {
     expect(parseCapUsd("$7")).toBe(7);
     for (const bad of ["0", "-1", "abc", "", "1e3", "NaN"]) expect(parseCapUsd(bad)).toBeNull();
   });
+  test("bare decimal cap: .5 and 5. are dollar caps, not null", () => {
+    expect(parseCapUsd(".5")).toBe(0.5);
+    expect(parseCapUsd("$.25")).toBe(0.25);
+    expect(parseCapUsd("5.")).toBe(5);
+    for (const bad of [".", "$.", "..5", "5..", ".0", "0."]) expect(parseCapUsd(bad)).toBeNull();
+    expect(resolveCap(".5", "/nonexistent-loki-repo", {})).toEqual({ usd: 0.5, source: "--max-cost" });
+    expect(resolveCap(null, "/nonexistent-loki-repo", { LOKI_BUDGET_LIMIT: "5." })).toEqual({ usd: 5, source: "env" });
+    expect(resolveCap(null, "/nonexistent-loki-repo", { LOKI_BUDGET_LIMIT: ".0" })).toEqual({ usd: 0, source: "subscription" });
+    expect(yamlPerRun("budgets:\n  per_run: .5\n")).toBe(0.5);
+  });
   test("yamlPerRun reads budgets.per_run only", () => {
     expect(yamlPerRun("budgets:\n  per_run: 3.5\n  per_day: 50\n")).toBe(3.5);
     expect(yamlPerRun("other:\n  per_run: 9\nbudgets:\n  per_day: 1\n")).toBeNull();
@@ -405,6 +415,20 @@ for (let i = 0; i < ${per}; i++) m.emit("cost" as never, "x" as never, { usd: 0.
       const f = join(d, "s.ledger");
       writeFileSync(f, JSON.stringify({ usd: 2, seed: true }) + "\n" + JSON.stringify({ usd: 3, seed: true }) + "\n" + JSON.stringify({ usd: 0.5 }) + "\n");
       expect(ledgerSum(f)).toBe(2.5);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("route key cap", () => {
+  test("route key cap: a model-route key counts as an API key", () => {
+    expect(hasApiKey({ OPENROUTER_API_KEY: "k" })).toBe(true);
+    expect(hasApiKey({ LOKI_MODEL_API_KEY: "k" })).toBe(true);
+    expect(hasApiKey({ OPENROUTER_API_KEY: "" })).toBe(false);
+    const d = mkdtempSync(join(tmpdir(), "loki-rk-"));
+    try {
+      expect(resolveCap(null, d, { OPENROUTER_API_KEY: "k" })).toEqual({ usd: DEFAULT_MAX_COST_USD, source: "default" });
+      expect(resolveCap(null, d, { LOKI_MODEL_API_KEY: "k" })).toEqual({ usd: DEFAULT_MAX_COST_USD, source: "default" });
+      expect(resolveCap(null, d, {})).toEqual({ usd: 0, source: "subscription" });
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
