@@ -394,6 +394,60 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
     }
   });
 
+  test("TEN-QUALITY-11: uv.lock and no .venv resolves through uv run as the project interpreter", () => {
+    const repoDir = mkRepo();
+    const uvDir = mkdtempSync(join(tmpdir(), "e10-verify-uv-"));
+    cleanupDirs.push(uvDir);
+    writeFileSync(join(uvDir, "uv"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(uvDir, "uv"), 0o755);
+    const savedPath = process.env["PATH"];
+    process.env["PATH"] = `${uvDir}:${savedPath ?? ""}`;
+    try {
+      // no uv.lock: today's system result
+      expect(runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir)[2]).toBe("system");
+      writeFileSync(join(repoDir, "uv.lock"), "version = 1\n");
+      const [cmd, args, interpreter] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+      expect([cmd, args, interpreter]).toEqual(["uv", ["run", "--", "python", "-m", "pytest", "-q", "tests/test_x.py"], "project"]);
+      // a real .venv still wins over uv
+      const venvBin = join(repoDir, ".venv", "bin");
+      mkdirSync(venvBin, { recursive: true });
+      writeFileSync(join(venvBin, "python"), "#!/usr/bin/env bash\nexit 0\n");
+      chmodSync(join(venvBin, "python"), 0o755);
+      expect(runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir)[0]).toBe(join(venvBin, "python"));
+    } finally {
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
+  });
+
+  test("TEN-QUALITY-11: uv.lock but no uv on PATH keeps the system result; ruff goes through uv run when uv exists", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "uv.lock"), "version = 1\n");
+    const savedPath = process.env["PATH"];
+    const emptyDir = mkdtempSync(join(tmpdir(), "e10-verify-nouv-"));
+    cleanupDirs.push(emptyDir);
+    process.env["PATH"] = `${emptyDir}:/usr/bin:/bin`;
+    try {
+      if (!Bun.which("uv")) expect(runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir)[2]).toBe("system");
+    } finally {
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
+    const uvDir = mkdtempSync(join(tmpdir(), "e10-verify-uv-"));
+    cleanupDirs.push(uvDir);
+    writeFileSync(join(uvDir, "uv"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(uvDir, "uv"), 0o755);
+    process.env["PATH"] = `${uvDir}:${savedPath ?? ""}`;
+    try {
+      const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+      const checks: VerifyCheck[] = [];
+      await runLintChecks(ctx, ["changed.py"], sig(), checks);
+      const ruffCheck = checks.find((c) => c.name === "lint:ruff");
+      expect(ruffCheck?.cmd.startsWith("uv run -- ruff check")).toBe(true);
+      expect(ruffCheck?.interpreter).toBe("project");
+    } finally {
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
+  });
+
   test("ruff resolves the same way: project .venv/bin/ruff over a bare PATH ruff", async () => {
     const repoDir = mkRepo();
     const venvBin = join(repoDir, ".venv", "bin");

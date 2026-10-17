@@ -41,19 +41,19 @@ export interface VerifyCheck {
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
 // else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
-function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter] {
+function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
   const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   const venvEnv = process.env["VIRTUAL_ENV"];
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
-  return project ? [project, "project"] : [Bun.which(fallback) ? fallback : lastResort, "system"];
+  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && Bun.which("uv") ? ["uv", "project", ["run", "--", bin]] : [Bun.which(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
 export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
   switch (t.runner) {
     case "pytest": {
-      const [cmd, interpreter] = resolveTool(repoDir, "python", "python3", "python");
-      return [cmd, ["-m", "pytest", "-q", t.path], interpreter];
+      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+      return [cmd, [...pre, "-m", "pytest", "-q", t.path], interpreter];
     }
     case "vitest": return ["npx", ["vitest", "run", t.path]];
     case "jest": return ["npx", ["jest", t.path]];
@@ -227,9 +227,9 @@ export async function runLintChecks(
   const { api, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) {
-    const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
-    const c = await runCheck(ctx, "lint:ruff", ruffCmd, ["check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
-    if (await excuseLint(ctx, signal, c, "ruff", ruffCmd, ["check"], ctx.repoDir, py, opts)) pre.push(c.name);
+    const [ruffCmd, interpreter, uvPre] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
+    const c = await runCheck(ctx, "lint:ruff", ruffCmd, [...uvPre, "check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
+    if (await excuseLint(ctx, signal, c, "ruff", ruffCmd, [...uvPre, "check"], ctx.repoDir, py, opts)) pre.push(c.name);
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
