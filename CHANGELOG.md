@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.19 (2026-10-17)
+
+### Changed
+- Lean prefix by default (TEN-COST-13): engine10 Claude sessions use the lean, cache-stable system prefix unless LOKI_E10_PREFIX is set; an explicit value, including off, wins. Other providers are unchanged.
+
+### Fixed
+- Group run iteration counts (TEN-GROUP-AUTH-F1): group cost records no longer count as iterations in KPIs or `loki stats`; their cost and tokens still count. One shared predicate serves both readers, and a test ties the writer's record kind to the reader.
+
 ## v11.17.18 (2026-10-17)
 
 ### Changed

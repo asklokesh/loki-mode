@@ -7,6 +7,6 @@ Modules:
     control: Session control helpers (status, atomic writes, origin check)
 """
 
-__version__ = "11.17.18"
+__version__ = "11.17.19"
 
 __all__ = ["__version__"]

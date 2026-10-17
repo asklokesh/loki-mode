@@ -2424,3 +2424,6 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-17T04:24Z (CoS) v11.17.18: COST-14 merged
 - Batch N done: TEN-COST-14 TL APPROVE a0c626378 (fc23 wall conventions 11 pass, wall 98 pass, two mutations caught), merged f5747f1ae. TEN-GROUP-AUTH-F1 r1 BLOCK 1c59103ad: deleting kind from writeGroupCostRecord left 24/0 green; r2 (workflow wi62vcm02) adds a writer-reader test and the stats.ts sibling. v11.17.17 Release run on 1fa2b21cc in progress; this push waits for it.
+
+## 2026-10-17T04:31Z (CoS) v11.17.19: COST-13 and GROUP-AUTH-F1
+- v11.17.17 publish-npm success (Release run on 1fa2b21cc; npm-visible job pending on propagation). v11.17.18 (COST-14) held behind that run, now pushed together with v11.17.19. TEN-COST-13 TL APPROVE 0b15dc2ba (session 225 pass, runner 1293 pass, 2 mutations caught). TEN-GROUP-AUTH-F1 r2 TL APPROVE 367b4e042 (writer, stats and shared predicate mutations each fail a test). Batch L blocks: GATES-05b r3 BLOCK 7eef05bcb (base_url prefix false green, regex tail unguarded); COST-12 BLOCK b96ffb5f9 (call-site wiring untested); COST-10 BLOCK a0bd42473 (router-off goldens red); COST-09 reviewer returned no verdict; COST-23 build failed on the fixed USER/LOGNAME env drop. r2 rounds dispatched. TEN-QUALITY-01 building; TEN-STABILITY-03 parked under D102.
