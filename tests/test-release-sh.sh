@@ -519,7 +519,9 @@ printf 'loki-ts/dist/\n' > "$SHIP_TPL/.gitignore"
 printf '{"version":3,"sources":[],"names":[],"mappings":"","x":"1.2.3"}\n' > "$SHIP_TPL/loki-ts/dist/loki.js.map"
 mkdir -p "$SHIP_TPL/docs/v10"
 printf 'control\n' > "$SHIP_TPL/docs/v10/CONTROL.md"
-gitq -C "$SHIP_TPL" add CHANGELOG.md .gitignore docs/v10/CONTROL.md
+mkdir -p "$SHIP_TPL/loki-ts/src"
+printf 'export const x = 1;\n' > "$SHIP_TPL/loki-ts/src/index.ts"
+gitq -C "$SHIP_TPL" add CHANGELOG.md .gitignore docs/v10/CONTROL.md loki-ts/src/index.ts
 gitq -C "$SHIP_TPL" add -f loki-ts/dist/loki.js.map
 gitq -C "$SHIP_TPL" commit -q -m "ship fixture"
 SHIP_BASE="$(git -C "$SHIP_TPL" rev-parse HEAD)"
@@ -637,21 +639,59 @@ rc=$?
     && ok ".gitleaksignore baseline passed to gitleaks" || bad ".gitleaksignore not passed (rc=$rc): $(cat "$SHIPW/gitleaks.log")"
 
 echo
-echo "T21 -- forbidden staged file: refuses before commit"
+echo "T21 -- only HEAD plus this run's edits reach the release commit"
+# T21a: anything already staged is refused in preflight, before any write.
 new_ship_fixture
 printf 'governor append\n' >> "$SHIP_REPO/docs/v10/CONTROL.md"
 git -C "$SHIP_REPO" add docs/v10/CONTROL.md
 run_ship_case ""
-assert_refused "forbidden staged" $? SHIP_FORBIDDEN_STAGED "$SHIP_BASE"
-[ "$(git -C "$SHIP_REPO" rev-parse HEAD)" = "$SHIP_BASE" ] && ok "forbidden staged: no commit made" || bad "forbidden staged: a commit was made"
-grep -q "docs/v10/CONTROL.md" "$SHIPW/case.log" && ok "forbidden staged: file named" || bad "forbidden file not named"
-# Boundary: a different path that merely contains the token is not forbidden.
+assert_refused "CONTROL.md pre-staged" $? SHIP_INDEX_NOT_EMPTY "$SHIP_BASE"
+[ "$(git -C "$SHIP_REPO" rev-parse HEAD)" = "$SHIP_BASE" ] && ok "pre-staged: no commit made" || bad "pre-staged: a commit was made"
+grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "pre-staged: VERSION untouched (preflight)" || bad "pre-staged: VERSION written"
+grep -q "docs/v10/CONTROL.md" "$SHIPW/case.log" && ok "pre-staged: file named" || bad "pre-staged file not named"
+# T21b: an arbitrary staged file (not on the 5-name denylist) is refused too.
 new_ship_fixture
 printf 'x\n' > "$SHIP_REPO/docs/v10/CONTROL.md.orig"
 git -C "$SHIP_REPO" add docs/v10/CONTROL.md.orig
 run_ship_case ""
-rc=$?
-[ "$rc" -eq 0 ] && ok "CONTROL.md.orig (substring of a forbidden path) does not trip the guard" || bad "exact-path match broken: rc=$rc ($(grep SHIP_ "$SHIPW/case.log" | head -2))"
+assert_refused "CONTROL.md.orig pre-staged" $? SHIP_INDEX_NOT_EMPTY "$SHIP_BASE"
+# T21c: an unstaged edit to a release-list file is refused (reviewer probe).
+new_ship_fixture
+printf 'UNREVIEWED STRAY EDIT\n' >> "$SHIP_REPO/CHANGELOG.md"
+run_ship_case ""
+assert_refused "stray CHANGELOG.md edit" $? SHIP_DIRTY_RELEASE_FILES "$SHIP_BASE"
+grep -qx 1.2.3 "$SHIP_REPO/VERSION" && ok "stray CHANGELOG edit: VERSION untouched (preflight)" || bad "stray CHANGELOG edit: VERSION written"
+new_ship_fixture
+printf 'stray\n' >> "$SHIP_REPO/CLAUDE.md"
+run_ship_case ""
+assert_refused "stray CLAUDE.md edit" $? SHIP_DIRTY_RELEASE_FILES "$SHIP_BASE"
+grep -q "CLAUDE.md" "$SHIPW/case.log" && ok "stray CLAUDE.md edit: file named" || bad "dirty file not named"
+# T21d: an unstaged edit to a build input would be bundled into dist.
+new_ship_fixture
+printf 'export const y = 2;\n' >> "$SHIP_REPO/loki-ts/src/index.ts"
+run_ship_case ""
+assert_refused "stray loki-ts/src edit" $? SHIP_DIRTY_RELEASE_FILES "$SHIP_BASE"
+# Second line: files staged mid-run (after preflight, during the build).
+printf '#!/usr/bin/env bash\nprintf "x\\n" >> "%s/docs/v10/CONTROL.md"\ngit -C "%s" add docs/v10/CONTROL.md\n' "$SHIP_REPO" "$SHIP_REPO" > "$SHIPW/stage-control.sh"
+printf '#!/usr/bin/env bash\nprintf "x\\n" > "%s/docs/v10/CONTROL.md.orig"\ngit -C "%s" add docs/v10/CONTROL.md.orig\n' "$SHIP_REPO" "$SHIP_REPO" > "$SHIPW/stage-orig.sh"
+# T21e: denylisted name staged mid-run.
+new_ship_fixture
+run_ship_case "BUN_RACE_SCRIPT=$SHIPW/stage-control.sh"
+assert_refused "CONTROL.md staged mid-run" $? SHIP_FORBIDDEN_STAGED "$SHIP_BASE"
+[ "$(git -C "$SHIP_REPO" rev-parse HEAD)" = "$SHIP_BASE" ] && ok "staged mid-run: no commit made" || bad "staged mid-run: a commit was made"
+# T21f: a non-denylisted name staged mid-run hits the allowlist (exact match:
+# CONTROL.md.orig contains a forbidden path but is not one).
+new_ship_fixture
+run_ship_case "BUN_RACE_SCRIPT=$SHIPW/stage-orig.sh"
+assert_refused "CONTROL.md.orig staged mid-run" $? SHIP_UNEXPECTED_STAGED "$SHIP_BASE"
+grep -q "SHIP_FORBIDDEN_STAGED" "$SHIPW/case.log" && bad "denylist matched a substring" || ok "denylist stays exact-path"
+[ "$(git -C "$SHIP_REPO" rev-parse HEAD)" = "$SHIP_BASE" ] && ok "unexpected staged: no commit made" || bad "unexpected staged: a commit was made"
+# T21g: allowlist boundary: 'CHANGELOG' is a substring of a release path
+# (CHANGELOG.md) but not one, so the match must be whole-path.
+printf '#!/usr/bin/env bash\nprintf "x\\n" > "%s/CHANGELOG"\ngit -C "%s" add CHANGELOG\n' "$SHIP_REPO" "$SHIP_REPO" > "$SHIPW/stage-sub.sh"
+new_ship_fixture
+run_ship_case "BUN_RACE_SCRIPT=$SHIPW/stage-sub.sh"
+assert_refused "CHANGELOG (substring of a release path) staged mid-run" $? SHIP_UNEXPECTED_STAGED "$SHIP_BASE"
 
 echo
 echo "T22 -- CHANGELOG line 8 mismatch: refuses before any write"

@@ -745,6 +745,10 @@ release_stage_lines() {
 # (nothing is reset); the message says so.
 SHIP_REMOTE="origin"
 SHIP_FORBIDDEN_STAGED="docs/v10/CONTROL.md docs/v10/usage-readings.tsv bun.lock out2.txt .claude/providers.ts"
+# Tracked inputs of `bun run build`. A working-tree edit here would be bundled
+# into the committed dist, so it must match HEAD like the release files do.
+# loki-ts/dist itself is not listed: the build regenerates it wholesale.
+SHIP_BUILD_INPUTS="loki-ts/src loki-ts/scripts loki-ts/data loki-ts/package.json loki-ts/tsconfig.json loki-ts/bun.lock loki-ts/bunfig.toml"
 SHIP_PHASE_NAME=""
 SHIP_PHASE_START=0
 SHIP_T0=0
@@ -833,7 +837,7 @@ sys.exit(1 if any(r.get("status") != "completed" for r in runs) else 0)
 }
 
 run_ship() {
-    local notes="$SHIP_NOTES" current new f staged hit waited
+    local notes="$SHIP_NOTES" current new f staged hit waited dirty
     local max_wait="${LOKI_RELEASE_SHIP_WAIT:-300}" poll="${LOKI_RELEASE_SHIP_POLL:-10}"
     case "$max_wait" in '' | *[!0-9]*) max_wait=300 ;; esac
     case "$poll" in '' | *[!0-9]* | 0) poll=10 ;; esac
@@ -850,6 +854,16 @@ run_ship() {
         || ship_refuse SHIP_NOTES_HEADER "the first line of $notes must be '## v$new ...'"
     ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$current" \
         || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is '$(sed -n '8p' "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$current'"
+    # The release commit may hold only HEAD plus this run's own edits. Refuse
+    # an index that already has anything staged, and any release file or
+    # build input that differs from HEAD (another agent's unreviewed edit in
+    # the shared checkout would otherwise ride the release to main and npm).
+    if ! git -C "$ROOT_DIR" diff --cached --quiet; then
+        ship_refuse SHIP_INDEX_NOT_EMPTY "already staged: $(git -C "$ROOT_DIR" diff --cached --name-only | tr '\n' ' ')(unstage with git restore --staged)"
+    fi
+    # shellcheck disable=SC2086 # word-split path lists on purpose
+    dirty="$(git -C "$ROOT_DIR" diff --name-only HEAD -- $RELEASE_COMMIT_FILES $SHIP_BUILD_INPUTS)"
+    [ -z "$dirty" ] || ship_refuse SHIP_DIRTY_RELEASE_FILES "differ from HEAD: $(printf '%s' "$dirty" | tr '\n' ' ') (commit them through review or git restore them)"
     ship_require_ancestor
 
     ship_phase "bump version files"
@@ -879,8 +893,21 @@ run_ship() {
         if printf '%s\n' "$staged" | grep -qxF -- "$f"; then hit="$hit $f"; fi
     done
     [ -z "$hit" ] || ship_refuse SHIP_FORBIDDEN_STAGED "refusing to commit:$hit (unstage with git restore --staged)"
+    # Allowlist: every staged path must be a release file or the dist pair.
+    hit=""
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case " $RELEASE_COMMIT_FILES loki-ts/dist/loki.js loki-ts/dist/loki.js.map " in
+            *" $f "*) ;;
+            *) hit="$hit $f" ;;
+        esac
+    done <<<"$staged"
+    [ -z "$hit" ] || ship_refuse SHIP_UNEXPECTED_STAGED "not a release file:$hit (unstage with git restore --staged)"
+    # Commit exactly the validated paths, so a file staged after this check
+    # by another process in the shared checkout still stays out.
+    # shellcheck disable=SC2086 # release paths contain no spaces
     git -C "$ROOT_DIR" -c user.name=asklokesh -c user.email=lokeshmure@live.com \
-        commit -q -m "release: v$new" || ship_refuse SHIP_COMMIT_FAILED "git commit failed"
+        commit -q -m "release: v$new" -- $staged || ship_refuse SHIP_COMMIT_FAILED "git commit failed"
     SHIP_COMMITTED="$(git -C "$ROOT_DIR" rev-parse HEAD)"
     if [ -n "$(git -C "$ROOT_DIR" diff --name-only HEAD -- VERSION CHANGELOG.md loki-ts/dist/loki.js loki-ts/dist/loki.js.map)" ]; then
         ship_refuse SHIP_DIRTY_AFTER_COMMIT "release files still differ from the commit"
