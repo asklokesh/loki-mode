@@ -33,6 +33,7 @@ import { redactSecrets } from "../util/redact.ts";
 import { formatDuration, type Outcome } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { firstIncompleteStage } from "./run_outputs.ts";
+import { colorDisabled } from "./colors.ts";
 
 export type RunResult = "verified" | "done-unverified" | "failed" | "stopped";
 
@@ -73,7 +74,7 @@ export function nextOf(result: RunResult, filesChanged: number | null, reason?: 
 }
 
 export function useColor(env: NodeJS.ProcessEnv = process.env, isTty: boolean = !!process.stdout.isTTY): boolean {
-  return isTty && env.NO_COLOR === undefined;
+  return isTty && !colorDisabled(env);
 }
 
 export function summaryObject(i: RunSummaryInput): Record<string, unknown> {
