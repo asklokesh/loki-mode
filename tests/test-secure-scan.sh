@@ -165,6 +165,21 @@ sec14_check hf huggingface-token "hf_${_b36}"
 sec14_check stripe stripe-key "sk_live_${_b24}"
 sec14_check stripe-rk stripe-key "rk_live_${_b24}"
 sec14_check sendgrid sendgrid-key "SG.${_s22}.${_s43}"
+# --- TEN-SECURITY-18: AWS ASIA, Azure AccountKey, Twilio SK ---
+_b86=$(printf 'aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA2b3C4d5E6f7aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA2b3C4d5E6f7')
+_h32=$(printf 'a1b2c3d4e5f60718293a4b5c6d7e8f90')
+sec14_check aws-sts aws-sts-key "ASIAQ3RS5TU7VW9XY1Z2"
+sec14_check azure azure-account-key "DefaultEndpointsProtocol=https;AccountKey=${_b86}=="
+sec14_check twilio twilio-key "SK${_h32}"
+SAFE="$WORK/sec18-safe"; mkdir -p "$SAFE/public"
+cat > "$SAFE/public/app.js" <<'EOT'
+const a = "ASIAshort";
+const b = "AccountKey=${KEY}";
+const c = "SKtooshort";
+EOT
+scan "$SAFE"; assert_silent "secret-in-client-file" "sec18-safe"
+rv=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rules_version"))' "$WORK/last.json")
+if [ "$rv" = "1.5" ]; then ok "sec18: rules_version is 1.5"; else bad "sec18: rules_version $rv" ""; fi
 SAFE="$WORK/sec14-placeholder"; mkdir -p "$SAFE/public"
 cat > "$SAFE/public/app.js" <<EOT
 const a = "${_gp}xxxxxxxxxxxxxxxxxxxx";

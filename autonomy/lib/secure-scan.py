@@ -47,7 +47,7 @@ import re
 import subprocess
 import sys
 
-RULES_VERSION = "1.4"
+RULES_VERSION = "1.5"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -133,6 +133,12 @@ _SECRET_PATTERNS = [
     ("stripe-key", re.compile(r"(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}")),
     # SendGrid API key: SG.<22>.<43>
     ("sendgrid-key", re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")),
+    # AWS temporary (STS) access key id
+    ("aws-sts-key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
+    # Azure storage connection string account key: 86 base64 chars + ==
+    ("azure-account-key", re.compile(r"AccountKey=[A-Za-z0-9+/]{86}==")),
+    # Twilio API key SID: SK + 32 hex
+    ("twilio-key", re.compile(r"(?<![A-Za-z0-9])SK[0-9a-f]{32}(?![A-Za-z0-9])")),
 ]
 
 # Placeholder / example markers. If the matched secret (or its surrounding
