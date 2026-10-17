@@ -15,7 +15,8 @@ def _arm(costs_by_task, accepted=None, **extra):
         for ri, c in enumerate(costs):
             ok = True if accepted is None else accepted(ti, ri)
             rows.append({"task_id": "t%d" % ti, "accepted": ok, "cost_usd": c,
-                         "engine": "e1", "loki_version": "11.0.0", **extra})
+                         "engine": "e1", "loki_version": "11.0.0",
+                         "model_used": "m1", **extra})
     return rows
 
 
@@ -102,7 +103,7 @@ _CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 def _attr_rows(arm, cost, ntask=8, nrep=3, prefix="t"):
     return [{"task": "%s%d" % (prefix, t), "arm": arm, "accepted": True,
              "cost_usd": cost, "status": "completed", "engine": "e1",
-             "loki_version": "11.0.0"}
+             "loki_version": "11.0.0", "model_used": "m1"}
             for t in range(ntask) for _ in range(nrep)]
 
 
@@ -322,3 +323,38 @@ def test_negative_and_infinite_elapsed_excluded():
     v = cc.cost_claim_verdict(loki, floor, 0.5)
     assert v["time_rows_excluded"] == 2, v
     assert abs(v["time_ratio"] - 2.0) < 1e-9, v
+
+
+def test_model_mismatch_between_arms_blocks():
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r["model_used"] = "cheap"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert any(r.startswith("model") for r in v["reasons"])
+
+
+def test_model_mixed_within_arm_blocks():
+    loki, floor = _tight(0.4)
+    floor[0]["model_used"] = "other"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert any(r.startswith("model") for r in v["reasons"])
+
+
+def test_model_missing_blocks():
+    loki, floor = _tight(0.4)
+    del loki[0]["model_used"]
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert any(r.startswith("model: missing") for r in v["reasons"])
+
+
+def test_cli_model_mismatch_not_proven(tmp_path):
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    for r in rows:
+        if r["arm"] == "loki":
+            r["model_used"] = "cheap"
+    f = tmp_path / "r.jsonl"
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    assert "NOT PROVEN" in out and "model" in out, out
