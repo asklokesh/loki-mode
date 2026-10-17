@@ -3539,8 +3539,8 @@ python3 - "$1" "$2" "$3" <<'PYEOF'
 import json, sys
 f, nxt, lat = sys.argv[1:4]
 print(json.dumps({"time": {"created": "2020-01-01T00:00:00.000Z", "modified": nxt,
-    "11.10.1": lat, "11.17.6": nxt},
-    "dist-tags": {"latest": "11.10.1", "next": "11.17.6"}}), file=open(f, "w"))
+    "99.10.1": lat, "99.17.6": nxt},
+    "dist-tags": {"latest": "99.10.1", "next": "99.17.6"}}), file=open(f, "w"))
 PYEOF
 }
 LAG_NPM="$WORK/npm-lag.json"; mk_lag_npm "$LAG_NPM" 2026-09-27T01:40:00.000Z 2026-09-26T00:00:00.000Z
@@ -3548,7 +3548,7 @@ LAG_NPM_SMALL="$WORK/npm-lag-small.json"; mk_lag_npm "$LAG_NPM_SMALL" 2026-09-27
 LAG_NPM_SAME="$WORK/npm-lag-same.json"
 python3 -c "
 import json
-print(json.dumps({'time': {'11.10.1': '2026-09-26T00:00:00.000Z'}, 'dist-tags': {'latest': '11.10.1', 'next': '11.10.1'}}))
+print(json.dumps({'time': {'99.10.1': '2026-09-26T00:00:00.000Z'}, 'dist-tags': {'latest': '99.10.1', 'next': '99.10.1'}}))
 " > "$LAG_NPM_SAME"
 LAG_PROMOTE="$WORK/promote-lag.txt"
 printf '%s\n' "promote	step	2026-09-27T01:00:00Z PROMOTE-BLOCK: the newest nightly at the promoted SHA abc is failure" \
