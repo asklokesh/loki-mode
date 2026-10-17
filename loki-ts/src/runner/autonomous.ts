@@ -633,8 +633,8 @@ async function runAutonomousCore(
   if (process.env["LOKI_REPO_PROFILE"] === "1") {
     try {
       const profileMod = await tryImport<{
-        buildProfile(o: { repoRoot: string; lokiDirOverride?: string }): { facts: unknown[] };
-      }>("./repo_profile.ts", ["buildProfile"]);
+        buildProfileCached(o: { repoRoot: string; lokiDirOverride?: string }): { facts: unknown[] };
+      }>("./repo_profile.ts", ["buildProfileCached"]);
       if (profileMod) {
         // Address the SAME file the reader will open. build_prompt resolves the
         // profile via LOKI_DIR (falling back to repo_profile's cwd default), so
@@ -642,7 +642,7 @@ async function runAutonomousCore(
         // would write a file buildPrompt never reads whenever the two differ,
         // leaving the fragment permanently empty with the flag ON.
         const override = process.env["LOKI_DIR"];
-        const p = profileMod.buildProfile({
+        const p = profileMod.buildProfileCached({
           repoRoot: ctx.cwd,
           lokiDirOverride: override !== undefined && override !== "" ? override : undefined,
         });
