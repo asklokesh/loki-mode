@@ -109,7 +109,7 @@ export interface SummaryInput {
      *  or leave measuredSessions 0, for a run with no priced sessions at all. */
     partialUsd?: number;
     measuredSessions?: number;
-    totalSessions?: number; capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"
+    totalSessions?: number; stageShares?: string | null; /* TEN-COST-28: stageShareText line, printed as Spend */ capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"
   };
   wallS: number;
   stages: { label: string; seconds: number }[]; firstSealed?: boolean; // TEN-UX-11: first sealed PR in repo (METRICS row 14); only literal true marks Time
@@ -135,7 +135,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
-  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, ...(input.cost.stageShares ? [`${labelCol("Spend")}${input.cost.stageShares}`] : []), timeLine].join("\n");
 }
 /** Section 3: eta.ts is optional; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;

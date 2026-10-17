@@ -46,3 +46,26 @@ export function costBreakdown(recs: { iter: string; rec: Record<string, unknown>
   }
   return out;
 }
+
+/** TEN-COST-28: per-stage share of spend from the run's cost events, for the cost summary. Shares cover the metered stages and sum to
+ *  exactly 100 (largest remainder); a stage with an unpriced or unmetered session says "unmetered", never 0. null when nothing was metered
+ *  or only one stage exists (a share of 100% says nothing). */
+export function stageShareText(events: { type: string; stage: string | null; data: Record<string, unknown> }[]): string | null {
+  const order: string[] = [], usd = new Map<string, number>(), unmetered = new Set<string>();
+  for (const e of events) {
+    if (e.type !== "cost") continue;
+    const stage = e.stage || UNATTRIBUTED;
+    if (!usd.has(stage)) { order.push(stage); usd.set(stage, 0); }
+    if (validUsd(e.data["usd"]) && e.data["source"] !== "cli-invoker-unmetered") usd.set(stage, usd.get(stage)! + e.data["usd"]);
+    else unmetered.add(stage);
+  }
+  const metered = order.filter((s) => !unmetered.has(s) && usd.get(s)! > 0);
+  const total = metered.reduce((a, s) => a + usd.get(s)!, 0);
+  if (order.length < 2 || total <= 0) return null;
+  const raw = metered.map((s) => (usd.get(s)! / total) * 100), pct = raw.map(Math.floor);
+  let left = 100 - pct.reduce((a, b) => a + b, 0);
+  [...raw.keys()].sort((a, b) => (raw[b]! - pct[b]!) - (raw[a]! - pct[a]!) || a - b).forEach((i) => { if (left-- > 0) pct[i]!++; });
+  const top = metered.reduce((a, s) => (usd.get(s)! > usd.get(a)! ? s : a), metered[0]!);
+  const parts = order.map((s) => { const i = metered.indexOf(s); return i >= 0 ? `${s} ${pct[i]}%` : `${s} unmetered`; });
+  return `${parts.join(", ")}; top: ${top}`;
+}
