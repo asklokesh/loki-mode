@@ -135,7 +135,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p9.XXXXXX")" || { echo "p9: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials"
+MOAT_IDS="P9.issue-workflows-separate-untrusted-from-push P9.comment-trigger-author-gate P9.injection-cannot-reach-token P9.checkout-no-persisted-credentials P9.allowtoken-only-fetch-callers"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -2075,6 +2075,87 @@ inj_run_bun_default() {
     fi
 }
 
+case_allowtoken() {
+    # FC-25c / SAFEGIT-REPOCONFIG 1+2: allowToken keeps the credential, so only
+    # the two fetch callers may pass it to safeGit, and only in the fetch-only form.
+    # safeGitEnv(base, true) is the positional spelling of the same opt-in.
+    local src="$REPO_ROOT/loki-ts/src" hits f n
+    [ -d "$src" ] || { nok "vacuous: $src is missing"; return; }
+    n="$(grep -rl 'allowToken' "$src" | grep -c .)"
+    [ "$n" -ge 3 ] || nok "vacuous: expected allowToken in safe_git, base_guard and modernize_unit, found $n files"
+    hits="$(grep -rl 'allowToken' "$src" | grep -v -e '/util/safe_git\.ts$' -e '/util/base_guard\.ts$' -e '/util/modernize_unit\.ts$')"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        nok "allowToken used outside the allowed fetch callers: ${f#"$REPO_ROOT"/}"
+    done <<EOF_HITS
+$hits
+EOF_HITS
+    # Whole-file scan: any safeGitEnv/safeGitArgs call outside safe_git.ts with a
+    # second argument (top-level comma, quote/bracket aware, multi-line, nested
+    # calls) is the positional allowToken opt-in. Single-arg calls stay legal.
+    hits="$(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
+        | xargs -0 perl -0777 -ne '
+            while (/\b(safeGitEnv|safeGitArgs)\s*\(/g) {
+                my ($d, $q, $i) = (0, "", pos());
+                for (; $i < length($_); $i++) {
+                    my $c = substr($_, $i, 1);
+                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
+                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
+                    if ($c =~ /[(\[{]/) { $d++; next }
+                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
+                    if ($c eq "," && $d == 0) {
+                        if (substr($_, $i + 1) =~ /\A\s*\)/) { last }
+                        print "$ARGV\n"; last;
+                    }
+                }
+            }' | sort -u)"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
+    done <<EOF_HITS
+$hits
+EOF_HITS
+    # Alias, namespace, require and dynamic imports of safe_git hide the call
+    # names the scans above key on, so they fail closed.
+    hits="$(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
+        | xargs -0 perl -0777 -ne '
+            if (/\bimport\s*\*\s*as\s+\w+\s+from\s*["\x27][^"\x27]*safe_git/
+                || /\bimport\s*(?:type\s*)?\{[^}]*\bas\b[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
+                || /\brequire\s*\(\s*["\x27][^"\x27]*safe_git/
+                || /\bimport\s*\(\s*["\x27][^"\x27]*safe_git/
+                || /\bexport\s*\*\s*(?:as\s+\w+\s+)?from\s*["\x27][^"\x27]*safe_git/) { print "$ARGV\n" }' | sort -u)"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        nok "safe_git imported by alias, namespace, require or dynamic import (call names hidden from the scan): ${f#"$REPO_ROOT"/}"
+    done <<EOF_HITS
+$hits
+EOF_HITS
+    # Fetch-only pin: exactly one allowToken occurrence (raw and comment-stripped),
+    # and across the whole comment-stripped file it is followed by the fetch-only
+    # expression and then , or } (newlines allowed), so a widened or second use fails.
+    local strip='
+        my ($s, $o, $q, $n) = (do { local $/; <STDIN> }, "", "", 0);
+        for (my $i = 0; $i < length $s; $i++) {
+            my $c = substr($s, $i, 1); my $d = substr($s, $i + 1, 1);
+            if ($q ne "") { $o .= $c; if ($c eq "\\") { $o .= $d; $i++ } elsif ($c eq $q) { $q = "" } next }
+            if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; $o .= $c; next }
+            if ($c eq "/" && $d eq "/") { $i++ while $i < length $s && substr($s, $i, 1) ne "\n"; $o .= "\n"; next }
+            if ($c eq "/" && $d eq "*") { $i += 2; $i++ while $i < length $s && substr($s, $i, 2) ne "*/"; $i++; $o .= " "; next }
+            $o .= $c;
+        }
+        print $o;'
+    local raw_n code_n code
+    for f in base_guard modernize_unit; do
+        code="$(perl -e "$strip" < "$src/util/$f.ts")"
+        raw_n="$(grep -o 'allowToken' "$src/util/$f.ts" | grep -c .)"
+        code_n="$(printf '%s\n' "$code" | grep -o 'allowToken' | grep -c .)"
+        if [ "$raw_n" -ne 1 ] || [ "$code_n" -ne 1 ] \
+            || ! printf '%s\n' "$code" | perl -0777 -ne 'exit(/allowToken\s*:\s*args\[0\]\s*===\s*"fetch"\s*[,}]/ ? 0 : 1)'; then
+            nok "$f.ts allowToken is not the single fetch-only form (allowToken: args[0] === \"fetch\")"
+        fi
+    done
+}
+
 moat_run "P9.issue-workflows-separate-untrusted-from-push" \
     "no workflow job or shipped action that untrusted text can reach combines it with write access or secrets and push/PR" \
     case_rule2
@@ -2087,4 +2168,7 @@ moat_run "P9.injection-cannot-reach-token" \
 moat_run "P9.checkout-no-persisted-credentials" \
     "actions/checkout sets persist-credentials: false in issue/comment/review-triggered and agent-running jobs" \
     case_checkout
+moat_run "P9.allowtoken-only-fetch-callers" \
+    "allowToken is passed to safeGit only by base_guard.ts and modernize_unit.ts (plus its definition in safe_git.ts)" \
+    case_allowtoken
 exit 0
