@@ -43,7 +43,7 @@ test("python fixture yields top-level def and class names", () => {
   expect(entry?.symbols).toEqual(["handler", "Widget"]);
 });
 
-test("nested or indented defs are not extracted", () => {
+test("nested defs inside a method are not extracted, the method is", () => {
   writeFileSync(
     join(dir, "app.py"),
     "class Outer:\n    def method(self):\n        def inner():\n            pass\n        return inner\n",
@@ -51,7 +51,7 @@ test("nested or indented defs are not extracted", () => {
   commitAll();
   const map = buildRepoMap(dir);
   const entry = map.entries.find((e) => e.path === "app.py");
-  expect(entry?.symbols).toEqual(["Outer"]);
+  expect(entry?.symbols).toEqual(["Outer", "Outer.method"]);
 });
 
 test("top-level async def is captured, indented async def is not", () => {
@@ -74,4 +74,23 @@ test("JS export behavior is unchanged", () => {
   const map = buildRepoMap(dir);
   const entry = map.entries.find((e) => e.path === "widget.ts");
   expect(entry?.symbols).toEqual(["makeWidget", "Widget"]);
+});
+
+test("python method past byte 20000 is indexed as Class.method", () => {
+  const filler = "# pad\n".repeat(10_000);
+  writeFileSync(
+    join(dir, "models.py"),
+    `${filler}class QuerySet:\n    def bulk_create(self, objs):\n        pass\n\n    async def aget(self):\n        pass\n\ndef helper():\n    pass\n`,
+  );
+  commitAll();
+  const symbols = buildRepoMap(dir).entries.find((e) => e.path === "models.py")?.symbols;
+  expect(symbols).toEqual(["QuerySet", "QuerySet.bulk_create", "QuerySet.aget", "helper"]);
+});
+
+test("symbols are capped at 300 per file", () => {
+  let src = "";
+  for (let i = 0; i < 1000; i++) src += `def f${i}():\n    pass\n`;
+  writeFileSync(join(dir, "many.py"), src);
+  commitAll();
+  expect(buildRepoMap(dir).entries.find((e) => e.path === "many.py")?.symbols.length).toBe(300);
 });
