@@ -175,12 +175,11 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
       add(self);
       continue;
     }
-    let stem = basename(rel, extname(rel));
-    // Directory entry files (index.ts, __init__.py) are imported by their directory name.
-    if (stem === "index" || stem === "__init__") stem = dirname(rel) === "." ? stem : basename(dirname(rel));
-    for (const p of sourceRefs[stem] ?? []) {
-      add(map.tests.find((t) => t.path === p));
-    }
+    const stem = basename(rel, extname(rel));
+    // Directory entry files (index.ts, __init__.py) are also imported by their directory name.
+    const stems = [stem];
+    if ((stem === "index" || stem === "__init__") && dirname(rel) !== ".") stems.push(basename(dirname(rel)));
+    for (const s of stems) for (const p of sourceRefs[s] ?? []) add(map.tests.find((t) => t.path === p));
   }
   return scopeRefs(map, changedFiles.map(normalizeRel), out);
 }

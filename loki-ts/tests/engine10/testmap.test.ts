@@ -77,6 +77,29 @@ describe("directory entry files (TEN-QUALITY-39)", () => {
     const map = buildTestMap(root);
     expect(impactedRefs(map, ["src/search/index.ts"])).toEqual([{ runner: "bun", path: "tests/search.test.ts" }]);
   });
+
+  test("index source still selects colocated and explicit /index importers", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ scripts: { test: "bun test" } }),
+      "bunfig.toml": "[test]\n",
+      "src/search/index.ts": "export const q = 1;\n",
+      "src/search/index.test.ts": 'import { q } from "./index";\ntest("q", () => {});\n',
+      "tests/query.test.ts": 'import { q } from "../src/search/index";\ntest("q", () => {});\n',
+      "tests/search.test.ts": 'import { q } from "../src/search";\ntest("q", () => {});\n',
+    });
+    const paths = impactedRefs(buildTestMap(root), ["src/search/index.ts"]).map((r) => r.path).sort();
+    expect(paths).toEqual(["src/search/index.test.ts", "tests/query.test.ts", "tests/search.test.ts"]);
+  });
+
+  test("python __init__ maps to package name", () => {
+    const root = repo({
+      "pytest.ini": "[pytest]\n",
+      "app/search/__init__.py": "x = 1\n",
+      "tests/test_s.py": "from app.search import x\n",
+    });
+    const refs = impactedRefs(buildTestMap(root), ["app/search/__init__.py"]);
+    expect(refs).toEqual([{ runner: "pytest", path: "tests/test_s.py" }]);
+  });
 });
 
 describe("TestMapProvider contract (types.ts, E-01)", () => {
