@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { safeGit } from "../util/safe_git";
 type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo"; interface Spec { re: RegExp; shared?: Sections }
-const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
+const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun", "patchedDependencies"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 // FC-09w: macOS filesystems are case-insensitive, so PNPM-Workspace.yaml is read by pnpm. Every row is forced case-insensitive below, in one place.
 const RAW_CONFIGS: Spec[] = [
   { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
@@ -82,10 +82,12 @@ function patchedTargets(cfg: string, text: string): string[] {
   if (/package\.json$/i.test(cfg)) {
     try { const j = JSON.parse(text) as { pnpm?: { patchedDependencies?: unknown }; patchedDependencies?: unknown }; for (const m of [j.patchedDependencies, j.pnpm?.patchedDependencies]) if (m && typeof m === "object") for (const v of Object.values(m)) if (typeof v === "string") out.push(v); } catch { /* relevant() fails closed */ }
   } else if (/pnpm-workspace\.yaml$/i.test(cfg)) {
-    let on = false;
-    for (const l of text.split("\n")) {
+    let on = false, flow = 0; // flow: open braces of a (possibly multi-line) flow map
+    const pairs = (t: string): void => { for (const m of t.matchAll(/:\s*("[^"]*"|'[^']*'|[^\s,}#]+)/g)) out.push(unq(m[1]!)); }, depth = (t: string): number => (t.match(/{/g) ?? []).length - (t.match(/}/g) ?? []).length;
+    for (const l of text.split(/\r?\n/)) {
+      if (flow) { const c = l.replace(/#.*$/, ""); pairs(c); flow = Math.max(0, flow + depth(c)); continue; }
       const h = /^patchedDependencies\s*:(.*)$/.exec(l);
-      if (h) { const rest = h[1]!.trim(); on = !rest || rest.startsWith("#"); for (const m of rest.matchAll(/:\s*("[^"]*"|'[^']*'|[^\s,}#]+)/g)) out.push(unq(m[1]!)); continue; }
+      if (h) { const rest = h[1]!.trim(), c = rest.replace(/#.*$/, ""); on = !rest || rest.startsWith("#"); pairs(c); if (c.startsWith("{")) flow = Math.max(0, depth(c)); continue; }
       if (!on) continue;
       if (/^\S/.test(l)) { on = false; continue; }
       const m = /^\s+(?:"[^"]*"|'[^']*'|[^\s:'"][^:]*?)\s*:\s*("[^"]*"|'[^']*'|[^\s#]+)/.exec(l);
