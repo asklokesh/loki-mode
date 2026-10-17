@@ -259,7 +259,7 @@ export type BaselineRunner = (cmd: string, cwd: string, timeoutMs: number) => Ba
 
 export const commandProfilePath = (repoDir: string): string => join(repoDir, ".loki", "state", "repo-profile.json");
 const DEFAULT_TIMEOUT_S = 60;
-const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml"];
+const MANIFESTS = ["requirements.txt", "package.json", "Makefile", "makefile", "GNUmakefile", "pyproject.toml", "tox.ini", "pytest.ini", "setup.cfg", "go.mod", "Cargo.toml", "tsconfig.json"];
 const NO_TEST = /no test specified/i;
 
 const read = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
@@ -288,12 +288,15 @@ export function discoverCommands(repoDir: string): ProfileCommand[] {
   const out: ProfileCommand[] = [];
   const pj = read(join(repoDir, "package.json"));
   if (pj) {
-    let scripts: Record<string, unknown> = {};
-    try { scripts = (JSON.parse(pj) as { scripts?: Record<string, unknown> }).scripts ?? {}; } catch { /* malformed manifest: nothing to discover */ }
+    let scripts: Record<string, unknown> = {}, hasTs = false;
+    try { const j = JSON.parse(pj) as { scripts?: Record<string, unknown>; dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }; scripts = j.scripts ?? {}; hasTs = !!(j.dependencies?.typescript ?? j.devDependencies?.typescript); } catch { /* malformed manifest: nothing to discover */ }
     const pm = pkgManager(repoDir), run = (n: string): string => (n === "test" ? `${pm} test` : `${pm} run ${n}`);
     const has = (n: string): boolean => typeof scripts[n] === "string" && !(n === "test" && NO_TEST.test(String(scripts[n])));
     const pick = (kind: CmdKind, names: string[]): void => { const n = names.find(has); if (n) out.push(entry(kind, run(n), "package.json")); };
-    pick("test", ["test"]); pick("lint", ["lint"]); pick("typecheck", ["typecheck", "type-check", "tsc"]); pick("build", ["build"]);
+    pick("test", ["test"]); pick("lint", ["lint"]); pick("typecheck", ["typecheck", "type-check", "tsc"]);
+    // No typecheck script: a TypeScript repo (tsconfig.json plus a typescript dependency) still gets a config-based one.
+    if (hasTs && existsSync(join(repoDir, "tsconfig.json")) && !out.some((e) => e.kind === "typecheck")) out.push(entry("typecheck", `${({ bun: "bunx", pnpm: "pnpm exec", yarn: "yarn" } as Record<string, string>)[pm] ?? "npx"} tsc --noEmit`, "tsconfig.json"));
+    pick("build", ["build"]);
   }
   const mk = ["Makefile", "makefile", "GNUmakefile"].map((f) => [f, read(join(repoDir, f))] as const).find(([, t]) => t);
   if (mk) {
