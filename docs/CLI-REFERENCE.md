@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.52. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.53. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -30,6 +30,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki rollback show` | Show a checkpoint |
 | `loki rollback to` | Restore a checkpoint |
 | `loki rollback latest` | Restore the latest checkpoint |
+| `loki rollback deploy` | Print the provider rollback command for the last deploy (read-only) |
 | `loki backup` | Back up dashboard state (audit log, checkpoint) with a sha256 manifest |
 | `loki restore` | Restore dashboard state from a verified backup archive |
 | `loki proof` (alias: `receipt`) | Inspect and share proof-of-run receipts |
@@ -64,6 +65,10 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki trust` | Trust trajectory from proof history |
 | `loki trust detail` | Trust metrics detail |
 | `loki crash` | Inspect or submit scrubbed crash reports |
+| `loki crash list` | List stored crash reports |
+| `loki crash show` | Show one scrubbed crash report |
+| `loki crash submit` | Submit a scrubbed crash report |
+| `loki crash help` | Show crash usage |
 | `loki contract` | Print the spec delivery contract |
 | `loki start` | Run the autonomous build (a `jira:KEY` or `linear:KEY` ref also writes the outcome back to that ticket, see docs/trackers.md) |
 | `loki slack` | Slack inbound handler |

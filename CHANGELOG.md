@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.53 (2026-10-17)
+
+### Added
+- `secure-scan.py` rule 9 flags unsafe deserialization (`pickle.loads`, `yaml.load` without a safe loader, `marshal.loads`) and rule 10 flags SQL built by f-string, `%` formatting or concatenation passed to `execute()` in added lines (TEN-SECURITY-19, TEN-SECURITY-20).
+- Secret detection widened: `redactSecrets` strips AWS ASIA keys and Azure `AccountKey=` strings; `export_sarif` flags PyPI, Docker, DigitalOcean, Google OAuth, Shopify and Postman tokens; `secure-scan.py` matches AWS ASIA, Azure AccountKey and Twilio SK keys (TEN-SECURITY-16, TEN-SECURITY-17, TEN-SECURITY-18).
+- `cost_claim.py` refuses a proven verdict when rows lack `cost_source` or an arm mixes cost sources, and reports NOT PROVEN when the arms cover different task sets (TEN-COST-51, TEN-COST-52).
+- `loki rollback deploy --json` prints the matched rollback command as JSON (TEN-DEPLOY-25).
+- Shell completion registry lists crash subcommands, rollback deploy, and the `--json`, `--list` and `--dry-run` flags of control status, trust, undo, memory list and memory lessons (TEN-ADOPTION-28 to TEN-ADOPTION-33).
+- `loki control`, `loki queue`, `loki queue run`, `loki undo` and `loki memory` suggest the closest valid subcommand, flag or argument on a typo (TEN-UX-40 to TEN-UX-44).
+
+### Fixed
+- `cost_claim.py` no longer counts a missing, None, NaN or negative `cost_usd` as zero (TEN-COST-53).
+- Bounded timeouts on every previously unbounded child call: safe_git config probes (fail closed), the PR stage push and pr-ready scripts, the runner push-pr spawn, pr_lessons push, `issues run` gh calls and the `verify pr` gh helper (TEN-SECURITY-21, TEN-STABILITY-50, TEN-STABILITY-51, TEN-STABILITY-53, TEN-STABILITY-54, TEN-STABILITY-55).
+- A negative `LOKI_MUTATION_PROOF_TIMEOUT_S` or `LOKI_E10_NOTIFY_TIMEOUT_MS` falls back to the default instead of failing the verifier gate or dropping Slack events (TEN-GATES-30, TEN-STABILITY-49).
+- `recordFailures` appends atomically, so concurrent runs no longer lose failure-memory lines (TEN-STABILITY-52).
+- Rollback deploy hints skip npx, bunx, pnpm dlx and yarn dlx wrappers and alias flyctl to fly (TEN-DEPLOY-24).
+
 ## v11.17.52 (2026-10-17)
 
 ### Added

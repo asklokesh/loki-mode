@@ -2536,3 +2536,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T13:34Z (CoS) v11.17.52
 - TEN-COST-49 and TEN-COST-50 released; evidence: test_cost_claim.py 37 passed, reviewer mutations red then restored.
+
+## 2026-10-17T13:56Z (CoS) v11.17.53
+- Wave AP released (30 rows, 19 chains, each reviewer APPROVE by SHA); evidence in ~/loki-ci-logs/ap-check.log (tsc, bun test, secure-scan, drift guards, cost_claim pytest).
