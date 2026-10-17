@@ -21,6 +21,13 @@ export async function runVersion(args: string[] = []): Promise<number> {
     process.stderr.write(`Unknown option for version: ${bad}\nUsage: loki version [--json]\n`);
     return 2;
   }
+  const extra = (args[0] === "help" ? args.slice(1) : args).find((a) => !a.startsWith("-"));
+  if (extra !== undefined) {
+    process.stderr.write(
+      `Unexpected argument for version: ${extra}\nUsage: loki version [--json]\n`,
+    );
+    return 2;
+  }
   const current = getVersion();
   if (args.includes("--json")) {
     const installPath = findRepoRootForVersion(dirname(fileURLToPath(import.meta.url)));
