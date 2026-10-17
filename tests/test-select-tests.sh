@@ -508,6 +508,33 @@ else
     FAIL=$((FAIL + 1)); echo "FAIL: SEL-XARGS candidate scan spawned $ncalls grep calls (expected < 60)"
 fi
 
+# FC-31 route needle: a changed API route handler selects the shell suite that hits its URL, with no
+# per-route table. Fixture repo: a handler with a router prefix, a suite that curls one of its routes,
+# and an unrelated suite. The selector cds to its own repo root, so run a copy of scripts/ in the fixture.
+rt_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-route.XXXXXX")"
+mkdir -p "$rt_dir/dashboard" "$rt_dir/web-app" "$rt_dir/tests/moat"
+cp -R "$REPO_ROOT/scripts" "$rt_dir/scripts"
+printf 'router = APIRouter(prefix="/api/zebra")\n\n@router.get("/stripes/{sid}")\ndef f():\n    pass\n\n@router.post("")\ndef g():\n    pass\n' > "$rt_dir/dashboard/api_zebra.py"
+printf '@app.get("/api/giraffe/neck")\ndef h():\n    pass\n' > "$rt_dir/web-app/server.py"
+printf '#!/usr/bin/env bash\ncurl -s localhost/api/zebra/stripes/7\n' > "$rt_dir/tests/test-zebra-curl.sh"
+printf '#!/usr/bin/env bash\ncurl -s localhost/api/giraffe/neck\n' > "$rt_dir/tests/test-giraffe-curl.sh"
+printf '#!/usr/bin/env bash\necho nothing to see\n' > "$rt_dir/tests/test-unrelated.sh"
+out="$(cd "$rt_dir" && bash scripts/select-tests.sh --files - <<<'dashboard/api_zebra.py')"
+expect_contains "FC-31 route needle: dashboard handler selects the suite that curls its route" "$out" "$(printf 'R3\tshell_test\ttests/test-zebra-curl.sh')"
+if grep -qE 'test-(unrelated|giraffe-curl)\.sh' <<<"$out"; then
+    FAIL=$((FAIL + 1)); echo "FAIL: FC-31 route needle selected a suite for a route the handler does not declare"
+else
+    PASS=$((PASS + 1))
+fi
+out="$(cd "$rt_dir" && bash scripts/select-tests.sh --files - <<<'web-app/server.py')"
+expect_contains "FC-31 route needle: web-app server selects the suite that curls its route" "$out" "$(printf 'R3\tshell_test\ttests/test-giraffe-curl.sh')"
+if grep -qF 'test-zebra-curl.sh' <<<"$out"; then
+    FAIL=$((FAIL + 1)); echo "FAIL: FC-31 route needle: web-app change selected the dashboard route suite"
+else
+    PASS=$((PASS + 1))
+fi
+rm -rf "$rt_dir"
+
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
