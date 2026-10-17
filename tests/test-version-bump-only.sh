@@ -143,6 +143,7 @@ fi
 allow_of() {  # $1 = file; prints the ALLOWLIST entries one per line
   awk '/ALLOWLIST = \{/{f=1;next} f&&/^ *\}/{f=0} f' "$1" | grep -o '"[^"]*"' | tr -d '"' | sort -u
 }
+# shellcheck disable=SC2066 # single-element loop kept for future gate scripts
 for src in "$GATE_SH"; do
   allow_of "$src" > "$WORK/allow.txt"
   missing="$(comm -23 "$DERIVED" "$WORK/allow.txt" | tr '\n' ' ')"

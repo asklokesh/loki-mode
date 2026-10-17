@@ -115,7 +115,7 @@ export function guardViolations(files: Record<string, string>): string[] {
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
     // xreview: the model flag is the user-configured reviewer agent model (council/role_agents.ts), claude judge only; never a cascade or cost downgrade.
-    "stages/xreview.ts": /^: \[cli, "-p", prompt, \.\.\.\(model \? \["--model", model\] : \[\]\), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"\];$/,
+    "stages/xreview.ts": /^: \[cli, "-p", prompt, \.\.\.\(model \? \["--model", model\] : \[\]\), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash", \.\.\.leanReviewerFlags\(\{ env, flagSupported \}\), "--output-format", "json"\];$/,
   };
   for (const [path, src] of Object.entries(files)) {
     if (path.startsWith("dashboard/") || path === "types.ts" || path === "session.ts" || path === "cost.ts") continue;

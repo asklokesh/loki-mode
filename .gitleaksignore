@@ -135,3 +135,8 @@ dd61901dc34ca13c107c7f9800171f6cec2efe45:.gitleaksignore:generic-api-key:123
 1513583f087412b1930e114e9209594ef31bbf12:loki-ts/tests/util/fc90_credential_env.test.ts:github-oauth:11
 # FC-90 GH-KEYRING fixture, same planted fake gho_FAKEPLANTED canary: gitleaks 8.30.0 (CI pin) attributes it to merge commit 5aaec69ff, not 1513583f0
 5aaec69ff1738ed1948cf986dd7ff7db46d6537a:loki-ts/tests/util/fc90_credential_env.test.ts:github-oauth:11
+# TEN-QUALITY-01 redaction fixture: a planted fake AWS-format key in check_result.test.ts, not a credential
+9e3c999df88ff4352facedb00dac45fa138a64c8:loki-ts/tests/engine10/check_result.test.ts:aws-access-token:342
+9e3c999df88ff4352facedb00dac45fa138a64c8:loki-ts/tests/engine10/check_result.test.ts:aws-access-token:345
+d9f24cd7a3a54c3082b7bdb692c0a1e548435f0coki-ts/tests/engine10/check_result.test.ts:aws-access-token:342
+d9f24cd7a3a54c3082b7bdb692c0a1e548435f0coki-ts/tests/engine10/check_result.test.ts:aws-access-token:345
