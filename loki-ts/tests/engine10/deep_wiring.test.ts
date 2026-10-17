@@ -10,6 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
 import { runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
+import { childEnv } from "../../src/engine10/session.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../src/runner/quality_gates.ts";
+import { deepStage } from "../../src/engine10/stages/deep.ts";
+import type { RunContext, SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const CANARY = "ghp_" + "DEEPWIRECANARYrealtoken0123456789"; // built at runtime: never a literal secret-shaped string
 const roots: string[] = [];
@@ -165,4 +169,79 @@ console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verd
       server.stop(true);
     }
   }, 10_000);
+});
+
+describe("Q18-04 deep council default runner", () => {
+  const git = (d: string, a: string[]): string => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" }).trim();
+  function changedRepo(): { dir: string; base: string } {
+    const dir = repo();
+    writeFileSync(join(dir, "a.txt"), "one\n");
+    git(dir, ["add", "a.txt"]); git(dir, ["commit", "-q", "-m", "base"]);
+    const base = git(dir, ["rev-parse", "HEAD"]);
+    writeFileSync(join(dir, "code.txt"), "change\n");
+    git(dir, ["add", "code.txt"]); git(dir, ["commit", "-q", "-m", "change"]);
+    return { dir, base };
+  }
+  async function deepWith(run: SessionRunner["run"], dir: string, base: string) {
+    const ctx = {
+      runId: "e10-q1804", repoDir: dir, runDir: join(dir, ".loki", "runs", "q1804"), baseSha: base, branch: "b", provider: "claude", model: "m", deep: true, capS: 2700,
+      emit: () => {}, sessions: { run }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+      cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => Date.now() }, outputs: () => ({}),
+    } as unknown as RunContext;
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    const keyDir = mkdtempSync(join(tmpdir(), "e10-q1804-key-")); roots.push(keyDir);
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(keyDir, "k.pem");
+    const saved = { g: process.env["GITHUB_TOKEN"], h: process.env["GH_TOKEN"] };
+    delete process.env["GITHUB_TOKEN"]; delete process.env["GH_TOKEN"];
+    try { return await deepStage.run(ctx, new AbortController().signal); } finally {
+      if (saved.g) process.env["GITHUB_TOKEN"] = saved.g;
+      if (saved.h) process.env["GH_TOKEN"] = saved.h;
+    }
+  }
+  const sess = (over: Partial<SessionResult> = {}): SessionResult => ({ exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false, summary: "LGTM", ...over });
+
+  test("the production deep stage runs one read-only reviewer session outside the repo and records a council pass", async () => {
+    const { dir, base } = changedRepo();
+    const seen: SessionRunOptions[] = [];
+    const r = await deepWith(async (o) => { seen.push(o); return sess(); }, dir, base);
+    expect(seen.length).toBe(1);
+    expect(seen[0]!.stage).toBe("deep");
+    expect(seen[0]!.brief).toContain("read-only");
+    expect(!!seen[0]!.cwd && seen[0]!.cwd !== dir && !seen[0]!.cwd!.startsWith(dir)).toBe(true);
+    const checks = r.data.checks as { name: string; result: string }[];
+    expect(checks.find((c) => c.name === "council")?.result).toBe("pass");
+    const scratch = seen[0]!.cwd!;
+    expect(scratch.startsWith(join(tmpdir(), "loki-deep-council-"))).toBe(true);
+    expect(existsSync(scratch)).toBe(false);
+    expect(seen[0]!.disallowedTools).toContain(REVIEW_GUARD_DENYLIST);
+    expect(seen[0]!.disallowedTools!.split(",")).toContain("Bash");
+    expect(childEnv(seen[0]!, { provider: "claude" }).LOKI_E10_DISALLOWED_TOOLS).toBe(seen[0]!.disallowedTools);
+    expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (not wired"))).toBe(false);
+  });
+
+  test("a killed or failed reviewer session stays NOT PROVEN, never a council pass", async () => {
+    const { dir, base } = changedRepo();
+    for (const bad of [sess({ killed: true, exit: null }), sess({ exit: 1 }), sess({ summary: "" }), sess({ summary: "I was unable to open diff.patch." })]) {
+      const r = await deepWith(async () => bad, dir, base);
+      expect((r.data.checks as { name: string }[]).find((c) => c.name === "council")).toBeUndefined();
+      expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (refused"))).toBe(true);
+    }
+  });
+
+  test("a council diff that is empty (only untracked changes) is NOT PROVEN before any session spawns", async () => {
+    const { dir, base } = changedRepo();
+    git(dir, ["reset", "-q", "--hard", base]);
+    writeFileSync(join(dir, "evil.ts"), "x\n");
+    let spawned = 0;
+    const r = await deepWith(async () => { spawned++; return sess({ summary: "diff.patch is empty; nothing to review." }); }, dir, base);
+    expect(spawned).toBe(0);
+    expect((r.data.checks as { name: string }[]).find((c) => c.name === "council")).toBeUndefined();
+    expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (refused"))).toBe(true);
+  });
+
+  test("FINDING lines are accepted as a review", async () => {
+    const { dir, base } = changedRepo();
+    const r = await deepWith(async () => sess({ summary: "FINDING: a.ts:1 bad" }), dir, base);
+    expect((r.data.checks as { name: string; result: string }[]).find((c) => c.name === "council")?.result).toBe("pass");
+  });
 });

@@ -4,7 +4,8 @@
 // suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token,
 // since the deep worker runs repo code and reads untrusted diffs. Council goes through the
 // injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverProjectGraph } from "../../project_graph.ts";
 import { run } from "../../util/shell.ts";
@@ -14,8 +15,9 @@ import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { runPackageSuites } from "../../project_model/package_suite.ts";
 import { classifyCheck, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
-import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
+import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../runner/quality_gates.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */
@@ -30,11 +32,26 @@ export interface CouncilInput {
 export interface CouncilOutcome {
   findings: unknown[];
 }
-/** Implemented by whoever next owns RunnerContext construction (see the
- *  contract-gap note above). Tests inject a fake; production has none by
- *  default, so council is NOT PROVEN until one is wired. */
+/** Tests inject a fake; deepStage defaults to sessionCouncil, bare runDeep has none (NOT PROVEN). */
 export interface CouncilRunner {
   run(input: CouncilInput, signal: AbortSignal): Promise<CouncilOutcome>;
+}
+/** Q18-04: one read-only reviewer session in a scratch dir outside the repo, diff as a file. A kill, nonzero exit or empty review throws, so the check stays NOT PROVEN. */
+export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
+  return { async run(input, signal) {
+    const cwd = mkdtempSync(join(tmpdir(), "loki-deep-council-"));
+    try {
+      writeFileSync(join(cwd, "diff.patch"), input.diff, "utf8");
+      const r = await sessions.run({ stage: "deep", tier: "development", iterationId: `${input.runId}-council`, limitS: COUNCIL_LIMIT_S, signal, cwd, disallowedTools: `${REVIEW_GUARD_DENYLIST},Bash`,
+        brief: `You are a read-only code reviewer. Read diff.patch (changed files: ${input.files.join(", ")}). Do not write or run anything. Reply with one line per defect, each starting "FINDING:", or "LGTM".` });
+      if (r.killed || r.exit !== 0) throw new Error(`reviewer session ${r.killed ? "killed" : `exit ${r.exit}`}`);
+      const text = (r.summary ?? "").trim();
+      if (!text) throw new Error("reviewer returned no review");
+      const lines = text.split("\n").map((l) => l.trim()), findings = lines.filter((l) => l.startsWith("FINDING:"));
+      if (findings.length === 0 && !lines.includes("LGTM")) throw new Error("reviewer reply has no LGTM or FINDING: line");
+      return { findings };
+    } finally { rmSync(cwd, { recursive: true, force: true }); }
+  } };
 }
 /** ReceiptCheck (types.ts) plus a `reason` field the contract does not carry,
  *  the same disclosed-extra-field pattern testmap.ts's EngineTestMap and
@@ -56,6 +73,7 @@ export interface DeepOptions {
 export const DEFAULT_PUSH_SH = new URL("../../../../autonomy/lib/engine10-push.sh", import.meta.url).pathname;
 export const DEFAULT_SECRET_SCAN_SH = new URL("../../../../autonomy/lib/secret-scan.sh", import.meta.url).pathname;
 const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361-byte context was refused
+const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -113,40 +131,23 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
 function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): void {
   const discover = opts.discoverGraph ?? discoverProjectGraph;
   let graph: { members: string[] } | null = null;
-  try {
-    graph = discover(ctx.repoDir);
-  } catch {
-    graph = null;
-  }
+  try { graph = discover(ctx.repoDir); } catch { graph = null; }
   // ponytail: real boot (docker compose up + health check) belongs to a slice
   // that owns autonomy/app-runner.sh's TS-callable surface; add it there.
-  checks.push({
-    name: "app boot",
-    cmd: "project_graph.ts discoverProjectGraph",
-    result: "not_run",
-    duration_s: 0,
-  });
+  checks.push({ name: "app boot", cmd: "project_graph.ts discoverProjectGraph", result: "not_run", duration_s: 0 });
   notProven.add(graph ? `app boot not run (app graph discovered, ${graph.members.length} member(s))` : "app boot not run (no app graph discovered)");
 }
 async function runCouncilCheck(
   ctx: RunContext, changed: string[], baseSha: string, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>,
 ): Promise<void> {
   const codeFiles = changed.filter((f) => !f.endsWith(".md")); // "generated docs excluded" (ENGINE.md section 4)
-  if (codeFiles.length === 0) {
-    notProven.add("council (no non-doc changes to review)");
-    return;
-  }
-  if (!opts.council) {
-    notProven.add("council (not wired: see the contract-gap note in stages/deep.ts)");
-    return;
-  }
+  if (codeFiles.length === 0) { notProven.add("council (no non-doc changes to review)"); return; }
+  if (!opts.council) { notProven.add("council (not wired: see the contract-gap note in stages/deep.ts)"); return; }
   const diffResult = await safeGitRun(ctx.repoDir, ["diff", "--no-color", baseSha, "HEAD", "--", ...codeFiles], { timeoutMs: 20_000 });
-  const diff = diffResult.exitCode === 0 ? diffResult.stdout : "";
+  if (diffResult.exitCode !== 0 || !diffResult.stdout.trim()) { notProven.add("council (refused: empty or failed diff, nothing to review)"); return; }
+  const diff = diffResult.stdout;
   const maxBytes = opts.maxCouncilDiffBytes ?? MAX_COUNCIL_DIFF_BYTES;
-  if (Buffer.byteLength(diff, "utf8") > maxBytes) {
-    notProven.add("council (context oversized, refused)");
-    return;
-  }
+  if (Buffer.byteLength(diff, "utf8") > maxBytes) { notProven.add("council (context oversized, refused)"); return; }
   const started = Date.now();
   try {
     const outcome = await opts.council.run({ runId: ctx.runId, diff, files: codeFiles }, signal);
@@ -162,32 +163,15 @@ async function runCouncilCheck(
 async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
   const scriptPath = opts.secretScanShPath ?? DEFAULT_SECRET_SCAN_SH;
   const name = "security scan";
-  if (!existsSync(scriptPath)) {
-    checks.push({ name, cmd: "secret-scan.sh", result: "not_run", duration_s: 0 });
-    notProven.add(`not run: ${name} (secret-scan.sh not found)`);
-    return;
-  }
-  if (changed.length === 0) {
-    checks.push({ name, cmd: "secret-scan.sh", result: "pass", duration_s: 0 });
-    return;
-  }
+  if (!existsSync(scriptPath)) { checks.push({ name, cmd: "secret-scan.sh", result: "not_run", duration_s: 0 }); notProven.add(`not run: ${name} (secret-scan.sh not found)`); return; }
+  if (changed.length === 0) { checks.push({ name, cmd: "secret-scan.sh", result: "pass", duration_s: 0 }); return; }
   const inline = 'script="$1"; shift; . "$script" || exit 3; hit=0; for f in "$@"; do if _commit_scan_secret_file "$f" || _commit_path_looks_secret "$f"; then printf "%s\\n" "$f"; hit=1; fi; done; exit "$hit"';
   const started = Date.now();
   const r = await run(["bash", "-c", inline, "_", scriptPath, ...changed.map((f) => join(ctx.repoDir, f))], { cwd: ctx.repoDir, timeoutMs: 30_000 });
   const durationS = (Date.now() - started) / 1000;
-  if (r.exitCode === 3) {
-    checks.push({ name, cmd: "secret-scan.sh", result: "not_run", duration_s: durationS });
-    notProven.add(`not run: ${name} (secret-scan.sh failed to load)`);
-    return;
-  }
+  if (r.exitCode === 3) { checks.push({ name, cmd: "secret-scan.sh", result: "not_run", duration_s: durationS }); notProven.add(`not run: ${name} (secret-scan.sh failed to load)`); return; }
   const hits = r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-  checks.push({
-    name,
-    cmd: "secret-scan.sh",
-    result: hits.length > 0 ? "fail" : "pass",
-    duration_s: durationS,
-    ...(hits.length > 0 ? { reason: `secret match: ${hits.join(", ")}` } : {}),
-  });
+  checks.push({ name, cmd: "secret-scan.sh", result: hits.length > 0 ? "fail" : "pass", duration_s: durationS, ...(hits.length > 0 ? { reason: `secret match: ${hits.join(", ")}` } : {}) });
 }
 /** engine10-push.sh's real `comment` usage is `comment <pr-number> <body-file>`
  *  (see the contract-gap note above) -- built here rather than through
@@ -276,6 +260,6 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
 export const deepStage: Stage = {
   name: "deep",
   ...STAGE_BUDGETS.deep,
-  run: (ctx, signal) => runDeep(ctx as DeepContext, signal),
+  run: (ctx, signal) => runDeep(ctx as DeepContext, signal, { council: sessionCouncil(ctx.sessions) }),
 };
 export const stage = deepStage;
