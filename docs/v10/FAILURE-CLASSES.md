@@ -898,3 +898,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every user of --check-receipt or SC_EXPECT_CHECKS (grep finds only tests/test-real-run.sh, tests/test-wall-executed-guard.sh, scripts/real-run.sh).
 - Mechanism: the fixture names the pinned check; slice cards touching tests/real-run/scenarios list tests/test-real-run.sh in their commands.
 - Fixture: tests/test-real-run.sh good receipt passes (13 PASS, rc=0 locally after the fix).
+
+## FC-COST-PARTIAL-b Partial cost still readable as complete in sibling consumers (COST-PARTIAL-SIBLINGS)
+- User-visible vs raw: a run whose cost is only partly measured can still be shown as a complete number in the runner equivalence report, the bench-run report, or a spend-cap message without its lower-bound label.
+- Law broken: one shared mechanism (FC-COST-PARTIAL fixed attribution.py only; siblings read cost without the partial flag).
+- Cause (COST-WALL-d HIGH reviews 2026-10-17): equivalence_report.py:334-374 and report.py:280 ignore adapter.provenance.cost_partial; row_spend_is_partial returns False for cost_usd None with true_cost_usd set; efficiency_cost.py counts ledger_invalid_lines without setting cost_partial; a stored cost_usd 0.0 with a larger true_cost_usd renders complete.
+- Mechanism: one helper decides partial (null cost, cost below ledger or true cost, invalid ledger lines, unpriced lines) and every cost consumer calls it.
+- Fixture: cases in benchmarks/bench/tests/test_attribution.py and tests/test_efficiency_cost_availability.py for each sibling.
