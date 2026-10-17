@@ -1703,6 +1703,7 @@ run_test "Whole-tree no dash or emoji codepoint guard (PO5-DASH-BENCH)" "timeout
 run_test "loki start repo directory routes as repository target (PO4)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-start-repo-directory.sh"
 run_test "loki wiki command (build, ask, grounded citation)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-wiki-command.sh"
 run_test "loki tour verifies the bundled sealed receipt (VERIFIED, then TAMPERED)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-tour-verify.sh"
+run_test "examples gallery receipts all verify with their own pubkey (TEN-ADOPTION-07)" "timeout -k 10 120 bash $SCRIPT_DIR/test-examples-gallery.sh"
 run_test "issue-to-PR flow (--prepare-pr, issue-mode)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-issue-to-pr.sh"
 run_test "dogfood-stats honest labeling and flags (PO5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-dogfood-stats.sh"
 run_test "loki status empty state files (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_status_empty_state.sh"

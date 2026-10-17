@@ -764,3 +764,4 @@ loki backup and restore: verified round trip, refuses tamper and overwrite (P12-
 Loki modernize Legacy-Bench pilot harness (M-27)	3
 loki github publish (receipt-stamped GitHub export)	10
 loki tour verifies the bundled sealed receipt (VERIFIED, then TAMPERED)	3
+examples gallery receipts all verify with their own pubkey (TEN-ADOPTION-07)	5
