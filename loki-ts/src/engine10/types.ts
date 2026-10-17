@@ -75,6 +75,7 @@ export interface SessionRunOptions {
   limitS: number;
   signal: AbortSignal;
   cwd?: string;
+  disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
   resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh

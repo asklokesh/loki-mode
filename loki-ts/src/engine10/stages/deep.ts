@@ -17,6 +17,7 @@ import { runPackageSuites } from "../../project_model/package_suite.ts";
 import { classifyCheck, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../runner/quality_gates.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */
@@ -41,12 +42,14 @@ export function sessionCouncil(sessions: SessionRunner): CouncilRunner {
     const cwd = mkdtempSync(join(tmpdir(), "loki-deep-council-"));
     try {
       writeFileSync(join(cwd, "diff.patch"), input.diff, "utf8");
-      const r = await sessions.run({ stage: "deep", tier: "development", iterationId: `${input.runId}-council`, limitS: COUNCIL_LIMIT_S, signal, cwd,
+      const r = await sessions.run({ stage: "deep", tier: "development", iterationId: `${input.runId}-council`, limitS: COUNCIL_LIMIT_S, signal, cwd, disallowedTools: `${REVIEW_GUARD_DENYLIST},Bash`,
         brief: `You are a read-only code reviewer. Read diff.patch (changed files: ${input.files.join(", ")}). Do not write or run anything. Reply with one line per defect, each starting "FINDING:", or "LGTM".` });
       if (r.killed || r.exit !== 0) throw new Error(`reviewer session ${r.killed ? "killed" : `exit ${r.exit}`}`);
       const text = (r.summary ?? "").trim();
       if (!text) throw new Error("reviewer returned no review");
-      return { findings: text.split(/\n/).filter((l) => l.startsWith("FINDING:")) };
+      const lines = text.split("\n").map((l) => l.trim()), findings = lines.filter((l) => l.startsWith("FINDING:"));
+      if (findings.length === 0 && !lines.includes("LGTM")) throw new Error("reviewer reply has no LGTM or FINDING: line");
+      return { findings };
     } finally { rmSync(cwd, { recursive: true, force: true }); }
   } };
 }
@@ -141,7 +144,8 @@ async function runCouncilCheck(
   if (codeFiles.length === 0) { notProven.add("council (no non-doc changes to review)"); return; }
   if (!opts.council) { notProven.add("council (not wired: see the contract-gap note in stages/deep.ts)"); return; }
   const diffResult = await safeGitRun(ctx.repoDir, ["diff", "--no-color", baseSha, "HEAD", "--", ...codeFiles], { timeoutMs: 20_000 });
-  const diff = diffResult.exitCode === 0 ? diffResult.stdout : "";
+  if (diffResult.exitCode !== 0 || !diffResult.stdout.trim()) { notProven.add("council (refused: empty or failed diff, nothing to review)"); return; }
+  const diff = diffResult.stdout;
   const maxBytes = opts.maxCouncilDiffBytes ?? MAX_COUNCIL_DIFF_BYTES;
   if (Buffer.byteLength(diff, "utf8") > maxBytes) { notProven.add("council (context oversized, refused)"); return; }
   const started = Date.now();

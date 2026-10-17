@@ -1565,7 +1565,7 @@ export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 //     autonomy/lib/claude-flags.sh.
 //   - CAVEMAN_DEFAULT_MODE=off: this is a parsed trust-gate subcall; a globally
 //     active caveman would reword the VERDICT line and flip the verdict.
-const REVIEW_GUARD_DENYLIST =
+export const REVIEW_GUARD_DENYLIST =
   "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
 
 // v8.x: absolute path to the code-review verdict schema (distinct from the

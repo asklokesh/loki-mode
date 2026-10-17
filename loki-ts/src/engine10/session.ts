@@ -52,6 +52,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_E10_BRIEF"] = opts.brief;
   env["LOKI_E10_TIER"] = opts.tier;
   env["LOKI_E10_PROVIDER"] = cfg.provider;
+  if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
   if (opts.resumeSessionId) env["LOKI_E10_RESUME_SESSION"] = opts.resumeSessionId; else delete env["LOKI_E10_RESUME_SESSION"]; // MW-2: only the per-call option sets it
   // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
   if (cfg.provider === "claude") {

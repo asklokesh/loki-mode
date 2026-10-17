@@ -490,6 +490,7 @@ export function claudeProvider(): ProviderInvoker {
         cli,
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (the compiled policy swaps it unless LOKI_PERMISSION_POLICY=legacy, C-C2)
         ...permissionArgv(call.cwd),
+        ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? ["--disallowedTools", process.env["LOKI_E10_DISALLOWED_TOOLS"]] : []), // Q18-04: per-session deny (read-only reviewer)
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
@@ -826,6 +827,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             // P12-26c: honours LOKI_PERMISSION_POLICY via the shared resolver. Legacy keeps
             // bypassPermissions + the required allowDangerouslySkipPermissions companion.
             ...sdkPermissionOptions(call.cwd),
+            ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? { disallowedTools: process.env["LOKI_E10_DISALLOWED_TOOLS"].split(",").filter(Boolean) } : {}), // Q18-04
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
             // S41-11: LOKI_E10_TRIM=1, default off. Read directly from

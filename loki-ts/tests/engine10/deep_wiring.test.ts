@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
 import { runSupervisor, type PrStep } from "../../src/engine10/supervisor.ts";
+import { childEnv } from "../../src/engine10/session.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../src/runner/quality_gates.ts";
 import { deepStage } from "../../src/engine10/stages/deep.ts";
 import type { RunContext, SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
@@ -208,15 +210,38 @@ describe("Q18-04 deep council default runner", () => {
     expect(!!seen[0]!.cwd && seen[0]!.cwd !== dir && !seen[0]!.cwd!.startsWith(dir)).toBe(true);
     const checks = r.data.checks as { name: string; result: string }[];
     expect(checks.find((c) => c.name === "council")?.result).toBe("pass");
+    const scratch = seen[0]!.cwd!;
+    expect(scratch.startsWith(join(tmpdir(), "loki-deep-council-"))).toBe(true);
+    expect(existsSync(scratch)).toBe(false);
+    expect(seen[0]!.disallowedTools).toContain(REVIEW_GUARD_DENYLIST);
+    expect(seen[0]!.disallowedTools!.split(",")).toContain("Bash");
+    expect(childEnv(seen[0]!, { provider: "claude" }).LOKI_E10_DISALLOWED_TOOLS).toBe(seen[0]!.disallowedTools);
     expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (not wired"))).toBe(false);
   });
 
   test("a killed or failed reviewer session stays NOT PROVEN, never a council pass", async () => {
     const { dir, base } = changedRepo();
-    for (const bad of [sess({ killed: true, exit: null }), sess({ exit: 1 }), sess({ summary: "" })]) {
+    for (const bad of [sess({ killed: true, exit: null }), sess({ exit: 1 }), sess({ summary: "" }), sess({ summary: "I was unable to open diff.patch." })]) {
       const r = await deepWith(async () => bad, dir, base);
       expect((r.data.checks as { name: string }[]).find((c) => c.name === "council")).toBeUndefined();
       expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (refused"))).toBe(true);
     }
+  });
+
+  test("a council diff that is empty (only untracked changes) is NOT PROVEN before any session spawns", async () => {
+    const { dir, base } = changedRepo();
+    git(dir, ["reset", "-q", "--hard", base]);
+    writeFileSync(join(dir, "evil.ts"), "x\n");
+    let spawned = 0;
+    const r = await deepWith(async () => { spawned++; return sess({ summary: "diff.patch is empty; nothing to review." }); }, dir, base);
+    expect(spawned).toBe(0);
+    expect((r.data.checks as { name: string }[]).find((c) => c.name === "council")).toBeUndefined();
+    expect((r.data.not_proven as string[]).some((n) => n.startsWith("council (refused"))).toBe(true);
+  });
+
+  test("FINDING lines are accepted as a review", async () => {
+    const { dir, base } = changedRepo();
+    const r = await deepWith(async () => sess({ summary: "FINDING: a.ts:1 bad" }), dir, base);
+    expect((r.data.checks as { name: string; result: string }[]).find((c) => c.name === "council")?.result).toBe("pass");
   });
 });
