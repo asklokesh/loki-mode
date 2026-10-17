@@ -79,9 +79,9 @@ The reconciliation:
   (`scripts/local-ci.sh:1911-1918`).
 - **Full tier is not a release precondition** because its BULK moved to CI,
   which runs it faster. The 323-suite shell run and the pytest blanket are
-  covered by Tests, and `required-ci` enforces Tests and Security
-  Audit at the exact release SHA (section 3). Blocking locally on those buys
-  latency without buying coverage.
+  covered by Tests, which runs in parallel with the release as a fix-forward
+  signal (D102; the old `required-ci` wait was deleted). Blocking locally on
+  those buys latency without buying coverage.
 
 Be precise about what that does NOT cover, because "CI has it" is false for
 part of the deferred list. Measured by grepping `.github/workflows/`:
@@ -179,16 +179,13 @@ installs and the full pytest suite before tsc failed in 7 seconds (measured on
 run 34724377951: gate 4m03s total). Cheapest failing check first is now the
 rule, and nothing about what is verified changed, only the order.
 
-**`required-ci`** (`needs: gate`) polls the check-runs API for Tests
-and Security Audit AT THE EXACT RELEASE SHA, waiting up to 2400s and failing
-closed. Its direction is load-bearing: "cancelled, timed_out, failure, skipped:
-none is a pass." It deliberately polls rather than re-running the matrix inline,
-because re-running would verify a DIFFERENT execution than the one the branch
-was judged on, at double the cost for a weaker guarantee.
+**`publish-npm`** (`needs: pack-npm`, D102) verifies the packed tarball digest and
+publishes under `latest`, then adds `next`. It waits on no CI result, no tag and
+no GitHub Release. The old `required-ci` job and promote.yml are deleted.
 
-**`release`** (`needs: [gate, required-ci]`) creates the tag, the GitHub
-release and its artifacts. Publish jobs hang off `needs: release`:
-`publish-npm`, `publish-docker`, and the others are PARALLEL SIBLINGS. That has
+**`release`** (`needs: [gate, pack-npm]`) creates the tag, the GitHub
+release and its artifacts. Docker, SDK and Homebrew jobs hang off it:
+`publish-docker` and the others are PARALLEL SIBLINGS. That has
 a consequence the npm job documents: "the channel with the assertion cannot
 stop the one without it, and npm has already shipped by the time Docker goes
 red" (`release.yml:523-525`). A per-channel assertion protects only its own
@@ -234,8 +231,7 @@ by hand and bypassing it. Use `scripts/release.sh`, or make the VERSION bump
 the last commit before the push.
 
 Recovery for an already-stranded bump needs BOTH dispatches, because
-`security-audit.yml` shares the `paths: [VERSION]` trigger and `required-ci`
-fails closed on "Security Audit: not reported yet":
+`security-audit.yml` shares the `paths: [VERSION]` trigger (informational since D102):
 
 ```bash
 gh workflow run security-audit.yml --ref main
@@ -254,8 +250,8 @@ mandatory, not as belt and braces.
 
 After a VERSION push, push NOTHING to that branch until npm shows the new
 version. Any later push moves HEAD, GitHub's concurrency rules CANCEL the older
-Tests run at the release SHA, and `required-ci` correctly refuses to treat
-`cancelled` as a pass.
+Tests run at the release SHA, which loses that fix-forward signal (npm itself
+is unaffected since D102).
 
 On 2026-08-08 v9.18.0 failed with `FAIL: a required workflow did not succeed at
 8892f477`. Nothing was broken:

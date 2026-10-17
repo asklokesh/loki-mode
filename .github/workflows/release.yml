@@ -18,24 +18,12 @@ on:
           - 'true'
 
 jobs:
-  # Gate: every downstream job (release, npm, docker, homebrew, ...) waits
-  # for this job to pass. Prevents publishing artifacts when the test suite is red.
-  #
-  # S-84 (2026-09): this job no longer runs the Python suite. It used to pip
-  # install a hand-picked subset of deps and run `python3 -m pytest -q` on
-  # 3.12 only -- a strictly WEAKER duplicate of test.yml's python-tests job,
-  # which runs the identical `python3 -m pytest` on 3.10-3.13 with the
-  # canonical requirements-test.txt. required-ci (below) still requires that
-  # workflow ("Tests") to succeed before release publishes, so deleting the
-  # duplicate here costs no coverage, only the ~3m46s it used to spend on pip
-  # installs before ever reaching the checks below.
-  #
-  # What replaced it: two no-pip version-file consistency probes. They exist
-  # because required-ci can let a version-bump-only push reuse its PARENT
-  # commit's Tests verdict -- and the files that reuse allowlist
-  # covers (server.json, plugin.json, ...) are exactly the ones that drift
-  # silently if a release forgets to bump them. Running them here, at the
-  # release SHA itself, means that check is never skipped by the reuse path.
+  # TEN-RELEASE-INSTANT (D102): npm publish does NOT wait on this job, on
+  # Tests, or on any other workflow. publish-npm needs only pack-npm. This
+  # job is the cheap post-hoc integrity check for the downstream jobs (tag,
+  # GitHub Release, docker, SDKs): bash -n, P9, dist freshness, version-file
+  # consistency. Tests run in parallel on the same SHA; red means fix forward
+  # (npm deprecate allowed, never unpublish).
   gate:
     runs-on: ubuntu-latest
     steps:
@@ -67,8 +55,7 @@ jobs:
           no-cache: true
       # WF-GATE-DEDUP (FC-88): no `bun run typecheck` and no `bun test` here.
       # The Tests workflow already runs tsc (test.yml "Typecheck loki-ts (tsc)")
-      # and the impacted bun suites on this tree, and required-ci below makes `release`
-      # wait for that verdict (or the bump-only parent's, FC-70). This job did
+      # and the impacted bun suites on this tree, in parallel with this run. This job did
       # the same work again in 6m40s (run 37859034694). It keeps only what Tests
       # cannot know: the dist committed at the release SHA is what a fresh build
       # of that SHA produces (debugId aside), and so is the dist in the tarball.
@@ -86,8 +73,7 @@ jobs:
       - name: Install PyYAML (the workflow scan prerequisite)
         run: python3 -m pip install pyyaml
       - name: P9 Rule of Two on the exact release SHA (never waived)
-        # CTO N4: P9 must hold at the release SHA even if required-ci stops
-        # enforcing Tests (D88 waiver, D97). Fail closed: a missing script or
+        # CTO N4: P9 must hold at the release SHA, independent of Tests. Fail closed: a missing script or
         # any nonzero rc fails the gate. About 13s.
         run: |
           set -euo pipefail
@@ -109,592 +95,18 @@ jobs:
       - name: Version-bump file consistency (server.json, plugin.json track VERSION)
         # Pure bash + stdlib python3 json, no pip install. These are also part
         # of the sharded shell-tests suite inside "Tests", but running them
-        # here too means a metadata-only release is checked at ITS OWN commit
-        # even on the iteration where required-ci reuses the parent's verdict
-        # for Tests.
+        # here too means a metadata-only release is checked at ITS OWN commit.
         run: |
           bash tests/test-server-json-current.sh
           bash tests/test-plugin-json-current.sh
 
-  # PROPORTIONAL CI: reuse the PARENT commit's verdict for Tests
-  # when this push is a version-bump-only diff against an explicit allowlist;
-  # otherwise, PROPORTIONAL CI AT THE EXACT RELEASE SHA, as before.
-  #
-  # S-84 (2026-09): "a release becomes a lookup". A VERSION-only bump whose
-  # parent commit already has a green Tests run no longer waits
-  # ~26-34 min for those to re-run at the release SHA -- it looks up that
-  # parent's already-completed verdict instead. This job no longer `needs:
-  # gate`; the two run in parallel, since gate's own checks (bash syntax, dist
-  # rebuild and tarball match, the two version-file probes) are independent of this
-  # lookup. `release` still needs both.
-  #
-  # GUARANTEED, exactly: for each of Tests / Security Audit,
-  # (a) any success at the release SHA wins outright; (b) else any completed
-  # run at the release SHA with conclusion exactly "failure" fails the whole
-  # job, even if another run of the same workflow is still in flight (a
-  # completed failure is never hidden behind a hopeful retry); (c) else, for
-  # Tests/Security Audit, reuse the parent's verdict if this push is eligible
-  # (see below) and the parent shows a success; (d) else wait for the release
-  # SHA's own result. Security Audit reuses the parent's newest decisive verdict under the SAME
-  # eligibility rule (E-157), only when that verdict is success AND a pinned
-  # gitleaks scan of PARENT..SHA (second-parent commits included) is clean,
-  # because the allowlist admits bytes the parent's audit never scanned.
-  # Eligibility (the "(c)" gate) requires every file this push changed to be
-  # on the allowlist below, present as the same regular-file mode on both
-  # sides (round 3: `git diff --raw`, not `--name-only` -- a rename, add,
-  # delete, or mode/type change disqualifies even an allowlisted path), AND
-  # each changed file's own RAW BYTES normalize to identical once the old and
-  # new VERSION literal (each required to match `^\d+\.\d+\.\d+$`, round 3) is
-  # substituted for a placeholder -- CHANGELOG.md instead has to be an
-  # insert-only edit (round 3.1: exactly one new block, opening with
-  # "## v<NEW_VERSION>", inserted immediately before the parent's own first
-  # "## v<OLD_VERSION>" heading, with the shared header above it and every
-  # existing entry below it byte-for-byte unchanged -- a plain "old bytes are
-  # a suffix of new" check rejected every real release here, because this
-  # repo's CHANGELOG.md keeps one shared header above all entries rather than
-  # repeating it per release). A file that fails its check disqualifies reuse for
-  # everything, not just itself. This is a fail-closed eligibility gate, not a
-  # substitute for (b): a completed failure at the release SHA always wins
-  # over reuse, and reuse never wins over a success or failure already
-  # decided at the release SHA itself.
-  #
-  # Round 3 (two independent HIGH reviews of round 2, both reproduced):
-  #
-  # FIX 1 (byte-safe compare). Round 2's compare split each file with
-  # `str.splitlines()` (which treats \r, \x0c, U+2028 and others as line
-  # breaks) and rejoined with "\n", then substituted the version string.
-  # Reviewers reproduced hiding a Dockerfile `USER nobody` (so the built image
-  # ran as root, confirmed with `docker build`) and a Python `raise` guard in
-  # mcp/__init__.py, in both cases by swapping the `\n` before it for a `\r`
-  # or U+2028 -- the normalizer's own line reshuffle made the parent and the
-  # sabotaged release compare equal. Fixed by comparing RAW BYTES with a
-  # single substring substitution and no line splitting at all; a NUL already
-  # present on either side (which would collide with the placeholder) now
-  # disqualifies that file outright. The debugId trailer strip is scoped to
-  # loki-ts/dist/loki.js alone, matched only at the true end of the byte
-  # string (never mid-file, never on another path), so it cannot be used to
-  # smuggle a line into any other allowlisted file either.
-  #
-  # FIX 2 (release-SHA priority, corrected). Round 2 treated ANY non-success
-  # completed run at the release SHA (including cancelled/timed_out) as an
-  # immediate fail. Reviewers showed this fails an otherwise-eligible, fully
-  # green bump the moment a later push's `cancel-in-progress` concurrency
-  # group cancels the release SHA's own in-flight Tests run -- a false
-  # negative, not a safety property. The (a)-(b)-(c)-(d) order above is the
-  # fix: only an explicit completed "failure" blocks reuse; cancelled,
-  # timed_out, or skipped fall through to reuse-if-eligible or to waiting,
-  # exactly like "not resolved yet". Checking (b) before waiting on any
-  # still-in-flight retry is what closes the "hidden failure" case: a
-  # completed failure plus a still-running run no longer reports pending.
-  #
-  # loki-ts/dist/loki.js.map is back on the allowlist (round 3): round 2's
-  # diagnosis for why a real release's dist failed to reuse -- non-deterministic
-  # minifier variable naming -- was WRONG, per both reviewers' independent,
-  # measured correction. Bun's build is byte-deterministic per commit; the
-  # committed b651b98d^ dist was simply STALE relative to its own src at that
-  # commit, which a fresh rebuild in a scratch worktree confirmed (see the
-  # replay note below). The map's JSON "debugId" is derived from the bundle
-  # (which embeds VERSION), so leaving the map off the allowlist made reuse
-  # permanently dead: 39 of the last 40 release commits touch it. Fixed
-  # properly instead of exempted: parse the map as JSON, drop only the
-  # top-level "debugId" key from each side, canonically re-serialize what's
-  # left, and run the same raw version-literal compare on that. A stale or
-  # rebuilt-different parent dist still correctly makes the bump ineligible;
-  # only a genuinely fresh, matching parent dist reuses.
-  #
-  # That is not hypothetical for this repo: a releases test passed on a
-  # developer clone and failed on 3.10-3.13 in Actions, and the operator mount
-  # failed open on exactly those versions. Neither was visible to a 3.12-only
-  # gate (which is why `gate` no longer runs pytest at all -- see its comment).
-  #
-  # This job deliberately polls the check-runs API rather than adding matrix
-  # jobs here: re-running the matrix inside release.yml would verify a
-  # DIFFERENT execution than the one the branch was judged on, and doubles CI
-  # cost for a weaker guarantee.
-  #
-  # FAIL-CLOSED DIRECTION IS LOAD-BEARING throughout: an absent measurement,
-  # a still-queued run, or an ineligible/unreadable diff never counts as a
-  # pass -- each either falls back to checking the release SHA directly or
-  # keeps the job waiting up to the poll deadline, and the deadline itself
-  # fails closed. The reuse fast path also depends on the parent's Tests/Bun
-  # Parity having actually finished before the bump was pushed -- main's
-  # `cancel-in-progress` concurrency group would otherwise cancel an in-flight
-  # parent run when the bump lands; S-80 (per-SHA concurrency, approved
-  # separately) removes that cancellation risk. It does not need to land for
-  # FIX 2 above: FIX 2 is about a cancelled run at the RELEASE SHA, a
-  # different commit than the one S-80 protects.
-  required-ci:
-    runs-on: ubuntu-latest
-    permissions:
-      checks: read
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout (full history for the reuse-eligibility diff and the PARENT..SHA secret scan)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install gitleaks (pinned, checksum-verified)
-        # E-157: reusing the parent's Security Audit verdict needs a fresh scan of
-        # PARENT..SHA first (see the poll loop). Same pinned binary as the audit.
-        run: bash scripts/install-gitleaks.sh
-
-      - name: Require Tests / Security Audit green, at the release SHA or an eligible parent
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          WAIVER_FROM: ${{ vars.LOKI_CI_WAIVER_FROM }}
-          WAIVER_COUNT: ${{ vars.LOKI_CI_WAIVER_COUNT }}
-        run: |
-          set -euo pipefail
-
-          # D88 CI waiver (founder, 2026-10-03: "skip all CIs for next 10
-          # releases"). Active only while both repo variables are set: the
-          # release does not wait for Tests / Security Audit when
-          # fewer than WAIVER_COUNT release tags exist above WAIVER_FROM. It
-          # expires by itself after WAIVER_COUNT releases; unset the variables
-          # to end it early.
-          if [ -n "${WAIVER_FROM:-}" ] && [ -n "${WAIVER_COUNT:-}" ]; then
-            CUR="$(tr -d '[:space:]' < VERSION)"
-            if [ "$CUR" != "$WAIVER_FROM" ] && [ "$(printf '%s\n%s\n' "$WAIVER_FROM" "$CUR" | sort -V | tail -1)" = "$CUR" ]; then
-              USED=0
-              for t in $(git tag --list 'v[0-9]*'); do
-                v="${t#v}"
-                [ "$v" = "$WAIVER_FROM" ] && continue
-                [ "$v" = "$CUR" ] && continue
-                [ "$(printf '%s\n%s\n' "$WAIVER_FROM" "$v" | sort -V | tail -1)" = "$v" ] || continue
-                [ "$(printf '%s\n%s\n' "$v" "$CUR" | sort -V | tail -1)" = "$CUR" ] || continue
-                USED=$((USED + 1))
-              done
-              if [ "$USED" -lt "$WAIVER_COUNT" ]; then
-                echo "D88 CI WAIVER: v$CUR is waived release $((USED + 1)) of $WAIVER_COUNT after v$WAIVER_FROM; not waiting for Tests / Security Audit."
-                exit 0
-              fi
-              echo "D88 CI waiver exhausted ($USED of $WAIVER_COUNT used); full required-ci applies."
-            fi
-          fi
-
-          # -------------------------------------------------------------------
-          # STEP 1: is this a version-bump-only diff against the immediate
-          # parent? The parent must resolve and this must be a push event
-          # (workflow_dispatch republishes an already-tagged commit and always
-          # checks fresh). Everything else -- the allowlist, the raw-mode
-          # check, the VERSION shape, and the per-file byte compare -- is
-          # decided in one python3 invocation below (round 3: rewritten for
-          # BLOCKING findings A and B from two independent HIGH reviews of
-          # round 2; see the job-level comment above for what each fixes).
-          # -------------------------------------------------------------------
-          ELIGIBLE=0
-          PARENT=""
-          if [ "$EVENT_NAME" = "push" ] && PARENT="$(git rev-parse "${SHA}^" 2>/dev/null)" \
-             && git cat-file -e "${PARENT}^{commit}" 2>/dev/null; then
-            if python3 - "$PARENT" "$SHA" <<'PYEOF'
-          import json, re, subprocess, sys
-
-          parent, sha = sys.argv[1], sys.argv[2]
-
-          # One per line, NO leading whitespace (see the job comment for what
-          # each path's own check additionally requires beyond being listed
-          # here: CHANGELOG.md is prepend-only; loki.js and loki.js.map each
-          # have their own debugId handling; everything else is a plain raw
-          # version-literal byte compare).
-          ALLOWLIST = {
-              "VERSION", "package.json", "SKILL.md", "CHANGELOG.md", "CLAUDE.md",
-              "docker/Dockerfile", "docker/Dockerfile.sandbox", "dashboard/__init__.py",
-              "mcp/__init__.py", "server.json",
-              "plugins/loki-mode/.claude-plugin/plugin.json",
-              "loki-ts/dist/loki.js", "loki-ts/dist/loki.js.map",
-              "docs/INSTALLATION.md", "wiki/Home.md", "wiki/_Sidebar.md",
-              "wiki/API-Reference.md", "web-app/src/components/Footer.tsx",
-              "web-app/src/components/WhatsNew.tsx",
-              "helm/loki-mode/Chart.yaml", "deploy/helm/autonomi/Chart.yaml",
-              "deploy/helm/control-plane/Chart.yaml", "docs/CLI-REFERENCE.md",
-          }
-          REGULAR_MODES = {"100644", "100755"}
-          VERSION_RE = re.compile(rb"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-          # Anchored at the true end of the byte string ONLY (no MULTILINE):
-          # this can match at most once, at the last line, so it can never be
-          # used to splice a hidden line in anywhere else in the file.
-          DEBUG_ID_TRAILER = re.compile(rb"(?:\r\n|\r|\n)?//# debugId=[0-9A-Fa-f-]+[ \t]*(?:\r\n|\r|\n)?\Z")
-          CHANGELOG_HEADING = re.compile(rb"(?m)^## v")
-
-          def fail(msg):
-              print("normalizer: " + msg, file=sys.stderr)
-              sys.exit(1)
-
-          def show_bytes(rev, path):
-              r = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True)
-              return r.stdout if r.returncode == 0 else None
-
-          # git diff --raw, NOT --name-only: every changed path must be a
-          # status-M, same-mode, regular-file change present on both sides.
-          # --no-renames turns a rename into a delete+add pair, which fails
-          # the "present on both sides as M" check by construction, so a
-          # rename INTO the allowlist (e.g. CHANGELOG.md -> wiki/Home.md)
-          # cannot slip through as if it were an ordinary edit.
-          raw = subprocess.run(["git", "diff", "--no-renames", "--raw", parent, sha],
-                                capture_output=True)
-          if raw.returncode != 0:
-              fail("git diff --raw failed")
-          lines = [l for l in raw.stdout.decode("utf-8", "replace").splitlines() if l]
-          if not lines:
-              fail("empty diff")
-          line_re = re.compile(r'^:(\d+) (\d+) [0-9a-f]+ [0-9a-f]+ ([A-Z])\d*\t(.+)$')
-          changed = []
-          for line in lines:
-              m = line_re.match(line)
-              if not m:
-                  fail(f"unparseable raw diff line: {line!r}")
-              old_mode, new_mode, status, path = m.groups()
-              if path not in ALLOWLIST:
-                  fail(f"not on the allowlist: {path}")
-              if status != "M":
-                  fail(f"not a modification (status {status}): {path}")
-              if old_mode != new_mode or old_mode not in REGULAR_MODES:
-                  fail(f"not a same-mode regular file: {path} ({old_mode} -> {new_mode})")
-              changed.append(path)
-
-          old_ver = show_bytes(parent, "VERSION")
-          new_ver = show_bytes(sha, "VERSION")
-          if old_ver is None or new_ver is None:
-              fail("VERSION missing on one side")
-          old_ver, new_ver = old_ver.strip(), new_ver.strip()
-          if not VERSION_RE.match(old_ver) or not VERSION_RE.match(new_ver):
-              fail("VERSION does not match ^\\d+\\.\\d+\\.\\d+$ on one side")
-
-          def version_only(old_b, new_b):
-              # A NUL already present on either side would collide with the
-              # substitution placeholder and falsely compare equal -- refuse
-              # outright rather than risk that collision.
-              if b"\x00" in old_b or b"\x00" in new_b:
-                  return False
-              return old_b.replace(old_ver, b"\x00") == new_b.replace(new_ver, b"\x00")
-
-          for path in changed:
-              old_b, new_b = show_bytes(parent, path), show_bytes(sha, path)
-              if old_b is None or new_b is None:
-                  fail(f"could not read {path} on one side")
-
-              if path == "CHANGELOG.md":
-                  # Insert-only: real entries are prepended AFTER a shared
-                  # header (title + Keep-a-Changelog blurb), not at byte 0, so
-                  # a plain "old is a suffix of new" check rejects every real
-                  # release. Instead: locate the parent's FIRST "## v" heading
-                  # (line-anchored) -- everything before it is the header,
-                  # everything from it onward is the old entries, and BOTH
-                  # must appear byte-for-byte unchanged in the new file, with
-                  # exactly one inserted block between them. That block must
-                  # itself open with "## v<NEW_VERSION>", and it is
-                  # immediately followed by the parent's old first heading
-                  # ("## v<OLD_VERSION>") by construction of the slice below.
-                  m = CHANGELOG_HEADING.search(old_b)
-                  if not m:
-                      fail("CHANGELOG.md has no '## v' heading to anchor the insert-only check")
-                  old_header, old_rest = old_b[:m.start()], old_b[m.start():]
-                  if not old_rest.startswith(b"## v" + old_ver):
-                      fail("CHANGELOG.md's first heading does not match VERSION")
-                  if not (new_b.startswith(old_header) and new_b.endswith(old_rest)
-                          and len(new_b) >= len(old_header) + len(old_rest)):
-                      fail("CHANGELOG.md is not insert-only (header or existing entries changed)")
-                  inserted = new_b[len(old_header):len(new_b) - len(old_rest)]
-                  if not inserted.startswith(b"## v" + new_ver):
-                      fail("CHANGELOG.md's inserted block does not open with the new version heading")
-                  continue
-
-              if path == "loki-ts/dist/loki.js":
-                  old_b = DEBUG_ID_TRAILER.sub(b"", old_b, count=1)
-                  new_b = DEBUG_ID_TRAILER.sub(b"", new_b, count=1)
-                  if not version_only(old_b, new_b):
-                      fail("loki.js changed beyond the version string and its debugId trailer")
-                  continue
-
-              if path == "loki-ts/dist/loki.js.map":
-                  try:
-                      old_j, new_j = json.loads(old_b), json.loads(new_b)
-                  except Exception as e:
-                      fail(f"loki.js.map is not valid JSON: {e}")
-                  if not isinstance(old_j, dict) or not isinstance(new_j, dict):
-                      fail("loki.js.map is not a JSON object")
-                  # E-157: the dropped debugId must be the same hex/dash shape as the
-                  # JS trailer, never free-form bytes the parent audit did not scan.
-                  for j in (old_j, new_j):
-                      d = j.pop("debugId", None)
-                      if d is not None and not (isinstance(d, str) and re.fullmatch(r"[0-9A-Fa-f-]+", d)):
-                          fail("loki.js.map debugId is not hex/dash shaped")
-                  old_canon = json.dumps(old_j, sort_keys=True, separators=(",", ":")).encode()
-                  new_canon = json.dumps(new_j, sort_keys=True, separators=(",", ":")).encode()
-                  if not version_only(old_canon, new_canon):
-                      fail("loki.js.map changed beyond the version string (top-level debugId excluded)")
-                  continue
-
-              if not version_only(old_b, new_b):
-                  fail(f"{path} changed beyond the version string")
-
-          sys.exit(0)
-          PYEOF
-            then
-              ELIGIBLE=1
-            fi
-          fi
-
-          if [ "$ELIGIBLE" = "1" ]; then
-            echo "Version-bump-only diff against parent $PARENT (every changed file is allowlisted, same-mode, and byte-identical modulo the version string). Tests may reuse that commit's verdict if it already succeeded there; Security Audit follows the same rule (E-157): a decisive run at $SHA wins, else the parent's newest decisive audit verdict is reused only if it is success."
-          else
-            echo "Not eligible for parent reuse (see 'normalizer:' diagnostic above if the eligibility check ran, or: empty diff, no resolvable parent, or a non-push event). All required workflows must succeed at $SHA unless already decided by a completed run there."
-          fi
-
-          # -------------------------------------------------------------------
-          # STEP 2: poll. Workflow names, ONE per line, NO leading whitespace:
-          # matched with an exact awk field comparison below, so an indented or
-          # partial-match entry would never match and the loop would stall
-          # until the deadline.
-          #
-          # "Security Audit" is required here, and security-audit.yml runs on
-          # every push to main, train/** and slice-* (E-157), so it actually RUNS at a
-          # release commit. Requiring a workflow that never fires at this SHA
-          # would deadlock every release rather than gate it, so the trigger
-          # and this list must be changed together.
-          # -------------------------------------------------------------------
-          REQUIRED=$(printf '%s\n' "Tests" "Security Audit")
-
-          fetch_runs() {
-            # name<TAB>status<TAB>conclusion<TAB>created_at, one run per line.
-            # Push runs only, EXCEPT Security Audit, which also accepts a
-            # workflow_dispatch run (E-87: lets a tree whose VERSION is already
-            # bumped publish after an audit fix, since a VERSION push cannot be
-            # re-created). Tests stays push-only. D75: a Security
-            # Audit run counts only if head_branch is main or it was a dispatch,
-            # because a train/** run scans only its range and must never stand
-            # in for the full-history scan (also covers the parent reuse path). A pull_request
-            # run at the same head_sha tested a different merge ref and must
-            # never satisfy this.
-            gh api "repos/$REPO/actions/runs?head_sha=$1&per_page=100" \
-              --jq '.workflow_runs[] | select(.event=="push" or (.event=="workflow_dispatch" and .name=="Security Audit")) | select(.name!="Security Audit" or .head_branch=="main" or .event=="workflow_dispatch") | "\(.name)\t\(.status)\t\(.conclusion)\t\(.created_at)"' 2>/dev/null || true
-          }
-
-          audit_verdict() {
-            # $1 = runs blob. Prints the conclusion (success|failure) of the
-            # NEWEST decisive Security Audit run, so an older success can never
-            # mask a newer failure; prints nothing when none is decisive. A
-            # created_at tie resolves to failure (fail closed).
-            printf '%s\n' "$1" | awk -F'\t' \
-              '$1=="Security Audit" && $2=="completed" && ($3=="success"||$3=="failure"){ if ($4>t || ($4==t && $3=="failure")) {t=$4; c=$3} } END{print c}'
-          }
-
-          has_conclusion() {
-            # $1 = exact workflow name, $2 = runs blob, $3 = exact conclusion.
-            # True iff some completed run of that exact name has that exact
-            # conclusion, whatever else exists for the same name (a failed run
-            # plus a later success still lets has_conclusion(..., success)
-            # come back true; a failed run plus a still-running one still lets
-            # has_conclusion(..., failure) come back true).
-            printf '%s\n' "$2" | awk -F'\t' -v w="$1" -v c="$3" \
-              '$1==w && $2=="completed" && $3==c{f=1} END{exit !f}'
-          }
-
-          # E-157: the eligibility allowlist accepts bytes the parent's audit never
-          # scanned (the CHANGELOG block, a merge release's second-parent history).
-          # So the parent's Security Audit verdict is reused ONLY when a pinned
-          # gitleaks scan of PARENT..SHA finds nothing. Reuses
-          # scripts/security-audit-gitleaks.sh for config trust: the BASE release
-          # tag's .gitleaks.toml (or defaults), never the tip's, refusing a changed
-          # one. The scan runs at most once; any failure means "do not reuse".
-          RANGE_SCAN=""
-          range_scan_clean() {
-            if [ -z "$RANGE_SCAN" ]; then
-              RANGE_SCAN=dirty
-              if GITLEAKS_BIN="${GITLEAKS_BIN:-$HOME/.local/share/loki/bin/gitleaks-8.30.0}" \
-                 GITLEAKS_BEFORE="$PARENT" GITLEAKS_TIP="$SHA" \
-                 GITLEAKS_RANGE="${PARENT}..${SHA}" \
-                 GITLEAKS_REPORT="$(mktemp "${TMPDIR:-/tmp}/loki-range-scan.XXXXXX")" \
-                 bash "${GITHUB_WORKSPACE:-.}/scripts/security-audit-gitleaks.sh" >&2; then
-                RANGE_SCAN=clean
-              else
-                echo "  Security Audit: PARENT..SHA scan did not come back clean; not reusing the parent's verdict" >&2
-              fi
-            fi
-            [ "$RANGE_SCAN" = "clean" ]
-          }
-
-          # D75: the daily scheduled Security Audit run is the full-history
-          # authority for what train/** pushes only scanned by range. The newest
-          # COMPLETED scheduled run on main blocks the release when it is not a
-          # success (failure, cancelled, timed_out, null: a cancelled or
-          # timed-out daily scan covered nothing and must be reviewed, never
-          # ignored), UNLESS a SUCCESSFUL full-history run on main (event push
-          # or workflow_dispatch, head_branch main) was created after it: a main
-          # push always runs the full scan, so that success supersedes the stale
-          # scheduled verdict and a fixed tree can release. A main push can clear
-          # the red even when its npm and python audits were reused via E-160,
-          # because secret-scan on main never reuses (D75). A success on a
-          # train/** branch never clears it (range scan only).
-          # D75b: two queries, never one page of mixed events. (a) the newest
-          # scheduled run is fetched on its own (event=schedule, per_page=1), so
-          # it cannot fall off a page crowded by main pushes; "no scheduled run"
-          # passes ONLY when that query's total_count is 0. (b) newer successes
-          # come from status=success, created>=the scheduled run; if none of the
-          # fetched ones qualifies but total_count says more exist, the verdict is
-          # indeterminate and blocks.
-          # Fail closed: a gh error (retried 3 times, e.g. a 404 after a
-          # workflow rename) blocks the release.
-          sched_audit_api() {
-            # $1 = query string, $2 = jq program. Retries; returns 1 on persistent error.
-            local i out
-            for i in 1 2 3; do
-              if out="$(gh api "repos/$REPO/actions/workflows/security-audit.yml/runs?$1" --jq "$2" 2>/dev/null)"; then
-                printf '%s\n' "$out"
-                return 0
-              fi
-              sleep 5
-            done
-            return 1
-          }
-          sched_audit_fetch() {
-            # One line: none | indeterminate | green|cleared|red|indeterminate<TAB>conclusion<TAB>url<TAB>created_at
-            # "none" needs an explicit total_count of 0 AND no runs; a response without total_count is never read as zero runs. per_page=1 relies on GitHub returning workflow runs newest first (verified live 2026-10-03).
-            local s concl created found
-            s="$(sched_audit_api 'event=schedule&branch=main&status=completed&per_page=1' \
-              'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"
-               else ((.workflow_runs // []) | map(select(.event=="schedule" and .head_branch=="main" and .status=="completed")) | first) as $s
-                 | if $s == null then "indeterminate" else "\($s.conclusion)\t\($s.html_url)\t\($s.created_at)" end
-               end')" || return 1
-            case "$s" in
-              none | indeterminate) printf '%s\n' "$s"; return 0 ;;
-            esac
-            concl="$(printf '%s' "$s" | cut -f1)"
-            if [ "$concl" = "success" ]; then
-              printf 'green\t%s\n' "$s"
-              return 0
-            fi
-            created="$(printf '%s' "$s" | cut -f3)"
-            found="$(sched_audit_api "branch=main&status=success&created=%3E%3D${created}&per_page=100" \
-              '([(.workflow_runs // [])[] | select(.conclusion=="success" and (.event=="push" or .event=="workflow_dispatch") and .head_branch=="main" and .created_at > "'"$created"'")] | length) as $n
-               | if $n > 0 then "cleared"
-                 elif (.total_count // 0) > ((.workflow_runs // []) | length) then "indeterminate"
-                 else "red" end')" || return 1
-            printf '%s\t%s\n' "$found" "$s"
-          }
-          sched_audit_ok() {
-            # $1 = line from sched_audit_fetch. Prints the reason; returns 0 to pass.
-            local state concl url created
-            state="$(printf '%s' "$1" | cut -f1)"
-            concl="$(printf '%s' "$1" | cut -f2)"
-            url="$(printf '%s' "$1" | cut -f3)"
-            created="$(printf '%s' "$1" | cut -f4)"
-            case "$state" in
-              none) echo "no completed scheduled run on main (total_count 0); not blocking"; return 0 ;;
-              green) echo "newest scheduled run succeeded ($created)"; return 0 ;;
-              cleared) echo "newest scheduled run concluded '$concl' ($created, $url) but a newer successful full-history run on main supersedes it"; return 0 ;;
-              red) echo "newest scheduled run on main concluded '$concl' ($created, $url) and no newer successful main run supersedes it; review it before releasing"; return 1 ;;
-              indeterminate) echo "indeterminate: the scheduled run or the newer successes could not be fully read ($url); blocking"; return 1 ;;
-              *) echo "unreadable scheduled Security Audit verdict '$state'"; return 1 ;;
-            esac
-          }
-          sched_audit_gate() {
-            local line
-            if ! line="$(sched_audit_fetch)"; then
-              echo "cannot read scheduled Security Audit runs (API error)"
-              return 1
-            fi
-            sched_audit_ok "$line"
-          }
-          sched_reason="$(sched_audit_gate)" && sched_rc=0 || sched_rc=$?
-          echo "  Security Audit (daily schedule): $sched_reason"
-          if [ "$sched_rc" -ne 0 ]; then
-            echo "FAIL: the daily scheduled Security Audit is not green"
-            exit 1
-          fi
-
-          deadline=$(( $(date +%s) + 2400 ))
-          while :; do
-            runs_release="$(fetch_runs "$SHA")"
-            runs_parent=""
-            [ "$ELIGIBLE" = "1" ] && runs_parent="$(fetch_runs "$PARENT")"
-
-            pending=0
-            failed=0
-            while IFS= read -r want; do
-              [ -n "$want" ] || continue
-              # FIX 2 (round 3, reviewer-corrected priority order):
-              #   (a) any success at the release SHA wins outright;
-              #   (b) else a completed run at the release SHA with conclusion
-              #       exactly "failure" fails the job -- checked BEFORE any
-              #       wait, so a still-running retry can never hide it;
-              #   (c) else reuse the parent's success if this bump is
-              #       eligible (Security Audit too, E-157, via its newest
-              #       decisive parent verdict);
-              #   (d) else wait for the release SHA's own result. Cancelled,
-              #       timed_out, and skipped deliberately fall through to (c)
-              #       or (d) rather than failing here: they are not evidence
-              #       the code is broken, only that this exact run did not
-              #       finish, and treating them as a hard fail would break an
-              #       otherwise-green bump whenever a later push's
-              #       cancel-in-progress concurrency group cancels the
-              #       release SHA's own in-flight run.
-              if [ "$want" = "Security Audit" ]; then
-                # E-157: same rule as Tests. A decisive verdict at
-                # the release SHA always wins; only when none exists does an
-                # eligible bump reuse the parent's NEWEST decisive verdict,
-                # and only if that verdict is success (a newer parent failure
-                # masks an older parent success, so it never reuses).
-                label="$SHA"
-                case "$(audit_verdict "$runs_release")" in
-                  success) result="success" ;;
-                  failure) result="failed" ;;
-                  *)
-                    if [ "$ELIGIBLE" = "1" ] \
-                       && [ "$(audit_verdict "$runs_parent")" = "success" ] \
-                       && range_scan_clean; then
-                      result="success"; label="$PARENT (reused)"
-                    else
-                      result="pending"
-                    fi
-                    ;;
-                esac
-              elif has_conclusion "$want" "$runs_release" success; then
-                result="success"; label="$SHA"
-              elif has_conclusion "$want" "$runs_release" failure; then
-                result="failed"; label="$SHA"
-              elif [ "$ELIGIBLE" = "1" ] \
-                   && has_conclusion "$want" "$runs_parent" success; then
-                result="success"; label="$PARENT (reused)"
-              else
-                result="pending"; label="$SHA"
-              fi
-              echo "  $want @ $label: $result"
-              case "$result" in
-                success) ;;
-                pending) pending=1 ;;
-                failed) failed=1 ;;
-              esac
-            done <<<"$REQUIRED"
-
-            if [ "$failed" -eq 1 ]; then
-              echo "FAIL: a required workflow did not succeed"
-              exit 1
-            fi
-            if [ "$pending" -eq 0 ]; then
-              echo "All required workflows succeeded"
-              break
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "FAIL: required workflows did not complete before the deadline"
-              exit 1
-            fi
-            sleep 10
-          done
-
-  # WF-2MIN-3: the tarball is built ONCE, here, in parallel with gate and
-  # required-ci, instead of serially after the release job. This job holds no
-  # secret and no write token. The release job downloads the artifact, recomputes
+  # WF-2MIN-3: the tarball is built ONCE, here, in parallel with gate,
+  # instead of serially after the release job. This job holds no
+  # secret and no write token. publish-npm downloads the artifact, recomputes
   # its sha256 and compares it with the digest this job reports, then publishes
   # exactly those bytes. Every pack-time integrity check (gitHead stamp, dist
   # presence, embedded VERSION) runs here and fails the whole run before the
-  # release job can tag or publish.
+  # publish-npm can publish.
   pack-npm:
     runs-on: ubuntu-latest
     permissions:
@@ -741,8 +153,8 @@ jobs:
           # scripts, so build the web-app and control-plane dist here, fail closed.
           npm run prepublishOnly
           # FC-51: `npm publish <tgz>` records NO gitHead of its own (only a
-          # directory publish reads .git), and promote.yml refuses a version
-          # with no gitHead. Stamp the exact release commit into the manifest
+          # directory publish reads .git), and gitHead lets anyone map a published
+          # version to its commit. Stamp the exact release commit into the manifest
           # that gets packed, then restore the tracked file.
           GITHEAD_STAMP="$(git rev-parse HEAD)" || { echo "FATAL: git rev-parse HEAD failed"; exit 1; }
           printf '%s' "$GITHEAD_STAMP" | grep -Eq '^[0-9a-f]{40}$' || { echo "FATAL: HEAD is not a 40-hex SHA: $GITHEAD_STAMP"; exit 1; }
@@ -762,6 +174,8 @@ jobs:
                       package/web-app/dist/index.html; do
             grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
           done
+          [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {
+            echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
           mkdir -p "$RUNNER_TEMP/npm-tarball"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
           printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
@@ -794,9 +208,77 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # TEN-RELEASE-INSTANT (D102): the npm publish. Depends ONLY on pack-npm
+  # (which verified the packed tarball carries a fresh dist). It does not wait
+  # on gate, Tests, the tag or the GitHub Release; those run in parallel
+  # and a red one means fix forward (npm deprecate allowed, never unpublish).
+  # Publishes under next, then moves latest and next only if VERSION is the
+  # highest (never backwards). Idempotent on rerun; serialized by concurrency.
+  publish-npm:
+    needs: pack-npm
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-npm
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (VERSION only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download the packed tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-tarball
+
+      - name: Verify digest, publish under latest, add next
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          shopt -s nullglob
+          tgzs=("$RUNNER_TEMP"/npm-tarball/*.tgz)
+          [ "${#tgzs[@]}" = "1" ] || { echo "FATAL: expected exactly one tarball"; exit 1; }
+          tgz="${tgzs[0]}"
+          got="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
+            echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}'"; exit 1; }
+          # Publish under next (never moves latest backwards), then move latest
+          # and next only when VERSION is the highest by semver (never-backwards).
+          if ! npm publish "$tgz" --access public --tag next; then
+            # Rerun case: the version is already on the registry. Anything else is a real failure.
+            if [ "$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)" = "$VERSION" ]; then
+              echo "loki-mode@${VERSION} is already published; re-asserting dist-tags only if highest"
+            else
+              echo "FATAL: npm publish failed and loki-mode@${VERSION} is not on the registry"; exit 1
+            fi
+          fi
+          CUR="$(npm view loki-mode dist-tags.latest --prefer-online 2>/dev/null || true)"
+          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            npm dist-tag add "loki-mode@${VERSION}" latest
+            npm dist-tag add "loki-mode@${VERSION}" next
+          else
+            echo "SKIP dist-tags: ${VERSION} is lower than current latest ${CUR} (never backwards)"
+            exit 0
+          fi
+          echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
+
   release:
     runs-on: ubuntu-latest
-    needs: [gate, required-ci, pack-npm]
+    needs: [gate, pack-npm]
     permissions:
       contents: write
 
@@ -911,7 +393,7 @@ jobs:
       # OS layer and Python runtime the npm tree never lists. They are NOT
       # interchangeable, which is why the filenames differ -- a collision would
       # silently overwrite one and ship half the evidence the release claims.
-      - name: Setup Node.js (SBOM generation and npm publish)
+      - name: Setup Node.js (SBOM generation)
         if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
         uses: actions/setup-node@v4
         with:
@@ -1070,7 +552,7 @@ jobs:
           # v7.32.1: build the brew source asset HERE and attach it at release
           # creation. Releases in this repo are immutable, so a later job
           # cannot upload assets (v7.32.0 the homebrew bump failed with HTTP 422
-          # trying). promote.yml (update-homebrew) downloads the published asset and hashes
+          # trying). update-homebrew (below) downloads the published asset and hashes
           # those exact bytes for the formula.
           REF="v${VERSION}"
           git rev-parse -q --verify "refs/tags/${REF}" >/dev/null || REF="HEAD"
@@ -1114,29 +596,6 @@ jobs:
           elif [ "$BODY" = "Release v${VERSION}" ]; then
             echo "::warning::published release v${VERSION} body is the placeholder 'Release v${VERSION}' -- the extract step should have caught this before tagging; investigate but the release stands."
           fi
-
-      # WF-2MIN-3: publish-npm is merged into this job. It runs LAST among the
-      # irreversible steps, after the tag and the GitHub release exist, so a
-      # package is never published without its tag. Docker, SDKs and Slack
-      # depend on this job, so they start only once the package is published.
-      - name: Publish the verified tarball (no rebuild)
-        # Publishing a tarball path does not run prepack. The registry-visibility
-        # wait lives in its own non-blocking job (npm-visible).
-        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # Never publish without the tag on the remote.
-          git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null || {
-            echo "FATAL: tag v${VERSION} is not on the remote; refusing to publish"; exit 1; }
-          tgz="$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")"
-          got="$(sha256sum "$tgz" | cut -d' ' -f1)"
-          [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
-            echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}' at publish time"; exit 1; }
-          npm publish "$tgz" --access public --tag next
 
       - name: Skip message
         if: steps.check_release.outputs.release_exists == 'true'
@@ -1233,19 +692,18 @@ jobs:
           echo "Slack notification sent for ${VERSION}"
 
   # D90: split out of the publish so the publish ends when the publish
-  # does. Post-Release Smoke and Promote trigger on this WORKFLOW finishing, so
-  # holding this job until the registry serves the exact version still gates
-  # both on visibility. Registry lag is external time, reported separately.
+  # does. Post-Release Smoke triggers on this WORKFLOW finishing, so holding
+  # this job until the registry serves the exact version keeps the smoke from
+  # running against a version npm does not serve yet. Registry lag is external
+  # time, reported separately.
   npm-visible:
-    needs: release
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+    needs: publish-npm
     runs-on: ubuntu-latest
     timeout-minutes: 50
     # WF-2MIN-3: a REPORTER, not a gate. Registry lag is external time and is
     # recorded in the job summary; no job may `needs:` this one, and a lag
     # timeout must not turn the Release run red (allow-listed in
-    # tests/test-workflow-no-masked-failures.sh). Post-Release Smoke and
-    # Promote poll for visibility themselves.
+    # tests/test-workflow-no-masked-failures.sh). Informational only.
     continue-on-error: true
     steps:
       - name: Checkout (VERSION only)
@@ -1262,19 +720,18 @@ jobs:
 
       - name: Wait until npm serves the published version
         # NPM-LAG: npm can take 30+ minutes to serve a version it just accepted
-        # (10.5.34 smoke failed ETARGET during a 29 minute lag and skipped
-        # promote). Post-Release Smoke and Promote both trigger on this workflow
-        # finishing successfully, so holding THIS job until the registry serves
-        # the exact version gates both on visibility: neither can run against a
+        # (10.5.34 smoke failed ETARGET during a 29 minute lag). Post-Release
+        # Smoke triggers on this workflow finishing, so holding THIS job until
+        # the registry serves the exact version keeps it from running against a
         # version npm does not serve yet. Three states, never conflated:
         #   visible: npm view prints exactly VERSION, so pass
         #   lagging: empty output, E404 or a transient error, so keep polling;
         #            this is neither a failure nor a pass
         #   timeout: still not visible at the deadline, so fail with the
         #            distinct NPM-LAG-TIMEOUT message
-        # --prefer-online bypasses the local packument cache. The smoke and
-        # promote retry windows stay as they are; this wait only adds the
-        # guarantee in front of them.
+        # --prefer-online bypasses the local packument cache. The smoke
+        # retry window stays as it is; this wait only adds the guarantee in
+        # front of it.
         env:
           NPM_WAIT_TIMEOUT_S: '2700'
           NPM_WAIT_BASE_S: '5'
@@ -1341,6 +798,9 @@ jobs:
 
   publish-ts-sdk:
     needs: release
+    concurrency:
+      group: release-npm-sdk
+      cancel-in-progress: false
     if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
@@ -1367,7 +827,20 @@ jobs:
 
       - name: Publish to npm
         working-directory: sdk/typescript
-        run: npm publish --access public --tag next
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < ../../VERSION)"
+          if ! npm publish --access public --tag next; then
+            if [ "$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)" != "$VERSION" ]; then
+              echo "FATAL: sdk publish failed and loki-mode-sdk@${VERSION} is not on the registry"; exit 1
+            fi
+            echo "loki-mode-sdk@${VERSION} already published"
+          fi
+          CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
+          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            npm dist-tag add "loki-mode-sdk@${VERSION}" latest
+            npm dist-tag add "loki-mode-sdk@${VERSION}" next
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -1495,7 +968,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Version tags only. `:latest` moves in promote.yml after the first-run gate.
+      # Version tags only. `:latest` is added alongside (D102).
       - name: Create and push multi-arch manifest
         id: build
         working-directory: /tmp/digests
@@ -1504,6 +977,7 @@ jobs:
           tags=(
             "asklokesh/loki-mode:v${{ needs.release.outputs.version }}"
             "asklokesh/loki-mode:${{ needs.release.outputs.version }}"
+            "asklokesh/loki-mode:latest"
           )
           tag_args=()
           for t in "${tags[@]}"; do tag_args+=(-t "$t"); done
@@ -1603,3 +1077,68 @@ jobs:
   # receives no further updates. The vscode-extension/ source remains in the
   # repo for users who want to build locally. See vscode-extension/README.md
   # for details.
+
+  # D102: Homebrew formula bump moved here from the deleted promote.yml. Runs
+  # after the GitHub Release exists (it hashes the release's brew asset).
+  update-homebrew:
+    needs: release
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Read version
+        id: ver
+        run: echo "version=${{ needs.release.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight Homebrew (hash asset, render formula, read tap)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          ASSET="loki-mode-${VERSION}.tar.gz"
+          gh release download "v${VERSION}" --repo asklokesh/loki-mode --pattern "${ASSET}" --dir "$RUNNER_TEMP" --clobber
+          file "${RUNNER_TEMP}/${ASSET}" | grep -q 'gzip compressed' || { echo "ERROR: asset is not a gzip tarball"; exit 1; }
+          SHA256=$(sha256sum "${RUNNER_TEMP}/${ASSET}" | cut -d' ' -f1)
+          rm -f "${RUNNER_TEMP}/${ASSET}"
+          cat > "${RUNNER_TEMP}/loki-mode.rb.tpl" << 'FORMULA_EOF'
+          class LokiMode < Formula
+            desc "Autonomous coding agent platform CLI for Claude Code, Codex CLI, Cline, and Aider"
+            homepage "https://github.com/asklokesh/loki-mode"
+            url "https://github.com/asklokesh/loki-mode/releases/download/vVERSION_PLACEHOLDER/loki-mode-VERSION_PLACEHOLDER.tar.gz"
+            sha256 "SHA256_PLACEHOLDER"
+            license "BUSL-1.1"
+
+            depends_on "node"
+            depends_on "oven-sh/bun/bun"
+
+            def install
+              libexec.install Dir["*"]
+              # bin/loki is the Bun-aware shim (v7.4.2 BUG-4); link it, not autonomy/loki.
+              bin.install_symlink libexec/"bin/loki" => "loki"
+            end
+
+            test do
+              system "#{bin}/loki", "--version"
+            end
+          end
+          FORMULA_EOF
+          sed "s/VERSION_PLACEHOLDER/${VERSION}/g; s/SHA256_PLACEHOLDER/${SHA256}/g" "${RUNNER_TEMP}/loki-mode.rb.tpl" > "${RUNNER_TEMP}/loki-mode.rb"
+          grep -q "sha256 \"${SHA256}\"" "${RUNNER_TEMP}/loki-mode.rb" || { echo "FATAL: formula render failed"; exit 1; }
+          gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha' > /dev/null
+
+      - name: Update Homebrew formula via API
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          CURRENT_SHA=$(gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha')
+          CONTENT=$(base64 < "${RUNNER_TEMP}/loki-mode.rb" | tr -d '\n')
+          gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb \
+            -X PUT \
+            -f message="Update to v${VERSION}" \
+            -f content="$CONTENT" \
+            -f sha="$CURRENT_SHA"
+          echo "Homebrew formula updated to v${VERSION}"

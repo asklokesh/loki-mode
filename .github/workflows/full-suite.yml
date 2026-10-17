@@ -1,9 +1,9 @@
 name: Full suite
 
 # D90 (founder directive): the FULL suites no longer gate push or release.
-# They run nightly (nightly.yml) and on demand, and a red nightly blocks
-# PROMOTION to latest (D96, promote.yml). The blocking gate is the fast gate
-# in test.yml. This file is the single home of the full matrix: Node 20/24,
+# They run nightly (nightly.yml) and on demand, and a red nightly is a
+# fix-forward signal (D102): it never delays an npm release. The push gate is
+# the fast gate in test.yml. This file is the single home of the full matrix: Node 20/24,
 # the Python matrix, all 8 shell shards, the full moat suite, Helm, and the
 # full bun suite. test.yml also calls it as the fail-safe when the diff
 # cannot be computed.
@@ -58,7 +58,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
 
-      # E-157: tests/test_release_required_ci.py drives release.yml's PARENT..SHA
+      # E-157: the Python suite drives the PARENT..SHA
       # secret scan with the real pinned gitleaks and FAILS (never skips) when CI
       # lacks it.
       - name: Install gitleaks (pinned, checksum-verified)
@@ -189,8 +189,8 @@ jobs:
         run: bash tests/run-all-tests.sh
 
   # The moat suite: nine product properties, each PROVEN or honestly NOT
-  # PROVEN. A release that fails it does not ship (release.yml required-ci
-  # waits for this whole workflow). Its own job, not a shard: the pending list
+  # PROVEN. A red result here is a fix-forward signal (D102); it
+  # does not delay the npm publish. Its own job, not a shard: the pending list
   # and the case registry are ratcheted against the reachable release tags, and
   # the shards' depth-1 checkout
   # has no tags, so the runner would exit 2 ("could not check") there by design.

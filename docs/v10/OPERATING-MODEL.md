@@ -31,9 +31,8 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 ## Release pipeline
 - Tier A fast gate on every change (target 60-120s): syntax checks, changed-file shellcheck, diff-selected tests, moat suite split per property. It is feedback, not release authority.
 - Tier B: every main commit has a full Tier B verdict on its exact tree, run on main or on the train that produced it (D55); never cancelled on main.
-- Every approved slice is a release (D96): merge-gate merges to main, and main publishes a PATCH to npm `next` within 15 min. No trains, no batching. Target 3-10 releases per hour.
-- `latest` is promotion only: the newest `next` whose SHA has a green hourly full-suite backstop and green Post-Release Smoke. A red backstop blocks promotion, not publishing.
-- If the backstop fails on main: promotion stops, and a P0 fix-forward slice opens within the hour. Never unpublish; npm deprecate is allowed.
+- Every approved slice is a release (D96, D102): merge-gate merges to main, and a VERSION push publishes to npm under `latest` AND `next` within seconds, depending only on pack-npm. No CI, nightly, backstop or smoke result delays npm. No trains, no batching. Target 3-10 releases per hour.
+- Tests, Security Audit, nightly and the backstop run in parallel as fix-forward signals. If one fails on main, a P0 fix-forward slice opens within the hour. Never unpublish; npm deprecate is allowed.
 
 ## Large tasks (for example "rebuild the dashboard")
 - The Architect splits the task into 10-40 slices behind a feature flag.

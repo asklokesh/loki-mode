@@ -157,8 +157,8 @@ trap 'if [ "$$" = "$_lci_hh_owner" ]; then [ "${_lci_owner:-}" = "$$" ] && rm -f
 declare -a _FAST_KEEP=(
   # THE RELEASE GATE'S FIRST JOB IS A TYPECHECK, AND THE FAST TIER WAS BLIND TO
   # IT. release.yml's `gate` job runs "Bun typecheck + test (protect published
-  # loki-ts dist)" before required-ci and before every publish job, so a tsc
-  # error blocks the whole release. These two checks existed here but sat
+  # loki-ts dist)" before the tag, GitHub Release and docker jobs (npm publish no longer waits, D102), so a tsc
+  # error blocks those jobs. These two checks existed here but sat
   # outside _FAST_KEEP, so `local-ci.sh` reported green on a tree whose
   # typecheck was broken, and the failure only surfaced a full release cycle
   # later. Measured 2026-09-12: v9.49.0 died on doctor.ts(300,3) TS2322 with
@@ -408,7 +408,7 @@ declare -a _FAST_KEEP=(
   #    a suite whose cost was NOT measured is deliberately left deferred rather
   #    than guessed into the fast tier.
   # Guards the CI security scanners (pip-audit / gitleaks / CodeQL) in
-  # security-audit.yml, which release.yml's required-ci job waits on by name.
+  # security-audit.yml, which reports at the release SHA (informational for npm, D102).
   # Same class as the packaged-artifact checks above: it asserts a SHIPPED
   # release gate is still wired and still fail-closed, and no GitHub CI job
   # inspects that wiring. Deferring it would mean a scanner could be deleted or
@@ -461,8 +461,6 @@ declare -a _FAST_KEEP=(
   # nothing else in CI can see this class. Measured 0.1s (one node graph walk).
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
-  "tests/test-promote-head-stamp.sh"          # FC-51, static workflow check
-  "tests/test-promote-smoke-sha.sh"           # FC-71, smoke gate head_sha fixtures
   "tests/test-nightly-flake-tracker.sh"       # FC-53, offline fixtures
   "tests/test-workflow-no-masked-failures.sh" # FC-57, static workflow check
   "tests/test-sigpipe-guard.sh"               # FC-64, pipe-to-grep-q ratchet
@@ -1376,7 +1374,7 @@ run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-
 # manifest, gitleaks over all reachable history, CodeQL over the supported
 # source surfaces. This suite existed and passed but was wired into NO runner,
 # so it never executed -- the same orphan class that let a hardcoded Codex
-# model ship. security-audit.yml is a required-ci gate, so an unguarded edit
+# model ship. security-audit.yml reports on every release, so an unguarded edit
 # there can silently weaken a release gate.
 run_check "tests/test-security-scan-coverage.sh (CI security scanners wired, fail-closed)" "bash tests/test-security-scan-coverage.sh 2>&1 | tail -3"
 
