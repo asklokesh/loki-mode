@@ -185,6 +185,9 @@ function _loki {
                     _arguments \
                         '--pubkey[Check against this public key only]:key file:_files' \
                         '--sign-deploy[Sign a loki.deploy/1 deploy record in place]:record:_files' \
+                        '--sign-provenance[Sign a loki.provenance/1 doc in place]:doc:_files' \
+                        '--url[Verify the live provenance doc served at URL]:url:' \
+                        '--expect-sha[Require the provenance head_sha to equal SHA]:sha:' \
                         '--receipt[Cited receipt file for a deploy record]:receipt:_files' \
                         '--max-age[Reject a receipt older than DUR]:duration:' \
                         '--require-exogenous[Exit 4 when a VERIFIED receipt has no agent-independent passing check]' \

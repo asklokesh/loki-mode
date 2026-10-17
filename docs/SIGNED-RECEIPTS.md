@@ -46,6 +46,18 @@ rolled-back service answered again (`post_rollback_health`: `healthy`,
 With `--health-match STR` the probe body must contain STR, and the record stores
 `health_match` and the deployed `tree_sha`.
 
+## Live provenance doc (loki.provenance/1)
+
+`loki verify --sign-provenance FILE` signs a JSON file holding `head_sha`,
+`tree_sha`, `receipt_sha256`, `run_id` and `built_at` in place, with the same
+Ed25519 key as a deploy record. Serve the result at
+`/.well-known/loki-provenance.json`. `loki verify --url https://host
+[--pubkey FILE] [--receipt FILE] [--expect-sha SHA]` fetches it (5s timeout,
+64KB cap, no redirects) and exits 0 VERIFIED only when the signature verifies
+and any cited receipt found locally or via `--receipt` is VERIFIED. An edited
+doc or a wrong `--expect-sha` is TAMPERED (1). A fetch failure, a non-200, a
+non-JSON or oversize body, or an unknown kid is UNCHECKED (2), never VERIFIED.
+
 ## Honest limits
 
 - A signature proves **provenance and integrity**, not correctness. The
