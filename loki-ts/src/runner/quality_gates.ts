@@ -53,6 +53,7 @@ import {
 import { judgeJson, sdkJudgeAvailable } from "./sdk_invoker.ts";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
+import { withChildLedger } from "../util/child_ledger.ts";
 import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
@@ -1670,6 +1671,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
         model: process.env["LOKI_SDK_REVIEW_MODEL"] || resolveClaudeModel("sonnet"),
         effort: "high",
         timeoutMs,
+        ledger: { lokiDir: lokiDir(), phase: "reviewer" }, // COST-WALL
       });
       if (obj !== null) {
         const legacy = rematerializeCodeReview(JSON.stringify(obj));
@@ -1692,7 +1694,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
     if (claudeFlagSupported("--json-schema")) {
       const schemaContent = readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8");
       const sArgv = [...argv, "-p", prompt, "--json-schema", schemaContent, "--output-format", "json"];
-      const rs = await run(sArgv, { env: { CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000 });
+      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000 }); // COST-WALL: result JSON carries total_cost_usd
       if (rs.exitCode === 0 && rs.stdout.trim().length > 0) {
         const legacy = rematerializeCodeReview(rs.stdout);
         if (legacy !== null) return legacy;
@@ -1706,7 +1708,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
 
   // Mirror the bash subcall: cwd-agnostic (the prompt carries the diff), caveman
   // hard-suppressed, generous timeout for a single review turn.
-  const r = await run(argv, {
+  const r = await withChildLedger(run, lokiDir(), "reviewer")(argv, { // COST-WALL: text output carries no cost, so this line is unmeasured (a lower bound, never zero)
     env: { CAVEMAN_DEFAULT_MODE: "off" },
     timeoutMs: 600_000,
   });

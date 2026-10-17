@@ -37,6 +37,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
 import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
+import { withChildLedger } from "../util/child_ledger.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
 import { parseMultiResponse } from "./finding_schema.ts";
@@ -304,7 +305,7 @@ export async function dispatchClaudeAgents(
   cec: CouncilEvaluateContext,
   claudeRunner?: ClaudeRunner,
 ): Promise<AgentVerdict[]> {
-  const runner = claudeRunner ?? defaultClaudeRunner;
+  const runner = claudeRunner ?? withChildLedger(defaultClaudeRunner, cec.ctx.lokiDir, "council"); // COST-WALL: the real spawn is a child session, one ledger line each
   const injected = claudeRunner !== undefined;
 
   if (!injected) {
@@ -351,6 +352,7 @@ export async function dispatchClaudeAgents(
         model: process.env["LOKI_SDK_COUNCIL_MODEL"] || resolveClaudeModel("sonnet"),
         effort: "high",
         timeoutMs,
+        ledger: { lokiDir: cec.ctx.lokiDir, phase: "council" },
       });
       if (obj !== null) {
         const verdicts = parseMultiResponse(JSON.stringify(obj));
@@ -452,7 +454,7 @@ export async function dispatchDevilsAdvocate(
   cec: CouncilEvaluateContext,
   claudeRunner?: ClaudeRunner,
 ): Promise<AgentVerdict> {
-  const runner = claudeRunner ?? defaultClaudeRunner;
+  const runner = claudeRunner ?? withChildLedger(defaultClaudeRunner, cec.ctx.lokiDir, "council"); // COST-WALL: the real spawn is a child session, one ledger line each
   const injected = claudeRunner !== undefined;
 
   if (!injected) {

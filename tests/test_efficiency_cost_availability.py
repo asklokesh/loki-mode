@@ -185,6 +185,22 @@ class ChildLedgerTests(unittest.TestCase):
             self.assertEqual(cost["input_tokens"], 1030)
             self.assertEqual(cost["cache_creation_tokens"], 700)
 
+    def test_v10_ts_child_lines_are_counted_and_unmeasured_is_lower_bound(self):
+        # COST-WALL: lines shaped like loki-ts/src/util/child_ledger.ts output.
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            priced = {"phase": "council", "model": "haiku", "input_tokens": 100,
+                      "output_tokens": 50, "usd": 0.065, "source": "ts-spawn"}
+            unmeasured = {"phase": "council", "model": "haiku",
+                          "cost_status": "unmeasured", "source": "ts-spawn"}
+            _ledger(loki, [priced, unmeasured])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.315, places=4)
+            self.assertEqual(cost["ledger_records"], 2)
+            self.assertTrue(cost["cost_partial"])
+            self.assertEqual(cost["cost_unpriced_records"], 1)
+
     def test_missing_ledger_is_main_only_and_flagged_absent(self):
         with tempfile.TemporaryDirectory() as d:
             loki = os.path.join(d, ".loki")
