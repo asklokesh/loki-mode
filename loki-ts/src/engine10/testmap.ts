@@ -3,7 +3,7 @@
 // it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
@@ -175,7 +175,9 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
       add(self);
       continue;
     }
-    const stem = basename(rel, extname(rel));
+    let stem = basename(rel, extname(rel));
+    // Directory entry files (index.ts, __init__.py) are imported by their directory name.
+    if (stem === "index" || stem === "__init__") stem = dirname(rel) === "." ? stem : basename(dirname(rel));
     for (const p of sourceRefs[stem] ?? []) {
       add(map.tests.find((t) => t.path === p));
     }

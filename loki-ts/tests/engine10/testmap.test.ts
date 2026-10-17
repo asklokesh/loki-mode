@@ -66,6 +66,19 @@ describe("mixed pytest plus vitest repo", () => {
   });
 });
 
+describe("directory entry files (TEN-QUALITY-39)", () => {
+  test("index source maps to directory", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ scripts: { test: "bun test" } }),
+      "bunfig.toml": "[test]\n",
+      "src/search/index.ts": "export const q = 1;\n",
+      "tests/search.test.ts": 'import { q } from "../src/search";\ntest("q", () => {});\n',
+    });
+    const map = buildTestMap(root);
+    expect(impactedRefs(map, ["src/search/index.ts"])).toEqual([{ runner: "bun", path: "tests/search.test.ts" }]);
+  });
+});
+
 describe("TestMapProvider contract (types.ts, E-01)", () => {
   test("detect() and impacted() round-trip through the real provider", async () => {
     const provider = new RealTestMapProvider();
