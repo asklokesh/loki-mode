@@ -3565,9 +3565,9 @@ else
     bad "PROMOTION_LAG reason line missing"; printf '%s\n' "$OUT"
 fi
 lag_run "$LAG_NPM_SMALL" "cat $LAG_PROMOTE"
-if ! printf '%s\n' "$OUT" | grep -q "PROMOTION_LAG"; then ok "lag under threshold: no PROMOTION_LAG"; else bad "under-threshold lag fired"; fi
+if ! grep -q "PROMOTION_LAG" <<<"$OUT"; then ok "lag under threshold: no PROMOTION_LAG"; else bad "under-threshold lag fired"; fi
 lag_run "$LAG_NPM_SAME" "cat $LAG_PROMOTE"
-if ! printf '%s\n' "$OUT" | grep -q "PROMOTION_LAG"; then ok "next==latest: no PROMOTION_LAG"; else bad "next==latest fired"; fi
+if ! grep -q "PROMOTION_LAG" <<<"$OUT"; then ok "next==latest: no PROMOTION_LAG"; else bad "next==latest fired"; fi
 lag_run "$LAG_NPM" "false"
 if printf '%s\n' "$OUT" | grep "^VIOLATION: PROMOTION_LAG" | grep -qF "promote block: UNKNOWN"; then
     ok "promote lookup failure: PROMOTION_LAG still fires with UNKNOWN reason"
