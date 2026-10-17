@@ -1171,8 +1171,8 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
   const ENV = ["HOME", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_VERIFY_REQUIRE_EXOGENOUS"];
   beforeEach(() => { for (const k of ENV) prev[k] = process.env[k]; delete process.env["LOKI_VERIFY_REQUIRE_EXOGENOUS"]; delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; });
   afterEach(() => { for (const k of ENV) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } });
-  type Chk = { name: string; cmd: string; result: string; duration_s: number; provenance?: string };
-  const chk = (name: string, provenance?: string, result = "pass"): Chk => ({ name, cmd: "x", result, duration_s: 1, ...(provenance ? { provenance } : {}) });
+  type Chk = { name: string; cmd: string; result: string; duration_s: number; n?: number; provenance?: string };
+  const chk = (name: string, provenance?: string, result = "pass", n = 1): Chk => ({ name, cmd: "x", result, duration_s: 1, n, ...(provenance ? { provenance } : {}) });
   // Writes a receipt signed with a fresh test key (VERIFIED under that key); returns the temp dirs.
   function signed(runId: string, checks: Chk[], tamper = false): { dir: string; home: string; runs: string } {
     const dir = tmpDir(), home = tmpDir();
@@ -1223,6 +1223,29 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
       expect(plain.out).toContain("agent-independent: provenance not recorded");
       expect(plain.out).not.toContain("0 of");
       expect((await runMain(["gx3", "--require-exogenous"], s.runs)).code).toBe(4);
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("F1: unsigned receipt with only agent_authored checks exits 4 under --require-exogenous --allow-unsigned and prints the line", async () => {
+    const dir = tmpDir();
+    try {
+      const fields = baseReceiptFields(); fields["run_id"] = "gx5"; fields["checks"] = [chk("bun:tests/new.test.ts", "agent_authored")];
+      const runDir = join(dir, "runs", "gx5"); mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...fields, receipt_sha256: computeReceiptHash(fields), verification: { jwt: null, kid: null } }));
+      const r = await runMain(["gx5", "--require-exogenous", "--allow-unsigned"], join(dir, "runs"));
+      expect(r.out).toContain("agent-independent: 0 of 1 passing checks");
+      expect(r.code).toBe(4);
+      expect((await runMain(["gx5", "--allow-unsigned"], join(dir, "runs"))).code).toBe(0);
+    } finally { done(dir); }
+  });
+
+  test("F1: an exogenous check with n:0 does not count toward k", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx6", [chk("typecheck", "exogenous", "pass", 0)]);
+    try {
+      const r = await runMain(["gx6", "--require-exogenous"], s.runs);
+      expect(r.out).toContain("agent-independent: 0 of 1 passing checks");
+      expect(r.code).toBe(4);
     } finally { done(s.dir, s.home); }
   });
 
