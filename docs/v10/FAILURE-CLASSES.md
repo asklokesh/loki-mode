@@ -1082,3 +1082,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: FC-TEN-STABILITY-09 fixed the loki-ts/tests stubs but not scripts/first-run-gate.sh (fixed here). scripts/b9-scoreboard.sh already answers auth. tests/test-quick-config-safety.sh, test-quick-receipt-order.sh, test-quick-artifacts.sh, test-json-schemas.sh and test-usage-governor.sh all pass on this base (their stubs do not edit the tree on the probe).
 - Mechanism: the gate stub answers `auth status` with {"loggedIn": true}, no side effects; the cost-non-null probe reports an unreadable run record as a FAIL line instead of a traceback.
 - Fixture: loki-ts/tests/engine10/e2e.test.ts "every engine10 stub claude answers claude auth status as logged in" now also pins the first-run gate stub (red with the stub line removed); the gate itself returns to 7 failures with that line removed.
+
+## FC-TEN-STABILITY-20 A slice adds a CLI flag in the Bun route and CHANGELOG but not in the help-drift-checked help or completions (HELP-FLAG-DRIFT)
+- User-visible vs raw: user-visible. `loki report kpis --since` and `loki undo --list` (v11.17.40) worked but were absent from `loki help` and Tab completion, so tests/test-help-changelog-drift.sh was red on 3 lines.
+- Law broken: a documented flag must appear in the help output for its command and in completions/loki.bash.
+- Siblings: swept the other newest-window invocations (proof list --json, proof share --dry-run, queue add, start --help, status --probe/--json); all already pass. completions/_loki carries no per-flag lists for report or undo; its undo description now names --list.
+- Mechanism: autonomy/loki help text lists both flags; completions/loki.bash gains report and undo cases. The drift test already guards both.
+- Fixture: tests/test-help-changelog-drift.sh (22 passed, 0 failed); removing the `undo --list` help line turns it red.
