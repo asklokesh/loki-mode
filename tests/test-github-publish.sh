@@ -86,7 +86,7 @@ echo "========================="
 
 echo "1. usage on bad input"
 OUT="$(cd "$WORKROOT" && PATH="$FAKE_BIN:$PATH" bash "$LOKI_BIN" github publish --bogus 2>&1)"; RC=$?
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "usage: loki github publish"; then
+if [ "$RC" -ne 0 ] && grep -qi "usage: loki github publish" <<<"$OUT"; then
     ok "unknown flag prints usage with non-zero exit"
 else
     bad "unknown flag did not print usage" "rc=$RC"
@@ -106,7 +106,7 @@ if grep -q "^api repos/.*/statuses/$HEADSHA" "$GH_LOG" && grep -q "state=success
 else
     bad "status call wrong" "log=$(cat "$GH_LOG")"
 fi
-if printf '%s' "$OUT" | grep -q "https://github.com/stub-owner/stub-repo"; then
+if grep -q "https://github.com/stub-owner/stub-repo" <<<"$OUT"; then
     ok "prints repo URL from gh output"
 else
     bad "repo URL missing" "$OUT"
@@ -122,7 +122,7 @@ if grep -q -- "--private" "$GH_LOG"; then bad "--private present alongside --pub
 echo "4. dirty tree refuses with zero gh calls"
 make_fixture c 1; echo x >> "$WORKROOT/c/package.json"; reset_logs
 OUT="$(run_publish "$WORKROOT/c" r)"; RC=$?
-if [ "$RC" -ne 0 ] && [ ! -s "$GH_LOG" ] && printf '%s' "$OUT" | grep -qi dirty; then
+if [ "$RC" -ne 0 ] && [ ! -s "$GH_LOG" ] && grep -qi dirty <<<"$OUT"; then
     ok "dirty tree refused, gh never called"
 else
     bad "dirty tree not refused cleanly" "rc=$RC gh=$(cat "$GH_LOG")"

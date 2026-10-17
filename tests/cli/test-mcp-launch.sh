@@ -90,7 +90,7 @@ run_help_test() {
     local route_desc="$1"; shift
     local out code
     out="$("$@" mcp --help 2>&1)"; code=$?
-    if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q "launch the MCP"; then
+    if [ "$code" -eq 0 ] && grep -q "launch the MCP" <<<"$out"; then
         log_pass "loki mcp --help exits 0 with usage ($route_desc)"
     else
         log_fail "loki mcp --help ($route_desc)" "exit=$code"
@@ -113,7 +113,7 @@ run_help_test "bash route" env LOKI_LEGACY_BASH=1 bash "$LOKI"
         _ml_python() { return 1; }   # simulate no python3 anywhere
         mcp_launch_main </dev/null 2>&1
     ); code=$?
-    if [ "$code" -eq 2 ] && printf '%s' "$out" | grep -qi "python"; then
+    if [ "$code" -eq 2 ] && grep -qi "python" <<<"$out"; then
         log_pass "loki mcp with no python3 exits 2 with honest message"
     else
         log_fail "no-python3 path" "exit=$code out=$(printf '%s' "$out" | head -1)"
@@ -126,8 +126,8 @@ make_python_sdk_missing
     # Real PATH plus our stub python3 prepended so check-sdk reports missing.
     out=$(PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
     if [ "$code" -eq 2 ] \
-        && printf '%s' "$out" | grep -q "mcp/requirements.txt" \
-        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        && grep -q "mcp/requirements.txt" <<<"$out" \
+        && ! grep -qi "Installing MCP dependencies" <<<"$out"; then
         log_pass "loki mcp SDK-missing non-TTY exits 2, prints manual cmd, no install"
     else
         log_fail "SDK-missing non-TTY path" "exit=$code"
@@ -138,7 +138,7 @@ make_python_sdk_missing
 {
     out=$(PATH="$STUB_BIN:$PATH" LOKI_NO_INSTALL_OFFER=1 LOKI_LEGACY_BASH=1 \
             bash "$LOKI" mcp </dev/null 2>&1); code=$?
-    if [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q "mcp/requirements.txt"; then
+    if [ "$code" -eq 2 ] && grep -q "mcp/requirements.txt" <<<"$out"; then
         log_pass "loki mcp SDK-missing + LOKI_NO_INSTALL_OFFER=1 exits 2 with manual cmd"
     else
         log_fail "LOKI_NO_INSTALL_OFFER path" "exit=$code"
@@ -233,7 +233,7 @@ EOF
         PYTHONPATH="$REPO_ROOT${FAKE_SITE:+:$FAKE_SITE}" \
             "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null 2>&1
     )
-    if printf '%s' "$out" | grep -q "FAKE_SDK_SENTINEL_DO_NOT_WANT"; then
+    if grep -q "FAKE_SDK_SENTINEL_DO_NOT_WANT" <<<"$out"; then
         log_fail "P0 regression: launcher resolves Loki server from non-repo cwd" \
             "fake SDK sentinel leaked -- root was not prepended ahead of ambient mcp"
     elif printf '%s' "$out" | grep -Eq "MCP SDK OK|loki-mcp"; then
@@ -278,7 +278,7 @@ if [ -n "$REAL_PY" ] \
         printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
             | bash "$LAUNCHER" 2>/dev/null
     )
-    printf '%s' "$hs" | grep -q '"result"' && launch_ok=yes
+    grep -q '"result"' <<<"$hs" && launch_ok=yes
     if [ "$probe_ok" = yes ] && [ "$launch_ok" = yes ]; then
         log_pass "decoy-cwd: probe AND launch both resolve Loki's server (cwd mcp/ package shadowed out)"
     else
@@ -449,7 +449,7 @@ if [ -n "$REAL_PY" ] \
         cd "$REPO_ROOT" || exit 99
         PYTHONPATH="$REPO_ROOT" "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null 2>&1 1>/dev/null
     )
-    if ! printf '%s' "$rw_err" | grep -q "RuntimeWarning"; then
+    if ! grep -q "RuntimeWarning" <<<"$rw_err"; then
         log_pass "no-RuntimeWarning: real file-exec launch emits no RuntimeWarning on stderr"
     else
         log_fail "no-RuntimeWarning" "stderr contained RuntimeWarning: $(printf '%s' "$rw_err" | grep RuntimeWarning | head -1)"
@@ -539,15 +539,15 @@ EOF
     )
     so="$(cat "$A_OUT" 2>/dev/null)"
     se="$(cat "$A_ERR" 2>/dev/null)"
-    if printf '%s' "$so" | grep -q "SERVER_STDOUT_OK" \
-        && ! printf '%s' "$so" | grep -q "PIP_STDOUT_NOISE" \
-        && ! printf '%s' "$so" | grep -q "VENV_STDOUT_NOISE" \
-        && printf '%s' "$se" | grep -q "PIP_STDOUT_NOISE" \
-        && printf '%s' "$se" | grep -q "VENV_STDOUT_NOISE"; then
+    if grep -q "SERVER_STDOUT_OK" <<<"$so" \
+        && ! grep -q "PIP_STDOUT_NOISE" <<<"$so" \
+        && ! grep -q "VENV_STDOUT_NOISE" <<<"$so" \
+        && grep -q "PIP_STDOUT_NOISE" <<<"$se" \
+        && grep -q "VENV_STDOUT_NOISE" <<<"$se"; then
         log_pass "auto-bootstrap non-TTY+flag: stdout clean (server sentinel only), all progress on stderr"
     else
         log_fail "auto-bootstrap stdout/stderr separation" \
-            "stdout=[$(printf '%s' "$so" | tr '\n' '|')] stderr-has-noise=$(printf '%s' "$se" | grep -q PIP_STDOUT_NOISE && echo yes || echo no)"
+            "stdout=[$(printf '%s' "$so" | tr '\n' '|')] stderr-has-noise=$(grep -q PIP_STDOUT_NOISE <<<"$se" && echo yes || echo no)"
     fi
 }
 
@@ -556,8 +556,8 @@ EOF
     make_python_sdk_missing
     out=$(PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
     if [ "$code" -eq 2 ] \
-        && printf '%s' "$out" | grep -q "mcp/requirements.txt" \
-        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        && grep -q "mcp/requirements.txt" <<<"$out" \
+        && ! grep -qi "Installing MCP dependencies" <<<"$out"; then
         log_pass "non-TTY WITHOUT flag still exits 2 (no silent install)"
     else
         log_fail "non-TTY no-flag regression" "exit=$code"
@@ -571,12 +571,12 @@ EOF
     out=$(PATH="$STUB_BIN:$PATH" LOKI_NO_INSTALL_OFFER=1 LOKI_MCP_AUTO_BOOTSTRAP=1 \
             LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
     if [ "$code" -eq 2 ] \
-        && printf '%s' "$out" | grep -q "overrides LOKI_MCP_AUTO_BOOTSTRAP" \
-        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        && grep -q "overrides LOKI_MCP_AUTO_BOOTSTRAP" <<<"$out" \
+        && ! grep -qi "Installing MCP dependencies" <<<"$out"; then
         log_pass "LOKI_NO_INSTALL_OFFER=1 overrides flag: exit 2 + precedence log, no install"
     else
         log_fail "precedence: NO_INSTALL_OFFER over AUTO_BOOTSTRAP" \
-            "exit=$code precedence-logged=$(printf '%s' "$out" | grep -q 'overrides LOKI_MCP_AUTO_BOOTSTRAP' && echo yes || echo no)"
+            "exit=$code precedence-logged=$(grep -q 'overrides LOKI_MCP_AUTO_BOOTSTRAP' <<<"$out" && echo yes || echo no)"
     fi
 }
 
@@ -598,12 +598,12 @@ EOF
         STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=1 \
             mcp_launch_main </dev/null 2>&1
     )
-    if ! printf '%s' "$out" | grep -qi "Proceed?" \
-        && printf '%s' "$out" | grep -q "SERVER_STDOUT_OK"; then
+    if ! grep -qi "Proceed?" <<<"$out" \
+        && grep -q "SERVER_STDOUT_OK" <<<"$out"; then
         log_pass "TTY + flag: consent prompt skipped, bootstrap proceeds"
     else
         log_fail "TTY + flag prompt skip" \
-            "prompt-present=$(printf '%s' "$out" | grep -qi 'Proceed?' && echo yes || echo no)"
+            "prompt-present=$(grep -qi 'Proceed?' <<<"$out" && echo yes || echo no)"
     fi
 }
 
@@ -698,14 +698,14 @@ EOF
         PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=0 LOKI_LEGACY_BASH=1 \
             bash "$LOKI" mcp </dev/null 2>&1
     ); zcode=$?
-    if printf '%s' "$out_true" | grep -q "bootstrapping the project venv" \
-        && printf '%s' "$out_yes" | grep -q "bootstrapping the project venv" \
-        && ! printf '%s' "$out_zero" | grep -q "bootstrapping the project venv" \
+    if grep -q "bootstrapping the project venv" <<<"$out_true" \
+        && grep -q "bootstrapping the project venv" <<<"$out_yes" \
+        && ! grep -q "bootstrapping the project venv" <<<"$out_zero" \
         && [ "$zcode" -eq 2 ]; then
         log_pass "LOKI_MCP_AUTO_BOOTSTRAP accepts true/yes; =0 still refuses (exit 2)"
     else
         log_fail "AUTO_BOOTSTRAP truthy parse" \
-            "true=$(printf '%s' "$out_true" | grep -q bootstrapping && echo ok || echo NO) yes=$(printf '%s' "$out_yes" | grep -q bootstrapping && echo ok || echo NO) zero_code=$zcode"
+            "true=$(grep -q bootstrapping <<<"$out_true" && echo ok || echo NO) yes=$(grep -q bootstrapping <<<"$out_yes" && echo ok || echo NO) zero_code=$zcode"
     fi
 }
 
@@ -806,7 +806,7 @@ done
 INSTALL_PATH="$NOCL"
 run_install "$IH" "$IP" --client claude
 INSTALL_PATH="$PATH"
-if [ "$INSTALL_RC" -eq 0 ] && printf '%s' "$INSTALL_OUT" | grep -q 'claude mcp add loki-mode -- npx -y loki-mode mcp'; then
+if [ "$INSTALL_RC" -eq 0 ] && grep -q 'claude mcp add loki-mode -- npx -y loki-mode mcp' <<<"$INSTALL_OUT"; then
     log_pass "install claude without CLI prints the command"
 else
     log_fail "install claude print" "rc=$INSTALL_RC out=$INSTALL_OUT"
