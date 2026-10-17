@@ -1078,17 +1078,17 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | TEN-GATES-05b | Spec-derived auth probe: negation window fixes | autonomy/lib/functional-verify.py, tests/test_functional_verify.py | HIGH | pytest tests/test_functional_verify.py | building@2026-10-17T03:30Z | HIGH r2 BLOCK aaf27e569: trailing-slash redirect false green, curly apostrophe and article negation false reds; r3 under D99 |
 | TEN-RELEASE-INSTANT-F1 | Empty CUR from a failed npm view fails closed; rename the stale publish step | .github/workflows/release.yml | LOW | see note | released@2026-10-17T03:50Z | TL APPROVE 29ca496f1, ships v11.17.16 Shipped in npm 11.17.15 (latest+next) or 11.17.16 (Release run success on e3d445460). |
 | TEN-COST-18-F1 | cost_claim: a non-object JSON row is skipped, not an AttributeError | C-F1 harness cost_claim | LOW | see note | released@2026-10-17T03:50Z | TL APPROVE 924cec1c8, ships v11.17.16 Shipped in npm 11.17.15 (latest+next) or 11.17.16 (Release run success on e3d445460). |
-| TEN-GROUP-AUTH-F1 | kpis iteration_count does not count group cost records | loki-ts kpis | LOW | see note | ready@2026-10-17T03:30Z | follow-up |
-| TEN-COST-09 | Skip a Wall that cannot run | engine10 wall stage | HIGH | see note | ready@2026-10-17T03:30Z | architect cost plan |
-| TEN-COST-10 | Plan on haiku for small and normal tasks | engine10 plan stage | MEDIUM | see note | ready@2026-10-17T03:30Z | architect cost plan |
+| TEN-GROUP-AUTH-F1 | kpis iteration_count does not count group cost records | loki-ts kpis | LOW | see note | building@2026-10-17T03:40Z | follow-up |
+| TEN-COST-09 | Skip a Wall that cannot run | engine10 wall stage | HIGH | see note | building@2026-10-17T03:40Z | architect cost plan |
+| TEN-COST-10 | Plan on haiku for small and normal tasks | engine10 plan stage | MEDIUM | see note | building@2026-10-17T03:40Z | architect cost plan |
 | TEN-COST-11 | Wall on haiku, re-authored on sonnet on failure | engine10 wall stage | HIGH | see note | ready@2026-10-17T03:30Z | architect cost plan |
-| TEN-COST-12 | 5-minute cache TTL by default | runner cache settings | MEDIUM | see note | ready@2026-10-17T03:30Z | architect cost plan |
-| TEN-COST-13 | Lean prefix by default | runner prompt prefix | MEDIUM | see note | ready@2026-10-17T03:30Z | architect cost plan |
-| TEN-COST-14 | Wall brief output budget | engine10 wall brief | LOW | see note | ready@2026-10-17T03:30Z | architect cost plan |
+| TEN-COST-12 | 5-minute cache TTL by default | runner cache settings | MEDIUM | see note | building@2026-10-17T03:40Z | architect cost plan |
+| TEN-COST-13 | Lean prefix by default | runner prompt prefix | MEDIUM | see note | building@2026-10-17T03:40Z | architect cost plan |
+| TEN-COST-14 | Wall brief output budget | engine10 wall brief | LOW | see note | building@2026-10-17T03:40Z | architect cost plan |
 | TEN-COST-15 | Plan output trim | engine10 plan stage | LOW | see note | ready@2026-10-17T03:30Z | architect cost plan |
 | TEN-COST-16 | Implement on haiku first (opt-in) | engine10 implement stage | HIGH | see note | ready@2026-10-17T03:30Z | architect cost plan |
 | TEN-COST-19 | Group cost in loki rows of C-F1 | C-F1 harness | LOW | see note | ready@2026-10-17T03:30Z | after COST-04 |
 | TEN-COST-21 | C-F1 .venv and keep_evidence | C-F1 harness | LOW | see note | ready@2026-10-17T03:30Z | after COST-04 and COST-20 |
 | TEN-COST-22 | Cache read pricing correction | model-pricing.json | LOW | see note | rejected@2026-10-17T03:30Z | premise false: Sonnet 5.5 cache read is $0.10 (0.05x) already |
-| TEN-COST-23 | Investigate multi-unit launcher exit 1 | features/speed launcher | HIGH | see note | ready@2026-10-17T03:30Z | architect cost plan |
+| TEN-COST-23 | Investigate multi-unit launcher exit 1 | features/speed launcher | HIGH | see note | building@2026-10-17T03:40Z | architect cost plan |
 | TEN-COST-24 | Opt-in Batch API path for single-shot judge calls under an API key | judge call sites | MEDIUM | see note | ready@2026-10-17T03:30Z | never used in loki start; subscription runs gain nothing from batch |
