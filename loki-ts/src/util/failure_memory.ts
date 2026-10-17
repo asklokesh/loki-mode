@@ -43,8 +43,8 @@ export function recordFailures(dir: string, groups: readonly FailureSignature[])
   if (groups.length === 0) return;
   mkdirSync(dir, { recursive: true });
   const lines = `${groups.map((g) => JSON.stringify(g)).join("\n")}\n`;
-  const existing = existsSync(failuresPath(dir)) ? readFileSync(failuresPath(dir), "utf8") : "";
-  writeFileSync(failuresPath(dir), existing + lines);
+  // O_APPEND write: no read-modify-write window, so concurrent runs cannot drop each other's lines.
+  appendFileSync(failuresPath(dir), lines);
 }
 /** The top `n` failure signatures by total count across all recorded runs
  *  (ENGINE.md section 13: "the top 3 past failure signatures go into the
