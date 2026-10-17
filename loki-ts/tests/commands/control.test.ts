@@ -47,6 +47,31 @@ describe("loki control status runs count", () => {
   });
 });
 
+describe("loki control status json", () => {
+  test("status json up: one object with running pid port url runs", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    expect(await runControl(["status", "--json"], env)).toBe(0);
+    expect(JSON.parse(out)).toEqual({ running: true, pid: 1, port: 1, url: "http://127.0.0.1:1", runs: 3 });
+  });
+  test("status json runs unknown is null, never 0", async () => {
+    stub(() => new Response("boom", { status: 500 }));
+    await runControl(["status", "--json"], env);
+    expect(JSON.parse(out).runs).toBeNull();
+  });
+  test("status json down: running false, exit 1, valid JSON", async () => {
+    globalThis.fetch = (async () => { throw new Error("refused"); }) as unknown as typeof fetch;
+    expect(await runControl(["status", "--json"], env)).toBe(1);
+    const j = JSON.parse(out);
+    expect(j.running).toBe(false);
+    expect(j.pid).toBeNull();
+  });
+  test("status without --json text output unchanged", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    await runControl(["status"], env);
+    expect(out).toBe("loki control: up at http://127.0.0.1:1 (pid 1), 3 runs\n");
+  });
+});
+
 describe("loki control stop", () => {
   let home = "";
   let child: ChildProcess | undefined;
