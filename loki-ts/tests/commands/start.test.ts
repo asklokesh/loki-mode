@@ -86,7 +86,7 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(parseStartArgs(["./prd.md", "--resume", "abc"], collect)).toBe(2);
     const msg = errs.join("");
     expect(msg).toContain("--resume is not supported");
-    expect(msg).toContain("bash route");
+    expect(msg).not.toContain("LOKI_SDK_LOOP");
   });
 
   // --- RUN-25 iter 2: T3(c) reconciled flag surface -----------------------
@@ -374,10 +374,16 @@ describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () =
     }
   });
 
-  it("plain start keeps the 11.3.0 refusal text for unsupported flags", () => {
+  it("unknown flag suggestion: plain start suggests the closest flag and hides runner internals", () => {
     errs.length = 0;
-    expect(parseStartArgs(["./prd.md", "--no-pr"], collect)).toBe(2);
-    expect(errs.join("")).toContain("not supported by the Bun (LOKI_SDK_LOOP) runner");
+    expect(parseStartArgs(["./prd.md", "--bugdet", "4"], collect)).toBe(2);
+    const out = errs.join("");
+    expect(out).toContain("flag --bugdet is not supported by loki start. Did you mean --budget?");
+    expect(out).not.toContain("LOKI_SDK_LOOP");
+    errs.length = 0;
+    expect(parseStartArgs(["x", "--zzzzzzzzzzzz"], collect)).toBe(2);
+    expect(errs.join("")).not.toContain("Did you mean");
+    expect(errs.join("")).not.toContain("LOKI_SDK_LOOP");
   });
 
   it("with --attempts every legacy-only runner flag is refused with exit 2, never accepted and dropped", () => {

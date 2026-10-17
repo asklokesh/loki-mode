@@ -20,6 +20,7 @@ import { tokenFreeEnv } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
+import { suggestWord } from "../cli/registry.ts";
 import { VALID_PROVIDERS } from "../runner/router/cost_preview.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
@@ -227,10 +228,9 @@ export function parseStartArgs(
           err("Runner and orchestration flags were only honored by the legacy loop; remove them or drop --attempts.\n");
           return 2;
         }
-        err(`start: flag ${name} is not supported by the Bun (LOKI_SDK_LOOP) runner.\n`);
-        err(
-          "Orchestration flags (--parallel, --github, --issue, --sandbox, --api, --bg, mirofish) run on the bash route automatically; if you reached this, run without LOKI_SDK_LOOP.\n",
-        );
+        const near = suggestWord(name, [...accepted].filter((f) => f.startsWith("--")));
+        err(`start: flag ${name} is not supported by loki start.${near ? ` Did you mean ${near}?` : ""}\n`);
+        err("Run 'loki start --help' to see the supported flags.\n");
         return 2;
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
