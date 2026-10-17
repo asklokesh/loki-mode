@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -207,5 +208,27 @@ describe("projectInterpreter (TEN-COST-09)", () => {
       expect(projectInterpreter(repo({ ".venv/bin/python": "" }))).toBe("project");
       expect(projectInterpreter(repo({ "venv/bin/python": "" }))).toBe("project");
     } finally { if (saved !== undefined) process.env["VIRTUAL_ENV"] = saved; }
+  });
+});
+
+describe("git ls-files source (TEN-SPEED-13)", () => {
+  const git = (cwd: string, ...a: string[]): void => { execFileSync("git", a, { cwd, stdio: "ignore" }); };
+  test("tracked files only: an ignored dir is not walked", () => {
+    const root = repo({ ".gitignore": "vendor/\n", "pytest.ini": "", "test_a.py": "", "vendor/test_ignored.py": "" });
+    git(root, "init", "-q");
+    const map = buildTestMap(root);
+    expect(map.tests.map((t) => t.path)).toEqual(["test_a.py"]);
+  });
+  test("untracked-not-ignored files still count, output sorted", () => {
+    const root = repo({ "pytest.ini": "", "test_b.py": "", "test_a.py": "" });
+    git(root, "init", "-q");
+    expect(buildTestMap(root).tests.map((t) => t.path)).toEqual(["test_a.py", "test_b.py"]);
+  });
+  test("outside a repo the walk fallback gives the same map", () => {
+    const files = { "pytest.ini": "", "test_a.py": "", "sub/test_b.py": "" };
+    const plain = buildTestMap(repo(files));
+    const root = repo(files);
+    git(root, "init", "-q");
+    expect(buildTestMap(root).tests).toEqual(plain.tests);
   });
 });
