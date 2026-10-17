@@ -1,8 +1,8 @@
 // loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed by HEAD^{tree}.
 // Reads never throw (missing or corrupt = miss) and write nothing; callers time writes after the PR.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { homeLokiDir } from "../util/paths.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap } from "./types.ts";
@@ -44,10 +44,16 @@ export function writeJson(path: string, dir: string, data: unknown): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(data));
 }
+/** TEN-STABILITY-45: after a write keep the newest 5 `<prefix>*.json` files (the one just written always survives). Never throws. */
+export function pruneCache(dir: string, prefix: string, keepPath: string, keep = 5): void {
+  const mt = (f: string): number => { try { return statSync(resolve(dir, f)).mtimeMs; } catch { return 0; } };
+  try { readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json") && f !== basename(keepPath)).sort((x, y) => mt(y) - mt(x) || (x < y ? 1 : -1)).slice(keep - 1).forEach((f) => { try { unlinkSync(resolve(dir, f)); } catch { /* best effort */ } }); } catch { /* prune failure never fails a write */ }
+}
+const writeAndPrune = (path: string, dir: string, prefix: string, data: unknown): void => { writeJson(path, dir, data); pruneCache(dir, prefix, path); };
 export const readRepoMapCache = (dir: string, tree: string): RepoMap | null => readJson<RepoMap>(resolve(dir, `repomap2-${tree}.json`), isRepoMap);
-export const writeRepoMapCache = (dir: string, tree: string, map: RepoMap): void => writeJson(resolve(dir, `repomap2-${tree}.json`), dir, map);
+export const writeRepoMapCache = (dir: string, tree: string, map: RepoMap): void => writeAndPrune(resolve(dir, `repomap2-${tree}.json`), dir, "repomap2-", map);
 export const readTestMapCache = (dir: string, tree: string): TestMap | null => readJson<TestMap>(resolve(dir, `testmap-${tree}.json`), isTestMap);
-export const writeTestMapCache = (dir: string, tree: string, map: TestMap): void => writeJson(resolve(dir, `testmap-${tree}.json`), dir, map);
+export const writeTestMapCache = (dir: string, tree: string, map: TestMap): void => writeAndPrune(resolve(dir, `testmap-${tree}.json`), dir, "testmap-", map);
 /** TEN-SPEED-04: hit/miss counts for the tree-keyed builders below. */
 export const cacheStats = { hits: 0, misses: 0 };
 function viaCache<T>(hit: T | null, build: () => T, save: (m: T) => void): T {
