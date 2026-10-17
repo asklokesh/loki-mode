@@ -2077,14 +2077,31 @@ inj_run_bun_default() {
 
 case_allowtoken() {
     # FC-25c / SAFEGIT-REPOCONFIG 1+2: allowToken keeps the credential, so only
-    # the two fetch callers may pass it to safeGit. Any other src file is a leak.
+    # the two fetch callers may pass it to safeGit, and only in the fetch-only form.
+    # safeGitEnv(base, true) is the positional spelling of the same opt-in.
     local src="$REPO_ROOT/loki-ts/src" hits f n
     [ -d "$src" ] || { nok "vacuous: $src is missing"; return; }
     n="$(grep -rl 'allowToken' "$src" | grep -c .)"
     [ "$n" -ge 3 ] || nok "vacuous: expected allowToken in safe_git, base_guard and modernize_unit, found $n files"
     hits="$(grep -rl 'allowToken' "$src" | grep -v -e '/util/safe_git\.ts$' -e '/util/base_guard\.ts$' -e '/util/modernize_unit\.ts$')"
-    for f in $hits; do
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
         nok "allowToken used outside the allowed fetch callers: ${f#"$REPO_ROOT"/}"
+    done <<EOF_HITS
+$hits
+EOF_HITS
+    hits="$(grep -rlE 'safeGitEnv\([^()]*,' "$src" | grep -v -e '/util/safe_git\.ts$')"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        nok "safeGitEnv called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
+    done <<EOF_HITS
+$hits
+EOF_HITS
+    for f in base_guard modernize_unit; do
+        if [ "$(grep -c 'allowToken' "$src/util/$f.ts")" -ne 1 ] \
+            || ! grep -qF 'allowToken: args[0] === "fetch"' "$src/util/$f.ts"; then
+            nok "$f.ts allowToken is not the single fetch-only form (allowToken: args[0] === \"fetch\")"
+        fi
     done
 }
 
