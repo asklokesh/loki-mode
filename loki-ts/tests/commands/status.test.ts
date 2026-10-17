@@ -74,13 +74,13 @@ describe("status: --help", () => {
   it("prints usage and returns 0", async () => {
     const r = await runWithCapture(["--help"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Usage: loki status [--json]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
   });
 
   it("accepts -h alias", async () => {
     const r = await runWithCapture(["-h"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Usage: loki status [--json]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
   });
 });
 
@@ -89,7 +89,7 @@ describe("status: unknown flag", () => {
     const r = await runWithCapture(["--bogus"]);
     expect(r.exitCode).toBe(1);
     expect(stripAnsi(r.stdout)).toContain("Unknown flag: --bogus");
-    expect(r.stdout).toContain("Usage: loki status [--json]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
   });
 });
 

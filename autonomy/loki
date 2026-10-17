@@ -1838,7 +1838,7 @@ show_help_all() {
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
-    echo "  status [--json]  Show current status (--json for machine-readable)"
+    echo "  status [--json|--badge]  Show current status (--json machine-readable, --badge deploy badge)"
     echo "  next             Run the right next step for you (resume / ship / why)"
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
@@ -6553,10 +6553,11 @@ cmd_status() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) cmd_status_json; return $? ;;
-            --help|-h) echo "Usage: loki status [--json]"; return 0 ;;
+            --badge) echo "loki status --badge requires the Bun CLI (loki-ts); not available on the bash fallback" >&2; return 1 ;;
+            --help|-h) echo "Usage: loki status [--json|--badge]"; return 0 ;;
             *)
                 echo -e "${RED}Unknown flag: $1${NC}"
-                echo "Usage: loki status [--json]"
+                echo "Usage: loki status [--json|--badge]"
                 return 1
                 ;;
         esac

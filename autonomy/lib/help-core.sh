@@ -19,7 +19,7 @@ help_core_screen() {
     echo "  quick \"<task>\"   One small task, no PR"
     echo ""
     echo "Check:"
-    echo "  status [--json]  What is running and where it stands"
+    echo "  status [--json|--badge]  What is running and where it stands"
     echo "  verify [--json]  Deterministic verification (CI-gate exit codes)"
     echo "  receipt          Inspect the proof-of-run receipt (alias of: proof)"
     echo "  diff / undo      See what a run changed; undo <run> to plan or apply a rollback"

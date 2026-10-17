@@ -743,8 +743,6 @@ function lastRunLine(dir: string): string {
   }
 }
 
-// Newest .loki/deploys/*.json (loki.deploy/1): target, head, health, rollback and the signature
-// verdict from the one existing verify path (verify_cmd main; its stdout is muted here). Silent when none.
 interface LastDeploy { path: string; newest: string; rec: Record<string, unknown> | null; verdict: string }
 
 // Loads the newest loki.deploy/1 record and its signature verdict. rec is null when unreadable.
@@ -981,11 +979,11 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
       return runStatusBadge();
     }
     if (flag === "--help" || flag === "-h") {
-      process.stdout.write(`Usage: loki status [--json]\n`);
+      process.stdout.write(`Usage: loki status [--json|--badge]\n`);
       return 0;
     }
     process.stdout.write(`${RED}Unknown flag: ${flag}${NC}\n`);
-    process.stdout.write(`Usage: loki status [--json]\n`);
+    process.stdout.write(`Usage: loki status [--json|--badge]\n`);
     return 1;
   }
   return runStatusText();
