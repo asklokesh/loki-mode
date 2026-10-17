@@ -217,6 +217,24 @@ describe("first run (TEN-UX-01)", () => {
     expect(r.warnings.filter((w) => w.startsWith("initialized a new git repository in"))).toEqual([`initialized a new git repository in ${dir} (LOKI_AUTO_GIT_INIT=0 to refuse)`]);
   });
 
+  test("ds_store only folder is initialised via the start entry", () => {
+    const { dir, env } = emptyFolder();
+    writeFileSync(join(dir, ".DS_Store"), "x");
+    const r = startIn(dir, env);
+    expect(r.stderr).toContain("initialized a new git repository in");
+    expect(r.stderr).not.toContain("This folder is not empty");
+    expect(existsSync(join(dir, ".git"))).toBe(true);
+  });
+
+  test("ds_store plus a real file stays fatal and untouched", () => {
+    const { dir, env } = emptyFolder();
+    writeFileSync(join(dir, ".DS_Store"), "x");
+    writeFileSync(join(dir, "a.txt"), "x");
+    const r = startIn(dir, env);
+    expect(r.stderr).toContain("git init && git add . && git commit -m init");
+    expect(existsSync(join(dir, ".git"))).toBe(false);
+  });
+
   test("folder with a file and no repo stays fatal and untouched", async () => {
     const { dir, env } = emptyFolder();
     writeFileSync(join(dir, "a.txt"), "x");
