@@ -10009,7 +10009,7 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination] [deployed_url] [health_url_source]
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination] [deployed_url] [health_url_source] [env_keys_csv] [env_source]
 # Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
 # receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
 # authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
@@ -10034,6 +10034,9 @@ _deploy_record() {
     local receipt_sha="${11:-}" started_at="${12:-}" finished_at="${13:-}" target="${14:-}" canary="${15:-false}"
     local post_rb="${16:-unchecked}" hcode_rec="${17:-}" hmatch="${18:-}" tree_sha="${19:-}" dest_rec="${20:-}"
     local deployed_url="${21:-}" hsrc="${22:-}"
+    # --env-file: key NAMES only (comma-joined, validated identifiers) and the file
+    # path. A value is never passed here, so the signed record cannot carry one.
+    local env_keys_csv="${23:-}" env_source="${24:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
@@ -10042,6 +10045,7 @@ _deploy_record() {
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
     DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
     DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" DR_DEST="$dest_rec" DR_DURL="$deployed_url" DR_HSRC="$hsrc" \
+    DR_ENVK="$env_keys_csv" DR_ENVS="$env_source" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -10073,6 +10077,8 @@ json.dump({
     "destination": os.environ.get("DR_DEST", ""),
     "deployed_url": os.environ.get("DR_DURL", ""),
     "health_url_source": os.environ.get("DR_HSRC", ""),
+    "env_keys": sorted(k for k in os.environ.get("DR_ENVK", "").split(",") if k),
+    "env_source": os.environ.get("DR_ENVS", ""),
     "health_http_code": int(os.environ["DR_HC"]) if os.environ.get("DR_HC", "").isdigit() else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
@@ -10241,6 +10247,59 @@ sys.exit(0 if ok else 1)' "$f" "$sha" 2>/dev/null || continue
     return 1
 }
 
+# _deploy_env_load <env_file> <example_file>
+# Parses KEY=VALUE lines with NO shell evaluation (python, never source/eval) and
+# writes NUL-terminated records to stdout: one "KEY=VALUE" per key (sorted by
+# key), then "__LOKI_ENV_OK__". On any problem it writes a single
+# "__LOKI_ENV_ERR__:<reason>" record instead. A reason names keys and line
+# numbers only, never a value. When <example_file> exists, every key it lists
+# must be present in <env_file>, else the reason names the missing keys.
+_deploy_env_load() {
+    python3 - "$1" "$2" <<'PYEOF'
+import os, re, sys
+KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+def out(s):
+    sys.stdout.buffer.write(s.encode("utf-8", "surrogateescape") + b"\0")
+def parse(path, label):
+    found = {}
+    with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if "=" not in line:
+                raise ValueError("%s line %d is not KEY=VALUE" % (label, n))
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if not KEY.match(k):
+                raise ValueError("%s line %d has an invalid key name" % (label, n))
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            elif " #" in v:
+                v = v.split(" #", 1)[0].rstrip()
+            if "\0" in v:
+                raise ValueError("%s key %s has a NUL byte in its value" % (label, k))
+            found[k] = v
+    return found
+try:
+    env = parse(sys.argv[1], "env file")
+    if not env:
+        raise ValueError("env file has no KEY=VALUE entries")
+    if os.path.isfile(sys.argv[2]):
+        missing = sorted(set(parse(sys.argv[2], ".env.example")) - set(env))
+        if missing:
+            raise ValueError("env file is missing key(s) listed in .env.example: " + ", ".join(missing))
+except (OSError, ValueError) as e:
+    out("__LOKI_ENV_ERR__:" + (str(e) if isinstance(e, ValueError) else "cannot read the env file"))
+    sys.exit(0)
+for k in sorted(env):
+    out(k + "=" + env[k])
+out("__LOKI_ENV_OK__")
+PYEOF
+}
+
 # _deploy_try_execute <dir> <type>
 # The ONLY place a deploy command is ever run. Evaluates the gate, and either
 # executes + records, or REFUSES naming every failed check. Returns the deploy
@@ -10288,6 +10347,52 @@ _deploy_try_execute() {
                 return 1
                 ;;
         esac
+    fi
+
+    # --env-file: values live ONLY in env_pairs and the provider argv. Stdout, the
+    # 'Running:' line and the record carry names (K=***), never values.
+    # Documented verbs only: Vercel '-e K=V' per key on the deploy itself; Fly
+    # 'fly secrets set --stage K=V ...' before 'fly deploy'; Netlify
+    # 'netlify env:import FILE' and Cloudflare 'wrangler secret bulk FILE' before
+    # the deploy (the provider reads FILE, so no value enters argv).
+    local env_file="${_LOKI_DEPLOY_ENV_FILE:-}" env_kind="" env_keys="" env_disp="" env_pre_disp="" _env_rec _env_ok=false _env_err=""
+    local -a env_pairs=() env_pre_argv=()
+    if [ -n "$env_file" ]; then
+        case "$command" in
+            "vercel --prod") env_kind="vercel" ;;
+            "fly deploy") env_kind="fly" ;;
+            "netlify deploy --prod") env_kind="netlify" ;;
+            "wrangler deploy") env_kind="cloudflare" ;;
+            *)
+                echo -e "${RED}REFUSED: --env-file is not supported for: ${command}${NC}" >&2
+                echo "  No documented env verb is wired for this provider. Nothing was run." >&2
+                return 1
+                ;;
+        esac
+        while IFS= read -r -d '' _env_rec; do
+            case "$_env_rec" in
+                __LOKI_ENV_OK__) _env_ok=true ;;
+                __LOKI_ENV_ERR__:*) _env_err="${_env_rec#__LOKI_ENV_ERR__:}" ;;
+                *) env_pairs+=("$_env_rec") ;;
+            esac
+        done < <(_deploy_env_load "$env_file" "$dir/.env.example")
+        if [ "$_env_ok" != true ]; then
+            echo -e "${RED}REFUSED: --env-file: ${_env_err:-the env file could not be parsed}${NC}" >&2
+            echo "  Nothing was run." >&2
+            return 1
+        fi
+        case "$env_kind" in
+            fly) env_pre_argv=(fly secrets set --stage); env_pre_disp="fly secrets set --stage" ;;
+            netlify) env_pre_argv=(netlify env:import "$env_file"); env_pre_disp="netlify env:import ${env_file}" ;;
+            cloudflare) env_pre_argv=(wrangler secret bulk "$env_file"); env_pre_disp="wrangler secret bulk ${env_file}" ;;
+        esac
+        for _env_rec in "${env_pairs[@]}"; do
+            env_keys="${env_keys:+${env_keys},}${_env_rec%%=*}"
+            case "$env_kind" in
+                vercel) env_disp="${env_disp} -e ${_env_rec%%=*}=***" ;;
+                fly) env_pre_argv+=("$_env_rec"); env_pre_disp="${env_pre_disp} ${_env_rec%%=*}=***" ;;
+            esac
+        done
     fi
 
     local reasons
@@ -10346,17 +10451,18 @@ _deploy_try_execute() {
     else
         echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
     fi
-    if [ "$canary" = true ]; then echo "Running (canary): ${exec_cmd}"; else echo "Running: ${command}"; fi
+    [ -n "$env_pre_disp" ] && echo "Running (env): ${env_pre_disp}"
+    if [ "$canary" = true ]; then echo "Running (canary): ${exec_cmd}${env_disp}"; else echo "Running: ${command}${env_disp}"; fi
     echo ""
 
     # Run in the project dir. No credential env var is read, set, or forwarded:
     # the command inherits the user's already-authenticated CLI session as-is.
     #
-    # eval is used because the canonical commands carry their own flags
-    # ("vercel --prod", "netlify deploy --prod --dir=<out>") and must word-split.
-    # The string is NOT user input: it comes from the hardcoded
-    # _deploy_options_for_type table, and the only path here has already passed
-    # the destructive-operation check in _deploy_gate.
+    # The deploy runs as an argv array, never through eval: the canonical
+    # command ("vercel --prod") is word-split from the hardcoded
+    # _deploy_options_for_type table (already past the destructive-operation
+    # check in _deploy_gate), and --env-file values are appended as single
+    # array elements, so a value such as $(cmd) is never evaluated.
     # Resolve the rollback target BEFORE deploying: after it, the previous Fly
     # release is no longer the newest one and cannot be recovered.
     local rb_cmd="" rb_note=""
@@ -10377,6 +10483,24 @@ _deploy_try_execute() {
     fi
 
     local rc=0 started_at finished_at purl="" canary_out=""
+    local -a deploy_argv=()
+    read -r -a deploy_argv <<<"$exec_cmd"
+    if [ "$env_kind" = vercel ]; then
+        for _env_rec in "${env_pairs[@]}"; do deploy_argv+=(-e "$_env_rec"); done
+    fi
+    # What the record and messages name: the command with values masked as K=***.
+    local exec_disp="${env_pre_disp:+${env_pre_disp}; }${exec_cmd}${env_disp}"
+    if [ -n "$env_pre_disp" ]; then
+        # The env step runs after the gate and before the deploy; if it fails the
+        # deploy is NOT run (a deploy missing its env is not the one asked for).
+        local env_rc=0
+        ( cd "$dir" && "${env_pre_argv[@]}" ) || env_rc=$?
+        if [ "$env_rc" -ne 0 ]; then
+            echo -e "${RED}REFUSED: the env step exited ${env_rc}: ${env_pre_disp}${NC}" >&2
+            echo "  The deploy was NOT run." >&2
+            return "$env_rc"
+        fi
+    fi
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     local deployed_url="" health_src=""
     [ -n "$health_url" ] && health_src="flag"
@@ -10385,8 +10509,7 @@ _deploy_try_execute() {
         # Staged: a preview deploy (no --prod), probe the preview URL, promote only if healthy.
         # Nothing reaches production before the probe, so there is nothing to roll back.
         rb_cmd=""; auto_rollback=false
-        exec_cmd="vercel"
-        canary_out="$( cd "$dir" && eval "$exec_cmd" )" || rc=$?
+        canary_out="$( cd "$dir" && "${deploy_argv[@]}" )" || rc=$?
         printf '%s\n' "$canary_out"
         purl="$(grep -Eo 'https?://[^[:space:]]+' <<<"$canary_out" | tail -n 1)"
         if [ "$rc" -eq 0 ] && [ -n "$purl" ]; then
@@ -10395,7 +10518,7 @@ _deploy_try_execute() {
             if hcode="$(_deploy_probe_health "$health_url" "$health_match")"; then
                 health_status="healthy"
                 echo "Promoting: vercel promote ${purl}"
-                exec_cmd="vercel; vercel promote ${purl}"
+                exec_disp="${exec_disp}; vercel promote ${purl}"
                 ( cd "$dir" && vercel promote "$purl" ) || rc=$?
             else
                 health_status="FAILED_HEALTH"
@@ -10418,7 +10541,7 @@ _deploy_try_execute() {
         fi
         case $- in *e*) dep_errexit=1 ;; esac
         set +e
-        ( cd "$dir" && eval "$exec_cmd" ) 2>&1 | tee "$dep_tmp"
+        ( cd "$dir" && "${deploy_argv[@]}" ) 2>&1 | tee "$dep_tmp"
         rc=${PIPESTATUS[0]}
         [ "$dep_errexit" -eq 1 ] && set -e
         if [ "$rc" -eq 0 ] && [ "$dep_tmp" != /dev/null ]; then
@@ -10472,9 +10595,9 @@ _deploy_try_execute() {
     local rec rsha
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
-    rec="$(_deploy_record "$dir" "$exec_cmd" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
+    rec="$(_deploy_record "$dir" "$exec_disp" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
         "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
-        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest" "$deployed_url" "$health_src")"
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest" "$deployed_url" "$health_src" "$env_keys" "$env_file")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -10623,6 +10746,7 @@ cmd_deploy() {
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
     # Per-invocation like --execute; local so an ambient env var cannot set them.
     local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_HEALTH_MATCH="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false _LOKI_DEPLOY_DESTINATION=""
+    local _LOKI_DEPLOY_ENV_FILE=""
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -10630,7 +10754,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--destination preview|staging|production] [--health-url URL [--health-match STR] [--auto-rollback]]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary] [--env-file FILE]] [--destination preview|staging|production] [--health-url URL [--health-match STR] [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -10720,6 +10844,16 @@ cmd_deploy() {
                 echo "                 With --execute: preview/staging run a non-production deploy"
                 echo "                 (Vercel only); production is refused unless a VERIFIED staging"
                 echo "                 deploy record exists for the same SHA. Unset keeps today's behavior."
+                echo "  --env-file FILE"
+                echo "                 With --execute: push KEY=VALUE lines from FILE to the provider"
+                echo "                 (parsed, never shell-evaluated). Refuses when a key listed in"
+                echo "                 .env.example is missing from FILE. Vercel: 'vercel --prod -e K=V'"
+                echo "                 per key; Fly: 'fly secrets set --stage K=V ...' then 'fly deploy';"
+                echo "                 Netlify: 'netlify env:import FILE'; Cloudflare: 'wrangler secret"
+                echo "                 bulk FILE'. Any other provider refuses with nothing run. If the env"
+                echo "                 step fails the deploy is not run. Values are masked as K=*** in"
+                echo "                 output; the deploy record stores env_keys (names) and env_source,"
+                echo "                 never values."
                 echo "  --allow-unanchored"
                 echo "                 Proceed when the receipt records NO baseline (nothing"
                 echo "                 about this tree is proven). Never bypasses a recorded"
@@ -10770,9 +10904,32 @@ cmd_deploy() {
             --no-clip)
                 do_clip=false
                 ;;
+            --env-file)
+                case "${2:-}" in
+                    -*|"") echo "loki deploy --env-file requires a file path" >&2; return 1 ;;
+                    *) _LOKI_DEPLOY_ENV_FILE="$2"; shift ;;
+                esac
+                ;;
+            --env-file=*)
+                _LOKI_DEPLOY_ENV_FILE="${1#--env-file=}"
+                [ -n "$_LOKI_DEPLOY_ENV_FILE" ] || { echo "loki deploy --env-file requires a file path" >&2; return 1; }
+                ;;
         esac
         shift
     done
+
+    if [ -n "$_LOKI_DEPLOY_ENV_FILE" ]; then
+        if [ "$do_execute" != true ]; then
+            echo "loki deploy --env-file requires --execute (the advisory run pushes nothing)" >&2
+            return 1
+        fi
+        if [ ! -f "$_LOKI_DEPLOY_ENV_FILE" ] || [ ! -r "$_LOKI_DEPLOY_ENV_FILE" ]; then
+            echo "loki deploy --env-file: not a readable file: $_LOKI_DEPLOY_ENV_FILE" >&2
+            return 1
+        fi
+        # Absolute, so a provider verb run from the project dir finds the same file.
+        _LOKI_DEPLOY_ENV_FILE="$(cd "$(dirname -- "$_LOKI_DEPLOY_ENV_FILE")" && pwd -P)/$(basename -- "$_LOKI_DEPLOY_ENV_FILE")"
+    fi
 
     if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
         echo "loki deploy --auto-rollback requires --health-url (no health signal, no rollback)" >&2
