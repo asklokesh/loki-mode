@@ -1323,6 +1323,22 @@ describe("doctor --quiet", () => {
     expect(short.result).toBe(full.result);
   });
 
+  it("install hint follows its row", async () => {
+    stubPythonImportOk();
+    const saved = process.env.PATH;
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      const quiet = await captureStdio(() => runDoctor(["--quiet"]));
+      const lines = quiet.cap.out.split("\n").map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+      const i = lines.findIndex((l) => /\b(FAIL|WARN)\b.*claude/i.test(l));
+      expect(i).toBeGreaterThanOrEqual(0);
+      expect(lines[i + 1]).toContain("Install: npm install -g @anthropic-ai/claude-code");
+      expect(quiet.cap.err).not.toContain("Install:");
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+
   it("--quiet leaves --json unaffected", async () => {
     stubPythonImportOk();
     const a = await captureStdio(() => runDoctor(["--json"]));

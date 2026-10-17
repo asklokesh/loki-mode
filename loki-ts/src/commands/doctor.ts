@@ -1990,8 +1990,21 @@ async function runTextQuiet(): Promise<number> {
     buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   };
+  // TEN-UX-27: route "Install:" hints (stderr in full mode, for bun-parity) into
+  // the same buffer so each hint stays directly under its row.
+  const origErr = process.stderr.write.bind(process.stderr);
+  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    if (/^\s+(\x1b\[[0-9;]*m)*Install:/.test(text)) { buf += text; return true; }
+    return (origErr as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+  };
   let code: number;
-  try { code = await runText(); } finally { (process.stdout as { write: unknown }).write = orig; }
+  try {
+    code = await runText();
+  } finally {
+    (process.stdout as { write: unknown }).write = orig;
+    (process.stderr as { write: unknown }).write = origErr;
+  }
   orig(filterQuietDoctor(buf));
   return code;
 }
