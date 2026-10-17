@@ -97,6 +97,8 @@ describe("classifyFailure: real permanent provider failures still stop early", (
     ["malformed request", "invalid_request_error: messages must be non-empty", "bad_request"],
     ["exhausted credit", "Your credit balance is too low to access the API", "quota_exhausted"],
     ["insufficient quota", "insufficient_quota: please add funds", "quota_exhausted"],
+    ["exceeded current quota openai", "You exceeded your current quota, please check your plan and billing details.", "quota_exhausted"],
+    ["exceeded current quota gemini", "RESOURCE_EXHAUSTED: check your plan and billing details", "quota_exhausted"],
   ];
 
   for (const [name, text, reason] of permanent) {
@@ -133,6 +135,17 @@ describe("rate limits are never permanent", () => {
     const d = classifyFailure("429 rate limit exceeded: insufficient quota for this minute");
     expect(d.klass).toBe("transient");
     expect(d.reason).toBe("transient_marker");
+  });
+});
+
+describe("exceeded current quota vs rate limit wording", () => {
+  it("exceeded current quota with a rate limit marker stays transient", () => {
+    const d = classifyFailure("429 Too Many Requests: rate limit reached, you exceeded your current quota per minute");
+    expect(d.klass).toBe("transient");
+    expect(d.reason).toBe("transient_marker");
+  });
+  it("exceeded current quota: a bare RESOURCE_EXHAUSTED without billing text stays transient", () => {
+    expect(classifyFailure("RESOURCE_EXHAUSTED: too many concurrent requests").klass).toBe("transient");
   });
 });
 

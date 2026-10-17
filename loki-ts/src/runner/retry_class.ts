@@ -50,7 +50,7 @@ const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request)/i],
   // "quota"/"billing" = the account is out of funds; unlike a rate limit this
   // does not clear on its own within a run.
-  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low)/i],
+  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low|exceeded your current quota|check your plan and billing details)/i],
 ];
 
 // Explicitly TRANSIENT markers that must win even if a permanent-looking word
