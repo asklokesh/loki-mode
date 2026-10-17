@@ -971,4 +971,60 @@ describe("status --probe: re-probe last deploy health URL", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("no health URL");
   });
+
+  describe("--json", () => {
+    const parse = (out: string): Record<string, unknown> => JSON.parse(out) as Record<string, unknown>;
+    it("healthy URL prints one JSON object, exit 0", async () => {
+      fixture({ health_url: url("/ok") });
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(0);
+      expect(parse(r.stdout)).toEqual({ url: url("/ok"), ok: true, status: 200, attempts: 1, reason: null });
+    });
+    it("flag order does not matter", async () => {
+      fixture({ health_url: url("/ok") });
+      const r = await runWithCapture(["--json", "--probe"]);
+      expect(r.exitCode).toBe(0);
+      expect(parse(r.stdout)["ok"]).toBe(true);
+    });
+    it("flaky URL reports attempts 2 and keeps stdout pure JSON", async () => {
+      fixture({ health_url: url("/flaky") });
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(0);
+      const o = parse(r.stdout);
+      expect(o["attempts"]).toBe(2);
+      expect(o["ok"]).toBe(true);
+    });
+    it("a 500 exits 1 with ok false, status and reason", async () => {
+      fixture({ health_url: url("/down") });
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(1);
+      expect(parse(r.stdout)).toEqual({ url: url("/down"), ok: false, status: 500, attempts: 2, reason: "returned 500" });
+    });
+    it("cross-host redirect exits 1 with reason", async () => {
+      fixture({ health_url: url("/xhost") });
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(1);
+      expect(String(parse(r.stdout)["reason"])).toContain("redirected to a different host");
+    });
+    it("unreachable URL exits 1 with null status", async () => {
+      fixture({ health_url: "http://127.0.0.1:1/x" });
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(1);
+      const o = parse(r.stdout);
+      expect(o["status"]).toBeNull();
+      expect(String(o["reason"])).toContain("unreachable");
+    });
+    it("no deploy record exits 0 with ok true and null url", async () => {
+      fixture(null);
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(0);
+      expect(parse(r.stdout)).toEqual({ url: null, ok: true, status: null, attempts: 0, reason: "no deploy record" });
+    });
+    it("record without health_url exits 0 with ok true", async () => {
+      fixture({});
+      const r = await runWithCapture(["--probe", "--json"]);
+      expect(r.exitCode).toBe(0);
+      expect(parse(r.stdout)["url"]).toBeNull();
+    });
+  });
 });
