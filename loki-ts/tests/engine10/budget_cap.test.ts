@@ -246,6 +246,12 @@ describe("every start mode honors the one cap", () => {
     expect(runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x" } as NodeJS.ProcessEnv)).toEqual({ usd: DEFAULT_MAX_COST_USD, note: capNote(DEFAULT_MAX_COST_USD, "default") });
     expect(runnerBudget(undefined, "/nonexistent", {} as NodeJS.ProcessEnv)).toEqual({ usd: undefined, note: null });
   });
+  test("runner keeps a dollar cap when LOKI_BUDGET_LIMIT is unparseable", () => {
+    const r = runnerBudget(undefined, "/nonexistent", { ANTHROPIC_API_KEY: "x", LOKI_BUDGET_LIMIT: "5usd" } as NodeJS.ProcessEnv);
+    expect(r.usd).toBe(DEFAULT_MAX_COST_USD);
+    expect(r.note).toContain("LOKI_BUDGET_LIMIT must be a positive number");
+    expect(runnerBudget(undefined, "/nonexistent", { LOKI_BUDGET_LIMIT: "5usd" } as NodeJS.ProcessEnv).usd).toBe(DEFAULT_MAX_COST_USD);
+  });
   test("attempts split the total: 3 attempts on a $3 cap get $1 each", () => {
     expect(perAttemptCap(3, 3)).toBe(1);
     expect(perAttemptCap(1, 3)).toBe(0.33);

@@ -75,7 +75,8 @@ export function childBudgetLimit(remaining: number | null): string | null { retu
 export function runnerBudget(explicit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number | undefined; note: string | null } {
   if (explicit !== undefined) return { usd: explicit, note: null };
   const c = resolveCap(null, repoDir, env);
-  return "error" in c || c.usd <= 0 ? { usd: undefined, note: null } : { usd: c.usd, note: capNote(c.usd, c.source) };
+  if ("error" in c) return { usd: DEFAULT_MAX_COST_USD, note: `${c.error}; falling back to ${capNote(DEFAULT_MAX_COST_USD, "default")}` }; // fail closed: a bad limit never means no cap
+  return c.usd <= 0 ? { usd: undefined, note: null } : { usd: c.usd, note: capNote(c.usd, c.source) };
 }
 /** `--attempts N` shares one total: each attempt gets total/N (cents, min 0.01). undefined = no dollar cap to divide. */
 export function perAttemptCap(totalUsd: number | undefined, n: number): number | undefined {
