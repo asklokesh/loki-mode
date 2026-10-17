@@ -5,6 +5,17 @@
 # Usage:
 #   ./scripts/release.sh patch|minor|major [--dry-run]
 #   ./scripts/release.sh patch|minor|major --bump-only
+#   ./scripts/release.sh [patch|minor|major] --ship --notes FILE
+#
+# --ship (TEN-RELEASE-FAST): the Release Manager recipe as one command. Runs
+# the same release gate, then preflights (notes header is '## v<new>',
+# CHANGELOG line 8 is '## v<current>', origin/main is an ancestor of HEAD),
+# bumps, inserts the notes as the new CHANGELOG section, rebuilds dist,
+# stages by name (refusing CONTROL.md, usage-readings.tsv, bun.lock, out2.txt
+# and .claude/providers.ts), commits as asklokesh, re-checks ancestry, runs
+# gitleaks on origin/main..HEAD, waits up to 300s for an in-flight Release
+# run, pushes with LOKI_RELEASE_MANAGER=1 and verifies HEAD == origin/main.
+# Prints a [TIME] line per phase. Every refusal exits 4 before the push.
 #
 # This script:
 #   1. Bumps version in every file CLAUDE.md's "Release Workflow" section 1
@@ -61,6 +72,8 @@ log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 DRY_RUN="false"
 BUMP_ONLY="false"
 CHECK_CLEAN="false"
+SHIP="false"
+SHIP_NOTES=""
 BUMP_TYPE=""
 
 # Parse arguments. Sets the globals DRY_RUN and BUMP_TYPE directly instead of
@@ -82,6 +95,17 @@ parse_args() {
             --check-clean)
                 CHECK_CLEAN="true"
                 ;;
+            --ship)
+                SHIP="true"
+                ;;
+            --notes)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--notes needs a FILE"
+                    exit 1
+                fi
+                SHIP_NOTES="$2"
+                shift
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -94,6 +118,22 @@ parse_args() {
         esac
         shift
     done
+
+    if [ "$SHIP" = "true" ]; then
+        [ -n "$BUMP_TYPE" ] || BUMP_TYPE="patch"
+        if [ "$DRY_RUN" = "true" ] || [ "$BUMP_ONLY" = "true" ]; then
+            log_error "--ship cannot be combined with --dry-run or --bump-only"
+            exit 1
+        fi
+        if [ -z "$SHIP_NOTES" ] || [ ! -s "$SHIP_NOTES" ]; then
+            log_error "--ship needs --notes FILE (an existing, non-empty file)"
+            exit 1
+        fi
+        SHIP_NOTES="$(cd "$(dirname -- "$SHIP_NOTES")" && pwd)/$(basename -- "$SHIP_NOTES")"
+    elif [ -n "$SHIP_NOTES" ]; then
+        log_error "--notes is only valid with --ship"
+        exit 1
+    fi
 
     if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" ]]; then
         log_error "Bump type required: patch, minor, or major"
@@ -116,6 +156,11 @@ Options:
   --bump-only  Bump version files + loki-ts/dist, then exit. No commit, no push.
   --check-clean  Run after the release commit: exit 1 naming any tracked file
                still modified (E-151: a stamped dist map left out of the commit).
+  --ship --notes FILE
+               One-command ship (bump type defaults to patch): bump, insert FILE
+               as the new CHANGELOG section, rebuild dist, commit, check
+               ancestry and gitleaks, wait (max 300s) for an in-flight Release
+               run, push origin HEAD:main and verify. Refusals exit 4 (SHIP_*).
   -h, --help   Show this help message
 
 Examples:
@@ -124,6 +169,7 @@ Examples:
   $(basename "$0") major          # 5.8.2 -> 6.0.0
   $(basename "$0") patch --dry-run
   $(basename "$0") patch --bump-only
+  $(basename "$0") --ship --notes /path/to/notes.md
 EOF
 }
 
@@ -633,7 +679,7 @@ release_commit_clean() {
 
 # --bump-only (S-108): version files + loki-ts/dist, no git side effects.
 run_bump_only() {
-    local current new dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
+    local current new
 
     current=$(get_current_version)
     new=$(bump_version "$current" "$BUMP_TYPE")
@@ -641,7 +687,18 @@ run_bump_only() {
     log_step "Bump-only: $current -> $new (no commit, no push)"
     bump_all_version_files "$new"
     log_warn "Not bumped (intentionally, see script header): vscode-extension/package.json (deprecated)"
+    release_rebuild_dist "$new"
 
+    echo ""
+    log_success "Bump-only complete: v$new"
+    echo "stage these files:"
+    release_stage_lines
+}
+
+# Rebuild loki-ts/dist and require it to embed $1. Shared by --bump-only and
+# --ship. On failure loki-ts/dist is restored from HEAD and the script exits 1.
+release_rebuild_dist() {
+    local new="$1" dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
     if [ -d "$ROOT_DIR/loki-ts" ]; then
         # E-102: fail fast on a missing node_modules instead of letting
         # `bun run build` fail mid-bundle and delete tracked dist files.
@@ -665,11 +722,6 @@ run_bump_only() {
     else
         log_warn "loki-ts/ not found, skipping dist rebuild"
     fi
-
-    echo ""
-    log_success "Bump-only complete: v$new"
-    echo "stage these files:"
-    release_stage_lines
 }
 
 # E-152: one `git add` line per modified tracked file; `-f` when the path sits
@@ -683,6 +735,198 @@ release_stage_lines() {
             echo "  git add $f"
         fi
     done
+}
+
+# --- --ship (TEN-RELEASE-FAST, D103) ----------------------------------------
+# One-command ship: bump, CHANGELOG section from --notes FILE, dist rebuild,
+# commit, ancestry + gitleaks checks, bounded wait for an in-flight Release
+# run, push, verify. Every refusal exits 4 with a SHIP_* token and happens
+# before the push. A refusal after the commit leaves the local commit in place
+# (nothing is reset); the message says so.
+SHIP_REMOTE="origin"
+SHIP_FORBIDDEN_STAGED="docs/v10/CONTROL.md docs/v10/usage-readings.tsv bun.lock out2.txt .claude/providers.ts"
+SHIP_PHASE_NAME=""
+SHIP_PHASE_START=0
+SHIP_T0=0
+SHIP_COMMITTED=""
+
+ship_refuse() {
+    log_error "$1: $2"
+    if [ -n "$SHIP_COMMITTED" ]; then
+        log_error "The local release commit $SHIP_COMMITTED was NOT pushed and is left in place."
+    fi
+    exit 4
+}
+
+# Close the running phase (printing its [TIME] line) and open phase $1.
+ship_phase() {
+    local now
+    now="$(date +%s)"
+    if [ -n "$SHIP_PHASE_NAME" ]; then
+        echo "[TIME] $SHIP_PHASE_NAME: $((now - SHIP_PHASE_START))s"
+    fi
+    SHIP_PHASE_NAME="$1"
+    SHIP_PHASE_START="$now"
+    if [ -n "$1" ]; then log_step "ship: $1"; fi
+}
+
+# Exit 0 iff line $2 of file $1 is the section header of exactly version $3:
+# "## v<ver>" followed by a space or end of line. A prefix match would accept
+# "## v1.2.30" for 1.2.3, so the version token is compared whole.
+ship_header_is() {
+    local file="$1" lineno="$2" want="$3" line tok
+    line="$(sed -n "${lineno}p" "$file" 2>/dev/null)"
+    case "$line" in
+        "## v"*) ;;
+        *) return 1 ;;
+    esac
+    tok="${line#"## v"}"
+    tok="${tok%% *}"
+    [ "$tok" = "$want" ]
+}
+
+# Insert the notes file as the new top section at line index 7 (the 8th
+# line), dropping its trailing blank lines and keeping exactly one blank line
+# before the previous section.
+ship_write_changelog() {
+    local notes="$1" cl="$ROOT_DIR/CHANGELOG.md" tmp
+    tmp="$(mktemp "${cl}.XXXXXX")" || return 1
+    cp -p "$cl" "$tmp"
+    if {
+        sed -n '1,7p' "$cl"
+        sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$notes"
+        echo ""
+        sed -n '8,$p' "$cl"
+    } >"$tmp"; then
+        mv "$tmp" "$cl"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+ship_fetch_main() {
+    git -C "$ROOT_DIR" fetch -q "$SHIP_REMOTE" \
+        "+refs/heads/main:refs/remotes/$SHIP_REMOTE/main"
+}
+
+ship_require_ancestor() {
+    ship_fetch_main || ship_refuse SHIP_FETCH_FAILED "git fetch $SHIP_REMOTE main failed"
+    if ! git -C "$ROOT_DIR" merge-base --is-ancestor "refs/remotes/$SHIP_REMOTE/main" HEAD; then
+        ship_refuse SHIP_NOT_ANCESTOR "$SHIP_REMOTE/main ($(git -C "$ROOT_DIR" rev-parse --short "refs/remotes/$SHIP_REMOTE/main")) is not an ancestor of HEAD; rebase onto it first"
+    fi
+}
+
+# Exit 0 iff gh lists no Release run that is still queued or running.
+# A gh failure counts as busy, so the bounded wait then refuses.
+ship_release_idle() {
+    local json
+    json="$(gh run list --workflow Release --limit 20 --json status,databaseId 2>/dev/null)" || return 1
+    python3 -c '
+import json, sys
+try:
+    runs = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(1)
+sys.exit(1 if any(r.get("status") != "completed" for r in runs) else 0)
+' "$json"
+}
+
+run_ship() {
+    local notes="$SHIP_NOTES" current new f staged hit waited
+    local max_wait="${LOKI_RELEASE_SHIP_WAIT:-300}" poll="${LOKI_RELEASE_SHIP_POLL:-10}"
+    case "$max_wait" in '' | *[!0-9]*) max_wait=300 ;; esac
+    case "$poll" in '' | *[!0-9]* | 0) poll=10 ;; esac
+    [ "$max_wait" -le 300 ] || max_wait=300
+
+    SHIP_T0="$(date +%s)"
+    current=$(get_current_version)
+    new=$(bump_version "$current" "$BUMP_TYPE")
+
+    # Every check that needs no write runs before the first write.
+    ship_phase "preflight ($current -> $new)"
+    command -v gitleaks >/dev/null 2>&1 || ship_refuse SHIP_NO_GITLEAKS "gitleaks is not on PATH"
+    ship_header_is "$notes" 1 "$new" \
+        || ship_refuse SHIP_NOTES_HEADER "the first line of $notes must be '## v$new ...'"
+    ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$current" \
+        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is '$(sed -n '8p' "$ROOT_DIR/CHANGELOG.md" 2>/dev/null)', expected '## v$current'"
+    ship_require_ancestor
+
+    ship_phase "bump version files"
+    bump_all_version_files "$new"
+
+    ship_phase "write CHANGELOG section"
+    ship_write_changelog "$notes" || ship_refuse SHIP_CHANGELOG_WRITE "could not write CHANGELOG.md"
+    ship_header_is "$ROOT_DIR/CHANGELOG.md" 8 "$new" \
+        || ship_refuse SHIP_CHANGELOG_MISMATCH "CHANGELOG.md line 8 is not '## v$new' after the insert"
+
+    ship_phase "rebuild loki-ts/dist"
+    release_rebuild_dist "$new"
+
+    ship_phase "stage and commit"
+    for f in $RELEASE_COMMIT_FILES; do
+        if [ -e "$ROOT_DIR/$f" ]; then git -C "$ROOT_DIR" add -- "$f"; fi
+    done
+    for f in loki-ts/dist/loki.js loki-ts/dist/loki.js.map; do
+        [ -f "$ROOT_DIR/$f" ] || ship_refuse SHIP_DIST_MISSING "$f does not exist after the build"
+        git -C "$ROOT_DIR" add -f -- "$f"
+    done
+    git -C "$ROOT_DIR" show ":loki-ts/dist/loki.js" | grep -qF "$new" \
+        || ship_refuse SHIP_DIST_STALE "staged loki-ts/dist/loki.js does not embed $new"
+    staged="$(git -C "$ROOT_DIR" diff --cached --name-only)"
+    hit=""
+    for f in $SHIP_FORBIDDEN_STAGED; do
+        if printf '%s\n' "$staged" | grep -qxF -- "$f"; then hit="$hit $f"; fi
+    done
+    [ -z "$hit" ] || ship_refuse SHIP_FORBIDDEN_STAGED "refusing to commit:$hit (unstage with git restore --staged)"
+    git -C "$ROOT_DIR" -c user.name=asklokesh -c user.email=lokeshmure@live.com \
+        commit -q -m "release: v$new" || ship_refuse SHIP_COMMIT_FAILED "git commit failed"
+    SHIP_COMMITTED="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+    if [ -n "$(git -C "$ROOT_DIR" diff --name-only HEAD -- VERSION CHANGELOG.md loki-ts/dist/loki.js loki-ts/dist/loki.js.map)" ]; then
+        ship_refuse SHIP_DIRTY_AFTER_COMMIT "release files still differ from the commit"
+    fi
+
+    ship_phase "ancestry check"
+    ship_require_ancestor
+
+    ship_phase "gitleaks"
+    # E-114: gitleaks auto-loads <target>/.gitleaks.toml, so a range that adds
+    # or edits it could disable the scan of that same range. Refuse it here.
+    if [ -n "$(git -C "$ROOT_DIR" diff --name-only "refs/remotes/$SHIP_REMOTE/main" HEAD -- .gitleaks.toml)" ]; then
+        ship_refuse SHIP_GITLEAKS_CONFIG "$SHIP_REMOTE/main..HEAD changes .gitleaks.toml; that needs its own reviewed PR"
+    fi
+    local -a leak_ignore=()
+    if [ -f "$ROOT_DIR/.gitleaksignore" ]; then
+        leak_ignore=(--gitleaks-ignore-path "$ROOT_DIR/.gitleaksignore")
+    fi
+    if ! gitleaks git --no-banner --redact "${leak_ignore[@]+"${leak_ignore[@]}"}" \
+        --log-opts="$SHIP_REMOTE/main..HEAD --diff-merges=first-parent" "$ROOT_DIR"; then
+        ship_refuse SHIP_GITLEAKS "gitleaks reported a finding (or failed) on $SHIP_REMOTE/main..HEAD"
+    fi
+
+    ship_phase "wait for an in-flight Release run (max ${max_wait}s)"
+    waited=0
+    until ship_release_idle; do
+        if [ "$waited" -ge "$max_wait" ]; then
+            ship_refuse SHIP_RELEASE_BUSY "a Release run is still in flight (or gh failed) after ${waited}s"
+        fi
+        log_info "Release run in flight; waiting ${poll}s (${waited}s/${max_wait}s)"
+        sleep "$poll"
+        waited=$((waited + poll))
+    done
+
+    ship_phase "push"
+    LOKI_RELEASE_MANAGER=1 git -C "$ROOT_DIR" push -q "$SHIP_REMOTE" HEAD:refs/heads/main \
+        || ship_refuse SHIP_PUSH_FAILED "git push $SHIP_REMOTE HEAD:refs/heads/main failed"
+
+    ship_phase "verify $SHIP_REMOTE/main"
+    ship_fetch_main || ship_refuse SHIP_FETCH_FAILED "post-push fetch failed"
+    if [ "$(git -C "$ROOT_DIR" rev-parse HEAD)" != "$(git -C "$ROOT_DIR" rev-parse "refs/remotes/$SHIP_REMOTE/main")" ]; then
+        ship_refuse SHIP_PUSH_UNVERIFIED "HEAD does not equal $SHIP_REMOTE/main after the push"
+    fi
+    ship_phase ""
+    echo "[TIME] total: $(( $(date +%s) - SHIP_T0 ))s"
+    log_success "Shipped v$new ($SHIP_COMMITTED) to $SHIP_REMOTE/main"
 }
 
 # Check for uncommitted changes
@@ -720,6 +964,11 @@ main() {
 
     if [ "$BUMP_ONLY" = "true" ]; then
         run_bump_only
+        return
+    fi
+
+    if [ "$SHIP" = "true" ]; then
+        run_ship
         return
     fi
 
