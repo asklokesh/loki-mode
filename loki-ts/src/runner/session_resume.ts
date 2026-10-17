@@ -3,6 +3,7 @@
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 import { classifyExitCause } from "../engine10/session.ts";
 import type { RunContext, SessionResult, SessionRunOptions } from "../engine10/types.ts";
 
@@ -46,6 +47,22 @@ export function readSessionId(repoDir: string, iterationId: string): string | nu
 export function holdoutNote(n: number): string[] { return n > 0 ? [`${n} hidden acceptance check${n === 1 ? "" : "s"} failed. Their content is withheld; re-read the task and make the behavior correct for inputs the visible tests do not cover.`] : []; } // C-C4b: the only form in which a held-out failure reaches a fix brief
 export function buildFixResumeBrief(groups: { signature: string; count: number; sample: string }[], diffStat: string | null, priorDiagnosis: string | null, holdoutFailed = 0): string {
   return ["The Fast verify run failed. Fix these grouped failures:", ...groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`), ...holdoutNote(holdoutFailed), `Diff so far:\n${diffStat ?? "(diff stat is not available)"}`, `Your previous diagnosis: ${priorDiagnosis ?? "(none was recorded)"}`].join("\n\n");
+}
+
+/** TEN-QUALITY-07: the live diff against the run base, computed fresh each fix round (no stage records one). Stat always; bounded hunks
+ *  when `hunks`; untracked files by name (ls-files, no index change). .loki/ excluded. Null when git cannot answer. */
+export function currentDiff(repoDir: string, baseSha: string, maxBytes = 6000, hunks = false): string | null {
+  const ex = [":(exclude).loki", ":(exclude).loki/**"];
+  try {
+    const parts = [safeGit(repoDir, ["diff", "--stat", baseSha, "--", ".", ...ex]).trimEnd()];
+    if (hunks) parts.push(safeGit(repoDir, ["diff", "-U2", baseSha, "--", ".", ...ex]).trimEnd());
+    const fresh = safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter((f) => f && f !== ".loki" && !f.startsWith(".loki/"));
+    if (fresh.length) parts.push(`New untracked files:\n${fresh.join("\n")}`);
+    const text = parts.filter(Boolean).join("\n\n") || "(no changes since the run base)";
+    if (Buffer.byteLength(text) <= maxBytes) return text;
+    const note = "\n[diff truncated at the byte limit]";
+    return Buffer.from(text).subarray(0, Math.max(0, maxBytes - Buffer.byteLength(note))).toString("utf8").replace(/�+$/, "") + note;
+  } catch { return null; }
 }
 
 export interface FixSessionOutcome {

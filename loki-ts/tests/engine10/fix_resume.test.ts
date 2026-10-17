@@ -45,7 +45,7 @@ function ctxFor(sessions: SessionRunner, outputs: Partial<Record<StageName, Reco
     clock: { now: () => 0 }, outputs: () => outputs,
   };
 }
-const impl = { diff_stat: "1 file", model: "sonnet", session_id: "sess-impl" };
+const impl = { model: "sonnet", session_id: "sess-impl" };
 const run = (c: RunContext) => fixStage.run(c, new AbortController().signal);
 
 describe("fix resume (MW-2)", () => {
@@ -105,7 +105,7 @@ describe("fix resume (MW-2)", () => {
   test("fallback when there is no session id, a non-claude provider, or the CLI invoker", async () => {
     process.env["LOKI_E10_FIX_RESUME"] = "1";
     let s = new Fake(() => ok);
-    let r = await run(ctxFor(s, { verify: { failures_grouped: groups }, implement: { diff_stat: "x" } }));
+    let r = await run(ctxFor(s, { verify: { failures_grouped: groups }, implement: {} }));
     expect(r.data.fix_resume).toBe("fallback (no session id recorded)");
     expect(s.calls[0]!.resumeSessionId).toBeUndefined();
     s = new Fake(() => ok);
@@ -156,7 +156,7 @@ describe("fix resume trust and mutation (MW-2)", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-fixresume-mut-"));
     try {
       const file = join(dir, "mut.ts");
-      writeFileSync(file, mutated.replace(/from "\.\.\/engine10\//g, `from "${join(SRC, "engine10")}/`));
+      writeFileSync(file, mutated.replace(/from "\.\.\/engine10\//g, `from "${join(SRC, "engine10")}/`).replace(/from "\.\.\/util\//g, `from "${join(SRC, "util")}/`));
       const mod = await import(file);
       process.env["LOKI_E10_FIX_RESUME"] = "1";
       const s = new Fake(() => ok);
