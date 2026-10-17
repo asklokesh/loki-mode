@@ -4,10 +4,11 @@
 // the slice's contract: machine.ts (E-02) and testmap.ts (E-05) do not exist
 // yet on main, and this stage codes against types.ts's interfaces only.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
@@ -18,6 +19,11 @@ import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "intake");
+// The tree cache lives under ~/.loki/cache/v10; keep every run in this file off the real home.
+const realHome = process.env.HOME;
+const fakeHome = mkdtempSync(join(tmpdir(), "e10-intake-home-"));
+beforeAll(() => { process.env.HOME = fakeHome; });
+afterAll(() => { if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome; rmSync(fakeHome, { recursive: true, force: true }); });
 
 function gitOut(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -281,6 +287,31 @@ describe("engine10 intake", () => {
 // E-66: "already implemented" as a first-class outcome. A deterministic evidence search (repo map
 // symbols, test file names, CHANGELOG headings) gates one short cheap-model confirmation session
 // that must cite files; only a confirmed candidate reaches ALREADY_SATISFIED with no PR.
+describe("engine10 intake: tree cache (TEN-SPEED-17)", () => {
+  test("tree cache: second run on an unchanged tree skips repo walk and test detection", async () => {
+    let detects = 0;
+    const tests: TestMapProvider = { detect: async () => { detects++; return { runners: ["pytest"] as never, tests: [] }; }, impacted: () => [] };
+    const r1 = await runIntake(makeCtx(repoDir, runDir, tests), new AbortController().signal, { taskText: "t" });
+    expect(r1.status).toBe("completed");
+    const run2 = mkdtempSync(join(tmpdir(), "e10-intake-rundir-"));
+    try {
+      const r2 = await runIntake(makeCtx(repoDir, run2, tests), new AbortController().signal, { taskText: "t" });
+      expect(detects).toBe(1);
+      expect(r2.data.testmap).toEqual(r1.data.testmap);
+      expect(readFileSync(join(run2, "repomap.json"), "utf8")).toBe(readFileSync(join(runDir, "repomap.json"), "utf8"));
+      expect(existsSync(join(homedir(), ".loki", "cache", "v10", repoKey(null, repoDir), `repomap2-${String(r1.data.tree)}.json`))).toBe(true);
+    } finally { rmSync(run2, { recursive: true, force: true }); }
+  });
+  test("tree cache: a changed tree rebuilds", async () => {
+    let detects = 0;
+    const tests: TestMapProvider = { detect: async () => { detects++; return { runners: [] as never, tests: [] }; }, impacted: () => [] };
+    await runIntake(makeCtx(repoDir, runDir, tests), new AbortController().signal, { taskText: "t" });
+    writeFileSync(join(repoDir, "new_file.txt"), "x\n"); git(repoDir, ["add", "new_file.txt"]); git(repoDir, ["commit", "-q", "-m", "more"]);
+    await runIntake(makeCtx(repoDir, runDir, tests), new AbortController().signal, { taskText: "t" });
+    expect(detects).toBe(2);
+  });
+});
+
 describe("engine10 intake: already-implemented (E-66)", () => {
   // The inline check pins LOKI_SPEED=0; the deferred (speed-on) path has its own tests (already_done_async).
   let prevSpeed: string | undefined;

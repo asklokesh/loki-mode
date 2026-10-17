@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from "node:path";
 import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
+import { cachedRepoMap, readTestMapCache, repoCacheDir, repoKey, writeTestMapCache } from "../cache.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
@@ -90,9 +91,11 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   }
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
-  const repoMap = buildRepoMap(ctx.repoDir);
+  const cacheDir = repoCacheDir(repoKey(null, ctx.repoDir)); // same dir sizing.ts and context.ts read; keyed by HEAD^{tree}, so an unchanged tree skips the repo walk and test detection
+  const repoMap = cachedRepoMap(cacheDir, tree, () => buildRepoMap(ctx.repoDir));
   writeFileSync(repomapRef, JSON.stringify(repoMap));
-  const testmap = await ctx.tests.detect(ctx.repoDir);
+  let testmap = readTestMapCache(cacheDir, tree);
+  if (!testmap) { testmap = await ctx.tests.detect(ctx.repoDir); try { writeTestMapCache(cacheDir, tree, testmap); } catch { /* an unwritable cache only costs the next run a rebuild */ } }
   const built = process.env.LOKI_REPO_BASELINE !== "0" ? ensureProfile(ctx.repoDir) : null; // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const rd = built ? repoReadiness(built.profile) : null, readiness = rd ? `Readiness: ${rd.score}/100 (${rd.grade})${rd.findings.length ? ` - run \`loki doctor --repo\` for ${rd.findings.length} fix(es)` : ""}` : null;
   if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") held.fold = readiness;
