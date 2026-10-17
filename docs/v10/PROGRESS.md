@@ -2421,3 +2421,6 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-17T04:08Z (CoS) v11.17.17: batch J merged
 - Batch J workflow w9sw9xytw: 6 of 6 TL APPROVE. Merged QUALITY-03 (a8d686b43), GATES-03 (d163dd812), GATES-08 (124b0cd70), ADOPTION-04 (6b5380bca), UX-07 (f3b4e9c3a). ADOPTION-03 (260474376) conflicted add/add with the merged ADOPTION-02 receipt_bundle; a clean cherry-pick onto main (029bdd1a6, same 4-file 322/20 diff, 48 pass 0 fail) merged.
+
+## 2026-10-17T04:24Z (CoS) v11.17.18: COST-14 merged
+- Batch N done: TEN-COST-14 TL APPROVE a0c626378 (fc23 wall conventions 11 pass, wall 98 pass, two mutations caught), merged f5747f1ae. TEN-GROUP-AUTH-F1 r1 BLOCK 1c59103ad: deleting kind from writeGroupCostRecord left 24/0 green; r2 (workflow wi62vcm02) adds a writer-reader test and the stats.ts sibling. v11.17.17 Release run on 1fa2b21cc in progress; this push waits for it.

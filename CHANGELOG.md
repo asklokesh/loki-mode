@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.18 (2026-10-17)
+
+### Changed
+- Wall brief output budget (TEN-COST-14): the Wall author brief carries a fixed output budget line (one test file, no closing summary) in the cache-stable prefix, ahead of any run-specific text, so Wall sessions spend fewer output tokens.
+
 ## v11.17.17 (2026-10-17)
 
 ### Added
