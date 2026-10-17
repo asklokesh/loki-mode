@@ -50,3 +50,22 @@ describe("version json", () => {
     expect(typeof o.install_path).toBe("string");
   });
 });
+
+describe("version unknown flag", () => {
+  it("unknown flag exits 2 with usage and no version on stdout", async () => {
+    const a = await run(["bun", CLI, "version", "--bogus"]);
+    expect(a.exitCode).toBe(2);
+    expect(a.stdout).toBe("");
+    expect(a.stderr).toContain("Unknown option for version: --bogus");
+    expect(a.stderr).toContain("Usage: loki version [--json]");
+  });
+
+  it("known flags still succeed", async () => {
+    for (const f of ["--json", "--help", "-h", "help"]) {
+      const a = await run(["bun", CLI, "version", f]);
+      expect(a.exitCode).toBe(0);
+    }
+    const p = await run(["bun", CLI, "version"]);
+    expect(p.stdout).toMatch(/^Loki Mode v\d+\.\d+\.\d+\n$/);
+  });
+});

@@ -16,6 +16,11 @@ the package. Equivalent to 'loki --version' and 'loki -v'.
 `;
 
 export async function runVersion(args: string[] = []): Promise<number> {
+  const bad = args.find((a) => a.startsWith("-") && a !== "--json" && a !== "--help" && a !== "-h");
+  if (bad !== undefined) {
+    process.stderr.write(`Unknown option for version: ${bad}\nUsage: loki version [--json]\n`);
+    return 2;
+  }
   const current = getVersion();
   if (args.includes("--json")) {
     const installPath = findRepoRootForVersion(dirname(fileURLToPath(import.meta.url)));
