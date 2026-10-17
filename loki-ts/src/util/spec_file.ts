@@ -26,8 +26,10 @@ export interface LoadedSpec extends ParsedSpec { sha256: string; path: string; r
 export const sha256Hex = (s: string): string => createHash("sha256").update(s).digest("hex");
 
 export function slugify(task: string): string {
-  const s = task.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
-  return s || "task";
+  const full = task.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (full.length <= 40) return full || "task";
+  // Truncated: append a task hash so two long tasks sharing a prefix never collide (31 + "-" + 8 = 40).
+  return `${full.slice(0, 31).replace(/-+$/g, "")}-${sha256Hex(task).slice(0, 8)}`;
 }
 
 /** Schema check for the model's JSON: {intent: string, criteria: string[1..MAX_CRITERIA]}. Returns an error string or null. */

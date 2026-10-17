@@ -87,6 +87,25 @@ describe("malformed spec is refused with a line number", () => {
   });
 });
 
+describe("long task collision", () => {
+  const prefix = "implement the new search ranking pipeline for the catalog ";
+  test("long tasks sharing a 40 char prefix get distinct slugs, short slugs unchanged", () => {
+    const a = slugify(`${prefix}using recency`), b = slugify(`${prefix}using popularity`);
+    expect(a).not.toBe(b);
+    expect(a.length).toBeLessThanOrEqual(40);
+    expect(slugify(`${prefix}using recency`)).toBe(a);
+    expect(slugify("Add Search Ranking!! to the API")).toBe("add-search-ranking-to-the-api");
+    expect(slugify("a".repeat(40))).toBe("a".repeat(40));
+  });
+  test("generateSpec writes two different files for the two tasks", async () => {
+    const s = new Fake((_o, b) => writeFileSync(jsonPathOf(b), JSON.stringify(CRIT)));
+    const r1 = await generateSpec({ task: `${prefix}using recency`, repoDir: dir, sessions: s });
+    const r2 = await generateSpec({ task: `${prefix}using popularity`, repoDir: dir, sessions: s });
+    expect(r1.path).not.toBe(r2.path);
+    expect(existsSync(r1.path) && existsSync(r2.path)).toBe(true);
+  });
+});
+
 describe("generateSpec (L0: the model emits schema-checked JSON, the harness renders)", () => {
   test("writes .loki/specs/<slug>.md from the JSON", async () => {
     const s = new Fake((_o, b) => writeFileSync(jsonPathOf(b), JSON.stringify(CRIT)));
