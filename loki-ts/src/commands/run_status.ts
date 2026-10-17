@@ -8,6 +8,7 @@ import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { STALE_S, controlRunLink, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { readRunControl, writeRunControl, type RunControlAction } from "../util/run_control.ts";
+import { isRunId } from "./undo.ts";
 import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
@@ -145,6 +146,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   const now = Date.now();
   let hit = pickRun(root, now);
   if (wanted !== null) {
+    if (!isRunId(wanted)) { process.stderr.write(`loki status: invalid run id '${wanted}'\n`); return 2; }
     const events = readEvents(eventsPath(root, wanted));
     if (events.length === 0) { process.stderr.write(`loki status: no events for run ${wanted}\n`); return 1; }
     hit = { id: wanted, events };
@@ -167,6 +169,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
 export async function runIntentShow(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const [sub, id] = argv;
   if (sub !== "show" || !id) { process.stderr.write("Usage: loki intent show <run-id>\n"); return 1; }
+  if (!isRunId(id)) { process.stderr.write(`loki intent: invalid run id '${id}'\n`); return 2; }
   const root = runsRoot(env, env.LOKI_E10_REPO_DIR ?? process.cwd());
   const events = readEvents(eventsPath(root, id));
   if (events.length === 0) { process.stderr.write(`loki intent: no such run ${id}\n`); return 1; }

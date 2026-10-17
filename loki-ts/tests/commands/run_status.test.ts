@@ -338,3 +338,33 @@ describe("issue status projector (FV-gh-steer-3)", () => {
     expect(existsSync(join(runDir, "status-comment.md"))).toBe(true);
   });
 });
+
+describe("run id traversal", () => {
+  const plant = (): void => {
+    const outside = join(dir, ".loki", "evil");
+    mkdirSync(outside, { recursive: true });
+    const log = new EventLog(join(outside, "events.jsonl"), "evil");
+    log.append("run.started", null, { issue_ref: "acme/widgets#66", task_source: "issue" });
+    mkdirSync(join(dir, ".loki", "runs"), { recursive: true });
+  };
+  const capture = async (fn: () => Promise<number>): Promise<{ code: number; out: string; err: string }> => {
+    const oo = process.stdout.write.bind(process.stdout), oe = process.stderr.write.bind(process.stderr);
+    let out = "", err = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try { return { code: await fn(), out, err }; } finally { process.stdout.write = oo; process.stderr.write = oe; }
+  };
+  test("status rejects a traversal run id with exit 2", async () => {
+    plant();
+    const r = await capture(() => runModernStatus(["../evil"], env()));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("invalid run id");
+    expect(r.out).not.toContain("acme/widgets#66");
+  });
+  test("intent show rejects a traversal run id with exit 2", async () => {
+    plant();
+    const r = await capture(() => runIntentShow(["show", "../evil"], env()));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("invalid run id");
+  });
+});
