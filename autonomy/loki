@@ -37563,6 +37563,8 @@ cmd_proof() {
             echo "  md <id>              Paste-able Markdown for a PR comment or Slack"
             echo "  open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
+            echo "  bundle <run-id>      Write a portable receipt bundle for offline verification"
+            echo "                       [--out <dir>] (default ./loki-bundle-<run-id>; Bun route)"
             echo ""
             echo "Options for 'share':"
             echo "  --yes                Skip the redaction-preview confirmation prompt"

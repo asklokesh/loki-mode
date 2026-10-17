@@ -67,7 +67,7 @@ export function writeGroupCostRecord(repoDir: string, name: string, costs: Group
   const dir = join(repoDir, ".loki", "metrics", "efficiency");
   const timestamp = new Date().toISOString();
   try {
-    const base = { phase: "implement", provider, status: "group", timestamp };
+    const base = { phase: "implement", provider, status: "group", kind: "group_cost", timestamp }; // kind: the kpis reader excludes these from iteration_count
     const recs: Record<string, unknown>[] = [];
     for (const c of costs) {
       if (c.measured > 0 && c.usd !== null) recs.push({ ...base, cost_usd: Number(c.usd.toFixed(6)), units_measured: c.measured });

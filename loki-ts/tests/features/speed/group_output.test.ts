@@ -1,3 +1,4 @@
+// select: walk-all-src
 // SPEED-TIMER-UNREF: the repaint interval must not keep the process alive when stop() is never called.
 import { expect, test } from "bun:test";
 import { join } from "node:path";
@@ -85,5 +86,9 @@ test("runGroup prints the summed group cost and writes the efficiency record", a
     const recs = readdirSync(dir).filter((n) => n.startsWith("iteration-") && n.endsWith(".json"));
     expect(recs.length).toBe(1);
     expect(JSON.parse(readFileSync(join(dir, recs[0]!), "utf8")).cost_usd).toBeCloseTo(0.42, 5);
+    // writer/reader contract: the written record must carry kind and the kpis reader must not count it as an iteration
+    expect(JSON.parse(readFileSync(join(dir, recs[0]!), "utf8")).kind).toBe("group_cost");
+    const { computeKpis } = await import("../../../src/metrics/kpis.ts");
+    expect(computeKpis(join(repo, ".loki")).efficiency.iteration_count).toBe(0);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });

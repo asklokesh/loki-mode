@@ -172,7 +172,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 - enterprise: 2
 - explain: 5
 - export: 6
-- github: 5
+- github: 6
 - import: 1
 - init: 21
 - issue: 2

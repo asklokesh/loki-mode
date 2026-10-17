@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.20 (2026-10-17)
+
+### Added
+- Failure excerpts in fix rounds (TEN-QUALITY-01): each failing visible check now hands the fix session a redacted excerpt of its decisive output lines (pytest, jest and vitest, node assertions, go, tsc and ruff, with a last-lines fallback), capped at 1500 bytes per group and 6 KB in total by UTF-8 bytes. Holdout check output never reaches the fix brief, and failure signatures are unchanged, so stall detection is unaffected.
+
+### Changed
+- 5-minute cache TTL for engine10 sessions (TEN-COST-12): engine10 stage sessions request the 5-minute prompt cache by default on both the CLI and SDK routes; LOKI_E10_CACHE_TTL=1h opts out, and the main RARV loop is unchanged.
+
+### Fixed
+- Group decomposition (TEN-COST-23): items that name no files fold into a unit that owns files instead of becoming empty units, so a fully file-less plan falls back to the sequential run.
+- CI on main (P0 fix-forward): repaired the red Tests workflow (registry known gaps for `github publish`, the never-below-raw guard regex, test selection, shellcheck, the stale future-version guard and `loki proof` help drift).
+
+## v11.17.19 (2026-10-17)
+
+### Changed
+- Lean prefix by default (TEN-COST-13): engine10 Claude sessions use the lean, cache-stable system prefix unless LOKI_E10_PREFIX is set; an explicit value, including off, wins. Other providers are unchanged.
+
+### Fixed
+- Group run iteration counts (TEN-GROUP-AUTH-F1): group cost records no longer count as iterations in KPIs or `loki stats`; their cost and tokens still count. One shared predicate serves both readers, and a test ties the writer's record kind to the reader.
+
+## v11.17.18 (2026-10-17)
+
+### Changed
+- Wall brief output budget (TEN-COST-14): the Wall author brief carries a fixed output budget line (one test file, no closing summary) in the cache-stable prefix, ahead of any run-specific text, so Wall sessions spend fewer output tokens.
+
+## v11.17.17 (2026-10-17)
+
+### Added
+- Agent-independent evidence in verify (TEN-GATES-03): `loki verify` prints how many passing checks are agent independent (k of n) from the receipt's check provenance, and says "provenance not recorded" when a receipt has none. `--require-exogenous` (or `LOKI_VERIFY_REQUIRE_EXOGENOUS=1`) exits 4 for a VERIFIED receipt with no agent-independent pass. Tamper and signature verdicts are unchanged.
+- Security scan gate on loki start (TEN-GATES-08): the engine10 route runs the secure scan as an exogenous gate, writes security-findings.json, fails on an active HIGH finding and reads inconclusive when the scanner or python3 is missing. `LOKI_GATE_SECURITY_SCAN=0` turns it off.
+- PR body verify line (TEN-ADOPTION-04): the receipt section shows the `loki proof bundle` and `npx loki-mode verify` commands so anyone can check the run on another machine. The Loki footer says verified only for a non-draft VERIFIED body, and `LOKI_PR_FOOTER=0` removes it. No network call, no telemetry.
+- Proof for loki start runs (TEN-ADOPTION-03): `loki proof` badge, bundle and share work for engine10 runs, not only legacy runs.
+- Dashboard run panels (TEN-UX-07): the dashboard shows Reason, Next and Stage panels for the selected run.
+
+### Fixed
+- Lint baseline (TEN-QUALITY-03): baseline lint reruns stop when the stage is aborted, so an aborted verify no longer waits on them, and an aborted rerun never excuses a lint failure.
+
+## v11.17.16 (2026-10-17)
+
+### Fixed
+- Docker images build again: the deep stage imported the review denylist from the runner module that loads the Anthropic SDK, so the control-plane server bundle failed to resolve `@anthropic-ai/sdk` and the 11.17.15 images were not published. The denylist now lives in the Claude flags module, and a control-plane test fails if the server bundle ever reaches the SDK invoker again.
+- Release safety (TEN-RELEASE-INSTANT-F1): if npm cannot report the current `latest`, the release still publishes under `next` but refuses to move `latest`, so a registry hiccup can never move `latest` backwards.
+- Cost claim (TEN-COST-18-F1): `cost_claim` skips non-object rows with a counted warning instead of crashing, and never counts them toward the ratio.
+
+## v11.17.15 (2026-10-17)
+
+### Fixed
+- Release packaging: the pack-npm job now installs loki-ts dependencies before packing. The control-plane server bundle imports loki-ts source, and without them v11.17.14 failed to pack with `Could not resolve: "@anthropic-ai/sdk"`, so v11.17.14 never reached npm. This release ships everything listed under v11.17.14.
+
 ## v11.17.14 (2026-10-17)
 
 ### Added

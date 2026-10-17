@@ -11,12 +11,12 @@ import { testConfigChanged } from "../../features/runner_config.ts"; import { as
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
+import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -70,6 +70,8 @@ export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null)
   const [cmd, args, interpreter] = runnerCmd(site ? { runner: t.runner, path: site.file } : t, repoDir);
   return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
 }
+/** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
+const excerpts = new WeakMap<object, string>();
 const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4b-c: pubHold is the one public shape of a held-out check: result and counts only
 const pubHold = (c: VerifyCheck): VerifyCheck => ({ name: "holdout", cmd: "holdout", result: c.result, duration_s: c.duration_s, ...(c.n !== undefined ? { n: c.n } : {}), ...(c.sk !== undefined ? { sk: c.sk } : {}), ...(c.owner ? { owner: c.owner, reason: "holdout infrastructure failure" } : {}) });
 /** The one check name a test run gets: runner:path. Provenance (check_result.ts) parses this shape. */
@@ -143,6 +145,7 @@ export async function runCheck(
   }
   const reason = c.reason;
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(c.owner ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  if (result === "fail" && !opts.opaque && !isHold(check)) excerpts.set(check, failureExcerpt(attempt.out, ctx.repoDir));
   checks.push(check); if (opts.opaque && check.result !== "pass" && check.reason) recordHoldoutTriage(ctx.runDir, { check: name, result: check.result, reason: check.reason }); // C-C4b-c-b: real reason stays out of the event below
   ctx.emit("test.result", "verify", opts.opaque ? { ...pubHold(check) } : { ...check });
   return check;
@@ -216,26 +219,31 @@ const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintr
 /** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint
  *  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set
  *  gets a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
+/** TEN-QUALITY-03: a failed ruff/shellcheck/eslint check whose every diagnostic is also on the base content (git show, fed on stdin, same per-check timeout) is pre-existing. */
+const excuseLint = (ctx: RunContext, signal: AbortSignal, c: VerifyCheck, tool: StaticTool, cmd: string, prefix: string[], cwd: string, rel: string[], opts: RunOpts): Promise<boolean> => c.result !== "fail" || signal.aborted ? Promise.resolve(false) : staticPreExisting(tool, prefix, rel, { run: async (a, stdin) => { if (signal.aborted) return null; const r = await runOnce(cmd, a, cwd, AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS)]), { ...opts, ...(stdin !== undefined ? { stdin } : {}) }); return r.missing || r.cut ? null : r; }, base: (f) => { try { return safeGit(ctx.repoDir, ["show", `${ctx.baseSha}:${relative(ctx.repoDir, join(cwd, f))}`], { stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } } });
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null } = {},
-): Promise<void> {
-  const { api, ...runOpts } = opts; opts = runOpts;
+): Promise<string[]> {
+  const { api, ...runOpts } = opts; opts = runOpts; const pre: string[] = []; // check names whose static diagnostics are all pre-existing
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) {
     const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
-    await runCheck(ctx, "lint:ruff", ruffCmd, ["check", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
+    const c = await runCheck(ctx, "lint:ruff", ruffCmd, ["check", "--output-format=concise", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
+    if (await excuseLint(ctx, signal, c, "ruff", ruffCmd, ["check"], ctx.repoDir, py, opts)) pre.push(c.name);
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
     await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, { ...opts, kind: "static" });
-    await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, { ...opts, kind: "static" });
+    const c = await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, { ...opts, kind: "static" });
+    if (await excuseLint(ctx, signal, c, "shellcheck", "shellcheck", [], ctx.repoDir, sh, opts)) pre.push(c.name);
   }
   // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
   for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
     const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
     if (existsSync(join(g.cwd, "tsconfig.json"))) await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, { ...co, kind: "static" });
-    if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["eslint", ...g.rel], signal, checks, { ...co, kind: "static" });
+    if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) { const c = await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["eslint", ...g.rel], signal, checks, { ...co, kind: "static" }); if (await excuseLint(ctx, signal, c, "eslint", "npx", ["eslint"], g.cwd, g.rel, co)) pre.push(c.name); }
   }
+  return pre;
 }
 export const verifyStage: Stage = {
   name: "verify",
@@ -288,7 +296,9 @@ export const verifyStage: Stage = {
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      await runLintChecks(ctx, changed, signal, checks, { api, wall: wallPaths });
+      const lintPre = await runLintChecks(ctx, changed, signal, checks, { api, wall: wallPaths });
+      preRed.names.push(...lintPre); // TEN-QUALITY-03: the same pre-existing path tests use
+      if (lintPre.length) attr.line = [attr.line, `baseline: ${lintPre.join(", ")} static diagnostics already on base (not blocking)`].filter(Boolean).join("; ");
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {
@@ -312,9 +322,14 @@ export const verifyStage: Stage = {
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => (isHold(c) ? "holdout" : c.name));
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1
     // placeholder keeps the section-4 output key populated until that slice lands.
+    let excerptLeft = EXCERPT_TOTAL_CAP; // TEN-QUALITY-01: sample = rerun cmd + redacted excerpt, 6 KB across all groups
     const failuresGrouped = checks
       .filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c))
-      .map((c) => ({ signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: c.cmd }));
+      .map((c) => {
+        const x = isHold(c) ? "" : truncateBytes(excerpts.get(c) ?? "", Math.max(0, excerptLeft));
+        excerptLeft -= Buffer.byteLength(x);
+        return { signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: x ? `${c.cmd}\n${x}` : c.cmd };
+      });
     const pub = checks.map((c) => (isHold(c) ? pubHold(c) : c)), holdoutFailed = checks.filter((c) => c.result === "fail" && isHold(c) && !preRed.names.includes(c.name)).length; // C-C4b-c: pub leaves this stage, holdoutFailed (C-C4b) is the only form in which a held-out failure reaches the fix stage
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
     // A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.

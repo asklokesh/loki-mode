@@ -3,7 +3,7 @@ name: autonomi
 description: Autonomi Loki Mode - Multi-agent autonomous development system
 type: application
 version: 0.1.0
-appVersion: "11.17.14"
+appVersion: "11.17.20"
 keywords:
   - ai
   - agents

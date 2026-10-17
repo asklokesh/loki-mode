@@ -17,7 +17,7 @@ import { runPackageSuites } from "../../project_model/package_suite.ts";
 import { classifyCheck, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
-import { REVIEW_GUARD_DENYLIST } from "../../runner/quality_gates.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */

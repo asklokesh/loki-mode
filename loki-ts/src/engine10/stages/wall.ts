@@ -109,9 +109,13 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
+/** COST-14: static output budget, placed before any run-specific text so it stays in the cache-stable prefix. */
+export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one assertion block per acceptance line, no docstrings, and no closing summary.";
+
 export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = []): string {
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
+    WALL_OUTPUT_BUDGET,
     `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (signatures, runner config, test layout and test-style examples)" : ""}.`,
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
