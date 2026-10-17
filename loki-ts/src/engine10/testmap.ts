@@ -7,6 +7,8 @@ import { basename, extname, join, relative, sep } from "node:path";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
+import { GO_TEST_RE, JS_SPEC_RE, JS_TEST_RE, PY_TEST_RE, coveredStem, detectFromPackageJson, isTestFile, referencedBasenames } from "../util/test_file_text.ts";
+export { isTestFile };
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the
  *  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always
  *  runs the whole suite: npm and cargo have no reliable per-file selection. */
@@ -27,10 +29,6 @@ const SKIP_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "target", "coverage",
   ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".loki", ".next",
 ]);
-const NPM_DEFAULT_TEST = /no test specified/;
-const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
-const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
-const GO_TEST_RE = /_test\.go$/;
 const COMMANDS: Record<RunnerName, CommandSpec> = {
   pytest: { cmd: "python -m pytest -q <files>", coarse: false },
   vitest: { cmd: "npx vitest run <files>", coarse: false },
@@ -49,10 +47,6 @@ function pytestPython(root: string): string {
     if (existsSync(bin)) return bin;
   }
   return "python";
-}
-export function isTestFile(rel: string): boolean {
-  const name = basename(rel);
-  return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name);
 }
 function readText(p: string): string {
   try {
@@ -86,68 +80,6 @@ function walk(root: string): string[] {
     }
   }
   return out.sort();
-}
-function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, file: string) => void): void {
-  let pkg: {
-    scripts?: Record<string, unknown>;
-    dependencies?: Record<string, unknown>;
-    devDependencies?: Record<string, unknown>;
-  };
-  try {
-    pkg = JSON.parse(text);
-  } catch {
-    return;
-  }
-  if (!pkg || typeof pkg !== "object") return;
-  const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-  const scripts = Object.values(pkg.scripts ?? {}).filter((s): s is string => typeof s === "string");
-  const inScripts = (re: RegExp) => scripts.some((s) => re.test(s));
-  if ("vitest" in deps || inScripts(/\bvitest\b/)) mark("vitest", rel);
-  if ("jest" in deps || inScripts(/\bjest\b/)) mark("jest", rel);
-  if (inScripts(/\bbun\s+test\b/)) mark("bun", rel);
-  // ponytail: repo_profile.ts also reads scripts.test, but buildProfile persists a profile file as a side effect, so the one check is inlined here.
-  const testScript = pkg.scripts?.test; // node only for a bare `node --test [paths]`: anything else (flags, &&) must run whole via npm
-  if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) mark(/^\s*node\s+--test(?:\s+[^\s\-&;|<>$`()][^\s&;|<>$`()]*)*\s*$/.test(testScript) ? "node" : "npm", rel);
-}
-// Import/reference specifiers a test file's text can carry, per language. JS: `from "./search"`
-// / `require("./search")`. Python: `from app.ranker import x` / `import app.ranker`. Matched
-// textually (grep), never resolved against a module graph.
-const JS_SPEC_RE = /(?:from\s+|require\(\s*)['"]([^'"]+)['"]/g;
-const PY_FROM_RE = /^\s*from\s+([\w.]+)\s+import\b/gm;
-const PY_IMPORT_RE = /^\s*import\s+([\w.]+)/gm;
-function jsSpecToBasename(spec: string): string {
-  const clean = spec.replace(/^\.*\/+/, "");
-  const base = clean.split("/").pop() ?? clean;
-  return base.replace(/\.[cm]?[jt]sx?$/, "");
-}
-function pySpecToBasename(spec: string): string {
-  const parts = spec.split(".");
-  return parts[parts.length - 1] ?? spec;
-}
-/** Source basenames a test file's text imports or references (section 8). */
-function referencedBasenames(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of text.matchAll(JS_SPEC_RE)) {
-    const spec = m[1];
-    if (spec) out.add(jsSpecToBasename(spec));
-  }
-  for (const m of text.matchAll(PY_FROM_RE)) {
-    const spec = m[1];
-    if (spec) out.add(pySpecToBasename(spec));
-  }
-  for (const m of text.matchAll(PY_IMPORT_RE)) {
-    const spec = m[1];
-    if (spec) out.add(pySpecToBasename(spec));
-  }
-  return out;
-}
-// Source stem a test covers by naming alone: search.test.ts -> search, test_ranker.py -> ranker, handler_test.go -> handler. The floor under the
-// import/reference grep, never a replacement: import-free tests (same-package Go, test_ranker.py) would otherwise map to zero tests (unsafe for E-09).
-function coveredStem(testPath: string): string {
-  const name = basename(testPath);
-  if (JS_TEST_RE.test(name)) return name.replace(JS_TEST_RE, "");
-  if (name.startsWith("test_")) return name.slice(5, -3);
-  return name.replace(/_test\.(py|go)$/, "");
 }
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
