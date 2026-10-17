@@ -294,9 +294,65 @@ for pair in "claude-haiku-4-5=6.0" "claude-haiku-5-5=0.6" "sonnet=12.0"; do
     got="$(bash_route_cost "$model")"
     if [ "$got" != "$want" ]; then
         echo "FAIL: bash route (check_budget_limit) prices $model at $got per 1M in+out, want $want"
-        bash_fail=1
+        bash_fail=1; case_fail=1
     else
         echo "ok:   bash route prices $model at $want per 1M in+out"
     fi
 done
+
+# TEN-COST-42: the bash readers of default_max_cost_usd keep the 100 fallback
+# but must say so on stderr when the pricing file exists yet is unreadable or
+# has no parsable key. An absent file stays silent (documented fallback), and a
+# healthy file prints nothing extra. Run.sh reader is extracted as a function;
+# the autonomy/loki reader is driven through the real `loki start --help` entry path
+# against a copy of autonomy/ whose pricing file is mutated.
+budget_work="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || exit 1
+mkdir -p "$budget_work/loki-ts/data"
+cp -R "$REPO_ROOT/autonomy" "$budget_work/autonomy"
+cp "$REPO_ROOT/VERSION" "$budget_work/VERSION" 2>/dev/null || true
+price="$budget_work/loki-ts/data/model-pricing.json"
+# shellcheck disable=SC1090
+source <(awk '/^_loki_budget_default_from\(\) \{/ {f=1} f {print} f && /^\}/ {exit}' "$REPO_ROOT/autonomy/run.sh")
+
+budget_case() {
+    # $1 label, $2 want-warning (1/0), $3 want-run.sh value
+    local label="$1" want_warn="$2" want_val="$3" rc_out rc_err val case_fail=0
+    rc_err="$budget_work/err.txt"
+    val="$(_loki_budget_default_from "$price" 2>"$rc_err")"
+    if [ "$val" != "$want_val" ]; then
+        echo "FAIL: run.sh reader ($label) returned '$val', want '$want_val'"; bash_fail=1; case_fail=1
+    fi
+    if [ "$want_warn" = 1 ] && ! grep -q 'default_max_cost_usd' "$rc_err"; then
+        echo "FAIL: run.sh reader ($label) gave no stderr warning"; bash_fail=1; case_fail=1
+    elif [ "$want_warn" = 0 ] && [ -s "$rc_err" ]; then
+        echo "FAIL: run.sh reader ($label) printed unexpected stderr: $(cat "$rc_err")"; bash_fail=1; case_fail=1
+    fi
+    bash "$budget_work/autonomy/loki" start --help >"$budget_work/out.txt" 2>"$rc_err"
+    rc_out="$?"
+    if [ "$want_warn" = 1 ] && ! grep -q 'default_max_cost_usd' "$rc_err"; then
+        echo "FAIL: loki start --help ($label) gave no stderr warning (rc=$rc_out)"; bash_fail=1; case_fail=1
+    elif [ "$want_warn" = 0 ] && grep -q 'default_max_cost_usd' "$rc_err"; then
+        echo "FAIL: loki start --help ($label) warned on a healthy or absent file"; bash_fail=1; case_fail=1
+    fi
+    [ "$case_fail" = 0 ] && echo "ok:   budget default reader ($label)"
+}
+
+cp "$REPO_ROOT/loki-ts/data/model-pricing.json" "$price"
+healthy="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$price" | head -n 1)"
+healthy="$(awk -v v="$healthy" 'BEGIN{printf "%.2f", v}')"
+budget_case "healthy file" 0 "$healthy"
+printf '{"pricing":{}}\n' >"$price"
+budget_case "keyless file" 1 "100.00"
+cp "$REPO_ROOT/loki-ts/data/model-pricing.json" "$price"
+chmod 000 "$price"
+if [ -r "$price" ]; then
+    echo "skip: running as a user that can read mode 000 files; unreadable case not testable"
+else
+    budget_case "unreadable file" 1 "100.00"
+fi
+chmod 600 "$price"
+rm -f "$price"
+budget_case "absent file" 0 "100.00"
+
+case "$budget_work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$budget_work" ;; esac
 exit "$bash_fail"

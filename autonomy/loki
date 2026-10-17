@@ -74,9 +74,16 @@ fi
 # Default per-run spend cap (single source: default_max_cost_usd in loki-ts/data/model-pricing.json,
 # also read by loki-ts/src/e10ext/budget_cap.ts and autonomy/run.sh). Prints a plain number; 100 only if the file is unreadable.
 loki_budget_default_usd() {
-    local v=""
-    [ -f "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" ] && \
-        v="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" | head -1)"
+    local f="${1:-$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json}" v=""
+    if [ -e "$f" ]; then
+        v="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$f" 2>/dev/null | head -1)"
+        case "$v" in
+            '' | *[!0-9.]*)
+                printf '%s\n' "loki: warning: cannot read default_max_cost_usd from $f (unreadable or no parsable key); using fallback 100" >&2
+                v=""
+                ;;
+        esac
+    fi
     printf '%s\n' "${v:-100}"
 }
 
