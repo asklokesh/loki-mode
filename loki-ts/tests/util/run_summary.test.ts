@@ -41,6 +41,15 @@ test("partial checks: skipped, not_run and flaky are NOT CHECKED, never passed; 
   expect(md).toContain("NOT PROVEN: perf");
 });
 
+test("spend: retry dollars append only when positive", () => {
+  expect(spendText({ usd: 1.5, retryUsd: 0.4 })).toBe("$1.50 (measured) ($0.40 on retries)");
+  for (const r of [0, null, undefined, -1, NaN]) expect(spendText({ usd: 1.5, retryUsd: r as number | null | undefined })).toBe("$1.50 (measured)");
+  expect(spendText({ usd: null, retryUsd: 0.4 })).toBe("not measured");
+  const f: HandoffFacts = { repoDir: ".", runId: "r", events: [], outcome: "VERIFIED", usd: 1.5, retryUsd: 0.4, elapsedS: 5, notProven: [], task: "t", requirements: null };
+  expect(renderHandoff(composeHandoff(f))).toContain("spend $1.50 (measured) ($0.40 on retries);");
+  expect(renderHandoff(composeHandoff({ ...f, retryUsd: 0 }))).not.toContain("on retries");
+});
+
 test("spend: unmeasured never renders as $0.00", () => {
   expect(spendText({ usd: null })).toBe("not measured");
   expect(spendText({ usd: null, partialUsd: 0.1, measuredSessions: 1, totalSessions: 3 })).toContain("partial: $0.10 for 1 of 3");

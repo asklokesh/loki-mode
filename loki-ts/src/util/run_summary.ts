@@ -153,6 +153,8 @@ export interface HandoffInput {
   checks: HandoffCheck[]; notProven: string[]; failures: string[]; requirements?: { id?: string; text?: string; status?: string }[] | null;
   filesChanged: number | null; insertions?: number | null; deletions?: number | null; hunks: HandoffHunk[];
   riskTier?: string | null; deferred?: string[]; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number;
+  /** Dollars spent in retry sessions (a subset of usd, from costBreakdown().retry_usd); null, 0 or absent prints nothing. */
+  retryUsd?: number | null;
   elapsedS: number | null; interventions: number | null; baseSha?: string | null;
   /** By-type counts and wall-clock waited seconds from interventions.json; absent for event-counted or unrecorded runs. */
   interventionDetail?: { by_type: Record<string, number>; waited_s: number | null } | null;
@@ -163,8 +165,8 @@ export interface HandoffInput {
 }
 const W = 110, clip = (s: string, n = W): string => { const t = redactSecrets(String(s)).replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
 /** Spend text: measured dollars, a partial figure, or "not measured". Never $0.00 for an unknown. */
-export function spendText(i: Pick<HandoffInput, "usd" | "partialUsd" | "measuredSessions" | "totalSessions">): string {
-  if (i.usd != null) return `$${i.usd.toFixed(2)} (measured)`;
+export function spendText(i: Pick<HandoffInput, "usd" | "partialUsd" | "measuredSessions" | "totalSessions" | "retryUsd">): string {
+  if (i.usd != null) return `$${i.usd.toFixed(2)} (measured)${typeof i.retryUsd === "number" && Number.isFinite(i.retryUsd) && i.retryUsd > 0 ? ` ($${i.retryUsd.toFixed(2)} on retries)` : ""}`;
   if (i.measuredSessions) return `partial: $${(i.partialUsd ?? 0).toFixed(2)} for ${i.measuredSessions} of ${i.totalSessions ?? i.measuredSessions} sessions, rest not measured`;
   return "not measured";
 }
@@ -234,7 +236,7 @@ const hunkSummary = (diff: string): HandoffHunk[] => {
   return out.sort((a, b) => b.added + b.removed - (a.added + a.removed)).slice(0, 5).map((h) => ({ ...h, summary: h.summary || "changed" }));
 };
 const readJson = (p: string): unknown => { try { return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null; } catch { return null; } };
-export interface HandoffFacts { requirements?: HandoffInput["requirements"]; sinceMs?: number; repoDir: string; runId: string; events: EventEnvelope[]; outcome: string; reason?: string | null; prUrl?: string | null; draft?: boolean; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number; elapsedS: number | null; notProven: string[]; task?: string; baseSha?: string | null; stats?: { files: number; ins: number; del: number } | null }
+export interface HandoffFacts { requirements?: HandoffInput["requirements"]; sinceMs?: number; repoDir: string; runId: string; events: EventEnvelope[]; outcome: string; reason?: string | null; prUrl?: string | null; draft?: boolean; usd: number | null; partialUsd?: number; retryUsd?: number | null; measuredSessions?: number; totalSessions?: number; elapsedS: number | null; notProven: string[]; task?: string; baseSha?: string | null; stats?: { files: number; ins: number; del: number } | null }
 /** Compose from recorded state; every missing source degrades to "not recorded", never to a fabricated value. */
 export function composeHandoff(f: HandoffFacts): HandoffInput {
   const done = (s: string): Record<string, unknown> => (f.events.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data ?? {}) as Record<string, unknown>;
@@ -273,7 +275,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
     task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" ? started.branch : null,
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
-    usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,
+    usd: f.usd, partialUsd: f.partialUsd, retryUsd: f.retryUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,
     resumeFrom: ["BUDGET_STOP", "CANCELLED", "STALLED", "FAILED"].includes(f.outcome) ? firstIncompleteStage(f.events, true) : null,
   };
 }
