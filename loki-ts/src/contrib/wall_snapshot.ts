@@ -10,7 +10,8 @@ export const MANIFESTS = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap
 const run = (cmd: string, args: string[], signal: AbortSignal, timeout: number): Promise<{ ok: boolean; out: string }> =>
   new Promise((res) => { try { execFile(cmd, args, { maxBuffer: 1 << 24, timeout, signal, env: tokenFreeEnv(process.env) }, (err, out) => res({ ok: !err, out: String(out ?? "") })); } catch { res({ ok: false, out: "" }); } });
 export async function snapshotTree(repoDir: string, signal: AbortSignal, o: { timeoutMs?: number; maxMb?: number } = {}): Promise<string | null> {
-  const timeoutMs = o.timeoutMs ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S) || 120) * 1000, maxMb = o.maxMb ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_MAX_MB) || 2048);
+  const posEnv = (k: string, d: number): number => { const n = Number(process.env[k]); return Number.isFinite(n) && n > 0 ? n : d; };
+  const timeoutMs = o.timeoutMs ?? posEnv("LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S", 120) * 1000, maxMb = o.maxMb ?? posEnv("LOKI_E10_WALL_SNAPSHOT_MAX_MB", 2048);
   if (signal.aborted) return null;
   const dir = mkdtempSync(join(tmpdir(), "e10-wallbase-")), fail = (): null => { rmSync(dir, { recursive: true, force: true }); return null; };
   try {
