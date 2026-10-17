@@ -1004,3 +1004,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: decompose.ts items with no matching file (also shared-file-only items); fix_units.ts units (always carry a write set); the u1 PARTIAL exit 1 in the same evidence is the separate no-test-runner seed cause (TEN-COST-20, TEN-COST-21), not this class.
 - Mechanism: decompose() folds every item that names no write-set file into the first unit that owns files; if no item names a file all items form one unit and route.ts falls back to the sequential run (fewer than 2 units).
 - Fixture: tests/engine10/decompose.test.ts "no unit has an empty write set" and "a spec where no item names a file collapses to one unit"; repro: LOKI_UNIT_SPEC with writeSet [] and bin/loki start gives rc=2 "spec file is invalid".
+
+## FC-TEN-UX-01 First run in an empty folder dies on "not a git repository", and a logged-out Claude CLI fails only after spend starts (FIRST-RUN-DEAD-END)
+- User-visible vs raw: a new user running `loki start "<brief>"` in a fresh folder got "not a git repository ... run loki from inside a git checkout" with no next step; a logged-out claude CLI surfaced later as a failed first iteration.
+- Law broken: a first run must either work or name the exact command that fixes it, before any spend.
+- Siblings: preflight.ts git identity check (stays fatal, names the git config command, never set automatically); doctor.ts login probe (same `claude auth status` parse, now shared); non-empty folder without a repo (stays fatal, now names `git init && git add . && git commit -m init`).
+- Mechanism: util/first_run_repo.ts initialises only a truly empty folder (LOKI_AUTO_GIT_INIT=0 refuses); preflight reuses doctor claudeAuthStatusLoggedIn: loggedIn false is fatal, an unknown answer is a warning only.
+- Fixture: tests/engine10/preflight.test.ts "first run (TEN-UX-01)" cases (empty folder, one-file folder, LOKI_AUTO_GIT_INIT=0, fake claude loggedIn false / unknown / API key set).

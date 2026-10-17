@@ -321,3 +321,38 @@ jobs:
       - name: Sanity bench-suite (hyperfine, 5 runs, 1 warmup)
         working-directory: loki-ts
         run: bun run scripts/bench-suite.ts --runs 5 --warmup 1
+
+  # TEN-STABILITY-07: informational. Classifies tests that flip pass/fail across
+  # the bun legs at one SHA (FLIP) versus tests red in every leg (STABLE-FAIL).
+  # !cancelled() keeps it running after a red leg; it never fails the run.
+  flake-classify:
+    name: Flake classify (nightly bun legs)
+    needs: [dedupe, bun-tests-nightly]
+    if: ${{ !cancelled() && needs.dedupe.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Classify flips and stable failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          rc=0
+          out="$(bash scripts/nightly-flake-tracker.sh --gh-run "$RUN_ID")" || rc=$?
+          {
+            echo "### Nightly flake classification (tracker rc=$rc)"
+            if [ -n "$out" ]; then
+              echo '```'
+              printf '%s\n' "$out"
+              echo '```'
+            else
+              echo "No flips or stable failures in the bun legs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0

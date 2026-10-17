@@ -116,6 +116,33 @@ describe("engine10 plan: relevant-file selection", () => {
     expect(picks[0]!.reason).toContain("date");
   });
 
+  const qmap = (entries: RepoMap["entries"]): RepoMap => ({ files: entries.map((e) => e.path), entries, truncated: false });
+
+  test("TEN-QUALITY-05: exact tokens only, 'add a retry flag' does not select address.py", () => {
+    const m = qmap([{ path: "src/address.py", symbols: [] }, { path: "src/retry.py", symbols: [] }]);
+    expect(selectRelevantFiles("add a retry flag", m)).toEqual(["src/retry.py"]);
+    expect(selectRelevantFiles("handle dress retry", m)).toEqual(["src/retry.py"]); // 'dress' sits inside 'address'
+  });
+
+  test("TEN-QUALITY-05: traceback path ranks first ahead of keyword noise", () => {
+    const noise = Array.from({ length: 7 }, (_, i) => ({ path: `src/noise${i}.py`, symbols: ["query", "pkg"] }));
+    const m = qmap([...noise, { path: "src/pkg/query.py", symbols: [] }]);
+    const task = 'query failed\n  File "src/pkg/query.py", line 88, in run\n    pkg query';
+    expect(selectRelevantFiles(task, m)[0]).toBe("src/pkg/query.py");
+  });
+
+  test("TEN-QUALITY-05: file:line:col and dotted module name a path", () => {
+    const m = qmap([{ path: "a/x.ts", symbols: [] }, { path: "a/b.ts", symbols: [] }, { path: "pkg/mod.py", symbols: [] }]);
+    expect(selectRelevantFiles("crash at a/b.ts:12:3", m)[0]).toBe("a/b.ts");
+    expect(selectRelevantFiles("raised in pkg.mod.Name", m)[0]).toBe("pkg/mod.py");
+  });
+
+  test("TEN-QUALITY-05: bulk_create and parseConfig match symbols by token", () => {
+    const m = qmap([{ path: "db/a.py", symbols: ["Other"] }, { path: "db/query.py", symbols: ["QuerySet.bulk_create"] }, { path: "cfg/c.py", symbols: ["parse_config"] }]);
+    expect(selectRelevantFiles("bulk_create is slow", m)).toEqual(["db/query.py"]);
+    expect(selectRelevantFiles("fix parseConfig", m)).toEqual(["cfg/c.py"]);
+  });
+
   test("no keyword overlap in the task yields no relevant files", () => {
     expect(selectRelevantFiles("   ", repoMap)).toEqual([]);
   });

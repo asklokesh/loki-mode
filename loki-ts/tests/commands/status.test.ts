@@ -8,7 +8,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { runStatus } from "../../src/commands/status.ts";
 import { stripAnsi, RED } from "../../src/util/colors.ts";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -773,5 +773,89 @@ describe("status: text mode -- last deploy", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("status --badge: verified deploy badge", () => {
+  const URL = "https://app.example.com";
+  const KEYS = ["LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_RECEIPT_SIGNING_KEY"];
+  let savedKeys: Array<string | undefined> = [];
+  beforeEach(() => { savedKeys = KEYS.map((k) => process.env[k]); });
+  afterEach(() => {
+    KEYS.forEach((k, i) => { if (savedKeys[i] === undefined) delete process.env[k]; else process.env[k] = savedKeys[i]; });
+  });
+  async function badgeFixture(extra: Record<string, unknown>, sign = true): Promise<string> {
+    const root = mkTmp();
+    const lokiDir = join(root, ".loki");
+    mkdirSync(join(lokiDir, "deploys"), { recursive: true });
+    const keyFile = join(root, "key.pem");
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    {
+      const { canonicalJson, signReceipt } = await import("../../src/util/receipt_signer.ts");
+      const { createHash } = await import("node:crypto");
+      const { main } = await import("../../src/engine10/verify_cmd.ts");
+      const body = { schema: "proof/1", run_id: "p1", verdict: "pass" };
+      const hash = createHash("sha256").update(canonicalJson(body)).digest("hex");
+      mkdirSync(join(lokiDir, "proofs", "p1"), { recursive: true });
+      writeFileSync(join(lokiDir, "proofs", "p1", "proof.json"), JSON.stringify({ ...body, verification: { hash, attestation: signReceipt("p1", hash).jwt } }));
+      const rec = join(lokiDir, "deploys", "20261016T000000Z-1.json");
+      writeFileSync(rec, JSON.stringify({ schema: "loki.deploy/1", receipt_sha256: hash, head_sha: "abc123", target: "vercel", command: "vercel --prod", health_status: "HEALTHY", health_url: "http://x/ok", rollback_attempted: false, rollback_exit: null, started_at: "2026-01-01T00:00:00Z", finished_at: "2026-01-01T00:00:05Z", ...extra }));
+      if (sign) {
+        const w = process.stdout.write.bind(process.stdout);
+        process.stdout.write = (() => true) as typeof process.stdout.write;
+        try { await main(["--sign-deploy", rec]); } finally { process.stdout.write = w; }
+      }
+    }
+    process.env["LOKI_DIR"] = lokiDir;
+    return root;
+  }
+  async function badge(extra: Record<string, unknown>, sign = true): Promise<string> {
+    const root = await badgeFixture(extra, sign);
+    try {
+      const r = await runWithCapture(["--badge"]);
+      expect(r.exitCode).toBe(0);
+      return stripAnsi(r.stdout);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("signed healthy record with live_binding=VERIFIED prints a green linked badge", async () => {
+    const out = await badge({ deployed_url: URL, live_binding: "VERIFIED" });
+    expect(out).toContain("brightgreen");
+    expect(out).toContain(`${URL}/.well-known/loki-provenance.json`);
+  });
+  it("FAILED_HEALTH gives a red badge", async () => {
+    const out = await badge({ deployed_url: URL, live_binding: "VERIFIED", health_status: "FAILED_HEALTH" });
+    expect(out).toContain("-red");
+    expect(out).not.toContain("brightgreen");
+  });
+  it("tampered record gives a red badge", async () => {
+    const root = await badgeFixture({ deployed_url: URL, live_binding: "VERIFIED" });
+    try {
+      const f = join(root, ".loki", "deploys", "20261016T000000Z-1.json");
+      writeFileSync(f, readFileSync(f, "utf-8").replace("vercel", "evil"));
+      const out = stripAnsi((await runWithCapture(["--badge"])).stdout);
+      expect(out).toContain("-red");
+      expect(out).not.toContain("brightgreen");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("unsigned record omits the badge with a reason", async () => {
+    const out = await badge({ deployed_url: URL, live_binding: "VERIFIED" }, false);
+    expect(out).not.toContain("brightgreen");
+    expect(out).toContain("No deploy badge");
+  });
+  it("missing live_binding omits the badge", async () => {
+    const out = await badge({ deployed_url: URL });
+    expect(out).not.toContain("brightgreen");
+    expect(out).toContain("live_binding");
+  });
+  it("missing deployed_url omits the badge", async () => {
+    const out = await badge({ live_binding: "VERIFIED" });
+    expect(out).not.toContain("shields.io");
+    expect(out).toContain("deployed_url");
   });
 });

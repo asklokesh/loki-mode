@@ -5,6 +5,11 @@
 # Usage: nightly-flake-tracker.sh SHA:LABEL:LOGFILE [SHA:LABEL:LOGFILE ...]
 #   LABEL names the run/job the log came from (for example 37790534786-bun).
 #   Fetch logs with: gh api repos/OWNER/REPO/actions/jobs/JOB_ID/logs > file
+#        nightly-flake-tracker.sh --gh-run RUN_ID
+#   --gh-run fetches the "Bun tests on ..." job logs of one Actions run with gh
+#   (repo from GITHUB_REPOSITORY) and tracks them at each job's head SHA.
+#   bun=latest (experimental) legs get a "-drift" label suffix so a flip there
+#   reads as upstream drift.
 #
 # Recognized result lines (timestamp and ANSI stripped):
 #   bun test:       "(pass) name [1.2ms]" / "(fail) name [1.2ms]"
@@ -16,9 +21,43 @@
 # (a real defect, not a flake). Exit 0 = no flips, 1 = flips, 2 = usage error.
 set -uo pipefail
 
-if [ "$#" -lt 1 ]; then
-    echo "usage: $0 SHA:LABEL:LOGFILE [...]" >&2
+usage() {
+    echo "usage: $0 SHA:LABEL:LOGFILE [...] | --gh-run RUN_ID" >&2
     exit 2
+}
+
+if [ "${1:-}" = "--gh-run" ]; then
+    run_id="${2:-}"
+    case "$run_id" in '' | *[!0-9]*) usage ;; esac
+    [ "$#" -eq 2 ] || usage
+    if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        echo "--gh-run needs gh and jq" >&2
+        exit 2
+    fi
+    repo="${GITHUB_REPOSITORY:-}"
+    [ -n "$repo" ] || repo='{owner}/{repo}'
+    gh_logdir="$(mktemp -d "${TMPDIR:-/tmp}/nightly-flake-gh.XXXXXX")" || exit 2
+    trap 'rm -rf -- "$gh_logdir"' EXIT
+    jobs_json="$(gh api --paginate "repos/$repo/actions/runs/$run_id/jobs?per_page=100")" || {
+        echo "gh api jobs failed for run $run_id" >&2
+        exit 2
+    }
+    set --
+    while IFS=$'\t' read -r jid jname jsha; do
+        [ -n "$jid" ] || continue
+        label="$jid-$(printf '%s' "$jname" | sed -e 's/^Bun tests on //' -e 's/ (nightly)$//' -e 's/[^A-Za-z0-9.=-]/_/g')"
+        case "$jname" in *bun=latest*) label="$label-drift" ;; esac
+        gh api "repos/$repo/actions/jobs/$jid/logs" >"$gh_logdir/$jid.log" 2>/dev/null || continue
+        set -- "$@" "$jsha:$label:$gh_logdir/$jid.log"
+    done < <(printf '%s' "$jobs_json" | jq -r '.jobs[]? | select(.name | startswith("Bun tests on")) | [.id, .name, .head_sha] | @tsv')
+    if [ "$#" -lt 1 ]; then
+        echo "no Bun test job logs found for run $run_id" >&2
+        exit 0
+    fi
+fi
+
+if [ "$#" -lt 1 ]; then
+    usage
 fi
 
 for arg in "$@"; do
