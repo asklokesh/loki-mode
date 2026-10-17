@@ -842,7 +842,8 @@ async function runStatusBadge(): Promise<number> {
 }
 
 // loki status --probe: re-probe the newest deploy record's health_url now. Exit 0 when healthy
-// (2xx/3xx) or when there is nothing to probe; exit 1 on a 4xx/5xx, timeout or network error.
+// (2xx/3xx) or when there is nothing to probe; exit 1 on a 4xx/5xx, timeout or network error
+// that persists across one retry after 5 seconds (LOKI_STATUS_PROBE_RETRY_DELAY_MS overrides).
 async function runStatusProbe(): Promise<number> {
   const d = await loadLastDeploy(lokiDir());
   if (d === null) {
@@ -856,19 +857,30 @@ async function runStatusProbe(): Promise<number> {
   }
   const ms = Number(process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"]);
   const timeoutMs = Number.isFinite(ms) && ms > 0 ? ms : 10000;
-  try {
-    const res = await fetch(raw, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
-    if (res.status >= 200 && res.status < 400) {
-      process.stdout.write(`Deploy health OK: ${raw} returned ${res.status}\n`);
-      return 0;
+  const rd = Number(process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"]);
+  const retryMs = Number.isFinite(rd) && rd >= 0 ? rd : 5000;
+  // One attempt: returns a failure reason, or null when healthy (prints the OK line).
+  const attempt = async (): Promise<string | null> => {
+    try {
+      const res = await fetch(raw, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+      if (res.status >= 200 && res.status < 400) {
+        process.stdout.write(`Deploy health OK: ${raw} returned ${res.status}\n`);
+        return null;
+      }
+      return `returned ${res.status}`;
+    } catch (e) {
+      return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError") ? `timed out after ${timeoutMs}ms` : `unreachable (${e instanceof Error ? e.message : String(e)})`;
     }
-    process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} returned ${res.status}${NC}\n`);
-    return 1;
-  } catch (e) {
-    const why = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError") ? `timed out after ${timeoutMs}ms` : `unreachable (${e instanceof Error ? e.message : String(e)})`;
-    process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} ${why}${NC}\n`);
-    return 1;
-  }
+  };
+  // A cold start is not a regression: retry once after a pause before reporting.
+  let why = await attempt();
+  if (why === null) return 0;
+  process.stdout.write(`Deploy health probe failed (${raw} ${why}); retrying once in ${Math.round(retryMs / 1000)}s\n`);
+  await new Promise<void>((r) => setTimeout(r, retryMs));
+  why = await attempt();
+  if (why === null) return 0;
+  process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} ${why}${NC}\n`);
+  return 1;
 }
 
 // v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
