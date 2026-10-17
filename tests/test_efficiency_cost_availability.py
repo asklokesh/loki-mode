@@ -290,5 +290,115 @@ class ChildLedgerTests(unittest.TestCase):
             self.assertAlmostEqual(cost["usd"], 0.25, places=4)
 
 
+def _load(name, fname):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, str(_LIB / fname))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class PartialCostSiblingTests(unittest.TestCase):
+    """FC-COST-PARTIAL-b: every cost consumer routes through cost_block_is_partial."""
+
+    def test_shared_helper_decides_partial(self):
+        from efficiency_cost import cost_block_is_partial
+        self.assertFalse(cost_block_is_partial({"usd": 1.0, "cost_available": True, "cost_partial": False}))
+        self.assertTrue(cost_block_is_partial({"usd": 1.0, "cost_partial": True}))
+        self.assertTrue(cost_block_is_partial({"usd": None, "cost_available": False}))
+        self.assertTrue(cost_block_is_partial({"usd": 1.0, "ledger_invalid_lines": 2}))
+        self.assertTrue(cost_block_is_partial({"usd": 1.0, "cost_unpriced_records": 1}))
+        self.assertFalse(cost_block_is_partial(None))
+
+    def test_trust_trajectory_cost_per_accepted_refuses_partial_cost(self):
+        tt = _load("trust_trajectory_t", "trust_trajectory.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            for i, partial in enumerate((False, True)):
+                pd = os.path.join(loki, "proofs", "r%d" % i)
+                os.makedirs(pd)
+                with open(os.path.join(pd, "proof.json"), "w") as fh:
+                    json.dump({"run_id": "r%d" % i, "verdict": "VERIFIED",
+                               "cost": {"usd": 0.5, "cost_partial": partial}}, fh)
+            runs = tt._load_runs(loki)
+            eff = tt.outcome_effort(runs)
+            self.assertIsNone(eff["cost_per_accepted_usd"])
+            self.assertIn("partial", eff["cost_note"])
+
+    def test_trust_trajectory_complete_cost_still_reported(self):
+        tt = _load("trust_trajectory_t2", "trust_trajectory.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            pd = os.path.join(loki, "proofs", "r0")
+            os.makedirs(pd)
+            with open(os.path.join(pd, "proof.json"), "w") as fh:
+                json.dump({"run_id": "r0", "verdict": "VERIFIED",
+                           "cost": {"usd": 0.5, "cost_partial": False}}, fh)
+            eff = tt.outcome_effort(tt._load_runs(loki))
+            self.assertEqual(eff["cost_per_accepted_usd"], 0.5)
+
+    def test_cost_summary_marks_unpriced_iteration_lower_bound(self):
+        cs = _load("cost_summary_t", "cost-summary.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [
+                {"iteration": 1, "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.1},
+                {"iteration": 2, "input_tokens": 10, "output_tokens": 5},
+            ])
+            s = cs.summarize(d)
+            self.assertTrue(s["cost_partial"])
+            self.assertIn("LOWER BOUND", cs.render(s))
+
+    def test_cost_summary_complete_is_not_flagged(self):
+        cs = _load("cost_summary_t2", "cost-summary.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [{"iteration": 1, "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.1}])
+            s = cs.summarize(d)
+            self.assertFalse(s["cost_partial"])
+            self.assertNotIn("LOWER BOUND", cs.render(s))
+
+    def test_proof_generator_labels_partial_cost_lower_bound(self):
+        pg = _load("proof_generator_t", "proof-generator.py")
+        hook = pg._build_social_hook({"cost": {"usd": 0.25, "cost_partial": True}})
+        self.assertIn("at least $0.25", hook)
+        hook = pg._build_social_hook({"cost": {"usd": 0.25, "cost_partial": False}})
+        self.assertNotIn("at least", hook)
+        self.assertIn("$0.25", hook)
+
+    def test_cost_summary_unmeasured_iteration_alone_marks_lower_bound(self):
+        cs = _load("cost_summary_t3", "cost-summary.py")
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [
+                {"iteration": 1, "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.1},
+                {"iteration": 2, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
+            ])
+            s = cs.summarize(d)
+            self.assertEqual(s["iterations_measured"], 1)
+            self.assertEqual(s["iterations_found"], 2)
+            self.assertEqual(s["cost_iterations_counted"], 1)
+            self.assertTrue(s["cost_partial"])
+
+    def test_proof_generator_fallback_html_labels_partial_cost(self):
+        pg = _load("proof_generator_t2", "proof-generator.py")
+        base = {"run_id": "r", "cost": {"usd": 0.25, "cost_partial": True}}
+        self.assertIn("at least $0.25", pg._render_fallback_html(base))
+        base["cost"]["cost_partial"] = False
+        html = pg._render_fallback_html(base)
+        self.assertNotIn("at least $0.25", html)
+
+    def test_proof_template_labels_partial_cost_in_hero_and_cost_card(self):
+        html = (_LIB / "proof-template.html").read_text(encoding="utf-8")
+        self.assertIn("function costIsPartial(", html)
+        for fn in ("renderHero", "renderHeroStats", "renderCost"):
+            start = html.index("function " + fn + "(")
+            end = html.index("\n  function ", start + 10)
+            body = html[start:end]
+            if fn != "renderHeroStats":
+                self.assertIn("costIsPartial(p)", body, fn)
+            self.assertIn('"at least "', body, fn)
+
+
 if __name__ == "__main__":
     unittest.main()

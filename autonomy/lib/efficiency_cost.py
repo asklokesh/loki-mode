@@ -238,6 +238,19 @@ _LEDGER_TOKEN_KEYS = (
 )
 
 
+def cost_block_is_partial(cost):
+    """The one partial-cost check (FC-COST-PARTIAL-b): True when a cost block's
+    dollar total is a lower bound or unknown, so consumers label it and never
+    print it as complete."""
+    if not isinstance(cost, dict):
+        return False
+    if cost.get("cost_partial") is True or cost.get("cost_available") is False:
+        return True
+    return any(
+        isinstance(cost.get(k), int) and not isinstance(cost.get(k), bool) and cost.get(k) > 0
+        for k in ("ledger_invalid_lines", "cost_unpriced_records"))
+
+
 def read_child_ledger(loki_dir):
     """Read .loki/metrics/child-sessions.jsonl, one JSON object per child session.
 

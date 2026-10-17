@@ -101,6 +101,8 @@ export type TrustRun = {
   verdict: string | null;
   /** proof.cost.usd, or null when unmeasured. */
   cost_usd: number | null;
+  /** true when proof.cost is a lower bound or unknown; mirrors cost_block_is_partial in autonomy/lib/efficiency_cost.py. */
+  cost_partial?: boolean;
   /** Per-type intervention counts from proof.interventions_detail, or null when the proof carries none. */
   interventions_by_type: InterventionsByType | null;
   /** Wall-clock seconds blocked on a person (upper bound), or null when unmeasured. */
@@ -236,6 +238,16 @@ function costValue(proof: Record<string, unknown>): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+/** Port of cost_block_is_partial (autonomy/lib/efficiency_cost.py): keep the two in step. */
+function costIsPartial(proof: Record<string, unknown>): boolean {
+  const c = obj(proof["cost"]);
+  if (c["cost_partial"] === true || c["cost_available"] === false) return true;
+  return ["ledger_invalid_lines", "cost_unpriced_records"].some((k) => {
+    const v = c[k];
+    return typeof v === "number" && Number.isInteger(v) && v > 0;
+  });
+}
+
 const IV_TYPES = ["steer", "input", "authorization", "repair"] as const;
 
 function interventionDetail(proof: Record<string, unknown>): { by_type: InterventionsByType | null; waited_s: number | null; active_s: number | null } {
@@ -296,6 +308,7 @@ function loadRuns(lokiDir: string): TrustRun[] {
     const det = interventionDetail(proof);
     runs.push({
       cost_usd: costValue(proof),
+      cost_partial: costIsPartial(proof),
       interventions_by_type: det.by_type,
       waited_s: det.waited_s,
       active_s: det.active_s,
@@ -456,6 +469,7 @@ export function outcomeEffort(series: TrustRun[]): OutcomeEffort {
   if (series.length === 0) costNote = "no runs";
   else if (accepted === 0) costNote = "no accepted run, cost per accepted is undefined";
   else if (unmeasuredCost > 0) costNote = `cost unmeasured for ${unmeasuredCost} of ${series.length} runs, a partial sum is not a total`;
+  else if (series.some((r) => r.cost_partial === true)) costNote = `cost partial for ${series.filter((r) => r.cost_partial === true).length} of ${series.length} runs, a lower bound is not a total`;
   else cost = Math.round((series.reduce((s, r) => s + (r.cost_usd ?? 0), 0) / accepted) * 1e6) / 1e6;
 
   const withDetail = series.filter((r) => r.interventions_by_type !== null);
@@ -569,7 +583,7 @@ export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel |
     regressing_axes: regressingAxes,
     series,
     notes,
-    outcome_effort: outcomeEffort(series),
+    outcome_effort: outcomeEffort(runs),
     graduation: graduationAdvice({ series, regressing_axes: regressingAxes }, currentLevel),
   };
 }

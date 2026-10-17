@@ -37,6 +37,7 @@ if _HERE not in sys.path:
 
 import proof_redact  # noqa: E402
 from efficiency_cost import collect_efficiency as _collect_efficiency  # noqa: E402
+from efficiency_cost import cost_block_is_partial as _cost_is_partial  # noqa: E402
 import effort_estimator  # noqa: E402
 from tree_digest import MANIFEST_VERSION, compute_tree_digest  # noqa: E402
 from workspace_diff import collect_workspace_diff  # noqa: E402
@@ -2133,6 +2134,8 @@ def _build_social_hook(proof):
     council ratio. When cost was not collected, omit the cost (never fabricate
     a number, never print "$0.00")."""
     usd = _fmt_usd_hook((proof.get("cost") or {}).get("usd"))
+    if usd is not None and _cost_is_partial(proof.get("cost")):
+        usd = "at least " + usd
     lead = ("Built autonomously for " + usd) if usd is not None \
         else "Built autonomously by Loki Mode"
     parts = [lead]
@@ -2184,6 +2187,8 @@ def _render_fallback_html(proof):
 
     usd_val = cost.get("usd", None)
     usd_disp = _fmt_usd_hook(usd_val)
+    if usd_disp is not None and _cost_is_partial(cost):
+        usd_disp = "at least " + usd_disp
 
     rows = []
     rows.append("<h1>Loki Mode -- Proof of Run</h1>")

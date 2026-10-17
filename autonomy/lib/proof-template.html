@@ -803,14 +803,28 @@
     sec.classList.remove("hide");
   }
 
+  // Mirror of cost_block_is_partial (autonomy/lib/efficiency_cost.py).
+  function costIsPartial(p) {
+    var c = g(p, "cost", null);
+    if (!c || typeof c !== "object") return false;
+    if (c.cost_partial === true || c.cost_available === false) return true;
+    var ks = ["ledger_invalid_lines", "cost_unpriced_records"];
+    for (var i = 0; i < ks.length; i++) {
+      var v = c[ks[i]];
+      if (typeof v === "number" && isFinite(v) && Math.floor(v) === v && v > 0) return true;
+    }
+    return false;
+  }
+
   function renderHero(p) {
     // cost.usd is null when cost was not collected for this run. g() coerces
     // null to its default, so read with a null default and branch BEFORE
     // fmtUsd: a skeptic seeing a zero-dollar total assumes the artifact is fake.
     var usdRaw = g(p, "cost.usd", null);
+    var partial = costIsPartial(p);
     var fc = num(g(p, "files_changed.count", 0));
     var parts = [__PROOF_RECEIPT_TITLE_JSON__];
-    if (usdRaw !== null) parts.push(fmtUsd(usdRaw));
+    if (usdRaw !== null) parts.push((partial ? "at least " : "") + fmtUsd(usdRaw));
     else parts.push("cost not recorded");
     parts.push(fc + " file" + (fc === 1 ? "" : "s") + " changed");
     var cs = councilSummary(p);
@@ -825,7 +839,7 @@
     if (prov || model) sub.push("via " + esc(prov) + (model ? " / " + esc(model) : ""));
     document.getElementById("heroSub").innerHTML = sub.join(" · ");
 
-    renderHeroStats(p, usdRaw, fc, cs);
+    renderHeroStats(p, usdRaw, fc, cs, partial);
 
     var actions = document.getElementById("heroActions");
     var html = "";
@@ -872,7 +886,7 @@
     actions.innerHTML = html + share;
   }
 
-  function renderHeroStats(p, usdRaw, fc, cs) {
+  function renderHeroStats(p, usdRaw, fc, cs, partial) {
     var el = document.getElementById("heroStats");
     if (!el) return;
     var cells = [];
@@ -895,7 +909,7 @@
     }
     cells.push(["Verified", vMain, esc(vSub), cs ? "ok" : ""]);
     // Cost: never render a zero-dollar total when cost was not collected.
-    if (usdRaw !== null) cells.push(["Cost", fmtUsd(usdRaw), "total for this run", ""]);
+    if (usdRaw !== null) cells.push(["Cost", (partial ? "at least " : "") + fmtUsd(usdRaw), partial ? "lower bound, some cost not priced" : "total for this run", ""]);
     else cells.push(["Cost", "not recorded", "no cost data", ""]);
     // Duration.
     var dur = g(p, "wall_clock_sec", null);
@@ -962,6 +976,7 @@
   function renderCost(p) {
     var card = document.getElementById("costCard");
     var usdRaw = g(p, "cost.usd", null);
+    var partial = costIsPartial(p);
     function tokenValue(path) {
       var raw = g(p, path, null);
       return raw === null ? "not recorded" : fmtInt(raw);
@@ -981,8 +996,8 @@
     // a zero-dollar total (which reads as fake/broken to a skeptic).
     var top;
     if (usdRaw !== null) {
-      top = '<div class="cost-top"><span class="cost-usd">' + fmtUsd(usdRaw) +
-            '</span><span class="cost-label">total cost for this run, itemized below</span></div>';
+      top = '<div class="cost-top"><span class="cost-usd">' + (partial ? "at least " : "") + fmtUsd(usdRaw) +
+            '</span><span class="cost-label">' + (partial ? "lower bound: some cost was not priced or recorded" : "total cost for this run, itemized below") + '</span></div>';
     } else {
       top = '<div class="cost-top"><span class="cost-label">Cost was not recorded for this run. ' +
             'Token usage is itemized below.</span></div>';
