@@ -2548,3 +2548,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T14:55Z (CoS) v11.17.56
 - TEN-SECURITY-25 released after round 2 (BLOCK 30fd64ba8 flag-form leak fixed; opus HIGH APPROVE c0c17580a: 75-case leak diff vs b12355488, 160000-combination idempotency sweep, new rule linear at 13ms or less on 100KB). Main checks: tsc OK, bun test tests/util 434 pass 0 fail. Reviewer N1 (pre-existing URL userinfo ReDoS, 2.8s on 100KB) dispatched as TEN-SECURITY-26.
+
+## 2026-10-17T15:48Z (CoS) v11.17.57
+- STAB-1 main green fix-forward: core budget 4956 (budget.test pass), P9 allowtoken case PASS, L2 registry pass, monorepo_cwd 16 pass 0 fail, sigpipe 1722 <= 1722, select-tests 119 pass 0 fail, help drift 34 pass 0 fail. Combined: tsc rc=0, build rc=0, bun test (budget, l0, monorepo, l2, verify, util, spawn_env_guard, contract, cli) 765 pass 0 fail. Three orphan bun test PIDs (ppid 1, 21h old, removed worktrees) stopped by PID.
