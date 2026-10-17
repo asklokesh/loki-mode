@@ -1,7 +1,7 @@
 // Changed files for a finished run when its events carry no diff: the run's receipt.json names base_sha and head_sha, and
 // `git diff --numstat base head` in the run's discovered repo gives the per-file counts. Shas are validated as hex, git is
 // spawned without a shell and with an explicit env, and a failure of any step reads as null (unmeasured), never as zero files.
-import { execFileSync } from "node:child_process";
+import { safeGit } from "../../../../loki-ts/src/util/safe_git.ts";
 import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -76,7 +76,7 @@ export function diffStatFor(db: Db, source: string, run: string): DiffStat | nul
   if (failedAt !== undefined && Date.now() - failedAt < FAIL_TTL_MS) return null;
   try {
     diffStatGitRuns.n++;
-    const out = execFileSync("git", ["-C", repoReal, "-c", "core.quotePath=false", "diff", "--numstat", "--no-renames", `${base}..${head}`, "--"], { env: gitEnv(), timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = safeGit(repoReal, ["-c", "core.quotePath=false", "diff", "--numstat", "--no-renames", `${base}..${head}`, "--"], { env: gitEnv(), timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
     const files = parseNumstat(out);
     const stat: DiffStat = { base, head, files, added: files.reduce((n, f) => n + (f.added ?? 0), 0), removed: files.reduce((n, f) => n + (f.removed ?? 0), 0), source: "git" };
     cache.set(key, stat);

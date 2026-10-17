@@ -2,7 +2,7 @@
 // Same store as legacy and run.sh: <repo>/.loki/state/checkpoints/{index.jsonl,<id>/metadata.json}. Audit data stays read-only: nothing here
 // writes, edits or deletes an audit row or the hash chain. Create and rollback are state-changing, so they sit on `act` (loopback peer plus a
 // loopback Host plus JSON, ctx.local) like every other POST route, and each is recorded in the actions log. Unmeasured values are null, never "" or 0.
-import { execFileSync } from "node:child_process";
+import { safeGit } from "../../../../../loki-ts/src/util/safe_git.ts";
 import { appendFileSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { gte, sql } from "drizzle-orm";
@@ -70,7 +70,7 @@ export function getCheckpoint(repoDir: string, id: string): Rec | null {
 }
 
 const gitHead = (repoDir: string): string | null => {
-  try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || null; } catch { return null; }
+  try { return safeGit(repoDir, ["rev-parse", "HEAD"], { timeout: 5000 }).trim() || null; } catch { return null; }
 };
 
 export function createCheckpoint(repoDir: string, message: string, now = new Date()) {

@@ -82,7 +82,7 @@ function conv(s: { id: string; label: string; names: string[] }): IntegrationRow
 export async function listIntegrations(repoDir: string, gh: () => Promise<boolean | null> = () => ghAuthed()): Promise<IntegrationRow[]> {
   const rows: IntegrationRow[] = [];
 
-  const gitEnv = configuredName(repoDir, ["git", "token_env"]);
+  const gitEnv = configuredName(repoDir, "git.token_env".split("."));
   const ghOk = await gh();
   const gitEnvSet = isSet(gitEnv);
   rows.push({
