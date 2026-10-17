@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
-import { signReceipt } from "../../src/util/receipt_signer.ts";
+import { collectToolchain, resetToolchainMemo, signReceipt, toolchainProbeRuns } from "../../src/util/receipt_signer.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "e10-roundtrip-"));
@@ -34,6 +34,16 @@ async function capture(args: string[], runsRoot: string): Promise<{ rc: number; 
 }
 
 describe("seal then verify round-trip", () => {
+  test("toolchain probed once", () => {
+    resetToolchainMemo();
+    const a = collectToolchain();
+    const b = collectToolchain();
+    expect(toolchainProbeRuns()).toBe(1);
+    expect(b).toEqual(a);
+    expect(a.node).toMatch(/^\d+\.\d+/);
+    expect(a.git).toMatch(/^\d+\.\d+/);
+    expect(collectToolchain((bin) => `v-${bin}`).git).toBe("v-git");
+  });
   test("non-ASCII in every string field, key, and nested value verifies", async () => {
     const p = seal(
       {

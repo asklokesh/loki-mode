@@ -89,8 +89,35 @@ function toolVersion(bin: string): string | null {
     return r.status === 0 ? /\d+(\.\d+)+\S*/.exec(String(r.stdout))?.[0] ?? null : null;
   } catch { return null; }
 }
-export const collectToolchain = (probe: (bin: string) => string | null = toolVersion): Toolchain =>
-  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") });
+let probeRuns = 0;
+/** Times the default probe spawned its tool processes this process; the memo keeps it at one per process. */
+export const toolchainProbeRuns = (): number => probeRuns;
+let memo: Toolchain | null = null;
+/** Drops the per-process memo (tests only). */
+export const resetToolchainMemo = (): void => { memo = null; probeRuns = 0; };
+/** node, python3 and git probed together in one shell with concurrent jobs; each prints one atomic `bin=line` record. */
+function probeAll(): Record<string, string | null> {
+  const out: Record<string, string | null> = { node: null, python3: null, git: null };
+  probeRuns++;
+  const job = (b: string): string => `(v=$(${b} --version 2>/dev/null) && printf '${b}=%s\\n' "$(printf %s "$v" | head -n 1)") &`;
+  try {
+    const r = spawnSync("/bin/sh", ["-c", `${job("node")} ${job("python3")} ${job("git")} wait`], { env: plainTestEnv(), encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+    for (const line of String(r.stdout ?? "").split("\n")) {
+      const i = line.indexOf("=");
+      if (i > 0 && line.slice(0, i) in out) out[line.slice(0, i)] = /\d+(\.\d+)+\S*/.exec(line.slice(i + 1))?.[0] ?? null;
+    }
+  } catch { /* all stay null */ }
+  return out;
+}
+/** Tool versions never change inside one run: the default path probes once per process and memoizes. An injected probe bypasses the memo. */
+export function collectToolchain(probe?: (bin: string) => string | null): Toolchain {
+  if (probe) return { bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") };
+  if (!memo) {
+    const p = probeAll();
+    memo = { bun: process.versions["bun"] ?? toolVersion("bun"), node: p["node"]!, python3: p["python3"]!, git: p["git"]! };
+  }
+  return { ...memo };
+}
 /** --max-age value: Ns, Nm, Nh, Nd or plain seconds; returns seconds, or null when invalid or <= 0. */
 function parseMaxAge(v: string): number | null {
   const m = /^(\d+)([smhd]?)$/.exec(v);
