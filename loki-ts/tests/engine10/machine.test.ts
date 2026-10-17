@@ -519,4 +519,28 @@ describe("engine10 optional()", () => {
     writeFileSync(p, "throw new Error('boom');\n");
     await expect(optional(p)).rejects.toThrow("boom");
   });
+
+describe("TEN-COST-11 r3: spend of failed or killed stages reaches seal", () => {
+  const OKS = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0.1, killed: false };
+  const run = async (wall: Stage["run"], limitS = 5) => {
+    const { ctx } = fakeCtx();
+    ctx.sessions = { run: async () => OKS } as RunContext["sessions"];
+    let seen: string[] | undefined, outWall: unknown = "unset";
+    const seal = stage("seal", async (c) => { seen = c.sessionIds?.(); outWall = c.outputs().wall; return { status: "completed", data: {} }; });
+    await runMachine(ctx, { load: loaderOf(all({ wall: stage("wall", wall, limitS), seal })) });
+    return { seen, outWall };
+  };
+  it("a failed+killed wall stage's session ids are visible to seal although outputs.wall is empty", async () => {
+    const r = await run(async (c) => {
+      await c.sessions.run({ stage: "wall", iterationId: "w1" } as never); await c.sessions.run({ stage: "wall", iterationId: "w1-r2" } as never);
+      return { status: "failed", data: { iteration_ids: ["w1", "w1-r2"] }, killed: true };
+    });
+    expect(r.outWall).toBeUndefined();
+    expect(r.seen).toEqual(expect.arrayContaining(["w1", "w1-r2"]));
+  });
+  it("a wall stage cut off by its limit keeps the ids of sessions it had started", async () => {
+    const r = await run(async (c, sig) => { await c.sessions.run({ stage: "wall", iterationId: "w1" } as never); await sleep(5000, sig); return { status: "completed", data: {} }; }, 0.05);
+    expect(r.seen).toContain("w1");
+  });
+});
 });

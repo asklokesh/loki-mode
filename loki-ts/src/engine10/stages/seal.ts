@@ -242,7 +242,7 @@ export const sealStage: Stage = {
     const stages: Partial<Record<StageName, number>> = {};
     for (const [s, d] of Object.entries(o)) if (typeof d?.duration_s === "number") stages[s as StageName] = d.duration_s;
     const T = hooks.time, time = T ? T.build(ctx, stages, T.firstEventMs(join(ctx.runDir, "events.jsonl"))) : { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages }, totalS = T?.reconciled(time) ?? null;
-    const iterIds = Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]);
+    const iterIds = [...new Set([...Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]), ...(ctx.sessionIds?.() ?? [])])]; // a killed or failed stage's data is dropped by the machine, so its sessions come from the launch record
     if (iterIds.length === 0) notProven.add("cost not measured (no iteration ids recorded)");
     const cost = ctx.cost.read(ctx.repoDir, iterIds);
     if (cost.unmetered) notProven.add("cost unmetered (CLI invoker; recorded as 0)");

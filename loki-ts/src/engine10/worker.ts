@@ -47,7 +47,6 @@ export async function main(args: string[]): Promise<number> {
   const repoDir = process.cwd();
   const lokiRoot = join(repoDir, ".loki");
   const deep = mode === "deep";
-  const started = new Set<string>();
   // Supervisor cancel (SIGINT/SIGTERM): stop every live session so each records its partial usage, then exit.
   (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
   for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
@@ -65,12 +64,11 @@ export async function main(args: string[]): Promise<number> {
       baseSha: safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
       capS: workerCapS(deep, process.env),
       emit, overCap: over,
-      sessions: { run: (o) => { started.add(o.iterationId); return sessions.run(o); } }, failovers: () => failovers,
+      sessions, failovers: () => failovers,
       tests: new RealTestMapProvider(),
       cost: {
-        // Union with every session started: a killed stage's output (and its ids) is dropped by the machine.
         read(dir, ids) {
-          const c = sumResultCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), [...new Set([...ids, ...started])], UNMETERED));
+          const c = sumResultCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED));
           return costTotalsOf(c);
         },
       },

@@ -26,7 +26,7 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 // Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet.
 // not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; }
-const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
+export const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 // B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
 export function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   if (/ModuleNotFoundError/.test(output)) return false;
@@ -261,7 +261,9 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
   };
 }
 
-const WALL_SESSION_MAX_S = 300, WALL_BASE_RUN_S = 60; // sizing.ts wallLimitS caps a session at 300; the base run is 60s (BASE_RUN_TIMEOUT_MS)
+const WALL_SESSION_MAX_S = 300; // sizing.ts wallLimitS caps a session at 300
+export const WALL_BASE_FILES = 4; // files one rung's base run is sized for; RealBaseTestRunner spawns once per file at BASE_RUN_TIMEOUT_MS each
+export const WALL_RUNG_S = WALL_SESSION_MAX_S + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000); // one rung at its worst: a max session plus a per-file base run
 const greenOnBase = (r: StageResult): boolean => { const d = r.data, b = d.base_run as { pass?: number; fail?: number; not_run?: number } | undefined; return d.already_satisfied === true || (!!b && (b.pass ?? 0) > 0 && (b.fail ?? 0) === 0 && (b.not_run ?? 0) === 0); }; // mirrors seal.ts wallGreenOnBase
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
@@ -274,8 +276,9 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const usable = a.kind === "authored" && first.status === "completed";
   const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0;
   const green = usable && !unusable && greenOnBase(first);
-  const budgetLeft = (WALL_SESSION_MAX_S + WALL_BASE_RUN_S) * 2 * 1000 - (Date.now() - t0) >= wallLimitS("normal") * 1000;
-  if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel() || !budgetLeft) return first;
+  const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
+  if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel()) return first;
+  if (!budgetLeft) return green ? { ...first, data: { ...first.data, already_satisfied: false } } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
   if (a.kind === "authored") {
     // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
     for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true });
@@ -290,10 +293,11 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true } }; // both tiers' spend reaches the ledger via iteration_ids
 }
 
+export const WALL_STAGE_LIMIT_S = 2 * WALL_RUNG_S;
 export const wallStage: Stage = {
   name: "wall",
   targetS: 45,
-  limitS: 2 * (WALL_SESSION_MAX_S + WALL_BASE_RUN_S), // B2: room for both rungs (each a session at the wallLimitS cap plus a base run), so the sonnet retry is never cut off by the stage ceiling
+  limitS: WALL_STAGE_LIMIT_S, // B2: room for both rungs (each a session at the wallLimitS cap plus a base run), so the sonnet retry is never cut off by the stage ceiling
   run: (ctx, signal) => runWall(ctx, signal),
 };
 /** WC-01b: the split halves, read by the machine under LOKI_E10_WALL_CONCURRENT=1. */

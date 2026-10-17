@@ -78,7 +78,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
+  const startedIds = new Set<string>(); // TEN-COST-11 r3: every session this run started, whatever its stage later returned; seal unions these into the cost read so a killed or failed stage's spend is never lost
   const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
+    startedIds.add(o0.iterationId);
     const n0 = intentRevs.length, o = withSteer(o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     if (intentRevs.length > n0) ctx.emit("intent.revised", o.stage, { revisions: intentRevs }); // P12-07h will seed ctx from these on re-entry; durable in events.jsonl
     const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, capAtMs, () => ctx.overCap?.() === true); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
@@ -86,7 +88,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
   } };
-  const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit };
+  const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit, sessionIds: () => [...startedIds] };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
   /** FC-21b: the one post-plan resize. Never below the current cap or the elapsed time; recomputes capAtMs and re-arms the soft-cap timer. */
   const applyResize = (proposedS: number): void => {

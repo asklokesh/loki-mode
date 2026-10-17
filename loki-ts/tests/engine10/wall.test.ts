@@ -24,6 +24,7 @@ import {
   runWall,
   wallStage,
   type BaseTestRunner,
+  WALL_BASE_FILES, WALL_RUNG_S, WALL_STAGE_LIMIT_S, BASE_RUN_TIMEOUT_MS,
 } from "../../src/engine10/stages/wall.ts";
 import type {
   RunContext,
@@ -782,19 +783,19 @@ describe("COST-11 r2: escalation on doubt", () => {
   const KILLED = { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 1, killed: true } as SessionResult;
   // per-file base runner: every file reports greenBase ? pass : fail
   const baseOf = (green: boolean): BaseTestRunner => ({ run: () => (green ? { pass: 1, fail: 0 } : { pass: 0, fail: 1 }) });
-  const go = async (session: (n: number, o: SessionRunOptions, ctx: { abort: () => void; runId: string; repoDir: string }) => { files: string[]; result?: SessionResult }, green: (n: number) => boolean, env: Record<string, string> = {}) => {
+  const go = async (session: (n: number, o: SessionRunOptions, ctx: { abort: () => void; runId: string; repoDir: string; runDir: string; sealed: () => boolean | undefined }) => { files: string[]; result?: SessionResult }, green: (n: number) => boolean, env: Record<string, string> = {}, base?: BaseTestRunner) => {
     for (const k of ENV) delete process.env[k];
     Object.assign(process.env, env);
     const s = setup({ runners: ["vitest"], tests: [] }), models: string[] = [], events: string[] = [], ac = new AbortController();
     let n = 0, calls = 0;
     const sessions: SessionRunner = { run: async (o) => {
       models.push(String(o.model)); n++;
-      const r = session(n, o, { abort: () => ac.abort(), runId: "e10-test-1", repoDir: s.repoDir });
+      const r = session(n, o, { abort: () => ac.abort(), runId: "e10-test-1", repoDir: s.repoDir, runDir: s.runDir, sealed: () => ctx.wallSealed });
       for (const f of r.files) writeFileSync(join(o.cwd!, f), SAMPLE, "utf8");
       return r.result ?? OK;
     } };
     const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: join(s.runDir, "repomap.json") } }, events);
-    const baseRunner: BaseTestRunner = { run: (...a) => baseOf(green(Math.min(n, 2))).run(...a) };
+    const baseRunner: BaseTestRunner = base ?? { run: (...a) => baseOf(green(Math.min(n, 2))).run(...a) };
     void calls;
     try { return { result: await runWall(ctx, ac.signal, { baseRunner }), models, events, s }; }
     finally { rmSync(s.repoDir, { recursive: true, force: true }); }
@@ -807,9 +808,14 @@ describe("COST-11 r2: escalation on doubt", () => {
     expect(r.result.data.reauthored).toBe(true);
     expect(r.events).toContain("wall.reauthor:wall");
   });
-  test("B1: the abandoned green attempt's files are gone from repo and sealed dir", async () => {
-    const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), (n) => n !== 2);
+  test("B1: the abandoned green attempt's files are gone from repo and sealed dir, and the sealed flag is reset", async () => {
+    const seen: { repo: boolean; sealedCopy: boolean; flag: boolean | undefined }[] = [];
+    const r = await go((n, _o, c) => {
+      if (n === 2) seen.push({ repo: existsSync(join(c.repoDir, "tests", "loki_wall_a1.test.ts")) || existsSync(join(c.repoDir, "loki_wall_a1.test.ts")), sealedCopy: existsSync(join(c.runDir, "wall", "loki_wall_a1.test.ts")), flag: c.sealed() });
+      return { files: [`loki_wall_a${n}.test.ts`] };
+    }, (n) => n !== 2);
     expect((r.result.data.files as { path: string }[]).map((f) => f.path.split("/").pop())).toEqual(["loki_wall_a2.test.ts"]);
+    expect(seen).toEqual([{ repo: false, sealedCopy: false, flag: false }]);
   });
   test("B1: sonnet also green means already_satisfied stands (two sessions, no loop)", async () => {
     const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => true);
@@ -828,13 +834,41 @@ describe("COST-11 r2: escalation on doubt", () => {
     } finally { delete process.env.LOKI_E10_WALL_TIER; }
   });
 
-  test("N3: a killed haiku session escalates once and both attempt ids reach the ledger", async () => {
+  test("N3: a killed haiku session escalates once and both attempt ids are in the stage result (the ledger path is tested in machine.test.ts)", async () => {
     const r = await go((n) => (n === 1 ? { files: [], result: KILLED } : { files: ["loki_wall_b.test.ts"] }), () => false);
     expect(r.models).toEqual([HAIKU, SONNET]);
     expect(r.result.data.iteration_ids).toEqual(["e10-test-1-wall", "e10-test-1-wall-r2"]);
     expect((r.result.data.files as unknown[]).length).toBe(1);
   });
-  test("N3: both rungs killed ends after two sessions, no loop, both ids recorded", async () => {
+  test("M5: green via base_run counts alone (already_satisfied false, pass>0, fail 0, not_run 0) escalates", async () => {
+    const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => false, {}, { run: () => ({ pass: 2, fail: 0 }) });
+    expect(r.models).toEqual([HAIKU, SONNET]);
+    expect(r.events).toContain("wall.reauthor:wall");
+  });
+  test("M1: with the stage budget spent the retry does not run and a green first attempt is not already_satisfied", async () => {
+    const real = Date.now; let off = 0; Date.now = () => real() + off;
+    try {
+      const g = await go((n) => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [`loki_wall_a${n}.test.ts`] }; }, () => true);
+      expect(g.models).toEqual([HAIKU]);
+      expect(g.events).not.toContain("wall.reauthor:wall");
+      expect(g.result.data.already_satisfied).toBe(false);
+      off = 0;
+      const k = await go(() => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [], result: KILLED }; }, () => false);
+      expect(k.models).toEqual([HAIKU]);
+    } finally { Date.now = real; }
+  });
+  test("M1 control: budget left for one more rung allows the retry", async () => {
+    const real = Date.now; let off = 0; Date.now = () => real() + off;
+    try {
+      const g = await go((n) => { off += (WALL_STAGE_LIMIT_S - WALL_RUNG_S - 5) * 1000; return { files: [`loki_wall_a${n}.test.ts`] }; }, (n) => n !== 2);
+      expect(g.models).toEqual([HAIKU, SONNET]);
+    } finally { Date.now = real; }
+  });
+  test("c: the stage limit and the retry gate come from the base runner's per-file timeout", () => {
+    expect(WALL_RUNG_S).toBe(300 + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000));
+    expect(wallStage.limitS).toBe(2 * WALL_RUNG_S);
+  });
+  test("N3: both rungs killed ends after two sessions, no loop, both ids in the stage result (ledger: machine.test.ts)", async () => {
     const r = await go(() => ({ files: [], result: KILLED }), () => false);
     expect(r.models).toEqual([HAIKU, SONNET]);
     expect(r.result.status).toBe("failed");
@@ -865,6 +899,6 @@ describe("COST-11 r2: escalation on doubt", () => {
     expect(typeof r.result.data.holdout_dir).toBe("string");
   });
   test("B2: the stage ceiling covers two max-length sessions plus base runs", () => {
-    expect(wallStage.limitS).toBeGreaterThanOrEqual(2 * 300 + 60);
+    expect(wallStage.limitS).toBeGreaterThanOrEqual(2 * (300 + WALL_BASE_FILES * 60));
   });
 });
