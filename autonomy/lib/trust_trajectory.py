@@ -171,6 +171,10 @@ def _interventions_value(proof):
 _IV_TYPES = ("steer", "input", "authorization", "repair")
 
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from efficiency_cost import cost_block_is_partial  # noqa: E402
+
+
 def _cost_value(proof):
     usd = _obj(proof.get("cost")).get("usd")
     if usd is None or isinstance(usd, bool):
@@ -236,6 +240,7 @@ def _load_runs(loki_dir):
             "verdict": verdict,
             "false_verified": false_verified,
             "cost_usd": _cost_value(proof),
+            "cost_partial": cost_block_is_partial(_obj(proof.get("cost"))),
             "interventions_by_type": by_type,
             "waited_s": waited_s,
             "active_s": active_s,
@@ -336,6 +341,9 @@ def outcome_effort(series):
         cost_note = "no runs"
     elif accepted == 0:
         cost_note = "no accepted run, cost per accepted is undefined"
+    elif any(r.get("cost_partial") for r in series):
+        cost_note = "cost partial for %d of %d runs, a lower bound is not a total" % (
+            sum(1 for r in series if r.get("cost_partial")), len(series))
     elif unmeasured:
         cost_note = "cost unmeasured for %d of %d runs, a partial sum is not a total" % (unmeasured, len(series))
     else:
@@ -449,7 +457,7 @@ def compute_trajectory(loki_dir):
         "regressing_axes": regressing_axes,
         "series": series,
         "notes": notes,
-        "outcome_effort": outcome_effort(series),
+        "outcome_effort": outcome_effort(runs),
     }
 
 

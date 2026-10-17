@@ -50,7 +50,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from efficiency_cost import record_is_measured  # noqa: E402
+from efficiency_cost import cost_block_is_partial, record_is_measured  # noqa: E402
 
 # iteration_attribution.py already reads and sorts the efficiency dir, skipping
 # malformed records. Importing it keeps ONE reader of that directory; a third
@@ -167,6 +167,8 @@ def summarize(workspace="."):
         "fully_measured": exists > 0 and measured == exists,
         "total_cost_usd": round(total_usd, 4) if have_cost else None,
         "cost_iterations_counted": len(cost_points),
+        "cost_partial": cost_block_is_partial({
+            "cost_partial": have_cost and (len(cost_points) < measured or measured < exists)}),
         "avg_cost_per_iteration": (
             round(total_usd / len(cost_points), 4) if have_cost else None),
         "cache_hit_ratio": _ratio(
@@ -262,7 +264,8 @@ def render(s):
         s["iterations_found"], s["iterations_measured"],
         "" if s["fully_measured"] else "  <- PARTIAL" if s["iterations_found"]
         else ""))
-    L.append("Total cost:  " + _usd(s["total_cost_usd"]))
+    L.append("Total cost:  " + _usd(s["total_cost_usd"])
+             + ("  <- LOWER BOUND" if s.get("cost_partial") else ""))
     L.append("Avg / iter:  " + _usd(s["avg_cost_per_iteration"]))
     L.append("Cache ratio: " + _pct(s["cache_hit_ratio"])
              + "   (cache_read / (input + cache_read))")
