@@ -167,6 +167,8 @@ jobs:
           [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
             echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
           echo "OK: packed manifest gitHead ${PACKED_HEAD}"
+          [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {
+            echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
           tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \
@@ -210,11 +212,14 @@ jobs:
   # (which verified the packed tarball carries a fresh dist). It does not wait
   # on gate, Tests, the tag or the GitHub Release; those run in parallel
   # and a red one means fix forward (npm deprecate allowed, never unpublish).
-  # Publishes under latest, then adds next. Idempotent: a rerun for a version
-  # npm already serves only re-asserts the two dist-tags.
+  # Publishes under next, then moves latest and next only if VERSION is the
+  # highest (never backwards). Idempotent on rerun; serialized by concurrency.
   publish-npm:
     needs: pack-npm
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-npm
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
@@ -244,21 +249,31 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
-          [ "$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz | wc -l | tr -d ' ')" = "1" ] || { echo "FATAL: expected exactly one tarball"; exit 1; }
-          tgz="$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz)"
+          shopt -s nullglob
+          tgzs=("$RUNNER_TEMP"/npm-tarball/*.tgz)
+          [ "${#tgzs[@]}" = "1" ] || { echo "FATAL: expected exactly one tarball"; exit 1; }
+          tgz="${tgzs[0]}"
           got="$(sha256sum "$tgz" | cut -d' ' -f1)"
           [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
             echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}'"; exit 1; }
-          if ! npm publish "$tgz" --access public --tag latest; then
+          # Publish under next (never moves latest backwards), then move latest
+          # and next only when VERSION is the highest by semver (never-backwards).
+          if ! npm publish "$tgz" --access public --tag next; then
             # Rerun case: the version is already on the registry. Anything else is a real failure.
             if [ "$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)" = "$VERSION" ]; then
-              echo "loki-mode@${VERSION} is already published; re-asserting dist-tags only"
-              npm dist-tag add "loki-mode@${VERSION}" latest
+              echo "loki-mode@${VERSION} is already published; re-asserting dist-tags only if highest"
             else
               echo "FATAL: npm publish failed and loki-mode@${VERSION} is not on the registry"; exit 1
             fi
           fi
-          npm dist-tag add "loki-mode@${VERSION}" next
+          CUR="$(npm view loki-mode dist-tags.latest --prefer-online 2>/dev/null || true)"
+          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            npm dist-tag add "loki-mode@${VERSION}" latest
+            npm dist-tag add "loki-mode@${VERSION}" next
+          else
+            echo "SKIP dist-tags: ${VERSION} is lower than current latest ${CUR} (never backwards)"
+            exit 0
+          fi
           echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
 
   release:
@@ -812,8 +827,17 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(tr -d '\n' < ../../VERSION)"
-          npm publish --access public --tag latest
-          npm dist-tag add "loki-mode-sdk@${VERSION}" next
+          if ! npm publish --access public --tag next; then
+            if [ "$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)" != "$VERSION" ]; then
+              echo "FATAL: sdk publish failed and loki-mode-sdk@${VERSION} is not on the registry"; exit 1
+            fi
+            echo "loki-mode-sdk@${VERSION} already published"
+          fi
+          CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
+          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            npm dist-tag add "loki-mode-sdk@${VERSION}" latest
+            npm dist-tag add "loki-mode-sdk@${VERSION}" next
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

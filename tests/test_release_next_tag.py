@@ -33,7 +33,7 @@ def _runs(job):
 
 
 class ReleasePublishesLatestAndNext(unittest.TestCase):
-    def test_every_npm_publish_has_tag_latest(self):
+    def test_every_npm_publish_goes_to_next_first(self):
         pubs = [
             ln
             for job in _doc()["jobs"].values()
@@ -43,19 +43,39 @@ class ReleasePublishesLatestAndNext(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(pubs), 2, "expected loki-mode and ts-sdk publishes")
         for ln in pubs:
-            self.assertIn("--tag latest", ln, ln)
-            self.assertNotIn("--tag next", ln, ln)
+            self.assertIn("--tag next", ln, ln)
+            self.assertNotIn("--tag latest", ln, ln)
 
-    def test_next_is_added_for_both_packages(self):
+    def test_latest_and_next_both_moved_for_both_packages(self):
         jobs = _doc()["jobs"]
         main = "\n".join(_runs(jobs["publish-npm"]))
         sdk = "\n".join(_runs(jobs["publish-ts-sdk"]))
-        self.assertRegex(main, r'npm dist-tag add "loki-mode@\$\{VERSION\}" next')
-        self.assertRegex(sdk, r'npm dist-tag add "loki-mode-sdk@\$\{VERSION\}" next')
+        for txt, pkg in ((main, "loki-mode"), (sdk, "loki-mode-sdk")):
+            for tag in ("latest", "next"):
+                self.assertRegex(txt, r'npm dist-tag add "%s@\$\{VERSION\}" %s' % (pkg, tag))
 
-    def test_latest_published_before_next_is_added(self):
+    def test_never_backwards_guard(self):
+        jobs = _doc()["jobs"]
+        for name in ("publish-npm", "publish-ts-sdk"):
+            r = "\n".join(_runs(jobs[name]))
+            self.assertIn("sort -V", r, name)
+            self.assertLess(r.index("sort -V"), r.index("dist-tag add"), name)
+        r = "\n".join(_runs(jobs["publish-npm"]))
+        self.assertIn("never backwards", r)
+
+    def test_rerun_never_retags_without_the_guard(self):
         r = "\n".join(_runs(_doc()["jobs"]["publish-npm"]))
-        self.assertLess(r.index("--tag latest"), r.index("dist-tag add"))
+        self.assertEqual(r.count("dist-tag add"), 2)
+        self.assertGreater(r.index("dist-tag add"), r.index("sort -V"))
+
+    def test_publish_npm_is_serialized(self):
+        conc = _doc()["jobs"]["publish-npm"].get("concurrency")
+        self.assertEqual(conc["group"], "release-npm")
+        self.assertFalse(conc["cancel-in-progress"])
+
+    def test_pack_npm_checks_packed_version(self):
+        r = "\n".join(_runs(_doc()["jobs"]["pack-npm"]))
+        self.assertIn("packed package.json version != VERSION", r)
 
     def test_publish_tolerates_rerun_but_not_a_real_failure(self):
         r = "\n".join(_runs(_doc()["jobs"]["publish-npm"]))
