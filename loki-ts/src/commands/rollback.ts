@@ -34,8 +34,8 @@ Subcommands:
   show <id>              Print metadata for one checkpoint
   to <id>                Restore .loki/ state + context to that checkpoint
   latest                 Restore to the most recent checkpoint
-  deploy                 Print the provider rollback command for the last deploy
-                         record (read-only; never runs it)
+  deploy [--json]        Print the provider rollback command for the last deploy
+                         record (read-only; never runs it); --json prints one object
 
 Restored automatically (safe, non-code):
   .loki/state/orchestrator.json
@@ -62,7 +62,7 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
   }
 
   // Reject unknown flags so a mistyped safety flag never runs the real rollback.
-  const allowed = sub === "to" || sub === "latest" ? ["--force"] : sub === "list" ? ["--json"] : [];
+  const allowed = sub === "to" || sub === "latest" ? ["--force"] : sub === "list" || sub === "deploy" ? ["--json"] : [];
   if (["list", "show", "to", "latest", "deploy"].includes(sub)) {
     const bad = rest.find((a) => a.startsWith("-") && !allowed.includes(a));
     if (bad !== undefined) {
@@ -132,7 +132,7 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
     }
 
     case "deploy":
-      return printDeployRollback();
+      return printDeployRollback(rest.includes("--json"));
 
     default:
       process.stderr.write(`Unknown subcommand: ${sub}\n`);
@@ -203,9 +203,31 @@ const DEPLOY_ROLLBACKS: ReadonlyArray<{ prefix: string; provider: string; cmd?: 
   { prefix: "gcloud", provider: "Google Cloud Run", manual: "list revisions with `gcloud run revisions list`, then shift traffic to the previous one with `gcloud run services update-traffic --to-revisions=<revision>=100` (not run by loki)" },
 ];
 
+// First real program of a deploy command: skips npx/bunx/pnpm dlx/yarn dlx wrappers and their flags, and
+// aliases flyctl to fly.
+function deployProgram(command: string): string {
+  const toks = command.split(/\s+/).filter((t) => t !== "");
+  let i = 0;
+  for (;;) {
+    const t = toks[i] ?? "";
+    const next = toks[i + 1] ?? "";
+    if (t === "npx" || t === "bunx") i += 1;
+    else if ((t === "pnpm" || t === "yarn") && next === "dlx") i += 2;
+    else break;
+    while ((toks[i] ?? "").startsWith("-")) i += 1;
+  }
+  const prog = toks[i] ?? "";
+  return prog === "flyctl" ? "fly" : prog;
+}
+
 // loki rollback deploy: read-only. Reads the newest .loki/deploys/*.json (loki.deploy/1) and prints the
 // provider rollback command for its deploy command. Exit 0 with a note when there is nothing to print.
-function printDeployRollback(): number {
+function printDeployRollback(json = false): number {
+  const say = (matched: boolean, text: string, extra: Record<string, unknown> = {}): number => {
+    const body = json ? JSON.stringify({ matched, ...extra, message: text }) : text;
+    process.stdout.write(`${body}\n`);
+    return 0;
+  };
   const ddir = resolve(lokiDir(), "deploys");
   let files: string[] = [];
   try {
@@ -215,8 +237,7 @@ function printDeployRollback(): number {
   }
   const newest = files[files.length - 1];
   if (newest === undefined) {
-    process.stdout.write("No deploy to roll back: no deploy record\n");
-    return 0;
+    return say(false, "No deploy to roll back: no deploy record");
   }
   let command = "";
   try {
@@ -224,19 +245,22 @@ function printDeployRollback(): number {
     if (rec["schema"] !== "loki.deploy/1") throw new Error("schema");
     command = typeof rec["command"] === "string" ? rec["command"].trim() : "";
   } catch {
-    process.stdout.write("No deploy to roll back: last deploy record unreadable\n");
-    return 0;
+    return say(false, "No deploy to roll back: last deploy record unreadable");
   }
-  const first = command.split(/\s+/)[0] ?? "";
+  const first = deployProgram(command);
   const hit = DEPLOY_ROLLBACKS.find((r) => r.prefix === first);
   if (hit === undefined) {
-    process.stdout.write("No rollback command known for the last deploy's provider; roll back with the provider's own tooling\n");
-    return 0;
+    return say(false, "No rollback command known for the last deploy's provider; roll back with the provider's own tooling");
   }
   if (hit.cmd !== undefined) {
-    process.stdout.write(`Last deploy: ${hit.provider}. Roll back with (not run by loki): ${hit.cmd}\n`);
-  } else {
-    process.stdout.write(`Last deploy: ${hit.provider}. No CLI rollback: ${hit.manual}\n`);
+    return say(true, `Last deploy: ${hit.provider}. Roll back with (not run by loki): ${hit.cmd}`, {
+      provider: hit.provider,
+      command: hit.cmd,
+    });
   }
-  return 0;
+  return say(true, `Last deploy: ${hit.provider}. No CLI rollback: ${hit.manual}`, {
+    provider: hit.provider,
+    command: null,
+    manual: hit.manual,
+  });
 }

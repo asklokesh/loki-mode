@@ -338,6 +338,62 @@ describe("TEN-DEPLOY-11 loki rollback deploy", () => {
     }
   });
 
+  it("wrapped deploy commands resolve to the real provider", async () => {
+    const cases: Array<[string, string]> = [
+      ["fly releases rollback", "flyctl deploy"],
+      ["vercel rollback", "npx vercel --prod"],
+      ["vercel rollback", "npx -y vercel --prod"],
+      ["Cloudflare dashboard", "bunx wrangler deploy"],
+      ["vercel rollback", "pnpm dlx vercel --prod"],
+      ["heroku releases:rollback", "yarn dlx heroku container:release web"],
+    ];
+    for (const [want, command] of cases) {
+      seedDeploy("20260104T000000Z-4.json", { schema: "loki.deploy/1", command });
+      const stop = captureOutput();
+      const code = await runRollback(["deploy"]);
+      const out = stop();
+      expect(code).toBe(0);
+      expect(out.stdout).toContain(want);
+      expect(out.stdout).not.toContain("No rollback command known");
+    }
+  });
+
+  it("deploy json prints the matched rollback command as one object", async () => {
+    seedDeploy("20260105T000000Z-5.json", { schema: "loki.deploy/1", command: "npx vercel --prod", env: { TOKEN: "s3cret-value" } });
+    let stop = captureOutput();
+    let code = await runRollback(["deploy", "--json"]);
+    let out = stop();
+    expect(code).toBe(0);
+    const obj = JSON.parse(out.stdout);
+    expect(obj.matched).toBe(true);
+    expect(obj.provider).toBe("Vercel");
+    expect(obj.command).toBe("vercel rollback");
+    expect(out.stdout).not.toContain("s3cret-value");
+
+    seedDeploy("20260106T000000Z-6.json", { schema: "loki.deploy/1", command: "netlify deploy" });
+    stop = captureOutput();
+    code = await runRollback(["deploy", "--json"]);
+    out = stop();
+    const man = JSON.parse(out.stdout);
+    expect(man.matched).toBe(true);
+    expect(man.command).toBeNull();
+    expect(man.manual).toContain("Netlify");
+
+    seedDeploy("20260107T000000Z-7.json", { schema: "loki.deploy/1", command: "mystery up" });
+    stop = captureOutput();
+    code = await runRollback(["deploy", "--json"]);
+    out = stop();
+    expect(JSON.parse(out.stdout).matched).toBe(false);
+  });
+
+  it("deploy json with no record is a parseable object, exit 0", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["deploy", "--json"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(JSON.parse(out.stdout).matched).toBe(false);
+  });
+
   it("prints nothing runnable when there is no record", async () => {
     const stop = captureOutput();
     const code = await runRollback(["deploy"]);
