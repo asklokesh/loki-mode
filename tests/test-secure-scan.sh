@@ -179,7 +179,7 @@ const c = "SKtooshort";
 EOT
 scan "$SAFE"; assert_silent "secret-in-client-file" "sec18-safe"
 rv=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rules_version"))' "$WORK/last.json")
-if [ "$rv" = "1.5" ]; then ok "sec18: rules_version is 1.5"; else bad "sec18: rules_version $rv" ""; fi
+if [ "$rv" = "1.6" ]; then ok "sec18: rules_version is 1.6"; else bad "sec18: rules_version $rv" ""; fi
 SAFE="$WORK/sec14-placeholder"; mkdir -p "$SAFE/public"
 cat > "$SAFE/public/app.js" <<EOT
 const a = "${_gp}xxxxxxxxxxxxxxxxxxxx";
@@ -623,6 +623,26 @@ if type run_secure_scan >/dev/null 2>&1; then
     rc=0; ( TARGET_DIR="$BAD"; export TARGET_DIR; LOKI_SECURE_GATE=block; export LOKI_SECURE_GATE; run_secure_scan ) || rc=$?
     [ "$rc" -eq 1 ] && ok "r8-gate-blocks-committed-env" || bad "r8-gate-blocks-committed-env" "rc=$rc"
 fi
+
+# ---------------------------------------------------------------------------
+# rule 9: unsafe-deserialization (TEN-SECURITY-19)
+# ---------------------------------------------------------------------------
+BAD="$WORK/r9-bad"; mkdir -p "$BAD"
+printf 'import pickle\nobj = pickle.loads(blob)\n' > "$BAD/a.py"
+scan "$BAD"; assert_fires "unsafe-deserialization" "r9-pickle-loads"
+d9=$(python3 -c 'import json,sys; f=[x for x in json.load(open(sys.argv[1]))["findings"] if x["rule"]=="unsafe-deserialization"]; print(f[0]["file"]+":"+str(f[0]["line"]))' "$WORK/last.json" 2>/dev/null)
+if [ "$d9" = "a.py:2" ]; then ok "r9: finding carries file and line"; else bad "r9: expected a.py:2 got $d9"; fi
+printf 'import yaml\ncfg = yaml.load(open(p))\n' > "$BAD/b.py"
+scan "$BAD"; assert_fires "unsafe-deserialization" "r9-yaml-load-no-loader"
+printf 'import marshal\nc = marshal.loads(raw)\n' > "$BAD/c.py"
+rm -f "$BAD/a.py" "$BAD/b.py"
+scan "$BAD"; assert_fires "unsafe-deserialization" "r9-marshal-loads"
+
+SAFE="$WORK/r9-safe"; mkdir -p "$SAFE/tests"
+printf 'import yaml, json\na = yaml.safe_load(s)\nb = yaml.load(s, Loader=yaml.SafeLoader)\nc = json.loads(s)\n# d = pickle.loads(x)\n' > "$SAFE/ok.py"
+printf 'import pickle\nx = pickle.loads(b)\n' > "$SAFE/tests/test_x.py"
+printf 'x = pickle.loads(b)\n' > "$SAFE/notes.md"
+scan "$SAFE"; assert_silent "unsafe-deserialization" "r9-safe-and-excluded"
 
 # ===========================================================================
 echo
