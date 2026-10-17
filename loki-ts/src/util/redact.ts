@@ -27,4 +27,39 @@ const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;
 const SECRET_PARAM = /([?&](?:access_token|token|api_key|apikey|password|secret|sig)=)[^&\s#"']*/gi;
 const redactQuery = (s: string): string =>
   s.replace(QUERY_SEGMENT, (q) => q.replace(SECRET_PARAM, "$1[REDACTED]"));
-export const redactSecrets = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => a.replace(re, to), s));
+const redactOnce = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => a.replace(re, to), s));
+/** Q17-05b: one pass is not idempotent. A \b rule (TWILIO, DIGITALOCEAN) runs before a later rule (GOOGLE_KEY, OPENAI) whose marker creates a new word
+ *  boundary next to the earlier token, so a second pass redacts more. Layers that hash (engine) and re-redact (shipper, ingest) must agree on bytes, so
+ *  iterate to a fixpoint. Every pass that changes the text removes a secret, so the bound is never reached by real data. */
+const MAX_PASSES = 32;
+export const redactSecrets = (s: string): string => {
+  let cur = s;
+  for (let i = 0; i < MAX_PASSES; i++) {
+    const next = redactOnce(cur);
+    if (next === cur) return cur;
+    cur = next;
+  }
+  return cur;
+};
+/** Redacts every string value and object key (arrays and objects recursed); non-strings pass through. Idempotent (redactSecrets is a fixpoint), so redacting at source and again at ship or ingest is a no-op. */
+export const redactDeep = (x: unknown): unknown =>
+  typeof x === "string" ? redactSecrets(x)
+  : Array.isArray(x) ? x.map(redactDeep)
+  : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [redactSecrets(k), redactDeep(v)]))
+  : x;
+/** Q17-05b: engine-computed crypto fields of the integrity lines. A base64url sig or kid matches a token rule by chance (about 1.7% of log.sealed sigs match
+ *  GOOGLE_KEY), and a redacted one forges TAMPERED. Only a value of the exact shape the engine writes is exempt; every other field is redacted. */
+const B64 = (n: number): RegExp => new RegExp(`^[A-Za-z0-9_-]{${n}}$`), HEX64 = /^[0-9a-f]{64}$/;
+const SEAL_FIELDS = new Map<string, Map<string, RegExp>>([
+  ["log.sealed", new Map([["kid", B64(43)], ["sig", B64(86)], ["events_sha256", HEX64]])],
+  ["receipt.sealed", new Map([["kid", B64(43)], ["receipt_sha256", HEX64], ["events_sha256", HEX64]])],
+]);
+/** The one event-data redaction every layer uses (engine writer, shipper, ingest), so all three produce the same bytes. */
+export const redactEventData = (type: string, data: unknown): unknown => {
+  const keep = SEAL_FIELDS.get(type);
+  if (!keep || !data || typeof data !== "object" || Array.isArray(data)) return redactDeep(data);
+  return Object.fromEntries(Object.entries(data).map(([k, v]) => (typeof v === "string" && keep.get(k)?.test(v) ? [k, v] : [redactSecrets(k), redactDeep(v)])));
+};
+/** A whole event envelope: data through redactEventData keyed on the envelope type, every other field through redactDeep. Key order is kept. */
+export const redactEnvelope = <T extends { type: string; data: unknown }>(e: T): T =>
+  Object.fromEntries(Object.entries(e).map(([k, v]) => [redactSecrets(k), k === "data" ? redactEventData(e.type, v) : redactDeep(v)])) as T;

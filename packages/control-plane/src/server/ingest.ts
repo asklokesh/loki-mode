@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { validateEnvelope } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
-import { redactSecrets } from "../../../../loki-ts/src/util/redact.ts";
+import { redactEnvelope } from "../../../../loki-ts/src/util/redact.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, localRepos, runs, sources } from "../db/schema.ts";
 import { TEST_RUN_ID, tempRoots, underTemp } from "../db/fixture-cleanup.ts";
@@ -31,7 +31,7 @@ export function ingest(db: Db, body: unknown): IngestResult {
   for (const [i, raw] of b.events.entries()) {
     const bad = validateEnvelope(raw);
     if (bad) return { status: 400, body: { error: `events[${i}]: ${bad}` } };
-    const e = JSON.parse(redactSecrets(JSON.stringify(raw))) as EventEnvelope; // redacted again server-side
+    const e = redactEnvelope(raw as EventEnvelope); // redacted again server-side with the engine writer's rule (Q17-05b: seal crypto fields keep their bytes)
     if (e.run !== runId) return { status: 400, body: { error: `events[${i}]: run does not match run_id` } };
     const json = JSON.stringify(e);
     rows.push({ e, json, sha: createHash("sha256").update(json).digest("hex") });

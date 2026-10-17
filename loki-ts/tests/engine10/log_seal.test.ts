@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { redactEnvelope, redactSecrets } from "../../src/util/redact.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "e10-logseal-"));
@@ -15,11 +16,11 @@ afterAll(() => { if (saved === undefined) delete process.env["LOKI_RECEIPT_SIGNI
 
 let n = 0;
 /** A signed run whose log line 1 is edited before the seal (the supervisor then appends tamper.detected), or an honest one. */
-function run(tamper: boolean, marker = true): { dir: string; path: string; lines: () => string[]; put: (l: string[]) => void } {
+function run(tamper: boolean, marker = true, started: Record<string, unknown> = { provider: "claude" }): { dir: string; path: string; lines: () => string[]; put: (l: string[]) => void } {
   const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
   mkdirSync(dir, { recursive: true });
   const log = new SupervisorLog(ev, id);
-  log.append("run.started", null, { provider: "claude" });
+  log.append("run.started", null, started);
   if (tamper) writeFileSync(ev, readFileSync(ev, "utf8").replace('"claude"', '"claudX"'));
   const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), time: { wall_s: 0, stages: {} }, ...(marker ? { log_seal: true } : {}) };
   const hash = receiptSha256(body as never);
@@ -32,6 +33,54 @@ function run(tamper: boolean, marker = true): { dir: string; path: string; lines
   return { dir, path: join(dir, "receipt.json"), lines, put: (l) => writeFileSync(ev, l.join("\n") + "\n") };
 }
 const sha = (b: Buffer): string => new Bun.CryptoHasher("sha256").update(b).digest("hex");
+
+describe("Q17-05b redact at source", () => {
+  const SECRET = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+  test("a token in event data is redacted before the line is hashed and sealed; the run is VERIFIED and re-redaction is a no-op", async () => {
+    const r = run(false, true, { provider: "claude", note: `key ${SECRET}`, nested: { list: [`Bearer ${"a".repeat(30)}`] } });
+    const raw = readFileSync(join(r.dir, "events.jsonl"), "utf8");
+    expect(raw).not.toContain(SECRET);
+    expect(raw).toContain("[REDACTED:OPENAI_KEY]");
+    expect(redactSecrets(raw)).toBe(raw);
+    expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+    const seal = JSON.parse(r.lines().at(-1)!).data.events_sha256 as string;
+    expect(seal).toBe(sha(Buffer.from(r.lines().slice(0, -1).join("\n") + "\n")));
+  });
+  test("a planted placeholder edit after sealing is TAMPERED", async () => {
+    const r = run(false, true, { provider: "claude", note: `key ${SECRET}` });
+    r.put(r.lines().map((l) => l.replace("[REDACTED:OPENAI_KEY]", "[REDACTED]")));
+    expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
+  });
+});
+
+describe("Q17-05b seal fields are not redacted", () => {
+  test("seal crypto fields of the engine shape keep their bytes even when they match a token rule; the same values elsewhere, or a wrong shape, are redacted", () => {
+    const sig = "xxAI" + "b".repeat(82), kid = "AI" + "c".repeat(41), token = "sk-ant-" + "a".repeat(40);
+    const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("receipt.sealed", "seal", { path: `/x/${token}`, receipt_sha256: "0".repeat(64), signed: true, kid });
+    log.append("log.sealed", null, { kid, events_sha256: "0".repeat(64), tampered: false, sig });
+    log.append("worker.note", null, { sig, kid });
+    log.append("log.sealed", null, { kid: "k", events_sha256: "0", tampered: false, sig: token });
+    const [receipt, sealed, normal, smuggled] = readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect([receipt.data.kid, sealed.data.kid, sealed.data.sig]).toEqual([kid, kid, sig]);
+    expect(receipt.data.path).not.toContain(token);
+    expect(normal.data.sig).toContain("[REDACTED:GOOGLE_KEY]");
+    expect(normal.data.kid).toContain("[REDACTED:GOOGLE_KEY]");
+    expect(smuggled.data.sig).not.toContain(token);
+    for (const e of [receipt, sealed, normal, smuggled]) expect(redactEnvelope(e)).toEqual(e); // the shipper and ingest redaction is a no-op on every engine-written line
+  });
+  test("600 honest signed runs all VERIFY (about 1.7% of signatures match the Google key rule)", async () => {
+    let hit = 0;
+    for (let i = 0; i < 600; i++) {
+      const r = run(false);
+      if (/AI[a-zA-Z0-9_-]{30,}/.test(JSON.parse(r.lines().at(-1)!).data.sig)) hit++;
+      expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+    }
+    expect(hit).toBeGreaterThan(0);
+  }, 120000);
+});
 
 describe("A-117 log.sealed", () => {
   test("honest run VERIFIED; a run tampered in flight is TAMPERED", async () => {

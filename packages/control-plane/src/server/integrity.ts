@@ -2,7 +2,7 @@
 // Pure: no db. The same checks `loki verify` makes on events.jsonl (loki-ts/src/engine10/verify_cmd.ts: checkEventLog, checkLogSeal),
 // restated over stored envelopes. Option taken for sharing: a CP-local module plus test/server/integrity-parity.test.ts, which runs both
 // implementations over the same fixtures, including signed ones (unknown kid, mismatched kid, appended run.completed), so they cannot drift.
-// TAMPERED means positive evidence of forgery. A log the CP cannot check (redacted before ingest) is UNVERIFIED, never TAMPERED and never VERIFIED.
+// TAMPERED means positive evidence of forgery. The engine redacts before it hashes, so a log whose bytes no longer match its seal (including one rewritten by redaction) is TAMPERED.
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,8 +27,6 @@ export interface IntegrityOpts {
 
 const SHA = /^[0-9a-f]{64}$/;
 const SEAL_LINE = "log.sealed";
-const REDACTED = /\[REDACTED(?::[A-Z_]+)?\]/;
-export const REDACTED_NOTE = "log redacted before ingest; seal not checkable";
 export const UNCHECKED_SIG = "VERIFIED (signature not checked)";
 export const UNATTESTED_SUFFIX = " (unattested)";
 /** Outcomes that claim success: each needs a signed seal, exactly like VERIFIED. */
@@ -97,7 +95,7 @@ export function sealedPrefix<T extends { type: string }>(evs: readonly T[]): T[]
 }
 
 export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: IntegrityOpts = {}): RunIntegrity {
-  const bad: string[] = [], notes: string[] = [];
+  const bad: string[] = [];
   const doneAt = evs.findIndex((e) => e.type === "run.completed");
   const sealedAt = evs.map((e, i) => (e.type === "receipt.sealed" ? i : -1)).filter((i) => i >= 0);
   const finalised = doneAt >= 0 || sealedAt.length > 0;
@@ -114,9 +112,8 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
   if (firstSeal >= 0 && evs.slice(firstSeal + 1).some((e) => e.type === "run.completed" || e.type === "receipt.sealed" || typeof e.data["verdict"] === "string")) bad.push("a verdict-bearing event after log.sealed is unauthenticated");
   if (evs.filter((e) => e.type === "run.completed").length > 1) bad.push("more than one run.completed (a verdict appended after the seal is unauthenticated)");
 
-  // Hash problems are tamper evidence unless a redaction placeholder explains the changed bytes.
+  // Q17-05b: the engine redacts before it hashes and signs, so a hash problem is always tamper evidence; a placeholder never excuses one.
   const hashBad: string[] = [];
-  const redacted = REDACTED.test(JSON.stringify(doneAt >= 0 ? evs.slice(0, doneAt + 2).map((e) => e.data) : evs.map((e) => e.data)));
 
   for (const i of sealedAt) {
     const d = evs[i]!.data;
@@ -153,10 +150,7 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
     }
   } else if (signedReceipt && doneAt >= 0) bad.push(`signed receipt but no ${SEAL_LINE} line after run.completed`);
 
-  let unverifiable = false;
-  if (hashBad.length > 0) {
-    if (redacted) { unverifiable = true; sigChecked = false; notes.push(REDACTED_NOTE); } else bad.push(...hashBad);
-  }
+  bad.push(...hashBad);
 
   // A VERIFIED claim (first run.completed only) needs a receipt sealed before it, for the same verdict.
   let claimsVerified = false;
@@ -169,8 +163,8 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
   }
 
   const tampered = bad.length > 0;
-  const attested = !tampered && !unverifiable && (!claimsVerified || (signedReceipt && ls !== null));
-  return { tampered, attested, sig_checked: sigChecked && !tampered, reasons: [...bad, ...notes] };
+  const attested = !tampered && (!claimsVerified || (signedReceipt && ls !== null));
+  return { tampered, attested, sig_checked: sigChecked && !tampered, reasons: bad };
 }
 
 /** The one display verdict (FC-08). TAMPERED when the log failed integrity. When it is not attested, a success claim shows UNVERIFIED and any other verdict carries an

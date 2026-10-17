@@ -50,7 +50,7 @@ function supEnv(): NodeJS.ProcessEnv {
 const worker = (code: string): string[] => [process.execPath, "-e", code];
 const ECHO_TOKENS = `
 const vars = ["GH_TOKEN","GITHUB_TOKEN","GH_ENTERPRISE_TOKEN","GITHUB_ENTERPRISE_TOKEN"];
-const tokens = Object.fromEntries(vars.map((v) => [v, process.env[v] ?? null]));
+const tokens = Object.fromEntries(vars.map((v) => [v, process.env[v]?.replace(/^ghp_/, "ghp.") ?? null])); // ghp. keeps the value readable: the supervisor redacts a token-shaped value at source (Q17-05b)
 console.log("not json: a session tool printed this");
 console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { tokens } }));
 console.log(JSON.stringify({ type: "pr.opened", stage: "pr", data: { url: "https://forged" } }));
@@ -105,9 +105,10 @@ describe("E-03 rule of two", () => {
     const intake = events.find((e) => e.type === "stage.completed");
     const tokens = intake?.data.tokens as Record<string, string>;
     for (const v of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]) {
-      expect(tokens[v]).toStartWith("ghp_LOKIWITHHELDsentinel");
+      expect(tokens[v]).toStartWith("ghp.LOKIWITHHELDsentinel");
     }
     expect(readFileSync(join(dir, ".loki/runs/e10-t1/events.jsonl"), "utf8")).not.toContain(CANARY);
+    expect(readFileSync(join(dir, ".loki/runs/e10-t1/events.jsonl"), "utf8")).not.toContain("CANARYrealtoken");
     expect(env.GITHUB_TOKEN).toBe(CANARY);
     expect(pr.calls.length).toBe(1);
     expect(pr.calls[0]!.env.GITHUB_TOKEN).toBe(CANARY);
