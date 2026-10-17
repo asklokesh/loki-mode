@@ -2915,7 +2915,7 @@ cmd_start() {
                 echo "                        and, with --deploy, the flag --github runs loki github publish after a good deploy"
                 echo ""
                 echo "Issue-mode options (used when input is an ISSUE-REF or a --brief):"
-                echo "  --dry-run             Preview generated PRD without starting"
+                echo "  --dry-run             Validate flags, run the preflight and print the provider, model and cost cap without starting (issue mode: preview the PRD)"
                 echo "  --no-start            Generate PRD but don't start execution"
                 echo "  --output FILE         Save generated PRD to custom path"
                 echo "  --worktree, -w        Git worktree isolation (separate branch)"

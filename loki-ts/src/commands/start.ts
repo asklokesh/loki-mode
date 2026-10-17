@@ -129,6 +129,7 @@ function acceptedFlags(attemptsMode: boolean, specMode = false): Set<string> {
   for (const k of specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS) s.add(k);
   s.add("--help");
   s.add("-h");
+  s.add("--dry-run");
   return s;
 }
 
@@ -151,6 +152,7 @@ export interface ParsedStartOpts {
   attempts?: number; // set only by --attempts; selects the engine10 attempts path
   specPath?: string; // SPEC-FIRST-INTENT: --spec FILE, forwarded to engine10
   specFirst?: boolean; // --spec-first: write the spec for editing and stop
+  dryRun?: boolean; // TEN-UX-45: validate, preflight, print provider/model/cap, exit 0 without a run
   noPr?: boolean; // --attempts / --spec only: forwarded to engine10; absent = normal PR behavior
 }
 
@@ -160,13 +162,14 @@ export const START_USAGE =
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory] [--cost lean|off]\n" +
-  "                        [--spec FILE | --spec-first]\n" +
+  "                        [--spec FILE | --spec-first] [--dry-run]\n" +
   "                        [--workspace NAME | --deploy [--health-url URL [--health-match STR]] [--auto-rollback]\n" +
   "                                  [--destination preview|staging|production] [--canary] [--env-file FILE] [--domain HOST] [--github]]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
   "  --cost lean   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
+  "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
   `  --budget-limit USD  per-run spend cap (default $${DEFAULT_MAX_COST_USD}; Loki 10 applies it with an API key and none on a subscription; see docs/cost-controls.md)\n` +
@@ -362,6 +365,7 @@ export function parseStartArgs(
   return {
     ...(attempts !== undefined ? { attempts } : {}),
     ...((attemptsMode || specMode) && args.includes("--no-pr") ? { noPr: true } : {}),
+    ...(args.includes("--dry-run") ? { dryRun: true } : {}),
     ...(specFlag ? { specPath: specFlag } : {}),
     ...(specFirst ? { specFirst: true } : {}),
     prdPath: resolvedSpec,
@@ -508,8 +512,34 @@ export async function capSourceLine(budgetLimit: number | undefined, repoDir: st
   return budgetLimit !== undefined || c.source === "subscription" ? capNote(c.usd, c.source).replace("(--max-cost)", "(--budget-limit)") : null; // the start flag is --budget-limit, not engine10's --max-cost
 }
 
+/** TEN-UX-45: what `loki start --dry-run` prints; runs the real preflight (read-only: an uninitialised folder is reported, never git-initialised) and spends nothing. Returns the exit code. */
+export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: NodeJS.ProcessEnv, out: (s: string) => void = (s) => process.stdout.write(s), err: (s: string) => void = (s) => process.stderr.write(s)): Promise<number> {
+  const provider = o.provider ?? (env["LOKI_PROVIDER"] || "claude");
+  if (!VALID_PROVIDERS.has(provider)) { err(`start: unknown LOKI_PROVIDER '${provider}' (use one of: ${[...VALID_PROVIDERS].join(", ")})\n`); return 2; }
+  const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
+  const cap = resolveCap(o.budgetLimit !== undefined ? String(o.budgetLimit) : null, repoDir, env);
+  if ("error" in cap) { err(`start: ${cap.error}\n`); return 2; }
+  const { safeGitRun } = await import("../util/safe_git.ts");
+  const inRepo = (await safeGitRun(repoDir, ["rev-parse", "--is-inside-work-tree"], { env: env as Record<string, string>, timeoutMs: 10000 })).stdout.trim() === "true";
+  if (inRepo) {
+    const { checkPreflight } = await import("../engine10/preflight.ts");
+    const pf = await checkPreflight({ repoDir, provider, pr: o.noPr !== true, env });
+    for (const w of pf.warnings) err(`${w}\n`);
+    if (pf.fatal) { err(`start: dry-run preflight failed: ${pf.fatal}\n`); return 2; }
+  } else {
+    out("preflight: this folder is not a git repository; loki start would set one up if the folder is empty\n");
+  }
+  out(`dry-run: provider ${provider}, model ${o.sessionModel ?? "default tier routing"}, ${capNote(cap.usd, cap.source).replace("(--max-cost)", "(--budget-limit)")}, spec ${JSON.stringify(o.prdPath || o.specPath || "")}\n`);
+  out("dry-run: flags valid, preflight passed, nothing was run and no tokens were spent\n");
+  return 0;
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
+    if (args.includes("--dry-run")) {
+      process.stderr.write("start: --dry-run is not supported with --workspace or --deploy\n");
+      return 2;
+    }
     const deployErr = deployFlagError(args);
     if (deployErr) {
       process.stderr.write(deployErr);
@@ -529,6 +559,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
     process.stderr.write(missing);
     return 2;
   }
+  if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
     const capLine = await capSourceLine(parsed.budgetLimit, process.cwd(), process.env);
