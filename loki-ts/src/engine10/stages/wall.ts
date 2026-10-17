@@ -16,7 +16,7 @@ import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTa
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts"; import { projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { classify, classifyCheck, notRunReason, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
+import { baseJobs, classify, classifyCheck, mapPool, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -25,7 +25,7 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 
 // Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet.
 // not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
-export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; }
+export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; /** TEN-SPEED-19: one result per file, input order, at most `jobs` processes at once */ runEach?(repoDir: string, files: TestRef[], jobs: number): Promise<BaseEachResult[]>; }
 export const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 export { classify, notRunReason, pytestCollectionIsRed } from "../../util/check_result.ts"; // moved to util/check_result.ts (core line budget)
 // One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never
@@ -46,9 +46,12 @@ export class RealBaseTestRunner implements BaseTestRunner {
     this.lastNotRunFiles = not_run_files;
     return { pass, fail, not_run };
   }
+  async runEach(repoDir: string, files: TestRef[], jobs: number): Promise<BaseEachResult[]> { // TEN-SPEED-19: same classification as run(), at most `jobs` processes at once
+    const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; return mapPool(files, jobs, async (f) => { const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api), r = await spawnCollect(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, env: plainTestEnv(), timeoutMs: Math.max(1000, this.timeoutMs) }), result = classify(f, r.status, stripAnsi(r.output), repoDir, interpreter); return { pass: +(result === "pass"), fail: +(result === "fail"), not_run: +(result === "not_run"), notRunFiles: result === "not_run" ? [{ file: f.path, reason: notRunReason(r.status, interpreter) }] : [] }; });
+  }
 }
 
-export interface WallOptions { baseRunner?: BaseTestRunner; }
+export interface BaseEachResult { pass: number; fail: number; not_run: number; notRunFiles: { file: string; reason: string }[]; } export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
@@ -166,12 +169,12 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 }
 
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
-export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult {
+export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult { const g = installCore(ctx, a, baseDir, opts); g.next(); return g.next(null).value as StageResult; } // TEN-SPEED-19: sequential base run; installWallAsync runs it concurrently
+export async function installWallAsync(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): Promise<StageResult> { const g = installCore(ctx, a, baseDir, opts), y = g.next().value as { runner: BaseTestRunner; tests: TestRef[] }, jobs = baseJobs();
+  return g.next(jobs > 1 && y.runner.runEach && y.tests.length > 1 ? await y.runner.runEach(baseDir, y.tests, jobs) : null).value as StageResult; } // LOKI_E10_BASE_JOBS > 1 and a runner with runEach: concurrent base run
+function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions): Generator<{ runner: BaseTestRunner; tests: TestRef[] }, StageResult, BaseEachResult[] | null> {
   const { generated, contents, discarded, targetDir, runners } = a;
-  if (generated.length > 0) mkdirSync(targetDir, { recursive: true });
-  const sealedFiles: WallSealedFile[] = [];
-  const readOnlyFiles: ReadOnlyFile[] = [];
-  const wallTests: TestRef[] = [];
+  if (generated.length > 0) mkdirSync(targetDir, { recursive: true }); const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
     const dest = join(targetDir, name), runner = guessRunner(name, runners);
@@ -182,8 +185,8 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
   ctx.wallSealed = true;
   ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }, notRunFiles: { file: string; reason: string }[] = []; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
-  for (const t of wallTests) {
-    const r = baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; notRunFiles.push(...(baseRunner.lastNotRunFiles ?? [])); if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
+  const each = yield { runner: baseRunner, tests: wallTests }; for (const [i, t] of wallTests.entries()) {
+    const e = each?.[i], r = e ?? baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; notRunFiles.push(...(e ? e.notRunFiles : baseRunner.lastNotRunFiles ?? [])); if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
@@ -211,7 +214,7 @@ export const distrustGreenBase = (d: Record<string, unknown>): Record<string, un
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   const t0 = Date.now(), a = await wallAuthor(ctx, signal);
-  const first = a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
+  const first = a.kind === "done" ? a.result : await installWallAsync(ctx, a, ctx.repoDir, opts);
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
   const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
   const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
@@ -221,7 +224,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
-  const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" }), second = b.kind === "done" ? b.result : installWall(ctx, b, ctx.repoDir, opts);
+  const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" }), second = b.kind === "done" ? b.result : await installWallAsync(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
   return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true } }; // both tiers' spend reaches the ledger via iteration_ids
 }
