@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stageShareText } from "../../src/util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 
 function root(extra: Record<string, unknown>): string {
@@ -39,4 +40,22 @@ test("efficiency record carries the marker as its cost_source, not provider", ()
     expect(rec.cost_usd).toBe(0);
     expect(rec.cost_source).toBe(UNMETERED);
   } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+// TEN-COST-29: cache-cold hint on the cost summary
+const cev = (stage: string, input: number, read: number, source = "x") => ({ type: "cost", stage, data: { usd: 1, source, input_tokens: input, cache_read_tokens: read, cache_creation_tokens: 0 } });
+test("a stage with 5 percent cache reads gets one cache cold line", () => {
+  const t = stageShareText([cev("plan", 95, 5), cev("fix", 10, 90)])!;
+  expect(t.match(/cache cold:/g)!.length).toBe(1);
+  expect(t).toContain("cache cold: plan");
+  expect(t).not.toContain("cache cold: plan, fix");
+  expect(t.split("\n").length).toBe(2);
+});
+test("no hint when all stages warm, exactly 30 percent, or unmetered", () => {
+  expect(stageShareText([cev("plan", 10, 90), cev("fix", 70, 30)])).not.toContain("cache cold");
+  expect(stageShareText([cev("plan", 100, 0, "cli-invoker-unmetered"), cev("fix", 10, 90)])).not.toContain("cache cold");
+  expect(stageShareText([cev("plan", 70, 30)])).toBeNull();
+});
+test("single cold stage still reports the hint alone", () => {
+  expect(stageShareText([cev("plan", 100, 0)])).toBe("cache cold: plan");
 });
