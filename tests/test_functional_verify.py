@@ -290,10 +290,6 @@ class AuthBehaviors(unittest.TestCase):
         self.assertEqual(FV.run("static page", "http://127.0.0.1:1")["auth_behaviors"], [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class _SlashRedirectApp:
     """301 /p -> /p/ then 200 anonymously on /p/."""
 
@@ -331,6 +327,27 @@ class Round3Regressions(unittest.TestCase):
         self.assertFalse(FV._is_login_redirect("/api/auth/me/", "/api/auth/me"))
         self.assertFalse(FV._is_login_redirect("/api/auth/", "/api/auth"))
         self.assertFalse(FV._is_login_redirect("/home?next=/login", "/api/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/me/", "/api/other"))
+        self.assertFalse(FV._is_login_redirect("/auth/x", "/api/me"))
+
+    def test_login_redirect_base_prefix_and_case(self):
+        self.assertFalse(FV._is_login_redirect("/app/api/auth/", "/api/auth", "http://h/app"))
+        self.assertFalse(FV._is_login_redirect("/APP/api/AUTH/", "/api/auth", "http://h/app"))
+        self.assertTrue(FV._is_login_redirect("/app/login", "/api/auth", "http://h/app"))
+
+    def test_base_prefix_slash_redirect_not_passed(self):
+        srv = HTTPServer(("127.0.0.1", 0), _SlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}/app"
+        out = FV.run("GET /api/auth requires auth", base)
+        self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_more_contractions_negate(self):
+        for c in ("aren't", "won't", "shouldn't", "needn't", "wasn't"):
+            for q in ("'", "\u2019"):
+                w = c.replace("'", q)
+                self.assertEqual(FV.derive_auth_assertions(f"GET /api/x {w} a protected route"), [], w)
 
     def test_curly_apostrophe_negates(self):
         self.assertEqual(FV.derive_auth_assertions("GET /api/x doesn\u2019t require auth"), [])
@@ -347,3 +364,7 @@ class Round3Regressions(unittest.TestCase):
         for spec in ("GET /api/x is not even but requires auth",
                      "GET /api/x is not public but requires auth"):
             self.assertEqual(len(FV.derive_auth_assertions(spec)), 1, spec)
+
+
+if __name__ == "__main__":
+    unittest.main()

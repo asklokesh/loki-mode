@@ -78,7 +78,8 @@ _PROTECTED_RE = re.compile(
     r'|(without|no|missing)\s+(\w+\s+)?(auth\w*|credentials|token)\b(?:(?!\b(?:never|not)\b)[^.;,])*?\b40[13])\b',
     re.IGNORECASE)
 _NEGATION_WORDS = {"no", "not", "never", "without",
-                   "isn't", "doesn't", "don't", "cannot", "can't"}
+                   "isn't", "doesn't", "don't", "cannot", "can't",
+                   "aren't", "won't", "shouldn't", "needn't", "wasn't"}
 _NEGATION_AUX = {"does", "do", "is", "are", "need", "needs", "would", "will",
                  "should", "must", "longer", "even", "actually", "really",
                  "necessarily", "always", "ever", "also", "currently",
@@ -294,13 +295,15 @@ def _probe_unauth(base_url: str, method: str, path: str, timeout=8):
         return None, False, str(e)
 
 
-def _is_login_redirect(location: str, probe_path: str) -> bool:
+def _is_login_redirect(location: str, probe_path: str, base_url: str = "") -> bool:
     """True when Location points at a login page: the auth segment is the LAST
     path segment (optional extension, optional trailing slash). A redirect to
-    the probe path plus "/" is a canonical-slash redirect, never a login page."""
+    the request path (base_url path prefix included) differing only by a trailing
+    slash, case-insensitively, is a canonical-slash redirect, never a login page."""
     loc_path = urllib.parse.urlsplit(location).path
     probe = re.sub(r'(:[A-Za-z_]\w*|\{[^}]*\})', 'loki-auth-probe', probe_path)
-    if loc_path == probe + "/":
+    req_path = urllib.parse.urlsplit(base_url.rstrip("/") + probe).path
+    if loc_path.rstrip("/").lower() == req_path.rstrip("/").lower():
         return False
     return bool(re.search(
         r'(^|/)(login|signin|sign-in|auth|oauth)(?:\.(?:html?|php|aspx?|jsp))?/?$',
@@ -319,7 +322,7 @@ def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[di
             st, detail = "passed", f"HTTP {code} without credentials"
         elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
             st, detail = "failed", f"served without credentials (HTTP {code})"
-        elif code is not None and 300 <= code < 400 and _is_login_redirect(extra, path):
+        elif code is not None and 300 <= code < 400 and _is_login_redirect(extra, path, base_url):
             st, detail = "passed", f"HTTP {code} redirect to {extra}"
         elif code is None:
             st, detail = "inconclusive", f"unreachable: {extra}"
