@@ -913,3 +913,66 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings to sweep: every test that asserts a repo-local git config value runs (fsmonitor, filter, ssh, credential, uploadpack).
 - Mechanism: hermeticGit wrapper in fc25_safe_git.test.ts removes GIT_SSH, GIT_SSH_COMMAND, GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT/KEY/VALUE for the test and restores them after.
 - Fixture: the same file run with GIT_SSH_COMMAND=false GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= passes 14/0.
+
+## FC-TEN-QUALITY-01 The fix session gets a bare check name with no assertion text (FIX-BRIEF-BLIND)
+- User-visible vs raw: the user saw fix rounds repeat or stall on a failing test. Raw pytest printed `E assert 4 == 5`; the fix brief carried only the check name and the rerun command.
+- Law broken: L4 (the fixer must see the evidence the verifier saw).
+- Siblings: every runner whose decisive block differs: pytest `E ` lines, jest/vitest Expected/Received, node AssertionError, go `--- FAIL`, tsc/ruff diagnostics; holdout checks must stay hidden.
+- Mechanism: one failureExcerpt() in util/check_result.ts (redacted, repo-relative, at most 1500 bytes per check, 6 KB total), held in a stage-local map in verify.ts. It is never part of the check signature, never emitted in test.result, never computed for holdout checks.
+- Fixture: fix.test.ts (failing pytest `assert add(2,2) == 5`), check_result.test.ts (one fixture per runner plus size cap and AKIA redaction), wall_holdout.test.ts (holdout text absent from failures_grouped, events and brief).
+
+## FC-TEN-QUALITY-02 Pre-existing lint cannot be told apart from lint the change introduced (LINT-NO-BASELINE)
+- User-visible vs raw: the user saw a fix loop spending rounds on lint that was already in the repo. Raw base output showed the same diagnostics before the change.
+- Law broken: L4 (attribution must compare head to base, as tests already do via attribute()).
+- Siblings: ruff concise, shellcheck gcc, eslint unix parsers; tsc is out of scope; a file new on head has no base.
+- Mechanism: one pure attributeStatic(tool, headOut, baseOut) in runner/repo_profile.ts next to attribute() and attributeFullSuite(). Multiset keyed path/code/message (line and column dropped). Fails closed: unparseable head, empty parse with non-zero exit, missing base and unknown tool all count as introduced.
+- Fixture: harness_intelligence.test.ts cases for same, extra, changed-message, shifted-line, garbage and null-base inputs, plus a recorded real sample per parser.
+
+## FC-TEN-QUALITY-03 A pre-existing lint failure drives fix rounds because verify never asks the baseline (LINT-DRIVES-FIX)
+- User-visible vs raw: the user saw lint:ruff in failures_grouped for a file whose base already failed it. Raw base content run through the same tool gave the same diagnostics.
+- Law broken: L4, and the one-mechanism rule (tests already excuse pre-existing failures via attr.preExistingChecks / preRed.names).
+- Siblings: ruff, shellcheck, eslint per-file checks; tsc stays untouched; files new on head are never excused.
+- Mechanism: runLintChecks in verify.ts feeds base content on stdin to the tool and calls attributeStatic from QUALITY-02, joining the existing preExistingChecks path (at most 4 core lines).
+- Fixture: verify_lint.test.ts with a repo fixture and a stub ruff: base has the unused import (excused), head adds a new one (still reported), a new-file F401 (never excused).
+
+## FC-TEN-QUALITY-07 The fix brief says the diff is unavailable because its only reader has no writer (DEAD-DIFF-STAT)
+- User-visible vs raw: every real fix brief read "(diff stat is not available)". The working tree had the changed files.
+- Law broken: reader/writer key contract: fix.ts:62 reads prior.implement.diff_stat and no stage writes it.
+- Siblings: buildFixBrief and buildFixResumeBrief both consume the diff; any other reader of implement.diff_stat.
+- Mechanism: one currentDiff(repoDir, baseSha, maxBytes=6000) in runner/session_resume.ts via safeGit, computed fresh each fix round; excludes .loki/, names untracked files without touching the index, truncates with an explicit note.
+- Fixture: fix.test.ts and fix_resume.test.ts: temp repo with a modified file and no diff_stat shows "1 file changed"; round 2 shows the hunk; .loki/ never appears; a 50 KB diff cuts at 6000 bytes with the note.
+
+## FC-TEN-COST-06 The xreview claude judge spends tokens with lean flags off and no ledger line (XREVIEW-UNMETERED)
+- User-visible vs raw: cost totals omitted the cross-review judge. Raw claude calls ran with full settings and no child-session line.
+- Law broken: cost accounting must cover every model call (see FC-COST-PARTIAL).
+- Siblings: the codex argv (unchanged); other stages that spawn claude children and already use withChildLedger.
+- Mechanism: reviewArgv adds leanReviewerFlags() and --output-format json for claude; the run is wrapped in withChildLedger(run, lokiDir, 'xreview'). Verdict rules unchanged: no VERDICT line or bad JSON is not_run, never PASS.
+- Fixture: xreview.test.ts: argv contains the lean flags and json format; a stubbed run writes a phase xreview line to .loki/metrics/child-sessions.jsonl; JSON `VERDICT: BLOCK` parses to block; non-JSON gives not_run.
+
+## FC-TEN-DEPLOY-08 The web app reports a deployed URL it never obtained and stages everything on push (DEPLOY-FABRICATED-URL)
+- User-visible vs raw: a deploy with no URL in its output returned `https://vercel.app` as success. Raw provider output had no URL, and no receipt gate ran.
+- Law broken: a success claim must key on a parsed confirmation (fallback success is a false ack); the CLI deploy gate is the only path.
+- Siblings: deploy_session and github_push_session in web-app/server.py; hardcoded netlify.app and github.io fallbacks; the bulk-stage and `--public` push path; web-app consumers of url.
+- Mechanism: both handlers call the gated CLI (`loki deploy --execute --dir <dir>`, `loki github publish`) as argv lists and read the newest .loki/deploys record; url is deployed_url or null; refusals return 4xx with reasons.
+- Fixture: web-app/tests/test_server.py with monkeypatched subprocess; a grep for the three fallback URLs in server.py must exit 1.
+
+## FC-TEN-STABILITY-01 bench-suite builds VAR=1 hyperfine commands that hyperfine 1.20 refuses (BENCH-ARGV-ENV)
+- User-visible vs raw: the v11.17.6 backstop went red. Raw hyperfine 1.20 refused any positional command matching ^[A-Z_]+=, and the script skipped those commands without failing.
+- Law broken: a gate that skips its own work must fail, not pass quietly.
+- Siblings: benchPair and benchRoute call sites in loki-ts/scripts/bench-suite.ts; fixed /tmp/bench-*.json export paths; partial SKIP exit code.
+- Mechanism: one exported pure argv builder emits `env LOKI_LEGACY_BASH=1 <shim> <cmd>` (works on hyperfine 1.18 and 1.20); exports go under a mkdtemp dir; any SKIPPED command exits non-zero.
+- Fixture: loki-ts/tests/scripts/bench_suite_argv.test.ts with a fake hyperfine on PATH that exits 1 with the 1.20 message on a VAR= command.
+
+## FC-TEN-STABILITY-05 wall_concurrent races the 5s bun test timeout (WC-TIMEOUT-RACE)
+- User-visible vs raw: nightly 38938949858 failed. Raw duration was 5004.82ms against the 5000ms default; assertions were correct.
+- Law broken: a test must be hermetic and not depend on machine speed.
+- Siblings: other engine10 suites that init, add and commit a repo per test.
+- Mechanism: build the repo fixture once in beforeAll and copy it per test; give the concurrency case an explicit timeout sized from measured CI duration; every assertion unchanged.
+- Fixture: `bun test --timeout 1500 tests/engine10/wall_concurrent.test.ts` under CPU load, and a 20-run loop of the plain command.
+
+## FC-TEN-UX-02 Every failed start prints the same generic Next line (NEXT-NOT-SPECIFIC)
+- User-visible vs raw: auth failure, credit exhaustion, a failed check, a spec conflict and a stall all told the user `loki doctor` or `loki undo`. Raw reason strings from output.ts reasonOf name the actual cause.
+- Law broken: the failure message must name the exact fix for the cause that happened.
+- Siblings: every literal reason produced by reasonOf (output.ts:74); the supervisor call site that passes the reason.
+- Mechanism: nextOf in util/run_summary.ts takes reason and outcome and maps each failure class to one command; verified, done-unverified, budget and stopped output stays byte-identical.
+- Fixture: run_summary.test.ts table rows copied from the real reason literals, a pin of the old outputs, and a source scan that every reasonOf literal has a mapping; tests/features/contract.test.ts covers fatal:auth end to end.
