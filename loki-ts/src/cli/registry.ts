@@ -358,16 +358,5 @@ export function suggestWord(typo: string, names: readonly string[]): string | un
 
 /** Closest visible command name within distance 2, else undefined. */
 export function suggestCommand(typo: string): string | undefined {
-  let best: string | undefined;
-  let bestD = 3;
-  for (const c of visibleCommands()) {
-    for (const n of allNames(c)) {
-      const d = levenshtein(typo, n);
-      if (d < bestD) {
-        bestD = d;
-        best = n;
-      }
-    }
-  }
-  return best;
+  return suggestWord(typo, visibleCommands().flatMap((c) => [...allNames(c)]));
 }
