@@ -4,7 +4,7 @@
 // level symbols, size-capped"). Deterministic, no LLM: `git ls-files` plus a
 // best-effort regex scan (Python methods are Class.method). Caps files, bytes and
 // symbols per file so a huge repo cannot blow up Intake's 15s/60s limit.
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { safeGit } from "../util/safe_git.ts";
 import { join } from "node:path";
 export interface RepoMapEntry {
@@ -40,8 +40,8 @@ export function listRepoFiles(repoDir: string, maxFiles: number = maxFilesCap())
   return { files: all.slice(0, maxFiles), truncated: all.length > maxFiles };
 }
 function topLevelSymbols(absPath: string, re: RegExp): string[] {
-  let text: string;
-  try { text = readFileSync(absPath, "utf8").slice(0, MAX_SCAN_BYTES); } catch { return []; }
+  let text: string, fd = -1;
+  try { const buf = Buffer.allocUnsafe(MAX_SCAN_BYTES); fd = openSync(absPath, "r"); text = buf.toString("utf8", 0, readSync(fd, buf, 0, MAX_SCAN_BYTES, 0)); } catch { return []; } finally { if (fd >= 0) try { closeSync(fd); } catch { /* ignore */ } }
   const names: string[] = [];
   let cls = "", indent = "";
   for (const m of text.matchAll(re)) {
