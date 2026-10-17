@@ -92,7 +92,7 @@ export const DEFAULT_UNIT_USD_PER_MTOK = 15;
  *  Otherwise fails closed (ok false + a NOT PROVEN note) when the spec is missing, invalid, or lives inside the repo/worktree, where the
  *  agent could rewrite its own write set. On success returns env additions: the spec frozen as read now, and the cost cap from unitCapEnv
  *  applied over the run's existing cap (never loosened). */
-export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapUsd?: number): { ok: true; env: Record<string, string> } | { ok: false; note: string } | null {
+export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapUsd?: number): { ok: true; env: Record<string, string>; note?: string } | { ok: false; note: string } | null {
   const path = env["LOKI_UNIT_SPEC"];
   if (env["LOKI_SPEED"] === "0" || !path) return null;
   const bad = (why: string) => ({ ok: false as const, note: UNIT_NOT_PROVEN(why) });
@@ -105,5 +105,6 @@ export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapU
   const spec = txt === null ? null : parseText(txt);
   if (txt === null || !spec) return bad("its spec file is invalid");
   const rate = Number(env["LOKI_UNIT_USD_PER_MTOK"] ?? DEFAULT_UNIT_USD_PER_MTOK);
-  return { ok: true, env: { LOKI_UNIT_SPEC_FROZEN: txt, ...unitCapEnv(spec, rate, existingCapUsd) } };
+  const note = Number.isFinite(rate) && rate > 0 ? undefined : `NOT PROVEN: unit cost cap not applied, LOKI_UNIT_USD_PER_MTOK="${env["LOKI_UNIT_USD_PER_MTOK"]}" is not a positive number; the run cap is unchanged`;
+  return { ok: true, env: { LOKI_UNIT_SPEC_FROZEN: txt, ...unitCapEnv(spec, rate, existingCapUsd) }, ...(note ? { note } : {}) };
 }
