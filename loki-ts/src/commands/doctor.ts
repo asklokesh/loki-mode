@@ -20,6 +20,9 @@ import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { emitFunnel } from "../util/funnel.ts";
+import { readEvents } from "../engine10/events.ts";
+import { eventsRelPath } from "../util/engine_origin.ts";
+import { runOwnerAlive } from "../util/run_pid.ts";
 import { getVersion } from "../version.ts";
 import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
@@ -352,6 +355,25 @@ export async function checkTool(
     status,
     path,
   };
+}
+
+// ---------- Orphan runs (TEN-STABILITY-17) -------------------------------------
+/** Run ids under <repoDir>/.loki/runs whose event log has no run.completed and whose recorded owner process is gone. */
+export function findOrphanRuns(repoDir: string, ownerAlive: (runDir: string) => boolean = runOwnerAlive): string[] {
+  const root = join(repoDir, ".loki", "runs");
+  let ids: string[] = [];
+  try { ids = readdirSync(root); } catch { return []; }
+  const out: string[] = [];
+  for (const id of ids.sort()) {
+    if (!/^e10-[A-Za-z0-9-]+$/.test(id)) continue;
+    try {
+      const events = readEvents(join(repoDir, eventsRelPath(id)));
+      if (events.length === 0 || events.some((e) => e.type === "run.completed")) continue;
+      if (ownerAlive(join(root, id))) continue;
+      out.push(id);
+    } catch { /* unreadable run dir: not reported */ }
+  }
+  return out;
 }
 
 // ---------- Disk check --------------------------------------------------------
@@ -1603,6 +1625,10 @@ async function runText(): Promise<number> {
       `  ${badge("pass")}  Disk space: ${diskTextGb}GB available\n`,
     );
     bump(tally, "pass");
+  }
+  for (const id of findOrphanRuns(process.cwd()).slice(0, 5)) {
+    process.stdout.write(`  ${badge("warn")}  Orphan run ${id}: owner process died before run.completed (resume: loki start --resume ${id}, or undo: loki undo ${id})\n`);
+    bump(tally, "warn");
   }
   process.stdout.write(`\n`);
 

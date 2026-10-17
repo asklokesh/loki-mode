@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
+import { processStartTime } from "../../src/util/run_pid.ts";
 import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
@@ -31,6 +32,7 @@ import {
   type ReqTable,
   buildDoctorJson,
   checkDisk,
+  findOrphanRuns,
   lowestVolume,
   checkSkills,
   checkTool,
@@ -1327,5 +1329,52 @@ describe("doctor --quiet", () => {
     const b = await captureStdio(() => runDoctor(["--json", "--quiet"]));
     expect(b.result).toBe(a.result);
     expect(JSON.parse(b.cap.out).summary).toEqual(JSON.parse(a.cap.out).summary);
+  });
+});
+
+// TEN-STABILITY-17: doctor lists orphan runs (dead owner, no run.completed) with the resume/undo command.
+describe("doctor orphan runs", () => {
+  const env = (id: string, seq: number, type: string) => JSON.stringify({ v: 1, seq, ts: new Date().toISOString(), run: id, type, stage: null, data: {} }) + "\n";
+  let repo: string;
+  let prevCwd: string;
+  function mkRun(id: string, types: string[], pid?: number): void {
+    const dir = join(repo, ".loki", "runs", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "events.jsonl"), types.map((t, i) => env(id, i, t)).join(""));
+    if (pid !== undefined) {
+      const start = pid === process.pid ? (processStartTime(pid) ?? "") : "dead-start";
+      writeFileSync(join(dir, "run.pid"), JSON.stringify({ pid, start, argv: ["x"], run_id: id }));
+    }
+  }
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "loki-orphan-"));
+    prevCwd = process.cwd();
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(repo, { recursive: true, force: true });
+    restorePythonImportOk();
+  });
+
+  it("lists a dead-owner run without run.completed; skips live and completed runs", () => {
+    mkRun("e10-orphan", ["run.started"], 999999);
+    mkRun("e10-live", ["run.started"], process.pid);
+    mkRun("e10-done", ["run.started", "run.completed"], 999999);
+    expect(findOrphanRuns(repo)).toEqual(["e10-orphan"]);
+  });
+
+  it("runDoctor text prints a warn row naming the run id and the resume and undo commands", async () => {
+    mkRun("e10-orphan", ["run.started"], 999999);
+    mkRun("e10-live", ["run.started"], process.pid);
+    mkRun("e10-done", ["run.started", "run.completed"], 999999);
+    process.chdir(repo);
+    stubPythonImportOk();
+    const { cap } = await captureStdio(() => runDoctor([]));
+    const out = cap.out.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(out).toMatch(/WARN\s+Orphan run e10-orphan/);
+    expect(out).toContain("loki start --resume e10-orphan");
+    expect(out).toContain("loki undo e10-orphan");
+    expect(out).not.toContain("e10-live");
+    expect(out).not.toContain("e10-done");
   });
 });
