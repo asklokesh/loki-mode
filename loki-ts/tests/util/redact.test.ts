@@ -51,6 +51,10 @@ test("vendor tokens", () => {
   expect(redactSecrets(`k=${dk} x`)).toBe("k=[REDACTED:DOCKER_TOKEN] x");
   expect(redactSecrets(`k=${dop} x`)).toBe("k=[REDACTED:DIGITALOCEAN_TOKEN] x");
   expect(redactSecrets(`k=${ya} x`)).toBe("k=[REDACTED:GOOGLE_OAUTH_TOKEN] x");
+  const ai = "AI" + "z".repeat(32);
+  expect(redactSecrets(`k=SG.${"a".repeat(8)}${ai}.${"b".repeat(20)} x`)).toBe("k=[REDACTED:SENDGRID_KEY] x");
+  expect(redactSecrets(`k=dckr_pat_${"a".repeat(8)}${ai} x`)).toBe("k=[REDACTED:DOCKER_TOKEN] x");
+  expect(redactSecrets(`k=ya29.${"a".repeat(8)}${ai} x`)).toBe("k=[REDACTED:GOOGLE_OAUTH_TOKEN] x");
   const near = ["SG.short.tok", "SK" + "0".repeat(31), "SK" + "0".repeat(33), "xSK" + "0".repeat(32), "dckr_pat_abc", "dop_v1_" + "a".repeat(63), "dop_v1_" + "g".repeat(64), "ya29.short", "ya29"];
   for (const m of near) expect(redactSecrets(m)).toBe(m);
 });
