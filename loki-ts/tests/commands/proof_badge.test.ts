@@ -15,11 +15,13 @@
 // requirement is really protecting, so those cases are the meaningful test.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { renderProofBadge, runProof } from "../../src/commands/proof.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 
 describe("renderProofBadge: headline -> badge mapping (anti-fake-green)", () => {
   it("VERIFIED -> green 'Verified by Loki'", () => {
@@ -187,5 +189,162 @@ describe("loki proof badge: subcommand output", () => {
     restore();
     expect(code).toBe(0);
     expect(captured.stdout).toContain("badge");
+  });
+});
+
+// TEN-ADOPTION-03: a `loki start` (engine10) run has .loki/runs/<id>/receipt.json and NO .loki/proofs/<id>.
+describe("loki proof badge/bundle/share: sealed engine10 run, no .loki/proofs", () => {
+  let scratch = "";
+  const saved: Record<string, string | undefined> = {};
+  let cap = { stdout: "", stderr: "" };
+  let restore: () => void = () => {};
+  let n = 0;
+  const KEYS = ["LOKI_DIR", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "PATH"];
+
+  function capture(): void {
+    cap = { stdout: "", stderr: "" };
+    const oOut = process.stdout.write.bind(process.stdout);
+    const oErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: unknown): boolean => ((cap.stdout += String(c)), true)) as typeof process.stdout.write;
+    process.stderr.write = ((c: unknown): boolean => ((cap.stderr += String(c)), true)) as typeof process.stderr.write;
+    restore = () => {
+      process.stdout.write = oOut;
+      process.stderr.write = oErr;
+    };
+  }
+
+  function sealRun(verdict: string, signed = true): string {
+    const id = `e10-pb-${n++}`;
+    const dir = join(scratch, "runs", id);
+    const ev = join(dir, "events.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const log = new SupervisorLog(ev, id);
+    log.append("run.started", null, { provider: "claude" });
+    const evSha = new Bun.CryptoHasher("sha256").update(readFileSync(ev)).digest("hex");
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict, events_sha256: evSha, time: { wall_s: 0, stages: {} }, log_seal: true };
+    const hash = receiptSha256(body as never);
+    writeFileSync(
+      join(dir, "receipt.json"),
+      JSON.stringify({ ...body, receipt_sha256: hash, verification: signed ? signReceipt(id, hash) : { jwt: null, kid: null } }, null, 2),
+    );
+    log.append("receipt.sealed", "seal", { receipt_sha256: hash });
+    log.verify();
+    log.append("run.completed", null, {});
+    log.sealLog();
+    return id;
+  }
+
+  beforeEach(() => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    scratch = mkdtempSync(join(tmpdir(), "loki-adopt03-"));
+    process.env["LOKI_DIR"] = scratch;
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(scratch, "k.pem");
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k]!;
+    }
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("VERIFIED sealed run: badge prints green, exit 0", async () => {
+    const id = sealRun("VERIFIED");
+    expect(existsSync(join(scratch, "proofs"))).toBe(false);
+    capture();
+    const code = await runProof(["badge", id]);
+    restore();
+    expect(code).toBe(0);
+    expect(cap.stdout).toContain("brightgreen");
+  });
+
+  it("ALREADY_SATISFIED sealed run: its own label, not green", async () => {
+    const id = sealRun("ALREADY_SATISFIED");
+    capture();
+    const code = await runProof(["badge", id]);
+    restore();
+    expect(code).toBe(0);
+    expect(cap.stdout).toContain("Already%20satisfied");
+    expect(cap.stdout).not.toContain("brightgreen");
+  });
+
+  it("tampered receipt: no badge, non-zero", async () => {
+    const id = sealRun("VERIFIED");
+    const p = join(scratch, "runs", id, "receipt.json");
+    writeFileSync(p, readFileSync(p, "utf8").replace('"wall_s": 0', '"wall_s": 1'));
+    capture();
+    const code = await runProof(["badge", id]);
+    restore();
+    expect(code).not.toBe(0);
+    expect(cap.stdout).not.toContain("shields.io");
+    expect(cap.stderr).toContain("TAMPERED");
+  });
+
+  it("unsigned receipt: no badge, non-zero", async () => {
+    const id = sealRun("VERIFIED", false);
+    capture();
+    const code = await runProof(["badge", id]);
+    restore();
+    expect(code).not.toBe(0);
+    expect(cap.stdout).not.toContain("shields.io");
+  });
+
+  it("signed but PARTIAL receipt verdict: no badge, non-zero", async () => {
+    const id = sealRun("PARTIAL");
+    capture();
+    const code = await runProof(["badge", id]);
+    restore();
+    expect(code).not.toBe(0);
+    expect(cap.stdout).not.toContain("shields.io");
+  });
+
+  it("path-traversal id is not resolved", async () => {
+    capture();
+    const code = await runProof(["badge", "../runs/x"]);
+    restore();
+    expect(code).toBe(1);
+  });
+
+  it("bundle writes the four files; tampered run is refused with nothing written", async () => {
+    const id = sealRun("VERIFIED");
+    const out = join(scratch, "out");
+    capture();
+    const code = await runProof(["bundle", id, "--out", out]);
+    restore();
+    expect(code).toBe(0);
+    expect(readdirSync(out).sort()).toEqual(["VERIFY.md", "events.jsonl", "pubkey.jwk", "receipt.json"]);
+
+    const bad = sealRun("VERIFIED");
+    const p = join(scratch, "runs", bad, "receipt.json");
+    writeFileSync(p, readFileSync(p, "utf8").replace('"wall_s": 0', '"wall_s": 1'));
+    const out2 = join(scratch, "out2");
+    capture();
+    const code2 = await runProof(["bundle", bad, "--out", out2]);
+    restore();
+    expect(code2).not.toBe(0);
+    expect(existsSync(out2)).toBe(false);
+  });
+
+  it("share with a stubbed gh receives only bundle files, never the key or the .loki tree", async () => {
+    const id = sealRun("VERIFIED");
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const log = join(scratch, "gh.log");
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$1" = "gist" ]; then echo https://gist.github.com/x/abc; fi\nexit 0\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    process.env["PATH"] = `${bin}:${saved["PATH"] ?? ""}`;
+    capture();
+    const code = await runProof(["share", id, "--yes"]);
+    restore();
+    expect(cap.stderr).toBe("");
+    expect(code).toBe(0);
+    const line = readFileSync(log, "utf8").split("\n").find((l) => l.startsWith("gist create")) ?? "";
+    const names = line.split(" ").filter((t) => t.includes("/")).map((t) => t.split("/").pop());
+    expect(names.sort()).toEqual(["VERIFY.md", "events.jsonl", "pubkey.jwk", "receipt.json"]);
+    expect(line).not.toContain("k.pem");
+    expect(line).not.toContain(scratch + "/runs");
+    expect(cap.stdout).toContain("gist.github.com/x/abc");
+    expect(cap.stdout).toContain("brightgreen");
   });
 });

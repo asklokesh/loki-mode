@@ -305,11 +305,11 @@ _loki_completion() {
 
         proof)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--yes --private --hosted --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--yes --private --hosted --out --help" -- "$cur") )
                 return 0
             fi
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "list show open share" -- "$cur") )
+                COMPREPLY=( $(compgen -W "list show open share badge md bundle" -- "$cur") )
                 return 0
             fi
             ;;
