@@ -2515,3 +2515,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T10:17Z (CoS) v11.17.45
 - Released TEN-DEPLOY-03 (wave AH fix round, APPROVE fe1026bf1). Board refilled with 30 TEN rows for wave AM (fbde018b2).
+
+## 2026-10-17T11:21Z (CoS) v11.17.46
+- Released wave AM: 28 slices APPROVE across 19 chains; TEN-STABILITY-29 and TEN-ADOPTION-23 dropped as already fixed. Combined main: tsc rc 0; bun 593/0 and 449/0; help-changelog-drift, help-discoverability, secret-scan rc 0.

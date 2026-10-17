@@ -110,8 +110,25 @@ describe("loki verify-pr", () => {
   test("no linked issue is NOT PROVEN, never VERIFIED", async () => {
     const f = fixture("fix");
     const r = await run({ ...f.meta, issueRefs: [] }, { checkout: defaultCheckout });
-    expect(r.rc).toBe(4);
+    expect(r.rc).toBe(3);
     expect(r.json.reasons[0]).toContain("no linked issue");
+  });
+
+  test("no receipt exit code: missing proof is 3, failed proof stays 4, both say which", async () => {
+    const f = fixture("fix");
+    const none = await run({ ...f.meta, issueRefs: [] }, { checkout: defaultCheckout });
+    expect(none.rc).toBe(3);
+    expect(none.out).toContain("no proof:");
+    expect(none.json.noProof).toBe(true);
+    const nocheck = await run(f.meta, { checkout: defaultCheckout }, "Fix add()\n- add works\n");
+    expect(nocheck.rc).toBe(3);
+    const untrusted = await run(f.meta, { checkout: defaultCheckout, issue: () => ({ body: ISSUE, ...TRUSTED, authorAssociation: "NONE" }) });
+    expect(untrusted.rc).toBe(3);
+    const noop = fixture("noop");
+    const failed = await run(noop.meta, { checkout: defaultCheckout });
+    expect(failed.rc).toBe(4);
+    expect(failed.out).not.toContain("no proof:");
+    expect(failed.json.noProof).toBeUndefined();
   });
 
   test("an issue with no runnable check is NOT PROVEN", async () => {

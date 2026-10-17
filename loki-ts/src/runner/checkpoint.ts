@@ -415,9 +415,16 @@ export function listCheckpoints(lokiDirOverride?: string): CheckpointMetadata[] 
   const base = lokiDirOverride ?? lokiDir();
   const ids = sortByEpoch(listCheckpointDirs(base));
   const out: CheckpointMetadata[] = [];
+  const skipped: string[] = [];
   for (const id of ids) {
     const m = readCheckpointSafe(base, id);
     if (m) out.push(m);
+    else if (existsSync(join(checkpointsRoot(base), id, "metadata.json"))) skipped.push(id);
+  }
+  if (skipped.length > 0) {
+    process.stderr.write(
+      `[checkpoint] skipped ${skipped.length} checkpoint(s) with corrupt or invalid metadata.json: ${skipped.join(", ")}\n`,
+    );
   }
   return out;
 }

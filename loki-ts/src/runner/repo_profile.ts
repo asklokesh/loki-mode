@@ -57,6 +57,8 @@ export interface RepoProfile {
   readonly content_hash: string;
   /** UTC ISO-8601. */
   readonly generated_at: string;
+  /** HEAD sha + tracked-dirty flag the profile was derived at. Absent outside git. */
+  readonly cache_key?: string;
   readonly facts: readonly ProfileFact[];
 }
 
@@ -132,7 +134,7 @@ export interface BuildProfileOpts {
 
 // buildProfile -- derive and persist the profile. Caller decides when; this
 // never self-triggers, so it cannot surprise a default-path run.
-export function buildProfile(opts: BuildProfileOpts): RepoProfile {
+export function buildProfile(opts: BuildProfileOpts, cacheKey: string | null = null): RepoProfile {
   const root = resolve(opts.repoRoot);
   const facts = extractFacts(root).map((f) => ({
     ...f,
@@ -144,12 +146,38 @@ export function buildProfile(opts: BuildProfileOpts): RepoProfile {
     namespace: basename(root),
     content_hash: manifestHash(root),
     generated_at: (opts.now ?? new Date()).toISOString().replace(/\.\d{3}Z$/, "Z"),
+    ...(cacheKey !== null ? { cache_key: cacheKey } : {}),
     facts,
   };
   const target = profilePath(opts.lokiDirOverride);
   mkdirSync(resolve(target, ".."), { recursive: true });
   atomicWriteFileSync(target, JSON.stringify(profile, null, 2) + "\n");
   return profile;
+}
+
+// repoCacheKey -- HEAD sha plus a tracked-files dirty flag. Null outside git or
+// on any git failure, which disables the cache (always rescan).
+function repoCacheKey(root: string): string | null {
+  try {
+    const head = safeGit(root, ["rev-parse", "HEAD"]).trim();
+    if (!head) return null;
+    const dirty = safeGit(root, ["status", "--porcelain", "--untracked-files=no"]).trim() !== "";
+    return `${head}:${dirty ? "dirty" : "clean"}`;
+  } catch {
+    return null;
+  }
+}
+
+// buildProfileCached -- reuse the persisted profile when it is still fresh and
+// was derived at the same HEAD and dirty flag, so a resumed run skips the scan.
+// A new commit, a dirty-state flip, a manifest edit or TTL expiry rebuilds.
+export function buildProfileCached(opts: BuildProfileOpts & { env?: NodeJS.ProcessEnv }): RepoProfile {
+  const key = repoCacheKey(resolve(opts.repoRoot));
+  if (key !== null) {
+    const r = readProfile(opts);
+    if (r.status === "fresh" && r.profile && r.profile.cache_key === key) return r.profile;
+  }
+  return buildProfile(opts, key);
 }
 
 export type ProfileStatus = "fresh" | "absent" | "stale_hash" | "stale_ttl" | "unreadable";

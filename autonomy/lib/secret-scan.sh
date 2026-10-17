@@ -46,6 +46,10 @@ _commit_scan_secret_file() {
         'sk-ant-[A-Za-z0-9_-]{20,}'                 # Anthropic API key (hyphenated body)
         'AIza[0-9A-Za-z_-]{35}'                     # Google API key
         'glpat-[A-Za-z0-9_-]{20,}'                  # GitLab personal access token
+        '(^|[^A-Za-z0-9_])hf_[A-Za-z0-9]{34,}'      # Hugging Face token
+        '(^|[^A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}'  # SendGrid API key
+        '(^|[^A-Za-z0-9])SK[0-9a-f]{32}([^A-Za-z0-9]|$)'  # Twilio API key SID
+        'AccountKey=[A-Za-z0-9+/]{40,}={0,2}'       # Azure storage account key
     )
     local p
     for p in "${tier1[@]}"; do

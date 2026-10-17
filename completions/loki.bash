@@ -238,6 +238,14 @@ _loki_completion() {
             fi
             ;;
 
+        control)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--port --json --help" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "serve status help" -- "$cur") )
+            ;;
+
         plan)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --verbose --spec --requirements --help" -- "$cur") )

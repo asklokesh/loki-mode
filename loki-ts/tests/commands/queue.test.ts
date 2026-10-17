@@ -206,6 +206,20 @@ describe("loki queue", () => {
   });
 });
 
+describe("loki queue run progress (TEN-UX-28)", () => {
+  test("progress line per item before it runs, and digest rows carry [n/m]", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1", "o/r#2"], h.inject);
+    h.err.length = 0;
+    h.out.length = 0;
+    expect(await runQueue(["run", "--no-pr"], h.inject)).toBe(0);
+    expect(h.err.filter((e) => /^\[\d+\/\d+\] /.test(e))).toEqual(["[1/2] o/r#1\n", "[2/2] o/r#2\n"]);
+    const digest = h.out.join("");
+    expect(digest).toContain("  [1/2] o/r#1\n    verdict:");
+    expect(digest).toContain("  [2/2] o/r#2\n    verdict:");
+  });
+});
+
 describe("loki queue list columns (TEN-UX-14)", () => {
   test("prints id, age, status columns and an N queued footer", async () => {
     const h = harness({});

@@ -327,6 +327,35 @@ describe("listCheckpoints + readCheckpoint", () => {
     expect(m.iteration).toBe(2);
   });
 
+  it("corrupt metadata warns", async () => {
+    for (const [i, e] of [[1, 100], [2, 200], [3, 300]] as const) {
+      await createCheckpoint({
+        taskDescription: `t${i}`,
+        iteration: i,
+        lokiDirOverride: tmpBase,
+        forceCreate: true,
+        epochOverride: e,
+      });
+    }
+    writeFileSync(join(tmpBase, "state", "checkpoints", "cp-2-200", "metadata.json"), "{not json");
+    const writes: string[] = [];
+    const orig = process.stderr.write;
+    (process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+      writes.push(String(s));
+      return true;
+    };
+    let list: ReturnType<typeof listCheckpoints>;
+    try {
+      list = listCheckpoints(tmpBase);
+    } finally {
+      process.stderr.write = orig;
+    }
+    expect(list.map((c) => c.id)).toEqual(["cp-1-100", "cp-3-300"]);
+    const warns = writes.filter((w) => w.includes("[checkpoint] skipped"));
+    expect(warns.length).toBe(1);
+    expect(warns[0]).toContain("cp-2-200");
+  });
+
   it("readCheckpoint throws CheckpointNotFoundError for missing id", () => {
     expect(() => readCheckpoint("cp-99-99", tmpBase)).toThrow(CheckpointNotFoundError);
   });

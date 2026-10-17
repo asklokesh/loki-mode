@@ -301,6 +301,22 @@ describe("runQualityGates orchestration", () => {
     process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "pass";
   });
 
+  it("gate duration recorded per executed gate", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "false";
+    process.env["LOKI_GATE_INVARIANTS"] = "false";
+    process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
+    process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
+    const r = await runQualityGates(makeCtx());
+    const d = r.durations_ms ?? {};
+    expect(Object.keys(d).sort()).toEqual([...r.passed, ...r.failed].sort());
+    expect(Object.keys(d).length).toBeGreaterThan(0);
+    for (const v of Object.values(d)) {
+      expect(typeof v).toBe("number");
+      expect(v).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   it("returns all gates in passed[] when stubs default to pass", async () => {
     // v7.57.0: semantic/invariant/lsp are now default-ON but advisory. They
     // SPAWN real detectors / the LSP writer against ctx.cwd, which is slow and

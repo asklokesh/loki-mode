@@ -17,6 +17,16 @@ type Provider = "claude" | "cline" | "codex" | "aider" | "opencode";
 // outright until v8.76.0.
 const ALL_PROVIDERS: readonly Provider[] = ["claude", "cline", "codex", "aider", "opencode"];
 
+// Per-provider install hint, byte-matching autonomy/loki doctor_provider_install_cmd.
+// Shared by `loki doctor` and `loki provider list`.
+export const PROVIDER_INSTALL: Readonly<Record<string, string>> = {
+  claude: "npm install -g @anthropic-ai/claude-code",
+  codex: "npm install -g @openai/codex",
+  cline: "npm install -g cline",
+  aider: "pip install aider-chat",
+  opencode: "npm install -g opencode-ai",
+};
+
 function readSavedProvider(): string {
   const path = resolve(lokiDir(), "state", "provider");
   if (!existsSync(path)) return "";
@@ -119,6 +129,14 @@ export async function runProviderList(): Promise<number> {
   for (const [p, label] of rows) {
     const marker = current === p ? ` ${CYAN}(current)${NC}` : "";
     process.stdout.write(`  ${label} ${statusOf.get(p)}${marker}\n`);
+  }
+
+  // Hints go to STDERR so stdout stays byte-identical with the bash route
+  // (bun-parity gate captures stdout only).
+  for (const [p, isInstalled] of installed) {
+    if (!isInstalled && PROVIDER_INSTALL[p]) {
+      process.stderr.write(`  ${YELLOW}Install ${p}: ${PROVIDER_INSTALL[p]}${NC}\n`);
+    }
   }
 
   process.stdout.write(`\n`);

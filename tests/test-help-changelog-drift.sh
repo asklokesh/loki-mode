@@ -23,6 +23,7 @@ CHANGELOG="${LOKI_HELP_DRIFT_CHANGELOG:-$REPO_ROOT/CHANGELOG.md}"
 SECTIONS="${LOKI_HELP_DRIFT_SECTIONS:-2}"
 WINDOW="${LOKI_HELP_DRIFT_WINDOW:-5}"
 BASH_COMP="$REPO_ROOT/completions/loki.bash"
+ZSH_COMP="$REPO_ROOT/completions/_loki"
 export LOKI_NO_BROWSER=1
 
 PASS=0
@@ -53,6 +54,19 @@ if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ]; then
     fi
 fi
 
+# Exact-token completion checks (TEN-QUALITY-23): a flag or subcommand must appear as a whole
+# literal token, so "--spec" is not satisfied by "--spec-first" and a typo like "--sinse" fails.
+has_token() {
+    # $1 = file, $2 = token (flags and words only); token must not be flanked by [A-Za-z0-9_-]
+    grep -qE -- "(^|[^A-Za-z0-9_-])${2}([^A-Za-z0-9_-]|\$)" "$1"
+}
+bash_arm() {
+    # print the body of the case arm for subcommand $2 in bash completion file $1
+    awk -v c="$2" '
+        /^        [a-z|-]+\)/ { arm=$0; sub(/\).*/,"",arm); gsub(/^ +/,"",arm); n=split(arm,a,"|"); inarm=0; for(i=1;i<=n;i++) if(a[i]==c) inarm=1 }
+        inarm { print }' "$1"
+}
+
 extract_invocations() {
     awk -v n="$1" '/^## v/{c++} c>=1 && c<=n' "$CHANGELOG" \
         | grep -o '`loki [^`]*`' | tr -d '`' | sort -u
@@ -80,7 +94,10 @@ help_for() {
     local cmd="$1" f="$WORK/help-$1.txt"
     if [ ! -f "$f" ]; then
         { bash "$LOKI" "$cmd" --help </dev/null 2>&1 || true
-          bash "$LOKI" "$cmd" help </dev/null 2>&1 || true; } > "$f"
+          bash "$LOKI" "$cmd" help </dev/null 2>&1 || true
+          # bin/loki is the real entry path: Bun-routed commands (queue, ...) print help only there.
+          bash "$REPO_ROOT/bin/loki" "$cmd" help </dev/null 2>&1 || true
+          bash "$REPO_ROOT/bin/loki" "$cmd" --help </dev/null 2>&1 || true; } > "$f"
     fi
     printf '%s\n%s\n' "$HELP_ALL" "$(cat "$f")"
 }
@@ -98,6 +115,16 @@ while IFS= read -r line; do
         case "$2" in *[!a-z-]*|-*) ;; *) sub="$2" ;; esac
     fi
     hay="$(help_for "$cmd")"
+    if grep -E '^    local main_commands=' "$BASH_COMP" | grep -qE "[ \"]${cmd}[ \"]"; then
+        ok "'$cmd' is a literal command in loki.bash main_commands"
+    else
+        bad "'$cmd' (CHANGELOG) is not a literal command in loki.bash main_commands"
+    fi
+    if grep -qE "^[[:space:]]*'$cmd:" "$ZSH_COMP"; then
+        ok "'$cmd' is a literal command in completions/_loki"
+    else
+        bad "'$cmd' (CHANGELOG) is not a literal command in completions/_loki"
+    fi
     if [ -n "$sub" ]; then
         if printf '%s\n' "$hay" | grep -qw -- "$sub"; then
             ok "'loki $cmd $sub' appears in help"
@@ -114,10 +141,24 @@ while IFS= read -r line; do
                 else
                     bad "'loki $cmd $flag' (CHANGELOG) is absent from help"
                 fi
-                if grep -qF -- "$flag" "$BASH_COMP"; then
+                if has_token "$BASH_COMP" "$flag"; then
                     ok "'$flag' is in bash completion"
                 else
                     bad "'$flag' (CHANGELOG, loki $cmd) is absent from completions/loki.bash"
+                fi
+                if has_token "$ZSH_COMP" "$flag"; then
+                    ok "'$flag' is in zsh completion"
+                else
+                    bad "'$flag' (CHANGELOG, loki $cmd) is absent from completions/_loki"
+                fi
+                arm="$(bash_arm "$BASH_COMP" "$cmd")"
+                if [ -n "$arm" ]; then
+                    printf '%s\n' "$arm" > "$WORK/arm.txt"
+                    if has_token "$WORK/arm.txt" "$flag"; then
+                        ok "'$flag' is in the loki.bash case arm for '$cmd'"
+                    else
+                        bad "'$flag' (CHANGELOG) is absent from the loki.bash case arm for '$cmd'"
+                    fi
                 fi
                 ;;
         esac

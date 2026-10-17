@@ -18,6 +18,7 @@ import { processStartTime } from "../../src/util/run_pid.ts";
 import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
+  _setJsonProbesForTest,
   _setPythonImportOkForTest,
   probeIntegrations,
   evaluateClaudeCliCompat,
@@ -182,6 +183,27 @@ describe("doctor.checkDisk", () => {
     expect(d.available_gb).toBeNull();
     expect(d.low_volume).toBeNull();
   });
+});
+
+describe("doctor disk text volume label", () => {
+  for (const name of ["home", "cwd", "tmp"] as const) {
+    it(`names the ${name} volume on the text disk line when low`, async () => {
+      const volumes = (["home", "cwd", "tmp"] as const).map((n) => ({
+        name: n,
+        path: `/${n}`,
+        available_gb: n === name ? 3.2 : 100,
+      }));
+      const { cap } = await captureStdio(() => runDoctor([], { diskVolumes: volumes }));
+      expect(cap.out).toContain(`Disk space: 3GB available on ${name} volume (low)`);
+    }, 30_000);
+  }
+
+  it("omits the volume label when disk passes", async () => {
+    const volumes = [{ name: "home" as const, path: "/h", available_gb: 100 }];
+    const { cap } = await captureStdio(() => runDoctor([], { diskVolumes: volumes }));
+    expect(cap.out).toContain("Disk space: 100GB available\n");
+    expect(cap.out).not.toContain("volume");
+  }, 30_000);
 });
 
 // ---- checkSkills -------------------------------------------------------------
@@ -1288,6 +1310,33 @@ describe("doctor Integration probes run concurrently (TEN-SPEED-06)", () => {
   });
 });
 
+describe("doctor json checks run concurrently (TEN-SPEED-10)", () => {
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  afterEach(() => _setJsonProbesForTest(null));
+
+  it("json checks run concurrently: three 200ms probes overlap and output keys are preserved", async () => {
+    await buildDoctorJson(); // warm the shared tool-check path
+    const base = await buildDoctorJson();
+    _setJsonProbesForTest({
+      sentrux: async () => { await sleep(200); return base.sentrux; },
+      memory: async () => { await sleep(200); return base.memory; },
+      requirements: async () => { await sleep(200); return base.requirements; },
+    });
+    const t0 = Date.now();
+    const j = await buildDoctorJson();
+    const dt = Date.now() - t0;
+    const t1 = Date.now();
+    _setJsonProbesForTest({ sentrux: async () => base.sentrux, memory: async () => base.memory, requirements: async () => base.requirements });
+    await buildDoctorJson();
+    const floor = Date.now() - t1;
+    expect(dt - floor).toBeLessThan(400);
+    expect(j.sentrux).toEqual(base.sentrux);
+    expect(j.memory).toEqual(base.memory);
+    expect(j.requirements).toEqual(base.requirements);
+    expect(Object.keys(j)).toEqual(Object.keys(base));
+  });
+});
+
 // TEN-UX-18: doctor --quiet keeps only FAIL/WARN rows and the Summary footer.
 describe("doctor --quiet", () => {
   afterEach(() => { _setPythonImportOkForTest(null); _setIntegrationProbesForTest(null); });
@@ -1321,6 +1370,22 @@ describe("doctor --quiet", () => {
     expect(quiet.cap.out.length).toBeLessThan(full.cap.out.length);
     const short = await captureStdio(() => runDoctor(["-q"]));
     expect(short.result).toBe(full.result);
+  });
+
+  it("install hint follows its row", async () => {
+    stubPythonImportOk();
+    const saved = process.env.PATH;
+    process.env.PATH = "/usr/bin:/bin";
+    try {
+      const quiet = await captureStdio(() => runDoctor(["--quiet"]));
+      const lines = quiet.cap.out.split("\n").map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
+      const i = lines.findIndex((l) => /\b(FAIL|WARN)\b.*claude/i.test(l));
+      expect(i).toBeGreaterThanOrEqual(0);
+      expect(lines[i + 1]).toContain("Install: npm install -g @anthropic-ai/claude-code");
+      expect(quiet.cap.err).not.toContain("Install:");
+    } finally {
+      process.env.PATH = saved;
+    }
   });
 
   it("--quiet leaves --json unaffected", async () => {
