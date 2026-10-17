@@ -2148,6 +2148,11 @@ function scan(P) {
     if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
         || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && (sg(n.text) || [...H].some((h) => n.text.includes(h)))) strMention = true;
     if (ts.isElementAccessExpression(n) && H.has(lit(n.argumentExpression))) flags.add("indirect");
+    // allowToken spelled so the raw grep cannot see it: an identifier, property
+    // name or string whose decoded text is allowToken but whose source text is
+    // not (unicode or hex escapes). The plain spelling belongs to the grep rule.
+    if ((ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n))
+        && n.text === "allowToken" && !n.getText(P.sf).includes("allowToken")) flags.add("escape");
     // A safe_git literal anywhere but a module specifier or the direct argument of
     // require/import(): an aliased or wrapped loader (const r = require; r("..."),
     // require.call(null, "..."), createRequire(url)("...")) hides the module.
@@ -2241,6 +2246,7 @@ EOF_HITS
         case "$rest" in
             comma)    nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f2#"$REPO_ROOT"/}" ;;
             import)   nok "safe_git imported by alias, namespace, require or dynamic import, or its opt-in helpers re-exported (call names hidden from the scan): ${f2#"$REPO_ROOT"/}" ;;
+            escape)   nok "allowToken spelled with an escape sequence (hidden from the raw grep): ${f2#"$src"/}" ;;
             indirect) nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f2#"$src"/}" ;;
         esac
     done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
@@ -2280,13 +2286,18 @@ EOF_HITS
     done
 }
 
+# Inherent limits of this static scan (not closable without running the code):
+# a computed key such as o["allow"+"Token"], options built by JSON.parse, an
+# assignment o["allow"+"Token"]=true, and a fully templated dynamic import whose
+# helper key is joined at run time are all invisible to it. The guard bounds
+# source-visible spellings only; the runtime bound is safe_git.ts itself.
 # Positive controls: each synthetic bypass tree (the real util files plus one
 # offender) must make the scan fail, so a blind guard cannot pass quietly.
 allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2357,6 +2368,32 @@ const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
                             body='const k = ["safe", "GitEnv"].join(""); const m = require.call(null, "./util/safe_git.ts"); m[k](process.env, true);' ;;
             loader-create-require) # literal-outside-specifier rule alone: createRequire(url)(...)
                             body='import { createRequire } from "node:module"; const k = ["safe", "GitEnv"].join(""); const m = createRequire(import.meta.url)("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            comma-prop-call) # comma rule alone: positional flag through a property-access call
+                            body='export function f(m: any) { m.safeGitEnv(process.env, true); }' ;;
+            dyn-import-template) # import rule alone: template-head mention plus computed import
+                            body='const k = ["safe", "GitEnv"].join(""); const m = await import(`./util/safe_git${".ts"}`); m[k](process.env, true);' ;;
+            loader-template-literal) # literal-outside-specifier rule alone: no-substitution template literal
+                            body='const r = require; const k = ["safe","GitEnv"].join(""); const m = r(`./util/safe_git.ts`); m[k](process.env, true);' ;;
+            loader-aliased-spec) # literal-outside-specifier rule alone: specifier held in a variable
+                            body='const r = require; const p = "./util/safe_git.ts"; const k = ["safe","GitEnv"].join(""); const m = r(p); m[k](process.env, true);' ;;
+            ext-js|ext-mjs|ext-cjs|ext-mts|ext-cts|ext-jsx) # find list: every scanned extension must reach the scan
+                            ext="${name#ext-}"; body='const m = require("./util/safe_git.ts"); const k = ["safe", "GitEnv"].join(""); m[k](process.env, true);' ;;
+            allowtoken-core) # core grep alone: allowToken passed to safeGit outside the fetch callers
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { allowToken: true });' ;;
+            allowtoken-quoted) # core grep alone: quoted property name
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { "allowToken": true });' ;;
+            allowtoken-escaped-ident) # escape rule alone: unicode-escaped identifier (built so this file stays readable)
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { \u0061llowToken: true });' ;;
+            allowtoken-escaped-string) # escape rule alone: escaped string property name
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { "allow\u0054oken": true });' ;;
+            import-alias-config) # import rule alone: aliased import of a non-helper export of safe_git
+                            body='import { SAFE_GIT_CONFIG as c } from "./util/safe_git.ts";' ;;
+            optional-call)  # indirect rule alone: optional call of the bare helper
+                            body='safeGitEnv?.(process.env);' ;;
+            optional-prop-head) # indirect rule alone: optional chain on the receiver
+                            body='export function f(m: any) { m?.safeGitEnv(process.env); }' ;;
+            optional-prop-call) # indirect rule alone: optional call on a property access
+                            body='export function f(m: any) { m.safeGitEnv?.(process.env); }' ;;
             probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
