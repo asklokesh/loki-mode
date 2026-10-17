@@ -12,7 +12,7 @@ import { computeReceiptHash, main as verifyMain, verifyReceipt } from "../../src
 import { runGroup } from "../../src/features/speed/run_group.ts";
 import type { Dag } from "../../src/features/decompose.ts";
 import { capGroupVerdict, sealGroup } from "../../src/features/speed/seal_group.ts";
-import { composeComposite, compositeHash } from "../../src/util/composite_seal.ts";
+import { collectToolchain, composeComposite, compositeHash } from "../../src/util/composite_seal.ts";
 import type { EventType, Receipt, RunContext, StageName, Verdict } from "../../src/engine10/types.ts";
 
 let root = "";
@@ -361,6 +361,29 @@ function resign(p: string, f: (c: Record<string, any>) => void): void {
 
 describe("composite receipt", () => {
   const KIDS: C[] = [{ repo: "api" }, { repo: "web" }];
+  test("TEN-GATES-19: sealed composite records the toolchain, absent tools are null, tampering is caught", async () => {
+    const p = await seal(writeWs("tc", KIDS));
+    const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, any>;
+    expect(Object.keys(c["toolchain"]).sort()).toEqual(["bun", "git", "node", "python3"]);
+    expect(typeof c["toolchain"]["node"]).toBe("string");
+    expect(collectToolchain(() => null).python3).toBeNull();
+    const nulls = writeWs("tc-null", KIDS);
+    const body = composeComposite(nulls, computeReceiptHash, { bun: null, node: null, python3: null, git: null });
+    expect(body.toolchain).toEqual({ bun: null, node: null, python3: null, git: null });
+    expect((await verdictOf(p)).verdict).toBe("VERIFIED");
+    c["toolchain"]["node"] = "0.0.0";
+    writeFileSync(p, JSON.stringify(c));
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+    resign(p, (x) => { x["toolchain"] = { bun: 1 }; });
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("toolchain");
+  });
+  test("TEN-GATES-19: a composite sealed before the toolchain field existed still verifies", async () => {
+    const p = await seal(writeWs("tc-old", KIDS));
+    resign(p, (x) => { delete x["toolchain"]; });
+    expect((await verdictOf(p)).verdict).toBe("VERIFIED");
+  });
   test("all green: signed composite verifies VERIFIED, exit 0, children in order", async () => {
     const dir = writeWs("green", KIDS);
     const p = await seal(dir);
