@@ -6,7 +6,7 @@
 // autonomy/lib/engine10-push.sh).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts";
@@ -490,6 +490,21 @@ describe("RECOVERY: interrupted run resume", () => {
     expect(seen).toEqual(want);
     const done = readEvents(evPath()).findLast((e) => e.type === "run.completed");
     expect(done?.data["not_proven"]).toEqual(want);
+  });
+
+  test("resume surfaces the policy-not-evaluated note in the PR seal and run.completed", async () => {
+    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.json"), JSON.stringify({ autonomy: "execute", actions: { pr: "allow" } }));
+    log.append("receipt.sealed", "seal", { verdict: "PARTIAL", receipt_sha256: "abc", path: "p", not_proven: ["cost unmetered"] });
+    const bin = join(repo, "..", `${RUN}-gitonly`); mkdirSync(bin, { recursive: true });
+    symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    let seen: unknown = null;
+    const spy: RunPrFn = async (ctx: Record<string, unknown>) => { seen = ((ctx["outputs"] as () => Record<string, unknown>)()["seal"] as Record<string, unknown>)["not_proven"]; return runPr(ctx, new AbortController().signal); };
+    const keep = { p: process.env["PATH"], r: process.env["LOKI_POLICY_REQUIRE_NODE"] }; process.env["PATH"] = bin; process.env["LOKI_POLICY_REQUIRE_NODE"] = "0";
+    const cwd = process.cwd(); process.chdir(repo);
+    try { expect(await resumeMain([], { runPr: spy, out: say })).toBe(0); } finally { process.chdir(cwd); process.env["PATH"] = keep.p; if (keep.r === undefined) delete process.env["LOKI_POLICY_REQUIRE_NODE"]; else process.env["LOKI_POLICY_REQUIRE_NODE"] = keep.r; rmSync(bin, { recursive: true, force: true }); }
+    expect((seen as string[]).some((x) => x.includes("policy NOT evaluated"))).toBe(true);
+    expect(readEvents(evPath()).findLast((e) => e.type === "run.completed")?.data["not_proven"]).toContain((seen as string[])[2]);
   });
 
   test("failed publish leaves the run resumable and appends no pr.opened", async () => {

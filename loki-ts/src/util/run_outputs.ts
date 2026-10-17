@@ -298,7 +298,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
     const gate = prGate(repoDir);
     if ("deny" in gate) return { url: null, draft: false, existing: null, notProven: [gate.deny] };
-    const evs = readEvents(eventsPath), sealed: Record<string, unknown> = { ...((evs.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }, base = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    const evs = readEvents(eventsPath), sealed: Record<string, unknown> = { ...((evs.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: "note" in gate && gate.note ? [...notProven, gate.note] : notProven }, base = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
     const r = await (await import("../engine10/stages/pr.ts")).runPr({ runId: it.runId, repoDir, runDir, branch: br, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, provider, model, baseSha: typeof base === "string" ? base : "", outputs: () => ({ ...loadRunOutputs(runDir, evs), seal: { ...sealed, verdict, receipt_path: sealed["path"] } }), capHit: () => evs.some((e) => e.type === "cap.hit"), draft: gate.draft, emit: () => {} } as never, new AbortController().signal);
     const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
     return r.status !== "completed" ? { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] } : { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
@@ -328,7 +328,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   if ("deny" in gate) { out(`resume: ${gate.deny}\n`); return 5; }
   const log = new SupervisorLog(join(repoDir, eventsRelPath(it.runId)), it.runId);
   log.append("run.resumed", null, { phase: "publish", receipt_reused: true, receipt_sha256: sealedData["receipt_sha256"] ?? null });
-  const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption"];
+  const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption", ...("note" in gate && gate.note ? [gate.note] : [])];
   const runPr = deps.runPr ?? (async (c, s) => (await import("../engine10/stages/pr.ts")).runPr(c as never, s));
   const events = readEvents(log.path);
   const baseSha = it.events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
