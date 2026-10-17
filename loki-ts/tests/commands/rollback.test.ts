@@ -338,6 +338,26 @@ describe("TEN-DEPLOY-11 loki rollback deploy", () => {
     }
   });
 
+  it("wrapped deploy commands resolve to the real provider", async () => {
+    const cases: Array<[string, string]> = [
+      ["fly releases rollback", "flyctl deploy"],
+      ["vercel rollback", "npx vercel --prod"],
+      ["vercel rollback", "npx -y vercel --prod"],
+      ["Cloudflare dashboard", "bunx wrangler deploy"],
+      ["vercel rollback", "pnpm dlx vercel --prod"],
+      ["heroku releases:rollback", "yarn dlx heroku container:release web"],
+    ];
+    for (const [want, command] of cases) {
+      seedDeploy("20260104T000000Z-4.json", { schema: "loki.deploy/1", command });
+      const stop = captureOutput();
+      const code = await runRollback(["deploy"]);
+      const out = stop();
+      expect(code).toBe(0);
+      expect(out.stdout).toContain(want);
+      expect(out.stdout).not.toContain("No rollback command known");
+    }
+  });
+
   it("prints nothing runnable when there is no record", async () => {
     const stop = captureOutput();
     const code = await runRollback(["deploy"]);

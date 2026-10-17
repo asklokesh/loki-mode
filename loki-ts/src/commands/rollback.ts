@@ -203,6 +203,23 @@ const DEPLOY_ROLLBACKS: ReadonlyArray<{ prefix: string; provider: string; cmd?: 
   { prefix: "gcloud", provider: "Google Cloud Run", manual: "list revisions with `gcloud run revisions list`, then shift traffic to the previous one with `gcloud run services update-traffic --to-revisions=<revision>=100` (not run by loki)" },
 ];
 
+// First real program of a deploy command: skips npx/bunx/pnpm dlx/yarn dlx wrappers and their flags, and
+// aliases flyctl to fly.
+function deployProgram(command: string): string {
+  const toks = command.split(/\s+/).filter((t) => t !== "");
+  let i = 0;
+  for (;;) {
+    const t = toks[i] ?? "";
+    const next = toks[i + 1] ?? "";
+    if (t === "npx" || t === "bunx") i += 1;
+    else if ((t === "pnpm" || t === "yarn") && next === "dlx") i += 2;
+    else break;
+    while ((toks[i] ?? "").startsWith("-")) i += 1;
+  }
+  const prog = toks[i] ?? "";
+  return prog === "flyctl" ? "fly" : prog;
+}
+
 // loki rollback deploy: read-only. Reads the newest .loki/deploys/*.json (loki.deploy/1) and prints the
 // provider rollback command for its deploy command. Exit 0 with a note when there is nothing to print.
 function printDeployRollback(): number {
@@ -227,7 +244,7 @@ function printDeployRollback(): number {
     process.stdout.write("No deploy to roll back: last deploy record unreadable\n");
     return 0;
   }
-  const first = command.split(/\s+/)[0] ?? "";
+  const first = deployProgram(command);
   const hit = DEPLOY_ROLLBACKS.find((r) => r.prefix === first);
   if (hit === undefined) {
     process.stdout.write("No rollback command known for the last deploy's provider; roll back with the provider's own tooling\n");
