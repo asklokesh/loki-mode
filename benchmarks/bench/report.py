@@ -296,7 +296,7 @@ def summarize_row(row):
         "success_rate": success_rate,
         "quality_median": _median([q for q in qualities if q is not None]),
         "cost_usd_median": cost_median,
-        "cost_partial": any(_schema.cost_is_partial(t) for t in trials),
+        "cost_partial": _schema.trials_cost_partial(trials),
         "wall_clock_median": _median([d for d in durations if d is not None]),
         "iterations_median": _median([i for i in iters if i is not None]),
         "manual": _is_manual(row),

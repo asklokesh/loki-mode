@@ -422,6 +422,26 @@ class SpendCapTest(unittest.TestCase):
             A.run_cell = orig
         self.assertIn("(lower bound)", rows[1]["unmeasured_reason"])
 
+    def test_compute_metrics_null_cost_with_true_cost_is_lower_bound(self):
+        r = row(accepted=True, reported=True, cost=None)
+        r["true_cost_usd"] = 2.0
+        m = A.compute_metrics([r])
+        self.assertEqual(m["cost_status"], "partial_lower_bound")
+        self.assertAlmostEqual(m["cost_per_accepted_lower_bound_usd"], 2.0)
+
+    def test_ledger_read_counts_invalid_and_unpriced_lines(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, A.LEDGER_REL)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write('not json\n[1]\n{"usd": 0.5}\n{"phase": "x"}\n')
+            total, bad, unpriced = A.ledger_read(d)
+            self.assertAlmostEqual(total, 0.5)
+            self.assertEqual((bad, unpriced), (2, 1))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def _plan(self, n):
         tasks = [{"id": "t%d" % i, "class": "bugfix", "prompt": "p",
                   "seed_sha256": "a", "acceptance_sha256": "b", "prompt_sha256": "c"}

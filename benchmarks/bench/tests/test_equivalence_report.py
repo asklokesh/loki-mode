@@ -219,6 +219,48 @@ def test_bench_report_summary_labels_partial_cost():
     print("PASS: bench report flags partial cost")
 
 
+def _mixed_cost_row():
+    row = _fixture_row("haiku-full", "hard-1", "H", [1, 1], cost=1.0)
+    row["trials"][1]["cost_usd"] = None
+    return row
+
+
+def test_measured_trial_without_cost_makes_cell_partial():
+    cell = eq.cell_axes([_mixed_cost_row()])
+    assert cell["cost_partial"] is True
+    assert cell["cost_usd_per_verified"] is None
+    assert cell["cost_usd_per_verified_lower_bound"] == 0.5
+
+
+def test_summarize_trials_partial_nulls_per_solved():
+    import bench_schema as bs
+    trials = _mixed_cost_row()["trials"]
+    out = bs.summarize_trials(trials)
+    assert out["cost_partial"] is True
+    assert out["cost_usd_per_solved"] is None
+    assert out["cost_usd_per_solved_lower_bound"] == 0.5
+    done = bs.summarize_trials([{"success": True, "cost_usd": 1.0, "duration_s": 1}])
+    assert done["cost_partial"] is False and done["cost_usd_per_solved"] == 1.0
+
+
+def test_bench_report_markdown_prefixes_lower_bound():
+    import report as rp
+    res = rp.build_report({"rows": [{"tool": "loki", "trials": [
+        {"success": True, "cost_usd": 0.4, "duration_s": 1.0,
+         "adapter": {"provenance": {"cost_partial": True}}}]}]})
+    assert ">= $0.4" in rp.render_markdown(res)
+
+
+def test_cost_is_partial_hardening():
+    import bench_schema as bs
+    assert bs.cost_is_partial({"cost_usd": 1.0, "ledger_invalid_lines": "2"})
+    assert not bs.cost_is_partial({"cost_usd": 1.0, "ledger_invalid_lines": "x"})
+    assert not bs.cost_is_partial({"cost_usd": 1.0, "cost_unpriced_records": None})
+    assert bs.cost_is_partial({"cost_usd": 1.0, "cost_partial": "true"})
+    assert not bs.cost_is_partial({"cost_usd": 1.0, "cost_partial": "false"})
+    assert not bs.cost_is_partial({"cost_usd": 1.0, "cost_partial": "no"})
+
+
 if __name__ == "__main__":
     test_wilson()
     test_bootstrap_gap()
@@ -230,4 +272,8 @@ if __name__ == "__main__":
     test_partial_cost_is_not_published_as_complete_per_verified()
     test_partial_cost_median_is_flagged_and_rendered_lower_bound()
     test_bench_report_summary_labels_partial_cost()
+    test_measured_trial_without_cost_makes_cell_partial()
+    test_summarize_trials_partial_nulls_per_solved()
+    test_bench_report_markdown_prefixes_lower_bound()
+    test_cost_is_partial_hardening()
     print("\nALL EQUIVALENCE-REPORT SELF-CHECKS PASSED")

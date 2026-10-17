@@ -393,6 +393,26 @@ def _num(v: Any) -> Optional[float]:
     return float(v)
 
 
+def _count(v: Any) -> int:
+    try:
+        return max(int(v), 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def trials_cost_partial(trials: Any) -> bool:
+    """Aggregate form of cost_is_partial: partial when any trial is partial OR a
+    measured trial recorded no numeric cost, because a sum or median over the
+    priced trials alone is then only a lower bound. Unmeasured trials are skipped.
+    The one decision for equivalence_report, report and summarize_trials."""
+    for t in trials or []:
+        if not isinstance(t, dict) or not trial_is_measured(t):
+            continue
+        if cost_is_partial(t) or _num(t.get("cost_usd")) is None:
+            return True
+    return False
+
+
 def cost_is_partial(rec: Any, ledger_usd: Optional[float] = None,
                     ledger_invalid: int = 0, ledger_unpriced: int = 0) -> bool:
     """The ONE decision of whether a cost is only a lower bound (FC-COST-PARTIAL-b).
@@ -409,10 +429,11 @@ def cost_is_partial(rec: Any, ledger_usd: Optional[float] = None,
     adapter = rec.get("adapter") if isinstance(rec.get("adapter"), dict) else {}
     prov = adapter.get("provenance") if isinstance(adapter.get("provenance"), dict) else {}
     for src in (rec, adapter, prov):
-        if src.get("cost_partial"):
+        flag = src.get("cost_partial")
+        if flag is True or (isinstance(flag, str) and flag.strip().lower() == "true"):
             return True
-    invalid = (rec.get("ledger_invalid_lines") or 0) + (ledger_invalid or 0)
-    unpriced = (rec.get("cost_unpriced_records") or 0) + (ledger_unpriced or 0)
+    invalid = _count(rec.get("ledger_invalid_lines")) + _count(ledger_invalid)
+    unpriced = _count(rec.get("cost_unpriced_records")) + _count(ledger_unpriced)
     if invalid > 0 or unpriced > 0:
         return True
     stored = _num(rec.get("cost_usd"))
@@ -509,8 +530,9 @@ def summarize_trials(trials: List[Dict[str, Any]]) -> Dict[str, Any]:
     per_solved = None
     if total_cost is not None and n_success > 0:
         per_solved = round(total_cost / n_success, 4)
+    partial = trials_cost_partial(measured)
     return {
-        "cost_partial": any(cost_is_partial(t) for t in measured),
+        "cost_partial": partial,
         "n_trials": n,
         "n_attempted": n_attempted,
         "n_unmeasured": len(unmeasured),
@@ -521,5 +543,6 @@ def summarize_trials(trials: List[Dict[str, Any]]) -> Dict[str, Any]:
         "duration_s_min": min(durations) if durations else None,
         "duration_s_max": max(durations) if durations else None,
         "cost_usd_median": _median(costs),
-        "cost_usd_per_solved": per_solved,
+        "cost_usd_per_solved": None if partial else per_solved,
+        "cost_usd_per_solved_lower_bound": per_solved if partial else None,
     }

@@ -314,7 +314,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     proof_present = 0
     proof_observed = 0
     costs: List[float] = []
-    cost_partial = False
+    measured_trials: List[Dict[str, Any]] = []
     durations: List[float] = []
     for row in rows:
         for t in row.get("trials", []) or []:
@@ -332,7 +332,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             ok = 1 if t.get("success") else 0
             successes += ok
             obs.append(ok)
-            cost_partial = cost_partial or _schema.cost_is_partial(t)
+            measured_trials.append(t)
             c = t.get("cost_usd")
             if isinstance(c, (int, float)) and not isinstance(c, bool):
                 costs.append(c)
@@ -344,6 +344,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                 proof_observed += 1
                 if p:
                     proof_present += 1
+    cost_partial = _schema.trials_cost_partial(measured_trials)
     per_verified = (round(sum(costs) / successes, 4)
                     if costs and successes > 0 else None)
     p_est, lo, hi = wilson_interval(successes, n)
