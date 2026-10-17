@@ -9,7 +9,7 @@ export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default 
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
 export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
 /** True when a provider API key variable is set (presence only; the value is never read). */
-export function hasApiKey(env: NodeJS.ProcessEnv): boolean { return ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some((k) => (env[k] ?? "") !== ""); }
+export function hasApiKey(env: NodeJS.ProcessEnv): boolean { return ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "LOKI_MODEL_API_KEY"].some((k) => (env[k] ?? "") !== ""); }
 export function parseCapUsd(raw: unknown): number | null {
   const n = typeof raw === "number" ? raw : /^\$?(\d+(\.\d*)?|\.\d+)$/.test(String(raw ?? "").trim()) ? Number(String(raw).trim().replace("$", "")) : NaN;
   return Number.isFinite(n) && n > 0 ? n : null;

@@ -395,3 +395,17 @@ for (let i = 0; i < ${per}; i++) m.emit("cost" as never, "x" as never, { usd: 0.
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
+
+describe("route key cap", () => {
+  test("route key cap: a model-route key counts as an API key", () => {
+    expect(hasApiKey({ OPENROUTER_API_KEY: "k" })).toBe(true);
+    expect(hasApiKey({ LOKI_MODEL_API_KEY: "k" })).toBe(true);
+    expect(hasApiKey({ OPENROUTER_API_KEY: "" })).toBe(false);
+    const d = mkdtempSync(join(tmpdir(), "loki-rk-"));
+    try {
+      expect(resolveCap(null, d, { OPENROUTER_API_KEY: "k" })).toEqual({ usd: DEFAULT_MAX_COST_USD, source: "default" });
+      expect(resolveCap(null, d, { LOKI_MODEL_API_KEY: "k" })).toEqual({ usd: DEFAULT_MAX_COST_USD, source: "default" });
+      expect(resolveCap(null, d, {})).toEqual({ usd: 0, source: "subscription" });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
