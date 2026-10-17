@@ -126,7 +126,105 @@ def test_claude_adapter_lean_recorded_in_command():
     assert "--strict-mcp-config" in out["provenance"]["command"]
 
 
+RAW_JSON = (
+    '{"total_cost_usd":0.5,"num_turns":7,"usage":{"input_tokens":12,'
+    '"output_tokens":300,"cache_read_input_tokens":45000,'
+    '"cache_creation_input_tokens":9000,'
+    '"cache_creation":{"ephemeral_5m_input_tokens":6000,'
+    '"ephemeral_1h_input_tokens":3000}},'
+    '"modelUsage":{"claude-sonnet-4-6":{"inputTokens":12},'
+    '"claude-haiku-4-5":{"inputTokens":3}}}'
+)
+
+
+def test_usage_detail_records_every_token_class():
+    from adapters import claude_code
+    d = claude_code.parse_usage_detail(RAW_JSON)
+    assert d["cache_read_input_tokens"] == 45000
+    assert d["cache_creation_5m"] == 6000
+    assert d["cache_creation_1h"] == 3000
+    assert d["cache_creation_total"] == 9000
+    assert d["num_turns"] == 7
+    assert d["models_ran"] == ["claude-haiku-4-5", "claude-sonnet-4-6"]
+
+
+def test_usage_detail_total_only_and_absent():
+    from adapters import claude_code
+    d = claude_code.parse_usage_detail(
+        '{"usage":{"cache_creation_input_tokens":40}}')
+    assert d["cache_creation_total"] == 40
+    assert d["cache_creation_5m"] is None and d["cache_creation_1h"] is None
+    assert d["cache_read_input_tokens"] is None and d["models_ran"] == []
+    assert claude_code.parse_usage_detail("")["num_turns"] is None
+
+
+def test_adapter_run_carries_usage_detail():
+    from adapters import claude_code
+
+    class R:
+        returncode = 0
+        stdout = RAW_JSON
+        stderr = ""
+    out = claude_code.run(tempfile.mkdtemp(), "spec.md", timeout=10,
+                          runner=lambda *a, **k: R())
+    assert out["provenance"]["usage_detail"]["cache_read_input_tokens"] == 45000
+
+
+def test_raw_claude_row_has_usage_detail():
+    import attribution
+
+    class R:
+        returncode = 0
+        stdout = RAW_JSON
+        stderr = ""
+    res = attribution.run_raw_claude(tempfile.mkdtemp(), "p", model="sonnet",
+                                     budget_usd=1, timeout_s=10,
+                                     runner=lambda *a, **k: R())
+    assert res["usage_detail"]["num_turns"] == 7
+    assert res["usage_detail"]["cache_creation_1h"] == 3000
+
+
+def _row(arm, model, ran=None, task="t1", rep=1):
+    r = {"task": task, "repeat": rep, "arm": arm, "model_used": model}
+    if ran is not None:
+        r["usage_detail"] = {"models_ran": ran}
+    return r
+
+
+def test_attribution_invalid_when_models_differ():
+    import attribution
+    cells = attribution.attribution_cells([
+        _row("loki", "claude-opus-4-8"),
+        _row("raw-configured", "sonnet", ["claude-sonnet-4-6"])])
+    assert cells[0]["valid"] is False
+    assert "claude-opus-4-8" in cells[0]["reason"]
+    assert "claude-sonnet-4-6" in cells[0]["reason"]
+
+
+def test_attribution_valid_when_alias_matches_full_id():
+    import attribution
+    cells = attribution.attribution_cells([
+        _row("loki", "sonnet"),
+        _row("raw-configured", "sonnet", ["claude-sonnet-4-6"])])
+    assert cells[0]["valid"] is True and cells[0]["reason"] is None
+
+
+def test_summarize_exposes_attribution_cells():
+    import attribution
+    rows = [_row("loki", "opus"),
+            _row("raw-configured", "sonnet", ["claude-sonnet-4-6"])]
+    s = attribution.summarize(rows)
+    assert s["attribution_cells"][0]["valid"] is False
+
+
 if __name__ == "__main__":
+    test_usage_detail_records_every_token_class()
+    test_usage_detail_total_only_and_absent()
+    test_adapter_run_carries_usage_detail()
+    test_raw_claude_row_has_usage_detail()
+    test_attribution_invalid_when_models_differ()
+    test_attribution_valid_when_alias_matches_full_id()
+    test_summarize_exposes_attribution_cells()
     test_real_alias_pins_session_model()
     test_full_claude_id_pins()
     test_provider_label_default_does_not_pin()

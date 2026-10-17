@@ -41,15 +41,10 @@ def _detect_claude_version(runner=None, cwd=None):
     return m.group(1) if m else text.splitlines()[0].strip()
 
 
-def _parse_json_result(stdout):
-    """Parse claude -p --output-format json output.
-
-    Returns (cost_usd|None, tokens_in|None, tokens_out|None, model|None). Never
-    fabricates: any field absent from the JSON stays None.
-    """
+def _load_result_obj(stdout):
     text = (stdout or "").strip()
     if not text:
-        return None, None, None, None
+        return None
     obj = None
     # Try whole-blob parse, then last JSON object line (streaming-json).
     try:
@@ -63,7 +58,52 @@ def _parse_json_result(stdout):
                     break
                 except Exception:
                     continue
-    if not isinstance(obj, dict):
+    return obj if isinstance(obj, dict) else None
+
+
+def _int_or_none(v):
+    try:
+        return int(v) if v is not None and not isinstance(v, bool) else None
+    except Exception:
+        return None
+
+
+def parse_usage_detail(stdout):
+    """Every raw token class plus the models that actually ran.
+
+    input_tokens alone is only the uncached remainder (8 to 28 on cached runs),
+    so cache reads, cache creation (5m and 1h split when present, else the
+    total), num_turns and the modelUsage keys are recorded too. Absent fields
+    stay None (models_ran stays []); nothing is fabricated.
+    """
+    obj = _load_result_obj(stdout) or {}
+    usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+    cc = usage.get("cache_creation")
+    cc = cc if isinstance(cc, dict) else {}
+    five = _int_or_none(cc.get("ephemeral_5m_input_tokens"))
+    hour = _int_or_none(cc.get("ephemeral_1h_input_tokens"))
+    total = _int_or_none(usage.get("cache_creation_input_tokens"))
+    if total is None and (five is not None or hour is not None):
+        total = (five or 0) + (hour or 0)
+    mu = obj.get("modelUsage")
+    return {
+        "cache_read_input_tokens": _int_or_none(usage.get("cache_read_input_tokens")),
+        "cache_creation_5m": five,
+        "cache_creation_1h": hour,
+        "cache_creation_total": total,
+        "num_turns": _int_or_none(obj.get("num_turns")),
+        "models_ran": sorted(str(k) for k in mu) if isinstance(mu, dict) else [],
+    }
+
+
+def _parse_json_result(stdout):
+    """Parse claude -p --output-format json output.
+
+    Returns (cost_usd|None, tokens_in|None, tokens_out|None, model|None). Never
+    fabricates: any field absent from the JSON stays None.
+    """
+    obj = _load_result_obj(stdout)
+    if obj is None:
         return None, None, None, None
 
     cost = obj.get("total_cost_usd")
@@ -167,6 +207,7 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
             "command": "claude -p <prompt> --output-format json --model %s%s%s"
                        % (model, " --bare" if bare else "",
                           " " + " ".join(LEAN_ARGS) if lean else ""),
+            "usage_detail": parse_usage_detail(out),
             "cost_basis": ("native" if native_cost else
                            ("priced_from_tokens" if cost_usd is not None
                             else "not_recorded")),
