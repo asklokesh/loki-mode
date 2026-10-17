@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -256,6 +256,21 @@ echo "unexpected: $*" >&2; exit 2
     const r = spawnSync(join(__dirname, "../../../bin/loki"), ["verify-pr", "--json", "nope"], { encoding: "utf8", env: { ...process.env, LOKI_VERIFY_PR: "1" } });
     expect(r.stderr).toContain("not a PR url");
     expect(r.status).toBe(2);
+  });
+
+  test("out needs a value: a dash-led or missing --out is a usage error and creates nothing", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "loki-vpr-out-"));
+    try {
+      for (const argv of [["o/r#7", "--out", "--json"], ["o/r#7", "--out", "-x"], ["o/r#7", "--out"]]) {
+        const errs: string[] = [];
+        expect(await runVerifyPr(argv, { env: { LOKI_VERIFY_PR: "1" }, err: (s) => void errs.push(s) })).toBe(2);
+        expect(errs.join("")).toContain("Usage: loki verify-pr");
+      }
+      const r = spawnSync(join(__dirname, "../../../bin/loki"), ["verify-pr", "o/r#7", "--out", "--json"], { encoding: "utf8", cwd, env: { ...process.env, LOKI_VERIFY_PR: "1" } });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("Usage: loki verify-pr");
+      expect(existsSync(join(cwd, "--json"))).toBe(false);
+    } finally { rmSync(cwd, { recursive: true, force: true }); }
   });
 
   test("off by default and bad refs exit 2", async () => {
