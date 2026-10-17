@@ -153,4 +153,31 @@ describe("ai_bom hook after seal", () => {
       expect(existsSync(join(b.data.receipt_path as string, "..", AI_BOM_FILE))).toBe(false);
     } finally { hooks.sealed = saved; }
   });
+
+  test("Q18-05b: more credential prefixes and any case are dropped", () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-aibom.")); tmp.push(d);
+    const bad = ["github_pat_AAA", "glpat-AAA", "AIzaAAA", "npm_AAA", "hf_AAA", "ASIAAAA", "sk_live_AAA", "SK-ANT-AAA", "GHP_AAA", "openai/sk-AAA"];
+    const per_model: Record<string, object> = { ok: {} }; for (const b of bad) per_model[b] = {};
+    writeAiBom(d, { run_id: "r", provider: "claude", model: "m", receipt_sha256: "c".repeat(64), cost: { per_model } });
+    const names = JSON.parse(readFileSync(join(d, AI_BOM_FILE), "utf8")).components.map((c: { name: string }) => c.name);
+    expect(names).toEqual(["ok", "claude"]);
+  });
+
+  test("Q18-05b: one interior slash kept (provider/model), paths and double slashes dropped", () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-aibom.")); tmp.push(d);
+    writeAiBom(d, { run_id: "r", provider: "claude", model: "m", receipt_sha256: "c".repeat(64), cost: { per_model: { "openrouter/gpt-5": {}, "/abs/path": {}, "a/b/c": {}, "a/": {}, "../x": {} } } });
+    const names = JSON.parse(readFileSync(join(d, AI_BOM_FILE), "utf8")).components.map((c: { name: string }) => c.name);
+    expect(names).toEqual(["openrouter/gpt-5", "claude"]);
+  });
+
+  test("Q18-05b: sealed hook gets a frozen clone, not the live receipt", async () => {
+    const saved = hooks.sealed; let seen: Record<string, unknown> | undefined; let threw = false;
+    hooks.sealed = (_d, r) => { seen = r as unknown as Record<string, unknown>; try { "use strict"; (r as { verdict?: string }).verdict = "x"; (r as { run_id: string }).run_id = "tampered"; } catch { threw = true; } };
+    try {
+      const s = await sealRun("m1");
+      expect(Object.isFrozen(seen)).toBe(true);
+      expect(threw).toBe(true);
+      expect(JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")).run_id).not.toBe("tampered");
+    } finally { hooks.sealed = saved; }
+  });
 });
