@@ -122,6 +122,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       // INJECT: the exact block an engine10 run injects, so `loki chat` can show it. No new retrieval.
       const i = argv.indexOf("--task");
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
+      if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
       process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
       return 0;
     }

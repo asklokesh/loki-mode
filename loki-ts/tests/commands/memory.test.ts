@@ -71,4 +71,13 @@ describe("memory brief (INJECT)", () => {
       expect(r.stdout).toContain("use flock");
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+
+  it("brief without task value prints usage and exits 2", async () => {
+    for (const args of [["memory", "brief", "--task"], ["memory", "brief", "--task", ""], ["memory", "brief", "--task", "--json"]]) {
+      const r = await run(["bun", CLI, ...args], { env: { ...process.env, LOKI_NO_BROWSER: "1" } });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("Usage: loki memory brief [--task <text>]");
+      expect(r.stdout).toBe("");
+    }
+  });
 });
