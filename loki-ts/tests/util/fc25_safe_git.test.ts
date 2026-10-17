@@ -136,8 +136,15 @@ const withGlobal = <T>(gcfg: string, fn: () => T): T => {
   try { return fn(); } finally { if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = saved; }
 };
 const lc = (r: string, k: string, v: string): void => { execFileSync("git", ["config", "--add", k, v], { cwd: r }); };
+// Another suite in the same bun process can leave GIT_SSH_COMMAND or a GIT_CONFIG_COUNT credential.helper reset in
+// process.env; both override repo config, so the controls below would never fire. Run each test without them.
+const hermeticGit = (fn: () => void) => (): void => {
+  const keys = Object.keys(process.env).filter((k) => /^(GIT_SSH|GIT_SSH_COMMAND|GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/.test(k));
+  const saved = keys.map((k) => [k, process.env[k]] as const); for (const k of keys) delete process.env[k];
+  try { fn(); } finally { for (const [k, v] of saved) process.env[k] = v; }
+};
 
-test("FC-25c(a): a repo-local credential.helper never runs under allowToken; the global helper still answers", () => {
+test("FC-25c(a): a repo-local credential.helper never runs under allowToken; the global helper still answers", hermeticGit(() => {
   const { r, hit, rec, gcfg, ghit } = netRepo("cred");
   const gh = join(r, "..", "ghelper.sh"); writeFileSync(gh, `#!/bin/sh\necho gfired >> "${ghit}"\nif [ "$1" = get ]; then echo password=globalpw; fi\n`); chmodSync(gh, 0o755);
   writeFileSync(gcfg, `[user]\n\temail = t@t\n\tname = t\n[credential]\n\thelper = ${gh}\n`);
@@ -150,8 +157,8 @@ test("FC-25c(a): a repo-local credential.helper never runs under allowToken; the
   withGlobal(gcfg, () => safeGitSpawn(r, ["credential", "fill"], { allowToken: true, input, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }));
   expect(existsSync(hit)).toBe(false);
   expect(existsSync(ghit)).toBe(true);
-});
-test("FC-25c(a): a repo-local core.sshCommand never runs under allowToken; the global one still does", () => {
+}));
+test("FC-25c(a): a repo-local core.sshCommand never runs under allowToken; the global one still does", hermeticGit(() => {
   const { r, hit, rec, gcfg, ghit } = netRepo("ssh");
   const gs = join(r, "..", "gssh.sh"); writeFileSync(gs, `#!/bin/sh\necho gfired >> "${ghit}"\nexit 1\n`); chmodSync(gs, 0o755);
   writeFileSync(gcfg, `[user]\n\temail = t@t\n\tname = t\n[core]\n\tsshCommand = ${gs}\n`);
@@ -161,8 +168,8 @@ test("FC-25c(a): a repo-local core.sshCommand never runs under allowToken; the g
   try { withGlobal(gcfg, () => safeGit(r, ["ls-remote", "ssh://example.test/x"], { allowToken: true })); } catch { /* ssh fails by design */ }
   expect(existsSync(hit)).toBe(false);
   expect(existsSync(ghit)).toBe(true);
-});
-test("FC-25c(a): remote.*.uploadpack and receivepack never run under allowToken; fetch still works", () => {
+}));
+test("FC-25c(a): remote.*.uploadpack and receivepack never run under allowToken; fetch still works", hermeticGit(() => {
   const { r, hit, rec, gcfg } = netRepo("pack");
   const up = join(r, "..", "upstream"); mkdirSync(up);
   const U = (...a: string[]): string => execFileSync("git", a, { cwd: up, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg } });
@@ -176,4 +183,4 @@ test("FC-25c(a): remote.*.uploadpack and receivepack never run under allowToken;
   // a subcommand that cannot take the pinned option is refused, not run with the plant
   expect(() => safeGit(r, ["remote", "update"], { allowToken: true })).toThrow(/refused/); expect(existsSync(hit)).toBe(false);
   expect(safeGit(r, ["for-each-ref", "refs/remotes/origin"], { allowToken: true })).toContain("refs/remotes/origin/");
-});
+}));

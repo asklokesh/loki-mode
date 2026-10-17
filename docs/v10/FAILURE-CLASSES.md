@@ -905,3 +905,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Cause (COST-WALL-d HIGH reviews 2026-10-17): equivalence_report.py:334-374 and report.py:280 ignore adapter.provenance.cost_partial; row_spend_is_partial returns False for cost_usd None with true_cost_usd set; efficiency_cost.py counts ledger_invalid_lines without setting cost_partial; a stored cost_usd 0.0 with a larger true_cost_usd renders complete.
 - Mechanism: one helper decides partial (null cost, cost below ledger or true cost, invalid ledger lines, unpriced lines) and every cost consumer calls it.
 - Fixture: cases in benchmarks/bench/tests/test_attribution.py and tests/test_efficiency_cost_availability.py for each sibling.
+
+## FC-25c-ci Git env overrides leaked by an earlier suite silence repo-config controls (GIT-ENV-LEAK)
+- User-visible vs raw: v11.17.9 never published; Tests run 38988194257 failed 2 FC-25c(a) controls on ubuntu while they passed locally per file.
+- Law broken: a test must be hermetic; a control that depends on process-wide state is not a control.
+- Cause (reproduced 2026-10-17): runAutonomous (autonomous.ts:448) and issues_run.ts:512 call withholdGithubTokens on process.env inside the shared bun process, leaving GIT_SSH_COMMAND=false and a GIT_CONFIG_COUNT credential.helper reset; both override repo config. Running the old file with those four variables set reproduces exactly the 2 CI failures.
+- Siblings to sweep: every test that asserts a repo-local git config value runs (fsmonitor, filter, ssh, credential, uploadpack).
+- Mechanism: hermeticGit wrapper in fc25_safe_git.test.ts removes GIT_SSH, GIT_SSH_COMMAND, GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT/KEY/VALUE for the test and restores them after.
+- Fixture: the same file run with GIT_SSH_COMMAND=false GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= passes 14/0.
