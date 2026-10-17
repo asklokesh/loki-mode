@@ -172,8 +172,8 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect((r as Exclude<typeof r, number>).budgetLimit).toBe(3.25);
   });
 
-  it("--prd and --brief override the positional spec", () => {
-    const r1 = parseStartArgs(["ignored.md", "--prd", "real.md"], collect);
+  it("--prd and --brief supply the spec when given alone", () => {
+    const r1 = parseStartArgs(["--prd", "real.md"], collect);
     expect((r1 as Exclude<typeof r1, number>).prdPath).toBe("real.md");
     const r2 = parseStartArgs(["--brief", "build a todo app"], collect);
     expect((r2 as Exclude<typeof r2, number>).prdPath).toBe("build a todo app");
@@ -545,5 +545,26 @@ describe("env-file missing (TEN-DEPLOY-20)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("conflicting spec sources (TEN-UX-32)", () => {
+  it("conflicting spec sources: different positional, --prd, --brief exit 2 naming all", () => {
+    const e: string[] = [];
+    const r = parseStartArgs(["./a.md", "--prd", "./b.md", "--brief", "x"], (s) => e.push(s), () => {}, () => {});
+    expect(r).toBe(2);
+    const m = e.join("");
+    for (const t of ["./a.md", "./b.md", '"x"', "--prd", "--brief"]) expect(m).toContain(t);
+  });
+  it("conflicting spec sources: single source and --prd equal to positional are unchanged", () => {
+    const noop = () => {};
+    expect(typeof parseStartArgs(["./a.md"], noop, noop, noop)).toBe("object");
+    expect(typeof parseStartArgs(["--brief", "x"], noop, noop, noop)).toBe("object");
+    expect(typeof parseStartArgs(["./a.md", "--prd", "./a.md"], noop, noop, noop)).toBe("object");
+  });
+  it("conflicting spec sources: real entry (cli.ts start) exits 2", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--brief", "other thing"], { encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("conflicting spec sources");
   });
 });

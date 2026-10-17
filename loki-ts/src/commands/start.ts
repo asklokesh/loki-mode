@@ -263,6 +263,15 @@ export function parseStartArgs(
     err("start: --spec and --spec-first cannot be combined\n");
     return 2;
   }
+  // TEN-UX-32: two or more different spec sources are refused, never silently dropped.
+  const sources: Array<[string, string]> = [];
+  if (spec !== undefined) sources.push(["positional spec", spec]);
+  if (prdFlag !== undefined) sources.push(["--prd", prdFlag]);
+  if (briefFlag !== undefined) sources.push(["--brief", briefFlag]);
+  if (new Set(sources.map(([, v]) => v)).size > 1) {
+    err(`start: conflicting spec sources, pick one: ${sources.map(([n, v]) => `${n} ${JSON.stringify(v)}`).join(", ")}\n`);
+    return 2;
+  }
   const resolvedSpec = prdFlag ?? briefFlag ?? spec ?? (specFlag !== undefined ? "" : undefined);
   if (resolvedSpec === undefined || (resolvedSpec === "" && specFlag === "")) {
     err("start: a spec source (PRD path, --prd FILE, --brief TEXT, or issue ref) is required\n");
