@@ -1,3 +1,4 @@
+// select: not-src-walker (reads one src file by path; readdirSync only lists a tmp cache dir)
 // Tests for src/runner/router/history.ts -- H4 per-repo, per-shape outcome history, the
 // Sonnet evidence floor (code-owned losses only), and the shipped shape-defaults reader.
 // Pure logic plus file IO on a temp cache root; no provider is called.
