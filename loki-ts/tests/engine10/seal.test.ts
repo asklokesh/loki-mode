@@ -1391,7 +1391,7 @@ describe("TEN-GATES-02 seal requires agent-independent proof", () => {
     expect(s.data.verdict).toBe("PARTIAL");
     expect(r.not_proven).toContain(AGENT_ONLY);
     expect(r.not_proven).not.toContain("no tests executed");
-    expect(r.checks).toEqual([{ name: "pytest:tests/test_x.py", cmd: "pytest -q tests/test_x.py", result: "pass", duration_s: 1, provenance: "agent_authored" }]);
+    expect(r.checks).toEqual([{ name: "pytest:tests/test_x.py", cmd: "pytest -q tests/test_x.py", result: "pass", duration_s: 1, provenance: "agent_authored", n: 1 }]); // n carried so verify --require-exogenous can see executed proof (TEN-GATES-03-F1)
     expect(md).toContain("### Agent-independent checks\n- none\n");
     expect(md).toContain("### Agent-authored / advisory checks\n- pass: pytest:tests/test_x.py");
     expect(md).not.toContain("### Checks");

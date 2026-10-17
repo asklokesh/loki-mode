@@ -127,7 +127,7 @@ function checksOf(v: unknown, pc: ProvenanceCtx): ReceiptCheck[] { // TEN-GATES-
     name: String(c.name ?? ""),
     cmd: String(c.cmd ?? ""),
     result: c.result === "pass" || c.result === "fail" ? c.result : "not_run",
-    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc),
+    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), // n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
   }));
 }
 
