@@ -1011,3 +1011,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: preflight.ts git identity check (stays fatal, names the git config command, never set automatically); doctor.ts login probe (same `claude auth status` parse, now shared); non-empty folder without a repo (stays fatal, now names `git init && git add . && git commit -m init`).
 - Mechanism: util/first_run_repo.ts initialises only a truly empty folder (LOKI_AUTO_GIT_INIT=0 refuses); preflight reuses doctor claudeAuthStatusLoggedIn: loggedIn false is fatal, an unknown answer is a warning only.
 - Fixture: tests/engine10/preflight.test.ts "first run (TEN-UX-01)" cases (empty folder, one-file folder, LOKI_AUTO_GIT_INIT=0, fake claude loggedIn false / unknown / API key set).
+
+## FC-TEN-P9-FIX The first-run login probe spawned the provider CLI holding the GitHub token (P9-PREFLIGHT-LEAK)
+- User-visible vs raw: moat P9.injection-cannot-reach-token went red on v11.17.22 (canary GH_TOKEN/GITHUB_TOKEN, hosts.yml, credential.helper and SSH_AUTH_SOCK reached the provider stub in every scenario); the raw cause was preflight running `claude auth status` from the supervisor with its full env.
+- Law broken: every spawn of a provider CLI gets the withheld env (moat P9); the supervisor env is never handed to an agent binary, probe or not.
+- Siblings: doctor.ts provider probe at the json route (already tokenFreeEnv); modernize/oracle/search.ts `--version` probe (already tokenFreeEnv); engine10 session spawns (worker env, assertWorkerEnv).
+- Mechanism: doctor.ts claudeAuthStatusLoggedIn, the one shared login probe, spawns with tokenFreeEnv plus GIT_SSH_COMMAND=false unless LOKI_ALLOW_AGENT_GITHUB_TOKEN=1.
+- Fixture: tests/engine10/preflight.test.ts "the login probe spawns the provider CLI without the GitHub token or SSH agent"; tests/moat/p9-rule-of-two.sh against a dist rebuilt from the tree.

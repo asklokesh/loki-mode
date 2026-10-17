@@ -11,7 +11,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { requirementFix } from "../../src/commands/doctor.ts";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
@@ -235,6 +235,23 @@ describe("first run (TEN-UX-01)", () => {
     const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: fakeClaude('{"loggedIn":true}').cli }));
     expect(r.fatal).toBeNull();
     expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(0);
+  });
+
+  test("the login probe spawns the provider CLI without the GitHub token or SSH agent (P9, TEN-P9-FIX)", async () => {
+    const { dir, env } = identifiedRepo();
+    const d = tmpRoot("e10-pf-claude-env-");
+    const dump = join(d, "env.txt");
+    const cli = join(d, "claude");
+    writeFileSync(cli, `#!/bin/sh\nenv > '${dump}'\necho '{"loggedIn":true}'\n`);
+    chmodSync(cli, 0o755);
+    const canary = "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz";
+    const r = await checkPreflight(opts(dir, { ...env, GH_TOKEN: canary, GITHUB_TOKEN: canary, SSH_AUTH_SOCK: join(d, "agent.sock"), GIT_SSH_COMMAND: "ssh", LOKI_CLAUDE_CLI: cli }));
+    expect(r.fatal).toBeNull();
+    const seen = readFileSync(dump, "utf8");
+    expect(seen).not.toContain(canary);
+    expect(seen).not.toMatch(/^SSH_AUTH_SOCK=/m);
+    expect(seen).toMatch(/^GIT_SSH_COMMAND=false$/m);
+    expect(seen).toMatch(/^GIT_CONFIG_KEY_\d+=credential\.helper$/m);
   });
 
   test("ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN skips the probe", async () => {
