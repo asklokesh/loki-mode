@@ -43,6 +43,7 @@ _commit_scan_secret_file() {
         'github_pat_[A-Za-z0-9_]{60,}'              # GitHub fine-grained PAT
         'xox[baprs]-[A-Za-z0-9-]{10,}'              # Slack token (xoxb-/xoxp-/...)
         'sk-[A-Za-z0-9]{20,}'                       # OpenAI-style secret key
+        'sk-ant-[A-Za-z0-9_-]{20,}'                 # Anthropic API key (hyphenated body)
         'AIza[0-9A-Za-z_-]{35}'                     # Google API key
         'glpat-[A-Za-z0-9_-]{20,}'                  # GitLab personal access token
     )

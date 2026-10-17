@@ -191,6 +191,27 @@ else
 fi
 
 # -------------------------------------------------------------------------
+# Scenario 6: Anthropic key (sk-ant-...) in a NON-browser file. Both bash
+# matchers (verify.sh verify_secret_scan_file and lib/secret-scan.sh
+# _commit_scan_secret_file) must flag it; a short sk-ant- prefix must not.
+# Key is built at runtime (leak-scanner rule). Matchers are called directly so
+# the proof holds whether or not gitleaks is on PATH.
+# -------------------------------------------------------------------------
+ANT_KEY="sk-ant-$(printf 'api03-%s' "Zq9Lm2Xv8Rt4Yw1Kp6Nb3Hd5")"
+mkdir -p "$TMP_ROOT/s6/server"
+printf 'KEY = "%s"\n' "$ANT_KEY" > "$TMP_ROOT/s6/server/client.py"
+printf 'KEY = "sk-ant-short"\n' > "$TMP_ROOT/s6/server/clean.py"
+# shellcheck source=../autonomy/verify.sh
+. "$VERIFY_SH"
+# shellcheck source=../autonomy/lib/secret-scan.sh
+. "$SCRIPT_DIR/../autonomy/lib/secret-scan.sh"
+if verify_secret_scan_file "$TMP_ROOT/s6/server/client.py"; then _ok "verify.sh matcher flags sk-ant key"; else _no "verify.sh matcher missed sk-ant key"; fi
+if verify_secret_scan_file "$TMP_ROOT/s6/server/clean.py"; then _no "verify.sh matcher flagged short sk-ant- prefix"; else _ok "verify.sh matcher ignores short sk-ant- prefix"; fi
+if _commit_scan_secret_file "$TMP_ROOT/s6/server/client.py"; then _ok "lib matcher flags sk-ant key"; else _no "lib matcher missed sk-ant key"; fi
+if _commit_scan_secret_file "$TMP_ROOT/s6/server/clean.py"; then _no "lib matcher flagged short sk-ant- prefix"; else _ok "lib matcher ignores short sk-ant- prefix"; fi
+
+
+# -------------------------------------------------------------------------
 # Summary
 # -------------------------------------------------------------------------
 echo ""
