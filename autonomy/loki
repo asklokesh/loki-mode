@@ -25722,7 +25722,7 @@ except Exception as e:
             echo "Usage: loki memory <command> [args]"
             echo ""
             echo "Learnings Commands:"
-            echo "  list              Show summary of all learnings"
+            echo "  list [--json]     Show summary of all learnings"
             echo "  show [type]       Show entries (patterns|mistakes|successes|all)"
             echo "                    Options: --limit N, --project P"
             echo "  search <query>    Search across all learnings"
