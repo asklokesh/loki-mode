@@ -16,7 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { runKpis } from "../../src/commands/kpis.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -151,5 +151,72 @@ describe("runKpis alias contract (Phase B)", () => {
     const { stderr } = io.get();
     expect(code).toBe(1);
     expect(stderr).toContain("unknown arg: --bogus");
+  });
+});
+
+describe("runKpis --since window (TEN-COST-31)", () => {
+  const DAY = 86_400_000;
+  function seed(): void {
+    const dir = join(td, ".loki", "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    const iso = (ago: number): string => new Date(Date.now() - ago).toISOString();
+    // old: 30d ago, $1.00; recent: 1d ago, $0.25 (explicit timestamps)
+    writeFileSync(join(dir, "iteration-1.json"), JSON.stringify({ iteration: 1, status: "success", cost_usd: 1, input_tokens: 1000, output_tokens: 100, timestamp: iso(30 * DAY) }));
+    writeFileSync(join(dir, "iteration-2.json"), JSON.stringify({ iteration: 2, status: "success", cost_usd: 0.25, input_tokens: 50, output_tokens: 5, timestamp: iso(1 * DAY) }));
+    // no timestamp (Bun writer): falls back to mtime, aged to 20d ago
+    const p = join(dir, "iteration-3.json");
+    writeFileSync(p, JSON.stringify({ iteration: 3, status: "success", cost_usd: 2, input_tokens: 10, output_tokens: 1 }));
+    const old = new Date(Date.now() - 20 * DAY);
+    utimesSync(p, old, old);
+  }
+  function run(args: string[]): { code: number; stdout: string; stderr: string } {
+    const io = captureIO();
+    let code: number;
+    try {
+      code = runKpis(args);
+    } finally {
+      io.restore();
+    }
+    return { code, ...io.get() };
+  }
+
+  it("--since 7d excludes older iterations from cost and tokens (timestamp and mtime fallback)", () => {
+    seed();
+    const r = run(["--since", "7d", "--json"]);
+    expect(r.code).toBe(0);
+    const e = (JSON.parse(r.stdout) as { efficiency: { iteration_count: number; total_cost_usd: number; total_input_tokens: number } }).efficiency;
+    expect(e.iteration_count).toBe(1);
+    expect(e.total_cost_usd).toBe(0.25);
+    expect(e.total_input_tokens).toBe(50);
+  });
+
+  it("without --since all iterations count", () => {
+    seed();
+    const e = (JSON.parse(run(["--json"]).stdout) as { efficiency: { iteration_count: number; total_cost_usd: number } }).efficiency;
+    expect(e.iteration_count).toBe(3);
+    expect(e.total_cost_usd).toBe(3.25);
+  });
+
+  it("window boundary: 25d keeps the mtime-aged 20d record, 10d drops it", () => {
+    seed();
+    const n = (a: string): number => (JSON.parse(run(["--since", a, "--json"]).stdout) as { efficiency: { iteration_count: number } }).efficiency.iteration_count;
+    expect(n("25d")).toBe(2);
+    expect(n("10d")).toBe(1);
+  });
+
+  it("human output names the window; --since=YYYY-MM-DD form works", () => {
+    seed();
+    const r = run(["--since=2020-01-02"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("since 2020-01-02");
+    expect(r.stdout).toContain("Iterations:           3");
+  });
+
+  it("bad, missing, or impossible values exit 1 and say so", () => {
+    for (const bad of [["--since", "banana"], ["--since"], ["--since", "7"], ["--since", "2026-02-31"], ["--since", "-3d"]]) {
+      const r = run(bad);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("invalid --since value");
+    }
   });
 });
