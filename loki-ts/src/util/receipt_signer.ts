@@ -150,14 +150,20 @@ async function checkCited(path: string, hash: string, deps: DeployDeps): Promise
   const a = deps.attest(v.attestation, hash);
   return a.status === "verified" ? { verdict: "VERIFIED", reasons: [] } : { verdict: a.status === "tampered" ? "TAMPERED" : "UNCHECKED", reasons: [`cited receipt attestation: ${a.reason ?? a.status}`] };
 }
-/** Offline re-check of a signed deploy record. Fails closed: unsigned, unknown key, missing or non-VERIFIED cited receipt is UNCHECKED, never VERIFIED. */
-export async function verifyDeployRecord(recPath: string, rec: Obj, deps: DeployDeps, receiptFile: string | null = null): Promise<DeployResult> {
-  const sig = rec["signature"] as { alg?: unknown; kid?: unknown; sig?: unknown } | undefined;
-  if (!sig || typeof sig !== "object") return { verdict: "UNCHECKED", reasons: ["deploy record is unsigned (no signature)"] };
-  if (sig.alg !== "EdDSA" || typeof sig.sig !== "string") return { verdict: "TAMPERED", reasons: ["malformed deploy signature"] };
+/** Shared by deploy records and provenance docs: signature presence, kid lookup and verification. Null means the signature holds; else the verdict to return. */
+function checkBodySignature(doc: Obj, deps: DeployDeps, noun: string, edited: string): DeployResult | null {
+  const sig = doc["signature"] as { alg?: unknown; kid?: unknown; sig?: unknown } | undefined;
+  const w = noun.split(" ")[0];
+  if (!sig || typeof sig !== "object") return { verdict: "UNCHECKED", reasons: [`${noun} is unsigned (no signature)`] };
+  if (sig.alg !== "EdDSA" || typeof sig.sig !== "string") return { verdict: "TAMPERED", reasons: [`malformed ${w} signature`] };
   const pub = deps.pubFor(sig.kid);
   if (!pub) return { verdict: "UNCHECKED", reasons: [`no key for kid ${String(sig.kid)} on this machine (set LOKI_RECEIPT_SIGNING_KEY_FILE or use --pubkey)`] };
-  if (!verify(null, Buffer.from(canonicalJson(deployBody(rec))), pub, Buffer.from(sig.sig, "base64url"))) return { verdict: "TAMPERED", reasons: ["deploy record signature does not verify (record was edited)"] };
+  if (!verify(null, Buffer.from(canonicalJson(deployBody(doc))), pub, Buffer.from(sig.sig, "base64url"))) return { verdict: "TAMPERED", reasons: [`${w} signature does not verify (${edited} was edited)`] };
+  return null;
+}
+/** Offline re-check of a signed deploy record. Fails closed: unsigned, unknown key, missing or non-VERIFIED cited receipt is UNCHECKED, never VERIFIED. */
+export async function verifyDeployRecord(recPath: string, rec: Obj, deps: DeployDeps, receiptFile: string | null = null): Promise<DeployResult> {
+  const bad = checkBodySignature(rec, deps, "deploy record", "record"); if (bad) return bad;
   const hash = rec["receipt_sha256"];
   if (typeof hash !== "string" || !hash) return { verdict: "UNCHECKED", reasons: ["deploy record cites no receipt_sha256"] };
   const path = citedReceipt(recPath, hash, receiptFile);
@@ -198,12 +204,7 @@ async function fetchProvenance(url: string): Promise<{ doc: Obj } | { problem: s
 /** Signature first (TAMPERED on an edit), then --expect-sha, then the cited receipt when one is found locally or via --receipt. Fails closed. */
 export async function verifyProvenanceDoc(doc: Obj, deps: DeployDeps, receiptFile: string | null, expectSha: string | null, searchFrom: string): Promise<DeployResult> {
   if (doc["schema"] !== PROVENANCE_SCHEMA) return { verdict: "UNCHECKED", reasons: [`provenance doc is not a ${PROVENANCE_SCHEMA} document`] };
-  const sig = doc["signature"] as { alg?: unknown; kid?: unknown; sig?: unknown } | undefined;
-  if (!sig || typeof sig !== "object") return { verdict: "UNCHECKED", reasons: ["provenance doc is unsigned (no signature)"] };
-  if (sig.alg !== "EdDSA" || typeof sig.sig !== "string") return { verdict: "TAMPERED", reasons: ["malformed provenance signature"] };
-  const pub = deps.pubFor(sig.kid);
-  if (!pub) return { verdict: "UNCHECKED", reasons: [`no key for kid ${String(sig.kid)} on this machine (set LOKI_RECEIPT_SIGNING_KEY_FILE or use --pubkey)`] };
-  if (!verify(null, Buffer.from(canonicalJson(deployBody(doc))), pub, Buffer.from(sig.sig, "base64url"))) return { verdict: "TAMPERED", reasons: ["provenance signature does not verify (doc was edited)"] };
+  const bad = checkBodySignature(doc, deps, "provenance doc", "doc"); if (bad) return bad;
   if (expectSha !== null && doc["head_sha"] !== expectSha) return { verdict: "TAMPERED", reasons: [`head_sha ${String(doc["head_sha"])} does not equal --expect-sha ${expectSha}`] };
   const hash = doc["receipt_sha256"];
   if (typeof hash !== "string" || !hash) return { verdict: "VERIFIED", reasons: [] };
@@ -215,6 +216,16 @@ const takeFlag = (a: readonly string[], name: string): { rest: string[]; value: 
   const i = a.indexOf(name);
   return i < 0 ? { rest: [...a], value: null } : { rest: a.filter((_, j) => j !== i && j !== i + 1), value: a[i + 1] ?? "" };
 };
+/** Freshness on the signed built_at of a provenance doc: stale, future, missing or unparseable is UNCHECKED (same class applyMaxAge uses). */
+function applyProvenanceMaxAge(res: DeployResult, doc: Obj, raw: string, now: number): DeployResult {
+  const unchecked = (reason: string): DeployResult => ({ verdict: "UNCHECKED", reasons: [...res.reasons, reason] });
+  const max = parseMaxAge(raw), at = doc["built_at"], t = typeof at === "string" ? Date.parse(at) : NaN;
+  if (max === null) return unchecked(`invalid --max-age ${raw}`);
+  if (!Number.isFinite(t)) return unchecked("no parseable signed built_at; age cannot be checked");
+  if (t - now > 300_000) return unchecked(`provenance built_at ${String(at)} is in the future`);
+  if (now - t > max * 1000) return unchecked(`provenance built_at ${String(at)} is older than --max-age ${raw}`);
+  return res;
+}
 /** `loki verify --url https://host [--expect-sha SHA] [--receipt FILE] [--pubkey FILE]` and `--sign-provenance FILE`. Null when neither flag is present. */
 async function provenanceCmd(args: readonly string[], env: Parameters<typeof deployAttestCmd>[1]): Promise<number | null> {
   const sp = takeFlag(args, "--sign-provenance"), u = takeFlag(sp.rest, "--url");
@@ -241,12 +252,13 @@ async function provenanceCmd(args: readonly string[], env: Parameters<typeof dep
   if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   if (pk.args.length) return (process.stderr.write(`loki verify: unexpected arguments with --url: ${pk.args.join(" ")}\n`), 2);
   const got = await fetchProvenance(url);
-  const res = "problem" in got ? { verdict: "UNCHECKED" as const, reasons: [got.problem] } : await verifyProvenanceDoc(got.doc, env.make(pk.pubkey), rc.value, ex.value, join(process.cwd(), ".loki", "provenance", "p.json"));
+  let res: DeployResult = "problem" in got ? { verdict: "UNCHECKED" as const, reasons: [got.problem] } : await verifyProvenanceDoc(got.doc, env.make(pk.pubkey), rc.value, ex.value, join(process.cwd(), ".loki", "provenance", "p.json"));
+  if (env.maxAge && res.verdict === "VERIFIED" && "doc" in got) res = applyProvenanceMaxAge(res, got.doc, env.maxAge, (env.now ?? Date.now)());
   process.stdout.write(`provenance: ${url}\nverdict: ${res.verdict}\n${res.reasons.map((x) => `  ${x}\n`).join("")}`);
   return res.verdict === "VERIFIED" ? 0 : res.verdict === "TAMPERED" ? 1 : 2;
 }
 /** loki verify dispatch: `--sign-deploy FILE` signs a record in place; a loki.deploy/1 file is verified. Null means the args are not a deploy record. */
-export async function deployAttestCmd(args: readonly string[], env: { takePubkey(a: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string }; make(pk?: KeyObject): DeployDeps; maxAge?: string | null }): Promise<number | null> {
+export async function deployAttestCmd(args: readonly string[], env: { takePubkey(a: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string }; make(pk?: KeyObject): DeployDeps; maxAge?: string | null; now?: () => number }): Promise<number | null> {
   const prov = await provenanceCmd(args, env); if (prov !== null) return prov;
   const rc = args.indexOf("--receipt"), receiptFile = rc >= 0 ? (args[rc + 1] ?? null) : null;
   const pre = rc < 0 ? args : args.filter((_, i) => i !== rc && i !== rc + 1), si = pre.indexOf("--sign-deploy");

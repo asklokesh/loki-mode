@@ -1034,10 +1034,52 @@ describe("loki.provenance/1 live provenance doc", () => {
     const r = await run(["--url", url()]);
     expect(r.code).toBe(2);
     expect(r.out).not.toContain("VERIFIED");
+    expect(r.out).toContain("no key for kid nope");
   });
-  test("a 404, a non-JSON body and a doc over 64KB are UNCHECKED rc 2", async () => {
-    body = () => new Response("nope", { status: 404 });
-    expect((await run(["--url", url(), "--pubkey", pub])).code).toBe(2);
+  test("a 404 that carries a genuinely signed body is UNCHECKED rc 2", async () => {
+    const sdSigned = await signed();
+    body = () => new Response(JSON.stringify(sdSigned), { status: 404 });
+    const r = await run(["--url", url(), "--pubkey", pub]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("HTTP 404");
+    expect(r.out).not.toContain("VERIFIED");
+  });
+  test("a redirect is never followed, even to a genuinely signed doc", async () => {
+    const good = JSON.stringify(await signed());
+    body = () => new Response(null, { status: 302, headers: { location: `${url()}/elsewhere` } });
+    server.reload({ fetch: (req: Request) => (new URL(req.url).pathname === "/elsewhere" ? new Response(good) : body()) });
+    const r0 = await run(["--url", url(), "--pubkey", pub]);
+    expect(r0.code).toBe(2);
+    expect(r0.out).not.toContain("verdict: VERIFIED");
+  });
+  test("--max-age on an old built_at is never VERIFIED (rc 2); within max-age is VERIFIED", async () => {
+    const { signProvenance } = await import("../../src/util/receipt_signer.ts");
+    serve(signProvenance("a".repeat(40), "b".repeat(40), "c".repeat(64), "run1", "2020-01-01T00:00:00Z"));
+    const old = await run(["--url", url(), "--pubkey", pub, "--max-age", "1s"]);
+    expect(old.code).toBe(2);
+    expect(old.out).toContain("older than --max-age 1s");
+    expect(old.out).not.toContain("verdict: VERIFIED");
+    serve(signProvenance("a".repeat(40), "b".repeat(40), "c".repeat(64), "run1", new Date().toISOString()));
+    const fresh = await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"]);
+    expect(fresh.code).toBe(0);
+    expect(fresh.out).toContain("verdict: VERIFIED");
+  });
+  test("--max-age with a missing or unparseable built_at is UNCHECKED rc 2; a tampered doc stays TAMPERED rc 1", async () => {
+    const { signDeployRecord, PROVENANCE_SCHEMA } = await import("../../src/util/receipt_signer.ts");
+    const base = { schema: PROVENANCE_SCHEMA, head_sha: "a".repeat(40), tree_sha: "b".repeat(40), receipt_sha256: "c".repeat(64), run_id: "r" };
+    serve(signDeployRecord({ ...base }));
+    expect((await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"])).code).toBe(2);
+    serve(signDeployRecord({ ...base, built_at: "not a date" }));
+    expect((await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"])).code).toBe(2);
+    const d = await signed();
+    serve({ ...d, head_sha: "d" + "a".repeat(39) });
+    expect((await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"])).code).toBe(1);
+  });
+  test("--max-age is refused (rc 2) with --seal-composite and --export-dsse rather than ignored", async () => {
+    expect((await run(["--seal-composite", dir, "--max-age", "1h"])).code).toBe(2);
+    expect((await run(["--export-dsse", "--max-age", "1h"])).code).toBe(2);
+  });
+  test("a non-JSON body and a doc over 64KB are UNCHECKED rc 2", async () => {
     body = () => new Response("<html>");
     expect((await run(["--url", url(), "--pubkey", pub])).code).toBe(2);
     serve({ ...(await signed()), pad: "x".repeat(70000) });
