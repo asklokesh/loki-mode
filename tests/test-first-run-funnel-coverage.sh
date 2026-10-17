@@ -197,6 +197,19 @@ RECORDER
     else
         bad "build_verified not recorded: $(cat "$_W/payload.log")"
     fi
+    # Exact key set: baseline props plus headline and route, nothing else
+    _keys="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    d = json.loads(line)
+    if d.get("event") == "build_verified":
+        print(",".join(sorted(d["properties"])))
+' "$_W/payload.log" 2>/dev/null)"
+    if [ "$_keys" = "arch,channel,headline,os,route,version" ]; then
+        ok "build_verified payload carries only headline and route beyond the baseline props"
+    else
+        bad "build_verified payload keys differ: $_keys"
+    fi
     cd "$REPO_ROOT" || exit 1
 else
     ok "bun absent; live funnel run skipped"
