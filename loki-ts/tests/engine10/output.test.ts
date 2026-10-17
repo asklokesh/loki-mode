@@ -192,6 +192,17 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     );
   });
 
+  test("firstSealed marks the Time line only when literally true (TEN-UX-11)", () => {
+    const base = { pr: null, verdict: "VERIFIED" as const, notProven: [], flaky: [], cost: { usd: 0.1, provider: "claude", tokens: 1000 }, wallS: 60, stages: [{ label: "intake", seconds: 5 }] };
+    const timeOf = (extra: object): string => formatSummary({ ...base, ...extra } as never).split("\n").at(-1) as string;
+    const plain = "Time:       1m00s (intake 5s)";
+    expect(timeOf({})).toBe(plain);
+    expect(timeOf({ firstSealed: false })).toBe(plain);
+    expect(timeOf({ firstSealed: "false" })).toBe(plain);
+    expect(timeOf({ firstSealed: true })).toBe(plain + " - first sealed PR in this repo");
+    expect(formatSummary({ ...base, firstSealed: true }).split("\n")).toHaveLength(formatSummary(base).split("\n").length);
+  });
+
   test("null cost renders \"not measured\", never $0.00", () => {
     const out = formatSummary({
       pr: null,

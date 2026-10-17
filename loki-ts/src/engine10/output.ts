@@ -112,7 +112,7 @@ export interface SummaryInput {
     totalSessions?: number; capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"
   };
   wallS: number;
-  stages: { label: string; seconds: number }[];
+  stages: { label: string; seconds: number }[]; firstSealed?: boolean; // TEN-UX-11: first sealed PR in repo (METRICS row 14); only literal true marks Time
 }
 function labelCol(text: string): string {
   return `${text}:`.padEnd(LABEL_WIDTH);
@@ -134,7 +134,7 @@ export function formatSummary(input: SummaryInput): string {
         ? `${labelCol("Cost")}partial: $${(input.cost.partialUsd ?? 0).toFixed(2)} for ${input.cost.measuredSessions} of ${input.cost.totalSessions ?? input.cost.measuredSessions} sessions`
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
-  const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
+  const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})${input.firstSealed === true ? " - first sealed PR in this repo" : ""}`;
   return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
 }
 /** Section 3: eta.ts is optional; when absent, ETAs are omitted. */
