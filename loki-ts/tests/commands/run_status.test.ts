@@ -68,6 +68,18 @@ describe("loki status (Loki 10)", () => {
     expect(controlRunLink("javascript:x", dir, "r")).toBeNull();
   });
 
+  test("--badge is routed to the deploy badge, not rejected as an unknown flag", async () => {
+    const prev = process.env.LOKI_DIR;
+    process.env.LOKI_DIR = join(dir, ".loki");
+    try {
+      const { code, out } = await run(["--badge"]);
+      expect(code).toBe(0);
+      expect(out.toLowerCase()).not.toContain("unknown flag");
+    } finally {
+      if (prev === undefined) delete process.env.LOKI_DIR; else process.env.LOKI_DIR = prev;
+    }
+  });
+
   test("a live run is preferred over a newer-named completed one and shows its stage", async () => {
     writeRun("e10-20261003T000000Z-aaaa", { done: false });
     const { out } = await run([]);
