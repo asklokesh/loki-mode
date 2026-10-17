@@ -7,7 +7,7 @@ about the cost-per-accepted ratio (loki / floor). A paired bootstrap over tasks
 the point estimate.
 
 Row shape (dict): task_id, accepted (bool), cost_usd (float), and optionally
-cost_partial (bool), unmeasured (bool), engine (str), loki_version (str).
+cost_partial (bool), unmeasured (bool), engine (str), loki_version (str), model_used (str).
 Rows may also carry elapsed_s; the verdict adds an informational paired time
 ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
 Rows without a usable elapsed_s are excluded from it and counted. The time
@@ -143,6 +143,20 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     if None in versions or len(versions) > 1:
         reasons.append("version: missing or mixed loki_version")
 
+    def _model(r):
+        return r.get("model_used") or r.get("model")
+
+    if rows and any(not _model(r) for r in rows):
+        reasons.append("model: missing model on a row")
+    else:
+        lm = {_model(r) for r in loki}
+        fm = {_model(r) for r in floor}
+        if len(lm) > 1 or len(fm) > 1:
+            reasons.append("model: mixed models within an arm")
+        elif lm and fm and lm != fm:
+            reasons.append("model: arms differ (loki %s, floor %s)"
+                           % (",".join(sorted(lm)), ",".join(sorted(fm))))
+
     for name, arm in (("loki", loki), ("floor", floor)):
         small = sorted(str(t) for t, g in _group(arm).items()
                        if len(g) < MIN_N_PER_TASK)
@@ -209,13 +223,24 @@ def _load_rows(paths):
     return rows, skipped
 
 
+def _finite_positive(text):
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("not a number: %r" % text)
+    if not math.isfinite(v) or v <= 0:
+        raise argparse.ArgumentTypeError(
+            "must be a finite number greater than 0: %r" % text)
+    return v
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Cost claim verdict over attribution rows")
     ap.add_argument("--rows", nargs="+", required=True)
     ap.add_argument("--loki-arm", required=True)
     ap.add_argument("--floor-arm", required=True)
-    ap.add_argument("--target", type=float, required=True)
+    ap.add_argument("--target", type=_finite_positive, required=True)
     ap.add_argument("--exclude-task", action="append", default=[])
     try:
         a = ap.parse_args(argv)
@@ -224,6 +249,10 @@ def main(argv=None):
         return 2 if e.code else 0
     except (OSError, ValueError) as e:
         print("usage error: %s" % e, file=sys.stderr)
+        return 2
+    if a.loki_arm == a.floor_arm:
+        print("usage error: --loki-arm and --floor-arm must differ: %r"
+              % a.loki_arm, file=sys.stderr)
         return 2
     if skipped:
         print("warning: skipped %d non-object row(s)" % skipped,

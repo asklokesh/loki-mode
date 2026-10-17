@@ -1247,7 +1247,7 @@ class LeanCostTableTest(unittest.TestCase):
             for arm, usd in (("raw-lean", 4.0), ("loki-lean", 1.0)):
                 for t in "abc":
                     r = row(arm, True, True, cost=usd + 0.01 * rep)
-                    r.update(task=t, repeat=rep + 1, engine="v10", loki_version="1.0.0",
+                    r.update(task=t, repeat=rep + 1, engine="v10", loki_version="1.0.0", model_used="m1",
                              lever_env={})
                     rows.append(r)
         self._write(rows)
