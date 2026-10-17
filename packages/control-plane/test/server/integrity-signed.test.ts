@@ -7,8 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { kidOf as engineKidOf } from "../../../../loki-ts/src/engine10/stages/seal.ts";
 import { computeReceiptHash, verifyReceipt } from "../../../../loki-ts/src/engine10/verify_cmd.ts";
+import { redactDeep } from "../../../../loki-ts/src/util/redact.ts";
+import { redactEvent } from "../../src/shipper/ship.ts";
 import { createApp } from "../../src/server/app.ts";
-import { effectiveVerdict, kidOf, REDACTED_NOTE, UNCHECKED_SIG, verifyRunIntegrity } from "../../src/server/integrity.ts";
+import { effectiveVerdict, kidOf, UNCHECKED_SIG, verifyRunIntegrity } from "../../src/server/integrity.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "cp-integrity-signed-"));
 const SRC = "abcdef0123456789";
@@ -162,16 +164,31 @@ test("B3: the genuine signed run is plain VERIFIED only when a key checks it, an
 });
 
 // --- S5 redaction ---
-test("S5: an honest signed run whose data held an sk- token (redacted on ingest) is UNVERIFIED with a note, never TAMPERED, never VERIFIED", async () => {
+test("S5: a signed log whose token was NOT redacted at source (rewritten on ingest, bytes no longer match the seal) is TAMPERED, never VERIFIED", async () => {
   const secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
   const b = honest("e10-s5", "VERIFIED", { startData: { task_source: "text", note: `key ${secret}` } });
   const { detail, filt } = await viaApi(b.events, true);
   expect(JSON.stringify(detail)).not.toContain(secret);
-  expect([detail.tampered, detail.attested, detail.sig_checked, detail.effective_verdict]).toEqual([false, false, false, "UNVERIFIED"]);
-  expect(detail.integrity_reasons).toContain(REDACTED_NOTE);
+  expect([detail.tampered, detail.attested, detail.sig_checked, detail.effective_verdict]).toEqual([true, false, false, "TAMPERED"]);
   expect(await filt("VERIFIED")).toBe(0);
+  expect(await filt("TAMPERED")).toBe(1);
+});
+
+// --- Q17-05b: redact at source ---
+test("Q17-05b: a run whose engine already redacted the token before hashing and signing reads attested and signature-checked, never UNVERIFIED or TAMPERED", async () => {
+  const secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+  const b = honest("e10-q05b", "VERIFIED", { startData: redactDeep({ task_source: "text", note: `key ${secret}` }) as object });
+  expect(b.events.map((e) => redactEvent(e))).toEqual(b.events); // the shipper redaction is a no-op on already-redacted lines
+  const { detail, filt } = await viaApi(b.events.map((e) => redactEvent(e)), true);
+  expect(JSON.stringify(detail)).not.toContain(secret);
+  expect([detail.tampered, detail.attested, detail.sig_checked]).toEqual([false, true, true]);
   expect(await filt("TAMPERED")).toBe(0);
-  expect(await filt("UNVERIFIED")).toBe(1);
+});
+
+test("Q17-05b: a planted [REDACTED] edit on an already-redacted signed log is TAMPERED", async () => {
+  const b = honest("e10-q05c", "VERIFIED", { startData: redactDeep({ task_source: "text", note: "key sk-abcdefghijklmnopqrstuvwxyz0123456789" }) as object });
+  const evs = b.events.map((e) => (e.type === "run.started" ? { ...e, data: { ...e.data, note: "key [REDACTED]" } } : e));
+  expect((await viaApi(evs, true)).detail.effective_verdict).toBe("TAMPERED");
 });
 
 test("S5: an edit with no redaction placeholder is still TAMPERED", async () => {
@@ -203,13 +220,12 @@ test("ALREADY_SATISFIED needs a seal exactly like VERIFIED: a bare two-line log 
   expect(nokey.detail.effective_verdict).toBe("ALREADY_SATISFIED (signature not checked)");
 });
 
-test("an unattested non-success verdict carries a marker: a redacted FAILED or PARTIAL log never reads as plain FAILED or PARTIAL", async () => {
+test("a non-success verdict is never plain when its log is not attested: a rewritten FAILED or PARTIAL log is TAMPERED, and an unattested verdict carries a marker", async () => {
   for (const v of ["FAILED", "PARTIAL"]) {
-    const b = honest(`e10-m-${v}`, v, { startData: { task_source: "text", note: "key sk-abcdefghijklmnopqrstuvwxyz0123456789" } });
+    const b = honest(`e10-m-${v}`, v, { startData: { task_source: "text", note: "key sk-abcdefghijklmnopqrstuvwxyz0123456789" } }); // token not redacted at source
     const { detail, filt } = await viaApi(b.events, true);
-    expect([v, detail.tampered, detail.effective_verdict]).toEqual([v, false, `${v} (unattested)`]);
+    expect([v, detail.tampered, detail.effective_verdict]).toEqual([v, true, "TAMPERED"]);
     expect(await filt(v)).toBe(0);
-    expect(await filt("UNVERIFIED")).toBe(1);
   }
   expect(effectiveVerdict({ verdict: "PARTIAL", tampered: false, attested: false })).toBe("PARTIAL (unattested)");
   expect(effectiveVerdict({ verdict: null, tampered: false, attested: false })).toBeNull();
@@ -244,11 +260,11 @@ test("boot recompute: a changed key set re-judges stored rows; a row with missin
   sqlite.close();
 });
 
-test("a seal field rewritten by redaction (a base64url signature matching a key pattern) is UNVERIFIED, never TAMPERED and never VERIFIED", async () => {
+test("a seal field rewritten by redaction (a base64url signature matching a key pattern) is TAMPERED, never VERIFIED", async () => {
   const b = honest("e10-redsig", "VERIFIED");
   b.events[3].data.sig = "[REDACTED:GOOGLE_KEY]";
   const { detail } = await viaApi(b.events, true);
-  expect([detail.tampered, detail.effective_verdict]).toEqual([false, "UNVERIFIED"]);
+  expect([detail.tampered, detail.effective_verdict]).toEqual([true, "TAMPERED"]);
   const t = honest("e10-redtamper", "VERIFIED");
   t.events[3].data.sig = "[REDACTED:GOOGLE_KEY]";
   t.events[3].data.tampered = true;

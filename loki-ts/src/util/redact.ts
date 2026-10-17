@@ -14,3 +14,9 @@ const RULES: [RegExp, string][] = [
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
 export const redactSecrets = (s: string): string => RULES.reduce((a, [re, to]) => a.replace(re, to), s);
+/** Redacts every string value (arrays and objects recursed); keys and non-strings pass through. Idempotent, so redacting at source and again at ship or ingest is a no-op. */
+export const redactDeep = (x: unknown): unknown =>
+  typeof x === "string" ? redactSecrets(x)
+  : Array.isArray(x) ? x.map(redactDeep)
+  : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, redactDeep(v)]))
+  : x;

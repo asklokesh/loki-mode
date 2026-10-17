@@ -4,7 +4,7 @@
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
-import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
+import { redactDeep } from "../util/redact.ts"; import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
@@ -100,7 +100,7 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
   }
   private implementOpen = false; // P12-07j: implement started and not yet settled; the only window a deferred already-done hit can be genuine
   append(type: string, stage: StageName | null, data: Record<string, unknown>): EventEnvelope {
-    const e = this.log.append(type, stage, data);
+    const e = this.log.append(type, stage, redactDeep(data) as Record<string, unknown>); // EL-FC08b: redact before the line is written, hashed and sealed, so the CP hashes the same bytes
     this.hash.update(JSON.stringify(e) + "\n");
     if (stage === "implement") { if (type === "stage.started") this.implementOpen = true; else if (type === "stage.completed" || type === "stage.failed" || type === "stage.skipped") this.implementOpen = false; }
     return e;
