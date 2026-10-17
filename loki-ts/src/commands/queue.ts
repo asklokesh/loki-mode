@@ -72,8 +72,10 @@ const PR_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d
 
 export function normalizeRef(raw: string): string | null {
   const m = URL_RE.exec(raw);
-  if (m) return `${m[1]}#${m[2]}`;
-  return REF_RE.test(raw) ? raw : null;
+  if (m) return /^0+$/.test(m[2]) ? null : `${m[1]}#${m[2]}`;
+  if (!REF_RE.test(raw)) return null;
+  // issue numbers start at 1; #0, 0 and o/r#00 are unrunnable
+  return /^0+$/.test(raw.replace(/^.*#/, "")) ? null : raw;
 }
 
 function queuePath(lokiDir: string): string {

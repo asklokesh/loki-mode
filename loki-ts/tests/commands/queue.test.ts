@@ -103,6 +103,22 @@ describe("loki queue", () => {
     expect(run("clear").stdout.toString()).toContain("1 removed, 0 left");
   });
 
+  test("queue zero issue: 0, #0, o/r#0, o/r#00 and a /issues/0 URL are rejected with exit 2", async () => {
+    for (const bad of ["0", "#0", "o/r#0", "o/r#00", "https://github.com/o/r/issues/0"]) {
+      expect(normalizeRef(bad)).toBeNull();
+      const h = harness({});
+      expect(await runQueue(["add", bad], h.inject)).toBe(2);
+      expect(readQueue(dir)).toEqual([]);
+    }
+    expect(normalizeRef("o/r#10")).toBe("o/r#10");
+    expect(normalizeRef("10")).toBe("10");
+  });
+
+  test("queue zero issue: bin/loki queue add o/r#0 exits 2", () => {
+    const r = Bun.spawnSync(["bash", join(import.meta.dir, "../../../bin/loki"), "queue", "add", "o/r#0"], { cwd: dir });
+    expect(r.exitCode).toBe(2);
+  });
+
   test("add rejects a bad ref with exit 2 and queues nothing", async () => {
     const h = harness({});
     expect(await runQueue(["add", "o/r#1", "not a ref"], h.inject)).toBe(2);
