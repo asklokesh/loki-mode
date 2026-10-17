@@ -22,8 +22,11 @@ export interface NormalizedIssue {
 }
 export type Execer = (cmd: string, args: string[]) => string;
 const ISSUE_PROVIDERS_SH = join(REPO_ROOT, "autonomy/issue-providers.sh");
+// A hung gh or network stall must not block Intake: execFileSync kills the child on timeout and
+// throws (ETIMEDOUT), the existing fetch failure. 60s default; env override is for tests.
 export function defaultExec(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: "utf8", env: process.env });
+  const ms = Number(process.env.LOKI_FETCH_ISSUE_TIMEOUT_MS) || 60_000;
+  return execFileSync(cmd, args, { encoding: "utf8", env: process.env, timeout: ms, killSignal: "SIGKILL" });
 }
 interface GithubExtra {
   state?: string;
