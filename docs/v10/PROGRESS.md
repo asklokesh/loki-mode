@@ -2500,3 +2500,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T09:21Z (CoS) v11.17.40
 - v11.17.40: wave AG, 14 slices merged (QUALITY-17 test file hand-merged with GATES-18, 16 pass 0 fail); tests/util 407 pass 0 fail, budget and L0 guards 36 pass 0 fail, tsc clean outside control-plane. STABILITY-16 was already shipped. COST-32, SPEED-06, QUALITY-16, UX-19 and STABILITY-15 builders started from a stale base without their rows and are re-dispatched. P0 rows TEN-STABILITY-18 and TEN-STABILITY-19 added for nightly 39016259458 reds.
+
+## 2026-10-17T09:37Z (CoS) v11.17.41
+- v11.17.41: wave AJ, 9 of 9 slices approved and merged cleanly; tests/util plus budget and L0 guards 446 pass 0 fail, tsc clean outside control-plane. Follow-ups noted by reviewers: doctor JSON path still serial, help-changelog-drift red (TEN-STABILITY-18 owns it).

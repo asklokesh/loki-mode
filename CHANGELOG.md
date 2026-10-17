@@ -5,6 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.41 (2026-10-17)
+
+Wave AJ: 9 reviewed slices.
+
+### Added
+
+- TEN-SECURITY-06: secure-scan rule 6 flags disabled TLS verification.
+- TEN-SECURITY-05: redactSecrets strips secret query parameters from URLs.
+- TEN-ADOPTION-14: `loki proof list --json` prints the proof index as JSON.
+- TEN-DEPLOY-14: `loki status --probe --json` prints one JSON object.
+- TEN-QUALITY-16: the commit stage formats only the run's own changed files with the repo's configured formatter.
+- TEN-UX-19: `loki start --help` ends with brief, PRD file and issue reference examples.
+- TEN-SPEED-06: `loki doctor` runs its integration probes concurrently.
+
+### Fixed
+
+- TEN-STABILITY-15: `loki queue add` quarantines a corrupt queue file and warns, instead of overwriting every queued item.
+- TEN-COST-32: the cap-stop next-step line gets the run id from the real callers and covers the time cap.
+
 ## v11.17.40 (2026-10-17)
 
 Wave AG: 14 reviewed slices.
