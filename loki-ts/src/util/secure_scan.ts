@@ -216,7 +216,7 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
   const base = resolveDiffBase(repoDir, opts.diffBase);
   const added = new Map<string, Map<number, string>>();
   if (base) {
-    const diff = git(repoDir, ["-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base, "--"]);
+    const diff = git(repoDir, ["-c", "core.quotePath=false", "diff", "--src-prefix=a/", "--dst-prefix=b/", "-U0", "--no-color", "--no-ext-diff", "--no-renames", base, "--"]);
     if (diff === null) return fail(`secure-scan: git diff against ${base.slice(0, 12)} failed`);
     for (const [p, lines] of parseAddedLines(diff)) added.set(p, lines);
   }

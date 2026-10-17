@@ -131,6 +131,22 @@ describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
     return d;
   }
 
+  it("user diff prefix config (noprefix, mnemonicPrefix) does not hide an added key", async () => {
+    for (const cfg of [["diff.noprefix", "true"], ["diff.mnemonicPrefix", "true"]] as const) {
+      const d = repoWithBase();
+      try {
+        git(d, "config", cfg[0], cfg[1]);
+        writeFileSync(join(d, "src", "config.ts"), `export const a = 1;\nexport const key = "${KEYS.ant}";\nexport const b = 2;\n`);
+        const r = await runSecureScan(d);
+        expect(r.ok).toBe(true);
+        expect(r.findings).toHaveLength(1);
+        expect(r.findings[0]).toMatchObject({ rule: ADDED_LINE_RULE, file: "src/config.ts", line: 2 });
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("red-then-green: a runtime-built sk-ant key added to server code is blocked at file:line", async () => {
     const d = repoWithBase();
     try {
