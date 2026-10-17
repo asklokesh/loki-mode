@@ -291,3 +291,17 @@ describe("loki cancel on a live run", () => {
     expect(out).toContain("CANCELLED");
   }, 150_000);
 });
+
+describe("supervisor main flag values", () => {
+  test("missing flag value: --spec or --max-cost with no value exits 2 with a needs-a-value line, via the real CLI", async () => {
+    const plain = mkdtempSync(join(tmpdir(), "e10-mfv-"));
+    roots.push(plain);
+    const CLI = join(import.meta.dir, "../../src/cli.ts");
+    for (const [flag, args] of [["--spec", ["task", "--spec"]], ["--max-cost", ["task", "--max-cost"]], ["--spec", ["task", "--spec", "--deep"]], ["--max-cost", ["task", "--max-cost", ""]]] as [string, string[]][]) {
+      const p = Bun.spawn([process.execPath, CLI, "engine10", "run", ...args], { cwd: plain, env: process.env, stdout: "ignore", stderr: "pipe" });
+      const err = await new Response(p.stderr).text();
+      expect(await p.exited).toBe(2);
+      expect(err).toContain(`${flag} needs a value`);
+    }
+  }, 60_000);
+});
