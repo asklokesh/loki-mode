@@ -13,7 +13,7 @@ import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
-import { sha256 } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
+import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts"; import { projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyCheck, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
@@ -263,37 +263,26 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
 
 const WALL_SESSION_MAX_S = 300; // sizing.ts wallLimitS caps a session at 300
 export const WALL_BASE_FILES = 4; // files one rung's base run is sized for; RealBaseTestRunner spawns once per file at BASE_RUN_TIMEOUT_MS each
-export const WALL_RUNG_S = WALL_SESSION_MAX_S + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000); // one rung at its worst: a max session plus a per-file base run
-const greenOnBase = (r: StageResult): boolean => { const d = r.data, b = d.base_run as { pass?: number; fail?: number; not_run?: number } | undefined; return d.already_satisfied === true || (!!b && (b.pass ?? 0) > 0 && (b.fail ?? 0) === 0 && (b.not_run ?? 0) === 0); }; // mirrors seal.ts wallGreenOnBase
+export const WALL_RUNG_S = WALL_SESSION_MAX_S + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000), WALL_STAGE_LIMIT_S = 2 * WALL_RUNG_S; // one rung at its worst: a max session plus a per-file base run; the stage holds two rungs
+export const distrustGreenBase = (d: Record<string, unknown>): Record<string, unknown> => ({ ...d, already_satisfied: false, already_satisfied_distrusted: true, base_run: { ...((d.base_run ?? {}) as Record<string, unknown>), not_run: 1, unproven: true } }); // Fail closed for EVERY consumer (wall, discard.alreadySatisfied, seal wallGreenOnBase): an untrusted green base run is recorded as unproven (not_run), which all of them already refuse. Shared by machine.ts (concurrent Wall) and runWall (budget-blocked cheap rung).
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
-  const t0 = Date.now();
-  const a = await wallAuthor(ctx, signal);
+  const t0 = Date.now(), a = await wallAuthor(ctx, signal);
   const first = a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
   // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
-  const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "";
-  const killed = a.kind === "done" && first.killed === true;
-  const usable = a.kind === "authored" && first.status === "completed";
-  const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0;
-  const green = usable && !unusable && greenOnBase(first);
+  const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "", killed = a.kind === "done" && first.killed === true, usable = a.kind === "authored" && first.status === "completed";
+  const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0, green = usable && !unusable && (first.data.already_satisfied === true || wallGreenOnBaseOf({ wall: first.data })); // same green test seal applies
   const budgetLeft = WALL_STAGE_LIMIT_S * 1000 - (Date.now() - t0) >= WALL_RUNG_S * 1000; // the retry must fit its own session plus base run inside the stage limit, from the same constants
   if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel()) return first;
-  if (!budgetLeft) return green ? { ...first, data: { ...first.data, already_satisfied: false } } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
-  if (a.kind === "authored") {
-    // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
-    for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true });
-    rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true });
-    ctx.wallSealed = false;
-  }
+  if (!budgetLeft) return green ? { ...first, data: distrustGreenBase(first.data) } : first; // fail closed: an unchecked cheap-rung green must not stand as already_satisfied
+  if (a.kind === "authored") { for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true }); rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true }); ctx.wallSealed = false; } // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
   removeHoldout(ctx.runId, ctx.repoDir);
   ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
-  const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" });
-  const second = b.kind === "done" ? b.result : installWall(ctx, b, ctx.repoDir, opts);
+  const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" }), second = b.kind === "done" ? b.result : installWall(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
   return { ...second, data: { ...second.data, iteration_ids: ids, reauthored: true } }; // both tiers' spend reaches the ledger via iteration_ids
 }
 
-export const WALL_STAGE_LIMIT_S = 2 * WALL_RUNG_S;
 export const wallStage: Stage = {
   name: "wall",
   targetS: 45,

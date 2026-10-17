@@ -36,6 +36,8 @@ import type {
 
 import { resolveModelAlias, wallModel } from "../../src/engine10/sizing.ts";
 import { WALL_HOLDOUT_MIN, holdoutDirFor } from "../../src/util/holdout.ts";
+import { verdictOf, wallGreenOnBaseOf } from "../../src/engine10/stages/seal.ts";
+import { alreadySatisfied } from "../../src/e10ext/discard.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "wall");
 const SAMPLE = readFileSync(join(FIX, "loki_wall_sample.test.ts"), "utf8");
@@ -852,6 +854,17 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect(g.models).toEqual([HAIKU]);
       expect(g.events).not.toContain("wall.reauthor:wall");
       expect(g.result.data.already_satisfied).toBe(false);
+      // N1 (r3): the unchecked green is recorded through the shared distrust mechanism, so EVERY consumer refuses it
+      expect(g.result.data.already_satisfied_distrusted).toBe(true);
+      expect(g.result.data.base_run).toMatchObject({ pass: 1, fail: 0, not_run: 1, unproven: true });
+      const o = { wall: g.result.data } as Partial<Record<StageName, Record<string, unknown>>>;
+      expect(wallGreenOnBaseOf(o)).toBe(false);
+      expect(verdictOf(o, [], false, false, wallGreenOnBaseOf(o), wallGreenOnBaseOf(o))).not.toBe("ALREADY_SATISFIED");
+      expect(alreadySatisfied(o)).toBe(false);
+      // positive control: the same green base run, not distrusted, is ALREADY_SATISFIED for both consumers
+      const ctl = { wall: { ...g.result.data, already_satisfied: true, base_run: { pass: 1, fail: 0, not_run: 0 } } } as Partial<Record<StageName, Record<string, unknown>>>;
+      expect(verdictOf(ctl, [], false, false, wallGreenOnBaseOf(ctl), wallGreenOnBaseOf(ctl))).toBe("ALREADY_SATISFIED");
+      expect(alreadySatisfied(ctl)).toBe(true);
       off = 0;
       const k = await go(() => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [], result: KILLED }; }, () => false);
       expect(k.models).toEqual([HAIKU]);
@@ -864,7 +877,18 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect(g.models).toEqual([HAIKU, SONNET]);
     } finally { Date.now = real; }
   });
+  test("N2 (r3): boundary, elapsed = LIMIT - RUNG + 5s leaves less than one rung, so the retry does not run", async () => {
+    const real = Date.now; let off = 0; Date.now = () => real() + off;
+    try {
+      const g = await go((n) => { off += (WALL_STAGE_LIMIT_S - WALL_RUNG_S + 5) * 1000; return { files: [`loki_wall_a${n}.test.ts`] }; }, (n) => n !== 2);
+      expect(g.models).toEqual([HAIKU]);
+      expect(g.events).not.toContain("wall.reauthor:wall");
+      expect(g.result.data.already_satisfied_distrusted).toBe(true);
+    } finally { Date.now = real; }
+  });
   test("c: the stage limit and the retry gate come from the base runner's per-file timeout", () => {
+    expect(WALL_BASE_FILES).toBe(4); // J (r3): pinned literal
+    expect(WALL_RUNG_S).toBe(540);
     expect(WALL_RUNG_S).toBe(300 + WALL_BASE_FILES * (BASE_RUN_TIMEOUT_MS / 1000));
     expect(wallStage.limitS).toBe(2 * WALL_RUNG_S);
   });
