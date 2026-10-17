@@ -409,6 +409,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # efficiency_cost collector.
             "cost_by_phase": phases,
             "ledger": cost.get("ledger"),
+            # True when the usd is a lower bound (token-only main session or
+            # unpriced child sessions); a consumer must not treat it as complete.
+            "cost_partial": bool(cost.get("cost_partial")),
             # The real process outcome, so a caller never has to infer rc from status.
             "rc": rc,
             "stdout_tail": _tail(out),
