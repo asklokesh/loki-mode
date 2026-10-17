@@ -96,9 +96,9 @@ describe("P12-08c SUPERVISOR_ONLY", () => {
 describe("TEN-GATES-16 head drift by sealed path overlap", () => {
   const vcs = (cwd: string, ...a: string[]): string => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd }).stdout.toString().trim();
   const sh = (s: string): string => new Bun.CryptoHasher("sha256").update(s).digest("hex");
-  function sealed(repo: string, id: string): void {
-    const base = vcs(repo, "rev-parse", "HEAD~1"), head = vcs(repo, "rev-parse", "HEAD");
-    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sh(""), time: { wall_s: 0, stages: {} }, base_sha: base, head_sha: head };
+  function sealed(repo: string, id: string, baseOf: (head: string) => string | undefined = () => vcs(repo, "rev-parse", "HEAD~1")): void {
+    const head = vcs(repo, "rev-parse", "HEAD"), base = baseOf(head);
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sh(""), time: { wall_s: 0, stages: {} }, ...(base === undefined ? {} : { base_sha: base }), head_sha: head };
     const dir = join(repo, ".loki", "runs", id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
@@ -139,5 +139,18 @@ describe("TEN-GATES-16 head drift by sealed path overlap", () => {
     writeFileSync(join(repo, "a.ts"), "9"); vcs(repo, "commit", "-qam", "t");
     writeFileSync(join(repo, "a.ts"), "1"); vcs(repo, "commit", "-qam", "revert");
     expect((await verify(repo, "r4")).code).toBe(0);
+  });
+  const unrelated = (repo: string): void => { writeFileSync(join(repo, "other.md"), "x"); vcs(repo, "add", "other.md"); vcs(repo, "commit", "-qm", "docs"); };
+  test("fail-safe: empty sealed diff (base == head) plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r5", (h) => h); unrelated(repo);
+    expect((await verify(repo, "r5")).code).toBe(2);
+  });
+  test("fail-safe: absent base_sha plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r6", () => undefined); unrelated(repo);
+    expect((await verify(repo, "r6")).code).toBe(2);
+  });
+  test("fail-safe: non-hex base_sha plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r7", () => "not-a-sha"); unrelated(repo);
+    expect((await verify(repo, "r7")).code).toBe(2);
   });
 });
