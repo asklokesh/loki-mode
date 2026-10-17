@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runQueue, readQueue, normalizeRef, type GovernorReading, type RunResult } from "../../src/commands/queue.ts";
@@ -35,6 +35,34 @@ function harness(opts: {
 }
 
 describe("loki queue", () => {
+  test("add on a corrupt queue file quarantines it, warns once, and starts a fresh file", async () => {
+    const qf = join(dir, "issue-queue.json");
+    writeFileSync(qf, '{"version":1,"items":[{"ref":"o/r#9","added_at":"2026');
+    const h = harness({});
+    expect(await runQueue(["add", "o/r#1", "o/r#2"], h.inject)).toBe(0);
+    expect(readQueue(dir).map((i) => i.ref)).toEqual(["o/r#1", "o/r#2"]);
+    const q = readdirSync(dir).filter((f) => f.startsWith("issue-queue.json.corrupt-"));
+    expect(q.length).toBe(1);
+    expect(readFileSync(join(dir, q[0]!), "utf8")).toContain("o/r#9");
+    expect(h.err.filter((e) => e.includes("corrupt")).length).toBe(1);
+  });
+
+  test("add on a valid queue and on a missing file does not quarantine", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1"], h.inject);
+    await runQueue(["add", "o/r#2"], h.inject);
+    expect(readdirSync(dir).filter((f) => f.includes(".corrupt-")).length).toBe(0);
+    expect(h.err.length).toBe(0);
+    expect(readQueue(dir).map((i) => i.ref)).toEqual(["o/r#1", "o/r#2"]);
+  });
+
+  test("add on a parseable file with no items array quarantines it", async () => {
+    writeFileSync(join(dir, "issue-queue.json"), "[]");
+    const h = harness({});
+    await runQueue(["add", "o/r#1"], h.inject);
+    expect(readdirSync(dir).filter((f) => f.includes(".corrupt-")).length).toBe(1);
+  });
+
   test("add and list keep insertion order, dedupe, and normalize URLs", async () => {
     const h = harness({});
     expect(await runQueue(["add", "o/r#3", "o/r#1"], h.inject)).toBe(0);

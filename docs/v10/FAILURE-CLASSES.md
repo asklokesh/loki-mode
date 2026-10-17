@@ -1033,3 +1033,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: tests/engine10/fixtures/e2e/bin/claude, fixtures/issue-ref/bin/claude, inline stubs in supervisor_signal.test.ts and budget_stop_e2e.test.ts (all fixed). tests/engine10/fixtures/providers/bin/* are non-claude providers and are not probed. Two verify_lint.test.ts lint:tsc cases fail only in a worktree with no loki-ts/node_modules (environmental, not this class).
 - Mechanism: every stub claude answers `auth status` with {"loggedIn":true}, no side effects.
 - Fixture: tests/engine10/e2e.test.ts "every engine10 stub claude answers claude auth status as logged in".
+
+## FC-TEN-STABILITY-15 queue add on a corrupt queue file silently overwrites every queued item (QUEUE-CORRUPT-OVERWRITE)
+- User-visible vs raw: user-visible. A truncated .loki/issue-queue.json read as an empty queue, so `loki queue add` wrote a file holding only the new item and the overnight backlog vanished with no message.
+- Law broken: a reader that maps a parse failure to "empty" must not be followed by a writer of the same file; unreadable state is quarantined and reported, never replaced.
+- Siblings: util/outbox.ts runOnce (TEN-STABILITY-12, already quarantines); queue run reads the queue and returns "queue is empty" without writing, so it cannot overwrite; its end-of-run writeQueue only follows a successful read.
+- Mechanism: queueAdd calls quarantineCorruptQueue, which renames the bad file to issue-queue.json.corrupt-<ts> and warns once on stderr before the read.
+- Fixture: loki-ts/tests/commands/queue.test.ts "add on a corrupt queue file quarantines it".
