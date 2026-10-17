@@ -242,7 +242,7 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let eoo = false, resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -250,11 +250,14 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--json") json = true;
     else if (a === "--verbose") verbose = true;
     else if (a === "--quiet") quiet = true; // OC-OUTPUT: unified summary only
-    else if (a.startsWith("--max-cost")) maxCost = a.includes("=") ? a.slice(11) : args[++i] ?? "";
-    else if (a === "--provider") provider = args[++i] ?? provider;
+    else if (a === "--max-cost") maxCost = args[++i] ?? "";
+    else if (a.startsWith("--max-cost=")) maxCost = a.slice(11); // TEN-STABILITY-38: exact flag only, so --max-costly is an unknown flag
+    else if (a === "--provider") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --provider needs a value\n"); return 2; } provider = v; i++; } // TEN-UX-33: a missing or flag-shaped value never silently keeps the env provider or eats the next flag
     else if (a === "--spec") specFile = args[++i] ?? "";
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
+    else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);

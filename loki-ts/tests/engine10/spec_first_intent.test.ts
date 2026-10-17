@@ -189,6 +189,50 @@ describe("CLI surface", () => {
   });
 });
 
+describe("unknown flag", () => {
+  const run = async (args: string[]): Promise<{ code: number; err: string }> => {
+    const { main } = await import("../../src/engine10/supervisor.ts");
+    const out: string[] = []; const w = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string | Uint8Array) => { out.push(String(s)); return true; }) as typeof process.stderr.write;
+    try { return { code: await main(args), err: out.join("") }; } finally { process.stderr.write = w; }
+  };
+  test("unknown flag exits 2 with usage instead of joining the task", async () => {
+    for (const f of ["--no-prr", "--dry-run", "-x", "--bogus=1"]) {
+      const r = await run(["fix the bug", f]);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(`unknown flag ${f}`);
+      expect(r.err).toContain("usage:");
+    }
+  });
+  test("provider needs a value: missing or flag-shaped value exits 2, codex unchanged", async () => {
+    for (const a of [["task", "--provider"], ["task", "--provider", "--deep"], ["task", "--provider", ""]]) {
+      const r = await run(a);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("--provider needs a value");
+    }
+    const cwd = process.cwd(), plain = mkdtempSync(join(tmpdir(), "e10-pv-")); writeFileSync(join(plain, "f"), "x");
+    process.chdir(plain);
+    try { const r = await run(["task", "--provider", "codex"]); expect(r.err).not.toContain("needs a value"); expect(r.err).toContain("repository"); } finally { process.chdir(cwd); rmSync(plain, { recursive: true, force: true }); }
+  });
+  test("max-cost prefix lookalikes are unknown flags, exact and = forms still parse", async () => {
+    for (const f of ["--max-costly", "--max-cost5"]) {
+      const r = await run(["task", f]);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(`unknown flag ${f}`);
+    }
+    const cwd = process.cwd(), plain = mkdtempSync(join(tmpdir(), "e10-mc-")); writeFileSync(join(plain, "f"), "x");
+    process.chdir(plain);
+    try { for (const a of [["task", "--max-cost", "5"], ["task", "--max-cost=5"]]) { const r = await run(a); expect(r.err).not.toContain("unknown flag"); expect(r.err).toContain("repository"); } } finally { process.chdir(cwd); rmSync(plain, { recursive: true, force: true }); }
+  });
+  test("-- ends options and a bullet-style task body is not a flag", async () => {
+    const cwd = process.cwd(), plain = mkdtempSync(join(tmpdir(), "e10-uf-")); writeFileSync(join(plain, "f"), "x");
+    process.chdir(plain); // a non-empty dir with no repo: parsing passes, then main stops at the repo check, so no run starts
+    try {
+      for (const a of [["--", "-weird"], ["--", "--dry-run"], ["- item one\n- item two"]]) { const r = await run(a); expect(r.err).not.toContain("unknown flag"); expect(r.err).toContain("repository"); }
+    } finally { process.chdir(cwd); rmSync(plain, { recursive: true, force: true }); }
+  });
+});
+
 describe("implement stage reads the run snapshot", () => {
   test("the edited criterion reaches the real implement session brief", async () => {
     const { implementStage } = await import("../../src/engine10/stages/implement.ts");
