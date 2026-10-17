@@ -21,7 +21,7 @@ r.start();`;
 });
 
 // Q18-08: runGroup reports a non-decomposable DAG (checkDecomposable, D61-09) after writing dag.json and still runs.
-async function decomposeRun(dag: Dag): Promise<{ err: string; launched: number }> {
+async function decomposeRun(dag: Dag, lines: (gid: string) => string = () => ""): Promise<{ err: string; launched: number }> {
   const repo = mkdtempSync(join(tmpdir(), "q18-08-"));
   try {
     const sh = (a: string[]): void => {
@@ -34,7 +34,7 @@ async function decomposeRun(dag: Dag): Promise<{ err: string; launched: number }
     sh(["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
     let err = "", launched = 0;
     const seal = { receiptSha256: (() => "") as never, verifyReceipt: (async () => ({ verdict: "NOT_PROVEN", reasons: [] })) as never };
-    await runGroup(async () => { launched++; return { code: 1, stdout: "" }; }, dag,
+    await runGroup(async (argv, _e, _c, onOut) => { launched++; onOut?.(lines(argv[argv.indexOf("--group") + 1]!)); return { code: 1, stdout: "" }; }, dag,
       { task: "t", repoDir: repo, env: { LOKI_PROVIDER: "claude" } as NodeJS.ProcessEnv, provider: "claude", spec: "- a\n- b\n", specPath: null, seal, say: (s: string) => { err += s; } });
     return { err, launched };
   } finally { rmSync(repo, { recursive: true, force: true }); }
@@ -52,4 +52,12 @@ test("independent DAG prints no decomposability warning", async () => {
   const r = await decomposeRun({ units: [unit("u1", ["src/a.ts"]), unit("u2", ["src/b.ts"])], sharedFiles: [], edges: [] });
   expect(r.err).not.toContain("not decomposable");
   expect(r.launched).toBe(1);
+});
+
+// Q18-11: backlog launcher output drives group.started/group.unit and the unit lines.
+test("runGroup renders a unit line per backlog status from the launcher output callback", async () => {
+  const r = await decomposeRun({ units: [unit("u1", ["src/a.ts"]), unit("u2", ["src/b.ts"])], sharedFiles: [], edges: [] },
+    (g) => `backlog: unit-${g}-1 VERIFIED\nbacklog: unit-${g}-2 FAILED: boom\n`);
+  expect(r.err).toContain("unit u1 done verified");
+  expect(r.err).toContain("unit u2 failed failed");
 });

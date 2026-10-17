@@ -22,6 +22,7 @@ import { REPO_ROOT } from "../../util/paths.ts";
 import { discoverCommands } from "../../runner/repo_profile.ts";
 import { checkDecomposable } from "./decompose_check.ts";
 import { buildRepoMap } from "../../engine10/repomap.ts";
+import { createGroupFeed, createGroupRenderer } from "./group_output.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
 
 /** Seal and verify functions, injected by the caller outside features/ (D66 fence: features/ never value-imports seal or verify_cmd). */
@@ -32,7 +33,7 @@ export const NOT_PROVEN = 4;
 
 export interface BacklogRun { code: number; stdout: string }
 /** argv is the full python3 argument list after the interpreter; env is already scoped. */
-export type BacklogLauncher = (argv: string[], env: NodeJS.ProcessEnv, cwd: string) => Promise<BacklogRun>;
+export type BacklogLauncher = (argv: string[], env: NodeJS.ProcessEnv, cwd: string, onOut?: (chunk: string) => void) => Promise<BacklogRun>;
 
 const ENV_KEEP = /^(PATH|HOME|TMPDIR|LANG|LC_ALL|CI|SSH_AUTH_SOCK|GH_TOKEN|GITHUB_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|OPENAI_API_KEY|LOKI_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+)$/;
 export function scopedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -42,10 +43,10 @@ export function scopedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
-const defaultLauncher: BacklogLauncher = (argv, env, cwd) => new Promise((resolve) => {
+const defaultLauncher: BacklogLauncher = (argv, env, cwd, onOut) => new Promise((resolve) => {
   const child = spawn("python3", argv, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
-  child.stdout.on("data", (b: Buffer) => { out += b.toString(); process.stderr.write(b); });
+  child.stdout.on("data", (b: Buffer) => { out += b.toString(); onOut?.(b.toString()); process.stderr.write(b); });
   child.stderr.on("data", (b: Buffer) => { process.stderr.write(b); });
   child.on("error", (e) => resolve({ code: 127, stdout: out + String(e) }));
   child.on("close", (c) => resolve({ code: c ?? 1, stdout: out }));
@@ -224,7 +225,8 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     const n = Math.min(slots, pending);
     say(`loki: group ${groupId}: ${units.length} units, ${n} parallel slot(s) (provider ${provider})\n`);
     const backlog = join(REPO_ROOT, "autonomy", "lib", "backlog.py");
-    const res = await run([backlog, slug, "--dag", dagPath, "--group", groupId, "--slots", String(n), "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir);
+    const feed = createGroupFeed(groupId, units, createGroupRenderer({ write: say, isTTY: false })); // plain per-unit lines; a TTY repaint needs a raw stderr writer
+    const res = await run([backlog, slug, "--dag", dagPath, "--group", groupId, "--slots", String(n), "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir, (c) => feed.feed(c));
     launchCode = res.code;
     // backlog prints `backlog: unit-<group>-<n> <status>`; a unit passed only when its status is VERIFIED or a PR url. Anything else is a fail.
     for (const m of res.stdout.matchAll(/^backlog: (unit-\S+) (VERIFIED|PR \S+|FAILED.*|BLOCKED.*|BUDGET_STOP.*|SKIPPED.*)$/gm)) status.set(m[1]!, m[2]!);
