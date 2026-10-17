@@ -763,3 +763,22 @@ describe("start --dry-run (TEN-UX-45)", () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
+
+describe("duplicate flag (TEN-UX-56)", () => {
+  it("duplicate flag: a repeated single-value flag exits 2 naming the flag", () => {
+    for (const argv of [["./a.md", "--budget-limit", "1", "--budget-limit", "50"], ["./a.md", "--provider", "claude", "--provider=codex"], ["./a.md", "--budget=1", "--budget=2"]]) {
+      const e: string[] = [];
+      expect(parseStartArgs(argv, (s) => e.push(s), () => {}, () => {})).toBe(2);
+      expect(e.join("")).toContain("more than once");
+    }
+  });
+  it("duplicate flag: single use and repeated booleans unchanged", () => {
+    const noop = () => {};
+    expect(typeof parseStartArgs(["./a.md", "--budget-limit", "5", "--yes", "--yes"], noop, noop, noop)).toBe("object");
+  });
+  it("duplicate flag: real entry (cli.ts start) exits 2", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--budget-limit", "1", "--budget-limit", "50"], { encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("more than once");
+  });
+});
