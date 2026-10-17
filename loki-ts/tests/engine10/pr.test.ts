@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts";
+import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { findInterrupted, phaseOf, resumeMain, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -511,5 +511,103 @@ describe("RECOVERY: interrupted run resume", () => {
     expect(prCalls).toBe(0);
     expect(await startRecovery(repo, "fix the bug", false, { runPr, out: say })).toBe(0);
     expect(prCalls).toBe(1);
+  });
+});
+
+describe("TEN-ADOPTION-09 gitlab.com origin routes to engine10-push-gitlab.sh push-mr", () => {
+  const GL_ORIGIN = "https://gitlab.com/grp/sub/proj.git";
+  const MR_URL = "https://gitlab.com/grp/sub/proj/-/merge_requests/7";
+  /** A fake engine10-push-gitlab.sh: logs mode, args and the pin env to its own log, prints printUrl for push-mr. */
+  function writeGlStub(printUrl: string = MR_URL): { script: string; log: string } {
+    const script = join(stubDir, "push-gl-stub.sh"), log = join(stubDir, "gl.log");
+    writeFileSync(script, `#!/bin/sh\nmode="$1"; shift\nprintf 'GL mode=%s args=%s pinned=%s origin=%s\\n' "$mode" "$*" "\${_LOKI_ORIGIN_PINNED:-}" "\${_LOKI_PINNED_ORIGIN:-}" >> "${log}"\n[ "$mode" = push-mr ] && echo "${printUrl}"\nexit 0\n`, { mode: 0o755 });
+    return { script, log };
+  }
+  const glLog = (p: string): string => (existsSync(p) ? readFileSync(p, "utf8") : "");
+  const freshRunDir = (): string => mkdtempSync(join(stubDir, "run-")); // one outbox per run, so a loop never replays a recorded push
+
+  test("a gitlab.com pin calls push-mr (never the GitHub push script) and records the MR URL", async () => {
+    const gh = writeStub(stubDir, logPath), gl = writeGlStub();
+    const { ctx, emitted } = makeCtx(repoDir, runDir, { verdict: "PARTIAL", pinnedOrigin: GL_ORIGIN });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: gh, gitlabPushScriptPath: gl.script });
+    expect(result.status).toBe("completed");
+    expect(result.data.pr_url).toBe(MR_URL);
+    expect(result.data.existing).toBeNull();
+    expect(result.data.not_proven).toEqual(["commit status loki/deep-verify not set (gitlab origin)"]);
+    expect(emitted[0]).toEqual({ type: "pr.opened", stage: "pr", data: { url: MR_URL, draft: true, existing: null } });
+    expect(glLog(gl.log)).toContain(`GL mode=push-mr args=${ctx.repoDir} ${ctx.branch} Loki 10: PARTIAL (e10-test-run) ${runDir}/pr-body.md --draft pinned=1 origin=${GL_ORIGIN}`);
+    expect(readLog()).toBe(""); // neither push-pr nor the GitHub status call ran
+  });
+
+  test("ssh and upper-case forms route too; VERIFIED passes no --draft", async () => {
+    for (const origin of ["git@gitlab.com:grp/proj.git", "ssh://git@gitlab.com/grp/proj.git", "HTTPS://GITLAB.COM/grp/proj"]) {
+      rmSync(join(stubDir, "gl.log"), { force: true });
+      const gl = writeGlStub("https://gitlab.com/grp/proj/-/merge_requests/1");
+      const { ctx } = makeCtx(repoDir, freshRunDir(), { verdict: "VERIFIED", pinnedOrigin: origin });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath), gitlabPushScriptPath: gl.script });
+      expect(result.data.pr_url).toBe("https://gitlab.com/grp/proj/-/merge_requests/1");
+      expect(glLog(gl.log)).toContain("GL mode=push-mr");
+      expect(glLog(gl.log)).not.toContain("--draft");
+    }
+    expect(readLog()).toBe("");
+  });
+
+  test("a GitHub PR URL, another host, a one-segment path or a non-URL line is refused, no pr.opened", async () => {
+    for (const bad of [PR_URL, "https://gitlab.example.com/grp/proj/-/merge_requests/7", "https://gitlab.com/proj/-/merge_requests/7", "https://gitlab.com/grp/proj/-/merge_requests/7x", "Creating merge request"]) {
+      const gl = writeGlStub(bad);
+      const { ctx, emitted } = makeCtx(repoDir, freshRunDir(), { pinnedOrigin: GL_ORIGIN });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath), gitlabPushScriptPath: gl.script });
+      expect(result.status).toBe("failed");
+      expect(result.reason).toContain("printed no valid MR URL");
+      expect(emitted).toEqual([]);
+    }
+  });
+
+  test("a look-alike host (gitlab.com.evil.example) stays on the GitHub script path", async () => {
+    const gh = writeStub(stubDir, logPath), gl = writeGlStub();
+    const { ctx } = makeCtx(repoDir, runDir, { pinnedOrigin: "https://gitlab.com.evil.example/grp/proj.git" });
+    await runPr(ctx, new AbortController().signal, { pushScriptPath: gh, gitlabPushScriptPath: gl.script });
+    expect(readLog()).toContain("CALL mode=push-pr");
+    expect(glLog(gl.log)).toBe("");
+  });
+
+  test("LOKI_PR_BASE with a gitlab origin fails closed before any push", async () => {
+    const prev = process.env.LOKI_PR_BASE; process.env.LOKI_PR_BASE = "loki/epic-1";
+    try {
+      const gl = writeGlStub();
+      const { ctx } = makeCtx(repoDir, runDir, { pinnedOrigin: GL_ORIGIN });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath), gitlabPushScriptPath: gl.script });
+      expect(result.status).toBe("failed");
+      expect(result.reason).toContain("has no --base");
+      expect(glLog(gl.log)).toBe("");
+    } finally { if (prev === undefined) delete process.env.LOKI_PR_BASE; else process.env.LOKI_PR_BASE = prev; }
+  });
+
+  test("end to end through the real engine10-push-gitlab.sh: the branch lands and the MR URL is recorded", async () => {
+    const gl = join(stubDir, "gl"), bin = join(stubDir, "bin"), gcfg = join(stubDir, "gitconfig"), glabLog = join(stubDir, "glab.log");
+    mkdirSync(join(gl, "grp/sub"), { recursive: true }); mkdirSync(bin);
+    execFileSync("git", ["init", "-q", "--bare", join(gl, "grp/sub/proj.git")]);
+    writeFileSync(gcfg, `[url "${gl}/"]\n\tinsteadOf = https://gitlab.com/\n`);
+    writeFileSync(join(bin, "glab"), `#!/bin/sh\necho "$*" >> "${glabLog}"\ncase "$1 $2" in\n  "api projects/grp%2Fsub%2Fproj") echo '{"default_branch":"main"}' ;;\n  "mr list") echo '[]' ;;\n  "mr create") echo "Creating merge request"; echo "${MR_URL}" ;;\nesac\nexit 0\n`, { mode: 0o755 });
+    git(repoDir, ["branch", "loki/e10-test-run"]);
+    git(repoDir, ["remote", "add", "origin", GL_ORIGIN]);
+    const keys = ["PATH", "GIT_CONFIG_GLOBAL", "GIT_ALLOW_PROTOCOL", "GIT_TERMINAL_PROMPT"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, GIT_CONFIG_GLOBAL: gcfg, GIT_ALLOW_PROTOCOL: "file", GIT_TERMINAL_PROMPT: "0" });
+    try {
+      const { ctx, emitted } = makeCtx(repoDir, runDir, { verdict: "VERIFIED", pinnedOrigin: GL_ORIGIN });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(result.reason).toBeUndefined();
+      expect(result.data.pr_url).toBe(MR_URL);
+      expect(emitted[0]?.data.url).toBe(MR_URL);
+      expect(readFileSync(glabLog, "utf8")).toContain("mr create --repo grp/sub/proj --source-branch loki/e10-test-run");
+      const landed = execFileSync("git", ["--git-dir", join(gl, "grp/sub/proj.git"), "rev-parse", "refs/heads/loki/e10-test-run"], { encoding: "utf8" }).trim();
+      expect(landed).toBe(execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+      expect(readLog()).toBe("");
+    } finally { keys.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; }); }
+  });
+
+  test("the default GitLab push script path exists", () => {
+    expect(existsSync(DEFAULT_PUSH_GITLAB_SH)).toBe(true);
   });
 });
