@@ -40,6 +40,21 @@ test("PEM private key blocks are redacted, including multi-line and truncated", 
   expect(redactSecrets("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----")).toBe("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----");
 });
 
+test("vendor tokens", () => {
+  const sg = "SG." + "a".repeat(22) + "." + "b".repeat(43);
+  const tw = "SK" + "0123456789abcdef".repeat(2);
+  const dk = "dckr_pat_" + "A1_-".repeat(6);
+  const dop = "dop_v1_" + "ab12".repeat(16);
+  const ya = "ya29." + "a0Af_-".repeat(5);
+  expect(redactSecrets(`k=${sg} x`)).toBe("k=[REDACTED:SENDGRID_KEY] x");
+  expect(redactSecrets(`k=${tw} x`)).toBe("k=[REDACTED:TWILIO_KEY] x");
+  expect(redactSecrets(`k=${dk} x`)).toBe("k=[REDACTED:DOCKER_TOKEN] x");
+  expect(redactSecrets(`k=${dop} x`)).toBe("k=[REDACTED:DIGITALOCEAN_TOKEN] x");
+  expect(redactSecrets(`k=${ya} x`)).toBe("k=[REDACTED:GOOGLE_OAUTH_TOKEN] x");
+  const near = ["SG.short.tok", "SK" + "0".repeat(31), "SK" + "0".repeat(33), "xSK" + "0".repeat(32), "dckr_pat_abc", "dop_v1_" + "a".repeat(63), "dop_v1_" + "g".repeat(64), "ya29.short", "ya29"];
+  for (const m of near) expect(redactSecrets(m)).toBe(m);
+});
+
 test("existing redactions unchanged", () => {
   expect(redactSecrets("sk-ant-" + "a".repeat(24))).toBe("[REDACTED:ANTHROPIC_KEY]");
   expect(redactSecrets("Bearer " + "a".repeat(24))).toBe("Bearer [REDACTED]");
