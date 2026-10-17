@@ -1,6 +1,6 @@
 // CLI-MODERN-2: `loki status` on the Loki 10 engine. Reads only .loki/runs/<id>/events.jsonl (the
 // engine's own record), never STATUS.txt or any legacy state.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { fold, readEvents } from "../engine10/events.ts";
@@ -90,17 +90,18 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
   };
 }
 
-/** The live run if one is recent, else the newest run; null when there are none. */
-export function pickRun(root: string, nowMs: number): { id: string; events: EventEnvelope[] } | null {
-  const ids = listRunIds(root).reverse();
-  let newest: { id: string; events: EventEnvelope[] } | null = null;
-  for (const id of ids) {
-    const events = readEvents(eventsPath(root, id));
-    if (events.length === 0) continue;
-    newest ??= { id, events };
-    if (!events.some((e) => e.type === "run.completed") && nowMs - lastTs(events) <= STALE_S * 1000) return { id, events };
+/** The live run if one is recent, else the newest run; null when there are none. Runs are ordered by events.jsonl mtime and only the newest non-empty file is read (a live run always has the newest mtime). */
+export function pickRun(root: string, _nowMs: number): { id: string; events: EventEnvelope[] } | null {
+  const ranked: Array<{ id: string; mtime: number }> = [];
+  for (const id of listRunIds(root)) {
+    try { ranked.push({ id, mtime: statSync(eventsPath(root, id)).mtimeMs }); } catch { /* no events file */ }
   }
-  return newest;
+  ranked.sort((x, y) => y.mtime - x.mtime || (x.id < y.id ? 1 : -1));
+  for (const { id } of ranked) {
+    const events = readEvents(eventsPath(root, id));
+    if (events.length > 0) return { id, events };
+  }
+  return null;
 }
 
 export function render(s: ModernStatus): string {

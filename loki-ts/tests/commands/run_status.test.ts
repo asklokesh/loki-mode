@@ -1,6 +1,6 @@
 // CLI-MODERN-2: `loki status` shows Loki 10 runs and never the legacy box.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
@@ -426,5 +426,24 @@ describe("loki pause|cancel dead supervisor (TEN-STABILITY-22)", () => {
     try { expect(runControlVerb("pause", env(), dir)).toBe(0); } finally { process.stdout.write = oo; }
     expect(readRunControl(liveDir)).toBe("pause");
     expect(readRunControl(deadDir)).toBeNull();
+  });
+});
+
+describe("pickRun mtime", () => {
+  test("pickRun mtime: newest events.jsonl wins over the lexically latest id", async () => {
+    writeRun("e10-20261003T000000Z-zzzz", { done: true });
+    writeRun("e10-20261001T000000Z-aaaa", { done: true });
+    const old = new Date(Date.now() - 3600_000);
+    utimesSync(join(dir, ".loki", "runs", "e10-20261003T000000Z-zzzz", "events.jsonl"), old, old);
+    const { out } = await run([]);
+    expect(out).toContain("e10-20261001T000000Z-aaaa");
+    expect(out).not.toContain("e10-20261003T000000Z-zzzz");
+  });
+
+  test("pickRun mtime: a run dir without events is skipped", async () => {
+    writeRun("e10-20261001T000000Z-aaaa", { done: true });
+    mkdirSync(join(dir, ".loki", "runs", "e10-20261005T000000Z-bbbb"), { recursive: true });
+    const { out } = await run([]);
+    expect(out).toContain("e10-20261001T000000Z-aaaa");
   });
 });
