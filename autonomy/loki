@@ -1904,6 +1904,9 @@ show_help_all() {
     echo "  --openspec PATH      Use OpenSpec change directory as input"
     echo "  --config PATH    Load settings from a config file (.yaml/.json/.env). Alias: --env-file, --vars"
     echo "                   Precedence: CLI flag > env var > --config file > defaults. Secrets via \${VAR}."
+    echo "  --deploy         After a start that exits 0, run the gated loki deploy --execute. Deploy flags: --destination preview|staging|production,"
+    echo "                   --canary, --env-file FILE (deploy env, not config, with --deploy), --domain HOST, --github (publish after deploy),"
+    echo "                   --health-url URL, --health-match STR, --auto-rollback"
     echo ""
     echo "Deprecated alias 'run': 'loki run <issue-ref>' still works as an alias"
     echo "for 'loki start'. See its options with 'loki run --help'."
@@ -2644,8 +2647,31 @@ cmd_start() {
     # that ended 0. cmd_deploy owns every gate: no VERIFIED HEAD-anchored
     # receipt means a refusal, never a deploy.
     local _ps_ws="" _ps_deploy=0 _ps_health="" _ps_hmatch="" _ps_rb=0 _ps_rest=() _ps_brief=() _ps_a
+    local _ps_dest="" _ps_canary=0 _ps_envf="" _ps_domain="" _ps_gh=0 _ps_dep_in=0
+    # --env-file and --github already mean config alias and issue sync for a plain
+    # start; they are deploy flags only when --deploy is on the line.
+    for _ps_a in "$@"; do [ "$_ps_a" = "--deploy" ] && _ps_dep_in=1; done
     while [ $# -gt 0 ]; do
         case "$1" in
+            --destination)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--destination requires preview, staging or production${NC}" >&2; exit 2; }
+                _ps_dest="$2"; shift 2 ;;
+            --destination=*) _ps_dest="${1#*=}"; shift ;;
+            --domain)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--domain requires a hostname${NC}" >&2; exit 2; }
+                _ps_domain="$2"; shift 2 ;;
+            --domain=*) _ps_domain="${1#*=}"; shift ;;
+            --env-file)
+                if [ "$_ps_dep_in" != 1 ]; then _ps_rest+=("$1"); shift; continue; fi
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--env-file requires a file path${NC}" >&2; exit 2; }
+                _ps_envf="$2"; shift 2 ;;
+            --env-file=*)
+                if [ "$_ps_dep_in" = 1 ]; then _ps_envf="${1#*=}"; else _ps_rest+=("$1"); fi
+                shift ;;
+            --canary) _ps_canary=1; shift ;;
+            --github)
+                if [ "$_ps_dep_in" = 1 ]; then _ps_gh=1; else _ps_rest+=("$1"); fi
+                shift ;;
             --workspace)
                 [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--workspace requires a workspace name${NC}" >&2; exit 2; }
                 _ps_ws="$2"; shift 2 ;;
@@ -2663,8 +2689,8 @@ cmd_start() {
             *) _ps_rest+=("$1"); shift ;;
         esac
     done
-    if { [ -n "$_ps_health" ] || [ -n "$_ps_hmatch" ] || [ "$_ps_rb" = 1 ]; } && [ "$_ps_deploy" != 1 ]; then
-        echo -e "${RED}--health-url, --health-match and --auto-rollback apply only with --deploy${NC}" >&2
+    if { [ -n "$_ps_health" ] || [ -n "$_ps_hmatch" ] || [ "$_ps_rb" = 1 ] || [ -n "$_ps_dest" ] || [ "$_ps_canary" = 1 ] || [ -n "$_ps_domain" ]; } && [ "$_ps_deploy" != 1 ]; then
+        echo -e "${RED}--health-url, --health-match, --auto-rollback, --destination, --canary and --domain apply only with --deploy${NC}" >&2
         exit 2
     fi
     if [ -n "$_ps_ws" ]; then
@@ -2708,8 +2734,17 @@ cmd_start() {
         [ -n "$_ps_health" ] && _ps_dargs+=(--health-url "$_ps_health")
         [ -n "$_ps_hmatch" ] && _ps_dargs+=(--health-match "$_ps_hmatch")
         [ "$_ps_rb" = 1 ] && _ps_dargs+=(--auto-rollback)
-        cmd_deploy "${_ps_dargs[@]}"
-        return $?
+        [ -n "$_ps_dest" ] && _ps_dargs+=(--destination "$_ps_dest")
+        [ "$_ps_canary" = 1 ] && _ps_dargs+=(--canary)
+        [ -n "$_ps_envf" ] && _ps_dargs+=(--env-file "$_ps_envf")
+        [ -n "$_ps_domain" ] && _ps_dargs+=(--domain "$_ps_domain")
+        local _ps_drc=0
+        cmd_deploy "${_ps_dargs[@]}" || _ps_drc=$?
+        if [ "$_ps_drc" -ne 0 ]; then return "$_ps_drc"; fi
+        if [ "$_ps_gh" = 1 ]; then
+            ( cmd_github publish ) || _ps_drc=$?
+        fi
+        return "$_ps_drc"
     fi
     # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
     # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
@@ -2841,6 +2876,11 @@ cmd_start() {
                 echo "  --quiet               Suppress [INFO]/[STEP]; warnings and errors still print"
                 echo "  --log-level LEVEL     debug | info | warn | error (default: info)"
                 echo "  --max-duration DUR    Wall-clock cap: seconds, or 90m / 2h (default: none)"
+                echo "  --deploy              After a start that exits 0, run the gated loki deploy --execute. Deploy flags:"
+                echo "                        --destination preview|staging|production, --canary, --domain HOST,"
+                echo "                        --env-file FILE (the deploy env file, not config, when --deploy is set),"
+                echo "                        --health-url URL, --health-match STR, --auto-rollback,"
+                echo "                        and, with --deploy, the flag --github runs loki github publish after a good deploy"
                 echo ""
                 echo "Issue-mode options (used when input is an ISSUE-REF or a --brief):"
                 echo "  --dry-run             Preview generated PRD without starting"
@@ -22168,7 +22208,12 @@ main() {
 
     case "$command" in
         start|run|quick)
-            if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
+            # `start --deploy --env-file F` means the deploy env file, not a config file.
+            local _cfg_a _cfg_skip=0
+            if [ "$command" = start ]; then
+                for _cfg_a in "$@"; do [ "$_cfg_a" = "--deploy" ] && _cfg_skip=1; done
+            fi
+            if [ "$_cfg_skip" = 0 ] && declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
                 loki_maybe_apply_config_file "$@"
             fi
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print

@@ -76,3 +76,6 @@
 --health-url | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
 --health-match | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
 --auto-rollback | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
+--destination | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
+--canary | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
+--domain | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
