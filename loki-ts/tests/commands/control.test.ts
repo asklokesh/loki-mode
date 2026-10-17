@@ -47,6 +47,31 @@ describe("loki control status runs count", () => {
   });
 });
 
+describe("loki control status json", () => {
+  test("status json up: one object with running pid port url runs", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    expect(await runControl(["status", "--json"], env)).toBe(0);
+    expect(JSON.parse(out)).toEqual({ running: true, pid: 1, port: 1, url: "http://127.0.0.1:1", runs: 3 });
+  });
+  test("status json runs unknown is null, never 0", async () => {
+    stub(() => new Response("boom", { status: 500 }));
+    await runControl(["status", "--json"], env);
+    expect(JSON.parse(out).runs).toBeNull();
+  });
+  test("status json down: running false, exit 1, valid JSON", async () => {
+    globalThis.fetch = (async () => { throw new Error("refused"); }) as unknown as typeof fetch;
+    expect(await runControl(["status", "--json"], env)).toBe(1);
+    const j = JSON.parse(out);
+    expect(j.running).toBe(false);
+    expect(j.pid).toBeNull();
+  });
+  test("status without --json text output unchanged", async () => {
+    stub(() => new Response(JSON.stringify({ total: 3 })));
+    await runControl(["status"], env);
+    expect(out).toBe("loki control: up at http://127.0.0.1:1 (pid 1), 3 runs\n");
+  });
+});
+
 describe("loki control stop", () => {
   let home = "";
   let child: ChildProcess | undefined;
@@ -111,5 +136,34 @@ describe("loki control stop", () => {
       }
     } finally { process.kill = realKill; }
     expect(sent).not.toContain("SIGTERM");
+  });
+});
+
+describe("loki control serve flag values", () => {
+  let err = "";
+  let realErr: typeof process.stderr.write;
+  beforeEach(() => {
+    err = "";
+    realErr = process.stderr.write;
+    process.stderr.write = ((s: string | Uint8Array) => { err += String(s); return true; }) as typeof process.stderr.write;
+  });
+  afterEach(() => { process.stderr.write = realErr; });
+  const e = { LOKI_CONTROL_PORT: "" } as NodeJS.ProcessEnv;
+  test("port without value exits 2 with usage", async () => {
+    expect(await runControl(["serve", "--port"], e)).toBe(2);
+    expect(err).toContain("--port needs a value");
+    expect(err).toContain("Usage: loki control serve");
+  });
+  test("port followed by another flag exits 2", async () => {
+    expect(await runControl(["serve", "--port", "--db", "x"], e)).toBe(2);
+    expect(err).toContain("--port needs a value");
+  });
+  test("db without value exits 2", async () => {
+    expect(await runControl(["serve", "--db"], e)).toBe(2);
+    expect(err).toContain("--db needs a value");
+  });
+  test("non-numeric port exits 2", async () => {
+    expect(await runControl(["serve", "--port", "abc"], e)).toBe(2);
+    expect(err).toContain("invalid --port abc");
   });
 });
