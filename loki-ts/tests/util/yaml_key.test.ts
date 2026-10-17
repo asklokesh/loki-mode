@@ -28,6 +28,13 @@ describe("yamlKey", () => {
     expect(yamlKey("budgets:\n  run_cap_s:\n", "budgets", "run_cap_s")).toBeNull();
     expect(yamlKey("x: 1\n", "budgets", "run_cap_s")).toBeNull();
   });
+  test("flow style map is read", () => {
+    expect(yamlKey("budgets: { per_run: 5, run_cap_s: 900 }\n", "budgets", "per_run")).toBe("5");
+    expect(yamlKey("budgets: {per_run: 5, run_cap_s: '900'} # c\n", "budgets", "run_cap_s")).toBe("900");
+    expect(yamlKey("budgets: { per_run_x: 5 }\n", "budgets", "per_run")).toBeNull();
+    expect(yamlKey("budgets: { note: 'a,per_run: 9', per_run: 5 }\n", "budgets", "per_run")).toBe("5");
+    expect(yamlKey("budgets: { }\n", "budgets", "per_run")).toBeNull();
+  });
   test("a key that merely shares a prefix does not match", () => {
     expect(yamlKey("budgets:\n  run_cap_s_extra: 5\n", "budgets", "run_cap_s")).toBeNull();
   });
