@@ -1174,6 +1174,110 @@ CEOF
         rm -f "$FAKE_BIN/curl"
         fi
     fi
+
+    # 28. --env-file: KEY=VALUE pushed through the provider's documented verb as
+    # argv elements (never a shell), names-only record, values masked everywhere.
+    echo "28. loki deploy --env-file pushes env by name, never stores or prints values"
+    ENVS="$WORKROOT/envs"; mkdir -p "$ENVS"
+    mk_envfix() {  # <name> [.env.example content] ; signed nextjs fixture, example committed
+        local n="$1" ex="${2:-}" b d
+        b="$(make_fixture "$n")"; d="$WORKROOT/$n"
+        if [ -n "$ex" ]; then
+            printf '%s\n' "$ex" > "$d/.env.example"
+            git -C "$d" add .env.example
+            git -C "$d" commit -qm "env example"
+        fi
+        ( cd "$d" && _LOKI_RUN_START_SHA="$b" \
+            python3 "$GENERATOR" --loki-dir "$d/.loki" >/dev/null 2>&1 )
+    }
+    cat > "$FAKE_BIN/vercel" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$SENTINEL_DIR/vercel-argv"
+echo "deployed"
+exit 0
+EOF
+    chmod +x "$FAKE_BIN/vercel"
+    argv_line() { tr '\n' ' ' < "$SENTINEL_DIR/vercel-argv" 2>/dev/null; }
+    printf 'API_URL=x\n# a comment\nexport TOKEN="s3cr3t"\n' > "$ENVS/good.env"
+
+    # 28a. GREEN: argv carries -e K=V per key; s3cr3t is in no output and no record
+    mk_envfix d28a "API_URL=
+TOKEN="; D28A="$WORKROOT/d28a"
+    reset_sentinels
+    OUT28A="$(run_h "$D28A" --execute --env-file "$ENVS/good.env")"; RC28A=$?
+    R28A="$(last_record "$D28A")"
+    if [ "$RC28A" -eq 0 ] && [ "$(argv_line)" = "--prod -e API_URL=x -e TOKEN=s3cr3t " ]; then
+        ok "28a. vercel argv is '--prod -e API_URL=x -e TOKEN=s3cr3t'"
+    else
+        bad "28a. env not passed as -e argv" "rc=$RC28A argv=$(argv_line) $(printf '%s' "$OUT28A" | tail -4)"
+    fi
+    if [ -n "$R28A" ] && ! grep -q "s3cr3t" <<<"$OUT28A" && ! grep -q "s3cr3t" "$R28A" \
+       && grep -q "TOKEN=\*\*\*" <<<"$OUT28A" \
+       && [ "$(rec_field "$R28A" env_keys)" = "['API_URL', 'TOKEN']" ] \
+       && [ "$(rec_field "$R28A" env_source)" = "$(cd "$ENVS" && pwd -P)/good.env" ]; then
+        ok "28a. s3cr3t absent from stdout, stderr and the record; env_keys=[API_URL,TOKEN]; Running line masks K=***"
+    else
+        bad "28a. a value leaked or env_keys wrong" "rec=$R28A keys=$( [ -n "$R28A" ] && rec_field "$R28A" env_keys)"
+    fi
+
+    # 28b. a key listed in .env.example but missing from the env file refuses, names it, runs nothing
+    mk_envfix d28b "API_URL=
+DB_URL=
+TOKEN="; D28B="$WORKROOT/d28b"
+    reset_sentinels
+    OUT28B="$(run_h "$D28B" --execute --env-file "$ENVS/good.env")"; RC28B=$?
+    if [ "$RC28B" -eq 1 ] && [ "$(any_sentinel)" -eq 0 ] && grep -q "DB_URL" <<<"$OUT28B" \
+       && ! grep -q "API_URL, DB_URL\|TOKEN, DB_URL" <<<"$OUT28B" && ! grep -q "s3cr3t" <<<"$OUT28B"; then
+        ok "28b. missing .env.example key refuses rc 1, names only DB_URL, no stub call"
+    else
+        bad "28b. missing key did not refuse cleanly" "rc=$RC28B sentinels=$(any_sentinel) $(printf '%s' "$OUT28B" | tail -3)"
+    fi
+
+    # 28c. a value that looks like a command substitution is passed literally, never run
+    # shellcheck disable=SC2016
+    printf 'PAYLOAD=$(touch pwned)\nTICK=`touch pwned2`\n' > "$ENVS/evil.env"
+    mk_envfix d28c; D28C="$WORKROOT/d28c"
+    reset_sentinels
+    _="$(run_h "$D28C" --execute --env-file "$ENVS/evil.env")"; RC28C=$?
+    # shellcheck disable=SC2016
+    if [ "$RC28C" -eq 0 ] && [ ! -e "$D28C/pwned" ] && [ ! -e "$WORKROOT/pwned" ] && [ ! -e "$D28C/pwned2" ] \
+       && grep -qF 'PAYLOAD=$(touch pwned)' "$SENTINEL_DIR/vercel-argv"; then
+        ok "28c. a \$(touch pwned) value reaches argv literally and creates no file"
+    else
+        bad "28c. an env value was shell-evaluated" "rc=$RC28C argv=$(argv_line)"
+    fi
+
+    # 28d. --env-file without --execute refuses; a missing file and a malformed line refuse
+    reset_sentinels
+    _="$(run_h "$D28C" --env-file "$ENVS/good.env")"; RC28D=$?
+    _="$(run_h "$D28C" --execute --env-file "$ENVS/nope.env")"; RC28E=$?
+    printf 'GOOD=1\nnot a pair\n' > "$ENVS/bad.env"
+    OUT28F="$(run_h "$D28C" --execute --env-file "$ENVS/bad.env")"; RC28F=$?
+    if [ "$RC28D" -eq 1 ] && [ "$RC28E" -eq 1 ] && [ "$RC28F" -eq 1 ] && [ "$(any_sentinel)" -eq 0 ] \
+       && grep -q "line 2 is not KEY=VALUE" <<<"$OUT28F"; then
+        ok "28d. no --execute, a missing file, or a malformed line refuses rc 1 and runs nothing"
+    else
+        bad "28d. bad --env-file input did not refuse" "rc=$RC28D/$RC28E/$RC28F sentinels=$(any_sentinel)"
+    fi
+
+    # 28e. a provider with no wired env verb refuses --env-file with nothing run
+    ENVFLY="$WORKROOT/envfly-bin"; mkdir -p "$ENVFLY"
+    printf '#!/usr/bin/env bash\necho "FLY-RAN $*" >> "%s/fly-calls"\nexit 0\n' "$SENTINEL_DIR" > "$ENVFLY/fly"
+    cp "$ENVFLY/fly" "$ENVFLY/flyctl"; chmod +x "$ENVFLY/fly" "$ENVFLY/flyctl"
+    D28E_BASE="$(make_fixture d28e)"; D28E="$WORKROOT/d28e"
+    git -C "$D28E" rm -q package.json
+    echo "flask" > "$D28E/requirements.txt"
+    git -C "$D28E" add requirements.txt
+    git -C "$D28E" commit -qm "python app"
+    ( cd "$D28E" && _LOKI_RUN_START_SHA="$D28E_BASE" python3 "$GENERATOR" --loki-dir "$D28E/.loki" >/dev/null 2>&1 )
+    reset_sentinels
+    OUT28E="$( cd "$D28E" && PATH="$ENVFLY:$PATH" LOKI_DIR="$D28E/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+        bash "$LOKI_BIN" deploy --dir "$D28E" --no-clip --execute --env-file "$ENVS/good.env" 2>&1 )"; RC28X=$?
+    if [ "$RC28X" -eq 1 ] && [ "$(any_sentinel)" -eq 0 ] && grep -q "env-file is not supported for: fly deploy" <<<"$OUT28E"; then
+        ok "28e. a provider with no env verb refuses --env-file and runs nothing"
+    else
+        bad "28e. unsupported provider did not refuse --env-file" "rc=$RC28X sentinels=$(any_sentinel) $(printf '%s' "$OUT28E" | tail -3)"
+    fi
     kill "$HS_PID" 2>/dev/null || true
 else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
