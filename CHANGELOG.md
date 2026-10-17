@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.9 (2026-10-17)
+
+v11.17.8 never published: its Tests run (38986362613) was red on 7fc08f186 because the real-run harness fixture receipt did not name the check that Q17-04 pinned. This release ships the v11.17.8 and v11.17.7 content plus the fix and the changes below.
+
+### Fixed
+- Real-run harness test (FC-REALRUN-FIXTURE): the doctored-receipt fixture in tests/test-real-run.sh names the pinned node:sum.test.js check, so the Q17-04 expected-checks pin no longer fails the dry-install scenario.
+- Cost reader (COST-WALL-b, FC-COST-PARTIAL): a run whose main session has tokens but no dollar figure, plus priced child-session ledger lines, is reported as a partial lower bound instead of a complete total.
+- Smart retry (Q17-03): when a verify run has a flaky check and also a different check that really failed, the next attempt revises the code instead of retrying unchanged; flaky alone still retries.
+- Runner config trust (FC-09v): any byte change to pnpm-workspace.yaml or .yarnrc.yml, including add, delete, rename, symlink and nested copies, now caps the verdict below VERIFIED; YAML key comparison is no longer trusted, because parsers disagree on edge-case documents.
+- Git safety (Q18-02): read-only git fetches that carry a token now pin upload-pack and receive-pack and reset repo-local credential helpers, so a cloned repo cannot run its own helper or upload-pack under the token; the user global helper still works.
+
+### Added
+- Test selector (Q18-10): a change to a dashboard or web-app Python API handler selects the shell suites that call its /api routes.
+- `loki start` prints a warning on stderr when a backlog cannot be split into independent parallel units (Q18-08); the run still launches as before.
+- Cost accounting (COST-WALL): council voters, quality-gate reviewers and the SDK judge bridge append one line per real provider call to .loki/metrics/child-sessions.jsonl, and the cost reader adds those lines to the run total; calls with no measured dollar figure are marked partial instead of counted as zero.
+- Control-plane git calls (Q18-01): diffstat, discover and checkpoints run git through safeGit with the hardened flags and a token-free environment, and the FC-25 guard now covers packages/control-plane/src.
+
 ## v11.17.8 (2026-10-17)
 
 v11.17.7 never published: its Tests run was red on e66c51a09 because the Tier A test selector check (FC-89) found the new M-25w modernize producer-coverage test walking all of loki-ts/src without the walk-all-src marker. This release ships the v11.17.7 content plus the fix.
