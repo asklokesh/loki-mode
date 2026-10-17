@@ -1388,6 +1388,125 @@ else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
 fi
 
+
+# ===========================================================================
+# 29. Live binding: the build ships a signed provenance doc and the live URL must serve the
+#     anchor's. A python http.server serves the dir a stubbed vercel copies public/ into.
+#     RED on main: no provenance file and the record has no live_binding.
+# ===========================================================================
+echo "29. provenance ships with the build and the live URL is bound to the verified SHA"
+if [ "${D8S_EXECUTED:-0}" = "1" ]; then
+    LB_SERVE="$WORKROOT/lb-serve"; LB_PORT_FILE="$WORKROOT/lb.port"; mkdir -p "$LB_SERVE"
+    python3 - "$LB_PORT_FILE" "$LB_SERVE" <<'PYEOF' &
+import functools, http.server, socketserver, sys
+class Q(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *a): pass
+srv = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Q, directory=sys.argv[2]))
+open(sys.argv[1], "w").write(str(srv.server_address[1]))
+srv.serve_forever()
+PYEOF
+    LB_PID=$!
+    trap 'kill "$LB_PID" 2>/dev/null || true; cleanup' EXIT INT TERM
+    for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        [ -s "$LB_PORT_FILE" ] && break
+        sleep 0.25
+    done
+    LB_PORT="$(cat "$LB_PORT_FILE" 2>/dev/null || true)"
+
+    # stub vercel: replace the served dir with a copy of public/ (fresh), a prepared older doc (stale) or nothing
+    for mode in fresh stale none; do
+        mkdir -p "$WORKROOT/lb-$mode"
+        cat > "$WORKROOT/lb-$mode/vercel" <<LBEOF
+#!/usr/bin/env bash
+find "$LB_SERVE" -mindepth 1 -delete
+case "$mode" in
+    fresh) cp -R public/. "$LB_SERVE"/ ;;
+    stale) mkdir -p "$LB_SERVE/.well-known"; cp "$WORKROOT/stale-prov.json" "$LB_SERVE/.well-known/loki-provenance.json" ;;
+esac
+echo "http://127.0.0.1:$LB_PORT/"
+exit 0
+LBEOF
+        chmod +x "$WORKROOT/lb-$mode/vercel"
+    done
+    run_lb() {  # <dir> <mode> [flags...]
+        local d="$1" m="$2"; shift 2
+        ( cd "$d" && PATH="$WORKROOT/lb-$m:$FAKE_BIN:$PATH" LOKI_DIR="$d/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+            LOKI_DEPLOY_HEALTH_ATTEMPTS=2 LOKI_DEPLOY_HEALTH_INTERVAL=0 \
+            bash "$LOKI_BIN" deploy --dir "$d" --no-clip --execute "$@" 2>&1 )
+    }
+    lb_rec() { ls -t "$1"/.loki/deploys/*.json 2>/dev/null | head -1; }
+    lb_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$1" "$2"; }
+    lb_fix() { local n="$1" b; b="$(make_fixture "$n")"; ( cd "$WORKROOT/$n" && _LOKI_RUN_START_SHA="$b" python3 "$GENERATOR" --loki-dir "$WORKROOT/$n/.loki" >/dev/null 2>&1 ); }
+
+    # a signed provenance doc for a DIFFERENT (older) SHA, built through the real signer
+    printf '{"head_sha":"%040d","tree_sha":"%040d","receipt_sha256":"aa","run_id":"old","built_at":"2026-01-01T00:00:00Z"}' 1 2 > "$WORKROOT/stale-prov.json"
+    bash "$LOKI_BIN" verify --sign-provenance "$WORKROOT/stale-prov.json" >/dev/null 2>&1
+
+    if [ -z "$LB_PORT" ]; then
+        bad "29. stub live server did not start; section would be vacuous"
+    else
+        # 29a. GREEN: provenance in public/.well-known, live_binding VERIFIED, head_sha == HEAD
+        lb_fix d29a; D29A="$WORKROOT/d29a"
+        OUT29A="$(run_lb "$D29A" fresh)"; RC29A=$?
+        P29A="$D29A/public/.well-known/loki-provenance.json"
+        if [ "$RC29A" -eq 0 ] && [ -f "$P29A" ] && [ "$(lb_field "$(lb_rec "$D29A")" live_binding)" = "VERIFIED" ] \
+           && [ "$(lb_field "$P29A" head_sha)" = "$(git -C "$D29A" rev-parse HEAD)" ]; then
+            ok "29a. provenance is written to public/.well-known, the live URL serves it, live_binding=VERIFIED"
+        else
+            bad "29a. live binding wrong" "rc=$RC29A $(printf '%s' "$OUT29A" | tail -4)"
+        fi
+
+        # 29b. the untracked provenance file does not dirty the next deploy's gate
+        OUT29B="$(run_lb "$D29A" fresh)"; RC29B=$?
+        if [ "$RC29B" -eq 0 ] && ! grep -q "working tree is dirty" <<<"$OUT29B"; then
+            ok "29b. a second deploy is not refused as dirty by the provenance file"
+        else
+            bad "29b. provenance file dirtied the tree" "rc=$RC29B $(printf '%s' "$OUT29B" | tail -3)"
+        fi
+
+        # 29c. a stub that serves an OLDER signed provenance gives FAILED_HEALTH, exit 4
+        lb_fix d29c; D29C="$WORKROOT/d29c"
+        OUT29C="$(run_lb "$D29C" stale)"; RC29C=$?
+        R29C="$(lb_rec "$D29C")"
+        if [ "$RC29C" -eq 4 ] && [ "$(lb_field "$R29C" live_binding)" = "FAILED" ] && [ "$(lb_field "$R29C" health_status)" = "FAILED_HEALTH" ] \
+           && grep -q "stale or wrong build served" <<<"$OUT29C"; then
+            ok "29c. a stale provenance doc served live exits 4 FAILED_HEALTH, live_binding=FAILED"
+        else
+            bad "29c. stale serve not caught" "rc=$RC29C $(printf '%s' "$OUT29C" | tail -4)"
+        fi
+
+        # 29d. nothing served at all: unchecked, never VERIFIED, exit 0
+        lb_fix d29d; D29D="$WORKROOT/d29d"
+        OUT29D="$(run_lb "$D29D" none)"; RC29D=$?
+        if [ "$RC29D" -eq 0 ] && [ "$(lb_field "$(lb_rec "$D29D")" live_binding)" = "unchecked" ]; then
+            ok "29d. no provenance served: live_binding=unchecked, never VERIFIED"
+        else
+            bad "29d. unserved provenance mis-recorded" "rc=$RC29D $(printf '%s' "$OUT29D" | tail -3)"
+        fi
+
+        # 29e. docker: refusal reason printed, live_binding=unsupported, no file written
+        mk_typed_fix d29e docker; D29E="$WORKROOT/d29e"
+        OUT29E="$(run_lb "$D29E" none)"; RC29E=$?
+        if [ "$(lb_field "$(lb_rec "$D29E")" live_binding)" = "unsupported" ] && grep -q "Live binding unsupported" <<<"$OUT29E" \
+           && [ ! -e "$D29E/public/.well-known/loki-provenance.json" ]; then
+            ok "29e. a docker project prints the refusal and records live_binding=unsupported"
+        else
+            bad "29e. docker binding wrong" "rc=$RC29E $(printf '%s' "$OUT29E" | tail -4)"
+        fi
+
+        # 29f. a dirty tree still refuses BEFORE the file is written
+        lb_fix d29f; D29F="$WORKROOT/d29f"; echo dirty > "$D29F/README.md"
+        OUT29F="$(run_lb "$D29F" fresh)"; RC29F=$?
+        if [ "$RC29F" -eq 1 ] && grep -q "working tree is dirty" <<<"$OUT29F" && [ ! -e "$D29F/public/.well-known" ]; then
+            ok "29f. the dirty-tree gate refuses before any provenance file is written"
+        else
+            bad "29f. dirty tree wrote provenance" "rc=$RC29F"
+        fi
+    fi
+    kill "$LB_PID" 2>/dev/null || true
+else
+    echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
+fi
 echo ""
 echo "==================================================================="
 echo "Passed: $PASS   Failed: $FAIL"
