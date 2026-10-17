@@ -26,7 +26,7 @@ test("GitLab, npm, Hugging Face and Stripe tokens are redacted", () => {
 });
 
 test("token shape boundaries: too short or wrong prefix is unchanged", () => {
-  for (const s of ["glpat-short", "npm_" + "a".repeat(35), "hf_" + "a".repeat(29), "sk_live_short", "sk_test_" + "x".repeat(24), "npm_install", "half_" + "a".repeat(40)]) {
+  for (const s of ["glpat-short", "npm_" + "a".repeat(35), "hf_" + "a".repeat(29), "sk_live_short", "sk_prod_" + "x".repeat(24), "npm_install", "half_" + "a".repeat(40)]) {
     expect(redactSecrets(s)).toBe(s);
   }
 });
@@ -143,4 +143,16 @@ test("google key shape", () => {
   expect(redactSecrets(ident)).toBe(ident);
   const long = "AI" + "b".repeat(40);
   expect(redactSecrets(`x ${long} y`)).toBe(`x ${long} y`);
+});
+
+test("slack stripe redact", () => {
+  const w = "hooks.slack.com/services/T01ABCDEF/B02GHIJKL/" + "a1B2c3D4e5F6g7H8i9J0k1L2";
+  expect(redactSecrets(`curl -X POST https://${w} -d x`)).toBe("curl -X POST https://hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK] -d x");
+  expect(redactSecrets(w)).toBe("hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK]");
+  const k = "A1b2C3d4E5f6G7h8I9j0K1l2";
+  expect(redactSecrets(`sk_test_${k} rk_test_${k} rk_live_${k}`)).toBe("[REDACTED:STRIPE_KEY] [REDACTED:STRIPE_KEY] [REDACTED:STRIPE_KEY]");
+  expect(redactSecrets(`whsec_${k}`)).toBe("[REDACTED:STRIPE_WEBHOOK_SECRET]");
+  for (const benign of ["sk_test_short", "whsec_short", "hooks.slack.com/services/help", "task_sk_test_" + k.toLowerCase().slice(0, 3), "https://hooks.slack.com/docs"]) expect(redactSecrets(benign)).toBe(benign);
+  for (const s of [w, `sk_test_${k}`, `whsec_${k}`, `x ${w}${w}`]) expect(redactSecrets(redactSecrets(s))).toBe(redactSecrets(s));
+  expect(redactEventData("run.started", { u: w, k: `whsec_${k}` })).toEqual({ u: "hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK]", k: "[REDACTED:STRIPE_WEBHOOK_SECRET]" });
 });
