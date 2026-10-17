@@ -316,10 +316,37 @@ describe("D61-13 single run is unchanged", () => {
     const s = await sealStage.run(ctx, new AbortController().signal).finally(() => { delete process.env["LOKI_MUTATION_PROOF"]; });
     const receipt = JSON.parse(readFileSync(s.data["receipt_path"] as string, "utf8")) as Record<string, unknown>;
     expect("group" in receipt).toBe(false);
-    expect(Object.keys(receipt).sort()).toEqual(["base_sha", "checks", "cost", "cost_preview", "diff_sha256", "evidence", "events_sha256", "head_sha", "log_seal", "model", "not_proven", "provider", "receipt_sha256", "repo", "resumed", "run_id", "schema", "task", "time", "tree", "verdict", "verification", "wall"].sort());
+    expect(Object.keys(receipt).sort()).toEqual(["base_sha", "checks", "cost", "cost_preview", "diff_sha256", "evidence", "events_sha256", "head_sha", "log_seal", "model", "not_proven", "provider", "receipt_sha256", "repo", "resumed", "run_id", "schema", "task", "time", "toolchain", "tree", "verdict", "verification", "wall"].sort());
     sealedLog(ctx.runDir, String(receipt["receipt_sha256"]));
     expect((await verifyReceipt(s.data["receipt_path"] as string)).verdict).toBe("VERIFIED");
     expect(readdirSync(ctx.runDir)).not.toContain("group");
+  }, 30000);
+  test("TEN-GATES-22: per-run receipt toolchain is recorded, hash-covered, and an old receipt without it still verifies", async () => {
+    const { repo, base } = makeRepo("tc22");
+    const ctx = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    process.env["LOKI_MUTATION_PROOF"] = "0";
+    const s = await sealStage.run(ctx, new AbortController().signal).finally(() => { delete process.env["LOKI_MUTATION_PROOF"]; });
+    const p = s.data["receipt_path"] as string;
+    const r = JSON.parse(readFileSync(p, "utf8")) as Record<string, any>;
+    expect(Object.keys(r["toolchain"]).sort()).toEqual(["bun", "git", "node", "python3"]);
+    expect(Object.values(r["toolchain"]).every((v) => v === null || typeof v === "string")).toBe(true);
+    expect(collectToolchain(() => null).git).toBeNull(); // absent tool is null
+    sealedLog(ctx.runDir, String(r["receipt_sha256"]));
+    expect((await verifyReceipt(p)).verdict).toBe("VERIFIED");
+    // editing the toolchain without re-hashing is caught
+    const raw = readFileSync(p, "utf8");
+    r["toolchain"]["node"] = "0.0.0-forged";
+    writeFileSync(p, JSON.stringify(r, null, 2) + "\n");
+    expect((await verifyReceipt(p)).verdict).toBe("TAMPERED");
+    // a receipt sealed before the field existed (re-hashed and re-signed without it) still verifies
+    delete r["toolchain"];
+    r["receipt_sha256"] = receiptSha256(r as never);
+    r["verification"] = signReceipt(String(r["run_id"]), r["receipt_sha256"]);
+    writeFileSync(p, JSON.stringify(r, null, 2) + "\n");
+    sealedLog(ctx.runDir, String(r["receipt_sha256"]));
+    expect((await verifyReceipt(p)).verdict).toBe("VERIFIED");
+    expect(raw.length).toBeGreaterThan(0);
   }, 30000);
 });
 

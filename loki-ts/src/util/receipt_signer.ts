@@ -3,6 +3,8 @@
 import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
 import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { plainTestEnv } from "./check_result.ts";
 import { dirname, join } from "node:path";
 import type { Obj } from "../engine10/types.ts";
 
@@ -64,6 +66,18 @@ export function signReceipt(runId: string, hash: string): { jwt: string | null; 
   const input = `${b64u(canonicalJson({ alg: "EdDSA", typ: "JWT", kid }))}.${b64u(canonicalJson({ job_id: runId, run_id: runId, receipt_sha256: hash, iat: Math.floor(Date.now() / 1000) }))}`;
   return { jwt: `${input}.${b64u(sign(null, Buffer.from(input), key))}`, kid };
 }
+/** Versions of the tools that ran the checks; an absent tool is null. Optional on the body, so receipts sealed before it existed still verify. */
+export interface Toolchain { bun: string | null; node: string | null; python3: string | null; git: string | null }
+export const TOOLCHAIN_KEYS = ["bun", "node", "python3", "git"] as const;
+/** First version-looking token of `<bin> --version` output, or null when the tool is missing or prints nothing usable. */
+function toolVersion(bin: string): string | null {
+  try {
+    const r = spawnSync(bin, ["--version"], { env: plainTestEnv(), encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+    return r.status === 0 ? /\d+(\.\d+)+\S*/.exec(String(r.stdout))?.[0] ?? null : null;
+  } catch { return null; }
+}
+export const collectToolchain = (probe: (bin: string) => string | null = toolVersion): Toolchain =>
+  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") });
 /** --max-age value: Ns, Nm, Nh, Nd or plain seconds; returns seconds, or null when invalid or <= 0. */
 function parseMaxAge(v: string): number | null {
   const m = /^(\d+)([smhd]?)$/.exec(v);
