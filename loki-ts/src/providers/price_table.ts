@@ -37,9 +37,16 @@ export function estimateTokens(text: string): number {
   return text.length === 0 ? 0 : Math.ceil(text.length / 4);
 }
 
+/** Non-finite or negative token counts clamp to 0. */
+function tokens(n: number): number {
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export function usdFor(model: string | null | undefined, inputTokens: number, outputTokens: number, cachedInputTokens = 0): number {
   const { price } = priceFor(model);
-  const fresh = Math.max(0, inputTokens - cachedInputTokens);
-  const usd = (fresh * price.input + cachedInputTokens * (price.cachedInput ?? price.input) + outputTokens * price.output) / 1_000_000;
+  const input = tokens(inputTokens);
+  const cached = Math.min(tokens(cachedInputTokens), input); // cached tokens are a subset of input
+  const fresh = input - cached;
+  const usd = (fresh * price.input + cached * (price.cachedInput ?? price.input) + tokens(outputTokens) * price.output) / 1_000_000;
   return Math.round(usd * 1e6) / 1e6;
 }
