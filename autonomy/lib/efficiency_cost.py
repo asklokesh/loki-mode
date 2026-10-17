@@ -301,6 +301,10 @@ def _merge_child_ledger(loki_dir, cost):
         return
     ledger_usd, priced, unpriced = 0.0, 0, 0
     main_known = bool(cost.get("available"))
+    # Main records exist but none carried a dollar figure (cost_available is
+    # False, set only by the token-only branch): the ledger-only total is a
+    # lower bound, never complete.
+    main_unpriced = main_known and cost.get("cost_available") is False
     tokens = {k: cost.get(k) for k in _LEDGER_TOKEN_KEYS}
     if not main_known:
         tokens = {k: 0 for k in _LEDGER_TOKEN_KEYS}
@@ -321,7 +325,7 @@ def _merge_child_ledger(loki_dir, cost):
     if priced:
         cost["usd"] = round((main_usd or 0.0) + ledger_usd, 4)
         cost["cost_available"] = True
-    partial = bool(cost.get("cost_partial")) or unpriced > 0 or not main_known
+    partial = bool(cost.get("cost_partial")) or unpriced > 0 or not main_known or main_unpriced
     cost["cost_partial"] = partial
     cost["cost_unpriced_records"] = int(cost.get("cost_unpriced_records") or 0) + unpriced
     if by_phase:

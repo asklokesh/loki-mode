@@ -185,6 +185,18 @@ class ChildLedgerTests(unittest.TestCase):
             self.assertEqual(cost["input_tokens"], 1030)
             self.assertEqual(cost["cache_creation_tokens"], 700)
 
+    def test_token_only_main_plus_priced_ledger_is_partial(self):
+        # FC-COST-PARTIAL: main records carry tokens but no cost_usd; one priced
+        # ledger line must not present a ledger-only total as complete.
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [{"iteration": 1, "input_tokens": 100,
+                           "output_tokens": 50, "model": "sonnet"}])
+            _ledger(loki, [_child("reviewer", 0.01)])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.01, places=4)
+            self.assertTrue(cost["cost_partial"])
+
     def test_v10_ts_child_lines_are_counted_and_unmeasured_is_lower_bound(self):
         # COST-WALL: lines shaped like loki-ts/src/util/child_ledger.ts output.
         with tempfile.TemporaryDirectory() as d:
