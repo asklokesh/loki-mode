@@ -1502,6 +1502,18 @@ LBEOF
         else
             bad "29f. dirty tree wrote provenance" "rc=$RC29F"
         fi
+
+        # 29g. --allow-unanchored: the anchor is UNPROVEN, so no provenance doc is published and the binding is never VERIFIED
+        b29g="$(make_fixture d29g)"; D29G="$WORKROOT/d29g"
+        ( cd "$D29G" && _LOKI_RUN_START_SHA="" python3 "$GENERATOR" --loki-dir "$D29G/.loki" >/dev/null 2>&1 )
+        OUT29G="$(run_lb "$D29G" fresh --allow-unanchored)"; RC29G=$?
+        LB29G="$(lb_field "$(lb_rec "$D29G")" live_binding)"
+        if [ "$RC29G" -eq 0 ] && [ "$LB29G" = "unanchored" ] && [ ! -e "$D29G/public/.well-known/loki-provenance.json" ] \
+           && grep -q "Live binding unanchored" <<<"$OUT29G"; then
+            ok "29g. an unanchored override publishes no provenance doc and records live_binding=unanchored"
+        else
+            bad "29g. unanchored override published or claimed a binding" "rc=$RC29G lb=$LB29G"
+        fi
     fi
     kill "$LB_PID" 2>/dev/null || true
 else
