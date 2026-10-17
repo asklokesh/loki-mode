@@ -277,6 +277,26 @@ else
     fail "--help honesty/non-execution contract violated" "rc=$help_rc sentinels=$state6 out=$help_out"
 fi
 
+# =============================================================================
+# Test 7: bash `start --deploy` rejects bad deploy flags (exit 2) before cmd_start.
+# =============================================================================
+echo "Test 7: start --deploy validates destination/health/canary pairing early"
+t7() {
+    local label="$1" want="$2"; shift 2
+    local out rc
+    out="$(cd "$WORKROOT" && PATH="$FAKE_BIN:$PATH" bash "$LOKI_BIN" start --deploy "$@" 2>&1)"; rc=$?
+    if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -qF "$want" && ! printf '%s\n' "$out" | grep -qi 'starting\|session'; then
+        pass "start --deploy $label: exit 2, matching message, no start output"
+    else
+        fail "start --deploy $label not rejected early" "rc=$rc out=$out"
+    fi
+}
+t7 "--destination prod" "loki deploy --destination must be one of: preview, staging, production" --destination prod
+t7 "--destination=prod" "loki deploy --destination must be one of: preview, staging, production" --destination=prod
+t7 "--auto-rollback no url" "loki deploy --auto-rollback requires --health-url" --auto-rollback
+t7 "--health-match no url" "loki deploy --health-match requires --health-url" --health-match ok
+t7 "--canary --destination staging" "loki deploy --canary only applies to --destination production" --canary --destination staging
+
 echo ""
 echo "==================================="
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"

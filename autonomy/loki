@@ -2704,6 +2704,27 @@ cmd_start() {
         echo -e "${RED}--health-url, --health-match, --auto-rollback, --destination, --canary and --domain apply only with --deploy${NC}" >&2
         exit 2
     fi
+    # Same checks and text as cmd_deploy so the bash route fails before cmd_start.
+    if [ "$_ps_deploy" = 1 ]; then
+        if [ -n "$_ps_dest" ]; then
+            case "$_ps_dest" in
+                preview|staging|production) ;;
+                *) echo -e "${RED}loki deploy --destination must be one of: preview, staging, production${NC}" >&2; exit 2 ;;
+            esac
+        fi
+        if [ "$_ps_rb" = 1 ] && [ -z "$_ps_health" ]; then
+            echo -e "${RED}loki deploy --auto-rollback requires --health-url (no health signal, no rollback)${NC}" >&2
+            exit 2
+        fi
+        if [ -n "$_ps_hmatch" ] && [ -z "$_ps_health" ]; then
+            echo -e "${RED}loki deploy --health-match requires --health-url${NC}" >&2
+            exit 2
+        fi
+        if [ "$_ps_canary" = 1 ] && [ -n "$_ps_dest" ] && [ "$_ps_dest" != production ]; then
+            echo -e "${RED}loki deploy --canary only applies to --destination production${NC}" >&2
+            exit 2
+        fi
+    fi
     if [ -n "$_ps_ws" ]; then
         if [ "$_ps_deploy" = 1 ]; then
             echo -e "${RED}--workspace and --deploy cannot be combined: deploy each repo with loki deploy${NC}" >&2

@@ -70,9 +70,9 @@ run_deploy() { rm -f "$REC_DEPLOY" "$REC_GITHUB"; bash "$SL" start "$@" >"$WORK/
 run_deploy --deploy --domain x.com --env-file .env --help >/dev/null
 check "start --deploy forwards --domain and --env-file to cmd_deploy" \
     grep -qx -e '--execute --env-file .env --domain x.com' "$REC_DEPLOY"
-run_deploy --deploy --destination staging --canary --help >/dev/null
+run_deploy --deploy --destination production --canary --help >/dev/null
 check "start --deploy forwards --destination and --canary" \
-    grep -qx -e '--execute --destination staging --canary' "$REC_DEPLOY"
+    grep -qx -e '--execute --destination production --canary' "$REC_DEPLOY"
 run_deploy --deploy --github --help >/dev/null
 check "start --deploy --github runs github publish after deploy" grep -qx -e 'publish' "$REC_GITHUB"
 rm -f "$REC_DEPLOY" "$REC_GITHUB"
