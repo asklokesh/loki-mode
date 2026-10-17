@@ -36,7 +36,15 @@ function _loki {
                     _arguments \
                         '--port[Port for the control plane server]:port:' \
                         '--json[Output as JSON]' \
+                        '--repo[Repository to backfill]:repo:_files -/' \
                         '1:subcommand:(serve status help)'
+                    ;;
+                report)
+                    _arguments \
+                        '--json[Machine-readable JSON output]' \
+                        '--since[Window for kpis (Nd or YYYY-MM-DD)]:since:' \
+                        '--efficiency[Include efficiency totals]' \
+                        '--help[Show help]'
                     ;;
                 config)
                     _loki_config

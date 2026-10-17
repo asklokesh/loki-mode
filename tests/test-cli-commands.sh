@@ -156,10 +156,10 @@ case "$_help_out" in
 esac
 
 # And `loki config provider` itself is not a real subcommand: it must NOT exit 0
-# (it falls through to the cmd_config usage block). We assert it prints the
-# config usage rather than succeeding silently.
-test_cmd "loki config provider is not a subcommand (prints config usage)" \
-    0 "Usage: loki config" config provider
+# (unknown subcommand error pointing at help, exit 2, TEN-UX-26). We assert it
+# reports the unknown subcommand rather than succeeding silently.
+test_cmd "loki config provider is not a subcommand (unknown subcommand, exit 2)" \
+    2 "unknown subcommand 'provider'" config provider
 
 # -------------------------------------------
 # Test: loki memory list

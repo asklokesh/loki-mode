@@ -164,7 +164,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 - audit: 8
 - code: 5
 - compliance: 1
-- config: 3
+- config: 4
 - context: 5
 - cost: 6
 - deploy: 1
@@ -188,7 +188,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 - preview: 1
 - projects: 8
 - proof: 5
-- provider: 2
+- provider: 3
 - quick: 1
 - resume: 1
 - rollback: 2

@@ -15,6 +15,7 @@ code help
 code onboard
 compliance snapshot
 config example
+config help
 config schema
 config validate
 context code
@@ -133,6 +134,7 @@ proof phases
 proof releases
 proof verify
 provider current
+provider help
 provider models
 quick help
 resume help

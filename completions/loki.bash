@@ -240,7 +240,7 @@ _loki_completion() {
 
         control)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--port --json --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--port --json --repo --help" -- "$cur") )
                 return 0
             fi
             COMPREPLY=( $(compgen -W "serve status help" -- "$cur") )

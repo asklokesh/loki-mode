@@ -220,7 +220,11 @@ describe("loki proof badge/bundle/share: sealed engine10 run, no .loki/proofs", 
     mkdirSync(dir, { recursive: true });
     const log = new SupervisorLog(ev, id);
     log.append("run.started", null, { provider: "claude" });
-    if (note) log.append("run.note", null, { note });
+    if (note) {
+      // SupervisorLog.append redacts since Q17-05b; plant the raw token through the underlying writer, keeping the running hash in step, so the share-time scan is what is under test.
+      const raw = log as unknown as { log: { append(t: string, s: null, d: Record<string, unknown>): unknown }; hash: { update(x: string): unknown } };
+      raw.hash.update(JSON.stringify(raw.log.append("run.note", null, { note })) + "\n");
+    }
     const evSha = new Bun.CryptoHasher("sha256").update(readFileSync(ev)).digest("hex");
     const body = { schema: "loki.v10.receipt/1", run_id: id, verdict, events_sha256: evSha, time: { wall_s: 0, stages: {} }, log_seal: true };
     const hash = receiptSha256(body as never);
