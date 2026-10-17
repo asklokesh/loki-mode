@@ -117,10 +117,11 @@ export const REGISTRY: readonly CmdSpec[] = [
   }),
   cmd("rollback", "KEEP-MODERN", "both", "Restore .loki/ state from a checkpoint", "Checkpoint restore is engine-neutral", {
     subcommands: [
-      sub("list", "List checkpoints"),
+      sub("list", "List checkpoints", { flags: [bool("--json", "Print the checkpoints as a JSON array")] }),
       sub("show", "Show a checkpoint", { positionals: [runId] }),
       sub("to", "Restore a checkpoint", { positionals: [runId] }),
       sub("latest", "Restore the latest checkpoint"),
+      sub("deploy", "Print the provider rollback command for the last deploy (read-only)"),
     ],
   }),
   cmd("backup", "KEEP-MODERN", "bash", "Back up dashboard state (audit log, checkpoint) with a sha256 manifest", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), str("--out", "<archive>", "Archive path (default ./loki-backup-<timestamp>.tar.gz)")] }),

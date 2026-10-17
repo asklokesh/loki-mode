@@ -184,6 +184,15 @@ describe("completions", () => {
     expect(complete(["loki", "crash", ""])).toEqual(expect.arrayContaining(names));
   });
 
+  test("rollback deploy", () => {
+    const rb = findCommand("rollback");
+    expect((rb?.subcommands ?? []).map((c) => c.name)).toContain("deploy");
+    const list = (rb?.subcommands ?? []).find((c) => c.name === "list");
+    expect((list?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "rollback", ""])).toContain("deploy");
+    expect(complete(["loki", "rollback", "list", "--"])).toContain("--json");
+  });
+
   test("bash: commands, subcommands, flag values, exclusivity", () => {
     expect(complete(["loki", "sta"])).toContain("start");
     expect(complete(["loki", "control", ""])).toEqual(expect.arrayContaining(["serve", "prune"]));
