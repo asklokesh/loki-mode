@@ -250,10 +250,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--json") json = true;
     else if (a === "--verbose") verbose = true;
     else if (a === "--quiet") quiet = true; // OC-OUTPUT: unified summary only
-    else if (a === "--max-cost") maxCost = args[++i] ?? "";
+    else if (a === "--max-cost") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --max-cost needs a value\n"); return 2; } maxCost = v; i++; } // TEN-STABILITY-63: a missing or flag-shaped value exits 2 instead of becoming ""
     else if (a.startsWith("--max-cost=")) maxCost = a.slice(11); // TEN-STABILITY-38: exact flag only, so --max-costly is an unknown flag
     else if (a === "--provider") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --provider needs a value\n"); return 2; } provider = v; i++; } // TEN-UX-33: a missing or flag-shaped value never silently keeps the env provider or eats the next flag
-    else if (a === "--spec") specFile = args[++i] ?? "";
+    else if (a === "--spec") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --spec needs a value\n"); return 2; } specFile = v; i++; } // TEN-STABILITY-63
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
