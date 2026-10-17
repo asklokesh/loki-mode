@@ -233,7 +233,7 @@ describe("engine10 verify: pre-existing static lint (LINT-DRIVES-FIX)", () => {
   }, 60_000);
   test("abort mid-run: baseline reruns stop, elapsed far below N x sleep", async () => {
     const dir = mkRepo(), bin = mkRepo(), files = ["a.py", "b.py", "c.py"];
-    writeFileSync(join(bin, "ruff"), ["#!/bin/sh", "for a in \"$@\"; do [ \"$a\" = - ] && sleep 3; done", "echo 'a.py:1:8: F401 unused'; exit 1"].join("\n") + "\n"); chmodSync(join(bin, "ruff"), 0o755);
+    writeFileSync(join(bin, "ruff"), ["#!/bin/sh", "for a in \"$@\"; do [ \"$a\" = - ] && sleep 10; done", "echo 'a.py:1:8: F401 unused'; exit 1"].join("\n") + "\n"); chmodSync(join(bin, "ruff"), 0o755);
     git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
     for (const f of files) writeFileSync(join(dir, f), "import os\n");
     git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
@@ -244,6 +244,6 @@ describe("engine10 verify: pre-existing static lint (LINT-DRIVES-FIX)", () => {
     const checks: VerifyCheck[] = [];
     const pre = await runLintChecks({ ...fakeCtx(dir).ctx, baseSha }, files, ac.signal, checks, {});
     expect(pre).toEqual([]);
-    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(Date.now() - t0).toBeLessThan(4000);
   }, 60_000);
 });
