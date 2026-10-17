@@ -13,8 +13,8 @@ import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
-import { sha256 } from "./seal.ts"; import { removeHoldout, stashHoldout } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts";
+import { sha256 } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
+import { commandFor } from "./verify.ts"; import { projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyCheck, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
@@ -181,6 +181,9 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
 
   if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }); // FC-17: decided before any model session
 
+  // TEN-COST-09: a pytest-only Wall under the system interpreter is classified not_run (classify, notRunReason), so the author session would be paid for and discarded. Skip it before any session ONLY when the holdout is off: with it on, held files never go through the base-run classify and verify runs them on the system interpreter, which drives fix rounds and the seal, so the Wall must still run. The held count is unknown before authoring, so ratio 0 is the only provable zero. Seal reads not_proven and the verdict can never be VERIFIED by this Wall.
+  if (testMap && (runners.length === 0 ? (repoMap?.files ?? []).some((p) => p.endsWith(".py")) && !(repoMap?.files ?? []).some((p) => p.endsWith(".go")) : runners.every((r) => r === "pytest")) && projectInterpreter(ctx.repoDir) === "system" && wallHoldoutRatio() === 0) return done({ status: "skipped", data: { size: sz.size, files: [], no_interpreter: true, not_proven: ["Wall skipped: no project test interpreter"] }, reason: "Wall skipped: no project test interpreter" });
+
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 
@@ -202,7 +205,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     signal,
     cwd,
   });
-  if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
+  if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer
   const sealedDir = join(ctx.runDir, "wall");
@@ -258,15 +261,29 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
   };
 }
 
+const WALL_SESSION_MAX_S = 300, WALL_BASE_RUN_S = 60; // sizing.ts wallLimitS caps a session at 300; the base run is 60s (BASE_RUN_TIMEOUT_MS)
+const greenOnBase = (r: StageResult): boolean => { const d = r.data, b = d.base_run as { pass?: number; fail?: number; not_run?: number } | undefined; return d.already_satisfied === true || (!!b && (b.pass ?? 0) > 0 && (b.fail ?? 0) === 0 && (b.not_run ?? 0) === 0); }; // mirrors seal.ts wallGreenOnBase
+
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
+  const t0 = Date.now();
   const a = await wallAuthor(ctx, signal);
   const first = a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
-  // COST-11: a cheaper first rung that left no usable test (nothing written, all discarded or not_run) is re-authored exactly once on wallModel(). Never loops. A killed or timed-out session does not retry.
-  const cheap = a.kind === "authored" ? a.model : "";
-  const unusable = a.kind === "authored" && first.status === "completed" && ((first.data.files as unknown[] | undefined) ?? []).length === 0;
-  if (!unusable || signal.aborted || cheap === wallModel()) return first;
-  removeHoldout(ctx.runId, ctx.repoDir); // the abandoned attempt's held-out tests must not leak into the retry
-  ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: "no usable test from the first author" });
+  // COST-11: a cheaper first rung is re-authored exactly once on wallModel() when its result cannot be trusted: nothing usable (nothing written, all discarded or not_run), a killed or timed-out session (N3), or a Wall already green on the base tree (B1: a haiku test that passes before the change may be vacuous, so the sonnet result decides already_satisfied). Never loops. Any doubt escalates.
+  const cheap = a.kind === "authored" ? a.model : (first.data.model as string | undefined) ?? "";
+  const killed = a.kind === "done" && first.killed === true;
+  const usable = a.kind === "authored" && first.status === "completed";
+  const unusable = usable && ((first.data.files as unknown[] | undefined) ?? []).length === 0;
+  const green = usable && !unusable && greenOnBase(first);
+  const budgetLeft = (WALL_SESSION_MAX_S + WALL_BASE_RUN_S) * 2 * 1000 - (Date.now() - t0) >= wallLimitS("normal") * 1000;
+  if (!(unusable || green || killed) || !cheap || signal.aborted || cheap === wallModel() || !budgetLeft) return first;
+  if (a.kind === "authored") {
+    // drop the abandoned attempt's installed copies, sealed copies and held-out tests so none leak into the retry
+    for (const f of (first.data.files as { path: string }[] | undefined) ?? []) rmSync(f.path, { force: true });
+    rmSync(join(ctx.runDir, "wall"), { recursive: true, force: true });
+    ctx.wallSealed = false;
+  }
+  removeHoldout(ctx.runId, ctx.repoDir);
+  ctx.emit("wall.reauthor", "wall", { from_model: cheap, to_model: wallModel(), reason: killed ? "first author session killed or timed out" : green ? "first author green on the base tree" : "no usable test from the first author" });
   const b = await wallAuthor(ctx, signal, { model: wallModel(), suffix: "-r2" });
   const second = b.kind === "done" ? b.result : installWall(ctx, b, ctx.repoDir, opts);
   const ids = [...((first.data.iteration_ids as string[] | undefined) ?? []), ...((second.data.iteration_ids as string[] | undefined) ?? [])];
@@ -276,7 +293,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 export const wallStage: Stage = {
   name: "wall",
   targetS: 45,
-  limitS: 300, // outer ceiling = the max session cap (sizing.ts wallLimitS)
+  limitS: 2 * (WALL_SESSION_MAX_S + WALL_BASE_RUN_S), // B2: room for both rungs (each a session at the wallLimitS cap plus a base run), so the sonnet retry is never cut off by the stage ceiling
   run: (ctx, signal) => runWall(ctx, signal),
 };
 /** WC-01b: the split halves, read by the machine under LOKI_E10_WALL_CONCURRENT=1. */

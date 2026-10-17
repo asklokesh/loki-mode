@@ -140,5 +140,268 @@ class SpecParsing(unittest.TestCase):
         self.assertEqual(out["summary"]["functional_status"], "inconclusive")
 
 
+class _AuthApp:
+    def __init__(self, code, body=b'{"secret": 1}', location=None):
+        self.code, self.body, self.location = code, body, location
+
+    def handler(self):
+        app = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _do(self):
+                self.send_response(app.code)
+                if app.location:
+                    self.send_header("Location", app.location)
+                self.end_headers()
+                if 200 <= app.code < 300:
+                    self.wfile.write(app.body)
+
+            do_GET = do_POST = do_DELETE = _do
+
+        return H
+
+
+class AuthBehaviors(unittest.TestCase):
+    SPEC_AUTH = "GET /api/admin requires auth"
+
+    def _serve(self, code, **kw):
+        srv = HTTPServer(("127.0.0.1", 0), _AuthApp(code, **kw).handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def test_served_without_credentials_is_failed(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+        self.assertIn("served without credentials", out["auth_behaviors"][0]["detail"])
+        self.assertEqual(out["functional_status"], "failed", out)
+
+    def test_401_and_403_pass(self):
+        for code in (401, 403):
+            out = FV.run(self.SPEC_AUTH, self._serve(code))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_redirect_to_login_passes_other_redirect_inconclusive(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/login"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/home"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_5xx_inconclusive(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(500))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_no_protected_wording_no_auth_behavior(self):
+        out = FV.run("GET /api/admin lists things", self._serve(200))
+        self.assertEqual(out["auth_behaviors"], [])
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x is public, no auth"), [])
+
+    def test_server_down_inconclusive_never_passed(self):
+        out = FV.run(self.SPEC_AUTH, "http://127.0.0.1:1")
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+
+    def test_section_heading_marks_protected(self):
+        spec = "## Admin (admin only)\n- GET /api/admin/users\n## Public\n- GET /api/pub\n"
+        self.assertEqual(FV.derive_auth_assertions(spec),
+                         [{"method": "GET", "path": "/api/admin/users"}])
+
+    def test_negation_only_cancels_adjacent_match(self):
+        # "requires authentication" must not be cancelled by a later "without credentials".
+        spec = ("GET /api/admin requires authentication; "
+                "requests without credentials get 401")
+        out = FV.run(spec, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+        self.assertEqual(out["functional_status"], "failed", out)
+        out = FV.run("GET /api/admin: Calls without auth return 401", self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+
+    def test_directly_negated_stays_unprotected(self):
+        for spec in ("GET /api/x needs no auth required", "GET /api/x does not require auth",
+                     "GET /api/x is public, no auth required"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_bare_protected_word_is_not_auth(self):
+        out = FV.run("GET /api/posts returns posts; protected fields hidden", self._serve(200))
+        self.assertEqual(out["auth_behaviors"], [])
+        self.assertEqual(out["functional_status"], "verified", out)
+        self.assertEqual(len(FV.derive_auth_assertions("GET /api/a is a protected route")), 1)
+
+    def test_bearer_token_is_protected(self):
+        self.assertEqual(len(FV.derive_auth_assertions("GET /api/me requires a bearer token")), 1)
+
+    def test_redirect_must_be_login_path_segment(self):
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="/authors/1"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", out)
+        out = FV.run(self.SPEC_AUTH, self._serve(302, location="https://x.io/auth?next=/a"))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_not_public_means_protected(self):
+        for spec in ("GET /api/admin is not public and requires authentication",
+                     "GET /api/admin (not public) requires login",
+                     "GET /api/admin - never public - requires a token",
+                     "GET /api/admin requires authentication and rejects requests without credentials"):
+            self.assertEqual(FV.derive_auth_assertions(spec),
+                             [{"method": "GET", "path": "/api/admin"}], spec)
+            out = FV.run(spec, self._serve(200))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "failed", spec)
+
+    def test_public_with_never_401_is_not_protected(self):
+        for spec in ("GET /health is public and works without auth, never 401",
+                     "GET /health works without auth never 401"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+        self.assertEqual(len(FV.derive_auth_assertions("GET /a calls without auth get 401")), 1)
+
+    def test_widened_negation_stays_unprotected(self):
+        for spec in ("GET /api/status no longer requires authentication",
+                     "GET /api/status does not even require auth",
+                     "GET /api/status does not really necessarily require auth"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_not_public_requires_auth_is_protected_and_fails_when_served(self):
+        spec = "GET /a is not public requires authentication"
+        self.assertEqual(len(FV.derive_auth_assertions(spec)), 1)
+        out = FV.run(spec, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+
+    def test_double_negator_stays_protected(self):
+        self.assertEqual(len(FV.derive_auth_assertions("GET /a is not no auth required")), 1)
+
+    def test_negation_does_not_cross_clause(self):
+        self.assertEqual(len(FV.derive_auth_assertions(
+            "GET /a is not cached but requires authentication")), 1)
+
+    def test_redirect_login_with_page_extension(self):
+        for loc in ("/login.html", "/login.php"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", loc)
+
+    def test_redirect_end_anchor(self):
+        for loc in ("/static/login.png", "/api/auth-free"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", loc)
+        for loc in ("/login", "/oauth", "/auth?next=/a"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", loc)
+
+    def test_early_return_has_auth_behaviors_key(self):
+        self.assertEqual(FV.run("static page", "http://127.0.0.1:1")["auth_behaviors"], [])
+
+
+class _SlashRedirectApp:
+    """301 /p -> /p/ then 200 anonymously on /p/."""
+
+    def handler(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.endswith("/"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"me": 1}')
+                else:
+                    self.send_response(301)
+                    self.send_header("Location", self.path + "/")
+                    self.end_headers()
+
+        return H
+
+
+class _RelSlashRedirectApp(_SlashRedirectApp):
+    """Like the slash redirect, but Location is the relative last segment + slash."""
+
+    def handler(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.endswith("/"):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"me": 1}')
+                else:
+                    self.send_response(301)
+                    self.send_header("Location", self.path.rsplit("/", 1)[1] + "/")
+                    self.end_headers()
+
+        return H
+
+
+class Round3Regressions(unittest.TestCase):
+    def test_relative_location_slash_redirect_not_passed(self):
+        srv = HTTPServer(("127.0.0.1", 0), _RelSlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        root = f"http://127.0.0.1:{srv.server_address[1]}"
+        for base in (root, root + "/app"):
+            out = FV.run("GET /api/auth requires auth", base)
+            self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", (base, out))
+
+    def test_relative_location_resolved(self):
+        for loc in ("auth/", "./auth/", "../api/auth/"):
+            self.assertFalse(FV._is_login_redirect(loc, "/api/auth"), loc)
+        self.assertFalse(FV._is_login_redirect("auth/", "/api/auth", "http://h/app"))
+        self.assertTrue(FV._is_login_redirect("login", "/api/me"))
+        self.assertTrue(FV._is_login_redirect("../login", "/api/me"))
+
+    def test_trailing_slash_redirect_is_not_login(self):
+        srv = HTTPServer(("127.0.0.1", 0), _SlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        for spec in ("GET /api/auth/me requires auth", "GET /api/auth requires auth"):
+            out = FV.run(spec, base)
+            self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_login_redirect_last_segment_only(self):
+        self.assertTrue(FV._is_login_redirect("/login/", "/api/me"))
+        self.assertTrue(FV._is_login_redirect("/login.html?next=/a", "/api/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/me/", "/api/auth/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/", "/api/auth"))
+        self.assertFalse(FV._is_login_redirect("/home?next=/login", "/api/me"))
+        self.assertFalse(FV._is_login_redirect("/api/auth/me/", "/api/other"))
+        self.assertFalse(FV._is_login_redirect("/auth/x", "/api/me"))
+
+    def test_login_redirect_base_prefix_and_case(self):
+        self.assertFalse(FV._is_login_redirect("/app/api/auth/", "/api/auth", "http://h/app"))
+        self.assertFalse(FV._is_login_redirect("/APP/api/AUTH/", "/api/auth", "http://h/app"))
+        self.assertTrue(FV._is_login_redirect("/app/login", "/api/auth", "http://h/app"))
+
+    def test_base_prefix_slash_redirect_not_passed(self):
+        srv = HTTPServer(("127.0.0.1", 0), _SlashRedirectApp().handler())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}/app"
+        out = FV.run("GET /api/auth requires auth", base)
+        self.assertNotEqual(out["auth_behaviors"][0]["status"], "passed", out)
+
+    def test_more_contractions_negate(self):
+        for c in ("aren't", "won't", "shouldn't", "needn't", "wasn't"):
+            for q in ("'", "\u2019"):
+                w = c.replace("'", q)
+                self.assertEqual(FV.derive_auth_assertions(f"GET /api/x {w} a protected route"), [], w)
+
+    def test_curly_apostrophe_negates(self):
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x doesn\u2019t require auth"), [])
+        self.assertEqual(FV.derive_auth_assertions("GET /api/x isn\u2019t a protected route"), [])
+
+    def test_article_between_negator_and_match(self):
+        for spec in ("GET /api/x is not a protected endpoint",
+                     "GET /api/x isn't a protected route",
+                     "GET /api/x is not an admin-only route"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_but_clause_still_protected(self):
+        # and/but stop the negation window on their own; no separate split needed.
+        for spec in ("GET /api/x is not even but requires auth",
+                     "GET /api/x is not public but requires auth"):
+            self.assertEqual(len(FV.derive_auth_assertions(spec)), 1, spec)
+
+
 if __name__ == "__main__":
     unittest.main()
