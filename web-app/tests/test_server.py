@@ -2031,3 +2031,141 @@ class TestGitHubGetPRFieldList:
         }
         missing = required - fields
         assert not missing, f"gh pr view --json is missing fields the frontend reads: {missing}"
+
+
+# ============================================================================
+# TEN-DEPLOY-08 (a): deploy goes through the gated CLI; no fabricated URLs
+# ============================================================================
+
+
+def _ten_deploy08_body(resp):
+    return json.loads(resp.body.decode())
+
+
+class TestTenDeploy08DeployGated:
+    """deploy_session runs `loki deploy --execute --dir <dir>` and reports its record."""
+
+    def _fake_run(self, calls, *, rc=0, record=None, out="", advisory=""):
+        def run(argv, **kwargs):
+            calls.append(list(argv))
+            res = MagicMock()
+            if "--execute" not in argv:
+                res.returncode, res.stdout, res.stderr = 0, advisory, ""
+                return res
+            if record is not None:
+                d = Path(argv[argv.index("--dir") + 1]) / ".loki" / "deploys"
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "20261017T000000Z-1.json").write_text(json.dumps(record))
+            res.returncode, res.stdout, res.stderr = rc, out, ""
+            return res
+        return run
+
+    async def _call(self, tmp_path, run, platform=""):
+        import server
+        with patch("server._find_session_dir", return_value=tmp_path), \
+             patch("server._find_loki_cli", return_value="/x/loki"), \
+             patch("server.subprocess.run", side_effect=run):
+            return await server.deploy_session("s1", {"platform": platform} if platform else {})
+
+    @pytest.mark.asyncio
+    async def test_argv_is_gated_execute(self, tmp_path):
+        calls = []
+        rec = {"schema": "loki.deploy/1", "exit_code": 0, "deployed_url": "https://app-x.vercel.app",
+               "health_status": "healthy", "target": "vercel"}
+        resp = await self._call(tmp_path, self._fake_run(calls, record=rec, out="Live at: https://app-x.vercel.app"))
+        assert calls == [["/x/loki", "deploy", "--execute", "--dir", str(tmp_path)]]
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 200
+        assert body["url"] == "https://app-x.vercel.app"
+        assert body["health_status"] == "healthy"
+        assert body["live_binding"]["target"] == "vercel"
+        assert body["record_path"].endswith("20261017T000000Z-1.json")
+        assert body["refused_reasons"] == []
+
+    @pytest.mark.asyncio
+    async def test_no_url_deploy_returns_null_not_a_fallback(self, tmp_path):
+        calls = []
+        rec = {"schema": "loki.deploy/1", "exit_code": 0, "deployed_url": "", "target": "vercel"}
+        resp = await self._call(tmp_path, self._fake_run(calls, record=rec, out="Deployed."))
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 200
+        assert body["url"] is None
+
+    @pytest.mark.asyncio
+    async def test_gate_refusal_is_4xx_with_reasons(self, tmp_path):
+        calls = []
+        out = ("REFUSED: not deploying. The evidence gate did not pass.\n"
+               "  - no Evidence Receipt found\n  - tree is dirty\n")
+        resp = await self._call(tmp_path, self._fake_run(calls, rc=1, out=out))
+        body = _ten_deploy08_body(resp)
+        assert 400 <= resp.status_code < 500
+        assert body["refused_reasons"] == ["no Evidence Receipt found", "tree is dirty"]
+        assert body["url"] is None and body["record_path"] is None
+
+    @pytest.mark.asyncio
+    async def test_failed_deploy_with_record_is_non_2xx(self, tmp_path):
+        calls = []
+        rec = {"schema": "loki.deploy/1", "exit_code": 1, "deployed_url": "", "target": "vercel"}
+        resp = await self._call(tmp_path, self._fake_run(calls, rc=1, record=rec))
+        assert resp.status_code == 502
+        assert _ten_deploy08_body(resp)["url"] is None
+
+    @pytest.mark.asyncio
+    async def test_record_from_an_earlier_deploy_is_not_reused(self, tmp_path):
+        calls = []
+        old = tmp_path / ".loki" / "deploys"
+        old.mkdir(parents=True)
+        (old / "20200101T000000Z-1.json").write_text(json.dumps(
+            {"exit_code": 0, "deployed_url": "https://stale.vercel.app"}))
+        resp = await self._call(tmp_path, self._fake_run(calls, rc=1, out="  - gate refused\n"))
+        body = _ten_deploy08_body(resp)
+        assert resp.status_code == 422
+        assert body["url"] is None
+
+    @pytest.mark.asyncio
+    async def test_platform_hint_mismatch_is_409_and_never_executes(self, tmp_path):
+        calls = []
+        adv = "Detected static project. Deploy options (run one yourself):\n\n  Netlify:\n    netlify deploy --prod\n"
+        resp = await self._call(tmp_path, self._fake_run(calls, advisory=adv), platform="vercel")
+        assert resp.status_code == 409
+        assert "Netlify" in _ten_deploy08_body(resp)["refused_reasons"][0]
+        assert all("--execute" not in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_platform_hint_match_executes(self, tmp_path):
+        calls = []
+        adv = ("\x1b[1mDetected static project. Deploy options (run one yourself):\x1b[0m\n\n"
+               "  Netlify:\n    netlify deploy --prod\n  Vercel:\n")
+        rec = {"schema": "loki.deploy/1", "exit_code": 0, "deployed_url": "https://n.netlify.app"}
+        resp = await self._call(tmp_path, self._fake_run(calls, advisory=adv, record=rec), platform="netlify")
+        assert resp.status_code == 200
+        assert calls[-1] == ["/x/loki", "deploy", "--execute", "--dir", str(tmp_path)]
+
+    @pytest.mark.asyncio
+    async def test_github_pages_hint_is_409(self, tmp_path):
+        calls = []
+        resp = await self._call(tmp_path, self._fake_run(calls), platform="github-pages")
+        assert resp.status_code == 409
+        assert calls == []
+
+    def test_no_hardcoded_fallback_urls_in_server(self):
+        src = (WEB_APP_DIR / "server.py").read_text()
+        for bad in ('"https://vercel.app"', '"https://netlify.app"', '"https://github.io"'):
+            assert bad not in src
+
+    @pytest.mark.asyncio
+    async def test_real_cli_refuses_ungated_deploy(self, tmp_path):
+        """Real entry path: autonomy/loki runs; with no receipt nothing deploys."""
+        import server
+        if not server.LOKI_CLI.exists():
+            pytest.skip("autonomy/loki not present")
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "dist" / "index.html").write_text("<html></html>")
+        with patch("server._find_session_dir", return_value=tmp_path):
+            resp = await server.deploy_session("s1", {})
+        body = _ten_deploy08_body(resp)
+        assert 400 <= resp.status_code < 500, body
+        assert body["url"] is None
+        assert body["refused_reasons"]
+        deploys = tmp_path / ".loki" / "deploys"
+        assert not deploys.exists() or not list(deploys.glob("*.json"))
