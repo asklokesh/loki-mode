@@ -200,13 +200,14 @@ export const hasExecutedProof = (checks: ReadonlyArray<{ result?: unknown; n?: u
 export type CheckProvenance = "exogenous" | "independent" | "agent_authored" | "llm_judge";
 export interface ProvenanceCtx { addedFiles: readonly string[]; wallFiles: readonly string[]; holdout?: boolean }
 const LLM_JUDGES = new Set(["council", "xreview", "code_review", "devils_advocate", "magic_debate"]);
+const NON_RUNNER = new Set(["lint", "typecheck", "holdout", "select-tests"]); // heads verify.ts emits that are not test runners
 const normPath = (p: string): string => p.replace(/^(?:\.\/)+/, "");
 export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenance {
   const head = name.split(":")[0]!;
   if (LLM_JUDGES.has(head)) return "llm_judge";
   if (head === "holdout") return "independent";
-  if (head === "runner") {
-    const p = normPath(name.slice("runner:".length));
+  if (!NON_RUNNER.has(head) && name.includes(":")) { // test checks are named `${runner}:${path}` (verify.ts testCheckName); any other head is a runner
+    const p = normPath(name.slice(name.indexOf(":") + 1));
     if (ctx.wallFiles.some((w) => normPath(w) === p)) return "independent";
     if (ctx.addedFiles.some((a) => normPath(a) === p)) return "agent_authored";
   }
