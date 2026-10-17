@@ -184,6 +184,39 @@ describe("crash: list", () => {
   });
 });
 
+describe("crash: list json", () => {
+  it("list --json and bare --json emit id, captured_at, error_class, fingerprint", async () => {
+    const { fingerprint } = seedReport();
+    for (const argv of [["list", "--json"], ["--json"]]) {
+      const r = await runWithCapture(argv);
+      expect(r.exitCode).toBe(0);
+      const rows = JSON.parse(r.stdout) as Record<string, unknown>[];
+      expect(rows).toEqual([
+        {
+          id: fingerprint,
+          captured_at: "2026-06-06T00:00:00Z",
+          error_class: "TypeError",
+          fingerprint,
+        },
+      ]);
+    }
+  });
+
+  it("emits [] when no reports and leaves text list unchanged", async () => {
+    const r = await runWithCapture(["--json"]);
+    expect(JSON.parse(r.stdout)).toEqual([]);
+    seedReport();
+    const t = await runWithCapture(["list"]);
+    expect(stripAnsi(t.stdout)).toContain("ERROR_CLASS");
+    expect(() => JSON.parse(t.stdout)).toThrow();
+  });
+
+  it("rejects unknown list option", async () => {
+    const r = await runWithCapture(["list", "--bogus"]);
+    expect(r.exitCode).toBe(2);
+  });
+});
+
 describe("crash: show", () => {
   it("pretty-prints one report resolved by fingerprint", async () => {
     const { fingerprint } = seedReport();
