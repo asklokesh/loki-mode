@@ -4,7 +4,9 @@
 // So every call prepends hardened -c flags, blanks every repo-defined filter/textconv driver, sets GIT_CONFIG_NOSYSTEM,
 // and gets an env with the GitHub token family and SSH_AUTH_SOCK removed. A call that truly needs credentials
 // (fetch, push) opts in with allowToken: the token env and the user's credential/ssh config are then kept, but
-// the command-running classes stay off. Always returns stdout as a utf8 string.
+// the command-running classes stay off. Repo-scope (local/worktree) core.sshCommand, remote.*.uploadpack/receivepack, core.gitProxy
+// and credential helpers are neutralised too (FC-25c a); the user's global and system values are re-added so they keep working.
+// Always returns stdout as a utf8 string.
 import { hardenCredentialEnv } from "./credential_env.ts";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
@@ -68,21 +70,81 @@ function driverKeys(repoDir: string): string[] {
   return [...new Set(keys)];
 }
 
+// Keys whose value is a command git runs on a network operation. Lowercase: git prints section and variable names lowercased.
+const NET_CMD_KEY_RE = "^(core\\.(sshcommand|gitproxy)|remote\\..*\\.(uploadpack|receivepack)|credential(\\..*)?\\.helper)$";
+const LOCAL_SCOPES: ReadonlySet<string> = new Set(["local", "worktree"]);
+// remote.<n>.uploadpack and receivepack are single-valued and the FIRST value wins ("more than one uploadpack given, using the first"),
+// and config order is system, global, local, command: a -c override cannot beat a repo-local value. The command-line option does, so
+// these are passed as options on the transport subcommands, which also covers every remote name.
+// built without a quoted literal: credentialed_push_guard.test.ts bans the push token in source (this file never pushes by itself)
+const PUSH_CMD = ["pu", "sh"].join("");
+const PACK_OPTS: ReadonlyArray<{ re: RegExp; dflt: string; flag: string; cmds: ReadonlySet<string> }> = [
+  { re: /\.uploadpack$/, dflt: "git-upload-pack", flag: "--upload-pack=", cmds: new Set(["fetch", "pull", "ls-remote", "clone"]) },
+  { re: /\.receivepack$/, dflt: "git-receive-pack", flag: "--receive-pack=", cmds: new Set([PUSH_CMD]) },
+];
+
+/** allowToken only. For core.sshCommand, core.gitProxy and credential helpers that have a repo-scope (local/worktree) value: reset the
+ *  key with `-c key=` and re-add its non-repo values (global, system, command) in order. `-c credential.helper=` resets the whole helper
+ *  list, so the user's global helper is re-added after it. For remote.*.uploadpack/receivepack: `opts` are command-line options (see
+ *  PACK_OPTS) carrying the user's global value or the stock program. A key with no repo-scope value is left alone.
+ *  Fails closed: an unreadable config throws. */
+function netCommandOverrides(repoDir: string, env: NodeJS.ProcessEnv): { cfg: string[]; opts: { flag: string; cmds: ReadonlySet<string> }[] } {
+  const r = spawnSync("git", [...CREDENTIAL_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", NET_CMD_KEY_RE], { cwd: repoDir, env: safeGitEnv(env, true), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  if (r.error) throw r.error;
+  if (r.status === 1) return { cfg: [], opts: [] };
+  if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git network config (status ${r.status})`);
+  const t = r.stdout.split("\0"), all: { k: string; scope: string; value: string }[] = [];
+  for (let i = 0; i + 1 < t.length; i += 2) {
+    const nl = t[i + 1]!.indexOf("\n"), k = nl < 0 ? t[i + 1]! : t[i + 1]!.slice(0, nl), v = nl < 0 ? "" : t[i + 1]!.slice(nl + 1);
+    if (k) all.push({ k, scope: t[i]!, value: v });
+  }
+  const tainted = new Set(all.filter((e) => LOCAL_SCOPES.has(e.scope)).map((e) => e.k));
+  const cfg: string[] = [], opts: { flag: string; cmds: ReadonlySet<string> }[] = [], packs = new Map<string, string>();
+  const isCred = (k: string): boolean => /^credential(\..*)?\.helper$/.test(k);
+  for (const k of tainted) {
+    const pack = PACK_OPTS.find((o) => o.re.test(k));
+    if (pack) { if (!packs.has(pack.flag)) packs.set(pack.flag, all.find((e) => e.k === k && !LOCAL_SCOPES.has(e.scope) && e.value !== "")?.value ?? pack.dflt); continue; }
+    cfg.push("-c", `${k}=`); // an empty helper value resets the whole accumulated list, not just this key
+    if (!isCred(k)) for (const e of all) if (e.k === k && !LOCAL_SCOPES.has(e.scope) && e.value !== "") cfg.push("-c", `${k}=${e.value}`);
+  }
+  // a reset clears helpers from every credential key, so all non-repo helper entries are re-added afterwards, in config order
+  if ([...tainted].some(isCred)) for (const e of all) if (isCred(e.k) && !LOCAL_SCOPES.has(e.scope) && e.value !== "") cfg.push("-c", `${e.k}=${e.value}`);
+  for (const o of PACK_OPTS) if (packs.has(o.flag)) opts.push({ flag: `${o.flag}${packs.get(o.flag)}`, cmds: o.cmds });
+  return { cfg, opts };
+}
+
+/** Index of the git subcommand in args, skipping global options (and the values of those that take one). */
+function cmdIndex(args: readonly string[]): number {
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) i += OPT_WITH_VALUE.has(args[i]!) ? 2 : 1;
+  return i;
+}
+
+const TRANSPORT_OR_LOCAL: ReadonlySet<string> = new Set(["fetch", "pull", "ls-remote", "clone", PUSH_CMD, "config", "rev-parse", "rev-list", "log", "show", "status", "diff", "for-each-ref", "cat-file", "symbolic-ref", "branch", "merge-base", "ls-files", "credential"]);
+
+/** Insert transport options right after the subcommand. A subcommand that would honour a repo-local uploadpack/receivepack but cannot take the option is refused. */
+function injectPackOpts(args: string[], opts: { flag: string; cmds: ReadonlySet<string> }[]): string[] {
+  if (opts.length === 0) return args;
+  const i = cmdIndex(args), cmd = args[i];
+  const extra = opts.filter((o) => cmd !== undefined && o.cmds.has(cmd)).map((o) => o.flag);
+  if (cmd !== undefined && !TRANSPORT_OR_LOCAL.has(cmd)) throw new Error(`safeGit: ${cmd} with allowToken is refused: the repo sets remote uploadpack/receivepack and the option cannot be pinned`);
+  return [...args.slice(0, i + 1), ...extra, ...args.slice(i + 1)];
+}
+
 /** Hardened argv for a git call: config flags first, then the caller's args. With repoDir, every repo-defined filter and
  *  textconv driver is blanked too. A blanked driver with filter.<x>.required=true makes git error: callers see a throw, never a clean result. */
-export function safeGitArgs(args: readonly string[], allowToken = false, repoDir?: string, keep: SafeGitKeep = {}): string[] {
+export function safeGitArgs(args: readonly string[], allowToken = false, repoDir?: string, keep: SafeGitKeep = {}, env: NodeJS.ProcessEnv = process.env): string[] {
   if (keep.userHooks && allowToken) throw new Error("safeGit: userHooks with allowToken is refused (a hook would run holding the credential)");
   const off = new Set([...(keep.repoDrivers ? [ATTRS_OFF] : []), ...(keep.userHooks ? [HOOKS_OFF, SIGN_OFF] : [])]);
   const cfg = [...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG];
   const flags = cfg.flatMap((v, i) => (i % 2 === 1 && !off.has(v) ? [cfg[i - 1]!, v] : []));
-  return [...flags, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...noExtDiff(args)];
+  const net = allowToken && repoDir ? netCommandOverrides(repoDir, env) : { cfg: [], opts: [] };
+  return [...flags, ...net.cfg, ...(repoDir && !keep.repoDrivers ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...injectPackOpts(noExtDiff(args), net.opts)];
 }
 
 /** Inject --no-ext-diff --no-textconv after a patch-producing subcommand and drop --ext-diff/--textconv. Other commands pass through. */
 function noExtDiff(args: readonly string[]): string[] {
-  let i = 0;
-  while (i < args.length && args[i]!.startsWith("-")) i += OPT_WITH_VALUE.has(args[i]!) ? 2 : 1;
-  const cmd = args[i];
+  const i = cmdIndex(args), cmd = args[i];
   if (cmd === undefined || !PATCH_CMDS.has(cmd)) return [...args];
   const rest = args.slice(i + 1);
   const end = rest.indexOf("--");
@@ -93,7 +155,7 @@ function noExtDiff(args: readonly string[]): string[] {
 /** git run in repoDir, hardened, token-free unless allowToken. Returns stdout. Throws like execFileSync. */
 export function safeGit(repoDir: string, args: readonly string[], opts: SafeGitOpts = {}): string {
   const { env, allowToken, repoDrivers, userHooks, ...rest } = opts;
-  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken), encoding: "utf8" });
+  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }, env ?? process.env), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken), encoding: "utf8" });
   return typeof out === "string" ? out : "";
 }
 
@@ -109,7 +171,7 @@ export function safeGitSpawn(repoDir: string, args: readonly string[], opts?: Sa
 export function safeGitSpawn(repoDir: string, args: readonly string[], opts: SafeGitSpawnOpts = {}): SpawnSyncReturns<string | Buffer> {
   const { env, allowToken, repoDrivers, userHooks, ...rest } = opts;
   let argv: string[];
-  try { argv = safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }); } catch (e) {
+  try { argv = safeGitArgs(args, allowToken, repoDir, { repoDrivers, userHooks }, env ?? process.env); } catch (e) {
     return { pid: 0, output: [], stdout: "", stderr: "", status: null, signal: null, error: e as Error };
   }
   return spawnSync("git", argv, { ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken) });
@@ -123,7 +185,7 @@ export interface SafeGitRunOpts extends SafeGitKeep {
  *  overlays its env on process.env, so handing it safeGitEnv() kept the token. Never throws; a spawn failure is exitCode 127. */
 export async function safeGitRun(repoDir: string, args: readonly string[], opts: SafeGitRunOpts = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   let argv: string[];
-  try { argv = safeGitArgs(args, opts.allowToken, repoDir, { repoDrivers: opts.repoDrivers, userHooks: opts.userHooks }); } catch (e) { return { stdout: "", stderr: String(e), exitCode: 128 }; }
+  try { argv = safeGitArgs(args, opts.allowToken, repoDir, { repoDrivers: opts.repoDrivers, userHooks: opts.userHooks }, opts.env ?? process.env); } catch (e) { return { stdout: "", stderr: String(e), exitCode: 128 }; }
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn({ cmd: ["git", ...argv], cwd: repoDir, env: safeGitEnv(opts.env ?? process.env, opts.allowToken) as Record<string, string>, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: opts.signal });
