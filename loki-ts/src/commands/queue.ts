@@ -456,6 +456,15 @@ export function runnerEnv(opts: RunOpts, runLoki: string): NodeJS.ProcessEnv {
   return { ...(opts.env ?? process.env), LOKI_NO_BROWSER: "1", ...(opts.cwd ? { LOKI_DIR: runLoki } : {}), ...(opts.draft ? { LOKI_PR_DRAFT: "1" } : {}), ...(opts.prBase ? { LOKI_PR_BASE: opts.prBase } : {}), ...(opts.prRefs ? { LOKI_PR_REFS: opts.prRefs } : {}) };
 }
 
+/** Per-item timeout in minutes: only a positive finite value that fits setTimeout is honored, else 120 with one stderr note. */
+export function itemTimeoutMin(raw: string | undefined, warn: (s: string) => void = (s) => void process.stderr.write(s)): number {
+  if (raw === undefined || raw.trim() === "") return 120;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0 && n * 60_000 <= 2_147_483_647) return n;
+  warn(`loki queue: ignoring invalid LOKI_QUEUE_ITEM_TIMEOUT_MIN=${JSON.stringify(raw)} (need a positive number of minutes); using 120\n`);
+  return 120;
+}
+
 export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
   return async (ref, opts) => {
     const since = Date.now();
@@ -464,7 +473,7 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
     const runLoki = opts.cwd ? join(opts.cwd, ".loki") : lokiDir;
     const env = runnerEnv(opts, runLoki);
     const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore", env, ...(opts.cwd ? { cwd: opts.cwd } : {}) });
-    const mins = Number(process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"]) || 120;
+    const mins = itemTimeoutMin(process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"]);
     const timer = setTimeout(() => proc.kill(), mins * 60_000);
     const [so, se] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const rc = await proc.exited;
