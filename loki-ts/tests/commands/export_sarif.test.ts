@@ -138,3 +138,33 @@ describe("export --sarif extra token formats", () => {
     }
   });
 });
+
+describe("export --sarif more token shapes", () => {
+  const J = (...p: string[]) => p.join("");
+  const B = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7rT9uVwXyZ01";
+  const cases: [string, string][] = [
+    ["pypi-token", J("pypi", "-AgEI", B)],
+    ["docker-pat", J("dckr", "_pat_", "aB3dE5gH7jK9mN1pQ3sT5v")],
+    ["digitalocean-token", J("dop", "_v1_", "0123456789abcdef".repeat(4))],
+    ["google-oauth-token", J("ya29", ".", "aB3dE5gH7jK9mN1pQ3sT5vW7")],
+    ["shopify-token", J("shp", "at_", "0123456789abcdef0123456789abcdef")],
+    ["postman-key", J("PM", "AK-", "aB3dE5gH7jK9mN1pQ3sT5vW7", "-", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3j")],
+  ];
+  const mk = (line: string) => `diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n@@ -1,0 +1,1 @@\n+const t = "${line}";\n`;
+  test.each(cases)("more token shapes: %s is reported through main label-only", async (label, key) => {
+    const { root, runs } = fixture();
+    try {
+      expect(scanDiff(mk(key)).map((f) => f.key)).toEqual([label]);
+      const r = await run(["--sarif", "e10-1-aaaa"], { runsRoot: runs, diff: async () => mk(key) });
+      expect(r.rc).toBe(0);
+      const sarif = readFileSync(join(runs, "e10-1-aaaa", "findings.sarif"), "utf8");
+      expect(sarif.match(/"ruleId": "loki\/secret-scan"/g)?.length).toBe(1);
+      expect(sarif).not.toContain(key);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test("more token shapes: clean lookalikes report 0", () => {
+    for (const clean of ["pypi-AgEIshort", "pypi-install", "dckr_pat_x", "dop_v1_abc", "ya29.short", "shpat_abc", "PMAK-short-tok", "xya29.aB3dE5gH7jK9mN1pQ3sT5vW7"]) {
+      expect(scanDiff(mk(clean))).toEqual([]);
+    }
+  });
+});
