@@ -1259,3 +1259,47 @@ describe("doctor Integration probes run concurrently (TEN-SPEED-06)", () => {
     }
   });
 });
+
+// TEN-UX-18: doctor --quiet keeps only FAIL/WARN rows and the Summary footer.
+describe("doctor --quiet", () => {
+  afterEach(() => { _setPythonImportOkForTest(null); _setIntegrationProbesForTest(null); });
+
+  it("filterQuietDoctor drops pass rows, headers and OK lines, keeps fail/warn with fix lines and the footer", async () => {
+    const { filterQuietDoctor } = await import("../../src/commands/doctor.ts");
+    const text = [
+      "Loki Mode Doctor", "", "Tools:", "  PASS  Node (v20)", "  FAIL  Git - not found",
+      "         Fix: install git", "  OK    Single loki install", "  WARN  Disk low", "  PASS  Bun",
+      "         Note: pass detail", "", "Summary: 2 passed, 1 failed, 1 warnings", "", "Then re-run: loki doctor", "",
+    ].join("\n");
+    const out = filterQuietDoctor(text);
+    expect(out).toContain("FAIL  Git - not found");
+    expect(out).toContain("Fix: install git");
+    expect(out).toContain("WARN  Disk low");
+    expect(out).toContain("Summary: 2 passed");
+    expect(out).toContain("Then re-run: loki doctor");
+    expect(out).not.toContain("PASS");
+    expect(out).not.toContain("Tools:");
+    expect(out).not.toContain("Single loki");
+    expect(out).not.toContain("pass detail");
+  });
+
+  it("runDoctor(['--quiet']) prints no PASS row, keeps the footer, and returns the same exit code as the full run", async () => {
+    stubPythonImportOk();
+    const full = await captureStdio(() => runDoctor([]));
+    const quiet = await captureStdio(() => runDoctor(["--quiet"]));
+    expect(quiet.result).toBe(full.result);
+    expect(quiet.cap.out).not.toMatch(/\bPASS\b/);
+    expect(quiet.cap.out).toMatch(/Summary:/);
+    expect(quiet.cap.out.length).toBeLessThan(full.cap.out.length);
+    const short = await captureStdio(() => runDoctor(["-q"]));
+    expect(short.result).toBe(full.result);
+  });
+
+  it("--quiet leaves --json unaffected", async () => {
+    stubPythonImportOk();
+    const a = await captureStdio(() => runDoctor(["--json"]));
+    const b = await captureStdio(() => runDoctor(["--json", "--quiet"]));
+    expect(b.result).toBe(a.result);
+    expect(JSON.parse(b.cap.out).summary).toEqual(JSON.parse(a.cap.out).summary);
+  });
+});

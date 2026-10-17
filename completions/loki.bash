@@ -143,7 +143,7 @@ _loki_completion() {
             ;;
         doctor)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --fix --yes --repo --requirements --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --quiet --fix --yes --repo --requirements --help" -- "$cur") )
                 return 0
             fi
             ;;

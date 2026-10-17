@@ -1873,7 +1873,7 @@ show_help_all() {
     echo ""
     echo "Config:"
     echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
-    echo "  doctor [--json]  Check system prerequisites and skill symlinks"
+    echo "  doctor [--json] [--quiet]  Check system prerequisites and skill symlinks"
     echo ""
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"

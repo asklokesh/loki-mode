@@ -1135,9 +1135,10 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--quiet] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON (includes requirements grouped by execution path)\n`);
+  process.stdout.write(`  --quiet   Text mode: print only FAIL and WARN rows plus the Summary footer (also -q); exit code and --json unchanged\n`);
   process.stdout.write(`  --requirements  Print requirements per execution path (required or optional, present or missing, one-line fix)\n`);
   process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); on a TTY offer the claude install and login (y/N); print commands for the rest\n`);
   process.stdout.write(`  --yes     With --fix: run the claude install and login without asking (also -y)\n`);
@@ -1910,6 +1911,36 @@ const defaultRoundTrip: RoundTripRunner = async () => {
   return { ok: r.status === 0, detail: (r.status === 0 ? r.stdout : r.stderr || `exit ${r.status}`).trim().slice(0, 200) };
 };
 
+// TEN-UX-18: --quiet keeps FAIL/WARN rows (with their indented fix lines) and
+// everything from the Summary line on; every other line is dropped.
+export function filterQuietDoctor(text: string): string {
+  const ansi = /\x1b\[[0-9;]*m/g;
+  const out: string[] = [];
+  let inRow = false;
+  let inFooter = false;
+  for (const line of text.split("\n")) {
+    const plain = line.replace(ansi, "");
+    if (inFooter || /^Summary:/.test(plain)) { inFooter = true; out.push(line); continue; }
+    if (/^\s+(FAIL|WARN)\b/.test(plain)) { inRow = true; out.push(line); continue; }
+    if (inRow && /^ {9,}\S/.test(plain)) { out.push(line); continue; }
+    inRow = false;
+  }
+  return out.join("\n");
+}
+
+async function runTextQuiet(): Promise<number> {
+  const orig = process.stdout.write.bind(process.stdout);
+  let buf = "";
+  (process.stdout as { write: unknown }).write = (chunk: string | Uint8Array): boolean => {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  };
+  let code: number;
+  try { code = await runText(); } finally { (process.stdout as { write: unknown }).write = orig; }
+  orig(filterQuietDoctor(buf));
+  return code;
+}
+
 export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}): Promise<number> {
   let roundTrip = false;
   let json = false;
@@ -1917,6 +1948,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
   let yes = false;
   let repo = false;
   let reqs = false;
+  let quiet = false;
   for (const arg of argv) {
     if (arg === "--repo") {
       repo = true;
@@ -1928,6 +1960,8 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       fix = true;
     } else if (arg === "--yes" || arg === "-y") {
       yes = true;
+    } else if (arg === "--quiet" || arg === "-q") {
+      quiet = true;
     } else if (arg === "--requirements") {
       reqs = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -1935,7 +1969,7 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--quiet] [--fix [--yes]] [--requirements] [--airgap] [--repo [--round-trip]]\n`);
       return 1;
     }
   }
@@ -1973,12 +2007,12 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
     return result.summary.ok ? 0 : 1;
   }
   if (fix) {
-    const code = await runText();
+    const code = quiet ? await runTextQuiet() : await runText();
     const { runDoctorFix } = await import("./doctor_fix.ts");
     const fixCode = runDoctorFix({ yes });
     return code !== 0 ? code : fixCode;
   }
   // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
   process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);
-  return runText();
+  return quiet ? runTextQuiet() : runText();
 }
