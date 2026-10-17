@@ -68,6 +68,31 @@ describe("loki status (Loki 10)", () => {
     expect(controlRunLink("javascript:x", dir, "r")).toBeNull();
   });
 
+  test("second run id is a too-many-arguments error with the full usage", async () => {
+    const orig = process.stderr.write.bind(process.stderr);
+    let err = "";
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try {
+      const { code } = await run(["e10-20261003T000000Z-aaaa", "e10-20261003T000000Z-bbbb"]);
+      expect(code).toBe(1);
+    } finally { process.stderr.write = orig; }
+    expect(err).toContain("too many arguments: expected one run id");
+    expect(err).not.toContain("unknown flag");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+  });
+
+  test("a truly unknown flag still reports unknown flag with the full usage", async () => {
+    const orig = process.stderr.write.bind(process.stderr);
+    let err = "";
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try {
+      const { code } = await run(["--bogus"]);
+      expect(code).toBe(1);
+    } finally { process.stderr.write = orig; }
+    expect(err).toContain("unknown flag --bogus");
+    expect(err).toContain("Usage: loki status [run-id] [--json|--badge|--probe]");
+  });
+
   test("--badge is routed to the deploy badge, not rejected as an unknown flag", async () => {
     const prev = process.env.LOKI_DIR;
     process.env.LOKI_DIR = join(dir, ".loki");

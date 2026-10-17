@@ -136,11 +136,13 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   if (argv.includes("--probe")) return (await import("./status.ts")).runStatus(["--probe"]);
   let json = false;
   let wanted: string | null = null;
+  const usage = "Usage: loki status [run-id] [--json|--badge|--probe]\n";
   for (const a of argv) {
     if (a === "--json") json = true;
     else if (!a.startsWith("-") && wanted === null) wanted = a;
-    else if (a === "--help" || a === "-h") { process.stdout.write("Usage: loki status [run-id] [--json|--badge|--probe]\n  Shows the current or latest Loki 10 run.\n"); return 0; }
-    else { process.stderr.write(`loki status: unknown flag ${a}\nUsage: loki status [--json]\n`); return 1; }
+    else if (!a.startsWith("-")) { process.stderr.write(`loki status: too many arguments: expected one run id\n${usage}`); return 1; }
+    else if (a === "--help" || a === "-h") { process.stdout.write(`${usage}  Shows the current or latest Loki 10 run.\n`); return 0; }
+    else { process.stderr.write(`loki status: unknown flag ${a}\n${usage}`); return 1; }
   }
   const repoDir = env.LOKI_E10_REPO_DIR ?? process.cwd();
   const root = runsRoot(env, repoDir);
