@@ -749,17 +749,24 @@ loki_maybe_apply_config_file() {
         path="$LOKI_CONFIG_FILE"
     fi
     # 2. scan args (explicit flag overrides the env var).
-    local prev=""
-    local a
+    # With --deploy on the line, --env-file is the deploy env file, not config.
+    local prev="" a ef_cfg=1
+    for a in "$@"; do [ "$a" = "--deploy" ] && ef_cfg=0; done
     for a in "$@"; do
         case "$prev" in
-            --config|--vars|--env-file)
+            --config|--vars)
                 path="$a"
+                ;;
+            --env-file)
+                [ "$ef_cfg" = 1 ] && path="$a"
                 ;;
         esac
         case "$a" in
-            --config=*|--vars=*|--env-file=*)
+            --config=*|--vars=*)
                 path="${a#*=}"
+                ;;
+            --env-file=*)
+                [ "$ef_cfg" = 1 ] && path="${a#*=}"
                 ;;
         esac
         prev="$a"

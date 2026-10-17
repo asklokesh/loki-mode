@@ -2494,3 +2494,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T08:00Z (CoS) v11.17.38
 - Wave AE released: 17 APPROVE merged clean (merged-ae.txt), including P0 TEN-STABILITY-13 (core 4949 lines) and HIGH TEN-SECURITY-01/02/03, TEN-GATES-16/17. TEN-COST-30 and TEN-QUALITY-15 already shipped. TEN-DEPLOY-03 BLOCK eca0e17e0 and TEN-GATES-15 BLOCK 6f7591b8c re-dispatched. Combined tree: bun test tests/engine10 tests/util had 4 structural guard fails (3 pre-existing at ac43fb498: full_env_spawn, registration_list, start_flag_parity; 1 new: model_output_regex wall.ts count); P0 TEN-STABILITY-14 opened.
+
+## 2026-10-17T09:06Z (CoS) v11.17.39
+- Wave AF: TEN-STABILITY-14 (APPROVE f0a131549) and TEN-DEPLOY-09 (APPROVE 87fa1bbfb) merged; cd loki-ts && bun test tests/util: 382 pass, 0 fail on the merged tree. A-112b already shipped (bfd6b98d8). Q17-05b BLOCK 812d13e0c and Q18-03e BLOCK 0c0c7ef0c after a fix round; TEN-DEPLOY-03 and TEN-GATES-15 fix rounds never ran (CoS script bug: the review pointer did not start with BLOCK), re-dispatched.

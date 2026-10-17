@@ -365,6 +365,10 @@ function _loki_start {
         '--deploy[Deploy after a VERIFIED run via loki deploy --execute]' \
         '--health-url[With --deploy: health probe URL]:url:' \
         '--auto-rollback[With --deploy: roll back on a failed health probe]' \
+        '--destination[With --deploy: preview, staging or production]:destination:(preview staging production)' \
+        '--canary[With --deploy: canary rollout]' \
+        '--domain[With --deploy: attach this domain and prove TLS]:hostname:' \
+        '--env-file[With --deploy: env file pushed to the provider]:file:_files' \
         '--background[Background mode]' \
         '--bg[Background mode]' \
         '--simple[Force simple complexity]' \

@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.39 (2026-10-17)
+
+### Added
+- TEN-DEPLOY-09: `loki start --deploy` passes --destination, --canary, --env-file, --domain and --github through to `loki deploy`; chat help and docs describe the brief-to-verified-URL path. With --deploy, --env-file is no longer loaded as start config.
+
+### Fixed
+- TEN-STABILITY-14: the four loki-ts/tests/util structural guards are green again. funnel.ts spawns with a token-free env instead of the full parent env, --cost is declared in the start flag parity table, and the regex and module allowlists match the tree.
+
+### Known
+- A-112b closed as already shipped (commit bfd6b98d8 unfolded subtractBase).
+- TEN-DEPLOY-03, TEN-GATES-15, Q17-05b and Q18-03e remain blocked and are re-dispatched with opus fixers.
+
 ## v11.17.38 (2026-10-17)
 
 ### Added
