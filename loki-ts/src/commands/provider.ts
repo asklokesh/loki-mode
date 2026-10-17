@@ -158,8 +158,14 @@ export async function runProvider(argv: readonly string[]): Promise<number> {
     case "models":
       // Defer to bash for write/lookup commands not in Phase 2 scope.
       return execLegacyBash(["provider", sub, ...rest]);
-    default:
+    case "help":
+    case "-h":
+    case "--help":
       return printProviderHelp();
+    default:
+      process.stderr.write(`loki provider: unknown subcommand '${sub}' (see 'loki provider help')\n`);
+      printProviderHelp();
+      return 2;
   }
 }
 

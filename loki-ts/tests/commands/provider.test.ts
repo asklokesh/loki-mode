@@ -86,9 +86,18 @@ describe("opencode provider selection", () => {
 });
 
 describe("provider unknown subcommand", () => {
-  it("prints help on unknown subcommand", async () => {
+  it("unknown subcommand prints error plus help and exits 2", async () => {
     const a = await bunCmd(["provider", "definitelynotacommand"]);
-    expect(a.exitCode).toBe(0);
+    expect(a.exitCode).toBe(2);
+    expect(stripAnsi(a.stderr)).toContain("unknown subcommand 'definitelynotacommand'");
     expect(stripAnsi(a.stdout)).toContain("Loki Mode Provider Management");
+  });
+
+  it("help, -h, --help stay exit 0", async () => {
+    for (const w of ["help", "-h", "--help"]) {
+      const a = await bunCmd(["provider", w]);
+      expect(a.exitCode).toBe(0);
+      expect(stripAnsi(a.stdout)).toContain("Loki Mode Provider Management");
+    }
   });
 });
