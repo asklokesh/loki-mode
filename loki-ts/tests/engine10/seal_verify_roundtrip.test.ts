@@ -5,7 +5,9 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateKeyPairSync } from "node:crypto";
 import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { signReceipt } from "../../src/util/receipt_signer.ts";
 import { main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const root = mkdtempSync(join(tmpdir(), "e10-roundtrip-"));
@@ -62,6 +64,48 @@ describe("seal then verify round-trip", () => {
       const { rc, out } = await capture([flag], join(root, "none"));
       expect(rc).toBe(0);
       expect(out).toContain("Usage");
+    }
+  });
+
+  test("unusable signing key names the reason", () => {
+    const keep = { k: process.env["LOKI_RECEIPT_SIGNING_KEY"], f: process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"], h: process.env["HOME"] };
+    const dirAsFile = join(root, "dir-as-file");
+    mkdirSync(dirAsFile, { recursive: true });
+    const cases: Array<[string, string | null, RegExp]> = [
+      [dirAsFile, null, /unreadable/],
+      ["junk.pem", "not a pem SECRETBYTES", /not a valid PEM/],
+      ["rsa.pem", generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }) as string, /not ed25519/],
+    ];
+    const w = process.stderr.write.bind(process.stderr);
+    const sign = (): { r: ReturnType<typeof signReceipt>; err: string } => {
+      let err = "";
+      process.stderr.write = ((s: string) => ((err += s), true)) as never;
+      try { return { r: signReceipt("run-x", "ab".repeat(32)), err }; } finally { process.stderr.write = w; }
+    };
+    try {
+      delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+      process.env["HOME"] = join(root, "home");
+      for (const [name, body, re] of cases) {
+        const f = body === null ? name : join(root, name);
+        if (body !== null) writeFileSync(f, body);
+        process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = f;
+        const { r, err } = sign();
+        expect(r).toEqual({ jwt: null, kid: null });
+        expect(err).toMatch(re);
+        expect(err).not.toContain("SECRETBYTES");
+        expect(err.trim().split("\n").length).toBe(1);
+      }
+      const good = join(root, "valid.pem");
+      writeFileSync(good, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }));
+      process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = good;
+      const ok = sign();
+      expect(ok.r.jwt).toBeTruthy();
+      expect(ok.err).toBe("");
+    } finally {
+      process.stderr.write = w;
+      for (const [n, v] of [["LOKI_RECEIPT_SIGNING_KEY", keep.k], ["LOKI_RECEIPT_SIGNING_KEY_FILE", keep.f], ["HOME", keep.h]] as const) {
+        if (v === undefined) delete process.env[n]; else process.env[n] = v;
+      }
     }
   });
 });

@@ -32,6 +32,8 @@ export const kidOf = (pub: KeyObject): string => b64u(createHash("sha256").updat
 /** Same precedence and file rules as receipt_jwt.load_signing_key: inline PEM, then KEY_FILE, then ~/.loki/keys/receipt-ed25519.pem
  *  (0600 key, 0700 dir, O_EXCL temp then link, so a concurrent first run reads the winner). Never logs or returns key bytes. */
 export function loadSigningKey(generate = true): KeyObject | null {
+  lastProblem = null;
+  let stage = "read";
   try {
     const inline = process.env["LOKI_RECEIPT_SIGNING_KEY"]?.trim();
     let pem: string | Buffer = inline ?? "";
@@ -42,6 +44,7 @@ export function loadSigningKey(generate = true): KeyObject | null {
         pem = readFileSync(file);
         if (!given) for (const [f, m] of [[file, 0o600], [dirname(file), 0o700]] as const) if (statSync(f).mode & 0o077) chmodSync(f, m);
       } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") lastProblem = `signing key file unreadable (${(e as NodeJS.ErrnoException).code ?? "error"})`;
         if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !generate) return null;
         mkdirSync(dirname(dirname(file)), { recursive: true, mode: 0o700 });
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -51,17 +54,27 @@ export function loadSigningKey(generate = true): KeyObject | null {
         pem = readFileSync(file);
       }
     }
+    stage = "parse";
     const k = createPrivateKey(pem);
-    return k.asymmetricKeyType === "ed25519" ? k : null;
+    if (k.asymmetricKeyType === "ed25519") return k;
+    lastProblem = `signing key is not ed25519 (found ${k.asymmetricKeyType ?? "unknown"})`;
+    return null;
   } catch {
+    lastProblem ??= stage === "parse" ? "signing key is not a valid PEM private key" : "signing key could not be read or created";
     return null;
   }
 }
+let lastProblem: string | null = null;
+/** Why the last loadSigningKey returned null, or null when it was only absent. Never holds key bytes. */
+export const signingKeyProblem = (): string | null => lastProblem;
 
 /** Signs a compact EdDSA JWT with node:crypto, byte-compatible with receipt_jwt.sign_attestation. Null jwt means UNSIGNED. */
 export function signReceipt(runId: string, hash: string): { jwt: string | null; kid: string | null } {
   const key = loadSigningKey();
-  if (!key) return { jwt: null, kid: null };
+  if (!key) {
+    if (lastProblem) process.stderr.write(`loki: receipt left UNSIGNED: ${lastProblem}\n`);
+    return { jwt: null, kid: null };
+  }
   const kid = kidOf(createPublicKey(key));
   const input = `${b64u(canonicalJson({ alg: "EdDSA", typ: "JWT", kid }))}.${b64u(canonicalJson({ job_id: runId, run_id: runId, receipt_sha256: hash, iat: Math.floor(Date.now() / 1000) }))}`;
   return { jwt: `${input}.${b64u(sign(null, Buffer.from(input), key))}`, kid };
