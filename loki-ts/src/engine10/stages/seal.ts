@@ -294,7 +294,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...ablationCorpusBlock(ctx.repoDir),
+      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...ablationCorpusBlock(ctx.repoDir, ctx.startedAtMs),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

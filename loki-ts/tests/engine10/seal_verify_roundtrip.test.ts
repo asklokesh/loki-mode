@@ -71,7 +71,7 @@ describe("seal then verify round-trip", () => {
 
 // TEN-GATES-15: the corpus version and catch rate ride in the signed receipt body.
 const sh = (cwd: string, ...a: string[]): string => execFileSync(a[0]!, a.slice(1), { cwd, encoding: "utf8" });
-async function realSeal(name: string, ablation: Record<string, unknown> | null, results: ((v: string) => unknown) | null, manifest = '{"defects":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}]}'): Promise<{ receipt: Record<string, unknown>; path: string; runsRoot: string; version: string }> {
+async function realSeal(name: string, ablation: Record<string, unknown> | null, results: ((v: string) => unknown) | null, manifest = '{"defects":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"}]}', started: number | null = Date.now() - 60_000): Promise<{ receipt: Record<string, unknown>; path: string; runsRoot: string; version: string }> {
   const repo = join(root, name), corpus = join(root, name + "-corpus"), runDir = join(repo, ".loki/runs/r1");
   mkdirSync(runDir, { recursive: true });
   mkdirSync(join(corpus, "results"), { recursive: true });
@@ -100,7 +100,7 @@ async function realSeal(name: string, ablation: Record<string, unknown> | null, 
     emit: () => {}, sessions: { run: async () => ({ exit: 0 }) as never },
     tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
-    clock: { now: () => Date.now() }, outputs: () => outputs,
+    clock: { now: () => Date.now() }, outputs: () => outputs, ...(started === null ? {} : { startedAtMs: started }),
   };
   const prev = process.env["LOKI_SEEDED_DEFECTS_DIR"];
   process.env["LOKI_SEEDED_DEFECTS_DIR"] = corpus;
@@ -144,6 +144,10 @@ describe("receipt records the seeded-defect corpus (TEN-GATES-15)", () => {
   test("no results file gives null; an outcome-less run is ignored", async () => {
     expect(((await realSeal("g15c", { status: "load_bearing" }, null)).receipt["ablation"] as Obj)["catch_rate"]).toBeNull();
     expect(((await realSeal("g15d", { status: "load_bearing" }, (v) => ({ manifest_sha256: v, runs: [{ outcomes: {} }] }))).receipt["ablation"] as Obj)["catch_rate"]).toBeNull();
+  });
+  test("an ablation record older than this run, or a run with no recorded start, is not signed", async () => {
+    expect("ablation" in (await realSeal("g15h", { status: "load_bearing" }, measured, undefined, Date.now() + 60_000)).receipt).toBe(false);
+    expect("ablation" in (await realSeal("g15i", { status: "load_bearing" }, measured, undefined, null)).receipt).toBe(false);
   });
   test("no ablation record, not_applicable, or unreadable manifest leaves the key out", async () => {
     expect("ablation" in (await realSeal("g15e", null, measured)).receipt).toBe(false);

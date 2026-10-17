@@ -82,6 +82,8 @@
     "bin/loki",
     "loki-ts/dist/",
     "loki-ts/data/",
+    "benchmarks/seeded-defects/manifest.json",
+    "benchmarks/seeded-defects/results/wrong-pass.json",
     "loki-ts/package.json",
     "packages/control-plane/src/",
     "packages/control-plane/drizzle/",

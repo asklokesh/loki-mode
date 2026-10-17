@@ -29,16 +29,19 @@ export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined
   return r.length ? { intent_revisions: r } : {};
 }
 
-/** Receipt field (TEN-GATES-15): the seeded-defect corpus the ablation gate leaned on. Present only when the run recorded a valid
- *  .loki/quality/ablation.json and the corpus manifest is readable, so every other receipt stays byte-stable. corpus_version is the
+/** Receipt field (TEN-GATES-15): the seeded-defect corpus the ablation gate leaned on. Present only when .loki/quality/ablation.json is a valid record
+ *  written AT OR AFTER this run started (mtime >= startedAtMs; engine10 itself does not produce it, so an older legacy-runner file is never
+ *  signed as this run's evidence; unknown start leaves the key out) and the corpus manifest is readable, so every other receipt stays byte-stable. corpus_version is the
  *  sha256 of the manifest bytes; catch_rate is NOT_SEALED / total of the worst run in results/wrong-pass.json, counted only when that
  *  file measured THIS manifest (a stale measurement is null, never carried over). The block sits in the signed receipt body, so
  *  editing any value breaks receipt_sha256 and `loki verify` reports TAMPERED. */
 export interface AblationCorpus { corpus_version: string; corpus_defects: number; catch_rate: number | null }
-export function ablationCorpusBlock(repoDir: string, env: NodeJS.ProcessEnv = process.env, corpusDir?: string): { ablation?: AblationCorpus } {
+export function ablationCorpusBlock(repoDir: string, startedAtMs: number | undefined, env: NodeJS.ProcessEnv = process.env, corpusDir?: string): { ablation?: AblationCorpus } {
   const dir = corpusDir ?? (env["LOKI_SEEDED_DEFECTS_DIR"] || join(REPO_ROOT, "benchmarks", "seeded-defects"));
   try {
-    const ab = JSON.parse(readFileSync(join(repoDir, ".loki", "quality", "ablation.json"), "utf8")) as { status?: unknown };
+    const abPath = join(repoDir, ".loki", "quality", "ablation.json");
+    if (startedAtMs === undefined || statSync(abPath).mtimeMs < startedAtMs) return {};
+    const ab = JSON.parse(readFileSync(abPath, "utf8")) as { status?: unknown };
     if (ab.status !== "load_bearing" && ab.status !== "not_load_bearing") return {};
     const bytes = readFileSync(join(dir, "manifest.json")), version = createHash("sha256").update(bytes).digest("hex");
     const defects = ((JSON.parse(bytes.toString("utf8")) as { defects?: unknown }).defects as unknown[] | undefined)?.length ?? 0;
