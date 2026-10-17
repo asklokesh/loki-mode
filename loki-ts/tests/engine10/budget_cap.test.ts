@@ -21,6 +21,16 @@ describe("cap resolution", () => {
     expect(parseCapUsd("$7")).toBe(7);
     for (const bad of ["0", "-1", "abc", "", "1e3", "NaN"]) expect(parseCapUsd(bad)).toBeNull();
   });
+  test("bare decimal cap: .5 and 5. are dollar caps, not null", () => {
+    expect(parseCapUsd(".5")).toBe(0.5);
+    expect(parseCapUsd("$.25")).toBe(0.25);
+    expect(parseCapUsd("5.")).toBe(5);
+    for (const bad of [".", "$.", "..5", "5..", ".0", "0."]) expect(parseCapUsd(bad)).toBeNull();
+    expect(resolveCap(".5", "/nonexistent-loki-repo", {})).toEqual({ usd: 0.5, source: "--max-cost" });
+    expect(resolveCap(null, "/nonexistent-loki-repo", { LOKI_BUDGET_LIMIT: "5." })).toEqual({ usd: 5, source: "env" });
+    expect(resolveCap(null, "/nonexistent-loki-repo", { LOKI_BUDGET_LIMIT: ".0" })).toEqual({ usd: 0, source: "subscription" });
+    expect(yamlPerRun("budgets:\n  per_run: .5\n")).toBe(0.5);
+  });
   test("yamlPerRun reads budgets.per_run only", () => {
     expect(yamlPerRun("budgets:\n  per_run: 3.5\n  per_day: 50\n")).toBe(3.5);
     expect(yamlPerRun("other:\n  per_run: 9\nbudgets:\n  per_day: 1\n")).toBeNull();

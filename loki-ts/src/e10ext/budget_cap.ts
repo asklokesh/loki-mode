@@ -11,10 +11,10 @@ export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscr
 /** True when a provider API key variable is set (presence only; the value is never read). */
 export function hasApiKey(env: NodeJS.ProcessEnv): boolean { return ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some((k) => (env[k] ?? "") !== ""); }
 export function parseCapUsd(raw: unknown): number | null {
-  const n = typeof raw === "number" ? raw : /^\$?\d+(\.\d+)?$/.test(String(raw ?? "").trim()) ? Number(String(raw).trim().replace("$", "")) : NaN;
+  const n = typeof raw === "number" ? raw : /^\$?(\d+(\.\d*)?|\.\d+)$/.test(String(raw ?? "").trim()) ? Number(String(raw).trim().replace("$", "")) : NaN;
   return Number.isFinite(n) && n > 0 ? n : null;
 }
-const isZeroCap = (raw: string): boolean => /^\$?0+(\.0+)?$/.test(raw.trim()); // 0 stays a valid no-cap value, never an error
+const isZeroCap = (raw: string): boolean => /^\$?(0+(\.0*)?|\.0+)$/.test(raw.trim()); // 0 stays a valid no-cap value, never an error
 /** budgets.per_run from loki.yaml text (a two-level read; no YAML dependency). */
 export function yamlPerRun(text: string): number | null { return parseCapUsd(yamlKey(text, "budgets", "per_run")); }
 /** usd 0 means no dollar cap (subscription run). */
