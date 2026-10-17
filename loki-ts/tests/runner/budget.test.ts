@@ -275,6 +275,19 @@ describe("budget.read/writeBudgetState atomic round-trip", () => {
     expect(readBudgetState(fp)).toBeNull();
   });
 
+  it("corrupt budget state rebuilds used from efficiency records", () => {
+    const fp = join(scratch, "metrics", "budget.json");
+    const effDir = join(scratch, "metrics", "efficiency");
+    mkdirSync(effDir, { recursive: true });
+    writeFileSync(join(effDir, "iter-0.json"), JSON.stringify({ model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 }));
+    const expected = calculateCostFromRecords(readEfficiencyDir(effDir));
+    expect(expected).toBeGreaterThan(0);
+    writeFileSync(fp, "{not json");
+    expect(readBudgetState(fp)?.budget_used).toBe(expected);
+    writeFileSync(fp, JSON.stringify({ limit: 10, budget_limit: 10, exceeded: false }));
+    expect(readBudgetState(fp)?.budget_used).toBe(expected);
+  });
+
   it("returns null when required field missing", () => {
     const fp = join(scratch, "metrics", "missing-field.json");
     mkdirSync(join(scratch, "metrics"), { recursive: true });

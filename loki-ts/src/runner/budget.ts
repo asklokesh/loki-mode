@@ -302,20 +302,34 @@ function isValidBudgetState(v: unknown): v is BudgetState {
   return true;
 }
 
-export function readBudgetState(file?: string): BudgetState | null {
+const warnedCorruptBudget = new Set<string>();
+
+// A corrupt budget.json must not reset spend to zero and disarm the cap. Rebuild
+// budget_used from the efficiency records beside it; null only when there is
+// nothing to rebuild from. Warns once per file.
+function rebuildBudgetState(fp: string, efficiencyDir?: string): BudgetState | null {
+  const records = readEfficiencyDir(efficiencyDir ?? join(dirname(fp), "efficiency"));
+  if (!warnedCorruptBudget.has(fp)) {
+    warnedCorruptBudget.add(fp);
+    console.warn(`[budget] malformed budget state at ${fp}; rebuilding spend from ${records.length} efficiency record(s)`);
+  }
+  if (records.length === 0) return null;
+  const used = calculateCostFromRecords(records);
+  const limit = parseBudgetLimit(process.env["BUDGET_LIMIT"] ?? null) ?? 0;
+  return { limit, budget_limit: limit, budget_used: used, exceeded: limit > 0 && used >= limit };
+}
+
+export function readBudgetState(file?: string, efficiencyDir?: string): BudgetState | null {
   const fp = file ?? join(lokiDir(), "metrics", "budget.json");
   if (!existsSync(fp)) return null;
+  let parsed: unknown;
   try {
-    const raw = readFileSync(fp, "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (!isValidBudgetState(parsed)) {
-      console.warn(`[budget] discarding malformed budget state at ${fp}`);
-      return null;
-    }
-    return parsed;
+    parsed = JSON.parse(readFileSync(fp, "utf8"));
   } catch {
-    return null;
+    return rebuildBudgetState(fp, efficiencyDir);
   }
+  if (!isValidBudgetState(parsed)) return rebuildBudgetState(fp, efficiencyDir);
+  return parsed;
 }
 
 export function writeBudgetState(state: BudgetState, file?: string): void {
