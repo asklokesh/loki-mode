@@ -18,6 +18,9 @@ import { homeLokiDir } from "./paths.ts";
 const REGISTRY_URL = "https://registry.npmjs.org/loki-mode/latest";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const FETCH_TIMEOUT_MS = 1500;
+// A failed fetch (offline, timeout) is remembered this long so an offline
+// machine does not pay the fetch timeout on every command.
+const NEGATIVE_TTL_MS = 15 * 60 * 1000; // 15 min
 
 interface UpdateCache {
   // Wall-clock ms when the registry was last queried successfully.
@@ -85,6 +88,29 @@ function readCache(file: string): UpdateCache | null {
   return null;
 }
 
+// Wall-clock ms of the last failed registry fetch, or null. Stored beside the
+// positive cache fields; a corrupt or absent record means no negative entry.
+function readFailedAt(file: string): number | null {
+  try {
+    const v = (JSON.parse(readFileSync(file, "utf-8")) as { failedAt?: unknown }).failedAt;
+    if (typeof v === "number") return v;
+  } catch {
+    // missing/corrupt -> no negative entry
+  }
+  return null;
+}
+
+// Record a failed fetch, preserving any previous positive entry.
+function writeFailure(file: string, now: number): void {
+  const prev = readCache(file);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ ...(prev ?? {}), failedAt: now }), "utf-8");
+  } catch {
+    // best-effort
+  }
+}
+
 function writeCache(file: string, c: UpdateCache): void {
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -115,7 +141,7 @@ async function fetchLatest(): Promise<string | null> {
 
 // Resolve the latest known version, preferring a fresh (< 24h) cache so we hit
 // the network at most once a day. On a cache miss, query the registry and
-// persist the result. Always fail-silent (returns null on any failure).
+// persist the result; a failed fetch is negatively cached for 15 min. Always fail-silent (returns null on any failure).
 //
 // `now` and `fetcher` are injectable for deterministic tests.
 export async function resolveLatest(
@@ -127,8 +153,15 @@ export async function resolveLatest(
   if (cached && now - cached.checkedAt < CACHE_TTL_MS) {
     return cached.latest;
   }
+  const failedAt = readFailedAt(cacheFile);
+  if (failedAt !== null && now - failedAt >= 0 && now - failedAt < NEGATIVE_TTL_MS) {
+    return null;
+  }
   const latest = await fetcher();
-  if (latest === null) return null;
+  if (latest === null) {
+    writeFailure(cacheFile, now);
+    return null;
+  }
   writeCache(cacheFile, { checkedAt: now, latest });
   return latest;
 }
@@ -233,6 +266,8 @@ export function maybePrintWhatsNew(
 export function updateCommandFor(installPath: string): string {
   const p = installPath.replace(/\\/g, "/");
   if (p.includes("/Cellar/")) return "brew upgrade loki-mode";
+  if (/\/pnpm\//.test(p) || p.includes("/.pnpm/")) return "pnpm add -g loki-mode  (or npm i -g loki-mode)";
+  if (p.includes("/yarn/global/") || p.includes("/.yarn/")) return "yarn global add loki-mode  (or npm i -g loki-mode)";
   if (p.includes("/.bun/")) return "bun install -g loki-mode  (or npm i -g loki-mode)";
   if (p.includes("/lib/node_modules/")) return "npm i -g loki-mode  (or bun install -g loki-mode)";
   if (p.includes("/homebrew/")) return "brew upgrade loki-mode";
