@@ -71,6 +71,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki queue` | Overnight issue queue with a morning digest |
 | `loki queue add` | Queue issue refs |
 | `loki queue list` | Show the queue |
+| `loki queue remove` | Take issue refs out of the queue |
+| `loki queue clear` | Empty the queue |
 | `loki queue run` | Process the queue |
 | `loki issues` | Run every open issue in a repo and open PRs |
 | `loki issues run` | Triage and run open issues; split too-large ones into stacked PRs |

@@ -75,6 +75,34 @@ describe("loki queue", () => {
     expect(text.indexOf("o/r#1")).toBeLessThan(text.indexOf("o/r#2"));
   });
 
+  test("remove drops normalized refs, clear empties, missing ref exits 0", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1", "o/r#2", "o/r#3"], h.inject);
+    h.out.length = 0;
+    expect(await runQueue(["remove", "https://github.com/o/r/issues/2"], h.inject)).toBe(0);
+    expect(h.out.join("")).toContain("1 removed, 2 left");
+    expect(readQueue(dir).map((i) => i.ref)).toEqual(["o/r#1", "o/r#3"]);
+    h.out.length = 0;
+    expect(await runQueue(["remove", "o/r#9"], h.inject)).toBe(0);
+    expect(h.out.join("")).toContain("not queued: o/r#9");
+    expect(h.out.join("")).toContain("0 removed, 2 left");
+    expect(await runQueue(["remove"], h.inject)).toBe(2);
+    expect(await runQueue(["remove", "bad ref"], h.inject)).toBe(2);
+    h.out.length = 0;
+    expect(await runQueue(["clear"], h.inject)).toBe(0);
+    expect(h.out.join("")).toContain("2 removed, 0 left");
+    expect(readQueue(dir)).toEqual([]);
+  });
+
+  test("remove and clear through bin/loki", () => {
+    const run = (...a: string[]) => Bun.spawnSync([join(import.meta.dir, "../../../bin/loki"), "queue", ...a], { env: { ...process.env, LOKI_DIR: dir } });
+    expect(run("add", "o/r#5", "o/r#6").exitCode).toBe(0);
+    const r = run("remove", "o/r#5");
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("1 removed, 1 left");
+    expect(run("clear").stdout.toString()).toContain("1 removed, 0 left");
+  });
+
   test("add rejects a bad ref with exit 2 and queues nothing", async () => {
     const h = harness({});
     expect(await runQueue(["add", "o/r#1", "not a ref"], h.inject)).toBe(2);

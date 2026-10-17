@@ -1,6 +1,8 @@
 // `loki queue`: an overnight queue of GitHub issue refs.
 //   loki queue add <issue...>   append refs to .loki/issue-queue.json
 //   loki queue list             show what is queued
+//   loki queue remove <issue...> take refs out of the queue (missing ref: "not queued", exit 0)
+//   loki queue clear            empty the queue
 //   loki queue run [--no-pr]    process one at a time through issue-mode `loki start`,
 //                               consulting the usage governor before each item, then
 //                               write and print a morning digest.
@@ -137,6 +139,45 @@ export function queueAdd(refs: readonly string[], d: QueueDeps): number {
   }
   writeQueue(d.lokiDir, items);
   d.out(`${added} added, ${items.length} in queue\n`);
+  return 0;
+}
+
+export function queueRemove(refs: readonly string[], d: QueueDeps): number {
+  if (refs.length === 0) {
+    d.err("usage: loki queue remove <issue...>   (owner/repo#N, #N, N or a GitHub issue URL)\n");
+    return 2;
+  }
+  const norm: string[] = [];
+  for (const r of refs) {
+    const n = normalizeRef(r);
+    if (!n) {
+      d.err(`loki queue remove: not an issue reference: ${r}\n`);
+      return 2;
+    }
+    norm.push(n);
+  }
+  quarantineCorruptQueue(d.lokiDir, d.now(), d.err);
+  let items = readQueue(d.lokiDir);
+  let removed = 0;
+  for (const ref of new Set(norm)) {
+    if (!items.some((i) => i.ref === ref)) {
+      d.out(`not queued: ${ref}\n`);
+      continue;
+    }
+    items = items.filter((i) => i.ref !== ref);
+    removed++;
+    d.out(`removed: ${ref}\n`);
+  }
+  if (removed > 0) writeQueue(d.lokiDir, items);
+  d.out(`${removed} removed, ${items.length} left\n`);
+  return 0;
+}
+
+export function queueClear(d: QueueDeps): number {
+  quarantineCorruptQueue(d.lokiDir, d.now(), d.err);
+  const n = readQueue(d.lokiDir).length;
+  if (n > 0) writeQueue(d.lokiDir, []);
+  d.out(`${n} removed, 0 left\n`);
   return 0;
 }
 
@@ -402,10 +443,15 @@ export async function runQueue(args: readonly string[], inject?: Partial<QueueDe
       return queueAdd(rest, d);
     case "list":
       return queueList(d);
+    case "remove":
+    case "rm":
+      return queueRemove(rest, d);
+    case "clear":
+      return queueClear(d);
     case "run":
       return queueRun(rest, d);
     default:
-      d.err("usage: loki queue <add <issue...> | list | run [--no-pr]>\n");
+      d.err("usage: loki queue <add <issue...> | list | remove <issue...> | clear | run [--no-pr]>\n");
       return 2;
   }
 }
