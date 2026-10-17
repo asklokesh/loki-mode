@@ -10347,11 +10347,18 @@ _deploy_try_execute() {
 
     # --env-file: values live ONLY in env_pairs and the provider argv. Stdout, the
     # 'Running:' line and the record carry names (K=***), never values.
-    local env_file="${_LOKI_DEPLOY_ENV_FILE:-}" env_kind="" env_keys="" env_disp="" _env_rec _env_ok=false _env_err=""
-    local -a env_pairs=()
+    # Documented verbs only: Vercel '-e K=V' per key on the deploy itself; Fly
+    # 'fly secrets set --stage K=V ...' before 'fly deploy'; Netlify
+    # 'netlify env:import FILE' and Cloudflare 'wrangler secret bulk FILE' before
+    # the deploy (the provider reads FILE, so no value enters argv).
+    local env_file="${_LOKI_DEPLOY_ENV_FILE:-}" env_kind="" env_keys="" env_disp="" env_pre_disp="" _env_rec _env_ok=false _env_err=""
+    local -a env_pairs=() env_pre_argv=()
     if [ -n "$env_file" ]; then
         case "$command" in
             "vercel --prod") env_kind="vercel" ;;
+            "fly deploy") env_kind="fly" ;;
+            "netlify deploy --prod") env_kind="netlify" ;;
+            "wrangler deploy") env_kind="cloudflare" ;;
             *)
                 echo -e "${RED}REFUSED: --env-file is not supported for: ${command}${NC}" >&2
                 echo "  No documented env verb is wired for this provider. Nothing was run." >&2
@@ -10370,9 +10377,17 @@ _deploy_try_execute() {
             echo "  Nothing was run." >&2
             return 1
         fi
+        case "$env_kind" in
+            fly) env_pre_argv=(fly secrets set --stage); env_pre_disp="fly secrets set --stage" ;;
+            netlify) env_pre_argv=(netlify env:import "$env_file"); env_pre_disp="netlify env:import ${env_file}" ;;
+            cloudflare) env_pre_argv=(wrangler secret bulk "$env_file"); env_pre_disp="wrangler secret bulk ${env_file}" ;;
+        esac
         for _env_rec in "${env_pairs[@]}"; do
             env_keys="${env_keys:+${env_keys},}${_env_rec%%=*}"
-            env_disp="${env_disp} -e ${_env_rec%%=*}=***"
+            case "$env_kind" in
+                vercel) env_disp="${env_disp} -e ${_env_rec%%=*}=***" ;;
+                fly) env_pre_argv+=("$_env_rec"); env_pre_disp="${env_pre_disp} ${_env_rec%%=*}=***" ;;
+            esac
         done
     fi
 
@@ -10432,6 +10447,7 @@ _deploy_try_execute() {
     else
         echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
     fi
+    [ -n "$env_pre_disp" ] && echo "Running (env): ${env_pre_disp}"
     if [ "$canary" = true ]; then echo "Running (canary): ${exec_cmd}${env_disp}"; else echo "Running: ${command}${env_disp}"; fi
     echo ""
 
@@ -10469,7 +10485,18 @@ _deploy_try_execute() {
         for _env_rec in "${env_pairs[@]}"; do deploy_argv+=(-e "$_env_rec"); done
     fi
     # What the record and messages name: the command with values masked as K=***.
-    local exec_disp="${exec_cmd}${env_disp}"
+    local exec_disp="${env_pre_disp:+${env_pre_disp}; }${exec_cmd}${env_disp}"
+    if [ -n "$env_pre_disp" ]; then
+        # The env step runs after the gate and before the deploy; if it fails the
+        # deploy is NOT run (a deploy missing its env is not the one asked for).
+        local env_rc=0
+        ( cd "$dir" && "${env_pre_argv[@]}" ) || env_rc=$?
+        if [ "$env_rc" -ne 0 ]; then
+            echo -e "${RED}REFUSED: the env step exited ${env_rc}: ${env_pre_disp}${NC}" >&2
+            echo "  The deploy was NOT run." >&2
+            return "$env_rc"
+        fi
+    fi
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     local deployed_url="" health_src=""
     [ -n "$health_url" ] && health_src="flag"
@@ -10817,8 +10844,12 @@ cmd_deploy() {
                 echo "                 With --execute: push KEY=VALUE lines from FILE to the provider"
                 echo "                 (parsed, never shell-evaluated). Refuses when a key listed in"
                 echo "                 .env.example is missing from FILE. Vercel: 'vercel --prod -e K=V'"
-                echo "                 per key. Values are masked as K=*** in output; the deploy record"
-                echo "                 stores env_keys (names) and env_source, never values."
+                echo "                 per key; Fly: 'fly secrets set --stage K=V ...' then 'fly deploy';"
+                echo "                 Netlify: 'netlify env:import FILE'; Cloudflare: 'wrangler secret"
+                echo "                 bulk FILE'. Any other provider refuses with nothing run. If the env"
+                echo "                 step fails the deploy is not run. Values are masked as K=*** in"
+                echo "                 output; the deploy record stores env_keys (names) and env_source,"
+                echo "                 never values."
                 echo "  --allow-unanchored"
                 echo "                 Proceed when the receipt records NO baseline (nothing"
                 echo "                 about this tree is proven). Never bypasses a recorded"

@@ -176,7 +176,7 @@ function _loki {
                         '--no-clip[Do not copy the command to the clipboard]' \
                         '--execute[Run the deploy command if the receipt gate passes]' \
                         '--canary[With --execute: staged rollout (Vercel promote, Fly canary)]' \
-                        '--env-file[With --execute: push KEY=VALUE env to the provider (names-only record)]:env file:_files' \
+                        '--env-file[With --execute: push KEY=VALUE env via Vercel, Fly, Netlify or Cloudflare (names-only record)]:env file:_files' \
                         '--allow-unanchored[Proceed when the receipt records no baseline]' \
                         '--health-url[Health probe URL]:url:' \
                         '--auto-rollback[Roll back on a failed health probe]' \
