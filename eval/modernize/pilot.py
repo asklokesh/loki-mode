@@ -308,7 +308,8 @@ def read_modernize_artifacts(repo_dir):
     """Per-repo facts from the run's own artifacts. report.json when present, else derived from the
     emitted events (unit.equivalence, unit.not_proven, unit.completed). Raises PilotError (status
     no_report) when units cannot be derived. cost is None unless a budget.hit event carries spent_usd;
-    resliced is always None because no writer emits unit.resliced."""
+    resliced stays None: this reader does not count unit.resliced events (the coordinator emits them
+    since M-25w-b), so it is reported as not measured, never 0."""
     mid, mdir = find_mid(repo_dir)
     events = []
     with open(os.path.join(mdir, "events.jsonl"), encoding="utf8") as fh:

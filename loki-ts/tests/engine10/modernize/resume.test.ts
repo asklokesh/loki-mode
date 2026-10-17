@@ -466,6 +466,39 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
     } finally { f.done(); }
   });
 
+  it("FC-M25W-b: emits one unit.planned per planned unit, once, even on a resumed run", async () => {
+    const f = fx();
+    try {
+      const plan = planOf([[u("a")], [u("b")]]);
+      await runWaves(plan, mk(f, { ship: false }));
+      await runWaves(plan, mk(f, { ship: false, resume: true }));
+      const planned = readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.planned");
+      expect(planned.map((e) => e.data["unit"])).toEqual(["a", "b"]);
+    } finally { f.done(); }
+  });
+
+  it("FC-M25W-b: a failing splittable unit is re-sliced (unit.resliced); an unsplittable one is not; the unit stays NOT_PROVEN", async () => {
+    const f = fx();
+    try {
+      const wide: Unit = { id: "w", nodes: ["w1.py", "w2.py"], lines: 2, highRisk: false };
+      const run = (ctx: AttemptCtx): AttemptOutcome => ({ result: { ...proven(ctx.unit.id), verdict: "NOT_PROVEN" }, costUsd: 0 });
+      const slice = (x: Unit): Unit[] => x.nodes.length > 1 ? x.nodes.map((n, i) => ({ id: `${x.id}.${i}`, nodes: [n], lines: 1, highRisk: false })) : [];
+      const check = (x: Unit) => ({ unit: x.id, cases: 3, pass: 3, fail: 0, held_out_pass: 1, held_out_fail: 0, rate: 1, branch_pct: 100, failures: [], not_proven: [], verdict: "PROVEN" as const });
+      const r = await runWaves(planOf([[wide]]), mk(f, { run, ship: false, reslice: { slice, check } }));
+      const ev = readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.resliced");
+      expect(ev.length).toBe(1);
+      expect(ev[0]!.data["unit"]).toBe("w");
+      expect(r.ok).toBe(false);
+      expect(r.blocked).toContain("unit w NOT_PROVEN");
+    } finally { f.done(); }
+    const g = fx();
+    try {
+      const run = (ctx: AttemptCtx): AttemptOutcome => ({ result: { ...proven(ctx.unit.id), verdict: "NOT_PROVEN" }, costUsd: 0 });
+      await runWaves(planOf([[u("solo")]]), mk(g, { run, ship: false, reslice: { slice: () => [], check: () => { throw new Error("unused"); } } }));
+      expect(readModernizeEvents(g.dir, MID).filter((e) => e.type === "unit.resliced")).toEqual([]);
+    } finally { g.done(); }
+  });
+
   it("a non-PROVEN unit blocks the wave: the next wave never runs", async () => {
     const f = fx();
     try {
@@ -534,6 +567,22 @@ describe("M-27E coordinator wiring", () => {
     expect(typeof calls[0]![5]).toBe("function");
     expect(calls[0]![5]).toBe(runners.runStub);
     f.done();
+  });
+
+  it("FC-M25W-b: makeAttemptRunner logs codemod.skipped with the runCodemod reason when the tool is absent", () => {
+    const f = fx();
+    const fake = (() => proven("u-1")) as unknown as typeof runUnit;
+    const runners = makeUnitRunners({ target: "python3", session: () => ({ status: 0 }) });
+    const unit = unit1("u-1", ["pkg/a.py"]);
+    const run = makeAttemptRunner({ mid: MID, target: "python3", log: f.log, repoDir: "/base/repo", units: [unit], runners, runUnit: fake, codemod: () => ({ found: false, code: null }) });
+    run({ unit, model: "sonnet", variant: 0, worker: 1, worktree: "/wt/u-1", baseSha: "abc123" });
+    const ev = readModernizeEvents(f.dir, MID).filter((e) => e.type === "codemod.skipped");
+    expect(ev.length).toBe(1);
+    expect(ev[0]!.data).toMatchObject({ unit: "u-1", tool: "futurize", reason: "futurize not found on PATH" });
+    const ran = fx();
+    makeAttemptRunner({ mid: MID, target: "python3", log: ran.log, repoDir: "/base/repo", units: [unit], runners, runUnit: fake, codemod: () => ({ found: true, code: 0 }) })({ unit, model: "sonnet", variant: 0, worker: 1, worktree: "/wt/u-1", baseSha: "abc123" });
+    expect(readModernizeEvents(ran.dir, MID).filter((e) => e.type === "codemod.skipped")).toEqual([]);
+    f.done(); ran.done();
   });
 
   it("two waves with real merge ops: wave 2 worktree is based on HEAD after wave 1's merge", async () => {
