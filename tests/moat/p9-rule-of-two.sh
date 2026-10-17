@@ -2075,11 +2075,11 @@ inj_run_bun_default() {
     fi
 }
 
-case_allowtoken() {
+allowtoken_scan() {
     # FC-25c / SAFEGIT-REPOCONFIG 1+2: allowToken keeps the credential, so only
     # the two fetch callers may pass it to safeGit, and only in the fetch-only form.
     # safeGitEnv(base, true) is the positional spelling of the same opt-in.
-    local src="$REPO_ROOT/loki-ts/src" hits f n
+    local src="$1" hits f n
     [ -d "$src" ] || { nok "vacuous: $src is missing"; return; }
     n="$(grep -rl 'allowToken' "$src" | grep -c .)"
     [ "$n" -ge 3 ] || nok "vacuous: expected allowToken in safe_git, base_guard and modernize_unit, found $n files"
@@ -2123,6 +2123,7 @@ EOF_HITS
                 || /\bimport\s*(?:type\s*)?\{[^}]*\bas\b[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
                 || /\brequire\s*\(\s*["\x27][^"\x27]*safe_git/
                 || /\bimport\s*\(\s*["\x27][^"\x27]*safe_git/
+                || /\bexport\s*(?:type\s*)?\{[^}]*\bas\b[^}]*\}\s*from\s*["\x27][^"\x27]*safe_git/
                 || /\bexport\s*\*\s*(?:as\s+\w+\s+)?from\s*["\x27][^"\x27]*safe_git/) { print "$ARGV\n" }' | sort -u)"
     while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -2144,7 +2145,7 @@ EOF_HITS
             $o .= $c;
         }
         print $o;'
-    local raw_n code_n code
+    local raw_n code_n code sig
     for f in base_guard modernize_unit; do
         code="$(perl -e "$strip" < "$src/util/$f.ts")"
         raw_n="$(grep -o 'allowToken' "$src/util/$f.ts" | grep -c .)"
@@ -2153,7 +2154,76 @@ EOF_HITS
             || ! printf '%s\n' "$code" | perl -0777 -ne 'exit(/allowToken\s*:\s*args\[0\]\s*===\s*"fetch"\s*[,}]/ ? 0 : 1)'; then
             nok "$f.ts allowToken is not the single fetch-only form (allowToken: args[0] === \"fetch\")"
         fi
+        # args must be the plain, default-free parameter of the enclosing git helper:
+        # exact signature, no function/arrow between it and the pin, no local rebinding.
+        if [ "$f" = base_guard ]; then sig='function\s+git\s*\(\s*repoDir\s*:\s*string\s*,\s*args\s*:\s*string\[\]\s*[,)]'
+        else sig='const\s+git\s*=\s*\(\s*args\s*:\s*string\[\]\s*\)\s*:\s*string\s*=>'; fi
+        if ! printf '%s\n' "$code" | SIG="$sig" perl -0777 -ne 'my $s = $ENV{SIG}; exit(/$s(?:(?!=>|\bfunction\b).)*?allowToken\s*:\s*args\[0\]/s ? 0 : 1)' \
+            || printf '%s\n' "$code" | perl -0777 -ne 'exit(/\b(?:const|let|var)\s+args\b|\bargs\s*(?:\?\?|\|\||&&|[-+*\/|&])?=(?![=>])/ ? 0 : 1)'; then
+            nok "$f.ts allowToken pin is not bound to the plain args parameter (shadowed, defaulted or reassigned args)"
+        fi
     done
+    # Indirect use of the opt-in helpers: any mention outside an import list that
+    # is not a direct call (alias const, .apply/.call/.bind, optional call) or a
+    # call whose top-level argument is a spread hides a positional token flag.
+    while IFS= read -r -d '' f; do
+        code="$(perl -e "$strip" < "$f")"
+        if printf '%s\n' "$code" | perl -0777 -ne '
+            s/\b(?:import|export)\s*(?:type\s*)?\{[^}]*\}\s*from\s*["\x27][^"\x27]*["\x27]//g;
+            exit 0 if /\b(?:safeGitEnv|safeGitArgs)\b(?!\s*\()/;
+            while (/\b(?:safeGitEnv|safeGitArgs)\s*\(/g) {
+                my ($d, $q) = (0, "");
+                for (my $i = pos(); $i < length($_); $i++) {
+                    my $c = substr($_, $i, 1);
+                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
+                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
+                    if ($c =~ /[(\[{]/) { $d++; next }
+                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
+                    exit 0 if $d == 0 && substr($_, $i, 3) eq "...";
+                }
+            }
+            exit 1'; then
+            nok "safeGitEnv/safeGitArgs used indirectly (alias, apply/call/bind, optional call or spread args): ${f#"$src"/}"
+        fi
+    done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0)
+}
+
+# Positive controls: each synthetic bypass tree (the real util files plus one
+# offender) must make the scan fail, so a blind guard cannot pass quietly.
+allowtoken_controls() {
+    local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu
+    real_bg="$(cat "$src/util/base_guard.ts")"
+    real_mu="$(cat "$src/util/modernize_unit.ts")"
+    local names="reexport-as indirect-alias indirect-apply spread-args shadow-default shadow-const"
+    for name in $names; do
+        t="$T_AT/$name"
+        mkdir -p "$t/util"
+        cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+        case "$name" in
+            reexport-as)    body='export { safeGitEnv as sge } from "./util/safe_git.ts";' ;;
+            indirect-alias) body='import { safeGitEnv } from "./util/safe_git.ts";
+const f = safeGitEnv; f(process.env, true);' ;;
+            indirect-apply) body='import { safeGitArgs } from "./util/safe_git.ts";
+safeGitArgs.apply(null, [["fetch"], true]);' ;;
+            spread-args)    body='import { safeGitEnv } from "./util/safe_git.ts";
+const a: [NodeJS.ProcessEnv, boolean] = [process.env, true]; safeGitEnv(...a);' ;;
+            shadow-default) printf '%s\n' "$real_bg" | sed 's/args: string\[\], timeout/args: string[] = ["fetch"], timeout/' > "$t/util/base_guard.ts"; body='export {};' ;;
+            shadow-const)   { printf '%s\n' "$real_mu"; printf '%s\n' 'const args = ["fetch"];'; } > "$t/util/modernize_unit.ts"; body='export {};' ;;
+        esac
+        printf '%s\n' "$body" > "$t/offender.ts"
+        saved_fails="$CASE_FAILS"; CASE_FAILS=""
+        allowtoken_scan "$t"
+        [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
+        CASE_FAILS="$saved_fails"
+    done
+}
+
+case_allowtoken() {
+    local T_AT
+    T_AT="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.p9at.XXXXXXXX")" || { nok "cannot create control dir"; return; }
+    allowtoken_scan "$REPO_ROOT/loki-ts/src"
+    allowtoken_controls
+    rm -rf -- "$T_AT"
 }
 
 moat_run "P9.issue-workflows-separate-untrusted-from-push" \
