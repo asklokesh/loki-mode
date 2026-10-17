@@ -8,7 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capSourceLine, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { capSourceLine, dryRunStart, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { VALID_PROVIDERS } from "../../src/runner/router/cost_preview.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -35,6 +36,19 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     const r = parseStartArgs(["--brief=-x"], collect, () => {}, () => {});
     expect(typeof r).toBe("object");
     expect((r as { prdPath: string }).prdPath).toBe("-x");
+  });
+
+  it("value flags need a value: --provider, --session-model, --cost, --spec", () => {
+    for (const f of ["--provider", "--session-model", "--cost", "--spec"]) {
+      for (const argv of [["x", f], ["x", f, "--simple"], ["x", f, ""], ["x", `${f}=`]]) {
+        errs.length = 0;
+        expect(parseStartArgs(argv, collect, () => {}, () => {})).toBe(2);
+        expect(errs.join("")).toContain(`start: ${f} needs a value`);
+      }
+    }
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "x", "--provider"], { cwd: tmpdir(), encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("start: --provider needs a value");
   });
 
   it("value flag swallows flag: real CLI entry exits 2 without starting a run", () => {
@@ -72,7 +86,7 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(parseStartArgs(["./prd.md", "--resume", "abc"], collect)).toBe(2);
     const msg = errs.join("");
     expect(msg).toContain("--resume is not supported");
-    expect(msg).toContain("bash route");
+    expect(msg).not.toContain("LOKI_SDK_LOOP");
   });
 
   // --- RUN-25 iter 2: T3(c) reconciled flag surface -----------------------
@@ -234,6 +248,14 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(errs.join("")).toContain("unknown --provider");
   });
 
+  it("unknown provider lists valid", () => {
+    errs.length = 0;
+    expect(parseStartArgs(["./prd.md", "--provider", "gemini"], collect)).toBe(2);
+    const msg = errs.join("");
+    expect(msg).toContain("unknown --provider 'gemini' (use one of: ");
+    for (const p of VALID_PROVIDERS) expect(msg).toContain(p);
+  });
+
   it("direct Bun start accepts opencode (a supported provider since v11.4)", () => {
     const errors: string[] = [];
     const parsed = parseStartArgs(["spec.md", "--provider", "opencode"], (s) => errors.push(s));
@@ -352,10 +374,16 @@ describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () =
     }
   });
 
-  it("plain start keeps the 11.3.0 refusal text for unsupported flags", () => {
+  it("unknown flag suggestion: plain start suggests the closest flag and hides runner internals", () => {
     errs.length = 0;
-    expect(parseStartArgs(["./prd.md", "--no-pr"], collect)).toBe(2);
-    expect(errs.join("")).toContain("not supported by the Bun (LOKI_SDK_LOOP) runner");
+    expect(parseStartArgs(["./prd.md", "--bugdet", "4"], collect)).toBe(2);
+    const out = errs.join("");
+    expect(out).toContain("flag --bugdet is not supported by loki start. Did you mean --budget?");
+    expect(out).not.toContain("LOKI_SDK_LOOP");
+    errs.length = 0;
+    expect(parseStartArgs(["x", "--zzzzzzzzzzzz"], collect)).toBe(2);
+    expect(errs.join("")).not.toContain("Did you mean");
+    expect(errs.join("")).not.toContain("LOKI_SDK_LOOP");
   });
 
   it("with --attempts every legacy-only runner flag is refused with exit 2, never accepted and dropped", () => {
@@ -436,6 +464,21 @@ describe("missing prd path (TEN-STABILITY-30)", () => {
     for (const p of ["./prd.md", "prd.md", "docs/spec", "x.yaml", "x.JSON", "a.txt", "a.yml"]) {
       expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
     }
+  });
+  it("spaced prd path: slash-containing token ending in a doc extension is a path even with spaces", () => {
+    for (const p of ["My Docs/prd.md", "docs/my spec.pdf", "a b/c d.yaml"]) {
+      expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
+      expect(missingPrdMessage([p], p, yes)).toBeNull();
+    }
+    for (const b of ["add docs/readme.md support", "build a thing", "write notes.md for me"]) expect(missingPrdMessage([b], b, none)).toBeNull();
+  });
+  it("spaced prd path: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-ux50-"));
+    try {
+      const r = spawnSync("bun", [join(import.meta.dir, "../../src/cli.ts"), "start", "My Docs/prd.md"], { cwd: dir, encoding: "utf8", timeout: 60000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr + r.stdout).toContain("PRD file not found: My Docs/prd.md");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it("missing prd path: --prd FILE and --prd=FILE always require the file", () => {
     expect(missingPrdMessage(["--prd", "plain"], "plain", none)).toBe("PRD file not found: plain\n");
@@ -622,5 +665,101 @@ describe("conflicting budget flags (TEN-COST-43)", () => {
     const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--budget-limit", "5", "--budget", "50"], { encoding: "utf8", timeout: 20_000 });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("conflicting budget flags");
+  });
+});
+
+describe("deploy flag missing value (TEN-DEPLOY-26)", () => {
+  const bad: string[][] = [["--health-url"], ["--destination"], ["--env-file"], ["--domain"], ["--domain", "--simple"], ["--health-url", "--auto-rollback"]];
+  it("deploy flag missing value: each is named", () => {
+    for (const a of bad) expect(deployFlagError(["x", "--deploy", ...a])).toContain(`${a[0]} requires a value`);
+  });
+  it("deploy flag missing value: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d26-"));
+    try {
+      for (const a of bad) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(`${a[0]} requires a value`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("start --dry-run (TEN-UX-45)", () => {
+  const repo = (): string => {
+    const d = mkdtempSync(join(tmpdir(), "start-dry-"));
+    for (const a of [["init", "-q"], ["config", "user.name", "t"], ["config", "user.email", "t@example.com"], ["commit", "-q", "--allow-empty", "-m", "init"]]) spawnSync("git", a, { cwd: d });
+    return d;
+  };
+  const cli = (args: string[], cwd: string, env: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", ...args], { cwd, encoding: "utf8", timeout: 25_000, env: { ...process.env, ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "", ...env } });
+
+  it("parses --dry-run as a flag, never an unknown-flag error", () => {
+    const r = parseStartArgs(["x", "--dry-run", "--provider", "codex"], collect, () => {}, () => {});
+    expect(typeof r).toBe("object");
+    expect((r as { dryRun?: boolean }).dryRun).toBe(true);
+  });
+
+  it("dry-run still validates flags: bad provider exits 2", () => {
+    errs.length = 0;
+    expect(parseStartArgs(["x", "--dry-run", "--provider", "nope"], collect, () => {}, () => {})).toBe(2);
+    expect(errs.join("")).toContain("unknown --provider");
+  });
+
+  it("real CLI: prints provider, model and cap, exits 0, starts no run", () => {
+    const d = repo();
+    try {
+      const fake = join(d, "fakeclaude");
+      writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const r = cli(["build a todo app", "--dry-run", "--budget-limit", "7", "--session-model", "high"], d, { CLAUDE_CODE_OAUTH_TOKEN: "x", LOKI_CLAUDE_CLI: fake });
+      expect(r.stderr).not.toContain("not supported");
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("dry-run: provider claude, model planning, cap $7.00 (--budget-limit)");
+      expect(r.stdout).toContain("nothing was run");
+      expect(spawnSync("ls", [join(d, ".loki")], { encoding: "utf8" }).status).not.toBe(0);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  it("real CLI: a failing preflight (CLI missing) exits 2 and names the fix", () => {
+    const d = repo();
+    try {
+      const r = cli(["x", "--dry-run"], d, { LOKI_CLAUDE_CLI: "/nonexistent/claude-zz", CLAUDE_CODE_OAUTH_TOKEN: "x" });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("dry-run preflight failed");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  const viaBin = (args: string[], cwd: string, env: Record<string, string> = {}) =>
+    spawnSync(join(import.meta.dir, "../../../bin/loki"), ["start", ...args], { cwd, encoding: "utf8", timeout: 40_000, env: { ...process.env, BUN_FROM_SOURCE: "1", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "", ...env } });
+
+  it("bin/loki: start --dry-run (PRD path and --attempts) reaches the Bun preview and starts no run", () => {
+    const d = repo();
+    try {
+      const fake = join(d, "fakeclaude");
+      writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      writeFileSync(join(d, "p.md"), "build a thing\n");
+      for (const a of [["--dry-run", "p.md"], ["--attempts", "2", "--dry-run", "p.md"]]) {
+        const r = viaBin(a, d, { CLAUDE_CODE_OAUTH_TOKEN: "x", LOKI_CLAUDE_CLI: fake });
+        expect(r.stderr).not.toContain("legacy engine");
+        expect(r.stderr).not.toContain("legacy flag");
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain("dry-run: provider claude");
+        expect(spawnSync("ls", [join(d, ".loki")], { encoding: "utf8" }).status).not.toBe(0);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  it("dryRunStart reports a subscription run with no dollar cap", async () => {
+    const d = repo();
+    const out: string[] = [];
+    try {
+      const fake = join(d, "fc"); writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const o = parseStartArgs(["x", "--dry-run"], collect, () => {}, () => {}) as Parameters<typeof dryRunStart>[0];
+      const code = await dryRunStart(o, d, { PATH: process.env["PATH"], LOKI_CLAUDE_CLI: fake, CLAUDE_CODE_OAUTH_TOKEN: "x" }, (s) => out.push(s), () => {});
+      expect(code).toBe(0);
+      expect(out.join("")).toContain("no dollar cap (subscription)");
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

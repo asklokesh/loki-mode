@@ -434,7 +434,7 @@ _loki_start_needs_bash() {
             |--fast|--repo-fast|--full|--repo-full \
             |--bmad-project|--openspec \
             |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
-            |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
+            |--issue|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
                 return 0 ;;
             --isolation)
                 # value follows; only worktree/docker/sandbox divert (none stays Bun).
@@ -455,7 +455,7 @@ _loki_start_needs_bash() {
 }
 _loki_attempts_refuse() {
     if _loki_start_needs_bash "$@"; then
-        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, or --detach) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
+        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, or --detach) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
         exit 2
     fi
     case "${LOKI_PROVIDER:-claude}" in
@@ -512,6 +512,19 @@ if [ "${1:-}" = "start" ]; then
         esac
     done
     unset _loki_sp_a
+fi
+
+# TEN-UX-45: `loki start ... --dry-run` is the Bun start command's preview (flags, preflight,
+# provider, model, cap; nothing runs). Issue refs and bash-only flags keep the legacy route,
+# where --dry-run previews the generated PRD.
+if [ "${1:-}" = "start" ]; then
+    _loki_dry=0
+    for _loki_da in "${@:2}"; do [ "$_loki_da" = "--dry-run" ] && _loki_dry=1; done
+    if [ "$_loki_dry" = "1" ] && ! _loki_start_needs_bash "${@:2}"; then
+        _loki_dry_bun="$(_loki_bun)"
+        [ -n "$_loki_dry_bun" ] && exec "$_loki_dry_bun" "$BUN_CLI" "$@"
+    fi
+    unset _loki_dry _loki_da _loki_dry_bun
 fi
 
 # OC-ROUTE: normalize flags before the engine decision so argument order and input form
