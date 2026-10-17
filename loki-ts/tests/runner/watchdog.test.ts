@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createWatchdog, stallThresholdS, DEFAULT_STALL_S } from "../../src/runner/watchdog.ts";
+import { createWatchdog, stallKillS, stallThresholdS, DEFAULT_STALL_S } from "../../src/runner/watchdog.ts";
 
 describe("watchdog progress classes", () => {
   it("classifies progressing, idle, stalled with a fake clock and fires stall once", () => {
@@ -37,5 +37,9 @@ describe("watchdog progress classes", () => {
     expect(stallThresholdS(undefined)).toBe(DEFAULT_STALL_S);
     expect(stallThresholdS("60")).toBe(60);
     expect(stallThresholdS("abc")).toBe(DEFAULT_STALL_S);
+  });
+  it("stallKillS: unset, blank, junk, negative, zero and Infinity are 0 (off); a positive number passes", () => {
+    for (const v of [undefined, "", "abc", "-5", "0", "Infinity"]) expect(stallKillS(v)).toBe(0);
+    expect(stallKillS("5")).toBe(5);
   });
 });
