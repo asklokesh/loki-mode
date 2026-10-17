@@ -11,7 +11,7 @@ import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { USAGE } from "../../src/engine10/cli.ts";
 import { engineArgv, START_USAGE, type ParsedStartOpts } from "../../src/commands/start.ts";
-import { buildProviderCost } from "../../src/providers/provider_cost.ts";
+import { buildProviderCost, writeProviderCost } from "../../src/providers/provider_cost.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
 
 describe("cap resolution", () => {
@@ -174,6 +174,29 @@ describe("a model with no known price is unmeasured, never priced by a guess or 
     const rec = buildProviderCost("aider", "totally-unknown-model-x", "p", "Tokens: 1.2k sent, 340 received. Cost: $0.01 message, $0.02 session.");
     expect(rec!.total_cost_usd).toBe(0.02);
     expect(rec!.cost_basis).toBe("provider-dollars");
+  });
+});
+
+describe("opencode estimate", () => {
+  test("a priced opencode model gets a size-estimate record", () => {
+    const rec = buildProviderCost("opencode", "gpt-5.3-codex", "do the thing please", "some opencode output");
+    expect(rec).not.toBeNull();
+    expect(rec!.estimated).toBe(true);
+    expect(rec!.cost_basis).toBe("size-estimate");
+    expect(typeof rec!.total_cost_usd).toBe("number");
+  });
+  test("an unpriced opencode model stays unmeasured with a reason", () => {
+    const rec = buildProviderCost("opencode", "totally-unknown-model-x", "do the thing please", "some opencode output");
+    expect(rec!.total_cost_usd).toBeNull();
+    expect(rec!.cost_basis).toBe("unpriced");
+  });
+  test("writeProviderCost writes the result-cost file for opencode", () => {
+    const d = mkdtempSync(join(tmpdir(), "oc-est-"));
+    try {
+      const dest = join(d, "metrics", "result-cost-1.json");
+      expect(writeProviderCost(dest, "opencode", "gpt-5.3-codex", "do the thing please", "some opencode output")).not.toBeNull();
+      expect(JSON.parse(readFileSync(dest, "utf8")).cost_basis).toBe("size-estimate");
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
 
