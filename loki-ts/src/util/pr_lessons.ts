@@ -337,15 +337,17 @@ export async function openReviewComments(gh: GhClient, repo: string, num: number
   return { open, skipped: roots.length - open.length };
 }
 
+const RESPOND_PUSH_TIMEOUT_MS = 300_000; // a hung push must not block `pr respond` forever
 const STATUS_ARGS = ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"]; // Loki run artifacts are neither "dirty" nor stageable
 /** Pushes through engine10-push.sh push-pr with origin pinned to the value read before any fix ran. It must find the open PR ("reused"); "created" means a new PR was opened, so throw. */
-export function defaultRespondPush(repoDir: string, headRef: string, pushSh: string = DEFAULT_PUSH_SH, origin: string | null = readOriginUrl(repoDir)): void {
+export function defaultRespondPush(repoDir: string, headRef: string, pushSh: string = DEFAULT_PUSH_SH, origin: string | null = readOriginUrl(repoDir), timeoutMs: number = RESPOND_PUSH_TIMEOUT_MS): void {
   const dir = mkdtempSync(join(tmpdir(), "loki-respond-"));
   try {
     const bodyFile = join(dir, "body.md");
     writeFileSync(bodyFile, `Loki verify-pr respond push to ${headRef}. Not a new PR.\n`);
     const argv = toPushShellArgs({ cmd: "push-pr", repoDir, branch: headRef, title: `respond: ${headRef}`, bodyFile, draft: false });
-    const r = spawnSync("bash", [pushSh, ...argv], { env: origin ? { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : process.env, encoding: "utf8" });
+    const r = spawnSync("bash", [pushSh, ...argv], { env: origin ? { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : process.env, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL" });
+    if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") throw new GhError(`push timed out after ${Math.round(timeoutMs / 1000)}s for ${headRef}; no reply posted`);
     if (r.status !== 0) throw new GhError(`push failed for ${headRef}: ${String(r.stderr ?? "").trim() || `exit ${r.status}`}`);
     const lines = String(r.stdout ?? "").split("\n").map((l) => l.trim());
     const i = lines.indexOf("created");
