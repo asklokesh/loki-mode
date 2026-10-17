@@ -173,7 +173,9 @@ fi
 
 # --- fail-silent guards must remain -----------------------------------------
 # This now runs on the hot path, so a hang or a crash here would break builds.
-_fn="$(sed -n '/^maybe_print_update_hint()/,/^}/p' "$LOKI")"
+# The registry fetch (and its --max-time) lives in the shared helper that
+# maybe_print_update_hint calls with a 1.5s budget.
+_fn="$(sed -n '/^maybe_print_update_hint()/,/^}/p;/^_loki_latest_published_version()/,/^}/p' "$LOKI")"
 for guard in 'LOKI_NO_UPDATE_CHECK' '${CI:-}' '! -t 1' '--max-time'; do
     case "$_fn" in
         *"$guard"*) ok "guard present: $guard" ;;
