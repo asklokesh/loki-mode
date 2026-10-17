@@ -2170,6 +2170,8 @@ _loki_control_ui() {
     else
         echo "$url"
     fi
+    echo "Give it work:   loki start \"<brief>\""
+    echo "Stop the UI:    loki control stop"
     return 0
 }
 

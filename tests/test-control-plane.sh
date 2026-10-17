@@ -20,7 +20,9 @@ TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/cp-test.XXXXXX")"
 SERVER_PID=""
 HEALTH_PID=""
+FAKE_PID=""
 cleanup() {
+    if [ -n "$FAKE_PID" ]; then kill "$FAKE_PID" 2>/dev/null || true; fi
     if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi
     if [ -n "$HEALTH_PID" ]; then kill "$HEALTH_PID" 2>/dev/null || true; fi
     rm -rf -- "$T"
@@ -273,6 +275,30 @@ if [ -n "$HEALTH_PID" ]; then
     fi
     HEALTH_PID=""
 fi
+
+# TEN-UX-10: bare `loki` prints the URL first, then the next-step lines. A fake loopback
+# /health stands in for a live Control Plane (instance.json points at its recorded pid).
+cat >"$T/fake_health.py" <<'PY'
+import http.server, json, os, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = b'{"service":"loki-control"}'
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(json.dumps({"pid": os.getpid(), "url": "http://127.0.0.1:%d" % srv.server_port}))
+srv.serve_forever()
+PY
+mkdir -p "$T/uxhome/.loki/control"
+python3 -I "$T/fake_health.py" "$T/uxhome/.loki/control/instance.json" &
+FAKE_PID=$!
+for _ in $(seq 1 50); do [ -s "$T/uxhome/.loki/control/instance.json" ] && break; sleep 0.1; done
+UXOUT="$(env -i HOME="$T/uxhome" PATH="$PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_NO_BROWSER=1 "$LOKI" 2>/dev/null)"
+UXURL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["url"])' "$T/uxhome/.loki/control/instance.json")"
+t "bare loki: first line is the URL" "output: $UXOUT" [ "$(printf '%s\n' "$UXOUT" | sed -n 1p)" = "$UXURL" ]
+t "bare loki: start hint is line 2" "output: $UXOUT" [ "$(printf '%s\n' "$UXOUT" | sed -n 2p | grep -cF 'loki start "<brief>"')" = 1 ]
+t "bare loki: stop hint is line 3" "output: $UXOUT" [ "$(printf '%s\n' "$UXOUT" | sed -n 3p | grep -cF 'loki control stop')" = 1 ]
+kill "$FAKE_PID" 2>/dev/null || true; wait "$FAKE_PID" 2>/dev/null || true; FAKE_PID=""
 
 echo "control plane: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
