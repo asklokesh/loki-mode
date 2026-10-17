@@ -7,6 +7,12 @@
 #   loki --version
 #   loki doctor --json
 #   loki route "add a health endpoint" --json
+# Case 1 also walks the newcomer first-touch path from the packed files: `loki tour` (the
+# verifier's VERIFIED line, then TAMPERED on the one-byte copy), `loki mcp install --client
+# cursor --print` (valid JSON) and a stdio MCP initialize + tools/list handshake. The
+# handshake bootstraps the MCP SDK into the throwaway HOME (LOKI_MCP_AUTO_BOOTSTRAP=1), so it
+# needs network access to a pip index. SMOKE_DROP_FIXTURE=1 deletes the packed tour pubkey
+# before the tour case; the tour case must then fail (the shipped-package mutation check).
 # Case 1 is a normal install. Case 2 repeats with the optional dependencies omitted
 # (--omit=optional: no bundled Bun, no Claude Agent SDK) and Bun hidden from PATH.
 # Everything is written to a reproducible log (tool versions, commit, tarball sha256, every
@@ -110,6 +116,48 @@ exercise() {
     else fail "$name: loki route --json (exit $rc)"; fi
 }
 
+# Newcomer first-touch path (TEN-ADOPTION-08), run against the packed install only.
+first_touch() {
+    local prefix="$1" home="$2" path="$3" pkg rc
+    pkg="$prefix/lib/node_modules/loki-mode"
+    if [ "${SMOKE_DROP_FIXTURE:-}" = 1 ]; then
+        log "SMOKE_DROP_FIXTURE=1: removing the packed tour pubkey"
+        rm -f -- "$pkg/skills/fixtures/demo-receipt/pubkey.jwk"
+    fi
+
+    run_case first-tour "$prefix" "$home" "$path" tour
+    rc=$?
+    if [ "$rc" = 0 ] && grep -q '^  Result: VERIFIED$' "$T/first-tour.out" && grep -q '^  Result: TAMPERED$' "$T/first-tour.out"; then
+        pass "first-touch: loki tour shows VERIFIED then TAMPERED from the packed fixture"
+    else fail "first-touch: loki tour (exit $rc, missing VERIFIED/TAMPERED result lines)"; fi
+
+    run_case first-mcp-print "$prefix" "$home" "$path" mcp install --client cursor --print
+    rc=$?
+    sed -n '/^{/,$p' "$T/first-mcp-print.out" >"$T/first-mcp-print.json"
+    if [ "$rc" = 0 ] && jq -e '.mcpServers["loki-mode"].command | length > 0' "$T/first-mcp-print.json" >/dev/null 2>&1; then
+        pass "first-touch: loki mcp install --client cursor --print emits valid JSON"
+    else fail "first-touch: loki mcp install --client cursor --print (exit $rc)"; fi
+
+    log ""
+    log "--- first-mcp-handshake: loki mcp (stdio initialize + tools/list)"
+    (
+        cd "$home" || exit 99
+        printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | env -i HOME="$home" PATH="$path" TERM=dumb NO_COLOR=1 CI=1 LOKI_NO_BROWSER=1 LOKI_MCP_AUTO_BOOTSTRAP=1 \
+                perl -e 'alarm 240; exec @ARGV' "$prefix/bin/loki" mcp
+    ) >"$T/first-mcp.out" 2>"$T/first-mcp.err"
+    rc=$?
+    log "exit code: $rc"
+    head -c 2000 "$T/first-mcp.out" >>"$LOG"
+    tail -n 5 "$T/first-mcp.err" >>"$LOG"
+    if jq -s -e '(map(select(.id == 1)) | .[0].result.serverInfo.name | length > 0) and (map(select(.id == 2)) | .[0].result.tools | length > 0)' "$T/first-mcp.out" >/dev/null 2>&1; then
+        pass "first-touch: stdio MCP handshake returned serverInfo and a non-empty tools list"
+    else fail "first-touch: stdio MCP handshake (no initialize result or empty tools list)"; fi
+}
+
 BASE_PATH="$PATH"
 
 # 2. case 1: normal install
@@ -120,6 +168,7 @@ if npm install -g --prefix "$P1" --no-audit --no-fund "$TARBALL" >"$T/install1.o
     pass "case 1: npm install -g from tarball"
     unset SMOKE_SDK_NM
     exercise case1 "$P1" "$T/home1" "$P1/bin:$BASE_PATH"
+    first_touch "$P1" "$T/home1" "$P1/bin:$BASE_PATH"
 else
     log "$(tail -n 30 "$T/install1.out")"
     fail "case 1: npm install -g from tarball"
