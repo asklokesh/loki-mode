@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.8 (2026-10-17)
+
+v11.17.7 never published: its Tests run was red on e66c51a09 because the Tier A test selector check (FC-89) found the new M-25w modernize producer-coverage test walking all of loki-ts/src without the walk-all-src marker. This release ships the v11.17.7 content plus the fix.
+
+### Fixed
+- Test selector (FC-89): loki-ts/tests/engine10/modernize/log.test.ts carries the walk-all-src marker, so any loki-ts/src change selects the producer-coverage test and tests/test-select-tests.sh is green again.
+- Modernize scale run (M-28): the scratch copy of the source is git-initialised before `loki modernize` runs, because unit discovery lists files with git ls-files; a run that discovers zero units now exits 2 instead of reporting success.
+- Pricing loader test (Q18-09): the budget test compares every tier of every pricing-file row to the loaded table, so a loader that drops cache_write_1h, cache_read or over_100k now fails the suite; previously such a loss passed.
+
+### Added
+- Cost attribution (Q17-06): `attribution.py` dry-run prints a cost-per-attempt table offline, with no paid spend.
+- Release wall guard (Q17-04): scripts/assert-wall-executed.sh takes an expected-checks list and fails the release when a named check did not execute; mutation and review are read from the receipt's mutation_outcome and review fields, other names match exactly or by `name:` prefix, and the real-run scenarios pin the exact non-Wall test checks so the Wall test alone cannot satisfy them.
+
 ## v11.17.7 (2026-10-16)
 
 ### Fixed
