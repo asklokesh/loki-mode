@@ -24,6 +24,25 @@ const collect = (s: string) => {
 };
 
 describe("parseStartArgs (Bun start flag subset)", () => {
+  it("value flag swallows flag: a missing, empty or dash-leading value is exit 2 naming the flag", () => {
+    for (const f of ["--brief", "--prd", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model"]) {
+      for (const argv of [["./prd.md", f, "--yes"], ["./prd.md", f], ["./prd.md", f, ""], ["./prd.md", `${f}=`]]) {
+        errs.length = 0;
+        expect(parseStartArgs(argv, collect, () => {}, () => {})).toBe(2);
+        expect(errs.join("")).toContain(`start: ${f} needs a value`);
+      }
+    }
+    const r = parseStartArgs(["--brief=-x"], collect, () => {}, () => {});
+    expect(typeof r).toBe("object");
+    expect((r as { prdPath: string }).prdPath).toBe("-x");
+  });
+
+  it("value flag swallows flag: real CLI entry exits 2 without starting a run", () => {
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "./prd.md", "--brief", "--yes"], { cwd: tmpdir(), encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("start: --brief needs a value");
+  });
+
   it("no spec -> exit 2", () => {
     errs.length = 0;
     expect(parseStartArgs(["--max-iterations", "3"], collect)).toBe(2);

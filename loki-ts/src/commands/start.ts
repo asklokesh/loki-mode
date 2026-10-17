@@ -52,6 +52,9 @@ const VALUE_FLAGS = new Set([
   "--cost", // TEN-COST-01: cost profile (lean|off); also LOKI_COST_PROFILE
 ]);
 
+// TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model"]);
+
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
 const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
@@ -235,6 +238,14 @@ export function parseStartArgs(
         continue;
       }
       if ((specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS).has(name)) continue;
+      if (TEXT_VALUE_FLAGS.has(name)) {
+        const inline = a.includes("=");
+        const v = inline ? a.slice(a.indexOf("=") + 1) : args[i + 1];
+        if (v === undefined || v === "" || (!inline && v.startsWith("-"))) {
+          err(`start: ${name} needs a value, got ${v === undefined ? "nothing" : v === "" ? "an empty value" : `'${v}'`} (use ${name}=VALUE for a dash-leading value)\n`);
+          return 2;
+        }
+      }
       // value-flag: skip its value token (unless inline --flag=value)
       if ((specMode ? SPEC_VALUE_FLAGS : attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS).has(name) && !a.includes("=")) i++;
       continue;
