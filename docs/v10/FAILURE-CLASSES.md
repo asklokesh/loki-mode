@@ -976,3 +976,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: every literal reason produced by reasonOf (output.ts:74); the supervisor call site that passes the reason.
 - Mechanism: nextOf in util/run_summary.ts takes reason and outcome and maps each failure class to one command; verified, done-unverified, budget and stopped output stays byte-identical.
 - Fixture: run_summary.test.ts table rows copied from the real reason literals, a pin of the old outputs, and a source scan that every reasonOf literal has a mapping; tests/features/contract.test.ts covers fatal:auth end to end.
+
+## FC-AGENT-PROOF A VERIFIED verdict proven only by agent-authored evidence (TEN-GATES-01)
+- User-visible vs raw: the receipt says VERIFIED, but every executed pass is a test the implementer added in the same diff or an LLM judge verdict; raw shows no check the agent could not write itself.
+- Law broken: success needs evidence the implementing agent did not author (exogenous gates are the moat).
+- Siblings to sweep: engine10 seal proof, proof-generator headline, deep council pass.
+- Mechanism: util/check_result.ts checkProvenance classifies each check (exogenous, independent, agent_authored, llm_judge; unknown is exogenous) and hasExogenousProof is the one predicate every consumer calls.
+- Fixture: loki-ts/tests/engine10/check_result.test.ts "TEN-GATES-01 check provenance" (added test file, same path pre-existing, Wall path, council, unknown name).
