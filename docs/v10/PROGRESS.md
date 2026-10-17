@@ -2467,3 +2467,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:16Z (CoS) v11.17.29
 - v11.17.28 pushed 5f504d333 without waiting for the v11.17.27 Release run (release.yml has no concurrency group; publish has a never-backwards guard). Wave Z all APPROVE: COST-16-F1 d9b5917fd (47 pass, 2 mutations red), COST-26 ddaf2389a (30 pass, 2 mutations red), SPEED-01 a643883d7 (pytest 24 passed, inverted ratio 6 failed), UX-09 b80656d3e (64 pass, 2 mutations red), GATES-11 c7cc6a31b HIGH (p8 moat rc=0 3 of 3 PASS, pytest 23 passed, 5 mutations red). COST-26 hand-merge: test-only conflict in sizing.test.ts resolved as union, bun test sizing and wall 94 pass 0 fail. Moat P8 moved from pending to proven.
+
+## 2026-10-17T06:18Z (CoS) v11.17.30
+- Ships TEN-STABILITY-09 (TL APPROVE 57e3aa1f6: bun test 87 pass 0 fail, 2 stub mutations red) and TEN-STABILITY-10 (TL APPROVE f8b625ca1: tests/test-v10-pulse.sh 171 passed, 2 mutations red at T51b). v11.17.29 landed 1e4c2da03.

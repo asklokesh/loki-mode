@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.30 (2026-10-17)
+
+### Fixed
+- Stub login in tests (TEN-STABILITY-09): the engine10 stub CLIs used by the end-to-end suites answer `claude auth status`, so the login probe never stalls or warns in stub runs. This targets the red main Tests runs.
+- Pulse speed (TEN-STABILITY-10): the merged-not-released check reads merges with one memoized git log pass and matches slice IDs with a digit boundary, instead of one git log per row that timed out under load.
+
 ## v11.17.29 (2026-10-17)
 
 ### Added
