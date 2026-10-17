@@ -16,7 +16,7 @@
 import { accessSync, constants as fsConstants, existsSync as pathExists, statSync } from "node:fs";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
-import { tokenFreeEnv } from "../util/safe_git.ts";
+import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
@@ -529,7 +529,6 @@ export async function dryRunStart(o: ParsedStartOpts, repoDir: string, env: Node
   const { resolveCap, capNote } = await import("../e10ext/budget_cap.ts");
   const cap = resolveCap(o.budgetLimit !== undefined ? String(o.budgetLimit) : null, repoDir, env);
   if ("error" in cap) { err(`start: ${cap.error}\n`); return 2; }
-  const { safeGitRun } = await import("../util/safe_git.ts");
   const inRepo = (await safeGitRun(repoDir, ["rev-parse", "--is-inside-work-tree"], { env: env as Record<string, string>, timeoutMs: 10000 })).stdout.trim() === "true";
   if (inRepo) {
     const { checkPreflight } = await import("../engine10/preflight.ts");
