@@ -10388,16 +10388,30 @@ _deploy_try_execute() {
             rc=4
         fi
     else
-        canary_out="$( cd "$dir" && eval "$exec_cmd" )" || rc=$?
-        printf '%s\n' "$canary_out"
-        if [ "$rc" -eq 0 ]; then
+        # Stream provider output live while keeping a copy to parse the URL from.
+        # The copy lives in a private mktemp -d dir removed on exit and on INT/TERM/HUP.
+        local dep_dir dep_tmp dep_errexit=0
+        dep_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-deploy-out.XXXXXXXX")" || dep_dir=""
+        dep_tmp=/dev/null
+        if [ -n "$dep_dir" ]; then
+            dep_tmp="${dep_dir}/out"
+            # shellcheck disable=SC2064
+            trap "rm -rf -- '${dep_dir}'; trap - INT TERM HUP; exit 130" INT TERM HUP
+        fi
+        case $- in *e*) dep_errexit=1 ;; esac
+        set +e
+        ( cd "$dir" && eval "$exec_cmd" ) 2>&1 | tee "$dep_tmp"
+        rc=${PIPESTATUS[0]}
+        [ "$dep_errexit" -eq 1 ] && set -e
+        if [ "$rc" -eq 0 ] && [ "$dep_tmp" != /dev/null ]; then
             # Same last-https-URL parse as the canary path; never invented.
-            deployed_url="$(grep -Eo 'https?://[^[:space:]]+' <<<"$canary_out" | tail -n 1)" || deployed_url=""
+            deployed_url="$(grep -Eo 'https?://[^[:space:]]+' "$dep_tmp" | tail -n 1)" || deployed_url=""
             if [ -n "$deployed_url" ]; then
                 echo "Live at: ${deployed_url}"
                 if [ -z "$health_url" ]; then health_url="$deployed_url"; health_src="captured"; fi
             fi
         fi
+        if [ -n "$dep_dir" ]; then rm -rf -- "$dep_dir"; trap - INT TERM HUP; fi
     fi
 
     # Health probe only after a deploy that exited 0. Without a URL, or after a
