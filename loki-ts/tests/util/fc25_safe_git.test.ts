@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRunCapS } from "../../src/util/run_cap.ts";
-import { tokenFreeEnv, safeGit } from "../../src/util/safe_git.ts";
+import { tokenFreeEnv, safeGit, safeGitSpawn } from "../../src/util/safe_git.ts";
 import { listRepoFiles } from "../../src/engine10/repomap.ts";
 import { restoreBranch } from "../../src/e10ext/stop_restore.ts";
 
@@ -120,4 +120,60 @@ test("FC-25b: a filter reached through a local include.path is still local scope
   writeFileSync(join(r, ".git", "inc.cfg"), `[filter "evil"]\n\tclean = ${rec}\n`); G("config", "include.path", "inc.cfg");
   try { safeGit(r, ["add", "-A", "--", "."]); } catch { /* ok */ }
   expect(existsSync(h)).toBe(false);
+});
+
+// FC-25c(a): allowToken keeps the user's GLOBAL credential helper and ssh command but never a repo-local one.
+function netRepo(tag: string): { r: string; hit: string; rec: string; gcfg: string; ghit: string } {
+  const d = mkdtempSync(join(root, `net-${tag}-`)), r = join(d, "repo"), hit = join(d, "hit.txt"), ghit = join(d, "ghit.txt"), gcfg = join(d, "global.cfg");
+  mkdirSync(r);
+  const rec = join(d, "rec.sh"); writeFileSync(rec, `#!/bin/sh\necho "fired $0 $*" >> "${hit}"\nexit 1\n`); chmodSync(rec, 0o755);
+  writeFileSync(gcfg, "[user]\n\temail = t@t\n\tname = t\n");
+  execFileSync("git", ["init", "-q"], { cwd: r, env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg } });
+  return { r, hit, rec, gcfg, ghit };
+}
+const withGlobal = <T>(gcfg: string, fn: () => T): T => {
+  const saved = process.env.GIT_CONFIG_GLOBAL; process.env.GIT_CONFIG_GLOBAL = gcfg;
+  try { return fn(); } finally { if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = saved; }
+};
+const lc = (r: string, k: string, v: string): void => { execFileSync("git", ["config", "--add", k, v], { cwd: r }); };
+
+test("FC-25c(a): a repo-local credential.helper never runs under allowToken; the global helper still answers", () => {
+  const { r, hit, rec, gcfg, ghit } = netRepo("cred");
+  const gh = join(r, "..", "ghelper.sh"); writeFileSync(gh, `#!/bin/sh\necho gfired >> "${ghit}"\nif [ "$1" = get ]; then echo password=globalpw; fi\n`); chmodSync(gh, 0o755);
+  writeFileSync(gcfg, `[user]\n\temail = t@t\n\tname = t\n[credential]\n\thelper = ${gh}\n`);
+  lc(r, "credential.helper", rec); lc(r, "credential.https://example.test.helper", rec);
+  const input = "protocol=https\nhost=example.test\n\n";
+  // control: a plain git call runs the repo helper
+  try { execFileSync("git", ["credential", "fill"], { cwd: r, input, env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg, GIT_TERMINAL_PROMPT: "0" }, stdio: ["pipe", "pipe", "ignore"] }); } catch { /* ok */ }
+  expect(existsSync(hit)).toBe(true); rmSync(hit, { force: true }); rmSync(ghit, { force: true });
+  // the global helper gives only a password, so git keeps going to later helpers (the repo one, in the control) until the prompt fails
+  withGlobal(gcfg, () => safeGitSpawn(r, ["credential", "fill"], { allowToken: true, input, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }));
+  expect(existsSync(hit)).toBe(false);
+  expect(existsSync(ghit)).toBe(true);
+});
+test("FC-25c(a): a repo-local core.sshCommand never runs under allowToken; the global one still does", () => {
+  const { r, hit, rec, gcfg, ghit } = netRepo("ssh");
+  const gs = join(r, "..", "gssh.sh"); writeFileSync(gs, `#!/bin/sh\necho gfired >> "${ghit}"\nexit 1\n`); chmodSync(gs, 0o755);
+  writeFileSync(gcfg, `[user]\n\temail = t@t\n\tname = t\n[core]\n\tsshCommand = ${gs}\n`);
+  lc(r, "core.sshCommand", rec);
+  try { execFileSync("git", ["ls-remote", "ssh://example.test/x"], { cwd: r, env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg }, stdio: "ignore" }); } catch { /* ok */ }
+  expect(existsSync(hit)).toBe(true); rmSync(hit, { force: true }); rmSync(ghit, { force: true });
+  try { withGlobal(gcfg, () => safeGit(r, ["ls-remote", "ssh://example.test/x"], { allowToken: true })); } catch { /* ssh fails by design */ }
+  expect(existsSync(hit)).toBe(false);
+  expect(existsSync(ghit)).toBe(true);
+});
+test("FC-25c(a): remote.*.uploadpack and receivepack never run under allowToken; fetch still works", () => {
+  const { r, hit, rec, gcfg } = netRepo("pack");
+  const up = join(r, "..", "upstream"); mkdirSync(up);
+  const U = (...a: string[]): string => execFileSync("git", a, { cwd: up, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg } });
+  U("init", "-q"); writeFileSync(join(up, "f"), "1\n"); U("add", "f"); U("commit", "-qm", "u");
+  lc(r, "remote.origin.url", up); lc(r, "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+  lc(r, "remote.origin.uploadpack", rec); lc(r, "remote.origin.receivepack", rec);
+  try { execFileSync("git", ["fetch", "origin"], { cwd: r, env: { ...process.env, GIT_CONFIG_GLOBAL: gcfg }, stdio: "ignore" }); } catch { /* ok */ }
+  expect(existsSync(hit)).toBe(true); rmSync(hit, { force: true });
+  withGlobal(gcfg, () => safeGit(r, ["fetch", "origin"], { allowToken: true }));
+  expect(existsSync(hit)).toBe(false);
+  // a subcommand that cannot take the pinned option is refused, not run with the plant
+  expect(() => safeGit(r, ["remote", "update"], { allowToken: true })).toThrow(/refused/); expect(existsSync(hit)).toBe(false);
+  expect(safeGit(r, ["for-each-ref", "refs/remotes/origin"], { allowToken: true })).toContain("refs/remotes/origin/");
 });
