@@ -9,7 +9,9 @@
 // identity" case. Every repo fixture pins HOME to an empty temp dir and
 // blanks GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM so the check is hermetic.
 import { afterAll, describe, expect, test } from "bun:test";
-import { requirementFix } from "../../src/commands/doctor.ts";
+import { providerProbeEnv, requirementFix } from "../../src/commands/doctor.ts";
+import { withholdGithubTokens } from "../../src/runner/github_token.ts";
+import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../../src/util/credential_env.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -280,6 +282,80 @@ describe("first run (TEN-UX-01)", () => {
     expect(seen).toMatch(/^GIT_SSH_COMMAND=false$/m);
     expect(seen).toMatch(/^GIT_CONFIG_KEY_\d+=credential\.helper$/m);
   });
+
+  // TEN-P9-FIX-F1: the probe env is built BY withholdGithubTokens, not a hand-built copy of it. Every key that function sets,
+  // changes or deletes on this input must reach the spawned CLI the same way, so a channel added there later (an askpass
+  // var, a new GIT_CONFIG pair) is withheld from the probe with no doctor.ts edit. Token vars carry a fresh sentinel per call,
+  // so they are compared by prefix; everything else by exact value or absence.
+  const parseEnv = (dump: string): Map<string, string> => {
+    const m = new Map<string, string>();
+    for (const line of dump.split("\n")) { const i = line.indexOf("="); if (i > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(line.slice(0, i))) m.set(line.slice(0, i), line.slice(i + 1)); }
+    return m;
+  };
+  function expectWithheldLike(input: Record<string, string>, seen: Map<string, string>): number {
+    const ref: NodeJS.ProcessEnv = { ...input };
+    withholdGithubTokens(ref, () => {});
+    let touched = 0;
+    for (const k of new Set([...Object.keys(input), ...Object.keys(ref)])) {
+      if (ref[k] === input[k]) continue;
+      touched++;
+      if (ref[k] === undefined) expect([k, seen.has(k)]).toEqual([k, false]);
+      else if ((GITHUB_TOKEN_VARS as readonly string[]).includes(k)) expect([k, seen.get(k)?.startsWith(SENTINEL_PREFIX)]).toEqual([k, true]);
+      // the empty gh config dir is per process: another process (the bun cli child) mints its own
+      else if (k === "GH_CONFIG_DIR" && seen.get(k) !== ref[k]) expect([k, /\/loki-gh-config-[^/]+$/.test(seen.get(k) ?? "")]).toEqual([k, true]);
+      else expect([k, seen.get(k)]).toEqual([k, ref[k]]);
+    }
+    return touched;
+  }
+  const P9_INPUT = (d: string): Record<string, string> => ({
+    GH_TOKEN: "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz", GITHUB_TOKEN: "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz",
+    GH_ENTERPRISE_TOKEN: "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz", GITHUB_ENTERPRISE_TOKEN: "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz",
+    SSH_AUTH_SOCK: join(d, "agent.sock"), GIT_SSH_COMMAND: "ssh", GIT_ASKPASS: join(d, "askpass"), SSH_ASKPASS: join(d, "askpass"),
+    GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "user.name", GIT_CONFIG_VALUE_0: "t", GIT_CONFIG_PARAMETERS: "'credential.helper'='store'",
+    GIT_TERMINAL_PROMPT: "1", GCM_INTERACTIVE: "always",
+  });
+
+  test("the login probe env equals withholdGithubTokens on every channel it touches (TEN-P9-FIX-F1)", async () => {
+    const { dir, env } = identifiedRepo();
+    const d = tmpRoot("e10-pf-claude-same-");
+    const dump = join(d, "env.txt");
+    const cli = join(d, "claude");
+    writeFileSync(cli, `#!/bin/sh\nenv > '${dump}'\necho '{"loggedIn":true}'\n`);
+    chmodSync(cli, 0o755);
+    const input = { ...env, ...P9_INPUT(d), LOKI_CLAUDE_CLI: cli };
+    const r = await checkPreflight(opts(dir, input));
+    expect(r.fatal).toBeNull();
+    const seen = parseEnv(readFileSync(dump, "utf8"));
+    expect(expectWithheldLike(input, seen)).toBeGreaterThanOrEqual(8);
+    // The helper doctor uses for every provider spawn (login probe and --round-trip) agrees in-process too, and never mutates.
+    const before = { ...input };
+    const probe = providerProbeEnv(input);
+    expect(input).toEqual(before);
+    expectWithheldLike(input, new Map(Object.entries(probe).filter((e): e is [string, string] => e[1] !== undefined)));
+  });
+
+  test("operator opt-out keeps the probe env untouched, as withholdGithubTokens does for the session", () => {
+    const d = tmpRoot("e10-pf-claude-optout-");
+    const input = { ...P9_INPUT(d), LOKI_ALLOW_AGENT_GITHUB_TOKEN: "1" };
+    expect(providerProbeEnv(input)).toEqual(input);
+    // exact-string opt-out: a value that merely reads as true (or numerically equals 1) still withholds
+    for (const v of ["01", "true", " 1", "1.0"]) expect([v, providerProbeEnv({ ...input, LOKI_ALLOW_AGENT_GITHUB_TOKEN: v })["GH_TOKEN"]?.startsWith(SENTINEL_PREFIX)]).toEqual([v, true]);
+  });
+
+  test("bun cli doctor: the login probe never sees the GitHub token (real entry path, TEN-P9-FIX-F1)", () => {
+    const d = tmpRoot("e10-pf-doctor-");
+    const dump = join(d, "env.txt");
+    writeFileSync(join(d, "claude"), `#!/bin/sh\nif [ "$1" = auth ]; then env > '${dump}'; echo '{"loggedIn":true}'; exit 0; fi\necho "2.1.99 (Claude Code)"\n`);
+    chmodSync(join(d, "claude"), 0o755);
+    const base: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ANTHROPIC_API_KEY" && k !== "CLAUDE_CODE_OAUTH_TOKEN") base[k] = v;
+    const input = { ...base, ...P9_INPUT(d), PATH: `${d}:${process.env.PATH ?? ""}` };
+    const r = spawnSync("bun", [join(import.meta.dir, "..", "..", "src", "cli.ts"), "doctor"], { env: input, encoding: "utf8", timeout: 60000 });
+    expect(r.stdout).toContain("Claude CLI is logged in");
+    const raw = readFileSync(dump, "utf8");
+    expect(raw).not.toContain("PFCANARY");
+    expectWithheldLike(input, parseEnv(raw));
+  }, 90000);
 
   test("ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN skips the probe", async () => {
     const { dir, env } = identifiedRepo();
