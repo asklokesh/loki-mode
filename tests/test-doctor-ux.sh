@@ -257,6 +257,47 @@ if grep -q 'rc=1' <<<"$out" && grep -q 'clock' <<<"$out" && ! grep -q 'not confi
 while read -r sp; do kill "$sp" 2>/dev/null || true; done < "$C_DIR/sleep.pid"
 rm -rf "$C_DIR"
 
+# --- TEN-UX-05: chat startup readiness and slash-command suggestions ----------------
+RD_DIR="$(mktemp -d)"
+mkdir -p "$RD_DIR/bin" "$RD_DIR/repo" "$RD_DIR/plain" "$RD_DIR/empty" "$RD_DIR/cbin"
+for t in jq git ls head sed sort tr cat dirname grep env bash; do
+    tp="$(command -v "$t" 2>/dev/null || true)"
+    [ -n "$tp" ] && ln -sf "$tp" "$RD_DIR/bin/$t"
+done
+git -C "$RD_DIR/repo" init -q >/dev/null 2>&1
+echo x > "$RD_DIR/plain/file.txt"
+printf '#!/bin/sh\necho "{\\"loggedIn\\":false}"\n' > "$RD_DIR/cbin/claude"
+chmod +x "$RD_DIR/cbin/claude"
+mkdir -p "$RD_DIR/cbin-in"
+printf '#!/bin/sh\necho "{\\"loggedIn\\":true}"\n' > "$RD_DIR/cbin-in/claude"
+chmod +x "$RD_DIR/cbin-in/claude"
+FIXFN="$(sed -n '/^_loki_req_fix_line() {/,/^}/p' "$LOKI")"
+rd_run() { # rd_run <path> <dir> <provider> <fn args...>
+    local p="$1" d="$2" prov="$3"; shift 3
+    ( cd "$d" && env -u ANTHROPIC_API_KEY PATH="$p" SKILL_DIR="$REPO_ROOT" bash -c 'source "$1"; eval "$2"; _CHAT_PROVIDER="$3"; shift 3; "$@"' _ "$CHAT_SH" "$FIXFN" "$prov" "$@" 2>&1 )
+}
+CODEX_FIX="$(jq -r '.requirements[] | select(.id == "codex") | .fix' "$REPO_ROOT/autonomy/lib/setup-requirements.json" | head -n 1)"
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" codex _chat_readiness)"
+if [ -n "$CODEX_FIX" ] && grep -qF "$CODEX_FIX" <<<"$out" && grep -q '/provider claude' <<<"$out"; then ok "UX-05: missing codex prints the codex fix and /provider claude hint"; else bad "UX-05: codex readiness: $out"; fi
+out="$(rd_run "$RD_DIR/cbin:$RD_DIR/bin" "$RD_DIR/repo" claude _chat_readiness)"
+if grep -q 'claude login' <<<"$out"; then ok "UX-05: logged-out claude prints claude login"; else bad "UX-05: logged-out output: $out"; fi
+out="$(rd_run "$RD_DIR/cbin-in:$RD_DIR/bin" "$RD_DIR/plain" claude _chat_readiness)"
+if grep -qi 'git' <<<"$out" && ! grep -q 'claude login' <<<"$out"; then ok "UX-05: non-git non-empty folder mentions git"; else bad "UX-05: non-git output: $out"; fi
+out="$(rd_run "$RD_DIR/cbin-in:$RD_DIR/bin" "$RD_DIR/empty" claude _chat_readiness)"
+if grep -q 'Empty folder' <<<"$out"; then ok "UX-05: empty folder says /run sets it up"; else bad "UX-05: empty folder output: $out"; fi
+out="$(rd_run "$RD_DIR/cbin-in:$RD_DIR/bin" "$RD_DIR/repo" claude _chat_readiness)"
+if [ -z "$out" ]; then ok "UX-05: all ready prints nothing"; else bad "UX-05: all-ready output not empty: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /stat)"
+if [ "$out" = "/status" ]; then ok "UX-05: /stat suggests /status"; else bad "UX-05: /stat suggestion: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /zzzz)"
+if [ -z "$out" ]; then ok "UX-05: /zzzz prints no suggestion"; else bad "UX-05: /zzzz suggestion: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /stauts)"
+if [ -z "$out" ]; then ok "UX-05: transposition is not a single edit, no suggestion"; else bad "UX-05: /stauts suggestion: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /stop)"
+if [ -z "$out" ]; then ok "UX-05: exact command name is not suggested as a typo"; else bad "UX-05: /stop suggestion: $out"; fi
+if grep -q '_chat_load_fail "\$_CHAT_PROVIDER"' "$CHAT_SH" && ! grep -q 'cannot load provider \$_CHAT_PROVIDER' "$CHAT_SH"; then ok "UX-05: provider load failure uses the fix line"; else bad "UX-05: bare cannot-load message remains"; fi
+rm -rf "$RD_DIR"
+
 # --- Cleanup ------------------------------------------------------------------
 rm -rf "$(dirname "$SANDBOX_BIN")" 2>/dev/null || true
 
