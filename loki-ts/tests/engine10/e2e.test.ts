@@ -105,6 +105,23 @@ describe("A-117 loki verify binds the receipt to events.jsonl", () => {
     expect(await verdictOf(runEngine("done"), (p) => rmSync(p.events))).toBe("TAMPERED");
   }, 120_000);
 });
+describe("TEN-STABILITY-09 stub claude login probe", () => {
+  const stubs = [join(STUB_DIR, "claude"), join(FIX, "..", "issue-ref", "bin", "claude")];
+  const inline = ["supervisor_signal.test.ts", "budget_stop_e2e.test.ts"];
+  test("every engine10 stub claude answers claude auth status as logged in", () => {
+    for (const s of stubs) {
+      const r = Bun.spawnSync(["bash", s, "auth", "status"], { env: { ...process.env, E2E_STUB_LOG: "", ISSUE_REF_STUB_LOG: "" } });
+      expect(r.exitCode).toBe(0);
+      expect(JSON.parse(r.stdout.toString()).loggedIn).toBe(true);
+    }
+    for (const f of inline) expect(readFileSync(join(import.meta.dir, f), "utf8")).toContain('"\\${2:-}" = "status"');
+  });
+  test("the auth status probe is not logged as a stage", () => {
+    const log = join(mkdtempSync(join(tmpdir(), "loki-e2e-")), "stub.log"); temps.push(join(log, ".."));
+    Bun.spawnSync(["bash", stubs[0]!, "auth", "status"], { env: { ...process.env, E2E_STUB_LOG: log } });
+    expect(existsSync(log)).toBe(false);
+  });
+});
 describe("engine10 e2e (stub claude)", () => {
   test("A-130 round 2: a tampered event log is TAMPERED on the receipt line, never VERIFIED, never exit 0", () => {
     const t = runEngine("tamper", false, ["--json"]);

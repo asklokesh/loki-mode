@@ -28,6 +28,10 @@ if [ "\${1:-}" = "--help" ]; then
   echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
   exit 0
 fi
+if [ "\${1:-}" = "auth" ] && [ "\${2:-}" = "status" ]; then
+  echo '{"loggedIn":true}'
+  exit 0
+fi
 mkdir -p .loki/metrics
 printf '{"total_cost_usd":0.5,"input_tokens":1000,"output_tokens":500,"cache_read_tokens":0,"cache_creation_tokens":0,"model":"sonnet"}' > ".loki/metrics/result-cost-\${LOKI_ITERATION:-x}.json"
 printf '\\nexport function subtract(a: number, b: number): number {\\n  return a - b;\\n}\\n' >> calc.ts

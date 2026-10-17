@@ -9,6 +9,10 @@ if [ "${1:-}" = "--help" ]; then
   echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
   exit 0
 fi
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then # TEN-STABILITY-09: the P9 login probe reads this; never logged as a stage
+  echo '{"loggedIn":true}'
+  exit 0
+fi
 prompt=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi
