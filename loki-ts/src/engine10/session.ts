@@ -60,6 +60,7 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     if (process.env["LOKI_E10_INVOKER"] === "cli") delete env["LOKI_SDK_LOOP"];
     else env["LOKI_SDK_LOOP"] = "1";
     env["LOKI_HOST_GUARD"] = "1";
+    if (env["LOKI_E10_PREFIX"] === undefined) env["LOKI_E10_PREFIX"] = "lean"; // TEN-COST-13: lean cache-stable prefix by default; an explicit user value (including off) wins
     const override = process.env["LOKI_MODEL_OVERRIDE"];
     if (override) {
       env["LOKI_CLAUDE_MODEL_PLANNING"] = override;
