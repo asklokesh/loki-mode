@@ -339,10 +339,12 @@ describe("TEN-QUALITY-01 failureExcerpt", () => {
     expect(x).toContain("error TS2322");
   });
   test("cap is bytes and secrets are redacted", () => {
-    const big = Array.from({ length: 400 }, (_, i) => `E   line ${i} AKIAABCDEFGHIJKLMNOP`).join("\n");
+    // Built at runtime so no committed text matches a gitleaks rule.
+    const fakeKey = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+    const big = Array.from({ length: 400 }, (_, i) => `E   line ${i} ${fakeKey}`).join("\n");
     const x = failureExcerpt(big);
     expect(Buffer.byteLength(x)).toBeLessThanOrEqual(1500);
-    expect(x).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(x).not.toContain(fakeKey);
     expect(x).toContain("[REDACTED:AWS_KEY]");
   });
   test("unknown shape falls back to the last lines; empty stays empty", () => {

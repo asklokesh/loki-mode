@@ -9,6 +9,7 @@ import { lokiDir } from "../util/paths.ts";
 import { applyMaxAge, deployAttestCmd, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
+import { isExecutedProof } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
@@ -149,11 +150,11 @@ function sealCompositeCmd(runDir: string): number {
 /** TEN-GATES-03: count passing checks by the provenance seal recorded (GATES-02). exogenous and independent are agent-independent; agent_authored and llm_judge are advisory.
  *  Absent or unknown provenance never counts as agent-independent (k=null prints "provenance not recorded"). */
 function independentLine(receiptPath: string): { line: string; k: number } {
-  let checks: Array<{ result?: unknown; provenance?: unknown }> = [];
+  let checks: Array<{ result?: unknown; provenance?: unknown; n?: unknown }> = [];
   try { const c = (JSON.parse(readFileSync(receiptPath, "utf8")) as { checks?: unknown }).checks; if (Array.isArray(c)) checks = c; } catch { /* unreadable: no provenance */ }
   const pass = checks.filter((c) => c?.result === "pass");
   if (!pass.some((c) => typeof c.provenance === "string")) return { line: "agent-independent: provenance not recorded", k: 0 };
-  const k = pass.filter((c) => c.provenance === "exogenous" || c.provenance === "independent").length, m = pass.filter((c) => c.provenance === "agent_authored" || c.provenance === "llm_judge").length;
+  const k = pass.filter((c) => isExecutedProof(c) && (c.provenance === "exogenous" || c.provenance === "independent")).length, m = pass.filter((c) => c.provenance === "agent_authored" || c.provenance === "llm_judge").length;
   return { line: `agent-independent: ${k} of ${pass.length} passing checks (wall/holdout/pre-existing/static/probe); advisory: ${m}`, k };
 }
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
@@ -166,12 +167,13 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (ma.error) return (process.stderr.write(`loki verify: ${ma.error}\n`), 2);
   args = ma.args;
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\n         --sign-deploy FILE signs a loki.deploy/1 deploy record in place; verify FILE (add --receipt FILE when the cited receipt is not beside it) re-checks it offline and is VERIFIED only when the signature and the cited receipt both are.\n         --require-exogenous (or LOKI_VERIFY_REQUIRE_EXOGENOUS=1) exits 4 when a VERIFIED receipt has no agent-independent passing check (see the agent-independent line) or no recorded provenance.\nUnknown flags and more than one run-id exit 2.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\n         --sign-deploy FILE signs a loki.deploy/1 deploy record in place; verify FILE (add --receipt FILE when the cited receipt is not beside it) re-checks it offline and is VERIFIED only when the signature and the cited receipt both are.\n         --sign-provenance FILE signs a loki.provenance/1 doc (head_sha, tree_sha, receipt_sha256, run_id, built_at) in place; --url https://host [--expect-sha SHA] [--receipt FILE] [--pubkey FILE] fetches <host>/.well-known/loki-provenance.json (5s timeout, 64KB cap) and is VERIFIED only when the signature and any cited receipt both are; fetch failure or unknown kid is UNCHECKED. With --url, --max-age checks the signed built_at (stale, future, missing or unparseable: UNCHECKED, exit 2); --seal-composite and --export-dsse refuse --max-age (exit 2).\n         --require-exogenous (or LOKI_VERIFY_REQUIRE_EXOGENOUS=1) exits 4 when a VERIFIED receipt has no agent-independent passing check (see the agent-independent line) or no recorded provenance.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
   const sc = args.indexOf("--seal-composite");
+  if (ma.raw !== null && (sc >= 0 || exportDsse)) return (process.stderr.write("loki verify: --max-age is not supported with --seal-composite or --export-dsse; freshness was not checked\n"), 2);
   if (sc >= 0) return args.length === 2 && sc === 0 ? sealCompositeCmd(args[1]!) : (process.stderr.write("loki verify: --seal-composite takes exactly one run directory\n"), 2);
-  const dep = await deployAttestCmd(args, { takePubkey, maxAge: ma.raw, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
+  const dep = await deployAttestCmd(args, { takePubkey, maxAge: ma.raw, now: deps.now, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
   const pk = takePubkey(args); if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
@@ -196,6 +198,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); } catch { /* unreadable: the verdict above already says so */ }
   if (result.verdict === "UNSIGNED") {
     if (deps.pubkey) { process.stdout.write("attestation: UNSIGNED, but --pubkey asked for a signature check; refusing\n"); return EXIT_BY_VERDICT.UNSIGNED; }
+    if (requireExo) { const ind = independentLine(receiptPath); process.stdout.write(`${ind.line}\n`); if (allowUnsigned && ind.k === 0) return (process.stdout.write("require-exogenous: refused, no agent-independent passing check\n"), 4); } // TEN-GATES-03-F1
     process.stdout.write(allowUnsigned ? "attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n" : "attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)\n");
     return allowUnsigned ? 0 : EXIT_BY_VERDICT.UNSIGNED;
   } else if (result.verdict === "VERIFIED") {

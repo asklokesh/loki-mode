@@ -14,12 +14,13 @@
 // can never throw to the caller. Emits on both success and failure runs.
 
 import { resolve, join } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { REPO_ROOT } from "../util/paths.ts";
 import { findPython3 } from "../util/python.ts";
 import { run as shellRun } from "../util/shell.ts";
 import { getVersion } from "../version.ts";
 import { atomicWriteText } from "../util/atomic.ts";
+import { appProbe } from "../util/app_probe.ts";
 import type { RunnerContext } from "./types.ts";
 
 // Resolve the standalone generator relative to the repo root (matches
@@ -43,7 +44,36 @@ function mintRunId(): string {
 
 // maybeGenerateProof: thin wrapper around the Python generator. Never throws.
 // Returns true if the generator was invoked, false if skipped.
-export async function maybeGenerateProof(ctx: RunnerContext): Promise<boolean> {
+export interface ProofDeps {
+  probe?: (repoDir: string, lokiDir: string, opts?: { specText?: string }) => Promise<unknown>;
+}
+
+// Collect app health and functional facts before the generator reads them.
+// LOKI_PROOF_APP_PROBE=0 opts out. A failure leaves the artifacts absent
+// (facts stay not_run); nothing is ever fabricated here.
+async function collectAppFacts(ctx: RunnerContext, deps: ProofDeps): Promise<void> {
+  if (process.env["LOKI_PROOF_APP_PROBE"] === "0") return;
+  try {
+    let specText: string | undefined;
+    if (ctx.prdPath) {
+      try {
+        specText = readFileSync(ctx.prdPath, "utf8");
+      } catch {
+        specText = undefined;
+      }
+    }
+    const probe = deps.probe ?? appProbe;
+    await probe(ctx.cwd, ctx.lokiDir, specText !== undefined ? { specText } : {});
+  } catch (err) {
+    try {
+      ctx.log(`[runner] proof app probe skipped: ${(err as Error).message}`);
+    } catch {
+      /* logging must not throw either */
+    }
+  }
+}
+
+export async function maybeGenerateProof(ctx: RunnerContext, deps: ProofDeps = {}): Promise<boolean> {
   try {
     if (process.env["LOKI_PROOF"] === "0") {
       return false;
@@ -101,6 +131,8 @@ export async function maybeGenerateProof(ctx: RunnerContext): Promise<boolean> {
     if (ctx.prdPath) {
       env["PRD_PATH"] = ctx.prdPath;
     }
+
+    await collectAppFacts(ctx, deps);
 
     await shellRun([py, ...args], { cwd: ctx.cwd, env, timeoutMs: 30_000 });
 

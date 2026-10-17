@@ -18,7 +18,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 - Non-leader sessions act as extra engineers or reviewers on BOARD.md slices, or answer Loki. They never push, bump VERSION, release or rewrite BOARD.md.
 
 ## Nobody sits idle
-- Ready queue >= 30 specced slices (features, enhancements, fixes evenly; D91). Seat cap 14 while weekly usage < 50%.
+- Ready queue >= 30 specced slices (features, enhancements, fixes evenly; D91). Seat cap 20 (D103: founder ruled cost irrelevant on the Max plan; load and memory are the limit).
 - The Chief of Staff keeps 8-16 engineers busy whenever ready slices exist. When anyone finishes, the next slice is assigned in the same turn.
 - The ready queue never drops below 2x the number of engineers; PMs and POs refill it.
 - Idle seats while work exists, or an empty ready queue, is a P0 violation.

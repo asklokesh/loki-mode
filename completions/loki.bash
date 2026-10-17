@@ -28,7 +28,7 @@ _loki_completion() {
             # If the word starts with a dash, show flags
             # Rule: list every flag bin/loki routes (Bun/engine10 ones such as --model, --max-cost, --spec, --no-pr too), not only cmd_start's own.
             if [[ "$cur" == -* ]]; then
-                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --brief --worktree --pr --ship --detach --workspace --deploy --health-url --auto-rollback --resume --help"
+                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --cost --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --brief --worktree --pr --ship --detach --workspace --deploy --health-url --auto-rollback --resume --help"
                 COMPREPLY=( $(compgen -W "${flags}" -- "$cur") )
                 return 0
             fi
@@ -130,7 +130,7 @@ _loki_completion() {
 
         status)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --badge --help" -- "$cur") )
                 return 0
             fi
             ;;
@@ -157,7 +157,7 @@ _loki_completion() {
 
         verify)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --sign-deploy --receipt --pubkey --require-exogenous --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --sign-deploy --sign-provenance --url --expect-sha --receipt --pubkey --require-exogenous --help" -- "$cur") )
                 return 0
             fi
             ;;

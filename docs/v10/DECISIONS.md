@@ -841,3 +841,10 @@ Founder: "stability I don't want nightly delaying latest version in npm, make an
 6. Pulse: a promotion lag violation, if one exists, fires only when npm `latest` differs from `next`.
 - Cost accepted: a red build can reach `latest` for minutes. Reason: the founder ranks speed of release over pre-publish testing, and deprecate plus fix-forward bounds the damage.
 - Reverse: only by a founder directive.
+
+## D103 (2026-10-17, CoS under D99, founder directive "faster releases and faster strategy to 10/10 asap"): throughput levers
+1. Seat cap 20 and worktree cap 21 (was 14 and 15). The founder ruled cost irrelevant on the Max plan; the limit is this machine (14 CPUs, 24 GB). Load average above 20 or free memory under 3 GB pauses new dispatch.
+2. HIGH-tier slices are built by opus. Evidence: TEN-P9-FIX (opus builder) was approved in round 1, while sonnet-built HIGH slices DEPLOY-02 and COST-11 each took 3 rounds.
+3. Every builder brief carries the anti-BLOCK checklist: run the row's exact Wall command; for each new guard, show the mutation that turns it red, including the boundary case (numeric vs string compare, the token removed from one of two places); test through the real entry path (bin/loki start, runMachine), not only the helper; sweep siblings of the same mechanism. Most of today's BLOCKs were one of these.
+4. Every approved slice is merged and released in the same CoS turn (D102 unchanged). TEN-RELEASE-FAST extends scripts/release.sh so one command bumps, writes the notes, rebuilds dist, commits, runs the push checks and pushes.
+- Reverse: by founder directive, or by the CoS if load or memory limits are hit twice in an hour.

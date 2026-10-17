@@ -12,13 +12,14 @@
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
 import { appendFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
+import { emitFunnel } from "../util/funnel.ts";
 import { getVersion } from "../version.ts";
 import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
@@ -890,8 +891,12 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 // parse so the bash and Bun doctor routes render the identical login line.
 export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv = process.env): "yes" | "no" | "" {
   try {
+    // P9 (TEN-P9-FIX): this spawns the provider CLI, so it gets the withheld env a provider session gets: no GitHub
+    // token, gh store or credential helper (tokenFreeEnv), no SSH agent, and git's ssh transport off. The operator opt-out
+    // (LOKI_ALLOW_AGENT_GITHUB_TOKEN=1, see runner/github_token.ts) keeps the env untouched, as it does for the session.
+    const optOut = env["LOKI_ALLOW_AGENT_GITHUB_TOKEN"] === "1";
     const r = spawnSync(cli, ["auth", "status"], {
-      env: { ...env },
+      env: optOut ? { ...env } : { ...tokenFreeEnv(env), GIT_SSH_COMMAND: "false" },
       encoding: "utf8",
       timeout: 5000,
     });
@@ -1054,18 +1059,7 @@ function emitFirstRunBlocked(blockers: string): void {
   else if (blockers.includes("curl is not installed")) key = "curl";
   else if (blockers.includes("Free up disk")) key = "disk";
   else if (blockers.includes("broken symlink")) key = "skill_symlink";
-  try {
-    const script = resolve(REPO_ROOT, "autonomy", "telemetry.sh");
-    if (!existsSync(script)) return;
-    const child = spawn(
-      "bash",
-      ["-c", 'source "$1" >/dev/null 2>&1 && loki_emit_first_run_blocked "$2" >/dev/null 2>&1', "_", script, key],
-      { detached: true, stdio: "ignore", env: { ...process.env } },
-    );
-    child.unref();
-  } catch {
-    // telemetry is best-effort
-  }
+  emitFunnel("first_run_blocked", key);
 }
 
 async function runText(): Promise<number> {

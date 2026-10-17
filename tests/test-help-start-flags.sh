@@ -42,7 +42,7 @@ for flag in --parallel --sandbox --github --detach --bg --background; do
 done
 
 # Flags still listed must be ones start.ts accepts.
-for flag in --simple --complex --skip-memory --provider --budget --fresh-prd; do
+for flag in --simple --complex --skip-memory --provider --budget --cost --fresh-prd; do
     check "start help still lists $flag" grep -q -e "$flag" "$WORK/start.txt"
 done
 

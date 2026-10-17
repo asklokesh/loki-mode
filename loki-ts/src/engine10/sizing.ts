@@ -69,4 +69,4 @@ export const wallFirstModel = (size: TaskSize, env = process.env): string => {
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 
-export { modelRank, escalationModel, cascadeDowngrade } from "../runner/model_rank.ts"; // L1 model ordering lives outside the engine10 line budget
+export { modelRank, escalationModel, cascadeDowngrade, haikuFirstDowngrade } from "../runner/model_rank.ts"; // L1 model ordering lives outside the engine10 line budget

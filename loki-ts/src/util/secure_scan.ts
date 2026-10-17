@@ -26,6 +26,8 @@ export interface SecureScanResult {
 export interface SecureScanOpts {
   scriptPath?: string;
   timeoutMs?: number;
+  /** Apply the token rule to every text file (share bundles), not just browser-served ones. */
+  secretsEverywhere?: boolean;
 }
 
 export const DEFAULT_SECURE_SCAN_TIMEOUT_MS = 120_000;
@@ -42,7 +44,7 @@ export async function runSecureScan(targetDir: string, opts: SecureScanOpts = {}
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SECURE_SCAN_TIMEOUT_MS;
 
   const started = Date.now();
-  const res = await run([py, script, targetDir, "--json"], { timeoutMs });
+  const res = await run([py, script, targetDir, "--json", ...(opts.secretsEverywhere ? ["--secrets-everywhere"] : [])], { timeoutMs });
   const elapsed = Date.now() - started;
 
   let parsed: unknown;

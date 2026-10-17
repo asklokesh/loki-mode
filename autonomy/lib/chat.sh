@@ -168,6 +168,81 @@ _chat_run_launch() {
     return 1
 }
 
+# Startup readiness: at most 3 lines, nothing when everything is ready.
+_chat_readiness() {
+    local p="${_CHAT_PROVIDER:-claude}" out="" t hint="" prov="" git_line=""
+    if ! command -v "$p" >/dev/null 2>&1; then
+        [ "$p" = "claude" ] || hint=" (or try /provider claude)"
+        prov="$p CLI not found$hint. Fix (same as loki doctor):"$'\n'"$(_loki_req_fix_line "$p")"
+    elif [ "$p" = "claude" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        t="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+        if [ -n "$t" ]; then out="$("$t" 5 claude auth status 2>/dev/null)" || out=""; else out="$(claude auth status 2>/dev/null)" || out=""; fi
+        case "$out" in
+            *'"loggedIn"'*false*) prov="claude is logged out: claude login (or set ANTHROPIC_API_KEY)" ;;
+        esac
+    fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if [ -z "$(ls -A 2>/dev/null)" ]; then
+            git_line="Empty folder: /run will set it up as a new project."
+        else
+            git_line="Not a git repo: /run needs git init in this folder first."
+        fi
+    fi
+    # Cap: provider block keeps at most 2 lines (3 total with the folder line).
+    if [ -n "$prov" ]; then
+        if [ -n "$git_line" ]; then printf '%s\n' "$prov" | head -n 2; else printf '%s\n' "$prov" | head -n 3; fi
+    fi
+    [ -z "$git_line" ] || printf '%s\n' "$git_line"
+    return 0
+}
+
+# Command names listed in _chat_help.
+_chat_command_names() {
+    _chat_help | sed -n 's/^  \(\/[a-z][a-z]*\)\([ ,].*\)\{0,1\}$/\1/p' | sort -u
+    echo /exit
+}
+
+# True when $1 and $2 differ by exactly one substitution, insertion or deletion.
+_chat_one_edit() {
+    local a="$1" b="$2" la=${#1} lb=${#2} i d=0 s l k=0
+    [ $(( la - lb )) -le 1 ] && [ $(( lb - la )) -le 1 ] || return 1
+    if [ "$la" -eq "$lb" ]; then
+        for (( i = 0; i < la; i++ )); do [ "${a:i:1}" = "${b:i:1}" ] || d=$((d + 1)); done
+        [ "$d" -eq 1 ]
+        return
+    fi
+    if [ "$la" -lt "$lb" ]; then s="$a"; l="$b"; else s="$b"; l="$a"; fi
+    while [ "$k" -lt "${#s}" ] && [ "${s:k:1}" = "${l:k:1}" ]; do k=$((k + 1)); done
+    [ "${s:k}" = "${l:k+1}" ]
+}
+
+# Suggest a command for an unknown slash command: unique prefix first, else a unique single-edit match.
+_chat_suggest() {
+    local cmd="$1" c hit="" n=0 names
+    names="$(_chat_command_names)"
+    [ "${#cmd}" -ge 3 ] || return 0
+    while IFS= read -r c; do
+        case "$c" in "$cmd"?*) hit="$c"; n=$((n + 1)) ;; esac
+    done <<EOF2
+$names
+EOF2
+    if [ "$n" -eq 1 ]; then echo "$hit"; return 0; fi
+    n=0; hit=""
+    while IFS= read -r c; do
+        if _chat_one_edit "$cmd" "$c"; then hit="$c"; n=$((n + 1)); fi
+    done <<EOF2
+$names
+EOF2
+    if [ "$n" -eq 1 ]; then echo "$hit"; fi
+    return 0
+}
+
+# Provider failed to load: show the doctor fix line instead of a bare error.
+_chat_load_fail() {
+    echo "loki chat: cannot load provider $1. Fix (same as loki doctor):" >&2
+    _loki_req_fix_line "$1" >&2
+}
+
 # Run a delegate without letting a non-zero exit end the session (autonomy/loki runs under set -e).
 _chat_do() { local _rc=0; "$@" || _rc=$?; [ "$_rc" -eq 0 ] || echo "(exit $_rc)"; return 0; }
 
@@ -256,7 +331,7 @@ _chat_send() {
         (
             # shellcheck disable=SC1091
             source "${_LOKI_SCRIPT_DIR:-.}/../providers/loader.sh" 2>/dev/null || exit 1
-            load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { echo "loki chat: cannot load provider $_CHAT_PROVIDER" >&2; exit 1; }
+            load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { _chat_load_fail "$_CHAT_PROVIDER"; exit 1; }
             provider_invoke "$prompt"
         )
         return $?
@@ -268,7 +343,7 @@ _chat_send() {
     (
         # shellcheck disable=SC1091
         source "${_LOKI_SCRIPT_DIR:-.}/../providers/loader.sh" 2>/dev/null || exit 1
-        load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { echo "loki chat: cannot load provider $_CHAT_PROVIDER" >&2; exit 1; }
+        load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { _chat_load_fail "$_CHAT_PROVIDER"; exit 1; }
         case "$_CHAT_PROVIDER" in
             codex) codex exec --sandbox read-only --skip-git-repo-check "$prompt" < /dev/null ;;
             opencode) opencode run --agent plan --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" < /dev/null ;;
@@ -398,6 +473,7 @@ cmd_chat() {
     _CHAT_STARTED=0
     local attached=0
     echo "Loki chat (provider: $_CHAT_PROVIDER). /help for commands, /exit to quit."
+    _chat_readiness
     _chat_memory_context "$loki"
     if [ "$attach" = "1" ]; then _chat_attach_banner && attached=1; fi
     while true; do
@@ -480,7 +556,9 @@ Question: $line" || true
                     claude|codex|cline|aider|opencode) _CHAT_PROVIDER="$rest"; _CHAT_STARTED=0; echo "provider: $rest" ;;
                     *) echo "usage: /provider claude|codex|cline|aider|opencode (now: $_CHAT_PROVIDER)" ;;
                 esac ;;
-            *) echo "unknown command: $cmd (try /help)" ;;
+            *)
+                local _sg; _sg="$(_chat_suggest "$cmd")"
+                if [ -n "$_sg" ]; then echo "unknown command: $cmd (did you mean $_sg?)"; else echo "unknown command: $cmd (try /help)"; fi ;;
         esac
     done
     return 0

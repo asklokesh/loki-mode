@@ -5,6 +5,38 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.25 (2026-10-17)
+
+### Added
+- Lean cost profile (TEN-COST-01): `loki start --cost lean` or LOKI_COST_PROFILE=lean opts a run into the cheaper model and effort settings, printed on the start line.
+- Batched judge calls (TEN-COST-24): SDK judge calls can opt into the Message Batches path for lower per-token cost.
+- First-run gate entry (TEN-UX-08): `scripts/first-run-gate.sh --entry start-empty` measures `loki start` in an empty folder end to end and compares the wall time against its budget numerically.
+
+### Fixed
+- Empty folder start (TEN-UX-01-F1): the engine10 supervisor initializes a git repo in an empty folder instead of exiting with "not inside a git repository".
+- Verify require-exogenous (TEN-GATES-03-F1): `--require-exogenous` also applies to unsigned receipts accepted with `--allow-unsigned`, and only checks that executed (n > 0) count as agent-independent proof.
+- Proof share redaction (TEN-ADOPTION-03-F1): `loki proof share` refuses any bundle file holding a GitHub, AWS, Anthropic, OpenAI or Slack token, even with `--yes`; `proof badge`, `proof md` and `proof bundle` are registered in help and completions.
+- Lint abort test (TEN-QUALITY-03-F1): the abort-mid-run lint case now goes red if the caller's abort signal is dropped.
+
+### Changed
+- Throughput (D103): seat cap 20 and worktree cap 21; HIGH-tier slices are built by opus.
+
+## v11.17.24 (2026-10-17)
+
+### Added
+- First-run funnel (TEN-UX-03): the default engine10 route reports first_run_blocked with a reason key (not_a_repo, git_identity or other) on a preflight refusal, and build_verified on a verified run, through the same opt-out analytics bridge doctor uses. No paths or task text are sent.
+
+### Fixed
+- Token isolation (TEN-P9-FIX): the first-run login probe (`claude auth status`) now runs with the GitHub token, gh config store, credential helper and SSH agent withheld, the same as a provider session. Since v11.17.22 the probe ran with the full environment, so the P9 injection moat failed.
+- Secret scanning (TEN-SEC-GITLEAKS-01): the pre-push gitleaks scan reads merge commits the same way as the CI Security Audit (first-parent), so a key added only in a merge result is refused locally. The check_result fixture builds its fake key at runtime instead of committing one.
+- Status badge (TEN-DEPLOY-04-F1): `loki status --badge` is routed by the dispatcher and listed in help, the command registry and shell completions.
+
+## v11.17.23 (2026-10-17)
+
+### Fixed
+- App probe (TEN-GATES-04): the app probe stops the app unconditionally when boot times out, so a slow app never leaks a running process, and its tests use a free port instead of a fixed one.
+- Chat startup (TEN-UX-05): chat startup readiness is capped at 3 lines structurally, and an ambiguous slash command suggests the matching commands.
+
 ## v11.17.22 (2026-10-17)
 
 ### Added

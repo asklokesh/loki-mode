@@ -923,6 +923,53 @@ else
     sk "a merge commit bringing in a secret is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
+# --- case 18b (TEN-SEC-GITLEAKS-01): an EVIL merge, key only in the merge result --
+# Neither parent carries the key; only the merge commit's own resolution adds it.
+# The hook must scan with --diff-merges=first-parent (same as CI) to see it. The
+# mutation strips the flag from the real gitleaks call line only (the echo line
+# keeps it) and must let the push through, proving this case is sensitive to it.
+_evil_merge_fixture() { # <dir> <bare>
+    local d="$1" b="$2"
+    setup_bare "$b"; setup_push_clone "$d" "$b"
+    g "$d" checkout -q -b feature >/dev/null 2>&1
+    echo "feature" > "$d/feature.txt"
+    g "$d" add feature.txt >/dev/null 2>&1
+    g "$d" commit -q -m "feature: clean change" --no-verify >/dev/null 2>&1
+    g "$d" checkout -q main >/dev/null 2>&1
+    g "$d" merge -q --no-ff --no-commit feature >/dev/null 2>&1
+    mkdir -p "$d/tests"
+    printf '%s\n' "# fixture: $_akia_evil leaked" > "$d/tests/evil.sh"
+    g "$d" add tests/evil.sh >/dev/null 2>&1
+    g "$d" commit -q -m "evil merge" --no-verify >/dev/null 2>&1
+}
+_akia_evil="AKIA""ABCDEFGHIJKLMNOP"
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c18b"; _evil_merge_fixture "$D" "$SCRATCH/c18b.git"
+    rc="$(real_push "$D")"
+    if [[ "$rc" != "RC=0" ]] && grep -q "gitleaks found a possible secret" "$D/push.out" && grep -q "tests/evil.sh" "$D/push.out"; then
+        ok "an evil merge adding a key only in the merge result is refused (rc != 0)"
+    else
+        ko "an evil merge adding a key only in the merge result is refused" "rc=$rc; out: $(cat "$D/push.out")"
+    fi
+    D="$SCRATCH/c18bm"; _evil_merge_fixture "$D" "$SCRATCH/c18bm.git"
+    python3 - "$D/.githooks/pre-push" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = '--log-opts="$_full_log_opts $_gitleaks_merge_mode" \\'
+assert s.count(old) == 1, "call-line anchor not found exactly once"
+open(p, "w").write(s.replace(old, '--log-opts="$_full_log_opts" \\'))
+PY
+    rc="$(real_push "$D")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ok "18b mutation (flag removed from the gitleaks call line only) lets the evil merge through"
+    else
+        ko "18b mutation (flag removed from call line only) stayed red" "rc=$rc; out: $(cat "$D/push.out")"
+    fi
+else
+    sk "an evil merge adding a key only in the merge result is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
 # --- case 19: an added .gitleaksignore line prints a WARNING, not a refusal --
 # Not gated on $_have_real_gitleaks: this case is about the WARNING message,
 # not about a real finding. LOKI_ALLOW_UNSCANNED_PUSH=1 keeps it independent

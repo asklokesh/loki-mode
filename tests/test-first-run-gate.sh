@@ -63,6 +63,18 @@ verify)
     if [ "$FAKE_MODE" = baddigest ]; then echo "receipt_sha256: $(printf 'b%.0s' $(seq 64))"; else echo "receipt_sha256: $D"; fi
     if [ "$FAKE_MODE" = unsigned ]; then echo "attestation: UNSIGNED (no key)"; else echo "attestation: VERIFIED against the local JWKS"; fi
     exit 0 ;;
+doctor) echo "doctor ok"; exit 0 ;;
+start) # TEN-UX-08 empty-folder entry; FAKE_MODE selects the misbehaviour
+    [ "$FAKE_MODE" = srepo ] || { git init -q && git symbolic-ref HEAD refs/heads/main && git commit -q --allow-empty -m init; }
+    [ "$FAKE_MODE" = sslow ] && sleep 3
+    echo "Loki 10 engine"
+    echo "Outcome:    VERIFIED"
+    echo "PR:         none (local)"
+    echo "Receipt:    receipt_sha256: $D"
+    echo "NOT PROVEN: none"
+    echo "Cost:       \$0.00"
+    [ "$FAKE_MODE" = snonext ] || echo "Next:       loki status"
+    exit 0 ;;
 *) # the gate's G8 run: loki "<task>" --no-pr with FRG_SKIP set
     mkdir -p .loki; : > .loki/failed-run
     if [ "$FAKE_MODE" = skipver ]; then echo "Outcome:    VERIFIED"; exit 0; fi
@@ -112,6 +124,27 @@ printf '%s\n' "$OUT" | grep -q 'IndexError' && bad "fallback: IndexError crash" 
 run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && ok "nocost: exits non-zero" || bad "nocost: exit 0"
 run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
 run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
+
+
+# TEN-UX-08: --entry start-empty
+run_empty() { # run_empty <mode> [budget] [injected measured seconds]: sets OUT and RC
+    OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" ${2:+FRG_BUDGET_S=$2} ${3:+FRG_FAKE_TOTAL_S=$3} FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-E$1.txt" bash "$GATE" --stub --entry start-empty 2>&1); RC=$?
+}
+run_empty sgood
+for a in repo-init outcome-verified receipt-sealed next-line first-success-budget; do expect start-empty-good $a PASS; done
+[ "$RC" -eq 0 ] && ok "start-empty-good: gate exits 0" || bad "start-empty-good: gate exit $RC"
+printf '%s\n' "$OUT" | grep -Eq '^install_to_first_success_s=[0-9]+$' && ok "start-empty-good: report has install_to_first_success_s" || bad "start-empty-good: no install_to_first_success_s"
+run_empty srepo;  expect srepo repo-init FAIL;  [ "$RC" -ne 0 ] && ok "srepo: exits non-zero" || bad "srepo: exit 0"
+run_empty sslow 1; expect sslow first-success-budget FAIL; [ "$RC" -ne 0 ] && ok "sslow: exits non-zero" || bad "sslow: exit 0"
+run_empty snonext; expect snonext next-line FAIL; [ "$RC" -ne 0 ] && ok "snonext: exits non-zero" || bad "snonext: exit 0"
+# integer compare, not string: lexically "10" < "9" is true, so a string compare would pass a 10s run against a 9s budget
+run_empty sgood 9 10; expect sgood-10v9 first-success-budget FAIL; [ "$RC" -ne 0 ] && ok "10s vs budget 9: exits non-zero" || bad "10s vs budget 9: exit 0"
+# and the reverse: lexically "9" > "10", so a string compare would fail a 9s run against a 10s budget
+run_empty sgood 10 9; expect sgood-9v10 first-success-budget PASS
+# stub mode never writes METRICS
+M0=$(git -C "$SCRIPT_DIR/.." hash-object docs/v10/METRICS.md 2>/dev/null || true)
+run_empty sgood
+[ "$M0" = "$(git -C "$SCRIPT_DIR/.." hash-object docs/v10/METRICS.md 2>/dev/null || true)" ] && ok "start-empty stub: METRICS.md untouched" || bad "start-empty stub: METRICS.md changed"
 
 # P0-DASH-STATIC: dashboard-root assertion (GET / is a 410 page naming the Control Plane) (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""

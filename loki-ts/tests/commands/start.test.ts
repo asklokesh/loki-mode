@@ -4,6 +4,9 @@
 // LOKI_SDK_LOOP=1). The runAutonomous delegation itself is covered by the
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
@@ -83,6 +86,30 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     const env: Record<string, string> = {};
     parseStartArgs(["./prd.md", "--skip-memory"], collect, () => {}, (k, v) => (env[k] = v));
     expect(env["LOKI_SKIP_MEMORY"]).toBe("true");
+  });
+
+  it("--cost lean reaches the child env and prints one line naming both levers", () => {
+    const env: Record<string, string> = {};
+    const saved = { r: process.env["LOKI_ROUTER"], t: process.env["LOKI_E10_TRIM"], c: process.env["LOKI_COST_PROFILE"], d: process.env["LOKI_DIR"] };
+    delete process.env["LOKI_ROUTER"]; delete process.env["LOKI_E10_TRIM"]; delete process.env["LOKI_COST_PROFILE"];
+    const dir = mkdtempSync(join(tmpdir(), "start-cost-"));
+    process.env["LOKI_DIR"] = dir;
+    try {
+      const lines: string[] = [];
+      const r = parseStartArgs(["./prd.md", "--cost", "lean"], collect, (s) => lines.push(s), (k, v) => { env[k] = v; });
+      expect(typeof r).toBe("object");
+      expect(env["LOKI_ROUTER"]).toBe("1");
+      expect(env["LOKI_E10_TRIM"]).toBe("1");
+      expect(lines.join("")).toMatch(/LOKI_ROUTER=1.*LOKI_E10_TRIM=1/);
+      errs.length = 0;
+      expect(parseStartArgs(["./prd.md", "--cost", "cheap"], collect)).toBe(2);
+      expect(errs.join("")).toContain("unknown cost profile");
+    } finally {
+      for (const [k, v] of [["LOKI_ROUTER", saved.r], ["LOKI_E10_TRIM", saved.t], ["LOKI_COST_PROFILE", saved.c], ["LOKI_DIR", saved.d]] as const) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("--budget is an alias of --budget-limit", () => {

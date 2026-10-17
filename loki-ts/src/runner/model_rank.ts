@@ -12,6 +12,13 @@ export function cascadeDowngrade(runModel: string, env = process.env): { from: s
   const to = cascadeImplementModel(env);
   return cascadeEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by cascade: ${runModel} -> ${to} (opt-in)` } : null;
 }
+/** TEN-COST-16: LOKI_IMPLEMENT_HAIKU_FIRST=1/on/true opts the first implement session onto the cheapest tier. OFF by default (Law L1). */
+export const haikuFirstEnabled = (env = process.env): boolean => ["1", "on", "true"].includes((env["LOKI_IMPLEMENT_HAIKU_FIRST"] ?? "").toLowerCase());
+/** TEN-COST-16: the haiku-first pin for the first implement session only; null when off or when the run model is not stronger. Fix rounds never use it: a failed verify always escalates to the run model, so no haiku attempt that failed verify ships. */
+export function haikuFirstDowngrade(runModel: string, env = process.env): { from: string; to: string; note: string } | null {
+  const to = resolveModelAlias("haiku");
+  return haikuFirstEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by haiku-first: ${runModel} -> ${to} (opt-in; a failed verify escalates to ${runModel})` } : null;
+}
 const klass = (m: string): string => resolveModelAlias(m).toLowerCase();
 export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall";
 export interface UnitEscalation { unit: string; from: string; to: string; trigger: EscalationTrigger; evidence: string }

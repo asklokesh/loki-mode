@@ -11,7 +11,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { requirementFix } from "../../src/commands/doctor.ts";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
@@ -214,6 +214,33 @@ describe("first run (TEN-UX-01)", () => {
     expect(existsSync(join(dir, ".git"))).toBe(false);
   });
 
+  // TEN-UX-01-F1: the real start entry (supervisor main) must reach initEmptyRepo before its own repo check.
+  function startIn(dir: string, env: Record<string, string>) {
+    const code = `import { main } from ${JSON.stringify(join(import.meta.dir, "..", "..", "src", "engine10", "supervisor.ts"))}; process.exit(await main(["fix the bug"]));`;
+    const script = join(tmpRoot("e10-pf-entry-"), "entry.ts"); // main reads process.argv[1], so a real file, not -e
+    writeFileSync(script, code);
+    return spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8", timeout: 60000, env: { ...env, LOKI_SPEED: "0", LOKI_CLAUDE_CLI: fakeClaude('{"loggedIn":false}').cli } });
+  }
+
+  test("start entry in an empty folder initialises the repo and gets past the repo check", () => {
+    const { dir, env } = emptyFolder();
+    const r = startIn(dir, env);
+    expect(r.stderr).not.toContain("not inside a git repository");
+    expect(r.stderr).toContain("initialized a new git repository in");
+    expect(r.stderr).toContain("claude login (or set ANTHROPIC_API_KEY)");
+    expect(existsSync(join(dir, ".git"))).toBe(true);
+    expect(r.status).toBe(2);
+  });
+
+  test("start entry in a non-empty folder keeps the named git init fix and touches nothing", () => {
+    const { dir, env } = emptyFolder();
+    writeFileSync(join(dir, "a.txt"), "x");
+    const r = startIn(dir, env);
+    expect(r.stderr).toContain("git init && git add . && git commit -m init");
+    expect(existsSync(join(dir, ".git"))).toBe(false);
+    expect(r.status).toBe(2);
+  });
+
   test("claude loggedIn:false is fatal and names the fix", async () => {
     const { dir, env } = identifiedRepo();
     const { cli } = fakeClaude('{"loggedIn":false}');
@@ -235,6 +262,23 @@ describe("first run (TEN-UX-01)", () => {
     const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: fakeClaude('{"loggedIn":true}').cli }));
     expect(r.fatal).toBeNull();
     expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(0);
+  });
+
+  test("the login probe spawns the provider CLI without the GitHub token or SSH agent (P9, TEN-P9-FIX)", async () => {
+    const { dir, env } = identifiedRepo();
+    const d = tmpRoot("e10-pf-claude-env-");
+    const dump = join(d, "env.txt");
+    const cli = join(d, "claude");
+    writeFileSync(cli, `#!/bin/sh\nenv > '${dump}'\necho '{"loggedIn":true}'\n`);
+    chmodSync(cli, 0o755);
+    const canary = "ghp_PFCANARYtokenzzzzzzzzzzzzzzzzzzzz";
+    const r = await checkPreflight(opts(dir, { ...env, GH_TOKEN: canary, GITHUB_TOKEN: canary, SSH_AUTH_SOCK: join(d, "agent.sock"), GIT_SSH_COMMAND: "ssh", LOKI_CLAUDE_CLI: cli }));
+    expect(r.fatal).toBeNull();
+    const seen = readFileSync(dump, "utf8");
+    expect(seen).not.toContain(canary);
+    expect(seen).not.toMatch(/^SSH_AUTH_SOCK=/m);
+    expect(seen).toMatch(/^GIT_SSH_COMMAND=false$/m);
+    expect(seen).toMatch(/^GIT_CONFIG_KEY_\d+=credential\.helper$/m);
   });
 
   test("ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN skips the probe", async () => {
