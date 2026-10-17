@@ -302,6 +302,24 @@ describe("TEN-DEPLOY-11 loki rollback deploy", () => {
     expect(out.stdout).toContain("No CLI rollback");
   });
 
+  it("more providers", async () => {
+    const cases: Array<[string, string]> = [
+      ["heroku releases:rollback", "heroku container:release web"],
+      ["Railway dashboard", "railway up"],
+      ["Render dashboard", "render deploys create"],
+      ["gcloud run revisions list", "gcloud run deploy svc --source ."],
+    ];
+    for (const [want, command] of cases) {
+      seedDeploy("20260103T000000Z-3.json", { schema: "loki.deploy/1", command });
+      const stop = captureOutput();
+      const code = await runRollback(["deploy"]);
+      const out = stop();
+      expect(code).toBe(0);
+      expect(out.stdout).toContain(want);
+      expect(out.stdout).not.toContain("No rollback command known");
+    }
+  });
+
   it("prints nothing runnable when there is no record", async () => {
     const stop = captureOutput();
     const code = await runRollback(["deploy"]);

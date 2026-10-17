@@ -190,6 +190,10 @@ const DEPLOY_ROLLBACKS: ReadonlyArray<{ prefix: string; provider: string; cmd?: 
   { prefix: "fly", provider: "Fly.io", cmd: "fly releases rollback <previous-version>" },
   { prefix: "netlify", provider: "Netlify", manual: "Netlify documents no CLI rollback; restore the previous deploy from the Netlify dashboard" },
   { prefix: "wrangler", provider: "Cloudflare", manual: "roll back from the Cloudflare dashboard or with the provider CLI yourself" },
+  { prefix: "heroku", provider: "Heroku", cmd: "heroku releases:rollback" },
+  { prefix: "railway", provider: "Railway", manual: "Railway documents no CLI rollback; redeploy the previous deployment from the Railway dashboard" },
+  { prefix: "render", provider: "Render", manual: "Render documents no CLI rollback; roll back to a previous deploy from the Render dashboard" },
+  { prefix: "gcloud", provider: "Google Cloud Run", manual: "list revisions with `gcloud run revisions list`, then shift traffic to the previous one with `gcloud run services update-traffic --to-revisions=<revision>=100` (not run by loki)" },
 ];
 
 // loki rollback deploy: read-only. Reads the newest .loki/deploys/*.json (loki.deploy/1) and prints the
