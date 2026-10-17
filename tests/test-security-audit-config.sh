@@ -773,14 +773,32 @@ fi
 
 # TEN-SEC-GITLEAKS-01: pre-push and CI must scan with the same merge-diff mode.
 _audit_mode="$(grep -o -e '--diff-merges=[a-z-]*' "$REPO_ROOT/scripts/security-audit-gitleaks.sh" | sort -u | tr '\n' ' ')"
-_hook_mode="$(grep -o -e '--diff-merges=[a-z-]*' "$REPO_ROOT/.githooks/pre-push" | sort -u | tr '\n' ' ')"
+# The hook defines the mode once in _gitleaks_merge_mode; the real scan call line must
+# use that variable, and its value is what is compared against the audit script.
+_g1_hook="$REPO_ROOT/.githooks/pre-push"
+_g1_check() { # <hook file>; prints the effective mode of the real gitleaks call, empty if none
+  local f="$1" call var val
+  call="$(grep -e '"\$_gitleaks_bin" git ' "$f" | grep -e '--log-opts=' | head -1)"
+  [ -n "$call" ] || return 0
+  if printf '%s' "$call" | grep -q -e '--log-opts="[^"]*\$_gitleaks_merge_mode"'; then
+    val="$(grep -m1 -e '^_gitleaks_merge_mode=' "$f" | sed 's/^_gitleaks_merge_mode="\(.*\)"$/\1/')"
+    printf '%s ' "$val"
+  else
+    printf '%s' "$call" | grep -o -e '--diff-merges=[a-z-]*' | sort -u | tr '\n' ' '
+  fi
+}
+_hook_mode="$(_g1_check "$_g1_hook")"
 if [ -n "$_audit_mode" ] && [ "$_audit_mode" = "$_hook_mode" ]; then
-  ok "G1: pre-push and security-audit-gitleaks.sh use the same --diff-merges mode ($_audit_mode)"
+  ok "G1: pre-push gitleaks call and security-audit-gitleaks.sh use the same --diff-merges mode ($_audit_mode)"
 else
-  bad "G1: merge-diff mode differs (audit='$_audit_mode' hook='$_hook_mode')"
+  bad "G1: merge-diff mode differs (audit='$_audit_mode' hook call='$_hook_mode')"
 fi
-_g1_mut="$(sed 's/ --diff-merges=first-parent//' "$REPO_ROOT/.githooks/pre-push" | grep -o -e '--diff-merges=[a-z-]*' | sort -u | tr '\n' ' ')"
-if [ "$_audit_mode" != "$_g1_mut" ]; then ok "G1 mutation (hook mode removed) goes red"; else bad "G1 mutation stayed green"; fi
+# Mutation: flag removed from the call line only (echo line and definition untouched).
+_g1_mf="$TMP_ROOT/g1-mut-pre-push"
+sed '/"\$_gitleaks_bin" git /s/ \$_gitleaks_merge_mode"/"/' "$_g1_hook" > "$_g1_mf"
+if cmp -s "$_g1_hook" "$_g1_mf"; then bad "G1 mutation did not change the hook"
+elif [ "$_audit_mode" != "$(_g1_check "$_g1_mf")" ]; then ok "G1 mutation (flag removed from the call line only) goes red"
+else bad "G1 mutation stayed green"; fi
 
 # TEN-SEC-GITLEAKS-01 (S2): lines a branch ADDS under tests/ or loki-ts/tests/ must not carry a
 # literal gitleaks' default rules flag. Older flagged literals are baselined by commit-qualified
