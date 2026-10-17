@@ -282,6 +282,31 @@ describe("COST-WALL child-session ledger", () => {
     }
   });
 
+  it("negative review timeout falls back to 600s and the SDK vote still lands", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-neg-to-")), loki = join(dir, ".loki"), bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --agents  --json-schema"; exit 0;; esac\nexit 1\n`, { mode: 0o755 });
+    const body = JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn", content: [{ type: "text", text: voters }], usage: { input_tokens: 1000, output_tokens: 500 } });
+    const srv = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-type": "application/json" } }) });
+    const keys = ["PATH", "LOKI_SDK_VOTER_AGENTS", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "LOKI_COUNCIL_REVIEW_TIMEOUT"] as const;
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const k of keys) savedEnv[k] = process.env[k];
+    process.env["PATH"] = `${bin}:${savedEnv["PATH"]}`; process.env["LOKI_SDK_VOTER_AGENTS"] = "1";
+    process.env["ANTHROPIC_API_KEY"] = "sk-test"; process.env["ANTHROPIC_BASE_URL"] = `http://127.0.0.1:${srv.port}`;
+    process.env["LOKI_COUNCIL_REVIEW_TIMEOUT"] = "-5";
+    __resetSdkClientForTests(); _resetClaudeHelpCacheForTest();
+    try {
+      await dispatchClaudeAgents(ctxIn(loki)).catch(() => undefined);
+      const lines = ledgerLines(loki);
+      expect(lines.length).toBe(1);
+      expect(lines[0]!["source"]).toBe("sdk-judge");
+    } finally {
+      srv.stop(true);
+      for (const k of keys) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]; }
+      __resetSdkClientForTests(); _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("an injected runner (tests) never touches the ledger", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-cw-inj-"));
     try {
