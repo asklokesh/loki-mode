@@ -2206,9 +2206,9 @@ else
     printf '%s\n' "$OUT"
 fi
 
-echo "T38 -- S-94: WORKTREE_COUNT does not fire at exactly 15 worktrees under .claude/worktrees"
+echo "T38 -- S-94: WORKTREE_COUNT does not fire at exactly 21 worktrees (D103) under .claude/worktrees"
 WT15_LIST=""
-for i in $(seq 1 15); do
+for i in $(seq 1 21); do
     WT15_LIST="${WT15_LIST}worktree /repo/.claude/worktrees/wf-${i}
 HEAD dead
 
@@ -2216,21 +2216,21 @@ HEAD dead
 done
 if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$WT15_LIST"; then rc=0; else rc=$?; fi
 if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: WORKTREE_COUNT" \
-    && printf '%s\n' "$OUT" | grep -qF "Worktrees under .claude/worktrees: 15 (max 15)"; then
-    ok "exactly 15 worktrees under .claude/worktrees does not fire WORKTREE_COUNT"
+    && printf '%s\n' "$OUT" | grep -qF "Worktrees under .claude/worktrees: 21 (max 21)"; then
+    ok "exactly 21 worktrees under .claude/worktrees does not fire WORKTREE_COUNT"
 else
     bad "T38 WORKTREE_COUNT-at-max case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
-echo "T38b -- WORKTREE_COUNT fires at 16 worktrees under .claude/worktrees"
-WT16_LIST="${WT15_LIST}worktree /repo/.claude/worktrees/wf-16
+echo "T38b -- WORKTREE_COUNT fires at 22 worktrees under .claude/worktrees"
+WT16_LIST="${WT15_LIST}worktree /repo/.claude/worktrees/wf-22
 HEAD dead
 
 "
 if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$WT16_LIST"; then rc=0; else rc=$?; fi
-if printf '%s\n' "$OUT" | grep -qF "VIOLATION: WORKTREE_COUNT: 16 worktrees under .claude/worktrees exceeds the 15 max"; then
-    ok "16 worktrees under .claude/worktrees fires WORKTREE_COUNT"
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: WORKTREE_COUNT: 22 worktrees under .claude/worktrees exceeds the 21 max"; then
+    ok "22 worktrees under .claude/worktrees fires WORKTREE_COUNT"
 else
     bad "T38b WORKTREE_COUNT-fires case: rc=$rc output follows"
     printf '%s\n' "$OUT"

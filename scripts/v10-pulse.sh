@@ -3016,7 +3016,7 @@ else:
 
 
 # --- 12b. WORKTREE_COUNT: too many worktrees under .claude/worktrees (S-94)
-_WORKTREE_COUNT_MAX = 15
+_WORKTREE_COUNT_MAX = 21  # D103
 # WORKTREE_SPRAWL (AUTO-REAP, FC-99): the disk-exhaustion tier. 377 worktrees
 # (56G) once filled the laptop volume; above this the reaper must run now.
 _WORKTREE_SPRAWL_MAX = 20
@@ -3338,7 +3338,7 @@ _NEXT_ACTION_TEXT = {
     "ORPHAN_WORKTREE": "investigate the named worktree/run.sh process; stop by exact PID only if confirmed stale, never by name or pattern",
     "STRAY_CONTAINER": "remove or fix the named swarm container: capped resources, restart policy 'no', removed when done (D28)",
     "STRAY_WORKTREE": "move the named worktree(s) under .claude/worktrees or remove them (git worktree remove)",
-    "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
+    "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 21 max (D103)",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
     "UNDERSTAFFED": "staff more engineers now, the ready queue is deep and BOARD shows fewer than 8 rows building",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
