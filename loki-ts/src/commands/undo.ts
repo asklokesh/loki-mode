@@ -1,6 +1,7 @@
 // UNDO-1: `loki undo <run-id> --plan`. Strictly read-only: verifies the run's receipt, then prints what an undo
 // would do (UNDO-2 applies it). Every git call goes through safe_git and is checked against READ_ONLY_GIT, so a
 // future edit that adds a mutating subcommand throws here instead of changing the user's repo.
+import { suggestWord } from "../cli/registry.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
@@ -218,7 +219,11 @@ export async function runUndo(args: readonly string[], deps: UndoDeps = {}): Pro
   if (args[0] === "--help" || args[0] === "-h" || args.length === 0) { out(USAGE); return args.length === 0 ? 2 : 0; }
   const known = new Set(["--list", "--plan", "--json", "--allow-unsigned", "--yes", "--close-pr", "--dry-run", "--help"]);
   const bad = args.find((x) => x.startsWith("-") && !known.has(x));
-  if (bad !== undefined) { err(`loki undo: unknown flag ${bad} (see loki undo --help)\n`); return 2; }
+  if (bad !== undefined) {
+    const hint = suggestWord(bad, [...known]);
+    err(`loki undo: unknown flag ${bad} (see loki undo --help)\n${hint ? `Did you mean '${hint}'?\n` : ""}`);
+    return 2;
+  }
   if (args.includes("--help")) { out(USAGE); return 0; }
   if (args.includes("--list")) {
     if (args.length !== 1) { err(`loki undo: --list takes no other arguments\n${USAGE}`); return 2; }
