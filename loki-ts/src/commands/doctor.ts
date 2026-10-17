@@ -13,7 +13,7 @@
 // the value is never read or echoed.
 import { PROVIDER_INSTALL } from "./provider.ts";
 import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
@@ -635,6 +635,20 @@ type SkillStatus = {
   dangling: boolean;
 };
 
+// TEN-STABILITY-47: every doctor helper child gets a hard timeout so one hung
+// script cannot freeze the whole doctor. A timed-out child reports as skipped.
+export const DOCTOR_HELPER_TIMEOUT_MS = 15000;
+function helperTimeoutMs(): number {
+  const n = Number(process.env["LOKI_DOCTOR_HELPER_TIMEOUT_MS"]);
+  return Number.isInteger(n) && n > 0 ? n : DOCTOR_HELPER_TIMEOUT_MS;
+}
+function helperSpawn(cmd: string, args: string[], opts: SpawnSyncOptions = {}): SpawnSyncReturns<string | Buffer> {
+  return spawnSync(cmd, args, { env: { ...process.env }, ...opts, timeout: helperTimeoutMs() });
+}
+function helperTimedOut(r: SpawnSyncReturns<unknown>): boolean {
+  return (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+}
+
 // The provider id a build would actually use. Read from provider-offer.sh --
 // the SAME helper the bash route calls -- rather than re-deriving the priority
 // list here, which is how the provider lists in this repo have drifted before.
@@ -643,9 +657,9 @@ export function readEffectiveProvider(): string | null {
   const script = providerOfferScript();
   if (!script) return null;
   try {
-    const r = spawnSync("bash", [script, "effective-provider"], { env: { ...process.env }, encoding: "utf8" });
+    const r = helperSpawn("bash", [script, "effective-provider"], { encoding: "utf8" });
     if (r.status !== 0 || !r.stdout) return null;
-    const id = r.stdout.trim();
+    const id = r.stdout.toString().trim();
     return id === "" ? null : id;
   } catch {
     return null;
@@ -796,9 +810,9 @@ export function readProviderAvailability(): ProviderAvailability | null {
   const script = providerOfferScript();
   if (!script) return null;
   try {
-    const r = spawnSync("bash", [script, "providers-json"], { env: { ...process.env }, encoding: "utf8" });
+    const r = helperSpawn("bash", [script, "providers-json"], { encoding: "utf8" });
     if (r.status !== 0 || !r.stdout) return null;
-    const parsed = JSON.parse(r.stdout) as ProviderAvailability;
+    const parsed = JSON.parse(r.stdout.toString()) as ProviderAvailability;
     if (!parsed || !Array.isArray(parsed.providers)) return null;
     return parsed;
   } catch {
@@ -818,9 +832,9 @@ export function renderProviderAvailability(): string {
   const script = providerOfferScript();
   if (!script) return "";
   try {
-    const r = spawnSync("bash", [script, "providers"], { env: { ...process.env }, encoding: "utf8" });
+    const r = helperSpawn("bash", [script, "providers"], { encoding: "utf8" });
     if (r.status !== 0 || !r.stdout) return "";
-    return r.stdout;
+    return r.stdout.toString();
   } catch {
     return "";
   }
@@ -1321,7 +1335,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     let sdkUsable = false;
     const sdkOfferScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
     if (existsSync(sdkOfferScript)) {
-      const probe = spawnSync("bash", [sdkOfferScript, "detect-sdk"], { env: { ...process.env }, stdio: "ignore" });
+      const probe = helperSpawn("bash", [sdkOfferScript, "detect-sdk"], { stdio: "ignore" });
       sdkUsable = probe.status === 0;
     }
     if (sdkUsable) {
@@ -1592,7 +1606,13 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     );
     bump(tally, "warn");
   }
-  if (spawnSync("python3", ["-c", "import cryptography"], { env: { ...process.env }, stdio: "ignore" }).status !== 0) {
+  const cryptoProbe = helperSpawn("python3", ["-c", "import cryptography"], { stdio: "ignore" });
+  if (helperTimedOut(cryptoProbe)) {
+    process.stdout.write(
+      `  ${badge("warn")}  Receipt signing: python3 'cryptography' check timed out (skipped)\n`,
+    );
+    bump(tally, "warn");
+  } else if (cryptoProbe.status !== 0) {
     process.stdout.write(
       `  ${badge("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)\n`,
     );
@@ -1915,19 +1935,21 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   // A-123: the last stdout line. Byte-mirrors cmd_doctor. The key state is read
   // WITHOUT creating a key (auto_generate=False).
   const id = process.env["LOKI_PROVIDER"] || readEffectiveProvider() || "claude";
-  const modelRun = spawnSync(
+  const modelRun = helperSpawn(
     "bash",
     ["-c", 'source "$1" >/dev/null 2>&1; printf %s "${PROVIDER_MODEL_DEVELOPMENT:-}"', "_", resolve(REPO_ROOT, "providers", `${id}.sh`)],
-    { env: { ...process.env }, encoding: "utf8" },
+    { encoding: "utf8" },
   );
-  const model = (modelRun.stdout ?? "").trim() || "default";
-  const keyRun = spawnSync(
+  const model = (modelRun.stdout ?? "").toString().trim() || "default";
+  const keyRun = helperSpawn(
     "python3",
     ["-E", "-c", READY_KEY_PY, resolve(REPO_ROOT, "autonomy")],
-    { env: { ...process.env }, encoding: "utf8" },
+    { encoding: "utf8" },
   );
-  const key = (keyRun.stdout ?? "").trim();
-  const keyState = key.startsWith("kid ")
+  const key = (keyRun.stdout ?? "").toString().trim();
+  const keyState = helperTimedOut(keyRun)
+    ? "receipts unsigned: signing key check timed out (skipped)"
+    : key.startsWith("kid ")
     ? `receipts signed (${key})`
     : key === "none"
       ? "receipts will be signed on first run"
