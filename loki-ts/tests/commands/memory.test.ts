@@ -102,3 +102,24 @@ describe("memory brief (INJECT)", () => {
     }
   });
 });
+
+describe("memory unknown flag", () => {
+  it("lessons/list/brief reject unknown flags with usage and exit 2; known flags still work", async () => {
+    const env = { ...process.env, LOKI_NO_BROWSER: "1" };
+    for (const [args, usage] of [
+      [["memory", "lessons", "--jsno"], "Usage: loki memory lessons [--json]"],
+      [["memory", "list", "--bogus"], "Usage: loki memory list [--json]"],
+      [["memory", "brief", "--bogus"], "Usage: loki memory brief [--task <text>]"],
+    ] as const) {
+      const r = await run(["bun", CLI, ...args], { env });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("unknown flag");
+      expect(r.stderr).toContain(usage);
+      expect(r.stdout).toBe("");
+    }
+    for (const args of [["memory", "lessons", "--json"], ["memory", "list", "--json"], ["memory", "brief", "--task", "x"]]) {
+      const r = await run(["bun", CLI, ...args], { env });
+      expect(r.exitCode).toBe(0);
+    }
+  });
+});

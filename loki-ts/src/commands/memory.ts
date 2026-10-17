@@ -105,6 +105,14 @@ function lessonJson(l: Lesson): Record<string, unknown> {
   return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null };
 }
 
+// Reject flags a read-only subcommand does not know instead of printing the default output.
+function unknownFlag(sub: string, rest: readonly string[], allowed: readonly string[], usage: string): boolean {
+  const bad = rest.find((a) => a.startsWith("-") && !allowed.includes(a) && a !== "--help" && a !== "-h");
+  if (bad === undefined) return false;
+  process.stderr.write(`Error: unknown flag '${bad}' for 'memory ${sub}'\n${usage}\n`);
+  return true;
+}
+
 export async function runMemory(argv: readonly string[]): Promise<number> {
   if (argv.length === 0) {
     // Bare `loki memory`: the learnings summary followed by this repo's PR lessons.
@@ -115,6 +123,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
   const sub = argv[0] ?? "list";
   switch (sub) {
     case "lessons": {
+      if (unknownFlag("lessons", argv.slice(1), ["--json"], "Usage: loki memory lessons [--json]")) return 2;
       const lessons = loadLessons(process.cwd());
       if (argv.slice(1).includes("--json")) {
         process.stdout.write(`${JSON.stringify(lessons.map(lessonJson), null, 2)}\n`);
@@ -125,6 +134,8 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     }
     case "brief": {
       // INJECT: the exact block an engine10 run injects, so `loki chat` can show it. No new retrieval.
+      const bi = argv.findIndex((a, k) => k > 0 && a.startsWith("-") && a !== "--task" && a !== "--help" && a !== "-h" && argv[k - 1] !== "--task");
+      if (bi > 0) { process.stderr.write(`Error: unknown flag '${argv[bi]}' for 'memory brief'\nUsage: loki memory brief [--task <text>]\n`); return 2; }
       const i = argv.indexOf("--task");
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
       if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
@@ -141,6 +152,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     }
     case "list":
     case "ls":
+      if (unknownFlag("list", argv.slice(1), ["--json"], "Usage: loki memory list [--json]")) return 2;
       return runMemoryList(argv.slice(1).includes("--json"));
     case "learn": {
       const usage = "Usage: loki memory learn <owner/repo#PR> | --recent N [--repo owner/repo]\n";
