@@ -92,6 +92,10 @@ export type GateOutcome = {
   // True when the PAUSE_LIMIT or ESCALATE_LIMIT was reached for any gate.
   // Caller (autonomous.ts) inspects this to decide whether to pause the loop.
   escalated: boolean;
+  // Wall-clock milliseconds each executed gate took, keyed by gate name.
+  // Additive: readers that predate it ignore the field. Lets status and the
+  // receipt show which gate dominates a slow run.
+  durations_ms?: Record<string, number>;
 };
 
 export type GateName =
@@ -121,6 +125,9 @@ export type GateResult = {
   // can surface or escalate on repeated inconclusive runs. Does NOT change the
   // pass/block decision.
   inconclusive?: boolean;
+  // Wall-clock duration of this gate run in milliseconds, set by
+  // runQualityGates. Additive; old readers ignore it.
+  duration_ms?: number;
 };
 
 // Escalation ladder limits, mirroring autonomy/run.sh:725-727. Read once at
@@ -3229,6 +3236,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   const toggles = readToggles();
   const passed: string[] = [];
   const failed: string[] = [];
+  const durations: Record<string, number> = {};
   let escalated = false;
 
   // Soft-gates path matches autonomy/run.sh:10957-10961: only code_review runs
@@ -3237,14 +3245,16 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   if (!toggles.hardGates) {
     if (toggles.codeReview) {
       try {
+        const t0 = Date.now();
         const r = await runCodeReview(ctx);
+        durations["code_review"] = Date.now() - t0;
         if (r.passed) passed.push("code_review");
         else failed.push("code_review");
       } catch {
         failed.push("code_review");
       }
     }
-    return { passed, failed, blocked: false, escalated: false };
+    return { passed, failed, blocked: false, escalated: false, durations_ms: durations };
   }
 
   // Hard-gates path -- mirror the bash ordering exactly. Real runners take
@@ -3267,12 +3277,15 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   for (const gate of sequence) {
     if (!gate.enabled) continue;
     let result: GateResult;
+    const startedAt = Date.now();
     try {
       result = await gate.run();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result = { passed: false, detail: `runner threw: ${msg}` };
     }
+    result.duration_ms = Date.now() - startedAt;
+    durations[gate.name] = result.duration_ms;
     if (result.passed) {
       clearGateFailure(gate.name, base);
       passed.push(gate.name);
@@ -3358,5 +3371,6 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     failed,
     blocked: failed.length > 0,
     escalated,
+    durations_ms: durations,
   };
 }
