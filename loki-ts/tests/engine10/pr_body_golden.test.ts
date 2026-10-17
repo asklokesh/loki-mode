@@ -23,6 +23,14 @@ describe("PR body golden: FireLater#17 recording", () => {
     expect(notRecorded(body)).toEqual([]);
     expect(body).not.toMatch(/not recorded|not available|unavailable|no data|unknown|missing/i); // widened missing-field phrases
   });
+  it("names the receipt-check action with a copyable uses: line pinned to the current version", () => {
+    const v = readFileSync(join(import.meta.dir, "../../../VERSION"), "utf8").trim();
+    expect(body).toContain(`- \`uses: asklokesh/loki-mode/.github/actions/receipt-check@v${v}\``);
+    expect(body).not.toContain("adds the receipt-check action");
+    const unpinned = renderReviewerBody({ verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r", outputs }, {}, "unknown");
+    expect(unpinned).not.toContain("uses:");
+    expect(renderReviewerBody({ verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r", outputs }, {}, "11.17.9")).toContain("receipt-check@v11.17.9`");
+  });
   it("fills what the issue asked from the issue's acceptance criteria", () => {
     expect(body).toContain("- Create centralized Zod schema registry");
     expect(body).toContain("- Implement validation middleware for all routes");

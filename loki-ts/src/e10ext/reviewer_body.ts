@@ -1,6 +1,7 @@
 // INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds. Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
 import { noteOf } from "../util/base_guard.ts";
+import { getVersion } from "../version.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
   receiptPath: string | null; receiptSha256: string | null; signed: boolean | null; runId: string;
@@ -37,7 +38,7 @@ function tested(o: ReviewerBodyInput["outputs"]): string[] {
   }
   return out;
 }
-export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv = process.env): string {
+export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv = process.env, version: string = getVersion()): string {
   const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "";
   const title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
   const changed = arr<string>(i.outputs.verify?.["changed_files"]), planned = arr<string>(i.outputs.plan?.["relevant_files"]);
@@ -51,7 +52,8 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
   if (i.receiptPath) L.push(`- File: ${i.receiptPath}`);
   L.push(`- Verify: \`loki verify ${i.runId}\``);
-  L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`npx loki-mode verify --pubkey pubkey.jwk receipt.json\` or adds the receipt-check action`);
+  L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`npx loki-mode verify --pubkey pubkey.jwk receipt.json\`${/^\d+\.\d+\.\d+/.test(version) ? " or adds this step to a workflow:" : " or adds the receipt-check action"}`);
+  if (/^\d+\.\d+\.\d+/.test(version)) L.push(`- \`uses: asklokesh/loki-mode/.github/actions/receipt-check@v${version}\``);
   if (env["LOKI_PR_FOOTER"] !== "0") L.push("", `${i.verdict === "VERIFIED" && !i.draftReason ? "Built and verified with" : "Built with"} Loki Mode: https://github.com/asklokesh/loki-mode`); // static text, no network call, no telemetry
   return `${L.join("\n")}\n`;
 }
