@@ -109,7 +109,7 @@ export interface SummaryInput {
      *  or leave measuredSessions 0, for a run with no priced sessions at all. */
     partialUsd?: number;
     measuredSessions?: number;
-    totalSessions?: number;
+    totalSessions?: number; capUsd?: number; // Q17-02: run cap USD when set; the measured Cost line adds "N% of cap $X"
   };
   wallS: number;
   stages: { label: string; seconds: number }[];
@@ -129,7 +129,7 @@ export function formatSummary(input: SummaryInput): string {
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =
     input.cost.usd != null
-      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${input.cost.note ? `; ${input.cost.note}` : ""})`
+      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${input.cost.note ? `; ${input.cost.note}` : ""}${input.cost.capUsd ? `; ${Math.round((input.cost.usd / input.cost.capUsd) * 100)}% of cap $${input.cost.capUsd.toFixed(2)}` : ""})`
       : input.cost.measuredSessions
         ? `${labelCol("Cost")}partial: $${(input.cost.partialUsd ?? 0).toFixed(2)} for ${input.cost.measuredSessions} of ${input.cost.totalSessions ?? input.cost.measuredSessions} sessions`
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
