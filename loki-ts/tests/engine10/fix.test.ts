@@ -239,3 +239,44 @@ describe("fix brief sees the current diff (TEN-QUALITY-07)", () => {
     expect(currentDiff("/tmp/does-not-matter", "deadbeef")).toBeNull();
   });
 });
+
+describe("TEN-QUALITY-01 fix brief carries a failure excerpt", () => {
+  test("verify then fix on a failing pytest: the fix brief has the assertion line", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "e10-fixex-"));
+    try {
+      const g = (a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repoDir, encoding: "utf8" });
+      mkdirSync(join(repoDir, "tests"));
+      writeFileSync(join(repoDir, "calc.py"), "def add(a, b):\n    return a + b\n");
+      writeFileSync(join(repoDir, "tests", "test_calc.py"), "import sys, os\nsys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))\nfrom calc import add\n\ndef test_add():\n    assert add(2, 2) == 5\n");
+      writeFileSync(join(repoDir, ".gitignore"), ".loki\n__pycache__\n.pytest_cache\n");
+      g(["init", "-q"]); g(["add", "."]); g(["commit", "-qm", "base"]);
+      const base = g(["rev-parse", "HEAD"]).trim();
+      writeFileSync(join(repoDir, "calc.py"), "def add(a, b):\n    return a + b  # attempted\n");
+      g(["commit", "-qam", "attempt"]);
+      const runDir = join(repoDir, ".loki", "runs", "e10-fixex");
+      mkdirSync(runDir, { recursive: true });
+      const emitted: { type: string; stage: StageName | null; data: Record<string, unknown> }[] = [];
+      const sessions = new FakeSessionRunner(doneResult);
+      const tests = [{ runner: "pytest", path: "tests/test_calc.py" }];
+      const ctx = {
+        ...fakeCtx(sessions, { intake: { task: "fix add", impacted_tests: ["tests/test_calc.py"] } }, emitted),
+        repoDir, runDir, baseSha: base,
+        tests: { async detect() { return { runners: ["pytest"], tests }; }, impacted: () => tests },
+      } as unknown as RunContext;
+      const { verifyStage } = await import("../../src/engine10/stages/verify.ts");
+      const v = await verifyStage.run(ctx, new AbortController().signal);
+      const grouped = v.data.failures_grouped as FailureGroup[];
+      expect(grouped.length).toBeGreaterThan(0);
+      expect(JSON.stringify(v.data.checks)).not.toContain("assert 4 == 5"); // never on VerifyCheck
+      expect(JSON.stringify(emitted)).not.toContain("assert 4 == 5"); // never in test.result
+      const fctx = fakeCtx(sessions, { intake: { task: "fix add", impacted_tests: [] }, verify: { failures_grouped: grouped } });
+      await fixStage.run(fctx, new AbortController().signal);
+      const brief = sessions.calls[0]!.brief;
+      expect(brief).toContain("E       assert 4 == 5");
+      expect(brief).toContain("pytest"); // the rerun cmd leads the group
+      expect(brief).not.toContain(repoDir);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

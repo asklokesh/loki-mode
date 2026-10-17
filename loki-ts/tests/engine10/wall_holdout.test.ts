@@ -19,7 +19,7 @@ afterAll(() => { if (saved === undefined) delete process.env["LOKI_WALL_HOLDOUT_
 const git = (cwd: string, args: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const RUN = "e10-holdout";
 const names = (n: number): string[] => Array.from({ length: n }, (_, i) => `loki_wall_f${i + 1}.test.ts`);
-const testSrc = (i: number): string => `import { expect, test } from "bun:test";\nimport * as impl from "../src/impl";\ntest("f${i}", () => { expect((impl as Record<string, () => number>)["f${i}"]!()).toBe(${i}); });\n`;
+const testSrc = (i: number): string => `import { expect, test } from "bun:test";\nimport * as impl from "../src/impl";\ntest("f${i} HOLDMARK${i}", () => { expect((impl as Record<string, () => number>)["f${i}"]!()).toBe(${i}); });\n`;
 
 function mkRepo(): { repoDir: string; base: string } {
   const repoDir = mkdtempSync(join(tmpdir(), "e10-holdout-")); dirs.push(repoDir);
@@ -138,6 +138,28 @@ describe("Wall holdout end to end", () => {
     expect(brief).toContain("1 hidden acceptance check failed");
     for (const leak of [held!, `f${i}`, "loki_wall_holdout", "holdout:"]) expect(brief).not.toContain(leak);
     expect(hasFailures(v.data)).toBe(true);
+  }, 120_000);
+  test("TEN-QUALITY-01: a failing holdout's output text reaches neither failures_grouped, events nor the fix brief; a visible failure's does", async () => {
+    const { repoDir, base } = mkRepo(), all = names(5), [held] = holdoutSplit(RUN, all, { ratio: 0.2, min: 5 });
+    const r = await runWall(mkCtx(repoDir, base, all), new AbortController().signal, { baseRunner: pass });
+    const i = all.indexOf(held!) + 1, j = i === 1 ? 2 : 1;
+    const impl = (skip: number[]): string => all.map((_, k) => (skip.includes(k + 1) ? "" : `export const f${k + 1} = () => ${k + 1};\n`)).join("");
+    writeFileSync(join(repoDir, "src", "impl.ts"), impl([i]));
+    const files = (r.data as { files: { path: string }[] }).files;
+    const events: unknown[] = [];
+    const vctx = mkCtx(repoDir, base, [], r.data); vctx.emit = ((t: string, s: unknown, d: unknown) => { events.push([t, s, d]); }) as never;
+    vctx.tests = { detect: async () => ({ runners: ["bun"], tests: files.map((f) => ({ runner: "bun", path: `tests/${f.path.split("/").pop()}` })) }), impacted: () => [] } as never;
+    const v = await verifyStage.run(vctx, new AbortController().signal);
+    const brief = buildFixBrief("t", null, [], v.data.failures_grouped as never, null, "", undefined, v.data["holdout_failed"] as number);
+    const evFile = join(repoDir, ".loki", "runs", RUN, "events.jsonl"), onDisk = existsSync(evFile) ? readFileSync(evFile, "utf8") : "";
+    for (const text of [JSON.stringify(v.data.failures_grouped), JSON.stringify(events), onDisk, brief]) expect(text).not.toContain(`HOLDMARK${i}`);
+    expect(v.data["holdout_failed"]).toBe(1);
+    // control: a visible failure's decisive output does reach the brief
+    writeFileSync(join(repoDir, "src", "impl.ts"), impl([i, j]));
+    const v2 = await verifyStage.run(vctx, new AbortController().signal);
+    const brief2 = buildFixBrief("t", null, [], v2.data.failures_grouped as never, null, "");
+    expect(brief2).toContain(`HOLDMARK${j}`);
+    expect(brief2).not.toContain(`HOLDMARK${i}`);
   }, 120_000);
   test("tampered or missing holdout store fails closed", async () => {
     const { repoDir, base } = mkRepo(), all = names(5);
