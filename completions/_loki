@@ -67,6 +67,7 @@ function _loki {
                     _arguments \
                         '--json[Output machine-readable JSON]' \
                         '--badge[Print verified deploy badge]' \
+                        '--probe[Re-probe last deploy health URL]' \
                         '--help[Show help]'
                     ;;
                 doctor)

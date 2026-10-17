@@ -21,7 +21,7 @@ Usage: loki <command> [args...]
 
 Bun-native commands:
   version                Print Loki Mode version
-  status [--json|--badge]  Show current orchestrator status
+  status [--json|--badge|--probe]  Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
   pause | resume | cancel  Ask the active Loki 10 run to pause, resume or cancel at the next stage boundary
   intent show <run>      Print a past run's intent card and answer

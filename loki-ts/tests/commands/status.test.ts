@@ -74,13 +74,13 @@ describe("status: --help", () => {
   it("prints usage and returns 0", async () => {
     const r = await runWithCapture(["--help"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge|--probe]");
   });
 
   it("accepts -h alias", async () => {
     const r = await runWithCapture(["-h"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge|--probe]");
   });
 });
 
@@ -89,7 +89,7 @@ describe("status: unknown flag", () => {
     const r = await runWithCapture(["--bogus"]);
     expect(r.exitCode).toBe(1);
     expect(stripAnsi(r.stdout)).toContain("Unknown flag: --bogus");
-    expect(r.stdout).toContain("Usage: loki status [--json|--badge]");
+    expect(r.stdout).toContain("Usage: loki status [--json|--badge|--probe]");
   });
 });
 
@@ -857,5 +857,84 @@ describe("status --badge: verified deploy badge", () => {
     const out = await badge({ live_binding: "VERIFIED" });
     expect(out).not.toContain("shields.io");
     expect(out).toContain("deployed_url");
+  });
+});
+
+describe("status --probe: re-probe last deploy health URL", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let root = "";
+  let savedDir: string | undefined;
+  let savedTimeout: string | undefined;
+  beforeEach(() => {
+    savedDir = process.env["LOKI_DIR"];
+    savedTimeout = process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"];
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        if (p === "/ok") return new Response("ok");
+        if (p === "/redirect") return new Response(null, { status: 302, headers: { location: "/ok" } });
+        if (p === "/slow") return new Promise<Response>((r) => setTimeout(() => r(new Response("late")), 3000));
+        return new Response("boom", { status: 500 });
+      },
+    });
+  });
+  afterEach(() => {
+    server.stop(true);
+    if (savedDir === undefined) delete process.env["LOKI_DIR"]; else process.env["LOKI_DIR"] = savedDir;
+    if (savedTimeout === undefined) delete process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"]; else process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"] = savedTimeout;
+    if (root) rmSync(root, { recursive: true, force: true });
+    root = "";
+  });
+  function fixture(rec: Record<string, unknown> | null): void {
+    root = mkdtempSync(join(tmpdir(), "status-probe-"));
+    const lokiDir = join(root, ".loki");
+    mkdirSync(join(lokiDir, "deploys"), { recursive: true });
+    if (rec !== null) writeFileSync(join(lokiDir, "deploys", "20261016T000000Z-1.json"), JSON.stringify({ schema: "loki.deploy/1", target: "vercel", head_sha: "abc123", health_status: "HEALTHY", ...rec }));
+    process.env["LOKI_DIR"] = lokiDir;
+  }
+  const url = (path: string): string => `http://127.0.0.1:${server.port}${path}`;
+
+  it("healthy URL exits 0", async () => {
+    fixture({ health_url: url("/ok") });
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Deploy health OK");
+  });
+  it("redirect to a healthy URL exits 0", async () => {
+    fixture({ health_url: url("/redirect") });
+    expect((await runWithCapture(["--probe"])).exitCode).toBe(0);
+  });
+  it("a 500 exits 1 naming the URL and status", async () => {
+    fixture({ health_url: url("/down") });
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(1);
+    const out = stripAnsi(r.stdout);
+    expect(out).toContain(url("/down"));
+    expect(out).toContain("returned 500");
+  });
+  it("a timeout exits 1 naming the URL", async () => {
+    fixture({ health_url: url("/slow") });
+    process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"] = "200";
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(1);
+    expect(stripAnsi(r.stdout)).toContain("timed out after 200ms");
+    expect(stripAnsi(r.stdout)).toContain(url("/slow"));
+  });
+  it("unreachable URL exits 1", async () => {
+    fixture({ health_url: "http://127.0.0.1:1/x" });
+    expect((await runWithCapture(["--probe"])).exitCode).toBe(1);
+  });
+  it("no deploy record exits 0 with a note", async () => {
+    fixture(null);
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("no deploy record");
+  });
+  it("record without health_url exits 0 with a note", async () => {
+    fixture({});
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("no health URL");
   });
 });

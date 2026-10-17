@@ -88,7 +88,7 @@ const startFlags: FlagSpec[] = [
 export const REGISTRY: readonly CmdSpec[] = [
   // ---- Bun-native (loki-ts dispatcher) ----
   cmd("version", "KEEP-MODERN", "bun", "Show version", "Bun-native, no legacy dependency", { aliases: ["--version", "-v"] }),
-  cmd("status", "UPDATE", "both", "Show current run status", "Reads both engines; fold legacy fields into the v10 view", { flags: [json, bool("--badge", "Print the verified deploy badge")], example: "loki status --json" }),
+  cmd("status", "UPDATE", "both", "Show current run status", "Reads both engines; fold legacy fields into the v10 view", { flags: [json, bool("--badge", "Print the verified deploy badge"), bool("--probe", "Re-probe the last deploy health URL; exit 1 on regression")], example: "loki status --json" }),
   cmd("stats", "DELETE", "bun", "Session statistics (alias of report session)", "Deprecated alias; use report session", { flags: [json, bool("--efficiency", "Token and cost efficiency")] }),
   cmd("doctor", "KEEP-MODERN", "both", "System prerequisites health check; --json, --fix, --requirements, --repo (repo profile with a 0-100 readiness score and fixes)", "Core onboarding gate", { flags: [json, bool("--fix", "Apply safe fixes; with --repo, build or refresh the repo profile"), bool("--airgap", "Air-gapped check"), bool("--repo", "Print the repo profile and readiness score"), bool("--requirements", "Requirements per execution path")], example: "loki doctor --json" }),
   cmd("provider", "KEEP-MODERN", "both", "Show, list or set the AI provider", "Provider-agnostic core", {
