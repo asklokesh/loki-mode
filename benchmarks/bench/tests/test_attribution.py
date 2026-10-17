@@ -1006,5 +1006,231 @@ class CostTableTest(unittest.TestCase):
         self.assertIn("DRY RUN", out.getvalue())
 
 
+class LeanArmsTest(unittest.TestCase):
+    """TEN-COST-04: raw-lean and loki-lean arms, lever ablation, verdict lines."""
+
+    ARMS4 = "raw-configured,raw-lean,loki,loki-lean"
+
+    def _main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = A.main(argv, runner=lambda *a, **k: 1 / 0)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_dry_run_plans_all_four_arms(self):
+        rc, out, _ = self._main(["--dry-run", "--arms", self.ARMS4])
+        self.assertEqual(rc, 0)
+        n_tasks = len(A.load_tasks(A.DEFAULT_TASKS_DIR)[0])
+        self.assertIn("%d model-backed runs" % (4 * n_tasks), out)
+        for arm in self.ARMS4.split(","):
+            planned = [ln for ln in out.splitlines() if (" %s " % arm) in ln and " run 1" in ln]
+            self.assertEqual(len(planned), n_tasks, arm)
+        self.assertIn("cost_profile=lean", out)
+
+    def test_plan_cells_carry_cost_profile(self):
+        tasks = A.load_tasks(A.DEFAULT_TASKS_DIR)[0][:1]
+        plan = A.build_plan(tasks, 1, "m", 1.0, 5, tuple(self.ARMS4.split(",")),
+                            {"LOKI_E10_TRIM": "1"})
+        prof = {c["arm"]: c.get("cost_profile") for c in plan["cells"]}
+        self.assertEqual(prof["loki-lean"], "lean")
+        self.assertEqual(prof["loki"], "off")
+        self.assertIsNone(prof["raw-lean"])
+        self.assertEqual(plan["loki_env"], {"LOKI_E10_TRIM": "1"})
+
+    def _cell(self, arm, loki_env=None):
+        t = A.load_tasks(A.DEFAULT_TASKS_DIR)[0][0]
+        scratch = tempfile.mkdtemp(prefix="loki-attr-test-")
+        seen = {}
+
+        def fake(cmd, **kw):
+            if cmd[1:2] == ["start"] or (cmd[:1] == ["claude"] and "-p" in cmd):
+                seen["cmd"] = list(cmd)
+                seen["env"] = dict(kw.get("env") or {})
+            return subprocess.CompletedProcess(cmd, 0, "{}", "")
+        try:
+            row_ = A.run_cell(t, arm, 1, model="claude-sonnet-5", budget_usd=1.0,
+                              timeout_s=5, scratch=scratch, runner=fake,
+                              loki_env=loki_env)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        return row_, seen
+
+    def test_loki_lean_row_and_env_carry_lean_profile(self):
+        row_, seen = self._cell("loki-lean")
+        self.assertEqual(row_["cost_profile"], "lean")
+        self.assertEqual(seen["env"].get("LOKI_COST_PROFILE"), "lean")
+
+    def test_plain_loki_pins_profile_off_against_parent_env(self):
+        old = os.environ.get("LOKI_COST_PROFILE")
+        os.environ["LOKI_COST_PROFILE"] = "lean"
+        try:
+            row_, seen = self._cell("loki")
+        finally:
+            if old is None:
+                os.environ.pop("LOKI_COST_PROFILE", None)
+            else:
+                os.environ["LOKI_COST_PROFILE"] = old
+        self.assertEqual(row_["cost_profile"], "off")
+        self.assertEqual(seen["env"].get("LOKI_COST_PROFILE"), "off")
+
+    def test_lever_env_reaches_child_and_row(self):
+        row_, seen = self._cell("loki", {"LOKI_E10_TRIM": "1"})
+        self.assertEqual(row_["lever_env"], {"LOKI_E10_TRIM": "1"})
+        self.assertEqual(seen["env"].get("LOKI_E10_TRIM"), "1")
+
+    def test_raw_lean_argv_and_lean_bare_conflict(self):
+        _row, seen = self._cell("raw-lean")
+        self.assertIn("--strict-mcp-config", seen["cmd"])
+        self.assertNotIn("--bare", seen["cmd"])
+        _row, seen = self._cell("raw-configured")
+        self.assertNotIn("--strict-mcp-config", seen["cmd"])
+        with self.assertRaises(ValueError):
+            A.run_raw_claude("/nonexistent", "p", model="m", budget_usd=1.0,
+                             timeout_s=5, bare=True, lean=True)
+
+    def test_loki_env_rejects_non_loki_keys_exit_2(self):
+        for bad in ("FOO=1", "loki_x=1", "LOKI_=1", "LOKI_X", "LOKI_COST_PROFILE=lean",
+                    "LOKI_SESSION_MODEL=haiku", "XLOKI_A=1"):
+            rc, _out, err = self._main(["--dry-run", "--arms", "loki", "--loki-env", bad])
+            self.assertEqual(rc, 2, bad)
+            self.assertIn("--loki-env", err)
+
+    def test_loki_env_without_loki_arm_exit_2(self):
+        rc, _out, err = self._main(["--dry-run", "--arms", "raw-lean",
+                                    "--loki-env", "LOKI_E10_TRIM=1"])
+        self.assertEqual(rc, 2)
+        self.assertIn("needs a loki arm", err)
+
+    def test_loki_env_repeatable_shown_in_plan(self):
+        rc, out, _ = self._main(["--dry-run", "--arms", "loki", "--loki-env", "LOKI_E10_TRIM=1",
+                                 "--loki-env", "LOKI_ROUTER=0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("LOKI_E10_TRIM=1, LOKI_ROUTER=0", out)
+
+    def test_parse_loki_env_conflicting_duplicate(self):
+        with self.assertRaises(ValueError):
+            A.parse_loki_env(["LOKI_A=1", "LOKI_A=2"])
+        self.assertEqual(A.parse_loki_env(["LOKI_A=1", "LOKI_A=1"]), {"LOKI_A": "1"})
+
+    def test_adapter_rejects_non_loki_env(self):
+        from adapters import loki as L
+        with self.assertRaises(ValueError):
+            L.validate_lever_env({"PATH": "/x"})
+        self.assertEqual(L.validate_lever_env({"LOKI_A": 1}), {"LOKI_A": "1"})
+
+    def test_adapter_records_cache_tokens_by_phase(self):
+        import json as js
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        pf = os.path.join(d, "p.md")
+        open(pf, "w").write("x")
+
+        def fake(cmd, **kw):
+            if cmd[1:2] == ["start"]:
+                eff = os.path.join(d, ".loki", "metrics", "efficiency")
+                os.makedirs(eff)
+                with open(os.path.join(eff, "iteration-1.json"), "w") as fh:
+                    js.dump({"cost_usd": 1.0, "input_tokens": 10, "output_tokens": 5,
+                             "cache_read_tokens": 100, "cache_creation_tokens": 40,
+                             "model": "claude-sonnet-5"}, fh)
+                with open(os.path.join(d, ".loki", "metrics", "child-sessions.jsonl"), "w") as fh:
+                    fh.write(js.dumps({"phase": "review", "usd": 0.5, "cache_read_tokens": 30,
+                                       "cache_creation_tokens": 10}) + "\n")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        try:
+            res = A.run_loki(d, pf, model="claude-sonnet-5", budget_usd=1.0, timeout_s=5,
+                             runner=fake, profile="lean", lever_env={"LOKI_A": "1"})
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(res["cost_profile"], "lean")
+        self.assertEqual(res["lever_env"], {"LOKI_A": "1"})
+        cache = res["cache_tokens_by_phase"]
+        self.assertEqual(cache["review"], {"cache_read": 30, "cache_creation": 10})
+        self.assertEqual(cache["main_session"], {"cache_read": 100, "cache_creation": 40})
+
+
+class LeanCostTableTest(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="loki-attr-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _write(self, rows):
+        import json
+        with open(os.path.join(self.d, "attribution-20260101T000000Z.json"), "w") as fh:
+            json.dump({"rows": rows}, fh)
+
+    def _rows(self, arm, tasks, usd, **extra):
+        out = []
+        for t in tasks:
+            r = row(arm, True, True, cost=usd)
+            r.update(task=t, **extra)
+            out.append(r)
+        return out
+
+    def test_table_has_raw_lean_column_and_verdict_line(self):
+        rows = (self._rows("raw-lean", "abc", 4.0) + self._rows(
+            "loki-lean", "abc", 1.0, cost_profile="lean", lever_env={},
+            engine="v10", loki_version="1.0.0"))
+        self._write(rows)
+        text = A.render_cost_table(self.d)
+        self.assertIn("vs raw-lean", text)
+        self.assertIn("vs 0.5x target (raw-lean)", text)
+        verdicts = [ln for ln in text.splitlines() if ln.startswith("verdict loki-lean vs raw-lean")]
+        self.assertEqual(len(verdicts), 1)
+        self.assertIn("NOT PROVEN", verdicts[0])
+        self.assertIn("n:", verdicts[0])
+        lean = [ln for ln in text.splitlines() if ln.startswith("| loki-lean ")][0]
+        self.assertIn("0.25x", lean)
+
+    def test_proven_when_repeats_ok(self):
+        rows = []
+        for rep in range(3):
+            for arm, usd in (("raw-lean", 4.0), ("loki-lean", 1.0)):
+                for t in "abc":
+                    r = row(arm, True, True, cost=usd + 0.01 * rep)
+                    r.update(task=t, repeat=rep + 1, engine="v10", loki_version="1.0.0",
+                             lever_env={})
+                    rows.append(r)
+        self._write(rows)
+        text = A.render_cost_table(self.d)
+        line = [ln for ln in text.splitlines() if ln.startswith("verdict loki-lean vs raw-lean")][0]
+        self.assertIn("PROVEN_AT(0.5)", line)
+        self.assertNotIn("NOT PROVEN", line)
+
+    def test_different_lever_env_is_not_pooled_into_loki_arm(self):
+        rows = self._rows("loki", "abc", 1.0, lever_env={}, cost_profile="off")
+        rows += self._rows("loki", "de", 9.0, lever_env={"LOKI_E10_TRIM": "1"},
+                           cost_profile="off")
+        self._write(rows)
+        text = A.render_cost_table(self.d)
+        base = [ln for ln in text.splitlines() if ln.startswith("| loki ")][0]
+        abl = [ln for ln in text.splitlines() if ln.startswith("| loki+LOKI_E10_TRIM=1 ")][0]
+        self.assertIn("| 3 |", base)
+        self.assertIn("$3.0000", base)
+        self.assertIn("| 2 |", abl)
+        self.assertIn("$18.0000", abl)
+        summ = A.summarize(rows, ("loki",))
+        self.assertEqual(summ["by_arm"]["loki"]["accepted"], 3)
+        self.assertEqual(summ["by_arm"]["loki+LOKI_E10_TRIM=1"]["accepted"], 2)
+
+    def test_lever_env_value_boundary_does_not_pool(self):
+        a = row("loki", True, cost=1.0)
+        a["lever_env"] = {"LOKI_X": "1"}
+        b = dict(a, lever_env={"LOKI_X": "10"})
+        c = dict(a, lever_env={"LOKI_X": "1", "LOKI_Y": "2"})
+        self.assertEqual(len({A.arm_label(x) for x in (a, b, c)}), 3)
+
+    def test_attribution_cells_pair_each_loki_label_with_raw_lean(self):
+        l1 = dict(row("loki-lean", True), model_used="claude-sonnet-5", lever_env={})
+        l2 = dict(row("loki-lean", True), model_used="claude-sonnet-5",
+                  lever_env={"LOKI_A": "1"})
+        r = dict(row("raw-lean", True), model_used="claude-sonnet-5")
+        cells = A.attribution_cells([l1, l2, r])
+        self.assertEqual(sorted(c["loki_arm"] for c in cells),
+                         ["loki-lean", "loki-lean+LOKI_A=1"])
+        self.assertTrue(all(c["raw_arm"] == "raw-lean" and c["valid"] for c in cells))
+
+
 if __name__ == "__main__":
     unittest.main()

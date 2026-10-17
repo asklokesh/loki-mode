@@ -6,7 +6,10 @@ Runs each task twice under matched conditions:
                CLAUDE.md load as usual), pinned model, same permissions, same budget
   raw-bare   : `claude -p --bare` (no hooks, skills or CLAUDE.md); needs
                ANTHROPIC_API_KEY, else every raw-bare cell is UNMEASURED with a reason
+  raw-lean   : `claude -p` with the engine10 tool set and no MCP/slash commands
+               (OAuth-safe same-config floor, TEN-COST-02)
   loki       : `loki start --provider claude` with the same pinned model
+  loki-lean  : loki with LOKI_COST_PROFILE=lean (TEN-COST-01 cost levers)
   droid      : optional `droid exec` arm (its own model). When `droid exec` is
                absent or fails its probe, every droid cell is UNMEASURED: never
                run, never zero, no rate published for that arm.
@@ -49,6 +52,7 @@ from adapters import claude_code as _claude_adapter  # noqa: E402
 from adapters import loki as _loki_adapter  # noqa: E402
 import bench_schema as _schema  # noqa: E402
 import equivalence_report as _equivalence  # noqa: E402
+import cost_claim as _cost_claim  # noqa: E402
 import report as _report  # noqa: E402
 import runner as _runner  # noqa: E402
 
@@ -57,7 +61,15 @@ DEFAULT_TASKS_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "tasks"
 DEFAULT_OUT_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "results")
 
 ARMS = ("raw-configured", "raw-bare", "loki", "droid")
-MODEL_PINNED_ARMS = ("raw-configured", "raw-bare", "loki")
+# Every selectable arm. ARMS stays the default set so a bare run costs what it did.
+ALL_ARMS = ("raw-configured", "raw-bare", "raw-lean", "loki", "loki-lean", "droid")
+LOKI_ARMS = ("loki", "loki-lean")
+RAW_ARMS = ("raw-configured", "raw-bare", "raw-lean")
+LOKI_ARM_PROFILE = {"loki": "off", "loki-lean": "lean"}
+MODEL_PINNED_ARMS = ("raw-configured", "raw-bare", "raw-lean", "loki", "loki-lean")
+LEVER_ENV_KEY = re.compile(r"^LOKI_[A-Z0-9_]+$")
+# Owned by the arm or the pin, so an ablation flag may not override them.
+LEVER_ENV_RESERVED = ("LOKI_COST_PROFILE", "LOKI_SESSION_MODEL", "LOKI_BUDGET_LIMIT")
 LEDGER_REL = os.path.join(".loki", "metrics", "child-sessions.jsonl")
 TASK_CLASSES = ("bugfix", "feature", "refactor", "integration")
 PILOT_MIX = {"bugfix": 2, "feature": 3, "refactor": 1, "integration": 2}
@@ -239,16 +251,22 @@ def arm_order(task_index: int, repeat: int, arms: Tuple[str, ...] = ARMS) -> Lis
 
 def build_plan(tasks: List[Dict[str, Any]], repeats: int, model: str,
                budget_usd: float, timeout_s: int,
-               arms: Tuple[str, ...] = ARMS) -> Dict[str, Any]:
+               arms: Tuple[str, ...] = ARMS,
+               loki_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     cells = []
     for r in range(repeats):
         for i, t in enumerate(tasks):
             for arm in arm_order(i, r, arms):
-                cells.append({"task": t["id"], "class": t["class"],
-                              "arm": arm, "repeat": r + 1})
+                cell = {"task": t["id"], "class": t["class"],
+                        "arm": arm, "repeat": r + 1}
+                if arm in LOKI_ARMS:
+                    cell["cost_profile"] = LOKI_ARM_PROFILE[arm]
+                    cell["lever_env"] = dict(loki_env or {})
+                cells.append(cell)
     return {
         "model": model, "budget_usd": budget_usd, "timeout_s": timeout_s,
         "repeats": repeats, "arms": list(arms),
+        "loki_env": dict(loki_env or {}),
         "tasks": [{"id": t["id"], "class": t["class"],
                    "seed_sha256": t["seed_sha256"],
                    "acceptance_sha256": t["acceptance_sha256"],
@@ -356,15 +374,33 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def arm_label(row: Dict[str, Any]) -> str:
+    """Pooling key of a row: its arm plus the lever env it ran with. Rows run
+    with different lever configs get different labels and never pool."""
+    lever = row.get("lever_env") or {}
+    if not lever:
+        return row["arm"]
+    return row["arm"] + "+" + ",".join("%s=%s" % kv for kv in sorted(lever.items()))
+
+
+def _labels(rows: List[Dict[str, Any]], arms: Tuple[str, ...]) -> List[str]:
+    """The requested arms, then any other known arm or ablation label seen in rows
+    (so a result file holding raw-lean or loki-lean rows is never dropped)."""
+    seen = {arm_label(r) for r in rows if r.get("arm") in ALL_ARMS}
+    others = [a for a in ALL_ARMS if a in seen and a not in arms]
+    return list(arms) + others + sorted(seen - set(arms) - set(others))
+
+
 def summarize(rows: List[Dict[str, Any]],
               arms: Tuple[str, ...] = ARMS) -> Dict[str, Any]:
-    by_arm = {a: compute_metrics([r for r in rows if r["arm"] == a]) for a in arms}
+    labels = _labels(rows, arms)
+    by_arm = {a: compute_metrics([r for r in rows if arm_label(r) == a]) for a in labels}
     by_class: Dict[str, Any] = {}
     for c in TASK_CLASSES:
         sub = [r for r in rows if r.get("class") == c]
         if sub:
-            by_class[c] = {a: compute_metrics([r for r in sub if r["arm"] == a])
-                           for a in arms}
+            by_class[c] = {a: compute_metrics([r for r in sub if arm_label(r) == a])
+                           for a in labels}
     return {"by_arm": by_arm, "by_class": by_class,
             "attribution_cells": attribution_cells(rows)}
 
@@ -390,10 +426,8 @@ def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                   key=lambda k: (str(k[0]), str(k[1])))
     for task, rep in keys:
         grp = [r for r in rows if r.get("task") == task and r.get("repeat") == rep]
-        loki = next((r for r in grp if r.get("arm") == "loki"), None)
-        for raw in (r for r in grp if r.get("arm") in ("raw-configured", "raw-bare")):
-            if loki is None:
-                continue
+        for loki, raw in ((lk, rw) for lk in grp if lk.get("arm") in LOKI_ARMS
+                          for rw in grp if rw.get("arm") in RAW_ARMS):
             lm, rm = _models_of(loki), _models_of(raw)
             ok = bool(lm) and bool(rm) and all(
                 any(_model_match(x, y) for y in rm) for x in lm) and all(
@@ -403,7 +437,7 @@ def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 reason = ("model mismatch: loki ran %s, %s ran %s"
                           % (lm or "unknown", raw["arm"], rm or "unknown"))
             cells.append({"task": task, "repeat": rep, "raw_arm": raw["arm"],
-                          "valid": ok, "reason": reason})
+                          "loki_arm": arm_label(loki), "valid": ok, "reason": reason})
     return cells
 
 
@@ -505,11 +539,15 @@ def probe_bare(env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
 
 def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
                    timeout_s: int, runner: Optional[Callable] = None,
-                   bare: bool = False) -> Dict[str, Any]:
+                   bare: bool = False, lean: bool = False) -> Dict[str, Any]:
+    if lean and bare:
+        raise ValueError("claude lean and bare are mutually exclusive")
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model,
            "--dangerously-skip-permissions", "--max-budget-usd", str(budget_usd)]
     if bare:
         cmd.append("--bare")
+    if lean:
+        cmd += list(_claude_adapter.LEAN_ARGS)
     rc, out, _err, status, dur = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout_s, runner=runner,
         env={"LOKI_NO_BROWSER": "1"})
@@ -528,12 +566,16 @@ def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
         "usage_detail": _claude_adapter.parse_usage_detail(out),
         "command": "claude -p <prompt> --output-format json --model %s "
                    "--dangerously-skip-permissions --max-budget-usd %s%s"
-                   % (model, budget_usd, " --bare" if bare else ""),
+                   % (model, budget_usd,
+                      (" --bare" if bare else "")
+                      + (" " + " ".join(_claude_adapter.LEAN_ARGS) if lean else "")),
     }
 
 
 def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
-             timeout_s: int, runner: Optional[Callable] = None) -> Dict[str, Any]:
+             timeout_s: int, runner: Optional[Callable] = None,
+             profile: Optional[str] = "off",
+             lever_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     prev = os.environ.get("LOKI_BUDGET_LIMIT")
     prev_model = os.environ.get("LOKI_SESSION_MODEL")
     os.environ["LOKI_BUDGET_LIMIT"] = str(budget_usd)
@@ -542,7 +584,8 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
     os.environ["LOKI_SESSION_MODEL"] = model
     try:
         res = _loki_adapter.run(workdir, prompt_file, model=model,
-                                timeout=timeout_s, runner=runner, provider="claude")
+                                timeout=timeout_s, runner=runner, provider="claude",
+                                profile=profile, extra_env=lever_env)
     finally:
         if prev is None:
             os.environ.pop("LOKI_BUDGET_LIMIT", None)
@@ -572,6 +615,10 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
         "failure_reason": prov.get("failure_reason"),
         "honesty": prov.get("honesty"),
         "engine": prov.get("engine"),
+        "loki_version": _loki_adapter.parse_loki_version(res.get("tool_version")),
+        "cost_profile": prov.get("cost_profile"),
+        "lever_env": prov.get("lever_env") or {},
+        "cache_tokens_by_phase": prov.get("cache_tokens_by_phase"),
         "cost_by_phase": prov.get("cost_by_phase"),
         "ledger": prov.get("ledger"),
         "command": prov.get("command"),
@@ -652,10 +699,15 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
              runner: Optional[Callable] = None,
              droid_probe: Optional[Dict[str, Any]] = None,
              bare_probe: Optional[Dict[str, Any]] = None,
-             evidence_dir: Optional[str] = None) -> Dict[str, Any]:
+             evidence_dir: Optional[str] = None,
+             loki_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     row: Dict[str, Any] = {"task": task["id"], "class": task["class"], "arm": arm,
                            "repeat": repeat, "accepted": False,
                            "reported_success": False}
+    if arm in LOKI_ARMS:
+        # Stamped before the run so unmeasured and failed rows still key correctly.
+        row["cost_profile"] = LOKI_ARM_PROFILE[arm]
+        row["lever_env"] = dict(loki_env or {})
     if arm == "droid" and not (droid_probe and droid_probe.get("available")):
         # Never run, never graded: an unavailable arm is UNMEASURED, not a failure.
         row.update({"status": "unmeasured", "cost_usd": None, "elapsed_s": None,
@@ -675,17 +727,19 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
         if arm == "droid":
             res = run_droid(workdir, task["prompt"], timeout_s=eff_timeout,
                             runner=runner)
-        elif arm in ("raw-configured", "raw-bare"):
+        elif arm in RAW_ARMS:
             res = run_raw_claude(workdir, task["prompt"], model=model,
                                  budget_usd=budget_usd, timeout_s=eff_timeout,
-                                 runner=runner, bare=(arm == "raw-bare"))
+                                 runner=runner, bare=(arm == "raw-bare"),
+                                 lean=(arm == "raw-lean"))
         else:
             # PRD lives OUTSIDE the workspace so it is not part of the repo.
             pf = os.path.join(scratch, "%s-%d.prd.md" % (task["id"], repeat))
             with open(pf, "w") as fh:
                 fh.write(task["prompt"])
             res = run_loki(workdir, pf, model=model, budget_usd=budget_usd,
-                           timeout_s=eff_timeout, runner=runner)
+                           timeout_s=eff_timeout, runner=runner,
+                           profile=LOKI_ARM_PROFILE[arm], lever_env=loki_env)
         row.update(res)
         led = ledger_spend(workdir)
         if led is not None:
@@ -711,7 +765,8 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
             droid_probe: Optional[Dict[str, Any]] = None,
             bare_probe: Optional[Dict[str, Any]] = None,
             max_spend_usd: Optional[float] = None,
-            evidence_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+            evidence_dir: Optional[str] = None,
+            loki_env: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     by_id = {t["id"]: t for t in tasks}
     scratch = tempfile.mkdtemp(prefix="loki-attr-")
     rows: List[Dict[str, Any]] = []
@@ -726,6 +781,9 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
                              "repeat": cell["repeat"], "accepted": False,
                              "reported_success": False, "status": "unmeasured",
                              "cost_usd": None, "elapsed_s": None,
+                             **({"cost_profile": LOKI_ARM_PROFILE[cell["arm"]],
+                                 "lever_env": dict(loki_env or {})}
+                                if cell["arm"] in LOKI_ARMS else {}),
                              "unmeasured_reason": "spend cap reached: true spend %.4f USD%s >= "
                                                   "--max-spend-usd %s"
                                                   % (spent, " (lower bound)" if lower_bound else "",
@@ -736,7 +794,8 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
                                  model=plan["model"], budget_usd=plan["budget_usd"],
                                  timeout_s=plan["timeout_s"], scratch=scratch,
                                  runner=runner, droid_probe=droid_probe,
-                                 bare_probe=bare_probe, evidence_dir=evidence_dir))
+                                 bare_probe=bare_probe, evidence_dir=evidence_dir,
+                                 loki_env=loki_env))
             spent += row_true_spend(rows[-1])
             lower_bound = lower_bound or row_spend_is_partial(rows[-1])
     finally:
@@ -875,7 +934,7 @@ def render_markdown(result: Dict[str, Any]) -> str:
 
 
 COST_TARGET_FRACTION = 0.5
-COST_FLOORS = ("raw-configured", "raw-bare")
+COST_FLOORS = ("raw-configured", "raw-bare", "raw-lean")
 
 
 def _result_rows(out_dir: str) -> List[Dict[str, Any]]:
@@ -911,33 +970,66 @@ def _result_rows(out_dir: str) -> List[Dict[str, Any]]:
     return rows
 
 
+def _verdict_lines(rows: List[Dict[str, Any]], labels: List[str]) -> List[str]:
+    """One TEN-COST-03 verdict line per Loki label against each floor that has
+    rows. Floor rows carry no engine or loki_version, so they inherit the Loki
+    rows' value only when those rows agree on exactly one; mixed or missing
+    values stay None and the verdict reports them."""
+    out: List[str] = []
+    for lab in labels:
+        if lab.split("+", 1)[0] not in LOKI_ARMS:
+            continue
+        loki = [_cost_claim._map_row(r) for r in rows if arm_label(r) == lab]
+        if not loki:
+            continue
+        stamps = {}
+        for key in ("engine", "loki_version"):
+            vals = {r.get(key) for r in loki}
+            stamps[key] = next(iter(vals)) if len(vals) == 1 else None
+        for f in COST_FLOORS:
+            floor = [dict(_cost_claim._map_row(r), **stamps)
+                     for r in rows if arm_label(r) == f]
+            if not floor:
+                continue
+            v = _cost_claim.cost_claim_verdict(loki, floor, COST_TARGET_FRACTION)
+            ci = ("ratio %.2fx, CI95 [%.2f, %.2f]" % (v["ratio"], v["ci_low"], v["ci_high"])
+                  if v["ratio"] is not None else "ratio not computable")
+            why = "; reasons: " + " | ".join(v["reasons"]) if v["reasons"] else ""
+            out.append("verdict %s vs %s (target %.1fx): %s (%s)%s"
+                       % (lab, f, COST_TARGET_FRACTION, v["verdict"], ci, why))
+    return out
+
+
 def render_cost_table(out_dir: str, arms: Tuple[str, ...] = ARMS) -> str:
     """Cost per accepted task per arm from existing result files. No model call.
-    Ratios are against both raw floors; 'target' is COST_TARGET_FRACTION of the floor."""
+    Ratios are against every raw floor; 'target' is COST_TARGET_FRACTION of the
+    floor. Rows pool by arm_label, so a different lever config is its own line."""
     rows = _result_rows(out_dir)
     L = ["cost per accepted task (from existing results in %s)" % out_dir]
     if not rows:
         L.append("  no result files found; nothing measured")
         return "\n".join(L) + "\n"
-    met = {a: compute_metrics([r for r in rows if r.get("arm") == a]) for a in arms}
+    labels = _labels(rows, arms)
+    met = {a: compute_metrics([r for r in rows if arm_label(r) == a])
+           for a in labels + [f for f in COST_FLOORS if f not in labels]}
 
     def per_acc(a: str) -> Optional[float]:
-        return met[a]["cost_per_accepted_usd"]
+        return met[a]["cost_per_accepted_usd"] if a in met else None
 
     def ratio(num: Optional[float], den: Optional[float], scale: float = 1.0) -> str:
         if num is None or not den:
             return "unmeasured"
         return "%.2fx" % (num / (den * scale))
 
-    L.append("| Arm | Accepted | Total USD | USD per accepted | vs raw-configured | "
-             "vs raw-bare | vs %.1fx target (raw-configured) | vs %.1fx target (raw-bare) |"
-             % (COST_TARGET_FRACTION, COST_TARGET_FRACTION))
-    L.append("|---|---|---|---|---|---|---|---|")
-    for a in arms:
+    head = ["Arm", "Accepted", "Total USD", "USD per accepted"]
+    head += ["vs %s" % f for f in COST_FLOORS]
+    head += ["vs %.1fx target (%s)" % (COST_TARGET_FRACTION, f) for f in COST_FLOORS]
+    L.append("| " + " | ".join(head) + " |")
+    L.append("|" + "---|" * len(head))
+    for a in labels:
         m = met[a]
         if m["assigned"] == 0 or m["unmeasured_runs"] == m["assigned"]:
-            L.append("| %s | unmeasured | unmeasured | unmeasured | unmeasured | "
-                     "unmeasured | unmeasured | unmeasured |" % a)
+            L.append("| %s | %s |" % (a, " | ".join(["unmeasured"] * (len(head) - 1))))
             continue
         if m["cost_status"] == "undefined_no_accepted":
             usd = "undefined (none accepted)"
@@ -951,7 +1043,8 @@ def render_cost_table(out_dir: str, arms: Tuple[str, ...] = ARMS) -> str:
             a, m["accepted"], _fmt(m["spend_measured_usd"], usd=True), usd,
             " | ".join(cells)))
     L.append("Ratios are arm / floor cost per accepted; target ratio is arm / (%.1f * floor), "
-             "so <= 1.00x meets the target. Both floors are always shown." % COST_TARGET_FRACTION)
+             "so <= 1.00x meets the target. Every floor is always shown." % COST_TARGET_FRACTION)
+    L.extend(_verdict_lines(rows, labels))
     return "\n".join(L) + "\n"
 
 
@@ -961,13 +1054,17 @@ def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -
     print("  budget per run: $%s   timeout per run: %ss   repeats: %d"
           % (plan["budget_usd"], plan["timeout_s"], plan["repeats"]))
     print("  arms: %s" % ", ".join(plan["arms"]))
+    if plan.get("loki_env"):
+        print("  loki lever env (ablation, loki arms only): %s" % ", ".join(
+            "%s=%s" % kv for kv in sorted(plan["loki_env"].items())))
     print("  tasks (%d):" % len(plan["tasks"]))
     for t in plan["tasks"]:
         print("    %-28s %-12s seed=%s acceptance=%s" % (
             t["id"], t["class"], t["seed_sha256"][:8], t["acceptance_sha256"][:8]))
     print("  cells in run order (%d model-backed runs would execute):" % plan["model_calls_planned"])
     for c in plan["cells"]:
-        print("    %-28s %-14s run %d" % (c["task"], c["arm"], c["repeat"]))
+        prof = "  cost_profile=%s" % c["cost_profile"] if "cost_profile" in c else ""
+        print("    %-28s %-14s run %d%s" % (c["task"], c["arm"], c["repeat"], prof))
     if plan.get("droid_cells_planned"):
         print("  droid arm: %d cells, availability not probed in dry run; an absent "
               "`droid exec` records UNMEASURED, never zero" % plan["droid_cells_planned"])
@@ -979,6 +1076,23 @@ def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def parse_loki_env(items: List[str]) -> Dict[str, str]:
+    """Parse repeated KEY=VALUE ablation flags. Only LOKI_* keys pass; keys the
+    arm or the model pin own are refused, so an ablation cannot silently change
+    the profile or the pinned model."""
+    out: Dict[str, str] = {}
+    for item in items:
+        key, sep, val = item.partition("=")
+        if not sep or not LEVER_ENV_KEY.match(key):
+            raise ValueError("%r must be LOKI_<NAME>=<value>" % item)
+        if key in LEVER_ENV_RESERVED:
+            raise ValueError("%s is set by the arm or the model pin, not by --loki-env" % key)
+        if key in out and out[key] != val:
+            raise ValueError("%s given twice with different values" % key)
+        out[key] = val
+    return out
+
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -994,7 +1108,12 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--tasks", default="", help="comma-separated task ids (default: all)")
     p.add_argument("--tasks-dir", default=DEFAULT_TASKS_DIR)
     p.add_argument("--arms", default=",".join(ARMS),
-                   help="comma-separated arms (default: %s)" % ",".join(ARMS))
+                   help="comma-separated arms from %s (default: %s)"
+                        % (",".join(ALL_ARMS), ",".join(ARMS)))
+    p.add_argument("--loki-env", action="append", default=[], metavar="KEY=VALUE",
+                   help="repeatable one-lever ablation env for the loki arms; "
+                        "KEY must be LOKI_* (not LOKI_COST_PROFILE, "
+                        "LOKI_SESSION_MODEL or LOKI_BUDGET_LIMIT)")
     p.add_argument("--repeats", type=int, default=1)
     p.add_argument("--model", default=os.environ.get("LOKI_BENCH_MODEL", DEFAULT_MODEL),
                    help="exact model id used by the claude arms (default %s)" % DEFAULT_MODEL)
@@ -1021,8 +1140,16 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         print("--max-spend-usd must be positive", file=sys.stderr)
         return 2
     arms = tuple(a for a in args.arms.split(",") if a)
-    if not arms or any(a not in ARMS for a in arms) or len(set(arms)) != len(arms):
-        print("--arms must be unique names from %s" % ",".join(ARMS), file=sys.stderr)
+    if not arms or any(a not in ALL_ARMS for a in arms) or len(set(arms)) != len(arms):
+        print("--arms must be unique names from %s" % ",".join(ALL_ARMS), file=sys.stderr)
+        return 2
+    try:
+        loki_env = parse_loki_env(args.loki_env)
+    except ValueError as exc:
+        print("--loki-env: %s" % exc, file=sys.stderr)
+        return 2
+    if loki_env and not set(arms) & set(LOKI_ARMS):
+        print("--loki-env needs a loki arm in --arms (loki or loki-lean)", file=sys.stderr)
         return 2
     only = [s for s in args.tasks.split(",") if s] or None
     tasks, errors, warnings = load_tasks(args.tasks_dir, only)
@@ -1031,7 +1158,7 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
             print("task set invalid: %s" % e, file=sys.stderr)
         return 2
     plan = build_plan(tasks, args.repeats, args.model, args.budget_usd, args.timeout,
-                      arms)
+                      arms, loki_env)
     execute = args.execute and not args.dry_run
     env = pin_environment(probe=execute, runner=runner, model=args.model)
     if not execute:
@@ -1041,7 +1168,7 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         if not args.dry_run:
             print("  pass --execute to run these cells for real (spends API budget)")
         return 0
-    if "loki" in arms:
+    if set(arms) & set(LOKI_ARMS):
         mismatch = _loki_adapter.version_mismatch_error(env.get("loki_version"))
         if mismatch:
             print(mismatch, file=sys.stderr)
@@ -1058,7 +1185,7 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
     rows = run_all(tasks, plan, runner=runner, evidence_dir=evidence_dir,
                    progress=lambda s: print(s, file=sys.stderr),
                    droid_probe=droid_probe, bare_probe=bare_probe,
-                   max_spend_usd=args.max_spend_usd)
+                   max_spend_usd=args.max_spend_usd, loki_env=loki_env)
     result = {
         "schema_version": SCHEMA_VERSION,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
