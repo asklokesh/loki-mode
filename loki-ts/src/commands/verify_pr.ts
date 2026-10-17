@@ -1,7 +1,8 @@
 // VPR-2: `loki verify-pr <url|owner/repo#N>`. Verdict is VERIFIED only if a check derived from the linked issue went
 // red on the PR base and green on the PR head AND the touched packages' suites passed. All PR code runs through the
 // VPR-1 sandbox (scripts/verify-pr-sandbox.sh); the host only fetches with safe_git and reads files. No model call.
-// Exit codes align with `loki verify`: 0 VERIFIED, 2 NOT PROVEN because the sandbox was blocked/usage, 4 NOT PROVEN.
+// Exit codes align with `loki verify`: 0 VERIFIED, 2 NOT PROVEN because the sandbox was blocked/usage, 3 NOT PROVEN because
+// no proof exists to run (no linked issue or no trusted runnable check), 4 NOT PROVEN because the proof ran and failed.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,6 +38,8 @@ export interface VerifyPrResult {
   checks: string[];
   criteria: number;
   blocked: boolean;
+  /** True when there was no usable proof to run (missing), as opposed to proof that ran and failed. */
+  noProof?: boolean;
   /** Every linked issue considered: author, association, last edit, and whether it was trusted as a check source. */
   issues: { ref: string; author: string | null; association: string | null; updatedAt: string | null; trusted: boolean }[];
   notes: string[];
@@ -143,9 +146,10 @@ export function defaultPackageSuites(baseDir: string, headDir: string, changed: 
 export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): VerifyPrResult {
   const res: VerifyPrResult = { verdict: "NOT PROVEN", reasons: [], pr: ref, base: null, head: null, checks: [], criteria: 0, blocked: false, issues: [], notes: [] };
   const np = (r: string): VerifyPrResult => ({ ...res, reasons: [...res.reasons, r] });
+  const missing = (r: string): VerifyPrResult => ({ ...np(`no proof: ${r}`), noProof: true });
   const meta = deps.prMeta(ref);
   res.base = meta.baseSha; res.head = meta.headSha;
-  if (meta.issueRefs.length === 0) return np("no linked issue: nothing to derive a check from");
+  if (meta.issueRefs.length === 0) return missing("no linked issue: nothing to derive a check from");
   const baseRepo = ref.repo.toLowerCase();
   const TRUSTED = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
   const bodies: string[] = [];
@@ -158,11 +162,11 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
     if (trusted) bodies.push(i.body ?? "");
   }
   const failed = meta.issueRefs.filter((_, k) => lookups[k]);
-  if (bodies.length === 0 && failed.length > 0) return np(`trust lookup failed for ${failed.join(", ")}: could not read the issue author association, so no check was accepted`);
-  if (bodies.length === 0) return np("check from an untrusted issue: the linked issue is not in the PR's repo or its author is not OWNER, MEMBER or COLLABORATOR");
+  if (bodies.length === 0 && failed.length > 0) return missing(`trust lookup failed for ${failed.join(", ")}: could not read the issue author association, so no check was accepted`);
+  if (bodies.length === 0) return missing("check from an untrusted issue: the linked issue is not in the PR's repo or its author is not OWNER, MEMBER or COLLABORATOR");
   res.criteria = bodies.reduce((n, b) => n + parseContract(b).criteria.length, 0);
   res.checks = [...new Set(bodies.flatMap(extractChecks))];
-  if (res.checks.length === 0) return np("the linked issue defines no runnable check (Check: `cmd` or a loki-check fence)");
+  if (res.checks.length === 0) return missing("the linked issue defines no runnable check (Check: `cmd` or a loki-check fence)");
   const co = deps.checkout(ref, meta, workDir);
   for (const c of res.checks) {
     const gone = referencedFiles(c, co.baseDir).filter((p) => !existsSync(join(co.headDir, p)));
@@ -183,7 +187,7 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   return { ...res, verdict: "VERIFIED" };
 }
 
-const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR] [--json]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\n--json prints the verify-pr-result.json verdict object on stdout instead of the text summary.\nExit: 0 verified, 2 usage or sandbox blocked, 4 not proven.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
+const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR] [--json]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\n--json prints the verify-pr-result.json verdict object on stdout instead of the text summary.\nExit: 0 verified, 2 usage or sandbox blocked, 3 no proof to run (no linked issue or no trusted runnable check), 4 proof ran and failed.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
 
 /** `loki verify-pr respond <o/r#N>`: fix open review comments on the checked-out PR branch, one commit each, push, reply with the sha. */
 async function runRespond(args: readonly string[], out: (s: string) => void, err: (s: string) => void): Promise<number> {
@@ -244,5 +248,5 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
     for (const r of result.reasons) out(`  ${r}\n`);
     for (const n of result.notes) out(`  note: ${n}\n`);
   }
-  return result.verdict === "VERIFIED" ? 0 : result.blocked ? 2 : 4;
+  return result.verdict === "VERIFIED" ? 0 : result.blocked ? 2 : result.noProof ? 3 : 4;
 }

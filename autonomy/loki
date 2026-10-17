@@ -1769,7 +1769,7 @@ _help_verify_pr() {
     echo "PR code runs only in the container sandbox (scripts/verify-pr-sandbox.sh); set"
     echo "LOKI_VPR_IMAGE to a locally present image."
     echo ""
-    echo "Exit codes: 0 verified, 2 usage or sandbox blocked, 4 not proven."
+    echo "Exit codes: 0 verified, 2 usage or sandbox blocked, 3 no proof to run (no linked issue or no trusted runnable check), 4 proof ran and failed."
 }
 
 # Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
