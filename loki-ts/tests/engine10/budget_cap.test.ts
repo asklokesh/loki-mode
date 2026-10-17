@@ -43,6 +43,23 @@ describe("cap resolution", () => {
       expect("error" in resolveCap("zero", d, none)).toBe(true);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("unparseable env or yaml cap returns an error, 0 stays valid", () => {
+    const d = mkdtempSync(join(tmpdir(), "loki-cap-"));
+    try {
+      const keyed = { ANTHROPIC_API_KEY: "present" } as NodeJS.ProcessEnv;
+      for (const bad of ["5usd", "abc", "-3"]) {
+        const r = resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: bad });
+        expect("error" in r && r.error.includes("LOKI_BUDGET_LIMIT")).toBe(true);
+      }
+      expect(resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: "0" })).toEqual({ usd: 100, source: "default" });
+      expect(resolveCap(null, d, { ...keyed, LOKI_BUDGET_LIMIT: "" })).toEqual({ usd: 100, source: "default" });
+      writeFileSync(join(d, "loki.yaml"), "budgets:\n  per_run: 5usd\n");
+      const y = resolveCap(null, d, keyed);
+      expect("error" in y && y.error.includes("budgets.per_run")).toBe(true);
+      writeFileSync(join(d, "loki.yaml"), "budgets:\n  per_run: 0\n");
+      expect(resolveCap(null, d, keyed)).toEqual({ usd: 100, source: "default" });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("start-line note names the cap", () => {
     expect(capNote(100, "default")).toBe("cap $100.00 (default)");
     expect(capNote(0, "subscription")).toBe("no dollar cap (subscription)");
