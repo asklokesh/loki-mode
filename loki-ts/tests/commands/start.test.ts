@@ -500,3 +500,31 @@ describe("deploy flag validation (TEN-DEPLOY-19)", () => {
     }
   });
 });
+
+describe("env-file missing (TEN-DEPLOY-20)", () => {
+  it("env-file missing: absent path and directory are named, existing file is accepted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d20-"));
+    try {
+      const f = join(dir, "ok.env");
+      writeFileSync(f, "A=1\n");
+      expect(deployFlagError(["p.md", "--deploy", "--env-file", join(dir, "missing.env")])).toContain("--env-file");
+      expect(deployFlagError([`--env-file=${join(dir, "missing.env")}`, "--deploy"])).toContain("--env-file");
+      expect(deployFlagError(["--deploy", "--env-file", dir])).toContain("--env-file");
+      expect(deployFlagError(["--deploy", "--env-file", f])).toBeNull();
+      expect(deployFlagError(["--deploy"])).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("env-file missing: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d20-"));
+    try {
+      const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", "--env-file", "./missing.env"], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("--env-file");
+      expect(r.stderr.trim().split("\n").length).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

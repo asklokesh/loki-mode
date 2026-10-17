@@ -13,7 +13,7 @@
 // (--compliance, mirofish) are rejected loudly and documented. See
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
-import { existsSync as pathExists } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync as pathExists, statSync } from "node:fs";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
@@ -433,6 +433,17 @@ export function deployFlagError(args: readonly string[]): string | null {
   const domain = val("--domain");
   if (domain !== undefined && !/^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(domain)) {
     return `start: --domain must be a bare hostname (no scheme, path or port), got '${domain}'\n`;
+  }
+  const envFile = val("--env-file"); // TEN-DEPLOY-20: fail before the build, not after
+  if (envFile !== undefined) {
+    let ok = false;
+    try {
+      accessSync(envFile, fsConstants.R_OK);
+      ok = statSync(envFile).isFile();
+    } catch {
+      ok = false;
+    }
+    if (!ok) return `start: --env-file '${envFile}' does not exist or is not a readable file\n`;
   }
   return null;
 }
