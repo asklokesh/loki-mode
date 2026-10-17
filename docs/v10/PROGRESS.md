@@ -2527,3 +2527,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T12:39Z (CoS) v11.17.49
 - P0 fix-forward for main Tests red on cbded2759, 5a6d770f6, e8e750117 (structural guards, bun, shell shards 1,2,3,4,6,7). Local evidence: help-changelog-drift 51/0, shard-durations-drift rc=0, shard-coverage rc=0, cli-commands rc=0, doctor-ux rc=0, cli/test-tour-verify rc=0, bun contract plus touched tests 66 pass 0 fail. Shard 3 cause is CI-only (bun found via node_modules/@oven), reasoned from the log.
+
+## 2026-10-17T13:13Z (CoS) v11.17.50
+- Wave AO shipped: 28 of 30 TEN rows APPROVE and merged clean in 22 chains. TEN-COST-49 FAILED (builder worktree path missing) so TEN-COST-50 was not built; both stay ready. Checks: tsc rc=0; bun changed tests plus guards 1266 pass 4 fail before the dist rebuild, 2 fail after (full_env_spawn_guard on doctor.ts, engine10 budget 5016 of 5000); secure-scan, help-changelog-drift, shard-durations-drift rc=0. Main Tests on 3756bef0f still red (bun, shell shards 0,3,4); a P0 fix-forward agent covers those and the two local reds. Q18-03e fix round 2 (64d5d906d) is in opus re-review.

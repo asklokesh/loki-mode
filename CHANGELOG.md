@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.50 (2026-10-17)
+
+### Wave AO (28 TEN rows, all reviewed APPROVE)
+
+- Seal: receipt.json and receipt.md are written atomically through atomicWriteText (TEN-GATES-27, opus HIGH review); engine10 keys export exits 2 on extra arguments (TEN-GATES-28).
+- verify-pr: a dash-led or missing --out is a usage error and creates nothing (TEN-GATES-29).
+- Timeouts: negative, zero, NaN or Infinity values for the provider call, queue item, council review and SDK review timeouts fall back to safe defaults with a note instead of disabling the timeout (TEN-STABILITY-39 to 42).
+- Security: TEN-SECURITY-13, 14 and 15 (opus HIGH review).
+- Cost, UX, deploy, stability, speed, quality and adoption: TEN-COST-46/47/48, TEN-UX-37/38/39, TEN-DEPLOY-23, TEN-STABILITY-43 to 48, TEN-SPEED-16, TEN-QUALITY-29/30/31, TEN-ADOPTION-27.
+
+### Known red, fix-forward in flight
+
+- full_env_spawn_guard flags loki-ts/src/commands/doctor.ts; engine10 core is 5016 lines against the 5000 cap. A P0 slice is fixing both.
+
 ## v11.17.49 (2026-10-17)
 
 ### P0 fix-forward: main Tests green again
