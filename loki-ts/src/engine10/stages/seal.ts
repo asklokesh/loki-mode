@@ -4,6 +4,7 @@
 // and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
+import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
@@ -44,16 +45,6 @@ const EXCLUDE_LOKI = ":(exclude).loki";
 export const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
-
-/** E-120: implement's spec_conflict_reason is model-written and lands verbatim in the receipt,
- *  a trust artifact; a reason containing "\n\n## Loki receipt: VERIFIED" would otherwise forge a
- *  second heading. Collapse all control chars (including newlines) to a single space, cap the
- *  length, and strip backticks so the caller can safely wrap it in a single inline-code span. */
-function sanitizeReason(s: string): string {
-  const collapsed = s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
-  const capped = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
-  return capped.replace(/`/g, "'");
-}
 
 /** sha256 over the canonical receipt with `verification` AND `receipt_sha256` removed (the hash cannot contain itself). */
 export function receiptSha256(r: Omit<Receipt, "receipt_sha256" | "verification"> & Partial<Receipt>): string {

@@ -4,26 +4,14 @@
 // missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M
 // sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
 import type { EventEnvelope, Verdict } from "./types.ts";
+import { formatClock, formatDuration, formatTokens } from "../util/term_width.ts";
+export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { STAGE_BUDGETS } from "./types.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
-export function formatClock(elapsedS: number): string {
-  const s = Math.max(0, Math.round(elapsedS));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-}
-export function formatDuration(totalS: number): string {
-  const s = Math.max(0, Math.round(totalS));
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
-}
-/** 212000 -> "212k"; under 1000 renders as-is. */
-export function formatTokens(n: number): string {
-  const v = Math.max(0, Math.round(n));
-  return v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`;
-}
 export interface StageLine {
   /** Elapsed run time (since run.started) when this line is printed. */
   clockS: number;

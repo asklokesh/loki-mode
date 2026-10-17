@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
+import { baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -107,5 +107,35 @@ describe("classifyWithRerun", () => {
     const c = classifyWithRerun(RED, () => GREEN);
     expect(hasExecutedProof([c])).toBe(false);
     expect(hasExogenousProof([{ name: "pytest:tests/a.py", ...c }], { addedFiles: [], wallFiles: [] })).toBe(false);
+  });
+});
+
+describe("mapPool and jobs env (TEN-SPEED-18/19 shared pool)", () => {
+  const withEnv = (k: string, v: string | undefined, f: () => void): void => { const o = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; try { f(); } finally { if (o === undefined) delete process.env[k]; else process.env[k] = o; } };
+  test("results keep input order whatever order they finish in", async () => {
+    const r = await mapPool([30, 1, 15, 2], 4, async (ms) => { await new Promise((res) => setTimeout(res, ms)); return ms; });
+    expect(r).toEqual([30, 1, 15, 2]);
+  });
+  test("never runs more than jobs at once; jobs below 1 means sequential", async () => {
+    for (const jobs of [2, 0]) {
+      let live = 0, peak = 0;
+      await mapPool([1, 2, 3, 4, 5], jobs, async () => { peak = Math.max(peak, ++live); await new Promise((res) => setTimeout(res, 3)); live--; });
+      expect(peak).toBe(Math.max(1, jobs));
+    }
+  });
+  test("stop() prevents new items from starting and leaves their slots empty", async () => {
+    let n = 0;
+    const r = await mapPool([1, 2, 3], 1, async (x) => { n++; return x; }, () => n >= 1);
+    expect(n).toBe(1); expect(r.filter((x) => x !== undefined)).toEqual([1]);
+  });
+  test("default 1, invalid falls back to 1, valid is capped", () => {
+    for (const [fn, key, cap] of [[verifyJobs, "LOKI_E10_VERIFY_JOBS", 8], [baseJobs, "LOKI_E10_BASE_JOBS", 16]] as const) {
+      withEnv(key, undefined, () => expect(fn()).toBe(1));
+      withEnv(key, "abc", () => expect(fn()).toBe(1));
+      withEnv(key, "0", () => expect(fn()).toBe(1));
+      withEnv(key, "-3", () => expect(fn()).toBe(1));
+      withEnv(key, "3", () => expect(fn()).toBe(3));
+      withEnv(key, "999", () => expect(fn()).toBe(cap));
+    }
   });
 });
