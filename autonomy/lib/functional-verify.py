@@ -66,6 +66,55 @@ def derive_endpoint_assertions(spec_text: str) -> list[dict]:
     return out
 
 
+# Wording that marks an endpoint as protected. Matched on the endpoint's own line
+# or on the nearest enclosing markdown heading (its section).
+_PROTECTED_RE = re.compile(
+    r'\b(requires?\s+(auth\w*|login|a\s+login|credentials|a\s+(bearer\s+|valid\s+)?token)'
+    r'|(must|needs?\s+to)\s+be\s+(logged[ -]in|authenticated)'
+    r'|login\s+required|auth(entication)?\s+required'
+    r'|authenticated(\s+users?)?(\s+only)?|admin[ -]only|admins?\s+only'
+    r'|protected\s+(endpoint|route|resource|api|path|page)s?|is\s+protected'
+    r'|(without|no|missing)\s+(\w+\s+)?(auth\w*|credentials|token)\b[^.;]*?\b40[13])\b',
+    re.IGNORECASE)
+_NEGATION_WORDS = {"no", "not", "never", "without", "unauthenticated", "public",
+                   "isn't", "doesn't", "don't", "cannot", "can't"}
+
+
+def _is_protected_text(text: str) -> bool:
+    """True when a protected-wording match is not directly negated. Negation
+    cancels only the match it modifies: one of the two words right before it,
+    inside the same clause (no ; , . or : between)."""
+    for m in _PROTECTED_RE.finditer(text or ""):
+        clause = re.split(r'[;,.:]', text[:m.start()])[-1]
+        prev = re.findall(r"[\w']+", clause.lower())[-2:]
+        if not any(w in _NEGATION_WORDS for w in prev):
+            return True
+    return False
+
+
+def derive_auth_assertions(spec_text: str) -> list[dict]:
+    """Endpoints the spec marks protected (same line or enclosing heading).
+    Returns [{method, path}], deduped, order-preserved."""
+    seen = set()
+    out = []
+    heading = ""
+    for line in (spec_text or "").splitlines():
+        if re.match(r'\s*#{1,6}\s', line):
+            heading = line
+        eps = list(_ENDPOINT_RE.finditer(line))
+        if not eps:
+            continue
+        if not (_is_protected_text(line) or _is_protected_text(heading)):
+            continue
+        for m in eps:
+            key = (m.group(1).upper(), _clean_path(m.group(2)))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"method": key[0], "path": key[1]})
+    return out
+
+
 # --- run assertions against the live app ------------------------------------
 
 def _req(base_url: str, method: str, path: str, body=None, timeout=8):
@@ -197,6 +246,52 @@ def verify_crud_lifecycle(base_url: str, assertions: list[dict]) -> list[dict]:
     return results
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _probe_unauth(base_url: str, method: str, path: str, timeout=8):
+    """One credential-free call, redirects not followed.
+    Returns (status, body_nonempty, location_or_error)."""
+    probe = re.sub(r'(:[A-Za-z_]\w*|\{[^}]*\})', 'loki-auth-probe', path)
+    url = base_url.rstrip("/") + probe
+    data = b"{}" if method in ("POST", "PUT", "PATCH") else None
+    headers = {"Content-Type": "application/json"} if data else {}
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            return resp.status, bool(resp.read().strip()), ""
+    except urllib.error.HTTPError as e:
+        return e.code, False, e.headers.get("Location", "") or ""
+    except (urllib.error.URLError, OSError) as e:
+        return None, False, str(e)
+
+
+def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[dict]:
+    """Probe each spec-protected endpoint unauthenticated.
+    401/403 -> passed; 2xx served -> failed; anything else -> inconclusive."""
+    results = []
+    for a in auth_assertions:
+        method, path = a["method"], a["path"]
+        name = f"auth: {method} {path} rejects unauthenticated requests"
+        code, has_body, extra = _probe_unauth(base_url, method, path)
+        if code in (401, 403):
+            st, detail = "passed", f"HTTP {code} without credentials"
+        elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
+            st, detail = "failed", f"served without credentials (HTTP {code})"
+        elif code is not None and 300 <= code < 400 and re.search(
+                r'(^|/)(login|signin|sign-in|auth|oauth)\b', extra, re.IGNORECASE):
+            st, detail = "passed", f"HTTP {code} redirect to {extra}"
+        elif code is None:
+            st, detail = "inconclusive", f"unreachable: {extra}"
+        else:
+            st, detail = "inconclusive", f"HTTP {code}; cannot tell if protected"
+        results.append({"behavior": name, "status": st, "detail": detail})
+    return results
+
+
 def summarize(results: list[dict]) -> dict:
     passed = sum(1 for r in results if r["status"] == "passed")
     failed = sum(1 for r in results if r["status"] == "failed")
@@ -217,14 +312,15 @@ def summarize(results: list[dict]) -> dict:
 
 def run(spec_text: str, base_url: str) -> dict:
     assertions = derive_endpoint_assertions(spec_text)
+    auth = verify_auth_behaviors(base_url, derive_auth_assertions(spec_text))
     if not assertions:
         return {"spec_behaviors": [], "summary": {"passed": 0, "failed": 0,
                 "inconclusive": 0, "functional_status": "inconclusive"},
-                "note": "no HTTP endpoint behaviors derivable from the spec"}
+                "auth_behaviors": [], "note": "no HTTP endpoint behaviors derivable from the spec"}
     results = verify_crud_lifecycle(base_url, assertions)
-    summ = summarize(results)
+    summ = summarize(results + auth)
     return {"assertions_derived": assertions, "spec_behaviors": results,
-            "summary": summ, "functional_status": summ["functional_status"]}
+            "auth_behaviors": auth, "summary": summ, "functional_status": summ["functional_status"]}
 
 
 def main(argv):
