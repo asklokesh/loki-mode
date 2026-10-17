@@ -117,7 +117,7 @@ Verification
   loki verify --json           One JSON object: command, exit_code, ok, output
   loki verify --pubkey FILE    Check a receipt against a public key
   loki receipt                 Inspect the proof-of-run receipt
-  loki undo <run> [--plan]     Plan or apply an undo of a run
+  loki undo <run> [--plan|--dry-run]  Plan or apply an undo of a run
 
 Exit codes: see loki help exit-codes.
 T
