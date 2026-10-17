@@ -97,23 +97,27 @@ export async function launchInThread(state: InboundState, deps: InboundDeps, cha
   }).catch(() => { rec.state = "done"; });
 }
 /** Handles one verified Slack Events API payload. Returns the HTTP response; work continues in the background. */
-export async function handleSlackEvent(state: InboundState, deps: InboundDeps, payload: any, botUserId?: string): Promise<{ status: number; body: string }> {
-  if (payload?.type === "url_verification") return { status: 200, body: String(payload.challenge ?? "") };
-  if (payload?.type !== "event_callback" || !payload.event) return { status: 200, body: "ignored" };
-  if (payload.event_id) {
-    if (state.seen.has(payload.event_id)) return { status: 200, body: "duplicate" };
-    state.seen.add(payload.event_id);
-    if (state.dedupFile) appendDedup(state.dedupFile, payload.event_id);
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+export async function handleSlackEvent(state: InboundState, deps: InboundDeps, payload: unknown, botUserId?: string): Promise<{ status: number; body: string }> {
+  if (!isRec(payload)) return { status: 200, body: "ignored" };
+  if (payload.type === "url_verification") return { status: 200, body: str(payload.challenge) };
+  if (payload.type !== "event_callback" || !isRec(payload.event)) return { status: 200, body: "ignored" };
+  const eventId = str(payload.event_id);
+  if (eventId) {
+    if (state.seen.has(eventId)) return { status: 200, body: "duplicate" };
+    state.seen.add(eventId);
+    if (state.dedupFile) appendDedup(state.dedupFile, eventId);
     if (state.seen.size > 1000) state.seen.delete(state.seen.values().next().value as string);
   }
   const ev = payload.event;
   if (ev.bot_id || ev.subtype || (botUserId && ev.user === botUserId)) return { status: 200, body: "ignored" };
-  const channel = String(ev.channel ?? ""), ts = String(ev.ts ?? ""), threadTs = String(ev.thread_ts ?? ts);
+  const channel = str(ev.channel), ts = str(ev.ts), threadTs = str(ev.thread_ts) || ts;
   if (!channel || !ts) return { status: 200, body: "ignored" };
   const existing = state.threads.get(threadKey(channel, threadTs));
-  const text = parseMention(String(ev.text ?? ""));
+  const text = parseMention(str(ev.text));
   const wouldAct = (ev.type === "app_mention" || (ev.type === "message" && (existing?.state === "blocked" || existing?.state === "running") && ev.thread_ts)) && text;
-  const allow = deps.allowed ? deps.allowed() : state.allowedUsers, actor = String(ev.user ?? "");
+  const allow = deps.allowed ? deps.allowed() : state.allowedUsers, actor = str(ev.user);
   if (wouldAct && !(actor && (allow?.has("*") || allow?.has(actor)))) {
     await deps.post(channel, threadTs, NOT_ALLOWED);
     return { status: 200, body: "forbidden" };
@@ -222,6 +226,7 @@ export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (
       if (j && j.ok === false) fail(`slack error: ${j.error ?? "unknown"}`);
       else if (typeof j?.ts === "string") return j.ts;
     } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
+    return undefined;
   };
 }
 /** chat.update: edits the run status message in place instead of posting a new one. */

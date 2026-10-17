@@ -91,6 +91,24 @@ describe("thread mapping", () => {
     expect(f.tasks[1]).toContain("use postgres");
     expect(f.tasks[1]).toContain("build it");
   });
+  test("malformed payload is ignored without side effects", async () => {
+    const f = fake(0), dir = mkdtempSync(join(tmpdir(), "slackmal-"));
+    try {
+      const st = openState(); st.dedupFile = join(dir, "dedup");
+      for (const p of [null, "x", 5, [], { type: "event_callback", event: "str" }, { type: "event_callback", event: [] }]) {
+        expect((await handleSlackEvent(st, f.deps, p)).body).toBe("ignored");
+      }
+      expect((await handleSlackEvent(st, f.deps, { type: "url_verification", challenge: { a: 1 } })).body).toBe("");
+      const bad = { type: "event_callback", event_id: { x: 1 }, event: { type: "app_mention", channel: { c: 1 }, user: "U1", text: "<@UB> fix the thing", ts: "9.1" } };
+      expect((await handleSlackEvent(st, f.deps, bad)).body).toBe("ignored");
+      const badText = { type: "event_callback", event_id: { x: 2 }, event: { type: "app_mention", channel: "C1", user: { u: 1 }, text: { t: 1 }, ts: "9.2" } };
+      expect((await handleSlackEvent(st, f.deps, badText)).body).toBe("ignored");
+      await tick();
+      expect(f.tasks).toEqual([]);
+      expect(f.posts).toEqual([]);
+      expect(existsSync(st.dedupFile)).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   test("url_verification echoes the challenge", async () => {
     expect((await handleSlackEvent(openState(), fake(0).deps, { type: "url_verification", challenge: "abc" })).body).toBe("abc");
   });
