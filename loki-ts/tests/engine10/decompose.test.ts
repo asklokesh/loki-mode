@@ -78,6 +78,17 @@ describe("parseMilestones", () => {
   it("parses a top-level milestones: list", () => {
     expect(parseMilestones("name: x\nmilestones:\n  - first\n  - second\nother: 1\n").map((x) => x.title)).toEqual(["first", "second"]);
   });
+  it("no unit has an empty write set: file-less items fold into the first unit that owns files", () => {
+    const d = run("- fix auth token\n- limit must be validated carefully\n- update billing totals");
+    expect(d.units.every((u) => u.writeSet.length > 0)).toBe(true);
+    expect(d.units.map((u) => u.writeSet)).toEqual([["src/auth.ts"], ["src/billing.ts"]]);
+    expect(d.units[0]!.items).toEqual(["fix auth token", "limit must be validated carefully"]);
+  });
+  it("a spec where no item names a file collapses to one unit (the caller falls back to a sequential run)", () => {
+    const d = run("- nothing matches here\n- nor here either");
+    expect(d.units.length).toBe(1);
+    expect(d.units[0]!.items.length).toBe(2);
+  });
   it("fewer than 2 milestones returns []", () => {
     expect(parseMilestones("## Milestone 1: solo\n- a\n")).toEqual([]);
     expect(parseMilestones("- a\n- b\n")).toEqual([]);

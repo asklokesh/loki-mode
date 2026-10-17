@@ -997,3 +997,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: deep.ts was the only engine10 stage importing runner/quality_gates.ts (git grep); xreview.ts already imports providers/claude_flags.ts. pack-npm also lacked a loki-ts install, fixed in 386e73f32.
 - Mechanism: REVIEW_GUARD_DENYLIST moves to providers/claude_flags.ts; quality_gates.ts re-exports it; deep.ts imports the leaf.
 - Fixture: tests/test-control-plane.sh builds serve.ts with a metafile and fails if runner/sdk_invoker appears (red with the old import: 3 hits; green: 0).
+
+## FC-TEN-COST-23 Decomposer emits a unit with an empty write set and unit mode refuses it (EMPTY-WRITESET-UNIT)
+- User-visible vs raw: every multi-unit run of coord-1-api-web exited 1 with "unit launcher exit 1; 2 unit(s) did not pass" after about 50s, the spurious unit having failed with exit 2 in 1s and $0; the raw reason ("unit mode was requested but its spec file is invalid") never reached the user.
+- Law broken: a decomposer output must be runnable by the stage that consumes it; unit_mode.ts parseText rejects writeSet.length === 0 and the engine refuses an unfenced run, so a file-less prose bullet ("`limit` must be an int ...") became a unit that could never start.
+- Siblings: decompose.ts items with no matching file (also shared-file-only items); fix_units.ts units (always carry a write set); the u1 PARTIAL exit 1 in the same evidence is the separate no-test-runner seed cause (TEN-COST-20, TEN-COST-21), not this class.
+- Mechanism: decompose() folds every item that names no write-set file into the first unit that owns files; if no item names a file all items form one unit and route.ts falls back to the sequential run (fewer than 2 units).
+- Fixture: tests/engine10/decompose.test.ts "no unit has an empty write set" and "a spec where no item names a file collapses to one unit"; repro: LOKI_UNIT_SPEC with writeSet [] and bin/loki start gives rc=2 "spec file is invalid".
