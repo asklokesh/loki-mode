@@ -90,9 +90,15 @@ describe("rough prior (F2)", () => {
     expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-haiku-5-5" }))).toBe("estimate: ~$0.19-$0.63 (rough prior, no history for this shape)");
   });
   test("unknown tier or unmeasured size class has no prior", () => {
-    expect(priorFor("claude-opus-5-5", "unplanned")).toBeNull();
+    expect(priorFor("claude-fable-5", "unplanned")).toBeNull();
     expect(priorFor("claude-sonnet-5-5", "large")).toBeNull();
-    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-opus-5-5" }))).toContain("NOT AVAILABLE");
+    expect(priorFor("claude-opus-5-5", "large")).toBeNull();
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-fable-5" }))).toContain("NOT AVAILABLE");
+  });
+  test("opus prior", () => {
+    expect(priorFor("claude-opus-5-5")?.tier).toBe("opus");
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-opus-5-5" }))).toBe("estimate: ~$0.16-$0.39 (rough prior, no history for this shape)");
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "opus", env: { LOKI_COST_PRIOR: "0" } }))).toContain("NOT AVAILABLE");
   });
   test("size class comes from structured plan scope file count", () => {
     expect(sizeClassFromScope(["a", "b", "c"])).toBe("small");

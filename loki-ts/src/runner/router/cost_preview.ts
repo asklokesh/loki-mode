@@ -26,16 +26,20 @@ export interface PriorOpts { model?: string; sizeClass?: SizeClass; env?: Env }
 // D50 small-tier baseline (docs/v10/METRICS.md, 2026-09-30, 9 measured runs per tier, min-max). The B9
 // scoreboard rows are still pending (RELEASE-11.md), so only the small-task band is measured; at start no plan
 // exists, so "unplanned" uses that band. medium and large have no measured row and therefore no prior.
+// opus: no per-run min-max exists (the D50 baseline ran no opus arm). Its band is the two measured cost-per-
+// completed-task means of the D30 small-tier report on claude-opus-5-5 (29 tasks): v10 lean $0.1616 to v10
+// default knobs $0.3946 (docs/v10/METRICS.md, 2026-09-28).
 const PRIOR_USD: Record<string, Partial<Record<SizeClass, [number, number]>>> = {
   haiku: { unplanned: [0.19, 0.63], small: [0.19, 0.63] },
   sonnet: { unplanned: [0.11, 0.98], small: [0.11, 0.98] },
+  opus: { unplanned: [0.16, 0.39], small: [0.16, 0.39] },
 };
 
 /** Size class from the structured plan scope file list (same 3-file boundary run_cap uses); never from task text. */
 export const sizeClassFromScope = (files: string[]): SizeClass => (files.length <= 3 ? "small" : files.length <= 10 ? "medium" : "large");
 
 export function priorFor(model: string | undefined, sizeClass: SizeClass = "unplanned"): Prior | null {
-  const tier = /haiku/i.test(model ?? "") ? "haiku" : /sonnet/i.test(model ?? "") ? "sonnet" : null;
+  const tier = /haiku/i.test(model ?? "") ? "haiku" : /sonnet/i.test(model ?? "") ? "sonnet" : /opus/i.test(model ?? "") ? "opus" : null;
   const usd = tier ? PRIOR_USD[tier]?.[sizeClass] : undefined;
   return tier && usd ? { usd: [usd[0], usd[1]], tier, size_class: sizeClass } : null;
 }
