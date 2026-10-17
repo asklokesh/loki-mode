@@ -14,15 +14,19 @@ export function parseCapUsd(raw: unknown): number | null {
   const n = typeof raw === "number" ? raw : /^\$?\d+(\.\d+)?$/.test(String(raw ?? "").trim()) ? Number(String(raw).trim().replace("$", "")) : NaN;
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+const isZeroCap = (raw: string): boolean => /^\$?0+(\.0+)?$/.test(raw.trim()); // 0 stays a valid no-cap value, never an error
 /** budgets.per_run from loki.yaml text (a two-level read; no YAML dependency). */
 export function yamlPerRun(text: string): number | null { return parseCapUsd(yamlKey(text, "budgets", "per_run")); }
 /** usd 0 means no dollar cap (subscription run). */
 export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number; source: CapSource } | { error: string } {
   if (cli !== null) { const n = parseCapUsd(cli); return n === null ? { error: "--max-cost must be a positive number of US dollars" } : { usd: n, source: "--max-cost" }; }
-  const envCap = parseCapUsd(env.LOKI_BUDGET_LIMIT); if (envCap !== null) return { usd: envCap, source: "env" }; // same variable the bash route reads; flag > env > loki.yaml > default
+  const envRaw = (env.LOKI_BUDGET_LIMIT ?? "").trim(), envCap = parseCapUsd(envRaw); if (envCap !== null) return { usd: envCap, source: "env" };
+  if (envRaw !== "" && !isZeroCap(envRaw)) return { error: `LOKI_BUDGET_LIMIT must be a positive number of US dollars (got "${envRaw}")` }; // same variable the bash route reads; flag > env > loki.yaml > default
   for (const text of lokiYamlTexts(repoDir)) {
     const n = yamlPerRun(text);
     if (n !== null) return { usd: n, source: "loki.yaml" };
+    const raw = yamlKey(text, "budgets", "per_run");
+    if (raw !== null && !isZeroCap(raw)) return { error: `loki.yaml budgets.per_run must be a positive number of US dollars (got "${raw}")` };
   }
   return hasApiKey(env) ? { usd: DEFAULT_MAX_COST_USD, source: "default" } : { usd: 0, source: "subscription" };
 }
@@ -71,7 +75,8 @@ export function childBudgetLimit(remaining: number | null): string | null { retu
 export function runnerBudget(explicit: number | undefined, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number | undefined; note: string | null } {
   if (explicit !== undefined) return { usd: explicit, note: null };
   const c = resolveCap(null, repoDir, env);
-  return "error" in c || c.usd <= 0 ? { usd: undefined, note: null } : { usd: c.usd, note: capNote(c.usd, c.source) };
+  if ("error" in c) return { usd: DEFAULT_MAX_COST_USD, note: `${c.error}; falling back to ${capNote(DEFAULT_MAX_COST_USD, "default")}` }; // fail closed: a bad limit never means no cap
+  return c.usd <= 0 ? { usd: undefined, note: null } : { usd: c.usd, note: capNote(c.usd, c.source) };
 }
 /** `--attempts N` shares one total: each attempt gets total/N (cents, min 0.01). undefined = no dollar cap to divide. */
 export function perAttemptCap(totalUsd: number | undefined, n: number): number | undefined {
