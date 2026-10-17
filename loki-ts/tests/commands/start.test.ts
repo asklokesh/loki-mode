@@ -278,6 +278,30 @@ describe("equals form (TEN-COST-35)", () => {
   });
 });
 
+describe("invalid numeric flags (TEN-COST-36)", () => {
+  const cases: string[][] = [
+    ["p.md", "--budget-limit", "abc"],
+    ["p.md", "--max-iterations", "-1"],
+    ["p.md", "--budget-limit", "0x"],
+    ["p.md", "--budget-limit", "0"],
+    ["p.md", "--max-retries=abc"],
+    ["p.md", "--budget-limit"],
+  ];
+  for (const c of cases) {
+    it(`invalid numeric: ${c.slice(1).join(" ")} exits 2 naming the flag`, () => {
+      const errs: string[] = [];
+      const r = parseStartArgs(c, (s) => errs.push(s), () => {}, () => {});
+      expect(r).toBe(2);
+      expect(errs.join("")).toMatch(/^start: --[a-z-]+ must be a positive number/);
+    });
+  }
+  it("valid numeric values unchanged", () => {
+    const r = parseStartArgs(["p.md", "--budget-limit", "2.5", "--max-iterations=3"], collect, () => {}, () => {}) as { budgetLimit?: number; maxIterations?: number };
+    expect(r.budgetLimit).toBe(2.5);
+    expect(r.maxIterations).toBe(3);
+  });
+});
+
 describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () => {
   const legacy: string[][] = [
     ["--max-iterations", "5"], ["--max-retries", "2"], ["--completion-promise", "x"], ["--base-wait", "1"],

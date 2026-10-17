@@ -307,6 +307,16 @@ export function parseStartArgs(
     return 2;
   }
 
+  // TEN-COST-36: a present numeric flag with a missing, non-numeric, zero or negative value is an error, not a silent default.
+  for (const f of ["--max-iterations", "--max-retries", "--budget-limit", "--budget", "--base-wait", "--max-wait"]) {
+    if (!accepted.has(f) || !args.some((a) => a === f || a.startsWith(`${f}=`))) continue;
+    const v = argVal(args, f);
+    if (posNum(v) === undefined) {
+      err(`start: ${f} must be a positive number, got '${v ?? ""}'\n`);
+      return 2;
+    }
+  }
+
   // --budget is an alias of --budget-limit (bash divergence closed).
   const budget = posNum(argVal(args, "--budget-limit") ?? argVal(args, "--budget"));
 
