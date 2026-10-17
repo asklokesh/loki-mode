@@ -20,6 +20,8 @@ import { safeGitSpawn } from "../../util/safe_git.ts";
 import { atomicWriteJson } from "../../util/atomic.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { discoverCommands } from "../../runner/repo_profile.ts";
+import { checkDecomposable } from "./decompose_check.ts";
+import { buildRepoMap } from "../../engine10/repomap.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
 
 /** Seal and verify functions, injected by the caller outside features/ (D66 fence: features/ never value-imports seal or verify_cmd). */
@@ -206,6 +208,11 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   if (resumable) say(`loki: resuming group ${groupId}: ${doneCount} of ${units.length} units already VERIFIED\n`);
   const dagPath = join(groupDir, "dag.json");
   atomicWriteJson(dagPath, { group: groupId, spec_sha256: specSha, base_ref: baseRef, start_branch: startBranch, ...full, units });
+  // D61-09: report a heavily coupled backlog. Advisory only: it never changes the DAG, the slots or the exit code.
+  try {
+    const chk = await checkDecomposable(full, { map: (() => { try { return buildRepoMap(repoDir); } catch { return null; } })() });
+    if (chk.mode === "sequential") say(`loki: warning: backlog is not decomposable into parallel units (${chk.reason}); units still run, but coupled work may conflict at integration\n`);
+  } catch { /* advisory check failed: run unchanged */ }
 
   const { provider, slots } = providerSlots(env, ctx.provider);
   const pending = units.length - doneCount;
