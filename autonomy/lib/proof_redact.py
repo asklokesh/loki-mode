@@ -11,7 +11,7 @@ behavior changes in a way callers must be able to detect.
 Patterns implemented (see R1-proof-of-run-PLAN.md REDACTION RULES):
   - Anthropic keys (sk-ant-...) -> [REDACTED:ANTHROPIC_KEY]
   - OpenAI-style keys (sk-...)  -> [REDACTED:OPENAI_KEY]
-  - Google API keys (AI...)     -> [REDACTED:GOOGLE_KEY]
+  - Google API keys (AIza...)   -> [REDACTED:GOOGLE_KEY]
   - GitHub tokens (gh[pousr]_ and github_pat_) -> [REDACTED:GITHUB_TOKEN]
   - AWS access key ids (AKIA..) -> [REDACTED:AWS_KEY]
   - AWS secret access keys       -> [REDACTED:AWS_SECRET]
@@ -75,8 +75,8 @@ _PATTERNS = [
         re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
         "[REDACTED:JWT]",
     ),
-    # Google API keys (broad per app_secrets.py:22).
-    (re.compile(r"AI[a-zA-Z0-9_-]{30,}"), "[REDACTED:GOOGLE_KEY]"),
+    # Google API keys: AIza + 35 chars (matches loki-ts redact.ts).
+    (re.compile(r"AIza[A-Za-z0-9_-]{35}"), "[REDACTED:GOOGLE_KEY]"),
     # Generic OpenAI-style keys (after sk-ant- so it does not eat them).
     (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), "[REDACTED:OPENAI_KEY]"),
 ]

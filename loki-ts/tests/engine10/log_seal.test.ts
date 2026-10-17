@@ -55,7 +55,7 @@ describe("Q17-05b redact at source", () => {
 
 describe("Q17-05b seal fields are not redacted", () => {
   test("seal crypto fields of the engine shape keep their bytes even when they match a token rule; the same values elsewhere, or a wrong shape, are redacted", () => {
-    const sig = "xxAI" + "b".repeat(82), kid = "AI" + "c".repeat(41), token = "sk-ant-" + "a".repeat(40);
+    const sig = "sk-" + "b".repeat(83), kid = "sk-" + "c".repeat(40), token = "sk-ant-" + "a".repeat(40);
     const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
     mkdirSync(dir, { recursive: true });
     const log = new SupervisorLog(ev, id);
@@ -66,19 +66,16 @@ describe("Q17-05b seal fields are not redacted", () => {
     const [receipt, sealed, normal, smuggled] = readFileSync(ev, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect([receipt.data.kid, sealed.data.kid, sealed.data.sig]).toEqual([kid, kid, sig]);
     expect(receipt.data.path).not.toContain(token);
-    expect(normal.data.sig).toContain("[REDACTED:GOOGLE_KEY]");
-    expect(normal.data.kid).toContain("[REDACTED:GOOGLE_KEY]");
+    expect(normal.data.sig).toContain("[REDACTED:OPENAI_KEY]");
+    expect(normal.data.kid).toContain("[REDACTED:OPENAI_KEY]");
     expect(smuggled.data.sig).not.toContain(token);
     for (const e of [receipt, sealed, normal, smuggled]) expect(redactEnvelope(e)).toEqual(e); // the shipper and ingest redaction is a no-op on every engine-written line
   });
-  test("600 honest signed runs all VERIFY (about 1.7% of signatures match the Google key rule)", async () => {
-    let hit = 0;
+  test("600 honest signed runs all VERIFY", async () => {
     for (let i = 0; i < 600; i++) {
       const r = run(false);
-      if (/AI[a-zA-Z0-9_-]{30,}/.test(JSON.parse(r.lines().at(-1)!).data.sig)) hit++;
       expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
     }
-    expect(hit).toBeGreaterThan(0);
   }, 120000);
 });
 

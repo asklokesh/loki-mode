@@ -102,6 +102,11 @@ class RedactionCorpusTests(unittest.TestCase):
     def test_google_key(self):
         self._assert_redacted("google", _GOOGLE, _GOOGLE)
 
+    def test_google_key_shape_leaves_ai_identifiers(self):
+        ident = "AIAgentOrchestrationFrameworkConfigurationName"
+        out, _ = proof_redact.redact_tree({"k": ident})
+        self.assertEqual(out["k"], ident)
+
     def test_github_token_ghp(self):
         self._assert_redacted("ghp", _GHP, _GHP)
 

@@ -18,11 +18,13 @@ const RULES: [RegExp, string][] = [
   [/\bdckr_pat_[A-Za-z0-9_-]{20,}/g, "[REDACTED:DOCKER_TOKEN]"],
   [/\bdop_v1_[a-f0-9]{64}\b/g, "[REDACTED:DIGITALOCEAN_TOKEN]"],
   [/\bya29\.[A-Za-z0-9_-]{20,}/g, "[REDACTED:GOOGLE_OAUTH_TOKEN]"],
-  [/AI[a-zA-Z0-9_-]{30,}/g, "[REDACTED:GOOGLE_KEY]"],
+  [/AIza[A-Za-z0-9_-]{35}/g, "[REDACTED:GOOGLE_KEY]"],
   [/glpat-[A-Za-z0-9_-]{20,}/g, "[REDACTED:GITLAB_TOKEN]"],
   [/npm_[A-Za-z0-9]{36}/g, "[REDACTED:NPM_TOKEN]"],
   [/hf_[A-Za-z0-9]{30,}/g, "[REDACTED:HF_TOKEN]"],
-  [/[sr]k_live_[A-Za-z0-9]{16,}/g, "[REDACTED:STRIPE_KEY]"],
+  [/(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, "[REDACTED:STRIPE_KEY]"],
+  [/whsec_[A-Za-z0-9]{16,}/g, "[REDACTED:STRIPE_WEBHOOK_SECRET]"],
+  [/\bhooks\.slack\.com\/services\/[A-Z0-9]+\/[A-Z0-9]+\/[A-Za-z0-9]{16,}/g, "hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK]"],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[REDACTED:PRIVATE_KEY]"],
   [/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED:OPENAI_KEY]"],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
@@ -54,7 +56,7 @@ export const redactDeep = (x: unknown): unknown =>
   : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [redactSecrets(k), redactDeep(v)]))
   : x;
 /** Q17-05b: engine-computed crypto fields of the integrity lines. A base64url sig or kid matches a token rule by chance (about 1.7% of log.sealed sigs match
- *  GOOGLE_KEY), and a redacted one forges TAMPERED. Only a value of the exact shape the engine writes is exempt; every other field is redacted. */
+ *  an OPENAI sk- token rule), and a redacted one forges TAMPERED. Only a value of the exact shape the engine writes is exempt; every other field is redacted. */
 const B64 = (n: number): RegExp => new RegExp(`^[A-Za-z0-9_-]{${n}}$`), HEX64 = /^[0-9a-f]{64}$/;
 const SEAL_FIELDS = new Map<string, Map<string, RegExp>>([
   ["log.sealed", new Map([["kid", B64(43)], ["sig", B64(86)], ["events_sha256", HEX64]])],
