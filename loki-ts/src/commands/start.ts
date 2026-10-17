@@ -54,7 +54,8 @@ const VALUE_FLAGS = new Set([
 ]);
 
 // TEN-STABILITY-33: free-text value flags. A missing, empty or dash-leading value is an error (use --flag=-x for a dash-leading value).
-const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model"]);
+// TEN-UX-48: --provider, --session-model, --cost and --spec take a required value too.
+const TEXT_VALUE_FLAGS = new Set(["--prd", "--brief", "--completion-promise", "--aider-model", "--aider-flags", "--cline-model", "--provider", "--session-model", "--cost", "--spec"]);
 
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
 // already reads (or, for --skip-memory, now reads -- see build_prompt/runner).

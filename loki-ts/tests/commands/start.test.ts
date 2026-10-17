@@ -37,6 +37,19 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect((r as { prdPath: string }).prdPath).toBe("-x");
   });
 
+  it("value flags need a value: --provider, --session-model, --cost, --spec", () => {
+    for (const f of ["--provider", "--session-model", "--cost", "--spec"]) {
+      for (const argv of [["x", f], ["x", f, "--simple"], ["x", f, ""], ["x", `${f}=`]]) {
+        errs.length = 0;
+        expect(parseStartArgs(argv, collect, () => {}, () => {})).toBe(2);
+        expect(errs.join("")).toContain(`start: ${f} needs a value`);
+      }
+    }
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "x", "--provider"], { cwd: tmpdir(), encoding: "utf8", timeout: 20_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("start: --provider needs a value");
+  });
+
   it("value flag swallows flag: real CLI entry exits 2 without starting a run", () => {
     const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "./prd.md", "--brief", "--yes"], { cwd: tmpdir(), encoding: "utf8", timeout: 20_000 });
     expect(r.status).toBe(2);
