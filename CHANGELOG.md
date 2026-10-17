@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.55 (2026-10-17)
+
+### Added
+- Preflight probes login state for codex, cline, aider and opencode the way it already does for claude, and fails early with a one-line fix when the repo directory is not writable (TEN-ADOPTION-34, TEN-UX-55).
+- Redaction covers Slack webhook URLs, Stripe `sk_test_` and `rk_` keys, and `whsec_` webhook secrets (TEN-SECURITY-24).
+- The pre-run cost estimate now has a prior for opus models (TEN-COST-62).
+- `updateCommandFor` returns pnpm and yarn global upgrade hints (TEN-DEPLOY-27).
+
+### Changed
+- `loki doctor --fix` seeds the default provider from the first installed provider CLI, and with consent backs up an invalid `.loki/config/settings.json` and rewrites defaults; doctor.ts uses one shared version comparator (TEN-ADOPTION-35, TEN-UX-58, TEN-QUALITY-40).
+- An invalid pause timeout env warns once on stderr; a pause that expires records cancel reason `timeout_abandon`, distinct from a user cancel (TEN-STABILITY-60, TEN-STABILITY-61).
+- `loki run status` picks the newest run by events.jsonl mtime instead of reading every run; a failed registry version fetch is cached briefly so offline commands do not wait on the network (TEN-SPEED-24, TEN-SPEED-25).
+- `loki --version` and `loki version` reject extra positional arguments with exit 2 (TEN-UX-53).
+
+### Fixed
+- Cost caps: `parseCapUsd` accepts `.5` and `5.`; `OPENROUTER_API_KEY` and `LOKI_MODEL_API_KEY` count as API billing so those runs get a cap; `resolveRunCapS` reads the first loki.yaml/loki.yml like the other readers; `yamlKey` reads flow-style maps such as `budgets: { per_run: 5 }` (TEN-COST-59, TEN-COST-60, TEN-COST-61, TEN-STABILITY-58).
+- The redact GOOGLE_KEY rule requires the AIza prefix shape, so ordinary identifiers starting with AI are no longer rewritten (TEN-SECURITY-23).
+- policyGate says policy was NOT evaluated when node is absent with `LOKI_POLICY_REQUIRE_NODE=0`, and reports a check.js timeout as a timeout (TEN-GATES-31, TEN-GATES-32).
+- CLI argument strictness: `loki start` rejects a repeated single-value flag; `loki issues run --limit/--parallel` accept only decimal digits; `loki queue add` rejects issue 0; the engine10 supervisor exits 2 when `--spec` or `--max-cost` has no value; `loki undo` validates the run id before the gate; `loki provider show <unknown>` exits 2 with the valid list; `loki status --json --bogus` is rejected; `loki stats` writes its unknown-option message to stderr; internal handoff requires an explicit consecutive-failure count (TEN-UX-56, TEN-ADOPTION-36, TEN-STABILITY-62, TEN-STABILITY-63, TEN-STABILITY-59, TEN-UX-52, TEN-UX-57, TEN-UX-54, TEN-STABILITY-65).
+
+### Known
+- The engine10 core size budget test is red (5013 of 5000 lines) since 11.17.54; the fix is in review and ships fix-forward. TEN-SECURITY-25 (assignment-value redaction) was held back after review found it stopped redacting flag-form names such as `--password=x`.
+
 ## v11.17.54 (2026-10-17)
 
 ### Added

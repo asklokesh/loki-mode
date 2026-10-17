@@ -2542,3 +2542,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T14:35Z (CoS) v11.17.54
 - Wave AQ released (30 rows, 19 chains, every reviewer APPROVE by SHA, ancestry checked) plus Q18-03e (opus round 5 APPROVE e41ef40b2 after 5 BLOCK rounds); evidence in ~/loki-ci-logs/aq-check.log.
+
+## 2026-10-17T14:50Z (CoS) v11.17.55
+- Wave AR released (29 rows, 19 chains, reviewer APPROVE by SHA, ancestry checked; TEN-SECURITY-25 held at BLOCK 30fd64ba8 for a fix round). Combined checks in ~/loki-ci-logs/ar-check.log: build OK, bun test 533 pass 1 fail (known engine10 core budget, fix in flight), drift guards rc=0, control-plane 33 pass; tsc red on queue.ts:75 fixed in a2a21c137 (tsc OK, queue.test.ts 29 pass 0 fail).
