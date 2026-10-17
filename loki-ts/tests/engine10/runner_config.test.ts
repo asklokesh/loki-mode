@@ -612,4 +612,40 @@ describe("FC-09w case-insensitive registry, .npmrc, patchedDependencies targets"
     r.edit("vendor/other.js", "b");
     expect(runnerConfigNotes(r.dir, r.base, commit(r.dir, "u"), ["vendor/other.js"])).toEqual([]);
   });
+  describe("FC-09x remapped patch target between two committed patch files caps", () => {
+    const remap = (cfg: string, baseText: string, headText: string): string[] => {
+      const r = repo({ [cfg]: baseText, "p.patch": "p\n", "q.patch": "q\n" });
+      r.edit(cfg, headText);
+      return runnerConfigNotes(r.dir, r.base, commit(r.dir, "m"), [cfg]);
+    };
+    test("Bun top-level patchedDependencies mapping compared in package.json", () => {
+      const r = repo({ "package.json": pkg({ test: "t" }, { patchedDependencies: { a: "p.patch" } }), "p.patch": "p\n", "q.patch": "q\n" });
+      r.edit("package.json", pkg({ test: "t" }, { patchedDependencies: { a: "q.patch" } }));
+      expect(testConfigChanged(r.dir, r.base, ["package.json"])).toEqual(["package.json"]);
+      expect(runnerConfigNotes(r.dir, r.base, commit(r.dir, "m"), ["package.json"]).length).toBeGreaterThan(0);
+    });
+    test("CRLF pnpm-workspace.yaml remap caps", () => {
+      expect(remap("pnpm-workspace.yaml", "packages:\r\n  - a\r\npatchedDependencies:\r\n  a: p.patch\r\n", "packages:\r\n  - a\r\npatchedDependencies:\r\n  a: q.patch\r\n").length).toBeGreaterThan(0);
+    });
+    test("CRLF pnpm-workspace.yaml adding b->p.patch caps", () => {
+      expect(remap("pnpm-workspace.yaml", "patchedDependencies:\r\n  a: p.patch\r\n", "patchedDependencies:\r\n  a: p.patch\r\n  b: p.patch\r\n").length).toBeGreaterThan(0);
+    });
+    test("multi-line flow map remap caps", () => {
+      expect(remap("pnpm-workspace.yaml", "patchedDependencies: {\n  a: p.patch,\n  b: p.patch\n}\n", "patchedDependencies: {\n  a: q.patch,\n  b: p.patch\n}\n").length).toBeGreaterThan(0);
+    });
+    test("CRLF pnpm-workspace.yaml targets are parsed as patch targets", () => {
+      const r = repo({ "pnpm-workspace.yaml": "packages:\r\n  - a\r\npatchedDependencies:\r\n  a: vendor/a.js\r\n", "vendor/a.js": "x\n" });
+      r.edit("vendor/a.js", "y\n");
+      const n = runnerConfigNotes(r.dir, r.base, commit(r.dir, "p"), ["vendor/a.js"]);
+      expect(n.length).toBe(1);
+      expect(n[0]).toContain("vendor/a.js");
+    });
+    test("multi-line flow map targets are parsed as patch targets", () => {
+      const r = repo({ "pnpm-workspace.yaml": "patchedDependencies: {\n  a: vendor/a.js,\n  b: vendor/b.js\n}\nother: 1\n", "vendor/b.js": "x\n" });
+      r.edit("vendor/b.js", "y\n");
+      const n = runnerConfigNotes(r.dir, r.base, commit(r.dir, "p"), ["vendor/b.js"]);
+      expect(n.length).toBe(1);
+      expect(n[0]).toContain("vendor/b.js");
+    });
+  });
 });
