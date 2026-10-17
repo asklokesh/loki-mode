@@ -59,7 +59,7 @@ export function summarizeRun(repoDir: string, runId: string, nowMs: number = Dat
     const sealed = events.some((e) => e.type === "receipt.sealed");
     const outcome = outcomeOf(folded.run.verdict, capHit, stop, folded.run.tampered, sealed);
     reason = reasonOf(events, folded.run.tampered, stop, outcome) ?? null;
-    next = nextOf(resultOf(outcome), null, reason ?? undefined);
+    next = nextOf(resultOf(outcome), null, reason ?? undefined, undefined, runId);
   }
   const curStage = running ? (lastEvent?.stage ?? null) : null;
   const stageStart = curStage ? events.findLast((e) => e.type === "stage.started" && e.stage === curStage) : undefined;

@@ -417,6 +417,77 @@ export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
   pyImpl.fn = fn ?? pythonImportOk;
 }
 
+// Test seam for the non-python Integration probes (http, PATH lookup, sentrux
+// version) so a test can inject slow probes and time the concurrent gather.
+interface IntegrationProbeFns {
+  http: (url: string) => Promise<boolean>;
+  command: (cmd: string) => Promise<string | null>;
+  sentruxVersion: () => Promise<string>;
+}
+const LSP_BINS = [
+  "pyright-langserver",
+  "pylsp",
+  "typescript-language-server",
+  "gopls",
+  "rust-analyzer",
+  "jdtls",
+];
+async function defaultSentruxVersion(): Promise<string> {
+  try {
+    const r = await run(["sentrux", "--version"], { timeoutMs: 2000 });
+    const tok = r.stdout.split(/\s+/).filter(Boolean).pop();
+    if (tok) return tok.replace(/^v/, "");
+  } catch {
+    /* keep "unknown" */
+  }
+  return "unknown";
+}
+const integrationImpl: IntegrationProbeFns = {
+  http: (url) => httpReachable(url),
+  command: (cmd) => commandExists(cmd),
+  sentruxVersion: defaultSentruxVersion,
+};
+export function _setIntegrationProbesForTest(fns: Partial<IntegrationProbeFns> | null): void {
+  integrationImpl.http = fns?.http ?? ((url) => httpReachable(url));
+  integrationImpl.command = fns?.command ?? ((cmd) => commandExists(cmd));
+  integrationImpl.sentruxVersion = fns?.sentruxVersion ?? defaultSentruxVersion;
+}
+
+export interface IntegrationProbes {
+  mcpOk: boolean;
+  numpyOk: boolean;
+  stOk: boolean;
+  chromaOk: boolean;
+  lsp: string[];
+  mirofishOk: boolean | null;
+  sentruxVersion: string | null;
+}
+
+// Every Integration probe is independent, so run them all at once: the
+// section takes the slowest probe, not the sum. Callers render in their own
+// fixed order, so output is byte-identical to the sequential version.
+export async function probeIntegrations(mfUrl: string | undefined): Promise<IntegrationProbes> {
+  const [mcpOk, numpyOk, stOk, chromaOk, lspHits, mirofishOk, sentruxVersion] = await Promise.all([
+    pyImpl.fn("mcp"),
+    pyImpl.fn("numpy", true),
+    pyImpl.fn("sentence_transformers", true),
+    integrationImpl.http("http://localhost:8100/api/v2/heartbeat"),
+    Promise.all(LSP_BINS.map(async (bin) => ((await integrationImpl.command(bin)) ? bin : null))),
+    mfUrl ? integrationImpl.http(`${mfUrl}/health`) : Promise.resolve<boolean | null>(null),
+    (async (): Promise<string | null> =>
+      (await integrationImpl.command("sentrux")) ? integrationImpl.sentruxVersion() : null)(),
+  ]);
+  return {
+    mcpOk,
+    numpyOk,
+    stOk,
+    chromaOk,
+    lsp: lspHits.filter((b): b is string => b !== null),
+    mirofishOk,
+    sentruxVersion,
+  };
+}
+
 // ---------- Claude CLI compatibility (P12-24) ---------------------------------
 
 export interface ClaudeCliRange {
@@ -933,6 +1004,21 @@ export function claudeLoginProbeCached(cli: string, env: NodeJS.ProcessEnv = pro
   return li;
 }
 
+// TEN-SPEED-08: same 10-minute reuse for the PR-run `gh auth status` probe.
+// Only a passing probe is stored; a failed one always re-probes. Keyed on the
+// resolved gh path; a missing or corrupt file means probe.
+export async function ghAuthProbeCached(env: NodeJS.ProcessEnv, probe: () => Promise<boolean>, now = Date.now()): Promise<boolean> {
+  const bin = "gh"; const gh = Bun.which(bin, { PATH: env.PATH ?? process.env.PATH ?? "" }) ?? bin; // lookup only, never a spawn
+  const file = join(env.HOME || homedir(), ".loki", "gh-auth-ok.json");
+  try {
+    const c = JSON.parse(readFileSync(file, "utf8"));
+    if (c?.gh === gh && typeof c.at === "number" && now - c.at >= 0 && now - c.at < CLAUDE_LOGIN_TTL_MS) return true;
+  } catch { /* no usable cache */ }
+  const ok = await probe();
+  if (ok) { try { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, JSON.stringify({ gh, at: now })); } catch { /* best effort */ } }
+  return ok;
+}
+
 export type ClaudeLoginResult = {
   status: Status;
   line: string;
@@ -1338,16 +1424,11 @@ async function runText(): Promise<number> {
 
   // Integrations
   process.stdout.write(`${CYAN}Integrations:${NC}\n`);
-  // v7.5.8: parallelize the three python module probes. Sequentially the
-  // numpy + sentence_transformers checks each have a 30s timeout (cold ML
-  // imports), so worst case was ~60-90s wall time. Promise.all keeps them
-  // bounded by the slowest single probe. Output order is preserved by
-  // awaiting the array up front.
-  const [mcpOk, numpyOk, stOk] = await Promise.all([
-    pyImpl.fn("mcp"),
-    pyImpl.fn("numpy", true),
-    pyImpl.fn("sentence_transformers", true),
-  ]);
+  // All Integration probes run concurrently (probeIntegrations); the section
+  // is rendered below in the original fixed order.
+  const mfUrl = process.env["LOKI_MIROFISH_URL"];
+  const integ = await probeIntegrations(mfUrl);
+  const { mcpOk, numpyOk, stOk } = integ;
   if (mcpOk) {
     process.stdout.write(`  ${badge("pass")}  MCP SDK (Python)\n`);
     bump(tally, "pass");
@@ -1371,7 +1452,7 @@ async function runText(): Promise<number> {
     );
     bump(tally, "warn");
   }
-  if (await httpReachable("http://localhost:8100/api/v2/heartbeat")) {
+  if (integ.chromaOk) {
     process.stdout.write(`  ${badge("pass")}  ChromaDB server (port 8100)\n`);
     bump(tally, "pass");
   } else {
@@ -1384,20 +1465,7 @@ async function runText(): Promise<number> {
   // mcp.lsp_proxy auto-detects these binaries; reporting here gives users
   // visibility into which languages get agent-side symbol grounding.
   {
-    const lspBins = [
-      "pyright-langserver",
-      "pylsp",
-      "typescript-language-server",
-      "gopls",
-      "rust-analyzer",
-      "jdtls",
-    ];
-    const found: string[] = [];
-    for (const bin of lspBins) {
-      if (await commandExists(bin)) {
-        found.push(bin);
-      }
-    }
+    const found = integ.lsp;
     if (found.length > 0) {
       process.stdout.write(
         `  ${badge("pass")}  LSP servers detected (${found.length}): ${found.join(", ")}\n`,
@@ -1412,9 +1480,8 @@ async function runText(): Promise<number> {
   }
   // MiroFish: only check if env var is set (we can't run docker inspect cheaply
   // without spawning docker; bash also gates on env var or docker inspect).
-  const mfUrl = process.env["LOKI_MIROFISH_URL"];
   if (mfUrl) {
-    if (await httpReachable(`${mfUrl}/health`)) {
+    if (integ.mirofishOk) {
       process.stdout.write(`  ${badge("pass")}  MiroFish server (${mfUrl})\n`);
       bump(tally, "pass");
     } else {
@@ -1438,15 +1505,8 @@ async function runText(): Promise<number> {
   // sentrux check (v7.5.14, optional architectural-drift gate). Mirrors the
   // bash-route line at autonomy/loki:cmd_doctor so the bun-parity matrix
   // diff stays empty.
-  if (await commandExists("sentrux")) {
-    let sentruxVer = "unknown";
-    try {
-      const r = await run(["sentrux", "--version"], { timeoutMs: 2000 });
-      const tok = r.stdout.split(/\s+/).filter(Boolean).pop();
-      if (tok) sentruxVer = tok.replace(/^v/, "");
-    } catch {
-      /* keep "unknown" */
-    }
+  if (integ.sentruxVersion !== null) {
+    const sentruxVer = integ.sentruxVersion;
     process.stdout.write(
       `  ${badge("pass")}  sentrux ${sentruxVer} (architectural drift gate: loki sentrux help)\n`,
     );

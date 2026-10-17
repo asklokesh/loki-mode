@@ -322,3 +322,80 @@ describe("loki receipt: Bun alias for proof (F47)", () => {
     expect(r.stdout).toContain("No proofs found");
   });
 });
+
+// TEN-ADOPTION-13: share --dry-run scans and lists, never publishes.
+describe("loki proof share --dry-run", () => {
+  function seedPage(id: string, html: string): void {
+    seedProof(id, { run_id: id, redaction: { applied: true } });
+    writeFileSync(join(scratch, "proofs", id, "index.html"), html);
+  }
+  // A fake gh on PATH that records every call, so "publishes nothing" is observable.
+  function fakeGh(): { bin: string; log: string } {
+    const bin = join(scratch, "fakebin");
+    const log = join(scratch, "gh.log");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$@" >> "${log}"\nexit 0\n`, { mode: 0o755 });
+    return { bin, log };
+  }
+  function share(argv: string[], bin: string) {
+    return run(["bun", BUN_CLI, "proof", "share", ...argv], {
+      env: { LOKI_DIR: scratch, NO_COLOR: "1", PATH: `${bin}:${process.env["PATH"] ?? ""}` },
+      timeoutMs: 60000,
+    });
+  }
+
+  it("clean page: lists the file, exit 0, gh never called", async () => {
+    seedPage("p-clean", "<html>hello</html>");
+    const g = fakeGh();
+    const r = await share(["p-clean", "--dry-run"], g.bin);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Would publish:");
+    expect(r.stdout).toContain("index.html");
+    expect(r.stdout).toContain("redaction scan: 0 findings");
+    expect(existsSync(g.log)).toBe(false);
+  });
+
+  it("page with a token: exit 1, finding reported, gh never called", async () => {
+    seedPage("p-dirty", `<html>ghp_aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5</html>`);
+    const g = fakeGh();
+    const r = await share(["p-dirty", "--dry-run", "--yes"], g.bin);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("share would be refused");
+    expect(existsSync(g.log)).toBe(false);
+  });
+
+  it("unknown id still fails with --dry-run", async () => {
+    const g = fakeGh();
+    const r = await share(["nope", "--dry-run"], g.bin);
+    expect(r.exitCode).toBe(1);
+  });
+});
+
+// TEN-ADOPTION-14: list --json prints the index as a machine-readable array.
+describe("loki proof list --json", () => {
+  it("prints [{id, verdict, created}] newest first through the CLI", async () => {
+    seedProof("run-old", { run_id: "run-old", generated_at: "2026-06-01T00:00:00Z", council: { final_verdict: "APPROVE" } });
+    seedProof("run-new", { run_id: "run-new", generated_at: "2026-06-09T00:00:00Z", honesty: { headline: "VERIFIED WITH GAPS" } });
+    seedProof("run-none", {});
+    const r = await bunRoute(["proof", "list", "--json"]);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([
+      { id: "run-new", verdict: "VERIFIED WITH GAPS", created: "2026-06-09T00:00:00Z" },
+      { id: "run-old", verdict: "APPROVE", created: "2026-06-01T00:00:00Z" },
+      { id: "run-none", verdict: null, created: null },
+    ]);
+  });
+
+  it("text output is unchanged without --json", async () => {
+    seedProof("run-t", { run_id: "run-t", generated_at: "2026-06-01T00:00:00Z" });
+    const r = await bunRoute(["proof", "list"]);
+    expect(r.stdout).toContain("RUN_ID");
+    expect(r.stdout.trimStart().startsWith("[")).toBe(false);
+  });
+
+  it("empty or missing proofs dir prints []", async () => {
+    const r = await bunRoute(["proof", "list", "--json"]);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([]);
+  });
+});

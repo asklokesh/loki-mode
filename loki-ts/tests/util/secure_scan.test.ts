@@ -196,7 +196,7 @@ describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
       writeFileSync(join(d, "old.ts"), `const k = "${KEYS.ant}";\nconst clean = process.env.ANTHROPIC_API_KEY;\n`);
       writeFileSync(join(d, "new.ts"), "export const n = 3;\n");
       const r = await runSecureScan(d);
-      expect(r).toEqual({ ok: true, findings: [] });
+      expect(r).toMatchObject({ ok: true, findings: [] });
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
@@ -271,5 +271,63 @@ describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
     const m = parseAddedLines(diff);
     expect([...m.keys()]).toEqual(["x"]);
     expect([...m.get("x")!.entries()]).toEqual([[2, "two"], [3, "three"], [11, "eleven"]]);
+  });
+});
+
+describe("runSecureScan files_scanned (TEN-GATES-20)", () => {
+  it("real script reports summary.files_scanned", () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-fs-"));
+    try {
+      writeFileSync(join(d, "a.txt"), "hello\n");
+      writeFileSync(join(d, "b.txt"), "world\n");
+      const r = spawnSync("python3", [join(import.meta.dir, "../../../autonomy/lib/secure-scan.py"), d, "--json"], { encoding: "utf8" });
+      expect(JSON.parse(r.stdout).summary.files_scanned).toBe(2);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("empty directory is not_run, not a clean pass", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-empty-"));
+    try {
+      const r = await runSecureScan(d, { diffBase: false });
+      expect(r.ok).toBe(false);
+      expect(r.notRun).toBe(true);
+      expect(r.filesScanned).toBe(0);
+      expect(r.error).toContain("not_run");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("dir holding only skipped files (binary ext) is not_run", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-bin-"));
+    try {
+      writeFileSync(join(d, "x.png"), "not really a png");
+      const r = await runSecureScan(d, { diffBase: false });
+      expect(r.ok).toBe(false);
+      expect(r.notRun).toBe(true);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("one scanned file passes and carries filesScanned", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-one-"));
+    try {
+      writeFileSync(join(d, "a.txt"), "hello\n");
+      const r = await runSecureScan(d, { diffBase: false });
+      expect(r.ok).toBe(true);
+      expect(r.filesScanned).toBe(1);
+      expect(r.notRun).toBeUndefined();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("scanner that omits files_scanned (legacy) is not flagged not_run", async () => {
+    const s = fake("legacy.py", 'import json\nprint(json.dumps({"findings":[],"summary":{"total":0}}))\n');
+    const r = await runSecureScan(dir, { scriptPath: s, diffBase: false });
+    expect(r).toEqual({ ok: true, findings: [] });
   });
 });

@@ -115,6 +115,8 @@ describe("TEN-STABILITY-09 stub claude login probe", () => {
       expect(JSON.parse(r.stdout.toString()).loggedIn).toBe(true);
     }
     for (const f of inline) expect(readFileSync(join(import.meta.dir, f), "utf8")).toContain('"\\${2:-}" = "status"');
+    // TEN-STABILITY-19: the first-run gate's heredoc stub was the missed sibling; it edited sum.js on the probe and Intake refused the dirty tree.
+    expect(readFileSync(join(import.meta.dir, "..", "..", "..", "scripts", "first-run-gate.sh"), "utf8")).toContain(`*" auth status "*) echo '{"loggedIn": true`);
   });
   test("the auth status probe is not logged as a stage", () => {
     const log = join(mkdtempSync(join(tmpdir(), "loki-e2e-")), "stub.log"); temps.push(join(log, ".."));

@@ -2,7 +2,8 @@
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { runFormatters } from "../runner/repo_profile.ts";
+import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
 export type Staged = { st: string; f: string };
 
@@ -13,6 +14,10 @@ export const parseStaged = (out: string): Staged[] => out.split("\0").reduce<Sta
 export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env): Staged[] {
   return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
 }
+
+/** TEN-QUALITY-16: format only the files the run added or modified and kept (not dropped, deleted or under .loki/) with the repo's own configured formatter; returns them for re-staging. */
+export const formatChanged = (repoDir: string, staged: Staged[], dropped: Set<string>, env: NodeJS.ProcessEnv = process.env): string[] =>
+  runFormatters(repoDir, staged.filter(({ st, f }) => (st === "A" || st === "M") && !dropped.has(f) && !f.startsWith(".loki/")).map(({ f }) => f), tokenFreeEnv(env));
 
 /** Commits whatever a killed or crashed worker left uncommitted or untracked (minus .loki), so it
  *  reaches the pushed branch: `git diff` alone misses untracked files, and nothing pushes a tree

@@ -1033,3 +1033,59 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: tests/engine10/fixtures/e2e/bin/claude, fixtures/issue-ref/bin/claude, inline stubs in supervisor_signal.test.ts and budget_stop_e2e.test.ts (all fixed). tests/engine10/fixtures/providers/bin/* are non-claude providers and are not probed. Two verify_lint.test.ts lint:tsc cases fail only in a worktree with no loki-ts/node_modules (environmental, not this class).
 - Mechanism: every stub claude answers `auth status` with {"loggedIn":true}, no side effects.
 - Fixture: tests/engine10/e2e.test.ts "every engine10 stub claude answers claude auth status as logged in".
+
+## FC-TEN-STABILITY-15 queue add on a corrupt queue file silently overwrites every queued item (QUEUE-CORRUPT-OVERWRITE)
+- User-visible vs raw: user-visible. A truncated .loki/issue-queue.json read as an empty queue, so `loki queue add` wrote a file holding only the new item and the overnight backlog vanished with no message.
+- Law broken: a reader that maps a parse failure to "empty" must not be followed by a writer of the same file; unreadable state is quarantined and reported, never replaced.
+- Siblings: util/outbox.ts runOnce (TEN-STABILITY-12, already quarantines); queue run reads the queue and returns "queue is empty" without writing, so it cannot overwrite; its end-of-run writeQueue only follows a successful read.
+- Mechanism: queueAdd calls quarantineCorruptQueue, which renames the bad file to issue-queue.json.corrupt-<ts> and warns once on stderr before the read.
+- Fixture: loki-ts/tests/commands/queue.test.ts "add on a corrupt queue file quarantines it".
+
+## FC-TEN-STABILITY-18a Test pins a literal that an intentional change moved, and the pin is not updated in the same slice (STALE-PIN-AFTER-INTENT)
+- User-visible vs raw: raw (test infrastructure). Nightly 39016259458 stayed red on main e32ee1b5d: pr_body_golden producer registry (util/check_result.ts moved the gate line there, TEN-STABILITY-13), sizing wall brief cap (710 measured vs 600; TEN-COST-14 output budget plus TEN-QUALITY-14 negative-case sentence), router_optout_golden (TEN-COST-11 haiku-first Wall), test-ui-bare-loki (TEN-UX-10 next-step lines), test-local-ci-gitleaks (TEN-SEC-GITLEAKS-01-F1 first-parent log-opts).
+- Law broken: a slice that changes an asserted surface owns the guards that assert it; green on the slice branch is not green on main when the change landed after the pin.
+- Siblings: the five pins above (all fixed). The sizing cap now records its measured number; the router golden pins LOKI_E10_WALL_FIRST=0 so it isolates router behavior (wall.test.ts owns haiku-first).
+- Mechanism: each guard names the owning change in a comment and asserts the intended new shape (first line plus next-step lines; the exact log-opts string), never a weaker match.
+- Fixture: tests/test-ui-bare-loki.sh "the URL is followed by the start and stop next-step lines"; tests/test-local-ci-gitleaks.sh exact log-opts grep and live invocation mirror.
+
+## FC-TEN-STABILITY-18b Bun.which reads the PATH captured at process start, so a test or caller that mutates process.env.PATH is ignored (BUN-WHICH-STALE-PATH)
+- User-visible vs raw: raw (CI only). verify.test.ts TEN-QUALITY-11 cases passed on a machine with uv installed and failed in CI without it: resolveTool asked Bun.which("uv") and never saw the fake uv prepended to process.env.PATH.
+- Law broken: tool resolution must use the same PATH the child process will receive.
+- Siblings: verify.ts resolveTool (fixed, both uv and fallback lookups); provider_failover.ts defaultInstalled, deep.ts:104 and modernize/lang/java.ts:159 call Bun.which without the live PATH when no path option is given (named, not changed: production PATH is fixed at start, no test mutates it).
+- Mechanism: resolveTool's onPath helper passes {PATH: process.env.PATH}.
+- Fixture: verify.test.ts TEN-QUALITY-11 cases, run with PATH=/usr/bin:/bin plus the bun directory (no uv): red before the fix (2 fail), green after.
+
+## FC-TEN-STABILITY-18c A verify flag exists in the engine10 verifier and completions but the dispatcher rejects it and help omits it (VERIFY-FLAG-NOT-ROUTED)
+- User-visible vs raw: user-visible. `loki verify --require-exogenous` (the CHANGELOG form) printed "[verify][error] unknown option" from the legacy verifier, and `loki verify --help` did not list the flag.
+- Law broken: a documented flag must reach the implementation that owns it, and its help must list it.
+- Siblings: --allow-unsigned and --export-dsse also lack a flag-first route in bin/loki (they work after a run id or receipt path); named, not changed here.
+- Mechanism: bin/loki and autonomy/loki cmd_verify route --require-exogenous to engine10 like --pubkey; autonomy/verify.sh help lists it.
+- Fixture: tests/test-help-changelog-drift.sh (flag in help); `bash bin/loki verify --require-exogenous` now reaches engine10 ("no runs found") instead of the unknown-option error.
+
+## FC-TEN-STABILITY-18d The legacy echo-into-grep-q ratchet is breached by new tests and the ceiling is the only guard (SIGPIPE-RATCHET-BREACH)
+- User-visible vs raw: raw (test infrastructure). tests/test-sigpipe-guard.sh counted 1737 legacy forms against a ceiling of 1728.
+- Law broken: the ceiling is lowered when a suite is converted, never raised (the guard's own header).
+- Siblings: 15 forms converted in test-next-resume-agree.sh (7), test-security-audit-config.sh (6) and test-doctor-ux.sh (2); the ceiling now equals the new count, 1722. Large holders remain (test-v10-pulse.sh 321, test-deploy-receipt-gate.sh 38).
+- Mechanism: grep -q PATTERN <<<"$var" here-string form.
+- Fixture: tests/test-sigpipe-guard.sh; SIGPIPE_GUARD_CEILING=1721 turns it red (count 1722 exceeds ceiling 1721).
+
+## FC-TEN-STABILITY-19a A headline policy change silently disarmed a moat positive control (MOAT-CONTROL-POLICY-DRIFT)
+- User-visible vs raw: raw (moat suite). `bash tests/moat/run.sh` printed "moat suite: FAIL (1 rule failure(s))": P8.ablation-dead-code-not-sealed got "positive control: load-bearing fixture headline=VERIFIED WITH GAPS, expected VERIFIED". The raw cause was TEN-GATES-10 (c6796b75b, D104): VERIFIED now needs one agent-independent fact beside the agent's suite, and the P8 fixture recorded only the suite (build marked not applicable), so every P8 fixture got an exogenous_evidence gap. The dead-code assertion "headline is not VERIFIED" then held for the wrong reason: removing the not_load_bearing rule from _compute_headline no longer turned it red.
+- Law broken: a negative assertion is evidence only while its positive control reaches the green state under the CURRENT headline rules; a headline rule change must re-green every moat control it touches.
+- Siblings: tests/test-proof-ablation-headline.sh (passes; it pins facts.ablation, not the headline); tests/test_proof_generator.py (updated by TEN-GATES-10 itself); P1-P7 and P9 were green on the same run, so no other moat control reads a suite-only VERIFIED.
+- Mechanism: the P8 fixture records a real build fact (byte-compiling every source file, exit code recorded, no .pyc written) so the control meets D104; the moat rule and the generator are unchanged.
+- Fixture: tests/moat/p8-load-bearing-proof.sh. Red with the build exit code forced to 1 (control headline=NOT VERIFIED), and red with the generator's not_load_bearing check mutated ("headline is VERIFIED although the checks pass with the change no-oped"), which was undetectable before this fix.
+
+## FC-TEN-STABILITY-19b The first-run gate stub treated the login probe as a work session (STUB-AUTH-STATUS-SILENT recurrence)
+- User-visible vs raw: raw (release gate). `bash scripts/first-run-gate.sh --stub` failed 7 assertions, all from "Reason: dirty tracked tree: M sum.js" at intake.ts:61, plus a python FileNotFoundError traceback from the cost-non-null probe. The engine preflight (TEN-UX-01, 08a8ae052) runs `claude auth status` in the repo before Intake; the gate's heredoc stub short-circuited only --help/--version, so the probe applied the sum.js fix and Intake refused the dirty tree. The real CLI's auth status is read-only, so users never saw this.
+- Law broken: same as FC-TEN-STABILITY-09: a stub provider must honour every CLI call the engine makes before a session.
+- Siblings: FC-TEN-STABILITY-09 fixed the loki-ts/tests stubs but not scripts/first-run-gate.sh (fixed here). scripts/b9-scoreboard.sh already answers auth. tests/test-quick-config-safety.sh, test-quick-receipt-order.sh, test-quick-artifacts.sh, test-json-schemas.sh and test-usage-governor.sh all pass on this base (their stubs do not edit the tree on the probe).
+- Mechanism: the gate stub answers `auth status` with {"loggedIn": true}, no side effects; the cost-non-null probe reports an unreadable run record as a FAIL line instead of a traceback.
+- Fixture: loki-ts/tests/engine10/e2e.test.ts "every engine10 stub claude answers claude auth status as logged in" now also pins the first-run gate stub (red with the stub line removed); the gate itself returns to 7 failures with that line removed.
+
+## FC-TEN-STABILITY-20 A slice adds a CLI flag in the Bun route and CHANGELOG but not in the help-drift-checked help or completions (HELP-FLAG-DRIFT)
+- User-visible vs raw: user-visible. `loki report kpis --since` and `loki undo --list` (v11.17.40) worked but were absent from `loki help` and Tab completion, so tests/test-help-changelog-drift.sh was red on 3 lines.
+- Law broken: a documented flag must appear in the help output for its command and in completions/loki.bash.
+- Siblings: swept the other newest-window invocations (proof list --json, proof share --dry-run, queue add, start --help, status --probe/--json); all already pass. completions/_loki carries no per-flag lists for report or undo; its undo description now names --list.
+- Mechanism: autonomy/loki help text lists both flags; completions/loki.bash gains report and undo cases. The drift test already guards both.
+- Fixture: tests/test-help-changelog-drift.sh (22 passed, 0 failed); removing the `undo --list` help line turns it red.

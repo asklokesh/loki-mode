@@ -97,6 +97,18 @@ assert_silent() {
 # 1. ENGINE PRECISION -- bad/safe matrix for all 5 rules + FP guards.
 # ===========================================================================
 
+# --- files_scanned (TEN-GATES-20): the result states how many files were read ---
+FS="$WORK/fs-two"; mkdir -p "$FS"; echo "a" > "$FS/a.txt"; echo "b" > "$FS/b.txt"
+scan "$FS"
+fs_n=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",{}).get("files_scanned",-1))' "$WORK/last.json" 2>/dev/null)
+if [ "$fs_n" = "2" ]; then ok "files_scanned: two text files report 2"
+else bad "files_scanned: expected 2 got $fs_n" "$(cat "$WORK/last.json")"; fi
+FS0="$WORK/fs-empty"; mkdir -p "$FS0"
+scan "$FS0"
+fs_n=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",{}).get("files_scanned",-1))' "$WORK/last.json" 2>/dev/null)
+if [ "$fs_n" = "0" ]; then ok "files_scanned: empty dir reports 0"
+else bad "files_scanned: empty dir expected 0 got $fs_n" "$(cat "$WORK/last.json")"; fi
+
 # --- rule 1: private-key-committed -----------------------------------------
 BAD="$WORK/r1-bad"; mkdir -p "$BAD"
 cat > "$BAD/server.js" <<'EOF'
@@ -184,6 +196,34 @@ DEBUG = True
 ALLOWED_HOSTS = ["localhost"]
 EOF
 scan "$SAFE"; assert_silent "debug-in-prod" "r4-dev-file"
+
+# --- rule 6: tls-verify-disabled (TEN-SECURITY-06) --------------------------
+BAD="$WORK/r6-py"; mkdir -p "$BAD"
+printf 'import requests\nr = requests.get(url, verify=False)\n' > "$BAD/client.py"
+scan "$BAD"; assert_fires "tls-verify-disabled" "r6-requests-verify-false"
+tls_line=$(python3 -c 'import json,sys; f=[x for x in json.load(open(sys.argv[1]))["findings"] if x["rule"]=="tls-verify-disabled"]; print(f[0]["file"]+":"+str(f[0]["line"]))' "$WORK/last.json" 2>/dev/null)
+if [ "$tls_line" = "client.py:2" ]; then ok "r6: finding carries file and line"
+else bad "r6: expected client.py:2 got $tls_line"; fi
+BAD="$WORK/r6-node"; mkdir -p "$BAD"
+printf 'const a = new https.Agent({ rejectUnauthorized: false });\n' > "$BAD/agent.js"
+scan "$BAD"; assert_fires "tls-verify-disabled" "r6-rejectUnauthorized"
+BAD="$WORK/r6-go"; mkdir -p "$BAD"
+printf 'cfg := &tls.Config{InsecureSkipVerify: true}\n' > "$BAD/main.go"
+scan "$BAD"; assert_fires "tls-verify-disabled" "r6-InsecureSkipVerify"
+BAD="$WORK/r6-env"; mkdir -p "$BAD"
+printf 'export NODE_TLS_REJECT_UNAUTHORIZED=0\n' > "$BAD/run.sh"
+printf 'process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";\n' > "$BAD/boot.js"
+scan "$BAD"; assert_fires "tls-verify-disabled" "r6-NODE_TLS-env"
+if [ "$(total_findings)" = "2" ]; then ok "r6: both NODE_TLS forms found"
+else bad "r6: expected 2 findings" "$(cat "$WORK/last.json")"; fi
+# FP guards: verify=True, rejectUnauthorized: true, tests, fixtures, comments, docs.
+SAFE="$WORK/r6-safe"; mkdir -p "$SAFE/tests" "$SAFE/fixtures"
+printf 'r = requests.get(url, verify=True)\nx = {rejectUnauthorized: true}\nNODE_TLS_REJECT_UNAUTHORIZED=1\n' > "$SAFE/ok.py"
+printf 'requests.get(u, verify=False)\n' > "$SAFE/tests/test_c.py"
+printf 'requests.get(u, verify=False)\n' > "$SAFE/fixtures/c.py"
+printf '# never pass verify=False here\n// rejectUnauthorized: false is unsafe\n' > "$SAFE/note.py"
+printf 'Do not set verify=False.\n' > "$SAFE/README.md"
+scan "$SAFE"; assert_silent "tls-verify-disabled" "r6-safe-and-excluded-paths"
 
 # --- rule 5: cors-wildcard-credentials -------------------------------------
 # ACAO * AND ACAC true in the same file -> fires.

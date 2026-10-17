@@ -556,7 +556,7 @@ case "v10" in
             status|verify|dashboard)
                 if [ "$1" = "verify" ]; then
                     for _pk in "$@"; do
-                        case "$_pk" in --pubkey|--pubkey=*) _e10=1; _e10_hard=1 ;; esac
+                        case "$_pk" in --pubkey|--pubkey=*|--require-exogenous) _e10=1; _e10_hard=1 ;; esac
                     done
                     unset _pk
                 fi

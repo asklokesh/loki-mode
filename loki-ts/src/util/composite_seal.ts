@@ -2,7 +2,9 @@
 // line caps, and util/ is uncapped. Reuses seal_group's exported helpers; no second sealer.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { canonicalJson } from "./receipt_signer.ts";
+import { plainTestEnv } from "./check_result.ts";
 import { compositeVerdict, dirNames, ID_RE, isObj, readJson, sha, text, type RecHash, type VerifyOne } from "../features/speed/seal_group.ts";
 import type { VerifyDeps } from "../engine10/verify_cmd.ts";
 
@@ -15,7 +17,22 @@ import type { VerifyDeps } from "../engine10/verify_cmd.ts";
 export const COMPOSITE_SCHEMA = "loki.v10.composite/1";
 export interface CompositeChild { repo: string; run_id: string; receipt_path: string; receipt_file_sha256: string; receipt_sha256: string; head_sha: string; verdict: string }
 export interface CompositeIntegration { status: string; exit_code: number | null; log_sha256: string | null; heads: Record<string, string | null> }
-export interface CompositeBody { schema: string; workspace: string; run_id: string; integration_sha256: string; integration: CompositeIntegration; children: CompositeChild[]; verdict: string }
+export interface CompositeBody { schema: string; workspace: string; run_id: string; integration_sha256: string; integration: CompositeIntegration; children: CompositeChild[]; verdict: string; toolchain?: Toolchain }
+/** Versions of the tools that ran the checks; an absent tool is null. Optional on the body, so receipts sealed before it existed still verify. */
+export interface Toolchain { bun: string | null; node: string | null; python3: string | null; git: string | null }
+export const TOOLCHAIN_KEYS = ["bun", "node", "python3", "git"] as const;
+/** First version-looking token of `<bin> --version` output, or null when the tool is missing or prints nothing usable. */
+function toolVersion(bin: string): string | null {
+  try {
+    const r = spawnSync(bin, ["--version"], { env: plainTestEnv(), encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+    return r.status === 0 ? /\d+(\.\d+)+\S*/.exec(String(r.stdout))?.[0] ?? null : null;
+  } catch { return null; }
+}
+export const collectToolchain = (probe: (bin: string) => string | null = toolVersion): Toolchain =>
+  ({ bun: process.versions["bun"] ?? probe("bun"), node: probe("node"), python3: probe("python3"), git: probe("git") });
+/** Problem with a stated toolchain field (wrong shape), or null. */
+const toolchainProblem = (t: unknown): string | null =>
+  isObj(t) && Object.keys(t).length === TOOLCHAIN_KEYS.length && TOOLCHAIN_KEYS.every((k) => t[k] === null || typeof t[k] === "string") ? null : "toolchain section is malformed";
 /** integration.log must hash to the recorded log_sha256 when one is recorded; a recorded hash with no log is a problem too. */
 function logProblem(runDir: string, integ: Record<string, unknown>): string | null {
   if (typeof integ["log_sha256"] !== "string") return null;
@@ -34,7 +51,7 @@ const slugOf = (repo: string): string => repo.replace(/\//g, "__"); // mirrors w
 export const isComposite = (r: Record<string, unknown>): boolean => r["schema"] === COMPOSITE_SCHEMA;
 const relOk = (p: string): boolean => p !== "" && !p.startsWith("/") && !p.split("/").includes("..");
 /** Builds the unsigned composite body. Throws (message names the repo) unless every workspace repo has a readable child receipt. */
-export function composeComposite(runDir: string, rh: RecHash): CompositeBody {
+export function composeComposite(runDir: string, rh: RecHash, toolchain: Toolchain = collectToolchain()): CompositeBody {
   const ip = join(runDir, "integration.json");
   let ibytes: Buffer;
   try { ibytes = readFileSync(ip); } catch { throw new Error("integration.json missing; the workspace run did not finish"); }
@@ -66,7 +83,7 @@ export function composeComposite(runDir: string, rh: RecHash): CompositeBody {
   if (children.length === 0) throw new Error("workspace has no repos");
   return { schema: COMPOSITE_SCHEMA, workspace: basename(dirname(runDir)), run_id: basename(runDir), integration_sha256: sha(ibytes),
     integration: { status: String(integ["status"]), exit_code: typeof integ["exit_code"] === "number" ? integ["exit_code"] : null, log_sha256: typeof integ["log_sha256"] === "string" ? integ["log_sha256"] : null, heads: heads as Record<string, string | null> },
-    children, verdict: compositeVerdict(children.map((c) => c.verdict)) };
+    children, verdict: compositeVerdict(children.map((c) => c.verdict)), toolchain };
 }
 /** Verify side for composite.json. Null problem means the composite body checks out against disk; `verdict` is the recomputed (capped) outcome. */
 export async function verifyComposite(receiptPath: string, receipt: Record<string, unknown>, rh: RecHash, verifyOne: VerifyOne, deps: VerifyDeps = {}): Promise<{ problem: { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null; verdict: string }> {
@@ -84,6 +101,7 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
   if (iprob) return bad(iprob);
   const lprob = logProblem(runDir, integ);
   if (lprob) return bad(lprob);
+  if (receipt["toolchain"] !== undefined) { const tp = toolchainProblem(receipt["toolchain"]); if (tp) return bad(tp); }
   const heads = isObj(integ["heads"]) ? integ["heads"] : {}, outcomes = integ["outcomes"];
   const stated = receipt["integration"];
   if (stated !== undefined) {

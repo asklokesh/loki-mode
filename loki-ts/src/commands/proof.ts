@@ -43,7 +43,7 @@ const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
 Usage: loki proof <subcommand> [args]
 
 Subcommands:
-  list                 List proof-of-run artifacts in .loki/proofs/
+  list [--json]        List proof-of-run artifacts in .loki/proofs/
   show <id> [--json]   Compact reviewer summary; --json prints the full proof.json
   verify <id>          Re-check a receipt against your code (tamper + drift)
                        [--jwks <url|file>] also checks its attestation; [--human]
@@ -64,6 +64,8 @@ Options for 'share':
   --yes                Skip the redaction-preview confirmation prompt
   --private            Create a secret gist (default: public)
   --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)
+  --dry-run            Run the secret scan and list what would be published; publishes
+                       nothing. Exit 0 clean, 1 when the scan blocks
 
 Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out).
 `;
@@ -96,8 +98,43 @@ function pad(s: string, w: number): string {
   return s.length >= w ? s : s + " ".repeat(w - s.length);
 }
 
-function listProofs(): number {
+function listProofsJson(dir: string): number {
+  const out: Array<{ id: string; verdict: string | null; created: string | null }> = [];
+  let names: string[] = [];
+  try {
+    names = existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+      : [];
+  } catch {
+    names = [];
+  }
+  for (const id of names) {
+    const d = readProof(id);
+    if (d === null) continue;
+    const verdict = obj(d["honesty"])["headline"] ?? obj(d["council"])["final_verdict"];
+    const created = d["generated_at"];
+    out.push({
+      id,
+      verdict: verdict === undefined || verdict === null ? null : String(verdict),
+      created: created === undefined || created === null ? null : String(created),
+    });
+  }
+  // Newest first; ISO timestamps sort lexically. Missing created sorts last.
+  out.sort((a, b) => {
+    const ca = a.created ?? "";
+    const cb = b.created ?? "";
+    if (ca !== cb) return ca < cb ? 1 : -1;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
+  process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  return 0;
+}
+
+function listProofs(asJson = false): number {
   const dir = proofsDir();
+  if (asJson) return listProofsJson(dir);
   if (!existsSync(dir)) {
     process.stdout.write(`${YELLOW}No proofs found.${NC} Run 'loki start' to generate one.\n`);
     return 0;
@@ -594,8 +631,8 @@ async function ghReady(): Promise<boolean> {
 }
 
 // share for a run with no proof page: gist ONLY the bundle files (never the key or .loki tree).
-async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, visibility: string): Promise<number> {
-  if (!(await ghReady())) return 1;
+async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, visibility: string, dryRun = false): Promise<number> {
+  if (!dryRun && !(await ghReady())) return 1;
   const dir = mkdtempSync(join(tmpdir(), "loki-proof-"));
   try {
     const bdir = join(dir, "bundle");
@@ -610,6 +647,12 @@ async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, v
       process.stderr.write(`${RED}Share refused:${NC} redaction scan ${scan.ok ? `found ${scan.findings.length} finding(s)` : `failed (${scan.error ?? "unknown"})`}\n`);
       for (const f of scan.findings) process.stderr.write(`  - ${f.file}:${f.line} ${f.rule}\n`);
       return 1;
+    }
+    if (dryRun) {
+      process.stdout.write(`${BOLD}Dry run: run '${id}' bundle${NC}\n\nWould publish:\n`);
+      for (const f of ["receipt.json", "events.jsonl", "pubkey.jwk (public key only)", "VERIFY.md"]) process.stdout.write(`  - ${f}\n`);
+      process.stdout.write(`  - redaction scan: 0 findings\n\nDry run: nothing was published.\n`);
+      return 0;
     }
     const visLabel = visibility === "" ? "secret" : "public";
     process.stdout.write(`${BOLD}Publishing run '${id}' bundle as a ${visLabel} GitHub Gist${NC}\n\nWhat will be shared:\n`);
@@ -640,16 +683,41 @@ async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, v
   }
 }
 
+// share --dry-run for a proof page: scan a copy of the exact file share would
+// upload, print it, publish nothing. 1 when the scan blocks or fails.
+async function dryRunProofPage(id: string, html: string): Promise<number> {
+  const dir = mkdtempSync(join(tmpdir(), "loki-proof-"));
+  try {
+    copyFileSync(html, join(dir, "index.html"));
+    const scan = await runSecureScan(dir, { secretsEverywhere: true });
+    if (!scan.ok || scan.findings.length > 0) {
+      process.stderr.write(`${RED}Dry run: share would be refused:${NC} redaction scan ${scan.ok ? `found ${scan.findings.length} finding(s)` : `failed (${scan.error ?? "unknown"})`}\n`);
+      for (const f of scan.findings) process.stderr.write(`  - ${f.file}:${f.line} ${f.rule}\n`);
+      return 1;
+    }
+    process.stdout.write(`${BOLD}Dry run: proof '${id}'${NC}\n\nWould publish:\n  - ${html}\n  - redaction scan: 0 findings\n\nDry run: nothing was published.\n`);
+    return 0;
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 async function shareProof(argv: readonly string[]): Promise<number> {
   let id = "";
   let skipConfirm = false;
   let visibility = "--public";
   let hosted = false;
+  let dryRun = false;
   for (const a of argv) {
     if (a === "--yes" || a === "-y") skipConfirm = true;
     else if (a === "--private") visibility = "";
     else if (a === "--public") visibility = "--public";
     else if (a === "--hosted") hosted = true;
+    else if (a === "--dry-run") dryRun = true;
     else if (a.startsWith("-")) {
       process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
       return 1;
@@ -662,11 +730,12 @@ async function shareProof(argv: readonly string[]): Promise<number> {
   const html = join(proofsDir(), id, "index.html");
   if (!existsSync(html)) {
     const rp = runReceiptPath(id);
-    if (rp && !hosted) return shareRun(id, rp, skipConfirm, visibility);
+    if (rp && (!hosted || dryRun)) return shareRun(id, rp, skipConfirm, visibility, dryRun);
     process.stderr.write(`${RED}Proof page not found: ${id}/index.html${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
   }
+  if (dryRun) return dryRunProofPage(id, html);
   // R9 open-core hosted-publish seam. Only taken when the user explicitly
   // passes --hosted. The default gist path below stays unchanged for OSS users
   // (zero hosted backend required). We never silent-fall-back to gist here: the
@@ -871,7 +940,7 @@ export async function runProof(argv: readonly string[]): Promise<number> {
 
   switch (sub) {
     case "list":
-      return listProofs();
+      return listProofs(rest.includes("--json"));
     case "show":
       return showProof(rest);
     case "verify":

@@ -36,6 +36,8 @@ export type KpiSnapshot = {
   schema_version: 1;
   generated_at: string; // ISO 8601 UTC
   loki_dir: string;
+  // Present only under --since: the window start (ISO 8601 UTC). Efficiency totals cover records at or after it.
+  since?: string;
 
   // Efficiency KPIs (from .loki/metrics/efficiency/iteration-*.json).
   efficiency: {
@@ -265,14 +267,59 @@ function deriveAccuracy(
   return out;
 }
 
+/** Parse --since: "<N>d" (N days back from now) or "YYYY-MM-DD" (UTC midnight). Returns epoch ms, or null when invalid. */
+export function parseSince(raw: string, nowMs: number = Date.now()): number | null {
+  const days = /^(\d{1,5})d$/.exec(raw);
+  if (days) return nowMs - Number(days[1]) * 86_400_000;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const ms = Date.parse(`${raw}T00:00:00Z`);
+    // Some engines roll 2026-02-31 over silently; require the round trip to match.
+    if (Number.isFinite(ms) && new Date(ms).toISOString().startsWith(raw)) return ms;
+  }
+  return null;
+}
+
+// Efficiency records at or after sinceMs. A record's own "timestamp" (written by run.sh) wins; records without one
+// (the Bun writer) fall back to the file mtime. Malformed files are skipped like readEfficiencyDir does.
+function readEfficiencyDirSince(dir: string, sinceMs: number): EfficiencyRecord[] {
+  const out: EfficiencyRecord[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const f of entries) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const fp = join(dir, f);
+      const parsed: unknown = JSON.parse(readFileSync(fp, "utf8"));
+      if (!parsed || typeof parsed !== "object") continue;
+      const ts = (parsed as { timestamp?: unknown }).timestamp;
+      const parsedTs = typeof ts === "string" ? Date.parse(ts) : NaN;
+      const at = Number.isFinite(parsedTs) ? parsedTs : statSync(fp).mtimeMs;
+      if (at >= sinceMs) out.push(parsed as EfficiencyRecord);
+    } catch {
+      // ignore malformed file
+    }
+  }
+  return out;
+}
+
 // Main entry point. Returns a KPI snapshot for the given .loki dir.
 // All file reads are best-effort; missing files yield empty/null KPIs.
-export function computeKpis(lokiDir: string): KpiSnapshot {
+// opts.sinceMs limits the efficiency totals to records at or after that instant.
+export function computeKpis(lokiDir: string, opts: { sinceMs?: number } = {}): KpiSnapshot {
   const notes: string[] = [];
   const efficiencyDir = join(lokiDir, "metrics", "efficiency");
   const councilDir = join(lokiDir, "council");
 
-  const records = existsSync(efficiencyDir) ? readEfficiencyDir(efficiencyDir) : [];
+  const sinceMs = opts.sinceMs;
+  const records = !existsSync(efficiencyDir)
+    ? []
+    : sinceMs === undefined
+      ? readEfficiencyDir(efficiencyDir)
+      : readEfficiencyDirSince(efficiencyDir, sinceMs);
   if (!existsSync(efficiencyDir)) {
     // "zeroed" would be the same false claim in prose: cost is UNKNOWN here,
     // not zero. Tokens are UNKNOWN for the same reason. Duration alone is
@@ -286,6 +333,7 @@ export function computeKpis(lokiDir: string): KpiSnapshot {
     );
   }
 
+  if (sinceMs !== undefined) notes.push(`--since limits iteration totals only; council rounds are not windowed`);
   const rounds = readCouncilRounds(councilDir);
   if (!existsSync(councilDir)) {
     notes.push(`no .loki/council/ dir (accuracy KPIs zeroed)`);
@@ -308,6 +356,7 @@ export function computeKpis(lokiDir: string): KpiSnapshot {
     schema_version: 1,
     generated_at: new Date().toISOString(),
     loki_dir: lokiDir,
+    ...(sinceMs !== undefined ? { since: new Date(sinceMs).toISOString() } : {}),
     efficiency,
     accuracy,
     notes,
@@ -321,7 +370,7 @@ export function formatKpisJson(snap: KpiSnapshot): string {
 // Pretty-print for terminal output. Stable line ordering for golden tests.
 export function formatKpisHuman(snap: KpiSnapshot): string {
   const lines: string[] = [];
-  lines.push(`Loki Mode KPIs  (snapshot at ${snap.generated_at})`);
+  lines.push(`Loki Mode KPIs  (snapshot at ${snap.generated_at}${snap.since ? `, since ${snap.since.slice(0, 10)}` : ""})`);
   lines.push(`Source: ${snap.loki_dir}`);
   lines.push(``);
   lines.push(`Efficiency`);

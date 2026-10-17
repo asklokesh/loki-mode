@@ -844,15 +844,24 @@ async function runStatusBadge(): Promise<number> {
 // loki status --probe: re-probe the newest deploy record's health_url now. Exit 0 when healthy
 // (2xx/3xx) or when there is nothing to probe; exit 1 on a 4xx/5xx, timeout or network error
 // that persists across one retry after 5 seconds (LOKI_STATUS_PROBE_RETRY_DELAY_MS overrides).
-async function runStatusProbe(): Promise<number> {
+// With json=true the only stdout is one JSON object {url, ok, status, attempts, reason}; exit codes are unchanged.
+async function runStatusProbe(json = false): Promise<number> {
+  const say = (t: string): void => {
+    if (!json) process.stdout.write(t);
+  };
+  const emit = (o: { url: string | null; ok: boolean; status: number | null; attempts: number; reason: string | null }): void => {
+    if (json) process.stdout.write(`${JSON.stringify(o)}\n`);
+  };
   const d = await loadLastDeploy(lokiDir());
   if (d === null) {
-    process.stdout.write("No deploy to probe: no deploy record\n");
+    say("No deploy to probe: no deploy record\n");
+    emit({ url: null, ok: true, status: null, attempts: 0, reason: "no deploy record" });
     return 0;
   }
   const raw = d.rec !== null && typeof d.rec["health_url"] === "string" ? (d.rec["health_url"] as string).trim() : "";
   if (!/^https?:\/\/\S+$/.test(raw)) {
-    process.stdout.write("No deploy to probe: last deploy record has no health URL\n");
+    say("No deploy to probe: last deploy record has no health URL\n");
+    emit({ url: null, ok: true, status: null, attempts: 0, reason: "last deploy record has no health URL" });
     return 0;
   }
   const ms = Number(process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"]);
@@ -860,11 +869,17 @@ async function runStatusProbe(): Promise<number> {
   const rd = Number(process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"]);
   const retryMs = Number.isFinite(rd) && rd >= 0 ? rd : 5000;
   // One attempt: returns a failure reason, or null when healthy (prints the OK line).
+  let lastStatus: number | null = null;
   const attempt = async (): Promise<string | null> => {
+    lastStatus = null;
     try {
       const res = await fetch(raw, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+      lastStatus = res.status;
       if (res.status >= 200 && res.status < 400) {
-        process.stdout.write(`Deploy health OK: ${raw} returned ${res.status}\n`);
+        // A redirect to another host (login page, provider not-found page) is not this deploy's health.
+        const finalHost = res.url ? new URL(res.url).hostname : "";
+        if (finalHost !== "" && finalHost !== new URL(raw).hostname) return `redirected to a different host (${finalHost}), returned ${res.status}`;
+        say(`Deploy health OK: ${raw} returned ${res.status}\n`);
         return null;
       }
       return `returned ${res.status}`;
@@ -874,12 +889,19 @@ async function runStatusProbe(): Promise<number> {
   };
   // A cold start is not a regression: retry once after a pause before reporting.
   let why = await attempt();
-  if (why === null) return 0;
-  process.stdout.write(`Deploy health probe failed (${raw} ${why}); retrying once in ${Math.round(retryMs / 1000)}s\n`);
+  if (why === null) {
+    emit({ url: raw, ok: true, status: lastStatus, attempts: 1, reason: null });
+    return 0;
+  }
+  say(`Deploy health probe failed (${raw} ${why}); retrying once in ${Math.round(retryMs / 1000)}s\n`);
   await new Promise<void>((r) => setTimeout(r, retryMs));
   why = await attempt();
-  if (why === null) return 0;
-  process.stdout.write(`${RED}Deploy health REGRESSED: ${raw} ${why}${NC}\n`);
+  if (why === null) {
+    emit({ url: raw, ok: true, status: lastStatus, attempts: 2, reason: null });
+    return 0;
+  }
+  say(`${RED}Deploy health REGRESSED: ${raw} ${why}${NC}\n`);
+  emit({ url: raw, ok: false, status: lastStatus, attempts: 2, reason: why });
   return 1;
 }
 
@@ -1015,13 +1037,14 @@ export async function runStatus(argv: readonly string[]): Promise<number> {
   while (args.length > 0) {
     const flag = args[0];
     if (flag === "--json") {
+      if (args.includes("--probe")) return runStatusProbe(true);
       return runStatusJson();
     }
     if (flag === "--badge") {
       return runStatusBadge();
     }
     if (flag === "--probe") {
-      return runStatusProbe();
+      return runStatusProbe(args.includes("--json"));
     }
     if (flag === "--help" || flag === "-h") {
       process.stdout.write(`Usage: loki status [--json|--badge|--probe]\n`);

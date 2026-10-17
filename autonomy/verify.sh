@@ -2594,6 +2594,11 @@ OPTIONS:
                        no signed issue time, or is more than 300s in the
                        future. Exits 2 (UNCHECKED). Routed to the engine10
                        verifier.
+    --require-exogenous
+                       With a run receipt: exit 4 when a VERIFIED receipt has
+                       no agent-independent passing check or no recorded
+                       provenance (or set LOKI_VERIFY_REQUIRE_EXOGENOUS=1).
+                       Routed to the engine10 verifier.
     -h, --help         Show this help.
 
 GATES (deterministic, reproducible by construction):

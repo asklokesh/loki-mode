@@ -100,7 +100,7 @@ done
 # advice that omits the cap has moved the contradiction rather than closed it.
 dir="$(mk_state "cap_advice" "max_iterations_reached")"
 out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-if printf '%s' "$out" | grep -q 'LOKI_MAX_ITERATIONS'; then
+if grep -q 'LOKI_MAX_ITERATIONS' <<<"$out"; then
     pass "an iteration-capped run is told to raise LOKI_MAX_ITERATIONS"
 else
     fail "capped run advice omits the cap; resuming as-is hits the same limit"
@@ -108,7 +108,7 @@ fi
 
 dir="$(mk_state "budget_advice" "budget_exceeded")"
 out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-if printf '%s' "$out" | grep -q 'LOKI_BUDGET_LIMIT'; then
+if grep -q 'LOKI_BUDGET_LIMIT' <<<"$out"; then
     pass "a budget-capped run is told to raise LOKI_BUDGET_LIMIT"
 else
     fail "budget run advice omits the budget; resuming as-is hits the same limit"
@@ -128,7 +128,7 @@ for status in max_iterations_reached budget_exceeded; do
     dir="$(mk_state "noiter_$status" "$status")"
     out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
     # mk_state writes iteration 9; it must not appear as a promised pick-up.
-    if printf '%s' "$out" | grep -q 'picks up from iteration'; then
+    if grep -q 'picks up from iteration' <<<"$out"; then
         fail "$status: promises to pick up from an iteration that load_state resets to 0"
     else
         pass "$status: does not promise a resumed iteration count"
@@ -139,7 +139,7 @@ done
 # assertion above would pass on an implementation that dropped it everywhere.
 dir="$(mk_state "iter_interrupted" "interrupted")"
 out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-if printf '%s' "$out" | grep -q 'picks up from iteration'; then
+if grep -q 'picks up from iteration' <<<"$out"; then
     pass "interrupted: still promises the pick-up (it genuinely resumes)"
 else
     fail "interrupted lost its pick-up line; the assertion above was vacuous"
@@ -151,7 +151,7 @@ fi
 for status in council_approved council_force_approved completion_promise_fulfilled; do
     dir="$(mk_state "verdict_$status" "$status")"
     out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-    if printf '%s' "$out" | grep -q "$DEAD_END"; then
+    if grep -q "$DEAD_END" <<<"$out"; then
         pass "$status: resume correctly refuses (it routes to loki ship)"
     else
         fail "$status: resume offered to continue an APPROVED build -- worse than silence"
@@ -161,7 +161,7 @@ done
 # --- A stale spec path must not produce a command that fails on paste ---------
 dir="$(mk_state "stale_prd" "max_iterations_reached" "/nonexistent/definitely-gone.md")"
 out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-if printf '%s' "$out" | grep -q 'definitely-gone.md'; then
+if grep -q 'definitely-gone.md' <<<"$out"; then
     fail "a stale prdPath was interpolated; the printed command fails on paste"
 else
     pass "a stale prdPath degrades to bare 'loki start'"
@@ -174,7 +174,7 @@ mkdir -p "$WORK/live_prd"
 printf 'spec\n' > "$WORK/live_prd/spec.md"
 dir="$(mk_state "live_prd" "max_iterations_reached" "$WORK/live_prd/spec.md")"
 out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
-if printf '%s' "$out" | grep -q 'spec.md'; then
+if grep -q 'spec.md' <<<"$out"; then
     pass "a live prdPath is interpolated into the resume command"
 else
     fail "a live prdPath was dropped; the command would resume a different run"

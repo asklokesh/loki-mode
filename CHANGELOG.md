@@ -5,6 +5,71 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.43 (2026-10-17)
+
+### Fixed
+- Help and shell completions now list `loki report kpis --since` and `loki undo --list`, closing the help-changelog-drift red introduced by v11.17.40 (TEN-STABILITY-20, FC-TEN-STABILITY-20 HELP-FLAG-DRIFT).
+
+## v11.17.42 (2026-10-17)
+
+P0 fix-forward for the nightly 39016259458 failures.
+
+### Fixed
+
+- TEN-STABILITY-18: green the remaining nightly reds:
+  - util/check_result.ts is registered as a "not recorded" producer.
+  - The Wall brief size cap is re-measured.
+  - The router opt-out golden pins the pre-router Wall order.
+  - verify resolves uv with the live PATH (Bun.which).
+  - 15 legacy echo-into-grep forms are converted, and the sigpipe ceiling is lowered from 1728 to 1722.
+  - `loki verify --require-exogenous` routes through bin/loki and autonomy/loki and appears in help.
+  - The bare-loki UI test pins the new three-line control output.
+  - local-ci scopes gitleaks to origin/main..HEAD.
+- TEN-STABILITY-19: the moat P8 positive control records a real byte-compile build result again (P8 PROVEN). The first-run gate stub answers the login probe without touching the work tree (0 assertions failed).
+
+## v11.17.41 (2026-10-17)
+
+Wave AJ: 9 reviewed slices.
+
+### Added
+
+- TEN-SECURITY-06: secure-scan rule 6 flags disabled TLS verification.
+- TEN-SECURITY-05: redactSecrets strips secret query parameters from URLs.
+- TEN-ADOPTION-14: `loki proof list --json` prints the proof index as JSON.
+- TEN-DEPLOY-14: `loki status --probe --json` prints one JSON object.
+- TEN-QUALITY-16: the commit stage formats only the run's own changed files with the repo's configured formatter.
+- TEN-UX-19: `loki start --help` ends with brief, PRD file and issue reference examples.
+- TEN-SPEED-06: `loki doctor` runs its integration probes concurrently.
+
+### Fixed
+
+- TEN-STABILITY-15: `loki queue add` quarantines a corrupt queue file and warns, instead of overwriting every queued item.
+- TEN-COST-32: the cap-stop next-step line gets the run id from the real callers and covers the time cap.
+
+## v11.17.40 (2026-10-17)
+
+Wave AG: 14 reviewed slices.
+
+### Added
+
+- TEN-GATES-20: secure-scan reports files_scanned, and a zero-file scan is not_run instead of a pass.
+- TEN-COST-31: `loki report kpis --since <Nd|YYYY-MM-DD>` windows the iteration totals.
+- TEN-COST-34: the run summary spend line adds retry dollars when retry sessions cost money.
+- TEN-SPEED-07: a fix-round verify runs the previous round's failing test files first.
+- TEN-QUALITY-17: a test that fails and then passes on one immediate rerun is classified flaky, and flaky never counts as executed or exogenous proof.
+- TEN-QUALITY-18: TypeScript repos with no typecheck script get a `tsc --noEmit` typecheck.
+- TEN-UX-17: `loki undo --list` prints recent runs with verdict, files changed and age.
+- TEN-ADOPTION-13: `loki proof share --dry-run` runs the secret scan and lists what would be shared.
+
+### Fixed
+
+- TEN-GATES-18: risk classification reads manifest dependency changes from git data; the L0 guard allowlist records check_result.ts.
+- TEN-GATES-19: the composite seal records the node version only from a real probe, never bun's compat version.
+- TEN-SECURITY-04: redactSecrets strips GitLab, npm, Hugging Face and Stripe tokens and PEM private key blocks.
+- TEN-SPEED-08: preflight reuses a successful `gh auth status` probe for 10 minutes.
+- TEN-ADOPTION-15: the update hint and self-update share one registry helper.
+- TEN-DEPLOY-13: `loki status --probe` fails when the health URL redirects to a different origin.
+
 ## v11.17.39 (2026-10-17)
 
 ### Added

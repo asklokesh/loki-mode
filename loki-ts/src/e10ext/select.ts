@@ -161,3 +161,12 @@ export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: 
   }
   return { index: winner.a.index, reason: `rank: ${decidedBy}` };
 }
+
+/** TEN-SPEED-07: a fix round's verify runs the tests that failed last round first, so a still-red file is reported early and
+ *  the order of the rest is untouched (stable partition). Order only: every test still runs, no runner flag changes, so a
+ *  runner this does not know about behaves exactly as before. `prior` is the previous verify output's checks. */
+export function failedFirst<T extends TestRef>(tests: T[], prior: ReadonlyArray<{ name?: unknown; result?: unknown }> | undefined): T[] {
+  const red = new Set((prior ?? []).filter((c) => c.result === "fail" && typeof c.name === "string").map((c) => c.name as string));
+  if (red.size === 0) return tests;
+  return [...tests.filter((t) => red.has(refName(t))), ...tests.filter((t) => !red.has(refName(t)))];
+}
