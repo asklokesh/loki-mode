@@ -449,6 +449,11 @@ export function deployFlagError(args: readonly string[]): string | null {
     }
     return undefined;
   };
+  // TEN-DEPLOY-26: a value flag with no value is named here, before the paid build
+  for (const f of ["--health-url", "--domain", "--destination", "--env-file"]) {
+    const i = args.indexOf(f);
+    if (i >= 0 && (args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) return `start: ${f} requires a value\n`;
+  }
   const health = val("--health-url");
   if (health !== undefined) {
     let ok = false;

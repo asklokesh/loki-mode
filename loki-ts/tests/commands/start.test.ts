@@ -652,3 +652,22 @@ describe("conflicting budget flags (TEN-COST-43)", () => {
     expect(r.stderr).toContain("conflicting budget flags");
   });
 });
+
+describe("deploy flag missing value (TEN-DEPLOY-26)", () => {
+  const bad: string[][] = [["--health-url"], ["--destination"], ["--env-file"], ["--domain"], ["--domain", "--simple"], ["--health-url", "--auto-rollback"]];
+  it("deploy flag missing value: each is named", () => {
+    for (const a of bad) expect(deployFlagError(["x", "--deploy", ...a])).toContain(`${a[0]} requires a value`);
+  });
+  it("deploy flag missing value: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d26-"));
+    try {
+      for (const a of bad) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", "--deploy", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(`${a[0]} requires a value`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
