@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultCheckout, defaultIssue, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
+import { defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
 import { extractChecks } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
@@ -186,6 +186,19 @@ echo "unexpected: $*" >&2; exit 2
     const bad = defaultIssue("o/r#1", { ...env, FAKE_GH_FAIL: "1" }, fetch);
     expect(bad.lookupFailed).toBe(true);
     expect(bad.authorAssociation).toBeUndefined();
+  });
+
+  test("gh timeout: a stalled gh throws within the bound instead of hanging", () => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(join(bin, "gh"), 0o755);
+    const env = { ...process.env, PATH: `${bin}:${process.env["PATH"]}`, LOKI_VPR_GH_TIMEOUT_MS: "300" };
+    const t0 = Date.now();
+    expect(() => defaultPrMeta({ repo: "o/r", number: 1 }, env)).toThrow();
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    const i = defaultIssue("o/r#1", env, () => ({ body: ISSUE }));
+    expect(i.lookupFailed).toBe(true);
   });
 
   test("OWNER, MEMBER and COLLABORATOR are trusted; repo match ignores case", async () => {

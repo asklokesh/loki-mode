@@ -54,7 +54,9 @@ export function parsePrRef(s: string): PrRef | null {
   return { repo: u[1]!, number: Number(u[2]) };
 }
 
-const sh = (args: string[], env: NodeJS.ProcessEnv): string => execFileSync("gh", args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
+/** A stalled gh must not hang verify-pr: the kill surfaces as a thrown error, the same path as any other gh failure. */
+const ghTimeoutMs = (env: NodeJS.ProcessEnv): number => { const n = Number(env["LOKI_VPR_GH_TIMEOUT_MS"]); return Number.isFinite(n) && n > 0 ? n : 60_000; };
+const sh = (args: string[], env: NodeJS.ProcessEnv): string => execFileSync("gh", args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: ghTimeoutMs(env), killSignal: "SIGKILL" });
 
 /** Issue body plus who wrote it and their association with the repo (the trust signal). `gh issue view --json` has no
  *  authorAssociation field, so the association comes from the REST issue object. A failed lookup is flagged, never guessed. */
