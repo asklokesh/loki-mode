@@ -2,8 +2,9 @@
 // real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference
 // it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
@@ -63,7 +64,21 @@ function readText(p: string): string {
 function normalizeRel(raw: string): string {
   return raw.split(sep).join("/").replace(/^\.\//, "");
 }
-// ponytail: full recursive walk minus SKIP_DIRS; add a file cap or `git ls-files` if a huge monorepo makes this slow.
+/** TEN-SPEED-13: tracked plus untracked-not-ignored files from git (honours .gitignore), same SKIP_DIRS filter and sort as the walk. Null outside a repo or when git lists nothing, so the caller falls back to the walk. */
+function gitFiles(root: string): string[] | null {
+  try {
+    const raw = safeGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 256 * 1024 * 1024, timeout: 60_000 });
+    const out = new Set<string>();
+    for (const p of raw.split("\0")) {
+      if (p === "" || p.split("/").some((seg, i, a) => i < a.length - 1 && SKIP_DIRS.has(seg))) continue;
+      try { if (lstatSync(join(root, p)).isFile()) out.add(p); } catch { /* deleted but still indexed */ }
+    }
+    return out.size ? [...out].sort() : null;
+  } catch {
+    return null;
+  }
+}
+/** Recursive walk minus SKIP_DIRS: the fallback outside a git repo. */
 function walk(root: string): string[] {
   const out: string[] = [];
   const stack = [root];
@@ -88,7 +103,7 @@ function walk(root: string): string[] {
 }
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
-  const files = walk(root);
+  const files = gitFiles(root) ?? walk(root);
   const evidence: Partial<Record<RunnerName, string>> = {};
   const mark = (r: RunnerName, file: string): void => {
     if (!(r in evidence)) evidence[r] = file;
