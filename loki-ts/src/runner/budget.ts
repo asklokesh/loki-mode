@@ -21,13 +21,19 @@ import { type CostResult, type EfficiencySessionInfo, num, writeEfficiencyRecord
 // LM-002: the default per-run cap (default_max_cost_usd) lives in loki-ts/data/model-pricing.json, also read by autonomy/run.sh and autonomy/loki.
 // The data dir is ../../data from src/runner (this file) and ../data from the bundled dist; the literal is only the last-resort fallback, and a test pins it to the file.
 const DEFAULT_FALLBACK_USD = 100;
-export function loadDefaultMaxCostUsd(): number {
+let pricingFallbackWarned = false;
+export function resetPricingFallbackWarning(): void { pricingFallbackWarned = false; }
+export function loadDefaultMaxCostUsd(dataDirs: string[][] = [["..", "..", "data"], ["..", "data"]]): number {
   const here = dirname(fileURLToPath(import.meta.url));
-  for (const rel of [["..", "..", "data"], ["..", "data"]]) {
+  for (const rel of dataDirs) {
     try {
       const j = JSON.parse(readFileSync(resolve(here, ...rel, "model-pricing.json"), "utf8")) as { default_max_cost_usd?: unknown };
       if (typeof j.default_max_cost_usd === "number" && Number.isFinite(j.default_max_cost_usd) && j.default_max_cost_usd > 0) return j.default_max_cost_usd;
     } catch { /* try the next location */ }
+  }
+  if (!pricingFallbackWarned) {
+    pricingFallbackWarned = true;
+    process.stderr.write(`loki: warning: model-pricing.json is missing or unreadable (looked in ${dataDirs.map((r) => resolve(here, ...r)).join(", ")}); using fallback default max cost $${DEFAULT_FALLBACK_USD}\n`);
   }
   return DEFAULT_FALLBACK_USD;
 }
