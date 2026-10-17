@@ -24,6 +24,8 @@ import { draftReason, isDraft } from "../../src/engine10/pr_body.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
+import { envCapS } from "../../src/engine10/types.ts";
+import { resolveRunCapS, yamlRunCapS } from "../../src/util/run_cap.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
 const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
@@ -206,5 +208,43 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
 
   test("draftReason: a non-VERIFIED verdict without a cap names the verdict", () => {
     expect(draftReason("SPEC_CONFLICT", false)).toBe("verdict SPEC_CONFLICT");
+  });
+});
+
+describe("invalid cap warns", () => {
+  const capture = (fn: () => void): string => {
+    const orig = process.stderr.write.bind(process.stderr);
+    let out = "";
+    (process.stderr as { write: unknown }).write = (c: unknown) => { out += String(c); return true; };
+    try { fn(); } finally { (process.stderr as { write: unknown }).write = orig; }
+    return out;
+  };
+  test("invalid cap warns once per value, names value and default, never loosens", () => {
+    const out = capture(() => {
+      for (const v of ["abc-e10", "0", "-5"]) { expect(envCapS(v)).toBeNull(); expect(envCapS(v)).toBeNull(); }
+      expect(yamlRunCapS("budgets:\n  run_cap_s: zzz\n")).toBeNull();
+      expect(yamlRunCapS("budgets:\n  run_cap_s: 1.5\n")).toBeNull();
+    });
+    expect(out).toContain('LOKI_E10_CAP_S="abc-e10"');
+    expect(out).toContain('budgets.run_cap_s="zzz"');
+    expect(out).toContain("900s");
+    expect(out.split("\n").filter((l) => l.includes('LOKI_E10_CAP_S="abc-e10"')).length).toBe(1);
+    expect(out.split("\n").filter((l) => l.startsWith("loki: ignoring")).length).toBe(5);
+  });
+  test("valid, blank and unset print nothing", () => {
+    const out = capture(() => {
+      expect(envCapS("30")).toBe(30); expect(envCapS(undefined)).toBeNull(); expect(envCapS("")).toBeNull();
+      expect(yamlRunCapS("budgets:\n  run_cap_s: 600\n")).toBe(600); expect(yamlRunCapS("x: 1\n")).toBeNull();
+    });
+    expect(out).toBe("");
+  });
+  test("real entry: resolveRunCapS with a bad env warns and keeps 900", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-capw-"));
+    try {
+      let r: ReturnType<typeof resolveRunCapS> | undefined;
+      const out = capture(() => { r = resolveRunCapS(dir, true, { LOKI_E10_CAP_S: "bad-entry" } as NodeJS.ProcessEnv); });
+      expect(r?.capS).toBe(900);
+      expect(out).toContain('LOKI_E10_CAP_S="bad-entry"');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
