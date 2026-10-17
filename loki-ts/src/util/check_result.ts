@@ -254,13 +254,13 @@ export async function withExplain(args: readonly string[], run: (args: readonly 
 // RISKTIER: classify risk on the ARTIFACT (the actual diff), never the prompt, and map the tier to a verification plan.
 // The bash `loki review --risk` scorer (autonomy/lib/review_risk.py) stays a separate 0-100 advisory view.
 export type RiskTier = "low" | "medium" | "high";
-export interface DiffFile { path: string; added: number; deleted: number; status?: "added" | "modified" | "deleted" }
+export interface DiffFile { path: string; added: number; deleted: number; status?: "added" | "modified" | "deleted"; deps?: boolean /* set by diffFiles for a dependency manifest whose dependency set changed */ }
 export interface RiskOverride { from: RiskTier; to: RiskTier; reason: string }
 export interface RiskAssessment {
   version: 1; tier: RiskTier; computed: RiskTier; reasons: string[];
   stats: { files: number; lines: number; sensitive: string[]; tests_modified: string[]; tests_deleted: string[]; api: string[] };
   checks_selected: string[]; checks_deferred: string[]; // deferred = planned for this tier but NOT run by the fast verify stage; never a pass
-  override?: RiskOverride; override_ignored?: string; summary: string;
+  override?: RiskOverride; override_ignored?: string; advisories?: string[]; summary: string;
 }
 
 const SENSITIVE: [string, RegExp][] = [
@@ -297,7 +297,45 @@ function summaryOf(a: Pick<RiskAssessment, "tier" | "computed" | "reasons" | "ov
 /** Marks selected deeper checks that verify really executed (for example the full test command), then rebuilds deferred and summary. */
 export function markExecuted(a: RiskAssessment, executed: string[]): RiskAssessment {
   const checks_deferred = deferredOf(a.tier, a.checks_selected, executed);
-  return { ...a, checks_deferred, summary: summaryOf({ ...a, checks_deferred }) };
+  return { ...a, checks_deferred, summary: summaryOf({ ...a, checks_deferred }) + (a.advisories?.length ? `; advisory: ${a.advisories.join(", ")}` : "") };
+}
+
+// TEN-GATES-18: advisory only. A dependency manifest whose dependency set changed with no lockfile change beside it (same or ancestor dir) is flagged; it never alters the tier.
+const MANIFEST_LOCKS: [RegExp, RegExp][] = [
+  [/(^|\/)package\.json$/, /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/],
+  [/(^|\/)pyproject\.toml$/, /(^|\/)(poetry\.lock|uv\.lock|pdm\.lock|Pipfile\.lock)$/],
+  [/(^|\/)go\.mod$/, /(^|\/)go\.sum$/],
+];
+const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+const PKG_DEP_KEYS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+const PYPROJECT_NONDEP = /^(name|version|description|readme|license|requires-python|python|authors|maintainers|keywords|classifiers|homepage|repository|documentation|packages|include|exclude)$/;
+
+/** Pure: did the dependency set of this manifest change? package.json compares the four dependency maps (scripts-only edits are false); go.mod and pyproject.toml read the -U0 patch. Unparseable package.json counts as changed. */
+export function manifestDepsChanged(path: string, oldText: string, newText: string, patch: string): boolean {
+  if (/(^|\/)package\.json$/.test(path)) {
+    try {
+      const o = oldText.trim() ? JSON.parse(oldText) : {}, n = newText.trim() ? JSON.parse(newText) : {};
+      return PKG_DEP_KEYS.some((k) => JSON.stringify(o?.[k] ?? {}) !== JSON.stringify(n?.[k] ?? {}));
+    } catch { return true; }
+  }
+  const changed = patch.split("\n").filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
+  if (/(^|\/)go\.mod$/.test(path)) return changed.some((l) => { const b = l.slice(1).trim(); return b !== "" && !b.startsWith("//") && !/^(module|go|toolchain)\b/.test(b); });
+  return changed.some((l) => {
+    const b = l.slice(1).trim();
+    if (/^"[A-Za-z][\w.-]*(\[[\w,.-]+\])?\s*([<>=~!]|;|@|"\s*,?\s*$)/.test(b)) return true; // PEP 508 list entry
+    const m = /^([A-Za-z][\w.-]*)\s*=\s*("[\^~<>=!*\d]|\{[^}]*version)/.exec(b); // poetry-style name = "^1.0"
+    return !!m && !PYPROJECT_NONDEP.test(m[1]!);
+  });
+}
+
+/** Pure: manifests with changed dependencies and no matching lockfile in the same or an ancestor directory of the diff. */
+export function manifestsWithoutLock(files: DiffFile[]): string[] {
+  return files.filter((f) => f.deps && f.status !== "deleted").flatMap((f) => {
+    const pair = MANIFEST_LOCKS.find(([m]) => m.test(f.path)); if (!pair) return [];
+    const d = dirOf(f.path);
+    const locked = files.some((g) => pair[1].test(g.path) && (dirOf(g.path) === "" || d === dirOf(g.path) || d.startsWith(dirOf(g.path) + "/")));
+    return locked ? [] : [f.path];
+  });
 }
 
 export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process.env): RiskAssessment {
@@ -329,12 +367,13 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
     else ignored = `LOKI_RISK_TIER=${asked} ignored: lowering from ${computed} needs LOKI_RISK_OVERRIDE_REASON`;
   }
   const plan = PLAN[tier], checks_deferred = deferredOf(tier, plan.selected, []);
-  const summary = summaryOf({ tier, computed, reasons, ...(override ? { override } : {}), checks_deferred });
+  const advisories = manifestsWithoutLock(files).map((p) => `manifest changed without lockfile: ${p}`);
+  const summary = summaryOf({ tier, computed, reasons, ...(override ? { override } : {}), checks_deferred }) + (advisories.length ? `; advisory: ${advisories.join(", ")}` : "");
   return {
     version: 1, tier, computed, reasons,
     stats: { files: files.length, lines, sensitive, tests_modified: testsModified, tests_deleted: testsDeleted, api },
     checks_selected: plan.selected, checks_deferred,
-    ...(override ? { override } : {}), ...(ignored ? { override_ignored: ignored } : {}), summary,
+    ...(override ? { override } : {}), ...(ignored ? { override_ignored: ignored } : {}), ...(advisories.length ? { advisories } : {}), summary,
   };
 }
 
@@ -361,12 +400,22 @@ export function diffFiles(repoDir: string, baseSha: string): DiffFile[] {
     const [s, ...p] = l.split("\t"), f = stat.get(p[p.length - 1] ?? "");
     if (f) f.status = s?.startsWith("A") ? "added" : s?.startsWith("D") ? "deleted" : "modified";
   }
-  return paths.map((path) => {
+  const out = paths.map((path) => {
     const f = stat.get(path);
     if (f) return f;
     let n = 0; try { n = readFileSync(join(repoDir, path), "utf8").split("\n").length; } catch { /* unreadable or binary */ }
     return { path, added: n, deleted: 0, status: "added" as const };
   });
+  for (const f of out) { // TEN-GATES-18: tag manifests whose dependency set changed (advisory input; a read failure leaves it untagged)
+    if (f.status === "deleted" || !MANIFEST_LOCKS.some(([m]) => m.test(f.path))) continue;
+    try {
+      const oldText = f.status === "added" ? "" : safeGit(repoDir, ["show", `${baseSha}:${f.path}`]);
+      const newText = readFileSync(join(repoDir, f.path), "utf8");
+      const patch = f.status === "added" ? newText.split("\n").map((l) => `+${l}`).join("\n") : safeGit(repoDir, ["diff", "-U0", baseSha, "--", f.path]);
+      if (manifestDepsChanged(f.path, oldText, newText, patch)) f.deps = true;
+    } catch { /* best effort */ }
+  }
+  return out;
 }
 
 /** Writes .loki/state/risk-tier.json atomically; best effort, a recording failure never fails the run. */
