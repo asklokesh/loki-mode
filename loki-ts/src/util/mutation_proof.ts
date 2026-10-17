@@ -23,6 +23,8 @@ export const mutationEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =
 const LABEL = "test fails without the fix: ";
 const np = (reason: string): MutationProof => ({ outcome: "inconclusive", line: `${LABEL}inconclusive (${reason})` });
 const MAX_TOTAL_S = 40; // B2: seal stage limit is 60s; the whole proof (worktree add, every test, removal) must fit well inside it
+/** Only a positive finite number of seconds is accepted from the env; anything else (negative, zero, NaN, Infinity, junk) falls back to 30. */
+const envTimeoutS = (raw: string | undefined): number => { const n = Number(raw ?? 30); return Number.isFinite(n) && n > 0 ? n : 30; };
 const DEP_DIRS = ["node_modules", ".venv", "venv"];
 const git = (cwd: string, args: string[], timeout = 30_000): { status: number } => { try { safeGit(cwd, args, { timeout }); return { status: 0 }; } catch { return { status: 1 }; } };
 
@@ -33,7 +35,7 @@ export function mutationProof(i: MutationInput): MutationProof {
   const tests = rels.flatMap((rel) => { const c = i.checks.find((k) => k.name.endsWith(`:${rel}`)); const idx = c ? c.name.indexOf(":") : -1; return c && idx > 0 ? [{ runner: c.name.slice(0, idx), path: rel }] : []; });
   if (tests.length === 0) return np("no recorded Wall test command");
   if (tests.length !== rels.length) return np("a Wall file has no recorded test command"); // N1
-  const budgetS = Math.min(i.timeoutS ?? (Number((i.env ?? process.env)["LOKI_MUTATION_PROOF_TIMEOUT_S"] ?? 30) || 30), MAX_TOTAL_S);
+  const budgetS = Math.min(i.timeoutS ?? envTimeoutS((i.env ?? process.env)["LOKI_MUTATION_PROOF_TIMEOUT_S"]), MAX_TOTAL_S);
   const deadline = Date.now() + budgetS * 1000, remaining = (): number => deadline - Date.now();
   let parent: string | null = null, wt: string | null = null, added = false;
   try {
