@@ -2082,6 +2082,7 @@ inj_run_bun_default() {
 # do). Comments, strings, regex literals, templates and JSX are the real grammar's
 # job. A file that does not parse is reported as PARSE and fails the case.
 #   scan  <ts.js>  (NUL-separated paths on stdin): FLAG<TAB>comma|import|indirect<TAB>file
+#   json  <ts.js>  (NUL-separated *.json paths): FLAG<TAB>escape<TAB>file for an escaped allowToken key
 #   strip <ts.js>  (one path on stdin): the file with comments replaced by blanks
 P9_AST_JS='
 const fs = require("fs"), ts = require(process.argv[1]), mode = process.argv[2];
@@ -2185,7 +2186,16 @@ function scan(P) {
   if (dynLoader && strMention) flags.add("import");
   return flags;
 }
-if (mode === "strip") {
+if (mode === "json") {
+  // A JSON module can carry allowToken as an escaped key the raw grep cannot see.
+  for (const f of files) {
+    const raw = fs.readFileSync(f, "utf8");
+    let hit = false;
+    try { JSON.parse(raw, (k, v) => { if (k === "allowToken") hit = true; return v; }); }
+    catch (e) { console.log("PARSE\t" + f); continue; }
+    if (hit && !raw.includes("allowToken")) console.log("FLAG\tescape\t" + f);
+  }
+} else if (mode === "strip") {
   const P = parse(files[0]);
   if (P.bad) { process.stderr.write("PARSE " + files[0] + "\n"); process.exit(3); }
   process.stdout.write(stripComments(P));
@@ -2251,6 +2261,16 @@ EOF_HITS
         esac
     done < <(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.jsx' \) ! -path '*/util/safe_git.ts' -print0 \
         | node -e "$P9_AST_JS" "$ts_js" scan 2>&1)
+    # JSON modules: parse every *.json under src; a key that decodes to allowToken
+    # while the raw text never spells it is an escaped key (hidden from the grep).
+    while IFS=$'\t' read -r kind rest f2; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" != FLAG ]; then
+            nok "allowToken scan could not parse JSON (fail closed): ${rest#"$REPO_ROOT"/}"
+            continue
+        fi
+        nok "allowToken spelled with an escape sequence in a JSON key (hidden from the raw grep): ${f2#"$src"/}"
+    done < <(find "$src" -type f -name '*.json' -print0 | node -e "$P9_AST_JS" "$ts_js" json 2>&1)
     # Fetch-only pin: exactly one allowToken occurrence (raw and comment-stripped),
     # and across the whole comment-stripped file it is followed by the fetch-only
     # expression and then , or } (newlines allowed), so a widened or second use fails.
@@ -2297,7 +2317,7 @@ allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require comma-prop-call dyn-import-template loader-template-literal loader-aliased-spec ext-js ext-mjs ext-cjs ext-mts ext-cts ext-jsx allowtoken-core allowtoken-quoted allowtoken-escaped-ident allowtoken-escaped-string import-alias-config optional-call optional-prop-head optional-prop-call fetch-pin-widened escape-template export-rename-barrel import-rename-barrel indirect-template-key strmention-tail strmention-middle strmention-nosub json-escaped-key"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2394,6 +2414,24 @@ const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
                             body='export function f(m: any) { m?.safeGitEnv(process.env); }' ;;
             optional-prop-call) # indirect rule alone: optional call on a property access
                             body='export function f(m: any) { m.safeGitEnv?.(process.env); }' ;;
+            fetch-pin-widened) # fetch-pin rule alone: the pin widened to a second verb
+                            printf '%s\n' "$real_bg" | sed 's/allowToken: args\[0\] === "fetch"/allowToken: args[0] === "fetch" || args[0] === "push"/' > "$t/util/base_guard.ts"; body='export {};' ;;
+            escape-template) # escape rule alone, NoSubstitutionTemplateLiteral operand (escaped so the raw grep stays blind)
+                            body='import { safeGit } from "./util/safe_git.ts"; safeGit(".", ["push"], { [`allow\u0054oken`]: true });' ;;
+            export-rename-barrel) # export rule alone: renamed re-export from a non-safe_git barrel (propertyName only)
+                            body='export { safeGitEnv as g } from "./b1.ts";' ;;
+            import-rename-barrel) # named-import rule alone: renamed import of a helper from a non-safe_git barrel
+                            body='import { safeGitEnv as g } from "./barrel.ts"; g(process.env, true);' ;;
+            indirect-template-key) # lit() NoSubstitutionTemplate operand alone: template-keyed element access
+                            body='export function f(m: any) { m[`safeGitEnv`](process.env, true); }' ;;
+            strmention-tail) # strMention TemplateTail alone: helper path ends in the tail of a templated import
+                            body='const d = "./util"; await import(`${d}/safe_git.ts`); m[k](process.env, true);' ;;
+            strmention-middle) # strMention TemplateMiddle alone: safe_git sits in the middle of a templated import
+                            body='await import(`${d}/safe_git${e}`);' ;;
+            strmention-nosub) # strMention NoSubstitutionTemplate alone: helper name in a template, path joined at run time
+                            body='const k = `safeGitEnv`; const p = "./util/safe_" + "git.ts"; const m = await import(p); m[k](process.env, true);' ;;
+            json-escaped-key) # JSON rule alone: escaped allowToken key in a JSON module
+                            ext=json; body='{"allow\u0054oken": true}' ;;
             probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
@@ -2405,6 +2443,13 @@ safeGitEnv(;' ;;
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # Fail closed when the TypeScript compiler cannot be found.
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    P9_TS_CANDIDATES=/nonexistent allowtoken_scan "$src"
+    case "$CASE_FAILS" in
+        *"prerequisite missing: typescript"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'ts-missing' did not fail closed with 'prerequisite missing: typescript'" ;;
+    esac
     # Negative control: look-alikes the scan must NOT flag (names in comments, strings
     # and regex literals, and a plain one-argument call), so a scan that flags every
     # file cannot pass the positive controls above by being blind the other way.
