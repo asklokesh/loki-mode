@@ -3,7 +3,7 @@ import { runControl } from "../../src/commands/control.ts";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
 const realFetch = globalThis.fetch;
 let out = "";
@@ -239,5 +239,27 @@ describe("loki control status extra args", () => {
     expect(await runControl(["stop", "extra"], env)).toBe(2);
     expect(err).toContain("Usage: loki control stop");
     expect(out).toBe("");
+  });
+});
+
+describe("loki control unknown subcommand", () => {
+  let err = "";
+  let realErr: typeof process.stderr.write;
+  beforeEach(() => { err = ""; realErr = process.stderr.write; process.stderr.write = ((s: string | Uint8Array) => { err += String(s); return true; }) as typeof process.stderr.write; });
+  afterEach(() => { process.stderr.write = realErr; });
+  test("did you mean: suggests nearest subcommand, exit 2", async () => {
+    expect(await runControl(["statsu"], env)).toBe(2);
+    expect(err).toContain("unknown command 'statsu'");
+    expect(err).toContain("Did you mean 'status'?");
+    expect(err).toContain("Usage: loki control");
+  });
+  test("did you mean: no hint for a far-off word", async () => {
+    expect(await runControl(["zzzzzzzz"], env)).toBe(2);
+    expect(err).not.toContain("Did you mean");
+  });
+  test("did you mean: works through bin/loki", () => {
+    const r = spawnSync(join(import.meta.dir, "..", "..", "..", "bin", "loki"), ["control", "statsu"], { encoding: "utf8" });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("Did you mean 'status'?");
   });
 });
