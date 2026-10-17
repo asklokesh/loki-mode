@@ -16,7 +16,7 @@ import type { RunContext, SessionRunOptions, Stage, StageName, TestMap, TestRef 
 
 const dirs: string[] = [];
 const saved = { ...process.env };
-afterEach(() => { for (const k of ["LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER", "LOKI_E10_WALL_LIMIT_S", "LOKI_E10_CASCADE", "LOKI_MODEL_OVERRIDE"]) delete process.env[k]; });
+afterEach(() => { for (const k of ["LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER", "LOKI_E10_WALL_LIMIT_S", "LOKI_E10_CASCADE", "LOKI_MODEL_OVERRIDE", "LOKI_E10_SMALL_MAX_CHARS", "LOKI_E10_SMALL_NO_RUNNER"]) delete process.env[k]; });
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); process.env = saved; });
 
 const TM: TestMap = { runners: ["bun"], tests: [{ runner: "bun", path: "tests/a.test.ts" }] };
@@ -360,5 +360,43 @@ describe("W1-S3 size-tied Wall time cap", () => {
   it("LOKI_E10_WALL_LIMIT_S=240 reaches the Wall session as 240", async () => {
     process.env.LOKI_E10_WALL_LIMIT_S = "240";
     expect((await wallRun(LONG)).seen[0]!.limitS).toBe(240);
+  });
+});
+
+describe("engine10 TEN-COST-26 sizing knobs", () => {
+  const map = { files: ["a.ts"], entries: [], truncated: false };
+  const long = "fix a.ts " + "x".repeat(691); // 700 chars
+  const noRunner: TestMap = { runners: [], tests: [] };
+  it("defaults are unchanged: 700 chars and no runner both size normal", () => {
+    expect(sizeTask(long, map, TM).size).toBe("normal");
+    expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
+    expect(sizeTask("fix a.ts " + "x".repeat(591), map, TM).size).toBe("small"); // exactly 600
+  });
+  it("LOKI_E10_SMALL_MAX_CHARS=800 sizes a 700-char task small; 699 keeps it normal (numeric, not string compare)", () => {
+    expect(long.length).toBe(700);
+    process.env.LOKI_E10_SMALL_MAX_CHARS = "800";
+    expect(sizeTask(long, map, TM).size).toBe("small");
+    process.env.LOKI_E10_SMALL_MAX_CHARS = "699";
+    expect(sizeTask(long, map, TM).size).toBe("normal");
+    process.env.LOKI_E10_SMALL_MAX_CHARS = "1000"; // a string compare would put "700" > "1000"
+    expect(sizeTask(long, map, TM).size).toBe("small");
+    for (const bad of ["abc", "0", "-5", ""]) { process.env.LOKI_E10_SMALL_MAX_CHARS = bad; expect(sizeTask(long, map, TM).size).toBe("normal"); }
+  });
+  it("LOKI_E10_SMALL_NO_RUNNER=1 sizes a no-runner task small; other values and a missing map still normal", () => {
+    process.env.LOKI_E10_SMALL_NO_RUNNER = "1";
+    expect(sizeTask("fix a.ts", map, noRunner).size).toBe("small");
+    expect(sizeTask("fix a.ts", map, null).size).toBe("small");
+    expect(sizeTask("fix a.ts", null, noRunner).size).toBe("normal");
+    process.env.LOKI_E10_SMALL_NO_RUNNER = "0";
+    expect(sizeTask("fix a.ts", map, noRunner).size).toBe("normal");
+  });
+  it("a no-runner small task still routes to wall, never lean", () => {
+    process.env.LOKI_E10_SMALL_NO_RUNNER = "1";
+    expect(smallTaskPath(sizeTask("fix a.ts", map, noRunner).size, false)).toBe("wall");
+  });
+  it("through the machine: a 700-char task with the knob emits size small in the variant event", async () => {
+    process.env.LOKI_E10_SMALL_MAX_CHARS = "800";
+    const { events } = await run("fix the off-by-one in mod1.ts " + "x".repeat(670), files(10));
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ size: "small" });
   });
 });
