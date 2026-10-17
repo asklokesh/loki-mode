@@ -7,7 +7,7 @@ about the cost-per-accepted ratio (loki / floor). A paired bootstrap over tasks
 the point estimate.
 
 Row shape (dict): task_id, accepted (bool), cost_usd (float), and optionally
-cost_partial (bool), unmeasured (bool), engine (str), loki_version (str), model_used (str).
+cost_partial (bool), unmeasured (bool), cost_profile (str), engine (str), loki_version (str), model_used (str).
 Rows may also carry elapsed_s; the verdict adds an informational paired time
 ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
 Rows without a usable elapsed_s are excluded from it and counted. The time
@@ -121,9 +121,21 @@ def _acc_rate(rows):
     return sum(1 for r in rows if r.get("accepted")) / len(rows) if rows else 0.0
 
 
+def _loki_cost_profile(loki):
+    """The loki arm's single cost_profile, "mixed", or None if no row names one."""
+    profiles = {r.get("cost_profile") for r in loki}
+    if profiles <= {None}:
+        return None
+    if len(profiles) > 1:
+        return "mixed"
+    return next(iter(profiles))
+
+
 def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
                        iters=BOOTSTRAP_ITERS):
-    """Return {verdict, target, ratio, ci_low, ci_high, unmeasured, reasons}."""
+    """Return {verdict, target, ratio, ci_low, ci_high, unmeasured, cost_profile,
+    reasons, ...}. cost_profile is the loki arm's profile (lean, default, off),
+    "mixed" when the arm mixes or partly lacks it, null when no row names one."""
     reasons = []
     unmeasured = sum(1 for r in list(loki_rows) + list(floor_rows)
                      if r.get("unmeasured"))
@@ -168,6 +180,11 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         reasons.append("acceptance: loki %.3f below floor %.3f"
                        % (_acc_rate(loki), _acc_rate(floor)))
 
+    cost_profile = _loki_cost_profile(loki)
+    if cost_profile == "mixed":
+        reasons.append("cost_profile: loki arm mixes profiles or lacks "
+                       "cost_profile on some rows")
+
     ci = bootstrap_ratio_ci(loki, floor, seed, iters) if loki and floor else None
     ratio = lo = hi = None
     if ci:
@@ -191,6 +208,7 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         "ci_low": lo,
         "ci_high": hi,
         "unmeasured": unmeasured,
+        "cost_profile": cost_profile,
         "reasons": reasons,
         "time_ratio": tci[0] if tci else None,
         "time_ci": [tci[1], tci[2]] if tci else None,
@@ -258,11 +276,17 @@ def main(argv=None):
         print("warning: skipped %d non-object row(s)" % skipped,
               file=sys.stderr)
     excl = set(a.exclude_task)
+    seen_tasks = {r.get("task") for r in rows}
+    unmatched = sorted(t for t in excl if t not in seen_tasks)
+    for t in unmatched:
+        print("warning: --exclude-task %r matches no row" % t,
+              file=sys.stderr)
     rows = [_map_row(r) for r in rows if r.get("task") not in excl]
     loki = [r for r in rows if r.get("arm") == a.loki_arm]
     floor = [r for r in rows if r.get("arm") == a.floor_arm]
     v = cost_claim_verdict(loki, floor, a.target)
     v["excluded_tasks"] = sorted(excl)
+    v["unmatched_exclusions"] = unmatched
     v["skipped_non_object_rows"] = skipped
     print(json.dumps(v, indent=2, sort_keys=True))
     return 0 if v["verdict"].startswith("PROVEN_AT") else 1
