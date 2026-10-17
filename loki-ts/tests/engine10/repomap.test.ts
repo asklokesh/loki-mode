@@ -5,7 +5,7 @@
 // regression check so the existing behavior stays intact.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRepoMap } from "../../src/engine10/repomap.ts";
@@ -85,6 +85,16 @@ test("python method past byte 20000 is indexed as Class.method", () => {
   commitAll();
   const symbols = buildRepoMap(dir).entries.find((e) => e.path === "models.py")?.symbols;
   expect(symbols).toEqual(["QuerySet", "QuerySet.bulk_create", "QuerySet.aget", "helper"]);
+});
+
+test("bounded read: huge file is indexed from its head, tail past the cap is ignored", () => {
+  writeFileSync(join(dir, "big.ts"), "export const head = 1;\n");
+  commitAll();
+  // sparse 5GB file: a full utf8 read would exceed V8's string limit and yield no symbols
+  truncateSync(join(dir, "big.ts"), 5_000_000_000);
+  appendFileSync(join(dir, "big.ts"), "\nexport const tail = 2;\n");
+  const e = buildRepoMap(dir).entries.find((x) => x.path === "big.ts");
+  expect(e?.symbols).toEqual(["head"]);
 });
 
 test("symbols are capped at 300 per file", () => {
