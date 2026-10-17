@@ -519,6 +519,15 @@ describe("respondToReview", () => {
     expect(() => defaultRespondPush(d, "feat", script)).toThrow(/boom/);
   });
 
+  it("a hung push times out with a bounded error", () => {
+    const d = mk();
+    const script = join(d, "hang-push.sh");
+    writeFileSync(script, "#!/bin/sh\nexec sleep 30\n");
+    const t0 = Date.now();
+    expect(() => defaultRespondPush(d, "feat", script, null, 300)).toThrow(/push timed out/);
+    expect(Date.now() - t0).toBeLessThan(10000);
+  });
+
   it("refuses a closed PR and a fork checkout before any fix or push", async () => {
     const closed = mkEnv([C(1, "x")], [], { state: "closed" });
     await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: closed.gh, git: closed.vcs, push: closed.push, fix: closed.edit })).rejects.toThrow(/not open/);
