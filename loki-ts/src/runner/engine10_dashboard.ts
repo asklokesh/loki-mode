@@ -323,11 +323,21 @@ export async function startServerReplacingOlder(repoDir: string, port: number): 
   return startServer(repoDir, port);
 }
 
+/** Validate LOKI_E10_DASHBOARD_PORT: an integer 1-65535, else the default plus a note. */
+export function resolveDashboardPort(raw: string | undefined): { port: number; note: string | null } {
+  if (raw === undefined) return { port: DEFAULT_PORT, note: null };
+  const t = raw.trim();
+  const n = Number(t);
+  if (t !== "" && Number.isInteger(n) && n >= 1 && n <= 65535) return { port: n, note: null };
+  return { port: DEFAULT_PORT, note: `LOKI_E10_DASHBOARD_PORT=${JSON.stringify(raw)} is not a port in 1-65535; using default ${DEFAULT_PORT}.` };
+}
+
 /** CLI entry: cli.ts routes "dashboard" here (E-12). Prints the URL and never
  *  opens a browser (section 12); runs until SIGINT/SIGTERM. */
 export async function main(_args: string[]): Promise<number> {
   const repoDir = process.cwd();
-  const port = Number(process.env["LOKI_E10_DASHBOARD_PORT"] ?? DEFAULT_PORT);
+  const { port, note } = resolveDashboardPort(process.env["LOKI_E10_DASHBOARD_PORT"]);
+  if (note) process.stderr.write(`${note}\n`);
   let server: DashboardServer;
   try {
     server = await startServerReplacingOlder(repoDir, port);
