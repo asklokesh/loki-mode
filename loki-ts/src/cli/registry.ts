@@ -200,7 +200,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("review", "UPDATE", "bash", "Standalone code review with quality gates", "Gates are legacy-shaped"),
   cmd("dashboard", "UPDATE", "bash", "Operations UI server", "Overlaps Control Plane", { subcommands: [sub("start", "Start"), sub("stop", "Stop"), sub("status", "Status"), sub("url", "Print URL"), sub("open", "Open in browser")] }),
   cmd("config", "UPDATE", "bash", "Manage configuration", "Mixed legacy keys", { subcommands: [sub("show", "Show config"), sub("list", "List config (alias of show)"), sub("init", "Create config"), sub("edit", "Edit config"), sub("path", "Print config path"), sub("set", "Set a value"), sub("get", "Get a value")] }),
-  cmd("mcp", "KEEP-MODERN", "bash", "Launch the MCP server (stdio)", "Engine-neutral"),
+  cmd("mcp", "KEEP-MODERN", "bash", "Launch the MCP server (stdio)", "Engine-neutral", { subcommands: [sub("install", "Register loki-mode in an MCP client config", { flags: [str("--client", "<name>", "claude, cursor, vscode or windsurf"), bool("--project", "Project-level config"), bool("--global", "User-level config"), bool("--print", "Print, write nothing")] })] }),
   cmd("acp", "KEEP-MODERN", "bash", "Run Loki as an ACP agent", "Engine-neutral"),
   cmd("stop", "KEEP-MODERN", "bash", "Stop execution immediately", "Session control"),
   cmd("pause", "KEEP-MODERN", "both", "Pause after the current session", "Session control; Bun writes the Loki 10 run request, bash keeps the legacy PAUSE file"),

@@ -13,6 +13,8 @@ import {
   type DashboardServer,
 } from "../../src/runner/engine10_dashboard.ts";
 import { getVersion } from "../../src/version.ts";
+import { nextOf } from "../../src/util/run_summary.ts";
+import { readFileSync } from "node:fs";
 
 function mkRepo(): string {
   return mkdtempSync(join(tmpdir(), "e10-dash-"));
@@ -72,6 +74,7 @@ describe("summarizeRun / formatPanels", () => {
     const panels = formatPanels(s);
     expect(panels).toEqual([
       { label: "Verdict", value: "VERIFIED" },
+      { label: "Next", value: "loki status" },
       { label: "PR", value: "https://github.com/o/r/pull/9" },
       { label: "NOT PROVEN", value: "app boot" },
       { label: "Cost", value: "$0.42" },
@@ -106,6 +109,58 @@ describe("summarizeRun / formatPanels", () => {
     const s = summarizeRun(repoDir, "r1");
     expect(s.costUsd).toBeNull();
     expect(formatPanels(s).find((p) => p.label === "Cost")).toEqual({ label: "Cost", value: "not measured" });
+  });
+});
+
+describe("TEN-UX-07 Reason, Next, Stage panels", () => {
+  const panel = (r: ReturnType<typeof summarizeRun>, label: string) => formatPanels(r).find((p) => p.label === label);
+
+  test("fatal:auth: Reason and Next match the console's own functions", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "escalated", null, { stop: "fatal:auth" }),
+      ev(2, "run.completed", null, { verdict: "FAILED" }),
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(panel(s, "Reason")).toEqual({ label: "Reason", value: "provider authentication failed" });
+    expect(panel(s, "Next")).toEqual({ label: "Next", value: nextOf("failed", null, "provider authentication failed") });
+  });
+
+  test("a failed verify check: Reason is '<name> failed: <first_error>'", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "stage.completed", "verify", { checks: [{ name: "unit", result: "fail", first_error: "boom" }] }),
+      ev(2, "run.completed", null, { verdict: "FAILED" }),
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(panel(s, "Reason")).toEqual({ label: "Reason", value: "unit failed: boom" });
+    expect(panel(s, "Next")).toEqual({ label: "Next", value: nextOf("failed", null, "unit failed: boom") });
+  });
+
+  test("a VERIFIED run: no Reason panel; Next is loki status", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [ev(0, "run.started", null, {}), ev(1, "run.completed", null, { verdict: "VERIFIED" })]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(panel(s, "Reason")).toBeUndefined();
+    expect(panel(s, "Next")).toEqual({ label: "Next", value: nextOf("verified", null) });
+    expect(panel(s, "Stage")).toBeUndefined();
+  });
+
+  test("a running run: Stage shows the stage and elapsed; no stage.started reads not measured", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [ev(0, "run.started", null, {}), ev(1, "stage.started", "implement", {})]);
+    const t0 = Date.parse("2026-09-27T00:00:01Z");
+    expect(panel(summarizeRun(repoDir, "r1", t0 + 72_000), "Stage")).toEqual({ label: "Stage", value: "implement, 1m12s" });
+    writeRun(repoDir, "r2", [ev(0, "run.started", null, {})]);
+    expect(panel(summarizeRun(repoDir, "r2"), "Stage")).toEqual({ label: "Stage", value: "not measured" });
+  });
+
+  test("source imports reasonOf and nextOf rather than reimplementing them", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/runner/engine10_dashboard.ts"), "utf8");
+    expect(src).toMatch(/import \{[^}]*\breasonOf\b[^}]*\} from "..\/engine10\/output\.ts"/);
+    expect(src).toMatch(/import \{[^}]*\bnextOf\b[^}]*\} from "..\/util\/run_summary\.ts"/);
   });
 });
 

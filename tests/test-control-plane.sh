@@ -92,6 +92,21 @@ step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-pl
 SD="$T/stage-real"; mkdir -p "$SD"
 if stage_build "$REPO" "$SD" >"$T/stage-real.log" 2>&1; then ok "server bundles from exactly what Dockerfile.control-plane COPYs"; else bad "server bundle from Dockerfile COPY set failed"; tail -15 "$T/stage-real.log"; fi
 
+# v11.17.14 FC: engine10/stages/deep.ts imported runner/quality_gates.ts for one constant, which pulled
+# runner/sdk_invoker.ts (and @anthropic-ai/sdk) into the server bundle; pack-npm and docker/Dockerfile then
+# failed to resolve the SDK. The server bundle must never reach the SDK invoker.
+if ( cd "$REPO/packages/control-plane" && bun build src/server/serve.ts --target=bun --outdir "$T/meta-out" \
+       --external @anthropic-ai/sdk --metafile="$T/server-meta.json" >"$T/meta.log" 2>&1 ) \
+   && [ -s "$T/server-meta.json" ]; then
+  if grep -q 'runner/sdk_invoker' "$T/server-meta.json"; then
+    bad "server bundle imports loki-ts runner/sdk_invoker.ts (SDK leaks into the control-plane bundle)"
+  else
+    ok "server bundle does not import runner/sdk_invoker.ts"
+  fi
+else
+  bad "server bundle metafile build failed"; tail -15 "$T/meta.log"
+fi
+
 # Red-first fixtures (FC-32). mkrepo: a scratch repo with the real control plane + loki-ts/src + Dockerfile.
 mkrepo() { # mkrepo <name>
     local d="$T/gfx/$1"

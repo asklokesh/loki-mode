@@ -3,7 +3,7 @@ name: Docker Build Check
 # Builds docker/Dockerfile and docker/Dockerfile.control-plane from the repo
 # root context on every change that can affect either image. Build only: it
 # never logs in, never pushes, holds no secrets, and has a read-only token.
-# Non-blocking for release: it is not part of required-ci or release.yml.
+# Non-blocking for release: it is not part of release.yml.
 on:
   push:
     paths:

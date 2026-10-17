@@ -3,17 +3,12 @@
 # parent's Tests run succeeded, and runs in full otherwise.
 #
 # WHY THIS IS HIGH RISK. A Tests run whose jobs are all skipped concludes
-# success, and release.yml required-ci accepts success at the release SHA
-# without looking at the parent. So the gate must be no looser than
-# release.yml required-ci STEP 1, and must itself confirm the parent's Tests
-# run succeeded. This suite proves:
+# success, so the gate must itself confirm the parent's Tests run succeeded and
+# must only skip for a diff that is a pure version bump. This suite proves:
 #
-#   1. PARITY: STEP 1 is pulled out of release.yml by its content markers
-#      ("# STEP 1:" .. "# STEP 2:") and run on the same fixture diffs as
-#      scripts/ci/version-bump-only.sh. Both must agree AND match the expected
-#      verdict (parity alone passes when both sides break the same way).
-#      Loosening the script's allowlist flips the README fixture; tightening
-#      it flips the pure-bump fixture.
+#   1. VERDICTS: scripts/ci/version-bump-only.sh is run on fixture diffs and
+#      must match the expected verdict. Loosening the allowlist flips the
+#      README fixture; tightening it flips the pure-bump fixture.
 #   2. GATE: skip=true only for an eligible diff plus a completed, successful,
 #      push-event run named Tests at the parent. Pending, red, absent,
 #      pull_request-only, another workflow's success, or a gh error: skip=false.
@@ -25,7 +20,6 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RELEASE_YML="$REPO_ROOT/.github/workflows/release.yml"
 TEST_YML="$REPO_ROOT/.github/workflows/test.yml"
 GATE_SH="${VBO_SCRIPT:-$REPO_ROOT/scripts/ci/version-bump-only.sh}"
 
@@ -37,28 +31,6 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/vbo-test.XXXXXXXX")" || exit 1
 trap 'rm -rf -- "$WORK"' EXIT
 
 gitc() { git -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false "$@"; }
-
-echo "== release.yml STEP 1 extraction =="
-BLOCK="$WORK/step1.sh"
-awk '/^ *# STEP 1:/{f=1} /^ *# STEP 2:/{f=0} f' "$RELEASE_YML" | sed 's/^          //' > "$BLOCK"
-# shellcheck disable=SC2016  # literal: expands when the block runs
-printf '%s\n' 'echo "VERDICT=$ELIGIBLE"' >> "$BLOCK"
-if [ -s "$BLOCK" ] && grep -q 'ALLOWLIST = {' "$BLOCK" \
-   && [ "$(grep -c '^PYEOF$' "$BLOCK")" = "1" ] && grep -q "<<'PYEOF'" "$BLOCK"; then
-  ok "STEP 1 extracted by content markers (non-empty, has ALLOWLIST and a closed PYEOF heredoc)"
-else
-  bad "STEP 1 extraction is empty or malformed; parity below would be vacuous"
-fi
-
-# Verdict parity below cannot reach every branch (loki.js.map, the NUL guard),
-# so also require the normalizer bodies to be byte-identical.
-awk '/<<.PYEOF.$/{f=1;next} /^          PYEOF$/{f=0} f' "$RELEASE_YML" | sed 's/^          //' > "$WORK/py-release"
-awk '/<<.PYEOF.$/{f=1;next} /^PYEOF$/{f=0} f' "$GATE_SH" > "$WORK/py-script"
-if [ -s "$WORK/py-release" ] && [ -s "$WORK/py-script" ] && cmp -s "$WORK/py-release" "$WORK/py-script"; then
-  ok "script's python normalizer is byte-identical to release.yml STEP 1's ($(wc -l < "$WORK/py-script" | tr -d ' ') lines)"
-else
-  bad "script's python normalizer differs from release.yml STEP 1's (or one side is empty)"
-fi
 
 # ---------------------------------------------------------------- fixtures
 BASE="$WORK/base"
@@ -94,11 +66,6 @@ make_fixture() {  # $1 = name; $2 = shell to apply in the clone; prints nothing
   ( cd "$d" && eval "$2" && git add -A && gitc commit -q -m "$1" ) >/dev/null 2>&1
 }
 
-release_verdict() {  # $1 = repo dir, $2 = event -> prints 1 or 0
-  ( cd "$1" && EVENT_NAME="$2" SHA="$(git rev-parse HEAD)" bash "$BLOCK" 2>/dev/null ) \
-    | sed -n 's/^VERDICT=//p' | tail -n 1
-}
-
 script_verdict() {  # $1 = repo dir, $2 = event -> prints 1 or 0
   if ( cd "$1" && EVENT_NAME="$2" SHA="$(git rev-parse HEAD)" "$GATE_SH" check 2>/dev/null ); then
     echo 1
@@ -127,7 +94,7 @@ charts-and-cli-ref-bump|1|push|printf '1.2.4\n' > VERSION; printf 'name: x\nvers
 chart-beyond-version|0|push|printf '1.2.4\n' > VERSION; printf 'name: x\nversion: 0.2.0\nappVersion: "1.2.4"\n' > helm/loki-mode/Chart.yaml
 EOF
 
-echo "== parity: release.yml STEP 1 vs scripts/ci/version-bump-only.sh =="
+echo "== verdicts: scripts/ci/version-bump-only.sh =="
 n=0
 while IFS='|' read -r name expect event change; do
   [ -n "$name" ] || continue
@@ -136,19 +103,18 @@ while IFS='|' read -r name expect event change; do
     continue
   fi
   n=$((n+1))
-  r="$(release_verdict "$WORK/fx-$name" "$event")"
   s="$(script_verdict "$WORK/fx-$name" "$event")"
-  if [ "$r" = "$expect" ] && [ "$s" = "$expect" ]; then
-    ok "$name: release=$r script=$s expected=$expect"
+  if [ "$s" = "$expect" ]; then
+    ok "$name: script=$s expected=$expect"
   else
-    bad "$name: release='$r' script='$s' expected=$expect"
+    bad "$name: script='$s' expected=$expect"
     ( cd "$WORK/fx-$name" && EVENT_NAME="$event" SHA="$(git rev-parse HEAD)" "$GATE_SH" check 2>&1 | sed 's/^/      /' )
   fi
 done < "$FIXTURES"
 if [ "$n" -ge 6 ]; then
-  ok "parity ran on $n fixture diffs (floor 6)"
+  ok "verdicts ran on $n fixture diffs (floor 6)"
 else
-  bad "parity ran on only $n fixture diffs (floor 6)"
+  bad "verdicts ran on only $n fixture diffs (floor 6)"
 fi
 # dep-spec-collateral is eligible by the normalizer on purpose: "^21.2.3" ->
 # "^21.2.4" is byte-identical modulo the version (CLAUDE.md here, package.json
@@ -177,7 +143,7 @@ fi
 allow_of() {  # $1 = file; prints the ALLOWLIST entries one per line
   awk '/ALLOWLIST = \{/{f=1;next} f&&/^ *\}/{f=0} f' "$1" | grep -o '"[^"]*"' | tr -d '"' | sort -u
 }
-for src in "$RELEASE_YML" "$GATE_SH"; do
+for src in "$GATE_SH"; do
   allow_of "$src" > "$WORK/allow.txt"
   missing="$(comm -23 "$DERIVED" "$WORK/allow.txt" | tr '\n' ' ')"
   if [ -z "$missing" ] && [ -s "$WORK/allow.txt" ]; then
@@ -190,7 +156,7 @@ done
 echo "== FC-70: replay v11.3.3 (54a519a22 -> eee891534) =="
 RP=54a519a22; RS=eee891534
 if git -C "$REPO_ROOT" cat-file -e "${RP}^{commit}" 2>/dev/null && git -C "$REPO_ROOT" cat-file -e "${RS}^{commit}" 2>/dev/null; then
-  awk '/<<.PYEOF.$/{f=1;next} /^          PYEOF$/{f=0} f' "$RELEASE_YML" | sed 's/^          //' > "$WORK/replay.py"
+  awk '/<<.PYEOF.$/{f=1;next} /^PYEOF$/{f=0} f' "$GATE_SH" > "$WORK/replay.py"
   if ( cd "$REPO_ROOT" && python3 "$WORK/replay.py" "$RP" "$RS" >/dev/null 2>"$WORK/replay.err" ); then
     ok "normalizer returns eligible (rc 0) for 54a519a22 -> eee891534"
   else

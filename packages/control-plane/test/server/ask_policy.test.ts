@@ -8,7 +8,7 @@ import { ALLOWED_TOOLS, DENIED_TOOLS, MCP_SERVER_NAME, buildMcpConfig, createJob
 const REPO = resolve(import.meta.dir, "../../../..");
 
 test("the deny list covers every token of the loki-ts REVIEW denylist, plus the outbound and shell tools", () => {
-  const src = readFileSync(join(REPO, "loki-ts/src/runner/quality_gates.ts"), "utf8");
+  const src = readFileSync(join(REPO, "loki-ts/src/providers/claude_flags.ts"), "utf8");
   const m = /const REVIEW_GUARD_DENYLIST =\s*\n?\s*"([^"]+)"/.exec(src);
   expect(m).not.toBeNull();
   const deny = DENIED_TOOLS.split(",");

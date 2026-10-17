@@ -54,21 +54,6 @@ if kind == "step":
     run = [s["run"] for s in steps if s.get("name", "").startswith("Select gitleaks scan mode")]
     assert len(run) == 1, "expected exactly one scan-mode step"
     open(out, "w").write(run[0])
-elif kind == "jq":
-    m = re.findall(r"--jq '(\.workflow_runs\[\][^\n]*)' 2>/dev/null", rel)
-    assert len(m) == 1, "expected exactly one fetch_runs jq filter"
-    open(out, "w").write(m[0])
-elif kind == "sfn":
-    out_s = ""
-    for fn in ("sched_audit_api", "sched_audit_fetch", "sched_audit_ok", "sched_audit_gate"):
-        m = re.findall(r"^ {10}" + fn + r"\(\) \{\n(.*?\n) {10}\}\n", rel, re.S | re.M)
-        assert len(m) == 1, "expected exactly one " + fn
-        out_s += fn + "() {\n" + m[0] + "}\n"
-    open(out, "w").write(out_s)
-elif kind == "awk":
-    m = re.findall(r"'(\$1==\"Security Audit\"[^\n]*END\{print c\})'", rel)
-    assert len(m) == 1, "expected exactly one audit_verdict awk program"
-    open(out, "w").write(m[0])
 elif kind == "if":
     d = yaml.safe_load(sa)
     job = sys.argv[5]
@@ -76,201 +61,8 @@ elif kind == "if":
 PYEOF
 _extract() { python3 "$TMP_ROOT/extract.py" "$1" "$2" "$SA_YML" "$REL_YML" "${3:-}"; }
 
-# W7: release.yml required-ci counts a Security Audit run only from main or a dispatch.
-if command -v jq >/dev/null 2>&1; then
-  _extract jq "$TMP_ROOT/fetch.jq" && _extract awk "$TMP_ROOT/verdict.awk"
-  _w7() { # _w7 <jq-prog-file> ; 0 = filter behaves per D75
-    local prog parent_train parent_main parent_disp tests_train
-    prog="$(cat "$1")"
-    _mk_blob() { # branch event conclusion name
-      printf '{"workflow_runs":[{"name":"%s","status":"completed","conclusion":"%s","created_at":"2026-10-03T00:00:00Z","event":"%s","head_branch":"%s"}]}' "$4" "$3" "$2" "$1"
-    }
-    _verdict() { jq -r "$prog" | awk -F'\t' "$(cat "$TMP_ROOT/verdict.awk")"; }
-    parent_train="$(_mk_blob train/x push success 'Security Audit' | _verdict)"
-    parent_main="$(_mk_blob main push success 'Security Audit' | _verdict)"
-    parent_disp="$(_mk_blob train/x workflow_dispatch success 'Security Audit' | _verdict)"
-    tests_train="$(_mk_blob train/x push success 'Tests' | jq -r "$prog" | awk -F'\t' '$1=="Tests"&&$3=="success"{print "kept"}')"
-    [ -z "$parent_train" ] && [ "$parent_main" = "success" ] && [ "$parent_disp" = "success" ] && [ "$tests_train" = "kept" ]
-  }
-  if _w7 "$TMP_ROOT/fetch.jq"; then
-    ok "W7: a train/** push Security Audit success is not reused; main push and dispatch successes are; Tests on a train branch is untouched"
-  else
-    bad "W7: required-ci Security Audit filter does not match D75"
-  fi
-  # mutation: drop the D75 select clause -> the train success is reused -> must go red
-  python3 - "$TMP_ROOT/fetch.jq" "$TMP_ROOT/fetch.mut.jq" <<'PYEOF'
-import sys
-s = open(sys.argv[1]).read()
-m = ' | select(.name!="Security Audit" or .head_branch=="main" or .event=="workflow_dispatch")'
-assert m in s
-open(sys.argv[2], "w").write(s.replace(m, ""))
-PYEOF
-  if _w7 "$TMP_ROOT/fetch.mut.jq"; then
-    bad "W7 mutation (filter removed) stayed green: the check cannot see the guard"
-  else
-    ok "W7 mutation (filter removed) goes red"
-  fi
-else
-  bad "W7: jq is required for this test"
-fi
-
-# W9: a red daily scheduled scan halts releases unless a newer successful main run
-# supersedes it; an API error blocks; paging cannot hide the scheduled run (release.yml
-# required-ci, D75/D75b). The stub gh below emulates the Actions API filters
-# (event, branch, status=success, created>=, per_page, total_count, newest first)
-# so the REAL extracted gate functions run unchanged.
-if command -v jq >/dev/null 2>&1; then
-  _extract sfn "$TMP_ROOT/sched.fn.sh"
-  cat > "$TMP_ROOT/gh-stub.sh" <<'STUBEOF'
-gh() {
-  local url="$2" p="" kv q ev="" br="" st="" cr="" pp=100 n
-  shift 2
-  while [ $# -gt 0 ]; do [ "$1" = --jq ] && p="$2"; shift; done
-  if [ -n "${W9_FLAKY:-}" ]; then
-    n="$(cat "$W9_FLAKY" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$W9_FLAKY"
-    [ "$n" -ge 2 ] || return 1
-  fi
-  q="${url#*\?}"
-  local IFS='&'
-  for kv in $q; do
-    case "$kv" in
-      event=*) ev="${kv#event=}" ;;
-      branch=*) br="${kv#branch=}" ;;
-      status=*) st="${kv#status=}" ;;
-      created=*) cr="${kv#created=%3E%3D}" ;;
-      per_page=*) pp="${kv#per_page=}" ;;
-    esac
-  done
-  if [ -n "${W9_RAW_SCHED:-}" ] && [ "$ev" = schedule ]; then
-    printf '%s' "$W9_RAW_SCHED" | jq -r "$p"
-    return
-  fi
-  printf '%s' "$BLOB" | jq --arg ev "$ev" --arg br "$br" --arg st "$st" --arg cr "$cr" --argjson pp "$pp" '
-    ([.workflow_runs[] | select(.status=="completed")
-      | select($ev=="" or .event==$ev) | select($br=="" or .head_branch==$br)
-      | select($st!="success" or .conclusion=="success") | select($cr=="" or .created_at >= $cr)]
-     | sort_by(.created_at) | reverse) as $all
-    | {total_count: ($all|length), workflow_runs: $all[:$pp]}' | jq -r "$p"
-}
-STUBEOF
-  _sched_run() { # _sched_run <fn-file> <runs-json | FAIL> -> prints "<rc>|<output>"
-    local out rc=0
-    out="$(BLOB="$2" bash -c '
-      source "$1"; REPO=x/y; sleep() { :; }
-      if [ "$BLOB" = FAIL ]; then gh() { return 1; }; else source "$2"; fi
-      sched_audit_gate' _ "$1" "$TMP_ROOT/gh-stub.sh" 2>&1)" || rc=$?
-    printf '%s|%s' "$rc" "$out"
-  }
-  _r() { # name event conclusion created [branch]
-    local c="\"$3\""
-    [ "$3" = null ] && c=null
-    printf '{"name":"Security Audit","status":"completed","conclusion":%s,"created_at":"%s","event":"%s","head_branch":"%s","html_url":"https://example.invalid/runs/%s"}' "$c" "$4" "$2" "${5:-main}" "$1"
-  }
-  _many() { # _many <count> <event> <conclusion>: <count> main runs all newer than 2026-10-01
-    local i out=""
-    for i in $(seq 1 "$1"); do
-      out="${out:+$out,}$(_r "m$i" "$2" "$3" "$(printf '2026-10-03T%02d:%02d:00Z' $((i / 60)) $((i % 60)))" "${4:-main}")"
-    done
-    printf '%s' "$out"
-  }
-  _blob() { local IFS=,; printf '{"workflow_runs":[%s]}' "$*"; }
-  _expect() { # _expect <fn> <rc> <substring> <runs-json|FAIL>
-    local o
-    o="$(_sched_run "$1" "$4")"
-    [ "${o%%|*}" = "$2" ] && case "$o" in *"$3"*) true ;; *) false ;; esac
-  }
-  _w9() { # _w9 <fn-file> ; 0 = every case behaves per D75/D75b
-    local f="$1" o
-    _expect "$f" 1 "runs/s" "$(_blob "$(_r s schedule failure 2026-10-03T08:00:00Z)" "$(_r p push success 2026-10-03T07:00:00Z)")" || return 1
-    _expect "$f" 1 "'cancelled'" "$(_blob "$(_r c schedule cancelled 2026-10-03T08:00:00Z)")" || return 1
-    _expect "$f" 1 "'timed_out'" "$(_blob "$(_r t schedule timed_out 2026-10-03T08:00:00Z)")" || return 1
-    _expect "$f" 1 "'null'" "$(_blob "$(_r n schedule null 2026-10-03T08:00:00Z)")" || return 1
-    _expect "$f" 0 "supersedes" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)" "$(_r s schedule failure 2026-09-28T07:00:00Z)")" || return 1
-    _expect "$f" 0 "supersedes" "$(_blob "$(_r d workflow_dispatch success 2026-10-03T07:00:00Z)" "$(_r s schedule failure 2026-09-28T07:00:00Z)")" || return 1
-    # a newer success on a train/** branch does NOT clear it
-    _expect "$f" 1 "runs/s" "$(_blob "$(_r tr push success 2026-10-03T09:00:00Z train/x)" "$(_r s schedule failure 2026-10-03T08:00:00Z)")" || return 1
-    # a success OLDER than the scheduled failure does not clear it
-    _expect "$f" 1 "runs/s" "$(_blob "$(_r s schedule failure 2026-10-03T08:00:00Z)" "$(_r p push success 2026-10-02T07:00:00Z)")" || return 1
-    _expect "$f" 0 "succeeded" "$(_blob "$(_r s schedule success 2026-10-03T08:00:00Z)")" || return 1
-    # newest scheduled run is the one that counts
-    _expect "$f" 0 "succeeded" "$(_blob "$(_r s2 schedule success 2026-10-03T08:00:00Z)" "$(_r s1 schedule failure 2026-10-02T08:00:00Z)")" || return 1
-    _expect "$f" 1 "runs/s2" "$(_blob "$(_r s2 schedule failure 2026-10-03T08:00:00Z)" "$(_r s1 schedule success 2026-10-02T08:00:00Z)")" || return 1
-    # a non-main scheduled failure (newer) is ignored
-    _expect "$f" 0 "succeeded" "$(_blob "$(_r x schedule failure 2026-10-03T09:00:00Z feature)" "$(_r s schedule success 2026-10-03T08:00:00Z)")" || return 1
-    # runs exist but none scheduled: passes (the schedule query has total_count 0)
-    _expect "$f" 0 "no completed scheduled run" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)")" || return 1
-    _expect "$f" 0 "no completed scheduled run" '{"workflow_runs":[]}' || return 1
-    # PAGE-OVERFLOW: 120 newer main push failures push the scheduled failure off any single
-    # 100-run page. The old one-page gate passed this as "no scheduled run"; it must block.
-    _expect "$f" 1 "runs/s" "$(_blob "$(_r s schedule failure 2026-09-28T07:00:00Z)" "$(_many 120 push failure)")" || return 1
-    # same overflow, but 120 newer push successes: the success beyond the old page clears it
-    _expect "$f" 0 "supersedes" "$(_blob "$(_r s schedule failure 2026-09-28T07:00:00Z)" "$(_many 120 push success)")" || return 1
-    # 120 newer successes on a train branch must not inflate the main total_count: plain red
-    _expect "$f" 1 "no newer successful main run" "$(_blob "$(_r s schedule failure 2026-09-28T07:00:00Z)" "$(_many 120 push success train/x)")" || return 1
-    # more successes exist than were fetched and none qualifies: indeterminate blocks
-    _expect "$f" 1 "indeterminate" "$(_blob "$(_r s schedule failure 2026-09-28T07:00:00Z)" "$(_many 120 pull_request success)")" || return 1
-    # schedule query says total_count 5 but returns no run: indeterminate, never "none"
-    o="$(W9_RAW_SCHED='{"total_count":5,"workflow_runs":[]}' _sched_run "$f" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)")")"
-    [ "${o%%|*}" = "1" ] && case "$o" in *indeterminate*) true ;; *) false ;; esac || return 1
-    # D75b LOW 1: a response with NO total_count and a red scheduled run must block,
-    # never be read as "zero runs"
-    o="$(W9_RAW_SCHED="{\"workflow_runs\":[$(_r s schedule failure 2026-10-03T08:00:00Z)]}" _sched_run "$f" "$(_blob "$(_r p push failure 2026-10-03T07:00:00Z)")")"
-    [ "${o%%|*}" = "1" ] && case "$o" in *"runs/s"*) true ;; *) false ;; esac || return 1
-    # two transient gh errors then success: the retry reads the verdict
-    : > "$TMP_ROOT/w9.flaky"
-    o="$(W9_FLAKY="$TMP_ROOT/w9.flaky" _sched_run "$f" "$(_blob "$(_r s schedule success 2026-10-03T08:00:00Z)")")"
-    [ "${o%%|*}" = "0" ] || return 1
-    # a failing gh (404, outage) blocks after retries
-    _expect "$f" 1 "cannot read scheduled Security Audit runs (API error)" FAIL
-  }
-  if _w9 "$TMP_ROOT/sched.fn.sh"; then
-    ok "W9: scheduled red blocks unless a newer main push or dispatch success supersedes it (including past 100 runs); train success does not; >100 runs, indeterminate and API error block; green, no schedule and zero runs pass with a reason"
-  else
-    bad "W9: scheduled-audit gate does not match D75/D75b"
-  fi
-  _w9_mut() { # _w9_mut <name> <old> <new> [<old2> <new2>]
-    python3 - "$TMP_ROOT/sched.fn.sh" "$TMP_ROOT/sched.fn.$1.sh" "$2" "$3" "${4:-}" "${5:-}" <<'PYEOF'
-import sys
-s = open(sys.argv[1]).read()
-for old, new in ((sys.argv[3], sys.argv[4]), (sys.argv[5], sys.argv[6])):
-    if not old:
-        continue
-    assert s.count(old) == 1, old
-    s = s.replace(old, new)
-open(sys.argv[2], "w").write(s)
-PYEOF
-    if _w9 "$TMP_ROOT/sched.fn.$1.sh"; then bad "W9 mutation ($1) stayed green"; else ok "W9 mutation ($1) goes red"; fi
-  }
-  _w9_mut noblock 'review it before releasing"; return 1' 'review it before releasing"; return 0'
-  _w9_mut nobranchsched 'event=schedule&branch=main&status=completed' 'event=schedule&status=completed'
-  _w9_mut nobranchsucc 'branch=main&status=success' 'status=success'
-  _w9_mut noclear 'if $n > 0 then "cleared"' 'if false then "cleared"'
-  _w9_mut oldsuccess '&created=%3E%3D${created}' '' '.created_at > "'"'"'"$created"'"'"'")' '.created_at > "0")'
-  _w9_mut noindet 'elif (.total_count // 0) > ((.workflow_runs // []) | length) then "indeterminate"' 'elif false then "indeterminate"'
-  _w9_mut indetpass 'could not be fully read ($url); blocking"; return 1' 'could not be fully read ($url); blocking"; return 0'
-  _w9_mut nototalcheck 'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"' 'if ((.workflow_runs // []) | length) == 0 then "none"'
-  _w9_mut nulltotalzero 'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"' 'if (.total_count // 0) == 0 then "none"'
-  _w9_mut mixedpage 'event=schedule&branch=main&status=completed&per_page=1' 'branch=main&status=completed&per_page=100'
-  _w9_mut failopen '(API error)"
-    return 1' '(API error)"
-    return 0'
-  _w9_mut noretry 'for i in 1 2 3; do' 'for i in 1; do'
-  # the gate must actually be called from required-ci and must fail the job
-  if grep -qF 'sched_reason="$(sched_audit_gate)"' "$REL_YML" \
-     && grep -qF 'FAIL: the daily scheduled Security Audit is not green' "$REL_YML"; then
-    ok "W9: required-ci calls the scheduled-audit gate and exits 1 when it blocks"
-  else
-    bad "W9: required-ci does not call the scheduled-audit gate"
-  fi
-  grep -vF 'sched_reason="$(sched_audit_gate)"' "$REL_YML" > "$TMP_ROOT/release.nocall.yml"
-  if grep -qF 'sched_reason="$(sched_audit_gate)"' "$TMP_ROOT/release.nocall.yml"; then
-    bad "W9 mutation (call dropped) stayed green"
-  else
-    ok "W9 mutation (call dropped) goes red"
-  fi
-else
-  bad "W9: jq is required for this test"
-fi
+# W7 and W9 (the required-ci Security Audit filter and scheduled-audit gate) were
+# removed with the required-ci job (D102): npm publish no longer waits on audits.
 
 # W8: a main push runs secret-scan even when train-reuse=true; other jobs keep E-160 reuse.
 _eval_if() { # _eval_if <if-file> <event> <ref> <reuse> -> prints True/False
@@ -879,26 +671,23 @@ if _w6 "$SCRIPT" w6; then ok "W6: a zero-rule tip config and a zero-rule merge-b
 if _w6 "$_SCRIPT_M6A" w6a; then bad "W6 mutation (tip config left in place) stayed green"; else ok "W6 mutation (tip config left in place) goes red"; fi
 if _w6 "$_SCRIPT_M6B" w6b; then bad "W6 mutation (merge-base config trusted) stayed green"; else ok "W6 mutation (merge-base config trusted) goes red"; fi
 
-# W10 (NPM-LAG): publish-npm holds until npm serves the exact version. The real run: block
+# W10 (NPM-LAG): npm-visible holds until npm serves the exact version. The real run: block
 # is extracted from release.yml and driven with a stubbed npm and a stubbed date-free clock.
 cat > "$TMP_ROOT/extract10.py" <<'PYEOF'
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
-# WF-2MIN-3: publish-npm is merged into `release`; the pack is its own parallel
-# job (pack-npm). npm-visible is a NON-BLOCKING reporter: it needs release,
-# is continue-on-error, and no other job may need it.
-assert d["jobs"]["npm-visible"]["needs"] == "release", "npm-visible must need release"
+# D102: publish-npm needs only pack-npm. npm-visible is a NON-BLOCKING reporter:
+# it needs publish-npm, is continue-on-error, and no other job may need it.
+assert d["jobs"]["npm-visible"]["needs"] == "publish-npm", "npm-visible must need publish-npm"
 assert d["jobs"]["npm-visible"].get("continue-on-error") is True, "npm-visible must be continue-on-error"
-assert "publish-npm" not in d["jobs"], "publish-npm must be merged into release"
+assert d["jobs"]["publish-npm"]["needs"] == "pack-npm", "publish-npm must need only pack-npm"
 for jn, j in d["jobs"].items():
     n = j.get("needs") or []
     n = [n] if isinstance(n, str) else n
     assert "npm-visible" not in n, "%s must not need npm-visible" % jn
-pub_steps = d["jobs"]["release"]["steps"]
-assert len([x for x in pub_steps if x.get("name", "").startswith("Publish")]) == 1, "exactly one publish step"
-names_r = [x.get("name", "") for x in pub_steps]
-assert names_r.index("Create GitHub Release") < [i for i, n in enumerate(names_r) if n.startswith("Publish the verified")][0], "tag and release must precede npm publish"
-assert not [x for x in pub_steps if x.get("name", "").startswith("Wait until npm serves")], "release must not wait on the registry"
+rel_steps = d["jobs"]["release"]["steps"]
+assert not [x for x in rel_steps if "npm publish" in x.get("run", "")], "release must not publish to npm"
+assert not [x for x in rel_steps if x.get("name", "").startswith("Wait until npm serves")], "release must not wait on the registry"
 steps = d["jobs"]["npm-visible"]["steps"]
 names = [s.get("name", "") for s in steps]
 w = [i for i, n in enumerate(names) if n.startswith("Wait until npm serves")]
@@ -909,9 +698,9 @@ for k, v in steps[w[0]]["env"].items():
     print("%s=%s" % (k, v))
 PYEOF
 if python3 "$TMP_ROOT/extract10.py" "$REL_YML" "$TMP_ROOT/npmwait.sh" > "$TMP_ROOT/npmwait.env"; then
-  ok "W10: npm-visible is a non-blocking reporter holding the one npm-visibility wait; publish is merged into release after the tag"
+  ok "W10: npm-visible is a non-blocking reporter holding the one npm-visibility wait; publish-npm needs only pack-npm"
 else
-  bad "W10: npm-visible wait job missing, blocking, needed by another job, or publish precedes the tag"
+  bad "W10: npm-visible wait job missing, blocking, needed by another job, or publish-npm waits on more than pack-npm"
 fi
 _w10_run() { # _w10_run <script> <visible-after-N-polls|never> -> prints "<rc>|<output>"
   local d="$TMP_ROOT/w10.cur" rc=0 out
@@ -965,10 +754,10 @@ else
   bad "W10: npm visibility wait does not match NPM-LAG"
 fi
 _w10_mut nocache ' --prefer-online' ''
-_w10_mut timeoutpass 'echo "NPM-LAG-TIMEOUT:' 'echo "TIMEOUT:'
-_w10_mut timeoutexit0 'polls); the publish step succeeded but the registry never listed it"
-              exit 1' 'polls); the publish step succeeded but the registry never listed it"
-              exit 0'
+_w10_mut timeoutpass 'echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} still' 'echo "TIMEOUT: loki-mode@${VERSION} still'
+_w10_mut timeoutexit0 '/dev/null}"
+    exit 1' '/dev/null}"
+    exit 0'
 _w10_mut lagispass '[ "$FOUND" = "$VERSION" ]' '[ -z "$FOUND" ] || [ "$FOUND" = "$VERSION" ]'
 _w10_mut nobackoff 'sleep "$delay"' ':'
 # the default window is not shorter than the 45 minutes the smoke and promote steps assume

@@ -23,16 +23,15 @@ name: Security Audit
 on:
   pull_request:
     branches: [main]
-  # A release commit (the VERSION bump) is pushed to main. release.yml's
-  # required-ci job will not publish until this workflow reports success AT
-  # THAT EXACT SHA, or reuses the parent's success after a clean PARENT..SHA
-  # scan; it can only report if it actually runs there, so main pushes must
+  # A release commit (the VERSION bump) is pushed to main. D102: release.yml
+  # publishes without waiting on this workflow; it still reports at that SHA
+  # (or reuses the parent's success after a clean PARENT..SHA scan); it can only report if it actually runs there, so main pushes must
   # trigger it (requiring a workflow that never fires would deadlock every
   # release).
   #
   # E-157: train/** and slice-* tips run the full audit on every push, so a
   # train is audited BEFORE main is fast-forwarded to it and the VERSION bump
-  # on top can reuse the parent's verdict (release.yml required-ci). GitHub
+  # on top can reuse the parent's verdict. GitHub
   # allows one paths filter per push trigger, so it cannot be kept for main
   # alone; main pushes now audit too. A VERSION bump whose parent has no
   # decisive audit success still requires its own fresh run.
@@ -46,9 +45,8 @@ on:
     # range (D74 follow-up) and, since GITLEAKS-INCR, a main push scans only
     # <previous release tag>..SHA. The full-history scan runs daily here and in
     # the Nightly backstop (nightly.yml job "gitleaks full history
-    # (backstop)"); a red daily scan halts releases (release.yml required-ci,
-    # sched_audit_ok: any non-success conclusion of the newest scheduled run
-    # blocks) and a red backstop blocks promotion to latest (promote.yml).
+    # (backstop)"); a red daily scan is a fix-forward signal (D102) and
+    # never delays an npm release.
     - cron: '0 7 * * *'
   workflow_dispatch:
 
@@ -154,9 +152,9 @@ jobs:
         # Neither has a fix release available, so a blocking gate would have
         # nothing to bump to. It would just be red forever.
         #
-        # That matters more than usual HERE: release.yml's required-ci job waits
-        # on this WORKFLOW's conclusion by name ("Security Audit"), not on named
-        # jobs. Any job in this file that fails blocks EVERY release. Landing a
+        # That matters more than usual HERE: a red job here is a fix-forward
+        # signal for the release (D102). Any job in this file that fails
+        # turns the Security Audit conclusion red. Landing a
         # blocking scanner on an unmeasured -- or in this case known-dirty --
         # baseline would wedge the release pipeline, not tighten it.
         #

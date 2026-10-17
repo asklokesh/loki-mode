@@ -2,7 +2,7 @@
 // Mirrors autonomy/run.sh (S3, cost program): _loki_run_pytest_with_timeout
 // (python3 -m pytest, unittest fallback on exit 5) and the enforce_build_check
 // python3 -m compileall arm. Change both together.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { commandExists, run } from "./shell.ts";
 import type { ShellOpts, ShellResult } from "./shell.ts";
@@ -124,6 +124,7 @@ export type PythonBuildFact = {
   status: "verified" | "failed" | "not_applicable";
   command: string;
   exitCode: number | null;
+  durationSec?: number | null;
 };
 
 /**
@@ -147,4 +148,76 @@ export async function pythonBuildCheck(
     { cwd: tree, timeoutMs: opts.timeoutMs ?? 120_000, env: { PYTHONPYCACHEPREFIX: pycacheDir } },
   );
   return { status: r.exitCode === 0 ? "verified" : "failed", command, exitCode: r.exitCode };
+}
+
+const TOKEN_FREE_ENV: Record<string, string> = Object.fromEntries(
+  [
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "NPM_TOKEN",
+    "NODE_AUTH_TOKEN",
+  ].map((k) => [k, ""]),
+);
+
+function hasNpmBuildScript(tree: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(tree, "package.json"), "utf8"));
+    const b = pkg?.scripts?.build;
+    return typeof b === "string" && b.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build fact for the TS route (mirrors run.sh enforce_build_check): a
+ * package.json "build" script runs via `npm run build --if-present` with
+ * token variables blanked and a LOKI_GATE_TIMEOUT bound; otherwise the
+ * manifest-less python arm; otherwise not_applicable (never verified).
+ */
+export async function buildFact(
+  tree: string,
+  pycacheDir: string,
+  opts: { exec?: PyExec; timeoutMs?: number } = {},
+): Promise<PythonBuildFact> {
+  const gateS = Number(process.env.LOKI_GATE_TIMEOUT);
+  const timeoutMs = opts.timeoutMs ?? (Number.isFinite(gateS) && gateS > 0 ? gateS * 1000 : 300_000);
+  const t0 = Date.now();
+  const withDuration = (f: PythonBuildFact): PythonBuildFact => ({
+    ...f,
+    durationSec: f.exitCode === null ? null : (Date.now() - t0) / 1000,
+  });
+  if (hasNpmBuildScript(tree)) {
+    const command = "npm run build --if-present";
+    const exec = opts.exec ?? run;
+    let exitCode: number;
+    try {
+      const r = await exec(["npm", "run", "build", "--if-present"], { cwd: tree, timeoutMs, env: TOKEN_FREE_ENV });
+      exitCode = r.exitCode;
+    } catch {
+      exitCode = 127;
+    }
+    return withDuration({ status: exitCode === 0 ? "verified" : "failed", command, exitCode });
+  }
+  return withDuration(await pythonBuildCheck(tree, pycacheDir, { exec: opts.exec, timeoutMs }));
+}
+
+/** Writes .loki/quality/build-results.json in the shape proof-generator.py _collect_build reads. */
+export function writeBuildResults(lokiDir: string, fact: PythonBuildFact): void {
+  const dir = join(lokiDir, "quality");
+  mkdirSync(dir, { recursive: true });
+  const na = fact.status === "not_applicable";
+  const body = {
+    timestamp: new Date().toISOString(),
+    command: na ? "" : fact.command,
+    ran: !na,
+    applicable: !na,
+    exit_code: na ? null : fact.exitCode,
+    duration_sec: na ? null : (fact.durationSec ?? null),
+    status: fact.status,
+  };
+  writeFileSync(join(dir, "build-results.json"), JSON.stringify(body) + "\n");
 }

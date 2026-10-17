@@ -5,6 +5,72 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.19 (2026-10-17)
+
+### Changed
+- Lean prefix by default (TEN-COST-13): engine10 Claude sessions use the lean, cache-stable system prefix unless LOKI_E10_PREFIX is set; an explicit value, including off, wins. Other providers are unchanged.
+
+### Fixed
+- Group run iteration counts (TEN-GROUP-AUTH-F1): group cost records no longer count as iterations in KPIs or `loki stats`; their cost and tokens still count. One shared predicate serves both readers, and a test ties the writer's record kind to the reader.
+
+## v11.17.18 (2026-10-17)
+
+### Changed
+- Wall brief output budget (TEN-COST-14): the Wall author brief carries a fixed output budget line (one test file, no closing summary) in the cache-stable prefix, ahead of any run-specific text, so Wall sessions spend fewer output tokens.
+
+## v11.17.17 (2026-10-17)
+
+### Added
+- Agent-independent evidence in verify (TEN-GATES-03): `loki verify` prints how many passing checks are agent independent (k of n) from the receipt's check provenance, and says "provenance not recorded" when a receipt has none. `--require-exogenous` (or `LOKI_VERIFY_REQUIRE_EXOGENOUS=1`) exits 4 for a VERIFIED receipt with no agent-independent pass. Tamper and signature verdicts are unchanged.
+- Security scan gate on loki start (TEN-GATES-08): the engine10 route runs the secure scan as an exogenous gate, writes security-findings.json, fails on an active HIGH finding and reads inconclusive when the scanner or python3 is missing. `LOKI_GATE_SECURITY_SCAN=0` turns it off.
+- PR body verify line (TEN-ADOPTION-04): the receipt section shows the `loki proof bundle` and `npx loki-mode verify` commands so anyone can check the run on another machine. The Loki footer says verified only for a non-draft VERIFIED body, and `LOKI_PR_FOOTER=0` removes it. No network call, no telemetry.
+- Proof for loki start runs (TEN-ADOPTION-03): `loki proof` badge, bundle and share work for engine10 runs, not only legacy runs.
+- Dashboard run panels (TEN-UX-07): the dashboard shows Reason, Next and Stage panels for the selected run.
+
+### Fixed
+- Lint baseline (TEN-QUALITY-03): baseline lint reruns stop when the stage is aborted, so an aborted verify no longer waits on them, and an aborted rerun never excuses a lint failure.
+
+## v11.17.16 (2026-10-17)
+
+### Fixed
+- Docker images build again: the deep stage imported the review denylist from the runner module that loads the Anthropic SDK, so the control-plane server bundle failed to resolve `@anthropic-ai/sdk` and the 11.17.15 images were not published. The denylist now lives in the Claude flags module, and a control-plane test fails if the server bundle ever reaches the SDK invoker again.
+- Release safety (TEN-RELEASE-INSTANT-F1): if npm cannot report the current `latest`, the release still publishes under `next` but refuses to move `latest`, so a registry hiccup can never move `latest` backwards.
+- Cost claim (TEN-COST-18-F1): `cost_claim` skips non-object rows with a counted warning instead of crashing, and never counts them toward the ratio.
+
+## v11.17.15 (2026-10-17)
+
+### Fixed
+- Release packaging: the pack-npm job now installs loki-ts dependencies before packing. The control-plane server bundle imports loki-ts source, and without them v11.17.14 failed to pack with `Could not resolve: "@anthropic-ai/sdk"`, so v11.17.14 never reached npm. This release ships everything listed under v11.17.14.
+
+## v11.17.14 (2026-10-17)
+
+### Added
+- Deep-stage council (Q18-04): the deep stage now runs one read-only reviewer session instead of recording "council (not wired)". An empty or failed diff is refused before any session starts, and a reply counts as a review only when it says LGTM or lists FINDING lines.
+- Check provenance (TEN-GATES-01): every check is classed as exogenous, independent, agent authored or LLM judged, so a verdict proven only by tests the agent added in the same change is no longer counted as exogenous proof.
+- MCP install (TEN-ADOPTION-05): `loki mcp install` merges the Loki server into Cursor, VS Code and Claude configs without touching other entries, keeps a .bak copy, refuses invalid JSON, and `--print` writes nothing.
+- Publish to GitHub (TEN-DEPLOY-07): `loki publish` creates the GitHub repo (private by default, `--public` opt-in), pushes it and posts the receipt verdict as the loki/receipt commit status. A dirty tree is refused.
+- Dashboard first view (TEN-UX-06): the dashboard shows an empty state with the next command, a stage strip, and selects the newest run automatically.
+- Build verdict in proof (TEN-GATES-09): engine10 runs write build results so the proof shows a real build verdict; an unbuilt project never reads as green.
+- Relevant-file digest (TEN-QUALITY-06): the full-job brief carries a capped digest of signatures from the files most relevant to the task.
+- Localization recall (TEN-QUALITY-09): the SWE-bench loader measures whether a run touched the files the reference fix touched.
+- Cache detail per stage (TEN-COST-05): per-stage cost lines carry cache read, cache creation and cache hit ratio.
+- Receipt bundle (TEN-ADOPTION-02): a run's receipt packs into one portable bundle a third party can verify.
+- Cost proof tooling (TEN-COST-17, TEN-COST-18, TEN-COST-20): the C-F1 ledger records raw token classes, a cost_claim command states the measured ratio, and the seed tasks ship their own tests.
+
+### Fixed
+- Git token safety (Q18-02b): token-carrying git fetch and pull reset repo-local CA, TLS verify and curl resolve settings, and never recurse into submodules, closing paths where a hostile repo could see the token.
+- Lint attribution (TEN-QUALITY-02): comparing head lint to base fails closed when the head output has only a summary line or nothing parseable with a non-zero exit, so pre-existing lint is never excused by mistake.
+- Repo map (TEN-QUALITY-04): the repo map scans past the first 20 KB of a file and caches per tree.
+- Pulse (TEN-STABILITY-06): PROMOTION_LAG names its reason and the failing Nightly steps.
+- Deploy output (TEN-DEPLOY-01b): `loki deploy --execute` streams provider output live and keeps the provider exit code.
+- Fix rounds (TEN-QUALITY-07): the fix brief carries the current diff and its hunks instead of an empty stat.
+- Group runs (TEN-GROUP-AUTH): unit sessions keep USER, LOGNAME and SHELL so Claude login works on macOS, and the run prints one Cost line summed from every unit (partial when a unit is unmeasured).
+
+### Changed
+- Project model discovery (TEN-COST-07): tries the fast model tier first and uses the run model only on retry.
+- Cross review (TEN-COST-06): the Claude judge runs with lean flags and its spend lands in the run ledger.
+- Instant releases (TEN-RELEASE-INSTANT, D102): every release publishes to npm `latest` and `next` as soon as the package is built, with a never-backwards version guard. The nightly promotion workflow is removed.
+
 ## v11.17.13 (2026-10-17)
 
 v11.17.12 was tagged but never published: its full test suite failed on one stale test assertion, so npm stayed at 11.17.11. Everything listed under v11.17.12 ships in this release.

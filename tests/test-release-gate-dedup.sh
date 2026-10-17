@@ -6,8 +6,8 @@
 #      (Tests runs tsc at test.yml "Typecheck loki-ts (tsc)" and the bun suites).
 #   2. gate rebuilds the dist and compares it to the committed one, and compares
 #      the npm tarball's dist (scripts/ci/verify-release-dist.sh build|tarball).
-#   3. The Tests verdict is still enforced: `release` needs required-ci, and
-#      required-ci's REQUIRED list still names Tests.
+#   3. D102: npm publish never waits on gate or Tests (publish-npm needs only
+#      pack-npm), while the tag/GitHub Release job still needs gate.
 #   4. verify-release-dist.sh behaves: a debugId-only difference passes, a real
 #      byte difference in the tarball or the build fails.
 #
@@ -61,10 +61,9 @@ check_yml() {
                    END { if (!(b && i && y && p && b < i && i < p && y < p)) print "gate runs P9 before bun, bun install or PyYAML are ready" }'
     grep -qE 'npm pack' <<< "$g" || echo "gate does not pack the tarball"
     rel="$(job_block "$yml" release | code_only)"
-    grep -qE '^[[:space:]]+needs:.*required-ci' <<< "$rel" || echo "release no longer needs required-ci (Tests verdict)"
     grep -qE '^[[:space:]]+needs:.*\bgate\b' <<< "$rel" || echo "release no longer needs gate"
-    req="$(job_block "$yml" required-ci | code_only)"
-    grep -qE "REQUIRED=.*\"Tests\"" <<< "$req" || echo "required-ci REQUIRED list no longer names Tests"
+    pub="$(job_block "$yml" publish-npm | code_only)"
+    grep -qE '^[[:space:]]+needs:[[:space:]]*pack-npm[[:space:]]*$' <<< "$pub" || echo "publish-npm must need only pack-npm"
 }
 
 # expect_clean / expect_red wrap check_yml
@@ -104,11 +103,11 @@ mutate "M3 remove dist byte-identity check" "gate lost the dist byte-identity bu
   's = s.replace("bash scripts/ci/verify-release-dist.sh build", "true", 1)'
 mutate "M4 remove tarball dist check" "gate lost the packed tarball dist check" \
   's = s.replace("verify-release-dist.sh tarball", "true", 1)'
-mutate "M5 release stops needing required-ci" "release no longer needs required-ci" \
-  's = s.replace("    needs: [gate, required-ci, pack-npm]\n    permissions:\n      contents: write", "    needs: [gate, pack-npm]\n    permissions:\n      contents: write", 1)'
+mutate "M5 release stops needing gate" "release no longer needs gate" \
+  's = s.replace("    needs: [gate, pack-npm]\n    permissions:\n      contents: write", "    needs: [pack-npm]\n    permissions:\n      contents: write", 1)'
 # shellcheck disable=SC2016
-mutate "M6 required-ci stops requiring Tests" "required-ci REQUIRED list no longer names Tests" \
-  's = s.replace("REQUIRED=$(printf \x27%s\\n\x27 \"Tests\" \"Security Audit\")", "REQUIRED=$(printf \x27%s\\n\x27 \"Security Audit\")", 1)'
+mutate "M6 publish-npm starts waiting on gate" "publish-npm must need only pack-npm" \
+  's = s.replace("  publish-npm:\n    needs: pack-npm", "  publish-npm:\n    needs: [gate, pack-npm]", 1)'
 
 mutate "M7 remove the P9 step" "gate lost the P9 step" \
   's = s.replace("bash scripts/ci/fast-gate.sh p9", "true", 1)'

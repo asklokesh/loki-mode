@@ -449,8 +449,6 @@ npm artifacts have portable permissions	11
 packaged MCP server exposes the exact tool surface	5
 MCP contract guard rejects rename/deletion/missing prereqs	23
 npm SBOM is attached to the GitHub Release	1
-promote gitHead stamp and tag fallback (FC-51)	1
-promote smoke gate accepts legacy run by head_sha (FC-71)	1
 nightly flake tracker flags same-SHA pass/fail flips (FC-53)	1
 release.sh version-bump preserves file mode (BACKLOG 22)	1
 loki why maps each error class to an action	2
@@ -668,7 +666,7 @@ No script or test removes run-owned temp dirs by glob (E-140)	2
 No test starts a build against the repo root (E-165)	2
 v10 ops (E-142)	70
 first-run gate assertion logic (A-02)	12
-release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)	3
+release publishes npm latest and next at once (D102)	3
 loki-seal Stop hook (A-04)	20
 Quick-fix artifacts (A-132)	60
 Council trivial-diff probe skip (A-133)	10
@@ -764,3 +762,4 @@ worktree reaper saves, removes and floors slice worktrees (AUTO-REAP, FC-99)	12
 quickstart --explain-match shows top 3 scores and confidence	2
 loki backup and restore: verified round trip, refuses tamper and overwrite (P12-48)	6
 Loki modernize Legacy-Bench pilot harness (M-27)	3
+loki github publish (receipt-stamped GitHub export)	10

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 // TS/JS public-signature extraction (moved from features/wall_manifest.ts, which keeps the manifest layout): a comment/literal-aware
 // lexer that returns export heads with bodies, defaults and decorators masked. Pure; a file whose lexing is undecidable emits nothing.
 interface Item { head: string; raw: string; end: string; body: string | null; balanced: boolean }
@@ -504,4 +506,51 @@ export function tsSignatures(src: string, jsx: boolean): string[] {
     if (!done.some(hasTopSemi)) out.push(...done);
   }
   return out;
+}
+
+// Python def/class headers up to the colon. Nested defs inside a function are skipped; methods keep their indentation under the class.
+function pySignatures(src: string): string[] {
+  const lines = src.split("\n"), out: string[] = [], stack: { indent: number; cls: boolean }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*)(?:async\s+def|def|class)\s/.exec(lines[i]!);
+    if (!m) continue;
+    const indent = m[1]!.length;
+    while (stack.length && stack[stack.length - 1]!.indent >= indent) stack.pop();
+    const isClass = /^\s*class\s/.test(lines[i]!);
+    let head = lines[i]!.trimEnd();
+    for (let j = i + 1; j < lines.length && (head.split("(").length !== head.split(")").length || !/:\s*(#.*)?$|:\s*\S/.test(head)) && j < i + 12; j++) head += ` ${lines[j]!.trim()}`;
+    const top = stack.length === 0 || stack[stack.length - 1]!.cls;
+    stack.push({ indent, cls: isClass });
+    if (!top) continue;
+    let colon = -1;
+    for (let k = 0, d = 0; k < head.length && colon < 0; k++) {
+      if ("([{".includes(head[k]!)) d++;
+      else if (")]}".includes(head[k]!)) d--;
+      else if (head[k] === ":" && d === 0) colon = k;
+    }
+    out.push(colon >= 0 ? head.slice(0, colon + 1) : head);
+  }
+  return out;
+}
+
+// Deterministic signature digest in the order of `files`, capped at maxBytes (whole lines only). Unreadable or ambiguous files are skipped.
+export function signatureDigest(repoDir: string, files: string[], maxBytes = 4000): string {
+  const out: string[] = [];
+  let used = 0;
+  for (const f of files) {
+    let src: string;
+    try { src = readFileSync(join(repoDir, f), "utf8"); } catch { continue; }
+    const jsx = /\.[jt]sx$/.test(f);
+    let sigs: string[] = [];
+    if (/\.py$/.test(f)) sigs = pySignatures(src);
+    else if (/\.[cm]?[jt]sx?$/.test(f) && !tsAmbiguous(src, jsx)) sigs = tsSignatures(src, jsx).flatMap((x) => x.split("\n"));
+    if (!sigs.length) continue;
+    for (const l of [f, ...sigs.map((x) => (x.startsWith(" ") ? x : `  ${x}`))]) {
+      const n = Buffer.byteLength(l) + 1;
+      if (used + n > maxBytes) return out.join("\n");
+      out.push(l);
+      used += n;
+    }
+  }
+  return out.join("\n");
 }

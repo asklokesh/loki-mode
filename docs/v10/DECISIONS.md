@@ -785,7 +785,7 @@ Amends FC-35 (the router-on plan no longer skips small tasks) and D89 Amendment 
 2. Line budgets are never raised to admit a feature. Overflow is extracted along docs/v11/REGISTRIES.md.
 3. RG-06 approved: loki-ts/src/contrib/ with a 1200-line cap and the D66 import rules. Binding guards: core (engine10) never imports contrib; each contrib module is optional (deleting one leaves core compiling and flag-off goldens unchanged); no verdict logic in contrib (D42); the cap failure lists per-file line counts.
 
-## D96 (2026-10-08, founder directive relayed by steering at 17:45Z, CoS records): every approved slice is a release; next by merge, latest by promotion
+## D96 (2026-10-08, founder directive relayed by steering at 17:45Z, CoS records): every approved slice is a release; next by merge, latest by promotion (point 3 SUPERSEDED by D102: latest and next publish together)
 Founder: "you are taking hours long for releases, I wanted 3 releases to 10 releases per hour ... release asap to accommodate that many". Supersedes D94 point 1 (trains) and the D91 clock cut; D90 moves from publish to promotion. D94 points 2 and 3 stand.
 1. A slice that passes merge-gate merges straight to main, and main publishes a PATCH to npm `next` within 15 minutes. There are no trains and no batching. Target: 3 or more releases per hour, 10 when the queue allows.
 2. `next` gate (budget 10 min from push to npm): tsc, impacted tests plus always-run guards, moat P9 (never waived), dist guard, pack smoke.
@@ -829,3 +829,15 @@ Standing: from this grant on, the CoS decides founder-queue items without waitin
 - Cost: an unrelated edit to pnpm-workspace.yaml now caps. Accepted: such edits are rare and moat beats convenience.
 - Rejected: more regexes on a strict subset (round 1 showed the class is open); bundling js-yaml (pnpm can change parsers between versions).
 - Reverse: only by comparing with the exact parser the installed package manager uses, proven by a differential fuzz against it.
+
+## D102 (2026-10-17, founder directive, CoS records): a VERSION push publishes npm `latest` and `next` at once; no CI gate before npm
+Founder: "stability I don't want nightly delaying latest version in npm, make an update and always a release should get into npm as well asap, but never cost time of testing, i hate delays, i want fastest releases into npm, significantly fastest and much faster than anyone in the world. within seconds." Supersedes D96 point 3 (latest by promotion), the `next` gate wait of D96 point 2, and the required-ci wait described in earlier release docs.
+1. A push to main that changes VERSION runs release.yml. The new `publish-npm` job needs only `pack-npm` (which already verifies the packed tarball carries a fresh dist and records its sha256). It does not wait on `gate`, Tests, Security Audit, nightly, the backstop, Post-Release Smoke, the git tag or the GitHub Release.
+2. `publish-npm` verifies the tarball digest, publishes with `--tag next`, then moves `latest` and `next` to VERSION only behind a `sort -V` never-backwards guard (VERSION must be the highest). A rerun for a version npm already serves only re-asserts the dist-tags; any other publish failure is fatal. The TypeScript SDK does the same (publish `--tag next`, then guarded tag moves).
+   The `release-npm` concurrency group (and `release-npm-sdk` for the SDK, `cancel-in-progress: false`) keeps one pending job, so an intermediate version can be skipped on npm while `latest` still ends at the newest.
+3. Deleted: the `required-ci` job, `.github/workflows/promote.yml` and their tests (test-promote-head-stamp.sh, test-promote-smoke-sha.sh, test_release_required_ci.py). The Docker `:latest` tag and the Homebrew formula bump that promote.yml performed now run inside release.yml after the release job.
+4. Tests, Security Audit, the nightly and the backstop still run in parallel on every push. They are fix-forward signals: a red result opens a P0 fix slice, never delays or blocks npm. `gate`, tag, GitHub Release, SBOM, notify, docker and the SDKs still use it. `npm-visible` stays informational.
+5. Safety net unchanged: never unpublish; `npm deprecate` is allowed for a bad version, then ship the fix as the next PATCH. The never-backwards guard now lives in publish-npm (publish under next, move latest and next only if VERSION is the highest by sort -V; serialized by a release-npm concurrency group); the gitHead stamp, packed-version check and release-actor tag guards stay.
+6. Pulse: a promotion lag violation, if one exists, fires only when npm `latest` differs from `next`.
+- Cost accepted: a red build can reach `latest` for minutes. Reason: the founder ranks speed of release over pre-publish testing, and deprecate plus fix-forward bounds the damage.
+- Reverse: only by a founder directive.

@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyCheck, GO_EXIT0_REASON, hasExecutedProof, testCount } from "../../src/util/check_result.ts";
-import { firstError, runCheck, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { checkProvenance, classifyCheck, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import type { RunContext } from "../../src/engine10/types.ts";
@@ -259,5 +259,52 @@ describe("go branch follows the runner, not the output", () => {
   });
   test("go exit 0 stays unconfirmed even if output has panic text", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: "panic: x\nok  \tp\t0.1s\n", runner: "go" }).result).toBe("not_run");
+  });
+});
+
+describe("TEN-GATES-01 check provenance", () => {
+  const ctx = { addedFiles: ["tests/new.test.ts"], wallFiles: ["tests/wall.test.ts"], holdout: true };
+  test("runner on an added file is agent_authored, same path pre-existing is exogenous", () => {
+    expect(checkProvenance("bun:tests/new.test.ts", ctx)).toBe("agent_authored");
+    expect(checkProvenance("jest:./tests/new.test.ts", ctx)).toBe("agent_authored");
+    expect(checkProvenance("bun:tests/new.test.ts", { ...ctx, addedFiles: [] })).toBe("exogenous");
+  });
+  test("pytest and go names (the real emitted shape) resolve by path", () => {
+    const c2 = { addedFiles: ["tests/test_new.py", "pkg/new_test.go"], wallFiles: ["tests/test_wall.py"], holdout: true };
+    expect(checkProvenance("pytest:tests/test_new.py", c2)).toBe("agent_authored");
+    expect(checkProvenance("go:pkg/new_test.go", c2)).toBe("agent_authored");
+    expect(checkProvenance("pytest:tests/test_wall.py", c2)).toBe("independent");
+    expect(checkProvenance("pytest:tests/test_old.py", c2)).toBe("exogenous");
+    expect(hasExogenousProof([{ name: "pytest:tests/test_new.py", result: "pass", n: 4 }], c2)).toBe(false);
+    expect(hasExogenousProof([{ name: "pytest:tests/test_wall.py", result: "pass", n: 4 }], c2)).toBe(true);
+  });
+  test("names derived by verify.ts testCheckName classify correctly for every runner", () => {
+    const refs = [{ runner: "pytest", path: "tests/test_new.py" }, { runner: "go", path: "pkg/new_test.go" }, { runner: "bun", path: "tests/new.test.ts" }] as never[];
+    const c3 = { addedFiles: refs.map((r: { path: string }) => r.path), wallFiles: [] as string[] };
+    for (const r of refs) expect(checkProvenance(testCheckName(r), c3)).toBe("agent_authored");
+    expect(checkProvenance(testCheckName(refs[0]!), { addedFiles: [], wallFiles: ["tests/test_new.py"] })).toBe("independent");
+    expect(checkProvenance("lint:tests/new.test.ts", c3)).toBe("exogenous");
+  });
+  test("wall file and holdout are independent", () => {
+    expect(checkProvenance("vitest:tests/wall.test.ts", ctx)).toBe("independent");
+    expect(checkProvenance("vitest:tests/wall.test.ts", { ...ctx, addedFiles: ["tests/wall.test.ts"] })).toBe("independent");
+    expect(checkProvenance("holdout", ctx)).toBe("independent");
+  });
+  test("LLM judges are llm_judge", () => {
+    for (const n of ["council", "xreview", "code_review", "devils_advocate", "magic_debate", "council:round1"]) expect(checkProvenance(n, ctx)).toBe("llm_judge");
+  });
+  test("static, scan, boot, probe and unknown names are exogenous (fail-closed)", () => {
+    for (const n of ["lint:eslint", "typecheck:tsc", "security_scan", "app_boot", "http_probe", "full_suite", "something_new"]) expect(checkProvenance(n, ctx)).toBe("exogenous");
+  });
+  test("hasExogenousProof", () => {
+    const ok = (name: string, n = 3, result = "pass") => ({ name, result, n });
+    expect(hasExogenousProof([ok("bun:tests/new.test.ts")], ctx)).toBe(false);
+    expect(hasExogenousProof([ok("bun:tests/new.test.ts")], { ...ctx, addedFiles: [] })).toBe(true);
+    expect(hasExogenousProof([ok("vitest:tests/wall.test.ts")], ctx)).toBe(true);
+    expect(hasExogenousProof([ok("council", 5)], ctx)).toBe(false);
+    expect(hasExogenousProof([ok("lint:x", 0)], ctx)).toBe(false);
+    expect(hasExogenousProof([ok("lint:x", 2, "fail")], ctx)).toBe(false);
+    expect(hasExogenousProof([ok("bun:tests/new.test.ts"), ok("council", 5), ok("app_boot", 1)], ctx)).toBe(true);
+    expect(hasExogenousProof([], ctx)).toBe(false);
   });
 });

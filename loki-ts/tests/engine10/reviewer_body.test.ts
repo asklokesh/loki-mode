@@ -33,9 +33,26 @@ describe("renderReviewerBody", () => {
     expect(body).toContain("2 failing, 0 passing on base; after: pass");
     expect(body).toContain("Verdict: PARTIAL (DRAFT: verdict PARTIAL)");
   });
-  it("ends with the digest and loki verify instructions", () => {
+  it("ends the receipt with the digest, loki verify, and the other-machine line", () => {
     expect(body).toContain("sha256:ab12 (signed)");
-    expect(body.trimEnd().split("\n").pop()).toBe("- Verify: `loki verify run-1`");
+    expect(body).toContain("- Verify: `loki verify run-1`");
+    expect(body).toContain("`loki proof bundle run-1`");
+    expect(body).toContain("`npx loki-mode verify --pubkey pubkey.jwk receipt.json`");
+  });
+  it("adds the footer, LOKI_PR_FOOTER=0 removes it and keeps the verify lines", () => {
+    expect(body.trimEnd().split("\n").pop()).toBe("Built with Loki Mode: https://github.com/asklokesh/loki-mode");
+    const off = renderReviewerBody(base, { LOKI_PR_FOOTER: "0" });
+    expect(off).not.toContain("Loki Mode:");
+    expect(off).toContain("- Verify: `loki verify run-1`");
+    expect(off).toContain("loki proof bundle run-1");
+  });
+  it("footer says verified only for a non-draft VERIFIED body", () => {
+    expect(body).not.toMatch(/Built and verified/);
+    const ok = renderReviewerBody({ ...base, verdict: "VERIFIED", draftReason: null });
+    expect(ok).toContain("Built and verified with Loki Mode: https://github.com/asklokesh/loki-mode");
+    const draft = renderReviewerBody({ ...base, verdict: "VERIFIED", draftReason: "cap hit" });
+    expect(draft).not.toMatch(/Built and verified/);
+    expect(draft).toContain("Built with Loki Mode");
   });
   it("prints not recorded, never a number, when data is absent", () => {
     const empty = renderReviewerBody({ ...base, outputs: {}, receiptSha256: null, signed: null, notProven: [] });

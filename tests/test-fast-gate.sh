@@ -122,7 +122,7 @@ assert 'Block the release on a red nightly' not in s, 'release.yml still has the
 assert 'NIGHTLY-BLOCK' not in s, 'NIGHTLY-BLOCK still present in release.yml'
 assert 'workflows/nightly.yml' not in s, 'release.yml still reads nightly runs'
 PY
-then ok "release.yml no longer blocks on a red nightly (D96: the gate moved to promote.yml)"
+then ok "release.yml no longer blocks on a red nightly (D102: release never waits on CI)"
 else bad "release.yml still blocks the release on a red nightly"; fi
 
 # PLAN-BOUND: the plan step is bounded and a nonzero planner rc forces FULL.

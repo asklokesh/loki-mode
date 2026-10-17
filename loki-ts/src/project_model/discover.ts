@@ -5,6 +5,7 @@
 // The session goes through ctx.sessions (the engine10 provider path) on the run's own model (L1).
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fastTierModel } from "../runner/model_downgrades.ts";
 import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
 import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
 import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
@@ -26,6 +27,7 @@ export interface Discovery {
   cached: boolean;
   attempts: number; // model sessions spent (0 on a cache hit)
   owner?: "model" | "provider" | "harness"; // who owns an unknown result
+  sessionModel?: string; // TEN-COST-07: model of the last session ("run" = the run model); absent when no session ran
 }
 
 export function loadCached(repoDir: string, now: number = Date.now()): ProjectModel | null {
@@ -117,12 +119,16 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   mkdirSync(ctx.runDir, { recursive: true });
   const answerPath = join(ctx.runDir, "project-model.answer.json");
   let errors: string[] | null = null;
+  let lastModel: string | undefined;
   const MAX_ATTEMPTS = 2; // one answer, one retry with the validation errors (L0)
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (signal.aborted) return { model: unknownModel("", "aborted"), cached: false, attempts: attempt - 1, owner: "harness" };
     const limitS = Math.min(SESSION_LIMIT_S, Math.floor((deadline - Date.now()) / 1000));
     if (limitS < MIN_SESSION_S) return { model: unknownModel("", "no stage budget left for discovery"), cached: false, attempts: attempt - 1, owner: "harness" };
     rmSync(answerPath, { force: true });
+    // TEN-COST-07: attempt 1 on the fast tier; the retry escalates to the run model (an explicit override stays).
+    const attemptModel = attempt === 1 ? fastTierModel() : process.env["LOKI_MODEL_OVERRIDE"] || undefined;
+    lastModel = attemptModel ?? "run";
     const hardMs = opts.hardTimeoutMs ?? limitS * 1000 + HARD_GRACE_MS;
     const abort = new AbortController();
     const onAbort = (): void => abort.abort();
@@ -139,6 +145,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
         limitS,
         signal: abort.signal,
         cwd: ctx.repoDir,
+        ...(attemptModel ? { model: attemptModel } : {}),
       });
       run.catch(() => undefined);
       raced = await Promise.race([run, hung]);
@@ -150,7 +157,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
       abort.abort();
       const reason = `owner=provider: the discovery session hung past ${Math.round(hardMs / 1000)}s and was abandoned`;
       try { ctx.emit?.("project_model.fallback", "intake", { reason, hard_timeout_s: Math.round(hardMs / 1000) }); } catch { /* recording must not fail intake */ }
-      return { model: unknownModel("", reason), cached: false, attempts: attempt, owner: "provider" };
+      return { model: unknownModel("", reason), cached: false, attempts: attempt, owner: "provider", sessionModel: lastModel! };
     }
     const session = raced;
     const raw = readAnswer(answerPath, session.summary);
@@ -162,13 +169,13 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     if (v?.ok) {
       const model: ProjectModel = { ...v.model, key: computeKey(ctx.repoDir, v.model.fingerprintFiles, dirs) };
       save(ctx.repoDir, model);
-      return { model, cached: false, attempts: attempt };
+      return { model, cached: false, attempts: attempt, sessionModel: lastModel! };
     }
     errors = v ? v.errors.slice(0, 20) : ["no JSON answer was found: write the JSON object to the answer file"];
   }
   const model = unknownModel(computeKey(ctx.repoDir, [], dirs), `owner=model: discovery answer rejected twice: ${(errors ?? []).slice(0, 3).join("; ")}`, Date.now() + UNKNOWN_TTL_MS);
   try { save(ctx.repoDir, model); } catch { /* an uncached unknown only costs a retry next run */ }
-  return { model, cached: false, attempts: MAX_ATTEMPTS, owner: "model" };
+  return { model, cached: false, attempts: MAX_ATTEMPTS, owner: "model", ...(lastModel ? { sessionModel: lastModel } : {}) };
 }
 
 /** Intake's stage-data fragment. Default ON (FC-01: verify, Wall, deep and visual evidence consume it);
@@ -178,8 +185,8 @@ export async function intakeProjectModel(ctx: RunContext, signal: AbortSignal, s
   if (!projectModelEnabled()) return {};
   try {
     const budgetS = STAGE_BUDGETS.intake.limitS - (Date.now() - startedMs) / 1000 - KILL_GRACE_S - MARGIN_S;
-    const { model, cached, attempts, owner } = await discoverProjectModel(ctx, signal, { budgetS });
-    return { project_model: { status: model.status, key: model.key, cached, attempts, ref: PROJECT_FILE, ...(owner ? { owner } : {}), ...(model.reason ? { reason: model.reason } : {}) } };
+    const { model, cached, attempts, owner, sessionModel } = await discoverProjectModel(ctx, signal, { budgetS });
+    return { project_model: { status: model.status, key: model.key, cached, attempts, ...(sessionModel ? { session_model: sessionModel } : {}), ref: PROJECT_FILE, ...(owner ? { owner } : {}), ...(model.reason ? { reason: model.reason } : {}) } };
   } catch {
     return {};
   }

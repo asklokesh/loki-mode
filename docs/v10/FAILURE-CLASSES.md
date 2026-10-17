@@ -976,3 +976,24 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: every literal reason produced by reasonOf (output.ts:74); the supervisor call site that passes the reason.
 - Mechanism: nextOf in util/run_summary.ts takes reason and outcome and maps each failure class to one command; verified, done-unverified, budget and stopped output stays byte-identical.
 - Fixture: run_summary.test.ts table rows copied from the real reason literals, a pin of the old outputs, and a source scan that every reasonOf literal has a mapping; tests/features/contract.test.ts covers fatal:auth end to end.
+
+## FC-AGENT-PROOF A VERIFIED verdict proven only by agent-authored evidence (TEN-GATES-01)
+- User-visible vs raw: the receipt says VERIFIED, but every executed pass is a test the implementer added in the same diff or an LLM judge verdict; raw shows no check the agent could not write itself.
+- Law broken: success needs evidence the implementing agent did not author (exogenous gates are the moat).
+- Siblings to sweep: engine10 seal proof, proof-generator headline, deep council pass.
+- Mechanism: util/check_result.ts checkProvenance classifies each check (exogenous, independent, agent_authored, llm_judge; unknown is exogenous) and hasExogenousProof is the one predicate every consumer calls.
+- Fixture: loki-ts/tests/engine10/check_result.test.ts "TEN-GATES-01 check provenance" (added test file, same path pre-existing, Wall path, council, unknown name).
+
+## FC-TEN-GROUP-AUTH Group child sessions lose the OS identity vars and report no cost (SCOPED-ENV-NO-IDENTITY)
+- User-visible vs raw: every unit session of a group run printed "Not logged in" and failed in about 6s at $0 on macOS Claude OAuth; the run then said nothing about the dollars the surviving units spent.
+- Law broken: a scoped child env must keep what the provider CLI needs to authenticate (USER and LOGNAME key the macOS keychain lookup) while still dropping unrelated secrets; spend that happened must be reported, never silently unmeasured.
+- Siblings: run_group.ts ENV_KEEP (broken); commands/start.ts START_ENV_NAMES and util/skill_checks.ts SKILL_CHECK_ENV_ALLOW already keep USER, LOGNAME, SHELL; features/speed/fix_units.ts suiteTail (the group's fix-unit suite run) was a fourth allowlist and now keeps the same three vars; a git grep of env allowlists in loki-ts/src found no other. The remaining child-env helpers copy the full env and remove named secrets, so they never dropped identity.
+- Mechanism: ENV_KEEP in run_group.ts gains USER, LOGNAME, SHELL; parseGroupCost and groupCostLine sum the per-unit cost rows of every backlog.py launch and print one measured, partial or not-measured `Cost:` line like a single run, and writeGroupCostRecord rolls the sum into the parent .loki/metrics/efficiency so collect_efficiency, receipts and the bench read it. parseGroupCost ignores output with no Summary table. No shared base list: the allowlists differ in everything but the identity trio, so a shared list would not remove the copies.
+- Fixture: tests/features/run_group_env_cost.test.ts (scopedEnv keeps USER and LOGNAME and drops an unrelated secret; group cost equals the sum of unit costs, unmeasured rows read partial, none reads not measured; a runGroup test with a fake launcher asserts the Cost line and the efficiency record); tests/runner/spawn_env_guard.test.ts stays green.
+
+## FC-BUNDLE-SDK-LEAK A server bundle pulls loki-ts SDK code through a one-constant import (v11.17.14)
+- User-visible vs raw: v11.17.14 never reached npm and the 11.17.15 docker images failed to build; raw was `Could not resolve: "@anthropic-ai/sdk"` while bundling packages/control-plane src/server/serve.ts.
+- Law broken: a module imported by the control-plane server must not reach runner code that needs loki-ts runtime deps; a shared constant lives in a leaf module.
+- Siblings: deep.ts was the only engine10 stage importing runner/quality_gates.ts (git grep); xreview.ts already imports providers/claude_flags.ts. pack-npm also lacked a loki-ts install, fixed in 386e73f32.
+- Mechanism: REVIEW_GUARD_DENYLIST moves to providers/claude_flags.ts; quality_gates.ts re-exports it; deep.ts imports the leaf.
+- Fixture: tests/test-control-plane.sh builds serve.ts with a metafile and fails if runner/sdk_invoker appears (red with the old import: 3 hits; green: 0).

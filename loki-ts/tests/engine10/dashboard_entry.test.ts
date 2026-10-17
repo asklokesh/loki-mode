@@ -47,6 +47,57 @@ async function waitFor(pred: () => Promise<boolean>, timeoutMs: number): Promise
   }
 }
 
+async function servePage(repoDir: string, offset: number): Promise<string> {
+  const port = 55000 + ((process.pid + offset) % 4000);
+  const url = `http://127.0.0.1:${port}/`;
+  const env: Record<string, string | undefined> = { ...process.env, LOKI_TS_ENTRY: ENTRY, LOKI_E10_DASHBOARD_PORT: String(port), LOKI_NO_BROWSER: "1" };
+  delete env.LOKI_LEGACY_BASH;
+  procs.push(Bun.spawn({ cmd: [process.execPath, ENTRY, "engine10", "dashboard"], cwd: repoDir, env, stdout: "ignore", stderr: "ignore" }));
+  await waitFor(async () => { try { return (await fetch(url)).status === 200; } catch { return false; } }, 10_000);
+  return await (await fetch(url)).text();
+}
+
+describe("TEN-UX-06 dashboard page", () => {
+  test("empty .loki serves the empty state with the start command and doctor link", async () => {
+    const repoDir = mkRepo();
+    mkdirSync(join(repoDir, ".loki"), { recursive: true });
+    const html = await servePage(repoDir, 1);
+    expect(html).toContain('id="empty-state"');
+    expect(html).toContain("loki start");
+    expect(html).toContain("loki doctor");
+  }, 20_000);
+
+  test("page has stage strip, auto-select on load, readable timeline, theme and narrow layout", async () => {
+    const { renderPage } = await import("../../src/util/dashboard_page.ts");
+    const html = renderPage();
+    expect(html).toContain('id="stage-strip"');
+    expect(html.split("autoSelect(").length - 1).toBeGreaterThanOrEqual(2); // definition plus the call on load
+    expect(html).toMatch(/function autoSelect[\s\S]*selectRun\(pick\)/);
+    expect(html).toContain("prefers-color-scheme");
+    expect(html).toContain("@media (max-width: 640px)");
+    expect(html).toContain(":root");
+    for (const st of ["intake", "plan", "wall", "implement", "verify", "seal", "pr"]) expect(html).toContain('"' + st + '"');
+  });
+
+  test("XSS: event detail never reaches innerHTML unescaped", async () => {
+    const repoDir = mkRepo();
+    writeRun(repoDir, "x1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "stage.completed", "intake", { duration_s: 1, summary: "<img src=x onerror=alert(1)>" }),
+    ]);
+    const { renderPage } = await import("../../src/util/dashboard_page.ts");
+    const html = renderPage();
+    const assigns = html.split("\n").filter((l) => /\.innerHTML\s*(\+)?=/.test(l));
+    expect(assigns.length).toBeGreaterThan(0);
+    // Only known-safe sinks may use innerHTML: clears, the esc()-built strip and panels. Event data goes through textContent.
+    for (const l of assigns) {
+      expect(l).toMatch(/(ul\.innerHTML = "";|"timeline"\)\.innerHTML = "";|"stage-strip"\)\.innerHTML = STAGES\.map|"panels"\)\.innerHTML = \(r\.panels)/);
+      expect(l).not.toMatch(/\be\.(data|detail)\b|timelineText/);
+    }
+    expect(html).not.toContain("<img src=x onerror");
+  });
+});
+
 describe("engine10 dashboard entry e2e (real cli.ts, real Bun.serve)", () => {
   test("engine10 dashboard serves a run folded from a fixture event log", async () => {
     const repoDir = mkRepo();

@@ -150,6 +150,7 @@ _ml_help() {
 Loki Mode -- launch the MCP (Model Context Protocol) server
 
 Usage: loki mcp [--transport stdio|http] [--port N] [--help]
+       loki mcp install --client claude|cursor|vscode|windsurf [--project|--global] [--print]
 
 Starts the Loki Mode MCP server so MCP-aware clients (Claude Code, IDEs)
 can call Loki's tools (memory, task queue, code search, build management).
@@ -200,8 +201,164 @@ install command to stderr and exits 2.
 EOF
 }
 
+# --- loki mcp install (TEN-ADOPTION-05) ------------------------------------
+# Registers the loki-mode stdio server (`npx -y loki-mode mcp`) in an MCP
+# client's config. The JSON merge keeps every other server and key, is a no-op
+# (byte-identical, no .bak) when loki-mode is already registered with the same
+# entry, writes <file>.bak before changing an existing file, and refuses to
+# touch invalid JSON.
+
+_ml_install_help() {
+    cat <<'EOF'
+Usage: loki mcp install --client claude|cursor|vscode|windsurf [--project|--global] [--print]
+
+Adds the loki-mode MCP server (npx -y loki-mode mcp) to a client's config.
+
+  claude    runs `claude mcp add loki-mode -- npx -y loki-mode mcp` when the
+            claude CLI is on PATH, otherwise prints that command.
+  cursor    .cursor/mcp.json (--project, default) or ~/.cursor/mcp.json (--global)
+  vscode    .vscode/mcp.json (project only), under the "servers" key
+  windsurf  ~/.codeium/windsurf/mcp_config.json (global only)
+
+Options:
+  --project   Write to the current project (claude: --scope project).
+  --global    Write to the user config (claude: --scope user).
+  --print     Print what would be written to stdout; write nothing.
+
+Existing files are merged (other servers and keys are kept), backed up to
+<file>.bak before a change, and left untouched if they are not valid JSON.
+EOF
+}
+
+# _ml_json_merge <file> <topkey> <type|-> : merge the loki-mode entry into file.
+# Exit codes: 0 ok (changed or already current), 3 invalid or unusable JSON.
+_ml_json_merge() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import json, os, shutil, sys
+path, top, typ = sys.argv[1], sys.argv[2], sys.argv[3]
+entry = {"command": "npx", "args": ["-y", "loki-mode", "mcp"]}
+if typ != "-":
+    entry = dict([("type", typ)] + list(entry.items()))
+exists = os.path.exists(path)
+data = {}
+if exists:
+    try:
+        with open(path) as fh:
+            raw = fh.read()
+        data = json.loads(raw) if raw.strip() else {}
+    except (ValueError, OSError) as exc:
+        sys.stderr.write("Refusing to modify %s: not valid JSON (%s)\n" % (path, exc))
+        sys.exit(3)
+    if not isinstance(data, dict) or not isinstance(data.get(top, {}), dict):
+        sys.stderr.write("Refusing to modify %s: unexpected structure (need an object with an object '%s')\n" % (path, top))
+        sys.exit(3)
+servers = data.setdefault(top, {})
+if servers.get("loki-mode") == entry:
+    print("loki-mode already registered in %s" % path)
+    sys.exit(0)
+servers["loki-mode"] = entry
+if exists:
+    shutil.copy2(path, path + ".bak")
+else:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+print("Registered loki-mode in %s" % path)
+PY
+}
+
+_ml_install_main() {
+    local client="" scope="" do_print=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --client) client="${2:-}"; shift 2 2>/dev/null || shift ;;
+            --client=*) client="${1#--client=}"; shift ;;
+            --project) scope="project"; shift ;;
+            --global) scope="global"; shift ;;
+            --print) do_print=1; shift ;;
+            --help|-h|help) _ml_install_help; return 0 ;;
+            *)
+                printf 'Unknown option for loki mcp install: %s\n' "$1" >&2
+                _ml_install_help >&2
+                return 2
+                ;;
+        esac
+    done
+    case "$client" in
+        claude|cursor|vscode|windsurf) ;;
+        *)
+            printf 'loki mcp install: --client must be one of claude, cursor, vscode, windsurf (got: %s)\n' "${client:-none}" >&2
+            return 2
+            ;;
+    esac
+
+    if [ "$client" = "claude" ]; then
+        local -a cmd=(claude mcp add)
+        case "$scope" in
+            project) cmd+=(--scope project) ;;
+            global) cmd+=(--scope user) ;;
+        esac
+        cmd+=(loki-mode -- npx -y loki-mode mcp)
+        if [ "$do_print" -eq 1 ] || ! command -v claude >/dev/null 2>&1; then
+            [ "$do_print" -eq 1 ] || printf 'claude CLI not found on PATH; run this command yourself:\n' >&2
+            printf '%s\n' "${cmd[*]}"
+            return 0
+        fi
+        "${cmd[@]}"
+        return $?
+    fi
+
+    local file top typ="-"
+    case "$client" in
+        cursor)
+            top="mcpServers"
+            if [ "$scope" = "global" ]; then file="$HOME/.cursor/mcp.json"; else file="$PWD/.cursor/mcp.json"; fi
+            ;;
+        vscode)
+            top="servers"; typ="stdio"
+            if [ "$scope" = "global" ]; then
+                printf 'loki mcp install: vscode supports --project only (workspace .vscode/mcp.json)\n' >&2
+                return 2
+            fi
+            file="$PWD/.vscode/mcp.json"
+            ;;
+        windsurf)
+            top="mcpServers"
+            if [ "$scope" = "project" ]; then
+                printf 'loki mcp install: windsurf supports --global only (~/.codeium/windsurf/mcp_config.json)\n' >&2
+                return 2
+            fi
+            file="$HOME/.codeium/windsurf/mcp_config.json"
+            ;;
+    esac
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf 'loki mcp install needs python3 on PATH for the JSON merge.\n' >&2
+        return 2
+    fi
+    if [ "$do_print" -eq 1 ]; then
+        printf 'Would write to %s\n' "$file" >&2
+        python3 - "$top" "$typ" <<'PY'
+import json, sys
+top, typ = sys.argv[1], sys.argv[2]
+entry = {"command": "npx", "args": ["-y", "loki-mode", "mcp"]}
+if typ != "-":
+    entry = dict([("type", typ)] + list(entry.items()))
+print(json.dumps({top: {"loki-mode": entry}}, indent=2))
+PY
+        return 0
+    fi
+    _ml_json_merge "$file" "$top" "$typ"
+}
+
 # mcp_launch_main: dispatcher invoked by cmd_mcp() (autonomy/loki) or directly.
 mcp_launch_main() {
+    if [ "${1:-}" = "install" ]; then
+        shift
+        _ml_install_main "$@"
+        return $?
+    fi
     # Split argv into launcher-owned flags (consumed here) and server argv
     # (forwarded verbatim to the file-exec launch `python "$root/mcp/server.py"`).
     # The server's argparse only
