@@ -242,6 +242,7 @@ function _loki_commands {
         'secure:Secure-by-default gate (findings and waivers)'
         'own:Finish-and-own ownership handoff'
         'backup:Back up dashboard state (verified archive)'
+        'restore:Restore dashboard state from a verified backup archive'
         'telemetry:OpenTelemetry management'
         'agent:Agent type dispatch'
         'doctor:Check system prerequisites'
