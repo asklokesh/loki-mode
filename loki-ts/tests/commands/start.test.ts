@@ -5,9 +5,10 @@
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -406,5 +407,38 @@ describe("writebackEnv (tracker ref exports LOKI_WRITEBACK_ISSUE)", () => {
     expect(writebackEnv("linear:ENG-42", {}).LOKI_WRITEBACK_KIND).toBe("linear");
     expect(writebackEnv("jira:PROJ-123", {}).LOKI_WRITEBACK_KIND).toBe("jira");
     expect(writebackEnv("add a login page", {}).LOKI_WRITEBACK_ISSUE).toBeUndefined();
+  });
+});
+
+describe("missing prd path (TEN-STABILITY-30)", () => {
+  const none = () => false;
+  const yes = () => true;
+  it("missing prd path: path-shaped positional that does not exist -> message", () => {
+    for (const p of ["./prd.md", "prd.md", "docs/spec", "x.yaml", "x.JSON", "a.txt", "a.yml"]) {
+      expect(missingPrdMessage([p], p, none)).toBe(`PRD file not found: ${p}\n`);
+    }
+  });
+  it("missing prd path: --prd FILE and --prd=FILE always require the file", () => {
+    expect(missingPrdMessage(["--prd", "plain"], "plain", none)).toBe("PRD file not found: plain\n");
+    expect(missingPrdMessage(["--prd=plain"], "plain", none)).toBe("PRD file not found: plain\n");
+  });
+  it("existing files, plain briefs, issue refs, URLs, --brief and empty spec are unchanged", () => {
+    expect(missingPrdMessage(["./prd.md"], "./prd.md", yes)).toBeNull();
+    for (const b of ["build a todo app", "build a CRUD/REST api", "owner/repo#123", "jira:ABC-12", "https://x.io/a.md", "todo", ""]) {
+      expect(missingPrdMessage([b], b, none)).toBeNull();
+    }
+    expect(missingPrdMessage(["--brief", "./prd.md"], "./prd.md", none)).toBeNull();
+  });
+  it("missing prd path: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-s30-"));
+    try {
+      for (const a of [["start", "./nope/prd.md"], ["start", "--prd", "nope"]]) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain("PRD file not found:");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

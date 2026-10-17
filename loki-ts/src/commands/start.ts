@@ -13,6 +13,7 @@
 // (--compliance, mirofish) are rejected loudly and documented. See
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
+import { existsSync as pathExists } from "node:fs";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
@@ -347,6 +348,18 @@ export function parseStartArgs(
   };
 }
 
+/** TEN-STABILITY-30: a path-shaped spec (or any --prd value) that does not exist is an error, never a paid run on the path string as an inline brief. Issue refs, URLs and multi-word briefs are not path-shaped. Returns the message, or null. */
+export function missingPrdMessage(args: readonly string[], spec: string, exists: (p: string) => boolean = pathExists): string | null {
+  if (spec === "") return null;
+  const fromFlag = argVal(args, "--prd") !== undefined || args.some((a) => a.startsWith("--prd="));
+  if (!fromFlag) {
+    if (argVal(args, "--brief") !== undefined || args.some((a) => a.startsWith("--brief="))) return null;
+    const pathShaped = !/\s|#|^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec) && (spec.includes("/") || /\.(md|txt|ya?ml|json)$/i.test(spec));
+    if (!pathShaped) return null;
+  }
+  return exists(spec) ? null : `PRD file not found: ${spec}\n`;
+}
+
 /** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
 export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" {
   if (o.specPath !== undefined || o.specFirst) return "spec";
@@ -415,6 +428,11 @@ export async function runStart(args: readonly string[]): Promise<number> {
   }
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
+  const missing = missingPrdMessage(args, parsed.prdPath);
+  if (missing) {
+    process.stderr.write(missing);
+    return 2;
+  }
   if (startEngine(parsed) === "runner") {
     const { runAutonomous } = await import("../runner/autonomous.ts");
     return runAutonomous(parsed);
