@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.46 (2026-10-17)
+
+### Added
+- Per-run receipts record the toolchain, and gate results record per-gate wall-clock `duration_ms` (TEN-GATES-22, TEN-GATES-24).
+- `loki start` prints the effective run cap and its source before the first iteration (TEN-COST-41).
+- `loki provider list` prints an install hint for each missing provider CLI; `loki queue run` prints an `[n/m]` progress line per item (TEN-ADOPTION-22, TEN-UX-29).
+
+### Changed
+- `loki doctor --json` runs the sentrux, memory and requirements probes concurrently; the repo profile is cached on HEAD sha plus dirty flag; `loki report kpis --since` skips efficiency files older than the cutoff without reading them (TEN-SPEED-10, TEN-SPEED-12, TEN-SPEED-11).
+
+### Fixed
+- `loki start` exits 2 on a missing PRD path instead of running it as a brief; `--deploy` validates `--health-url`, `--domain` and `--env-file` up front with exit 2 (TEN-STABILITY-30, TEN-DEPLOY-19, TEN-DEPLOY-20).
+- Budget: `budget_used` is rebuilt from efficiency records when budget.json is corrupt; an unreadable model-pricing.json warns once before falling back to a 100 USD cap (TEN-COST-39, TEN-COST-40).
+- Secret scan in SARIF export and commit scanning covers Hugging Face, SendGrid, Twilio and Azure storage keys (TEN-SECURITY-11).
+- `loki verify-pr` exits 3 with "no proof:" when no proof exists and 4 when proof ran and failed (TEN-GATES-23).
+- Argument validation: `loki undo` rejects unknown flags, `loki control backfill --repo` needs a value, `loki report kpis --since` needs a value, `loki wiki show` lists valid sections on a bad one, and bash `loki provider`, `config` and `api` exit 2 on an unknown subcommand (TEN-STABILITY-28, TEN-STABILITY-26, TEN-UX-28, TEN-QUALITY-26, TEN-UX-25, TEN-UX-26).
+- `loki doctor --quiet` keeps Install hints under their WARN or FAIL row; bash `loki control --help` lists prune, stop and status --json (TEN-UX-27, TEN-UX-24).
+- One-time warnings for invalid LOKI_E10_STALL_S / LOKI_E10_STALL_KILL_S and for corrupt checkpoint metadata skipped by listCheckpoints (TEN-STABILITY-27, TEN-STABILITY-31).
+- Tests: help-changelog-drift asserts exact completion tokens; doctor disk volume label and provider failover ordering are pinned (TEN-QUALITY-23, TEN-QUALITY-22, TEN-QUALITY-25).
+
 ## v11.17.45 (2026-10-17)
 
 ### Fixed
