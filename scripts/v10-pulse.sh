@@ -1974,27 +1974,40 @@ else:
 _MERGE_SHA_TOKEN_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 
-def find_merge_commit_for_id(row_id):
-    # -E + a trailing "not another digit" boundary: a plain substring grep
-    # for "slice-S-1" also matches "slice-S-10", "slice-S-11", ... (BOARD ID
-    # numbers are not fixed-width), which would silently resolve the WRONG
-    # slice's merge commit. Pinned to MAIN_REF, not the caller's own HEAD,
-    # for the same reason check_unreleased_merge_age's git describe is
-    # above. `-n 1`: the grep-filtered walk stops at the first (newest)
-    # match instead of scanning the rest of history uselessly. row_id comes
-    # straight off a BOARD.md cell with no ID_RE filter here (this check
-    # scans every row, not just the known ID shapes), so an odd ID can make
-    # `-E`'s pattern itself invalid -- git then exits non-zero and this
-    # raises rather than silently returning "no match" (see below: that
-    # distinction is the whole point of raising here instead of just
-    # returning None on any non-zero rc, which would let a git failure --
-    # timeout, malformed pattern, anything -- read as "nothing to flag").
-    rc, out, err = git(
-        ["log", MAIN_REF, "--merges", "-n", "1", "--format=%H", "-E", "--grep", "slice-%s([^0-9]|$)" % row_id]
-    )
+_MERGE_INDEX = []
+
+
+def load_merge_index():
+    # ONE `git log --merges` pass for the whole check, newest first, instead
+    # of one per BOARD row: with 50 merged rows under load a single slow
+    # call used to raise for whichever row it hit and blank the anti-drift
+    # signal. git() memoizes by args, so every row shares this one answer.
+    # A non-zero rc (timeout included) raises rather than returning an empty
+    # index, so a git failure still reads UNKNOWN and never "nothing to flag".
+    rc, out, err = git(["log", MAIN_REF, "--merges", "--format=%H%x1f%B%x1e"])
     if rc != 0:
-        raise RuntimeError("git log --merges failed for row %r: rc=%s: %s" % (row_id, rc, err.strip()))
-    return out.strip() or None
+        raise RuntimeError("git log --merges failed: rc=%s: %s" % (rc, err.strip()))
+    entries = []
+    for rec in out.split("\x1e"):
+        sha, sep, msg = rec.strip().partition("\x1f")
+        if sep and sha:
+            entries.append((sha, msg))
+    _MERGE_INDEX[:] = entries
+
+
+def find_merge_commit_for_id(row_id):
+    # Newest merge whose message has "slice-<row_id>" followed by a non-digit
+    # or end of line: a plain substring match for "slice-S-1" would also hit
+    # "slice-S-10" (BOARD ID numbers are not fixed-width) and resolve the
+    # WRONG slice's merge. row_id is matched literally (re.escape): it comes
+    # straight off a BOARD.md cell with no ID_RE filter.
+    if not _MERGE_INDEX:
+        load_merge_index()
+    pat = re.compile(r"slice-" + re.escape(row_id) + r"([^0-9]|$)", re.M)
+    for sha, msg in _MERGE_INDEX:
+        if pat.search(msg):
+            return sha
+    return None
 
 
 def find_cited_merge_sha(row_text):

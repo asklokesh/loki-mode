@@ -3276,15 +3276,19 @@ else
     printf '%s\n' "$OUT"
 fi
 
-echo "T51 -- MERGED_NOT_RELEASED_STALE reports UNKNOWN, never 'none', when a row's ID breaks the"
-echo "      underlying git lookup (a real git failure must never read as 'nothing to flag')"
-BOARD_MNS_BAD="$WORK/BOARD-mns-bad.md"
-cat > "$BOARD_MNS_BAD" <<'EOF'
-| ID | Owner | File set | Tier | Status | Notes |
-|---|---|---|---|---|---|
-| S-( | a | x | LOW | merged@2026-09-20T00:10Z | |
+echo "T51 -- MERGED_NOT_RELEASED_STALE reports UNKNOWN, never 'none', when the git lookup itself"
+echo "      fails (timeout/crash must never read as 'nothing to flag')"
+BOARD_MNS_BAD="$BOARD_MNS"
+REAL_GIT="$(command -v git)"
+FAKE_GIT_DIR="$WORK/fake-git-fail"
+mkdir -p "$FAKE_GIT_DIR"
+cat > "$FAKE_GIT_DIR/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "--merges" ] && { echo "fatal: injected" >&2; exit 128; }; done
+exec "$REAL_GIT" "\$@"
 EOF
-if run_pulse "PULSE_REPO_ROOT=$MNS_REPO" "PULSE_MAIN_REF=main" \
+chmod +x "$FAKE_GIT_DIR/git"
+if run_pulse "PATH=$FAKE_GIT_DIR:$PATH" "PULSE_REPO_ROOT=$MNS_REPO" "PULSE_MAIN_REF=main" \
     "BOARD_MD=$BOARD_MNS_BAD" "CONTROL_MD=$CONTROL_OK" "PULSE_PROGRESS_MD=$PROGRESS_FRESH" \
     "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=false" "PULSE_GH_STREAK_CMD=false" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$MNS_REPO")" \
@@ -3293,9 +3297,51 @@ if printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*merged_not_released_stale"
     && printf '%s\n' "$OUT" | grep -qF "Merged rows already released (D37/E-90): UNKNOWN (release tag, " \
     && ! printf '%s\n' "$OUT" | grep -qF "Merged rows already released (D37/E-90): none" \
     && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MERGED_NOT_RELEASED_STALE"; then
-    ok "an ID that breaks the git --grep pattern reports UNKNOWN, never a false 'none'"
+    ok "a failing git log --merges reports UNKNOWN, never a false 'none'"
 else
     bad "T51 MERGED_NOT_RELEASED_STALE-git-failure case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T51b -- merge lookup is ONE git log --merges call however many merged rows the board has,"
+echo "       a regex-shaped ID is matched literally, and slice-S-0 never resolves slice-S-01's merge"
+# Move the tag to main's tip so BOTH S-01 and S-02 merges are released: a
+# prefix-matching lookup for the S-0 row would then resolve to a released
+# merge and flag it, which the literal-boundary lookup must not.
+(cd "$MNS_REPO" && git tag -f v1.0.0 main >/dev/null 2>&1)
+CALL_LOG="$WORK/merges-calls.log"
+: > "$CALL_LOG"
+COUNT_GIT_DIR="$WORK/fake-git-count"
+mkdir -p "$COUNT_GIT_DIR"
+cat > "$COUNT_GIT_DIR/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "--merges" ] && echo x >> "$CALL_LOG"; done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$COUNT_GIT_DIR/git"
+BOARD_MNS_MANY="$WORK/BOARD-mns-many.md"
+{
+    printf '%s\n' '| ID | Owner | File set | Tier | Status | Notes |' '|---|---|---|---|---|---|'
+    printf '%s\n' '| S-01 | a | x | LOW | merged@2026-09-20T00:10Z | |'
+    printf '%s\n' '| S-0 | a | x | LOW | merged@2026-09-20T00:10Z | |'
+    printf '%s\n' '| S-( | a | x | LOW | merged@2026-09-20T00:10Z | |'
+    printf '%s\n' '| S-.. | a | x | LOW | merged@2026-09-20T00:10Z | |'
+    for i in $(seq 1 47); do printf '| N-%02d | a | x | LOW | merged@2026-09-20T00:10Z | |\n' "$i"; done
+} > "$BOARD_MNS_MANY"
+if run_pulse "PATH=$COUNT_GIT_DIR:$PATH" "PULSE_REPO_ROOT=$MNS_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_MNS_MANY" "CONTROL_MD=$CONTROL_OK" "PULSE_PROGRESS_MD=$PROGRESS_FRESH" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=false" "PULSE_GH_STREAK_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$MNS_REPO")" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+NCALLS="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+if [ "$NCALLS" = "1" ] \
+    && printf '%s\n' "$OUT" | grep -q "^VIOLATION: MERGED_NOT_RELEASED_STALE: S-01 (merge " \
+    && ! printf '%s\n' "$OUT" | grep -q "S-0 (merge " \
+    && ! printf '%s\n' "$OUT" | grep -q "S-\.\. (merge " \
+    && ! printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*merged_not_released_stale"; then
+    ok "50 merged rows cost 1 git log --merges call; S-0 does not match S-01's merge; regex-shaped IDs match literally"
+else
+    bad "T51b one-pass merge lookup: git --merges calls=$NCALLS rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
