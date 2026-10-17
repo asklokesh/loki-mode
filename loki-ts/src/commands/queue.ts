@@ -258,7 +258,28 @@ export function parseMaxTotalCost(args: readonly string[]): number | null {
   return n > 0 ? n : Number.NaN;
 }
 
+const QUEUE_USAGE = "usage: loki queue <add <issue...> | list | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n";
+
+// First argument queue run does not understand (so a mistyped --no-pr cannot open PRs), or null when all are valid.
+function unknownRunArg(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--no-pr" || a.startsWith("--max-total-cost=")) continue;
+    if (a === "--max-total-cost") {
+      i++;
+      continue;
+    }
+    return a;
+  }
+  return null;
+}
+
 export async function queueRun(args: readonly string[], d: QueueDeps): Promise<number> {
+  const bad = unknownRunArg(args);
+  if (bad !== null) {
+    d.err(`loki queue run: unknown argument '${bad}'\n${QUEUE_USAGE}`);
+    return 2;
+  }
   const pr = !args.includes("--no-pr");
   const cap = parseMaxTotalCost(args);
   if (cap !== null && Number.isNaN(cap)) {
@@ -473,16 +494,24 @@ export async function runQueue(args: readonly string[], inject?: Partial<QueueDe
     case "add":
       return queueAdd(rest, d);
     case "list":
+      if (rest.length > 0) {
+        d.err(`loki queue list: unexpected argument '${rest[0]}'\n${QUEUE_USAGE}`);
+        return 2;
+      }
       return queueList(d);
     case "remove":
     case "rm":
       return queueRemove(rest, d);
     case "clear":
+      if (rest.length > 0) {
+        d.err(`loki queue clear: unexpected argument '${rest[0]}'\n${QUEUE_USAGE}`);
+        return 2;
+      }
       return queueClear(d);
     case "run":
       return queueRun(rest, d);
     default:
-      d.err("usage: loki queue <add <issue...> | list | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n");
+      d.err(QUEUE_USAGE);
       return 2;
   }
 }

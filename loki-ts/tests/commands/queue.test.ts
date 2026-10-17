@@ -249,4 +249,25 @@ describe("loki queue list columns (TEN-UX-14)", () => {
     expect(h.out.join("")).toContain("queue is empty");
     expect(h.out.join("")).toContain("loki queue add");
   });
+
+  test("unknown flag or extra arg is rejected with usage and exit 2", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1"], h.inject);
+    for (const args of [["list", "--bogus"], ["clear", "extra"], ["run", "--bogus"], ["run", "--no-pr", "extra"], ["run", "--no-prr"]]) {
+      h.err.length = 0;
+      expect(await runQueue(args, h.inject)).toBe(2);
+      expect(h.err.join("")).toContain("usage: loki queue");
+    }
+    expect(h.ran).toEqual([]);
+    expect(readQueue(dir).length).toBe(1);
+  });
+
+  test("valid queue forms are unchanged", async () => {
+    const h = harness({});
+    await runQueue(["add", "o/r#1"], h.inject);
+    expect(await runQueue(["list"], h.inject)).toBe(0);
+    expect(await runQueue(["run", "--no-pr", "--max-total-cost", "5"], h.inject)).toBe(0);
+    expect(await runQueue(["run", "--max-total-cost=5"], h.inject)).toBe(0);
+    expect(await runQueue(["clear"], h.inject)).toBe(0);
+  });
 });
