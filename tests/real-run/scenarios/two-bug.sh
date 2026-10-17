@@ -7,5 +7,5 @@ SC_ARGS=(start "sum() skips the first element and max() is wrong for negative nu
 SC_ENV=()
 SC_RECEIPT=("verdict == VERIFIED" "cost.usd <= 2" "time.wall_s <= 900")
 SC_WALL_EXECUTED=1  # FC-68: >= 2 executed checks, Wall test present and executed
-SC_EXPECT_CHECKS=node  # Q17-04: fixture has no lint config; node:<test path> is its real non-Wall check; mutation/review not enabled here
+SC_EXPECT_CHECKS=node:lib.test.js  # Q17-04b: exact non-Wall check (the Wall test is also a node check, so bare node proves nothing); no lint config; mutation/review not enabled
 SC_CONSOLE=("VERIFIED")

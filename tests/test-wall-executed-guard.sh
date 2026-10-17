@@ -57,7 +57,7 @@ for s in trivial-sum two-bug; do
     grep -q '^SC_WALL_EXECUTED=1' "$ROOT/tests/real-run/scenarios/$s.sh"; check "scenario $s sets SC_WALL_EXECUTED=1" "$?" "missing"
     for f in 11.3.1 11.3.2; do
         # add the fields the other assertions read, so only the guard decides
-        node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1]));r.cost={usd:0.1,input_tokens:1,output_tokens:1};r.time={wall_s:5};fs.writeFileSync(process.argv[2],JSON.stringify(r))' "$T/r-$f.json" "$T/rr-$f.json"
+        node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1]));r.cost={usd:0.1,input_tokens:1,output_tokens:1};r.time={wall_s:5};r.checks.push({name:"node:sum.test.js",result:"pass"},{name:"node:lib.test.js",result:"pass"});fs.writeFileSync(process.argv[2],JSON.stringify(r))' "$T/r-$f.json" "$T/rr-$f.json"
     done
     rc=0; bash "$ROOT/scripts/real-run.sh" --check-receipt "$T/rr-11.3.1.json" "$s" > "$T/w1.log" 2>&1 || rc=$?
     check "real-run $s accepts the 11.3.1 shape" "$rc" "$(cat "$T/w1.log")"
@@ -117,6 +117,36 @@ expect_fail "Q17-04 malformed JSON with expected checks fails closed" "$rc" "exi
 rc=0; bash "$GUARD" "$T/r-full.json" 2 'li;nt' > /dev/null 2>&1 || rc=$?
 usage_ok=1; [ "$rc" -eq 2 ] && usage_ok=0
 check "Q17-04 malformed expected list is a usage error (rc 2)" "$usage_ok" "rc=$rc"
+# Q17-04b: a passing Wall node check must not satisfy an exact non-Wall node:<path> token.
+cat > "$T/r-wallonly.json" <<'J'
+{"verdict":"VERIFIED",
+ "checks":[{"name":"node:loki_wall_sum.test.js","result":"pass"},
+           {"name":"node:sum.test.js","result":"not_run"},
+           {"name":"holdout:h","result":"pass"}],
+ "wall":{"files":[{"path":"loki_wall_sum.test.js","sha256":"aa"}],"passed":true},
+ "not_proven":[]}
+J
+node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1]));r.checks=r.checks.filter(c=>c.name!=="node:sum.test.js");fs.writeFileSync(process.argv[2],JSON.stringify(r))' "$T/r-wallonly.json" "$T/r-absent.json"
+node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1]));r.checks.find(c=>c.name==="node:sum.test.js").result="pass";fs.writeFileSync(process.argv[2],JSON.stringify(r))' "$T/r-wallonly.json" "$T/r-sumpass.json"
+rc=0; bash "$GUARD" "$T/r-wallonly.json" 2 node:sum.test.js > /dev/null 2>&1 || rc=$?
+r1=1; [ "$rc" -eq 1 ] && r1=0; check "Q17-04b node:sum.test.js not_run beside passing Wall exits 1" "$r1" "rc=$rc"
+rc=0; bash "$GUARD" "$T/r-absent.json" 2 node:sum.test.js > /dev/null 2>&1 || rc=$?
+r1=1; [ "$rc" -eq 1 ] && r1=0; check "Q17-04b node:sum.test.js absent exits 1" "$r1" "rc=$rc"
+rc=0; bash "$GUARD" "$T/r-sumpass.json" 2 node:sum.test.js > /dev/null 2>&1 || rc=$?
+check "Q17-04b node:sum.test.js pass exits 0" "$rc" "rc=$rc"
+# Structural: scenario tokens must be exact (contain ':') unless lint/mutation/review.
+for f in "$ROOT"/tests/real-run/scenarios/*.sh; do
+    line="$(grep -E '^SC_EXPECT_CHECKS=' "$f" | head -1)" || true
+    [ -n "$line" ] || continue
+    val="${line#SC_EXPECT_CHECKS=}"; val="${val%%  #*}"; val="${val%% #*}"
+    bare=""
+    IFS=',' read -ra toks <<< "$val"
+    for t in "${toks[@]}"; do
+        case "$t" in lint | mutation | review | *:*) ;; *) bare="$bare $t" ;; esac
+    done
+    ok=1; [ -z "$bare" ] && ok=0
+    check "Q17-04b $(basename "$f") SC_EXPECT_CHECKS has no bare runner token" "$ok" "bare:$bare"
+done
 # Wiring: a scenario with SC_EXPECT_CHECKS makes --check-receipt go red on a receipt missing the check.
 mkdir -p "$T/sc"
 { cat "$ROOT/tests/real-run/scenarios/trivial-sum.sh"; echo 'SC_EXPECT_CHECKS=lint,mutation,review'; } > "$T/sc/trivial-sum.sh"
