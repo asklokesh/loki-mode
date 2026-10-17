@@ -211,6 +211,43 @@ describe("v7.5.2 loki rollback CLI", () => {
   });
 });
 
+describe("TEN-DEPLOY-11 loki rollback deploy", () => {
+  function seedDeploy(name: string, rec: Record<string, unknown>): void {
+    mkdirSync(join(scratch, "deploys"), { recursive: true });
+    writeFileSync(join(scratch, "deploys", name), JSON.stringify(rec));
+  }
+
+  it("prints the provider rollback command from the newest record", async () => {
+    seedDeploy("20260101T000000Z-1.json", { schema: "loki.deploy/1", command: "fly deploy" });
+    seedDeploy("20260102T000000Z-2.json", { schema: "loki.deploy/1", command: "vercel --prod", env: { TOKEN: "s3cret-value" } });
+    const stop = captureOutput();
+    const code = await runRollback(["deploy"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(out.stdout).toContain("vercel rollback");
+    expect(out.stdout).not.toContain("fly releases");
+    expect(out.stdout).not.toContain("s3cret-value");
+  });
+
+  it("prints a manual note for providers with no CLI rollback", async () => {
+    seedDeploy("20260102T000000Z-2.json", { schema: "loki.deploy/1", command: "netlify deploy --prod" });
+    const stop = captureOutput();
+    const code = await runRollback(["deploy"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(out.stdout).toContain("No CLI rollback");
+  });
+
+  it("prints nothing runnable when there is no record", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["deploy"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(out.stdout).toContain("no deploy record");
+    expect(out.stdout).not.toContain("rollback <");
+  });
+});
+
 // Helper: list checkpoint dir ids currently on disk for the scratch loki dir.
 function listCheckpointIds(): string[] {
   const root = join(scratch, "state", "checkpoints");
