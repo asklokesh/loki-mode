@@ -238,7 +238,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (wallJob && (jumped || capReached())) abortWall();
       const isTail = todo.every((n) => TAIL.includes(n));
       if (jumped && !isTail) continue;
-      if (!isTail && !jumped && await runControlBoundary(ctx.runDir, (t) => ctx.emit(t as EventType, null, {}))) { jumped = true; stopped = "cancelled by request"; continue; } // P12-10: pause/cancel read at stage boundaries only
+      if (!isTail && !jumped && await runControlBoundary(ctx.runDir, (t, d) => ctx.emit(t as EventType, null, d ?? {}))) { jumped = true; stopped = "cancelled by request"; continue; } // P12-10: pause/cancel read at stage boundaries only
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       if (wallConcurrent() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
