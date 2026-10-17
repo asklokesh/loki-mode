@@ -11073,6 +11073,97 @@ except: print(0)
             fi
             ;;
 
+        publish)
+            # Receipt-stamped export: push the verified tree to GitHub and set a
+            # loki/receipt commit status whose state comes ONLY from the receipt
+            # verdict. Never stages files; private unless --public is passed.
+            local _pub_vis="--private" _pub_name="" _pub_dir="." _pub_usage=0
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --public) _pub_vis="--public"; shift ;;
+                    --private) _pub_vis="--private"; shift ;;
+                    --dir)
+                        case "${2:-}" in ""|-*) _pub_usage=1; break ;; esac
+                        _pub_dir="$2"; shift 2 ;;
+                    -*) _pub_usage=1; break ;;
+                    *)
+                        [ -z "$_pub_name" ] || { _pub_usage=1; break; }
+                        _pub_name="$1"; shift ;;
+                esac
+            done
+            if [ "$_pub_usage" -ne 0 ]; then
+                echo "Usage: loki github publish [name] [--public] [--dir <path>]" >&2
+                exit 2
+            fi
+            local _pub_refuse
+            _pub_refuse="$(_deploy_tree_clean "$_pub_dir")"
+            if [ -n "$_pub_refuse" ]; then
+                echo -e "${RED}Refused: ${_pub_refuse}${NC}" >&2
+                exit 1
+            fi
+            if ! command -v gh &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not found. Install with: brew install gh${NC}" >&2
+                exit 1
+            fi
+            if ! gh auth status &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not authenticated. Run: gh auth login${NC}" >&2
+                exit 1
+            fi
+            local _pub_sha _pub_pj _pub_verdict="NONE" _pub_anchor="" _pub_state="none"
+            _pub_sha="$(git -C "$_pub_dir" rev-parse HEAD 2>/dev/null)" || _pub_sha=""
+            if [ -z "$_pub_sha" ]; then
+                echo -e "${RED}Refused: no HEAD commit to publish${NC}" >&2
+                exit 1
+            fi
+            _pub_pj="$(_deploy_latest_receipt "$_pub_dir")"
+            if [ -n "$_pub_pj" ]; then
+                _pub_verdict="$(_deploy_receipt_verdict "$_pub_pj")"
+                _pub_anchor="$(_deploy_anchor_ok "$_pub_pj" "$_pub_dir")"
+                if [ "$_pub_verdict" = "VERIFIED" ] && [ -z "$_pub_anchor" ]; then
+                    _pub_state="success"
+                else
+                    _pub_state="failure"
+                fi
+            fi
+
+            local _pub_url="" _pub_out=""
+            if git -C "$_pub_dir" remote get-url origin &>/dev/null; then
+                if [ -n "$_pub_anchor" ] || [ -z "$_pub_pj" ]; then
+                    echo -e "${RED}Refused: HEAD is not confirmed as the receipt anchor (${_pub_anchor:-no Evidence Receipt found}). Nothing was pushed.${NC}" >&2
+                    exit 1
+                fi
+                git -C "$_pub_dir" push origin HEAD || exit 1
+            else
+                [ -n "$_pub_name" ] || _pub_name="$(basename "$(cd "$_pub_dir" && pwd)")"
+                _pub_out="$(cd "$_pub_dir" && gh repo create "$_pub_name" "$_pub_vis" --source . --push 2>&1)" || {
+                    echo "$_pub_out" >&2
+                    echo -e "${RED}gh repo create failed; nothing published.${NC}" >&2
+                    exit 1
+                }
+                _pub_url="$(printf '%s\n' "$_pub_out" | grep -Eo 'https://github\.com/[^[:space:]]+' | head -1)"
+            fi
+            [ -n "$_pub_url" ] || _pub_url="$(git -C "$_pub_dir" remote get-url origin 2>/dev/null || true)"
+
+            local _pub_slug
+            _pub_slug="$(printf '%s' "$_pub_url" | sed -E 's|^.*github\.com[:/]||; s|\.git$||')"
+            if [ "$_pub_state" = "none" ]; then
+                echo -e "${YELLOW}No Evidence Receipt found: no loki/receipt status set.${NC}"
+            elif [ -z "$_pub_slug" ] || [ "$_pub_slug" = "$_pub_url" ]; then
+                echo -e "${YELLOW}Could not resolve owner/repo: no loki/receipt status set.${NC}"
+            else
+                gh api "repos/${_pub_slug}/statuses/${_pub_sha}" \
+                    -f "state=${_pub_state}" -f "context=loki/receipt" \
+                    -f "description=Evidence Receipt verdict: ${_pub_verdict}" >/dev/null \
+                    || echo -e "${YELLOW}Warning: could not set the loki/receipt status.${NC}" >&2
+                echo "loki/receipt status: ${_pub_state} (receipt ${_pub_verdict})"
+            fi
+            if [ -n "$_pub_url" ]; then
+                echo "Repository: ${_pub_url}"
+            else
+                echo "Repository URL could not be determined."
+            fi
+            ;;
+
         help|*)
             echo -e "${BOLD}loki github${NC} - GitHub integration management"
             echo ""
@@ -11081,6 +11172,7 @@ except: print(0)
             echo "  sync         Sync completed task status back to GitHub issues"
             echo "  export       Export local tasks as new GitHub issues"
             echo "  pr [name]    Create pull request from completed work"
+            echo "  publish [name] [--public]  Push to GitHub and set a loki/receipt commit status"
             echo ""
             echo "Environment Variables:"
             echo "  LOKI_GITHUB_IMPORT=true    Import open issues as tasks on start"
