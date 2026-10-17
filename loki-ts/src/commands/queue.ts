@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { join, resolve } from "node:path";
 import { atomicWriteText } from "../util/atomic.ts";
 import { REPO_ROOT } from "../util/paths.ts";
+import { suggestWord } from "../cli/registry.ts";
 import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../contrib/forecast.ts";
 
 export interface QueueItem {
@@ -262,6 +263,7 @@ export function parseMaxTotalCost(args: readonly string[]): number | null {
   return n > 0 ? n : Number.NaN;
 }
 
+const QUEUE_SUBCOMMANDS = ["add", "list", "remove", "rm", "clear", "run"] as const;
 const QUEUE_USAGE = "usage: loki queue <add <issue...> | list [--json] | remove <issue...> | clear | run [--no-pr] [--max-total-cost <usd>]>\n";
 
 // First argument queue run does not understand (so a mistyped --no-pr cannot open PRs), or null when all are valid.
@@ -526,8 +528,14 @@ export async function runQueue(args: readonly string[], inject?: Partial<QueueDe
       return queueClear(d);
     case "run":
       return queueRun(rest, d);
-    default:
-      d.err(QUEUE_USAGE);
+    default: {
+      if (sub === undefined || sub === "--help" || sub === "-h" || sub === "help") {
+        d.err(QUEUE_USAGE);
+        return 2;
+      }
+      const guess = suggestWord(sub, QUEUE_SUBCOMMANDS);
+      d.err(`loki queue: unknown subcommand '${sub}'${guess ? ` (did you mean '${guess}'?)` : ""}\n${QUEUE_USAGE}`);
       return 2;
+    }
   }
 }
