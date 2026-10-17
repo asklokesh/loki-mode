@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.48 (2026-10-17)
+
+### Wave AN (30 TEN rows, all reviewed APPROVE)
+
+- Security and speed: receipt signer toolchain probe is memoized per process and probes node, python3 and git concurrently (TEN-SECURITY-12, TEN-SPEED-15).
+- Gates: TEN-GATES-25 and TEN-GATES-26 tighten gate evidence (opus HIGH review).
+- Cost: budget rebuild pins limit, budget_limit and exceeded, and counts skipped malformed efficiency files (TEN-QUALITY-27, TEN-COST-44); bash pricing readers warn on keyless or unreadable pricing files (TEN-COST-42); cost preview rejects unknown providers (TEN-COST-45); TEN-COST-43.
+- CLI: loki queue rejects unknown flags with usage and exit 2, and queue list gains --json (TEN-STABILITY-34, TEN-ADOPTION-25); loki control backfill honours --repo DIR (TEN-QUALITY-28).
+- Stability, UX, deploy, speed and adoption: TEN-STABILITY-32/33/35/36/37/38, TEN-UX-30/31/32/33/34/36, TEN-DEPLOY-21/22, TEN-SPEED-13/14, TEN-ADOPTION-24/26.
+- Completions: loki control --repo in the bash arm and a zsh report arm with --since, so help-changelog-drift passes.
+
 ## v11.17.47 (2026-10-17)
 
 ### Fixed

@@ -153,6 +153,14 @@ function _loki {
                         '--help[Show help]' \
                         '1:subcommand:(prometheus)'
                     ;;
+                report)
+                    _arguments \
+                        '--json[Machine-readable JSON output]' \
+                        '--since[Only include runs since this time]:since:' \
+                        '--efficiency[Show efficiency metrics]' \
+                        '--help[Show help]' \
+                        '1:subcommand:(session metrics cost kpis export share dogfood)'
+                    ;;
                 share)
                     _arguments \
                         '--private[Create a secret gist]' \

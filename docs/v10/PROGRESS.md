@@ -2521,3 +2521,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T11:59Z (CoS) v11.17.47
 - Released TEN-GATES-15 and Q17-05b (wave AH redo, opus APPROVE 708682ea2 and 0112c4fcc) plus a tsc fix-forward in redact.test.ts (325df1f44). Q18-03e blocked after 3 rounds; reslice to a real tokenizer. Combined: tsc rc 0; loki-ts bun 557/0; control-plane server 335/0. Board refill wave AN (bda2ee54d) included.
+
+## 2026-10-17T12:36Z (CoS) v11.17.48
+- Wave AN shipped: 30 of 30 TEN rows APPROVE and merged in 19 chains (one test import conflict resolved by hand, union of both import sets). Checks: tsc rc=0; bun test changed files plus spawn_env_guard, engine10/budget and tests/util 1026 pass 0 fail; test-deploy, test-help-start-flags, test-pricing-parity rc=0; help-changelog-drift 51 passed 0 failed after the completion fix. Main Tests red on cbded2759 (shard-durations row for TEN-ADOPTION-15 plus shell and bun shards) has a P0 fix-forward agent running. Q18-03e reslice 4 (TypeScript compiler API) building.
