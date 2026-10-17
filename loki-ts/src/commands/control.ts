@@ -10,6 +10,9 @@ import { backfill } from "../../../packages/control-plane/src/shipper/backfill.t
 import { openDb } from "../../../packages/control-plane/src/db/migrate.ts";
 import { openReadOnly, parseBefore, pruneRuns, type PruneFilter } from "../../../packages/control-plane/src/db/prune.ts";
 import { REPO_ROOT } from "../util/paths.ts";
+import { suggestWord } from "../cli/registry.ts";
+
+const CONTROL_SUBCOMMANDS = ["serve", "backfill", "prune", "stop", "status", "help"] as const;
 
 export const DEFAULT_PORT = 47821;
 export const OFF_LINE = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on.";
@@ -246,7 +249,12 @@ export async function runControl(args: string[], env: NodeJS.ProcessEnv = proces
       return r.failed.length ? 1 : 0;
     }
     default:
-      process.stderr.write(`loki control: unknown command '${sub}'\n${HELP}`);
+      process.stderr.write(`loki control: unknown command '${sub}'\n`);
+      {
+        const hint = suggestWord(sub, CONTROL_SUBCOMMANDS);
+        if (hint) process.stderr.write(`Did you mean '${hint}'?\n`);
+      }
+      process.stderr.write(HELP);
       return 2;
   }
 }
