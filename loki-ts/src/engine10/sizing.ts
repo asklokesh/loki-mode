@@ -14,14 +14,16 @@ export function namedFiles(task: string, map: RepoMap | null): string[] {
 
 /** P12-46: "large" = names more than LARGE_NAMED_FILES repo files; never lean, routed to decompose (a large unit never runs in parallel). */
 export type TaskSize = "small" | "normal" | "large"; export const LARGE_NAMED_FILES = 8;
+/** C-F1 run4 knobs: LOKI_E10_SMALL_MAX_CHARS (positive number, default 600); LOKI_E10_SMALL_NO_RUNNER=1 stops a missing runner forcing normal. */
+export const smallMaxChars = (env = process.env): number => Number(env.LOKI_E10_SMALL_MAX_CHARS) > 0 ? Number(env.LOKI_E10_SMALL_MAX_CHARS) : 600;
 export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | null): { size: TaskSize; reasons: string[] } {
   const named = namedFiles(task, map).length;
   if (named > LARGE_NAMED_FILES) return { size: "large", reasons: [`task names ${named} files > ${LARGE_NAMED_FILES}: decompose`] };
   const why = [
-    !task.trim() && "no task text", task.length > 600 && `task ${task.length} chars > 600`,
+    !task.trim() && "no task text", task.length > smallMaxChars() && `task ${task.length} chars > ${smallMaxChars()}`,
     !map && "no repo map", (map?.files.length ?? 0) > 3000 && `repo ${map?.files.length} files > 3000`,
     map?.truncated && "repo map truncated at the file cap", // buildRepoMap caps files at 2000, so the >3000 rule alone never fires
-    !tests?.runners.length && "no test runner detected", named > 2 && `task names ${named} files > 2`,
+    !tests?.runners.length && process.env.LOKI_E10_SMALL_NO_RUNNER !== "1" && "no test runner detected", named > 2 && `task names ${named} files > 2`,
   ].filter((w): w is string => typeof w === "string");
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
