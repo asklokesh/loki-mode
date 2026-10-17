@@ -973,6 +973,102 @@ describe("loki.deploy/1 signed deploy records", () => {
   });
 });
 
+describe("loki.provenance/1 live provenance doc", () => {
+  let dir: string, keyFile: string, pub: string, savedKey: string | undefined, savedInline: string | undefined, server: ReturnType<typeof Bun.serve>, body: () => Response;
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "prov-"));
+    keyFile = join(dir, "key.pem");
+    savedKey = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; savedInline = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const { loadSigningKey } = await import("../../src/util/receipt_signer.ts");
+    const { createPublicKey } = await import("node:crypto");
+    pub = join(dir, "pub.jwk");
+    writeFileSync(pub, JSON.stringify(createPublicKey(loadSigningKey()!).export({ format: "jwk" })));
+    body = () => new Response("{}");
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => body() });
+  });
+  afterEach(() => {
+    server.stop(true);
+    if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = savedKey;
+    if (savedInline !== undefined) process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedInline;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  async function run(args: string[]): Promise<{ code: number; out: string }> {
+    const out: string[] = [];
+    const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { return { code: await main(args, {}), out: out.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
+  }
+  async function signed(): Promise<Record<string, unknown>> {
+    const { signProvenance } = await import("../../src/util/receipt_signer.ts");
+    return signProvenance("a".repeat(40), "b".repeat(40), "c".repeat(64), "run1", "2026-10-17T00:00:00Z")!;
+  }
+  const url = (): string => `http://127.0.0.1:${server.port}`;
+  const serve = (d: unknown): void => { body = () => new Response(JSON.stringify(d), { headers: { "content-type": "application/json" } }); };
+  test("genuine doc with --pubkey is VERIFIED rc 0", async () => {
+    serve(await signed());
+    const r = await run(["--url", url(), "--pubkey", pub]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("verdict: VERIFIED");
+  });
+  test("--sign-provenance FILE signs in place and the result verifies", async () => {
+    const f = join(dir, "p.json");
+    writeFileSync(f, JSON.stringify({ head_sha: "a".repeat(40), tree_sha: "b".repeat(40), receipt_sha256: "c".repeat(64), run_id: "run1", built_at: "2026-10-17T00:00:00Z" }));
+    expect((await run(["--sign-provenance", f])).code).toBe(0);
+    serve(JSON.parse(readFileSync(f, "utf8")));
+    expect((await run(["--url", url(), "--pubkey", pub])).code).toBe(0);
+  });
+  test("one edited byte of head_sha is TAMPERED rc 1", async () => {
+    const d = await signed();
+    serve({ ...d, head_sha: "d" + "a".repeat(39) });
+    const r = await run(["--url", url(), "--pubkey", pub]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("verdict: TAMPERED");
+  });
+  test("an unknown kid is UNCHECKED rc 2", async () => {
+    const d = await signed();
+    serve({ ...d, signature: { ...(d["signature"] as object), kid: "nope" } });
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "absent.pem");
+    const r = await run(["--url", url()]);
+    expect(r.code).toBe(2);
+    expect(r.out).not.toContain("VERIFIED");
+  });
+  test("a 404, a non-JSON body and a doc over 64KB are UNCHECKED rc 2", async () => {
+    body = () => new Response("nope", { status: 404 });
+    expect((await run(["--url", url(), "--pubkey", pub])).code).toBe(2);
+    body = () => new Response("<html>");
+    expect((await run(["--url", url(), "--pubkey", pub])).code).toBe(2);
+    serve({ ...(await signed()), pad: "x".repeat(70000) });
+    const r = await run(["--url", url(), "--pubkey", pub]);
+    expect(r.code).toBe(2);
+    expect(r.out).not.toContain("VERIFIED");
+  });
+  test("a fetch failure is UNCHECKED rc 2", async () => {
+    const u = url();
+    server.stop(true);
+    expect((await run(["--url", u, "--pubkey", pub])).code).toBe(2);
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => body() });
+  });
+  test("--expect-sha must equal head_sha: match VERIFIED, mismatch TAMPERED", async () => {
+    serve(await signed());
+    expect((await run(["--url", url(), "--pubkey", pub, "--expect-sha", "a".repeat(40)])).code).toBe(0);
+    expect((await run(["--url", url(), "--pubkey", pub, "--expect-sha", "f".repeat(40)])).code).toBe(1);
+  });
+  test("a cited receipt passed with --receipt that is tampered is never VERIFIED", async () => {
+    const { canonicalJson, signReceipt, signProvenance } = await import("../../src/util/receipt_signer.ts");
+    const pbody = { schema: "proof/1", run_id: "p1", verdict: "pass" };
+    const hash = createHash("sha256").update(canonicalJson(pbody)).digest("hex");
+    const proof = join(dir, "proof.json");
+    writeFileSync(proof, JSON.stringify({ ...pbody, verification: { hash, attestation: signReceipt("p1", hash).jwt } }));
+    serve(signProvenance("a".repeat(40), "b".repeat(40), hash, "p1", "2026-10-17T00:00:00Z"));
+    expect((await run(["--url", url(), "--pubkey", pub, "--receipt", proof])).code).toBe(0);
+    writeFileSync(proof, readFileSync(proof, "utf8").replace('"pass"', '"fail"'));
+    expect((await run(["--url", url(), "--pubkey", pub, "--receipt", proof])).code).toBe(1);
+  });
+});
+
 // P12-01: the seal is checked against the workspace it describes (intent, head) and against its own log (fabricated success).
 describe("seal drift (P12-01)", () => {
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");

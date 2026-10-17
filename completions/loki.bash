@@ -157,7 +157,7 @@ _loki_completion() {
 
         verify)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --sign-deploy --receipt --pubkey --require-exogenous --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --sign-deploy --sign-provenance --url --expect-sha --receipt --pubkey --require-exogenous --help" -- "$cur") )
                 return 0
             fi
             ;;
