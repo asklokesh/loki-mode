@@ -96,6 +96,30 @@ describe("engine10 implement brief", () => {
   });
 });
 
+describe("engine10 implement brief: LOKI_E10_REPRO (TEN-QUALITY-08)", () => {
+  const SENT = "If the task reports a bug, first add a new test function that reproduces it, run it and see it fail, then fix the code and run that test again.";
+  // Golden captured before the change with the flag unset: length 1867, sha256 below.
+  const GOLDEN = { len: 1867, sha: "3b3d4780fcf16ea5a49eeb49668aa5520a9666ee2394bca3c6c293dfeace2099" };
+  const withRepro = <T>(v: string | undefined, fn: () => T): T => { const old = process.env.LOKI_E10_REPRO; if (v === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = v; try { return fn(); } finally { if (old === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = old; } };
+  const lean = () => buildImplementBrief("fix the bug", null, ["tests/x.test.ts"]);
+  test("flag on: lean brief contains the sentence once", () => {
+    const b = withRepro("1", lean);
+    expect(b.split(SENT).length - 1).toBe(1);
+  });
+  test("flag unset: lean brief is byte-identical to the pre-change golden", () => {
+    const b = withRepro(undefined, lean);
+    expect(b.length).toBe(GOLDEN.len);
+    expect(new Bun.CryptoHasher("sha256").update(b).digest("hex")).toBe(GOLDEN.sha);
+    expect(b).not.toContain(SENT);
+  });
+  test("flag set to a non-1 value: still off", () => {
+    for (const v of ["0", "", "true"]) expect(withRepro(v, lean)).not.toContain(SENT);
+  });
+  test("plan-present brief never contains it, flag on or off", () => {
+    for (const v of ["1", undefined]) expect(withRepro(v, () => buildImplementBrief("fix the bug", "1. patch X", ["tests/x.test.ts"]))).not.toContain(SENT);
+  });
+});
+
 describe("engine10 implement stage", () => {
   test("restores an existing test file the session edited, and lists it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e08-"));
