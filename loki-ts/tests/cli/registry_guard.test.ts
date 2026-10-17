@@ -193,6 +193,12 @@ describe("completions", () => {
     expect(complete(["loki", "rollback", "list", "--"])).toContain("--json");
   });
 
+  test("control status json", () => {
+    const st = (findCommand("control")?.subcommands ?? []).find((c) => c.name === "status");
+    expect((st?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "control", "status", "--"])).toContain("--json");
+  });
+
   test("bash: commands, subcommands, flag values, exclusivity", () => {
     expect(complete(["loki", "sta"])).toContain("start");
     expect(complete(["loki", "control", ""])).toEqual(expect.arrayContaining(["serve", "prune"]));

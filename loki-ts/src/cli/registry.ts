@@ -151,7 +151,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("backfill", "Ship DIR/.loki/runs to the control plane", { positionals: [{ name: "dir", type: "path" }] }),
       sub("prune", "Delete matching runs", { flags: [str("--repo", "<owner/name>", "Repository to prune"), str("--before", "<iso-date>", "Prune runs before this date"), bool("--dry-run", "Report only"), dbFlag] }),
       sub("stop", "Stop the running control plane"),
-      sub("status", "Show control plane reachability"),
+      sub("status", "Show control plane reachability", { flags: [bool("--json", "Print one JSON object")] }),
     ],
   }),
   cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
