@@ -185,6 +185,24 @@ describe("v7.5.2 loki rollback CLI", () => {
     expect(code).toBe(2);
   });
 
+  it("did you mean: rollback lst suggests list before help, exit 2", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["lst"]);
+    const { stderr } = stop();
+    expect(code).toBe(2);
+    expect(stderr).toContain("Unknown subcommand: lst");
+    expect(stderr).toContain("Did you mean 'list'?");
+    expect(stderr.indexOf("Did you mean")).toBeLessThan(stderr.indexOf("Usage"));
+  });
+
+  it("did you mean: no hint for a far-off word, exit 2", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["frobnicate"]);
+    const { stderr } = stop();
+    expect(code).toBe(2);
+    expect(stderr).not.toContain("Did you mean");
+  });
+
   it("unknown flag on list/show/to/latest/deploy exits 2 and restores nothing", async () => {
     seedCheckpoint("cp-7-1700000007", 7);
     const before = listCheckpointIds();

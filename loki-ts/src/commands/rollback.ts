@@ -22,7 +22,10 @@ import {
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
+import { suggestWord } from "../cli/registry.ts";
 import { lokiDir } from "../util/paths.ts";
+
+const ROLLBACK_SUBCOMMANDS = ["list", "show", "to", "latest", "deploy", "help"] as const;
 
 const HELP = `Usage: loki rollback <subcommand>
 
@@ -133,6 +136,10 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
 
     default:
       process.stderr.write(`Unknown subcommand: ${sub}\n`);
+      {
+        const hint = suggestWord(sub, ROLLBACK_SUBCOMMANDS);
+        if (hint) process.stderr.write(`Did you mean '${hint}'?\n`);
+      }
       process.stderr.write(HELP);
       return 2;
   }
