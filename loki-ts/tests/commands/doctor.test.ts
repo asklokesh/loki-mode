@@ -9,7 +9,7 @@
 //     and invariants instead.
 import { afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
 import { createServer, type Server } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ import {
   _setJsonProbesForTest,
   _setPythonImportOkForTest,
   probeIntegrations,
+  cmpVersion,
   evaluateClaudeCliCompat,
   loadClaudeCliRange,
   evaluateRequirements,
@@ -1221,6 +1222,78 @@ describe("doctor --fix consent-gated installs (TEN-UX-04)", () => {
     }
   });
 
+  it("seed provider: first installed provider CLI is written, claude when none", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const seeded = (has: (c: string) => boolean): string => {
+      const { cwd, home } = mk();
+      applyDoctorFixes(cwd, home, { has, runner: recorder().run, tty: false, loggedIn: () => "yes" });
+      return JSON.parse(readFileSync(join(cwd, ".loki", "config", "settings.json"), "utf8")).provider;
+    };
+    expect(seeded((c) => c === "codex")).toBe("codex");
+    expect(seeded((c) => c === "aider" || c === "opencode")).toBe("aider");
+    expect(seeded(() => true)).toBe("claude");
+    expect(seeded(() => false)).toBe("claude");
+  });
+
+  it("seed provider: real entry path bin/loki doctor --fix seeds codex from a shim", () => {
+    const { cwd, home } = mk();
+    const shim = mkdtempSync(join(tmpdir(), "docfix-seed-"));
+    writeFileSync(join(shim, "codex"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(shim, "codex"), 0o755);
+    const noClaudePath = (process.env.PATH ?? "").split(":").filter((d) => d && !existsSync(join(d, "claude"))).join(":");
+    const r = spawnSync(join(REPO_ROOT, "bin", "loki"), ["doctor", "--fix"], {
+      cwd, encoding: "utf8", timeout: 120000,
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("LOKI_"))),
+        HOME: home, PATH: `${shim}:${noClaudePath}`,
+      },
+    });
+    const cfg = JSON.parse(readFileSync(join(cwd, ".loki", "config", "settings.json"), "utf8"));
+    expect(cfg.provider).toBe("codex");
+    expect(r.stdout).toContain("provider=codex");
+    rmSync(shim, { recursive: true, force: true });
+  }, 60000);
+
+  it("(g) repair settings: invalid JSON is backed up and rewritten only with consent", async () => {
+    const { applyDoctorFixes } = await import("../../src/commands/doctor_fix.ts");
+    const bad = "{ not json";
+    const seed = () => {
+      const { cwd, home } = mk();
+      mkdirSync(join(cwd, ".loki", "config"), { recursive: true });
+      writeFileSync(join(cwd, ".loki", "config", "settings.json"), bad);
+      return { cwd, home, file: join(cwd, ".loki", "config", "settings.json") };
+    };
+    const deps = { has: (c: string) => c === "claude", runner: recorder().run, loggedIn: () => "yes" as const };
+    const a = seed();
+    const outA = applyDoctorFixes(a.cwd, a.home, { ...deps, tty: false, yes: false });
+    expect(readFileSync(a.file, "utf8")).toBe(bad);
+    expect(outA.manual.join("\n")).toContain("is not valid JSON");
+    const b = seed();
+    const outB = applyDoctorFixes(b.cwd, b.home, { ...deps, tty: false, yes: true });
+    expect(JSON.parse(readFileSync(b.file, "utf8")).provider).toBe("claude");
+    const bak = readdirSync(join(b.cwd, ".loki", "config")).filter((f) => f.startsWith("settings.json.invalid-"));
+    expect(bak.length).toBe(1);
+    expect(readFileSync(join(b.cwd, ".loki", "config", bak[0]!), "utf8")).toBe(bad);
+    expect(outB.applied.join("\n")).toContain("backed up invalid");
+    expect(outB.manual.join("\n")).not.toContain("is not valid JSON");
+    const c = seed();
+    applyDoctorFixes(c.cwd, c.home, { ...deps, tty: true, confirm: () => false });
+    expect(readFileSync(c.file, "utf8")).toBe(bad);
+  });
+
+  it("(g2) repair settings through bin/loki doctor --fix --yes", () => {
+    const { cwd, home } = mk();
+    mkdirSync(join(cwd, ".loki", "config"), { recursive: true });
+    const f = join(cwd, ".loki", "config", "settings.json");
+    writeFileSync(f, "{ broken");
+    const r = spawnSync(join(REPO_ROOT, "bin", "loki"), ["doctor", "--fix", "--yes"], {
+      cwd, encoding: "utf8", timeout: 120000,
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("LOKI_"))), HOME: home },
+    });
+    expect(r.stdout).toContain("backed up invalid");
+    expect(() => JSON.parse(readFileSync(f, "utf8"))).not.toThrow();
+  }, 60000);
+
   it("(f) real entry path: bin/loki doctor --fix --yes runs claude login via the shim", () => {
     const { cwd, home } = mk();
     const shim = mkdtempSync(join(tmpdir(), "docfix-shim-"));
@@ -1485,4 +1558,21 @@ describe("doctor hung helper (TEN-STABILITY-47)", () => {
     expect(Date.now() - t0).toBeLessThan(25000);
     expect(cap.out).toContain("timed out (skipped)");
   }, 30000);
+});
+
+describe("doctor version compare", () => {
+  test("one semver compare serves all three call shapes", async () => {
+    expect(cmpVersion("2.1.0", "2.1.0", 3)).toBe(0);
+    expect(cmpVersion("2.0.9", "2.1.0", 3)).toBeLessThan(0);
+    expect(cmpVersion("2.1.1", "2.1.0", 2)).toBe(0);
+    expect(cmpVersion("2.1.1", "2.1.0")).toBeGreaterThan(0);
+    expect(cmpVersion("20", "20.0", 2)).toBe(0);
+    expect(cmpVersion("1.x", "1.0", 2)).toBe(0);
+    expect(evaluateClaudeCliCompat("2.0.9", { min_version: "2.1.0" } as never)).toBe("below_min");
+    expect(evaluateClaudeCliCompat("2.1.5", { min_version: "2.1.0", qualified_version: "2.1.4" } as never)).toBe("newer_unqualified");
+    const old = await checkTool("bun", "bun", "required", "999.0");
+    expect(old.status).toBe("fail");
+    const ok = await checkTool("bun", "bun", "required", null);
+    expect(ok.status).toBe("pass");
+  });
 });
