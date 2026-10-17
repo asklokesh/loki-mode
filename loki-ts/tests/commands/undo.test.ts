@@ -79,3 +79,19 @@ describe("loki undo --list", () => {
     expect(r.err).toContain("--list takes no other arguments");
   });
 });
+
+describe("loki undo unknown flag", () => {
+  for (const args of [["run1", "--bogus"], ["run1", "--dry-rn"], ["run1", "--plan", "-x"], ["--list", "--bogus"], ["--bogus"]]) {
+    test(`unknown flag rejected: ${args.join(" ")}`, async () => {
+      const r = await list(args);
+      expect(r.rc).toBe(2);
+      const bad = args.find((a) => a === "--bogus" || a === "--dry-rn" || a === "-x")!;
+      expect(r.err).toBe(`loki undo: unknown flag ${bad} (see loki undo --help)\n`);
+      expect(r.calls.length).toBe(0);
+    });
+  }
+  test("valid flags still accepted", async () => {
+    expect((await list(["run1", "--plan", "--help"])).rc).toBe(0);
+    expect((await list(["--list"])).rc).toBe(0);
+  });
+});
