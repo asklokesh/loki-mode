@@ -62,15 +62,20 @@ export function groupCostLine(costs: GroupCost[], provider = "claude"): string {
   const usd = costs.reduce((a, c) => a + (c.usd ?? 0), 0);
   return unmeasured > 0 ? `Cost:     $${usd.toFixed(2)} partial (${provider}, ${measured} of ${measured + unmeasured} unit sessions measured)\n` : `Cost:     $${usd.toFixed(2)} (${provider}, ${measured} unit session${measured === 1 ? "" : "s"})\n`;
 }
-/** Roll the summed unit cost into the parent run's efficiency records (.loki/metrics/efficiency/iteration-*.json) so collect_efficiency, the receipt and the bench read it. No figure: no cost_usd (absence reads as unmeasured). */
+/** Roll group unit cost into the parent run's efficiency records (.loki/metrics/efficiency/iteration-*.json) so collect_efficiency, the receipt and the bench read it. One record per priced launch (cost_usd = its summed unit figures) and one per unmeasured unit (no cost_usd key), because collect_efficiency derives cost_partial from records lacking cost_usd and ignores a record's own cost_partial flag. Phase is "implement": the group units do implementation work and collect_efficiency has no group phase. */
 export function writeGroupCostRecord(repoDir: string, name: string, costs: GroupCost[], provider: string): void {
-  const measured = costs.reduce((a, c) => a + c.measured, 0), unmeasured = costs.reduce((a, c) => a + c.unmeasured, 0);
-  if (measured + unmeasured === 0) return;
-  const usd = costs.reduce((a, c) => a + (c.usd ?? 0), 0);
   const dir = join(repoDir, ".loki", "metrics", "efficiency");
+  const timestamp = new Date().toISOString();
   try {
+    const base = { phase: "implement", provider, status: "group", timestamp };
+    const recs: Record<string, unknown>[] = [];
+    for (const c of costs) {
+      if (c.measured > 0 && c.usd !== null) recs.push({ ...base, cost_usd: Number(c.usd.toFixed(6)), units_measured: c.measured });
+      for (let j = 0; j < c.unmeasured; j++) recs.push({ ...base, cost_unmeasured_reason: "unit reported no dollar figure" });
+    }
+    if (recs.length === 0) return;
     mkdirSync(dir, { recursive: true });
-    atomicWriteJson(join(dir, `iteration-group-${name}.json`), { phase: "group", provider, status: "group", ...(measured > 0 ? { cost_usd: Number(usd.toFixed(6)) } : { cost_unmeasured_reason: "no unit reported a dollar figure" }), ...(unmeasured > 0 ? { cost_partial: true, units_measured: measured, units_unmeasured: unmeasured } : {}), timestamp: new Date().toISOString() });
+    recs.forEach((r, k) => atomicWriteJson(join(dir, `iteration-group-${name}-${String(k).padStart(3, "0")}.json`), r));
   } catch { /* cost reporting never fails the run */ }
 }
 
