@@ -26,7 +26,7 @@ import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
-import { cleanTreeId, recordFingerprints } from "../util/failure_memory.ts";
+import { cleanTreeId, failedCheckNames, recordFingerprints } from "../util/failure_memory.ts";
 import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
@@ -220,7 +220,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, reason: statusReason ?? String(outcome) }); }
   log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
-  log.sealLog();
+  log.sealLog(); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks), cleanTreeId(opts.repoDir)); // Q17-03: real failing checks, read by decideRecovery so a flaky check does not mask them
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "flaky", folded.stages["verify"]?.data.flaky, cleanTreeId(opts.repoDir)), wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: summaryTokens(folded, allEvents.some((e) => e.type === "cost")), partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
