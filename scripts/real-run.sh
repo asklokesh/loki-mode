@@ -38,12 +38,13 @@ load_scenario() { # sets SC_* in the current shell; returns 2 on any defect
     local f="$SC_DIR/$NAME.sh" a
     case "$NAME" in *[!A-Za-z0-9_-]*|'') echo "bad scenario name: $NAME" >&2; return 2 ;; esac
     [ -f "$f" ] || { echo "no such scenario: $f" >&2; return 2; }
-    SC_DESC="" SC_BILLED="" SC_FIXTURE="" SC_ARGS=() SC_ENV=() SC_RECEIPT=() SC_CONSOLE=() SC_WALL_EXECUTED=""
+    SC_DESC="" SC_BILLED="" SC_FIXTURE="" SC_ARGS=() SC_ENV=() SC_RECEIPT=() SC_CONSOLE=() SC_WALL_EXECUTED="" SC_EXPECT_CHECKS=""
     # shellcheck source=/dev/null
     . "$f" || { echo "scenario failed to load: $f" >&2; return 2; }
     [ -n "$SC_DESC" ] && [ -n "$SC_FIXTURE" ] && [ "${#SC_ARGS[@]}" -gt 0 ] || { echo "scenario $NAME: SC_DESC, SC_FIXTURE and SC_ARGS are required" >&2; return 2; }
     case "$SC_BILLED" in 0|1) ;; *) echo "scenario $NAME: SC_BILLED must be 0 or 1" >&2; return 2 ;; esac
     [ -x "$REPO_ROOT/scripts/b9-fixtures/$SC_FIXTURE.sh" ] || { echo "scenario $NAME: no fixture generator $SC_FIXTURE" >&2; return 2; }
+    case "$SC_EXPECT_CHECKS" in *[!A-Za-z0-9_.,:-]*) echo "scenario $NAME: SC_EXPECT_CHECKS must be a comma list of check-name tokens" >&2; return 2 ;; esac
     for a in "${SC_RECEIPT[@]+"${SC_RECEIPT[@]}"}"; do
         printf '%s\n' "$a" | grep -Eq '^[A-Za-z_][A-Za-z0-9_.]* (==|!=|<=|>=|exists)( .+)?$' \
             || { echo "scenario $NAME: malformed receipt assertion: $a" >&2; return 2; }
@@ -79,9 +80,10 @@ check_receipt() { # check_receipt FILE
         esac
     done
     # FC-68: SC_WALL_EXECUTED=1 also requires >= 2 executed checks and an executed, non-discarded Wall test.
-    if [ "${SC_WALL_EXECUTED:-}" = 1 ]; then
+    # Q17-04: SC_EXPECT_CHECKS=lint,mutation,review also requires each named non-Wall check in checks[].
+    if [ "${SC_WALL_EXECUTED:-}" = 1 ] || [ -n "${SC_EXPECT_CHECKS:-}" ]; then
         local wl wrc=0
-        wl="$(bash "$REPO_ROOT/scripts/assert-wall-executed.sh" "$file" 2 2>&1)" || wrc=$?
+        wl="$(bash "$REPO_ROOT/scripts/assert-wall-executed.sh" "$file" 2 "${SC_EXPECT_CHECKS:-}" 2>&1)" || wrc=$?
         printf '%s\n' "$wl"
         if [ "$wrc" -ne 0 ]; then FAILS=$((FAILS + 1)); fi
     fi

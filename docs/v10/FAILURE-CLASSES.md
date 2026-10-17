@@ -642,6 +642,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Law: evidence or it did not happen; a green that cannot go red is not a gate. Guard class: the root cause is FC-67 (WALL-NOTRUN holds that row); this row is the detection layer.
 - Siblings: any other check a receipt could lose without a failing exit (lint, mutation proof, cross review) is not yet counted; the guard asserts only checks[] executed >= 2 and the Wall test.
 - Mechanism: scripts/assert-wall-executed.sh reads the keys seal.ts writes (checks[].result, wall.files, wall.passed, not_proven[]). scripts/real-run.sh applies it to scenarios with SC_WALL_EXECUTED=1 (trivial-sum, two-bug). Post-Release Smoke npm-smoke runs it as a blocking step.
+- Q17-04 sibling guard: a scenario sets SC_EXPECT_CHECKS=lint,mutation,review and assert-wall-executed.sh (3rd arg) fails when a named check is absent or not_run in checks[]; unset keeps today's behavior.
 - Limit: the real trivial-sum and two-bug runs are billed and CI has no provider key, so Post-Release Smoke cannot run them unattended; the blocking step proves the guard logic on the released commit and runs the real scenario when a key is supplied.
 - Fixture: tests/test-wall-executed-guard.sh (11.3.1 shape passes, 11.3.2 shape fails, each leg alone fails).
 
