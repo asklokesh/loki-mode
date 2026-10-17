@@ -209,13 +209,24 @@ def _load_rows(paths):
     return rows, skipped
 
 
+def _finite_positive(text):
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("not a number: %r" % text)
+    if not math.isfinite(v) or v <= 0:
+        raise argparse.ArgumentTypeError(
+            "must be a finite number greater than 0: %r" % text)
+    return v
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Cost claim verdict over attribution rows")
     ap.add_argument("--rows", nargs="+", required=True)
     ap.add_argument("--loki-arm", required=True)
     ap.add_argument("--floor-arm", required=True)
-    ap.add_argument("--target", type=float, required=True)
+    ap.add_argument("--target", type=_finite_positive, required=True)
     ap.add_argument("--exclude-task", action="append", default=[])
     try:
         a = ap.parse_args(argv)

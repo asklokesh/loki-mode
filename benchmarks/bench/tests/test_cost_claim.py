@@ -147,6 +147,18 @@ def test_cli_usage_error_exit_2(tmp_path):
     assert _run("--loki-arm", "loki")[0] == 2
 
 
+def test_cli_target_must_be_finite_and_positive(tmp_path):
+    f = tmp_path / "a.jsonl"
+    _write(f, _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0))
+    for bad in ("nan", "inf", "-inf", "0", "-0.5", "abc"):
+        args = _base_args(f)
+        args[args.index("--target") + 1] = bad
+        rc, out = _run(*args)
+        assert rc == 2, (bad, rc, out)
+        assert "PROVEN" not in out, (bad, out)
+    assert _run(*_base_args(f))[0] == 0
+
+
 def test_cli_maps_unmeasured_and_partial(tmp_path):
     f = tmp_path / "a.jsonl"
     rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
