@@ -2461,3 +2461,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:02Z (CoS) v11.17.27
 - Ships TEN-COST-11 (HIGH r4 APPROVE 4014f37ee: r3 blockers N1 and N2 closed, reviewer reproduced red mutations for each; bun test wall, seal, machine, spawn_env_guard, budget, discard_proto 225 pass 0 fail) and the 20 Architect BOARD rows (871a2ef35). v11.17.25 Release run 39007241890 success, npm latest=next=11.17.25. Non-blocking follow-up: machine.ts distrust call has no direct test (pre-existing from WC-01b).
+
+## 2026-10-17T06:08Z (CoS) v11.17.28
+- v11.17.26 Release run 39008106373 success, npm latest=next=11.17.26. v11.17.27 pushed e044e5395 (HEAD equals origin/main, gitleaks no leaks). Ships TEN-COST-04 (TL APPROVE b6562f67d: pytest 153 passed, mutation M1 3 failed) and TEN-SEC-PREPUSH-MERGE-WARN (TL APPROVE 78f48de3a: tests/test-pre-push-gitleaks.sh Passed 59 Failed 0, mutation case 19b red). TEN-COST-16-F1 built nothing (row uncommitted at dispatch); re-dispatched in wave Z with COST-26, SPEED-01, UX-09, GATES-11.

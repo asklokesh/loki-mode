@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.28 (2026-10-17)
+
+### Added
+- Cost attribution by lever (TEN-COST-04): the C-F1 attribution script takes `--loki-env LOKI_<NAME>=<value>` and pools runs by arm plus lever settings, so a lean-profile arm is never averaged with a default arm. A malformed lever is refused with exit 2.
+
+### Fixed
+- Pre-push gitleaks warnings (TEN-SEC-PREPUSH-MERGE-WARN): the .gitleaksignore and .gitleaks.toml change checks read merges against their first parent only, so merging an older slice branch no longer reports ignore lines that were already on main.
+
 ## v11.17.27 (2026-10-17)
 
 ### Changed
