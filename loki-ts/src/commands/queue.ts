@@ -123,13 +123,28 @@ export function queueAdd(refs: readonly string[], d: QueueDeps): number {
   return 0;
 }
 
+export function formatAge(addedAt: string, now: Date): string {
+  const t = Date.parse(addedAt);
+  if (!Number.isFinite(t)) return "unknown";
+  const sec = Math.max(0, Math.floor((now.getTime() - t) / 1000));
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+}
+
 export function queueList(d: QueueDeps): number {
   const items = readQueue(d.lokiDir);
   if (items.length === 0) {
-    d.out("queue is empty\n");
+    d.out("queue is empty\nnext: loki queue add <issue...>  (owner/repo#N, #N or an issue URL)\n");
     return 0;
   }
-  items.forEach((it, i) => d.out(`${i + 1}. ${it.ref}  (added ${it.added_at})\n`));
+  const rows = items.map((it) => ({ id: it.ref, age: formatAge(it.added_at, d.now()), status: "queued" }));
+  const w = Math.max(2, ...rows.map((r) => r.id.length));
+  const aw = Math.max(3, ...rows.map((r) => r.age.length));
+  d.out(`${"ID".padEnd(w)}  ${"AGE".padEnd(aw)}  STATUS\n`);
+  for (const r of rows) d.out(`${r.id.padEnd(w)}  ${r.age.padEnd(aw)}  ${r.status}\n`);
+  d.out(`${rows.length} queued\n`);
   return 0;
 }
 
