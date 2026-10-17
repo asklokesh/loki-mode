@@ -24,5 +24,11 @@ export async function notifyEvent(env: NodeJS.ProcessEnv, event: SlackEvent, f: 
     try { await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(slackPayload(event, f)) }); }
     catch (e) { process.stderr.write(`engine10: slack notify failed: ${String((e as Error)?.message ?? e).split(url).join("[redacted]")}\n`); }
   };
-  await Promise.race([send(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]);
+  await Promise.race([send(), new Promise<void>((r) => setTimeout(r, notifyTimeoutMs(env)).unref())]);
+}
+
+/** Only a finite positive value is honored; negative, zero, NaN or junk fall back to 5000. */
+function notifyTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const n = Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 5000;
 }

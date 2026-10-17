@@ -60,4 +60,14 @@ describe("slack events", () => {
     expect(writes.join("")).toContain("slack notify failed");
     expect(writes.join("")).not.toContain("SECRETTOKEN");
   });
+  test("negative notify timeout falls back to the default and the event still posts", async () => {
+    const slow = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { await new Promise((r) => setTimeout(r, 150)); bodies.push(JSON.parse(await req.text())); return new Response("ok"); } });
+    try {
+      for (const bad of ["-1", "-5000", "NaN", "0"]) {
+        bodies.length = 0;
+        await notifyEvent({ LOKI_SLACK_WEBHOOK_URL: `http://127.0.0.1:${slow.port}/x`, LOKI_E10_NOTIFY_TIMEOUT_MS: bad }, "blocked", { question: "q" });
+        expect(bodies).toHaveLength(1);
+      }
+    } finally { slow.stop(true); }
+  });
 });
