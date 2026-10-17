@@ -74,20 +74,38 @@ _PROTECTED_RE = re.compile(
     r'|login\s+required|auth(entication)?\s+required'
     r'|authenticated(\s+users?)?(\s+only)?|admin[ -]only|admins?\s+only'
     r'|protected\s+(endpoint|route|resource|api|path|page)s?|is\s+protected'
-    r'|(without|no|missing)\s+(\w+\s+)?(auth\w*|credentials|token)\b[^.;]*?\b40[13])\b',
+    r'|(without|no|missing)\s+(\w+\s+)?(auth\w*|credentials|token)\b(?:(?!\b(?:never|not)\b)[^.;,])*?\b40[13])\b',
     re.IGNORECASE)
-_NEGATION_WORDS = {"no", "not", "never", "without", "unauthenticated", "public",
+_NEGATION_WORDS = {"no", "not", "never", "without",
                    "isn't", "doesn't", "don't", "cannot", "can't"}
+_NEGATION_AUX = {"does", "do", "is", "are", "need", "needs"}
+
+
+def _is_negated(words: list[str]) -> bool:
+    """True when the words right before a protected match negate it: the word
+    immediately before, or two back when the word between is an auxiliary. A
+    negator that is itself preceded by not/no/never does not count."""
+    for back in (1, 2):
+        if len(words) < back:
+            continue
+        i = len(words) - back
+        if words[i] not in _NEGATION_WORDS:
+            continue
+        if back == 2 and words[i + 1] not in _NEGATION_AUX:
+            continue
+        if i > 0 and words[i - 1] in ("not", "no", "never"):
+            continue
+        return True
+    return False
 
 
 def _is_protected_text(text: str) -> bool:
     """True when a protected-wording match is not directly negated. Negation
-    cancels only the match it modifies: one of the two words right before it,
-    inside the same clause (no ; , . or : between)."""
+    cancels only the match it modifies, inside the same clause (no ; , . or :
+    between). Words like "public" are not negators: "not public" means protected."""
     for m in _PROTECTED_RE.finditer(text or ""):
         clause = re.split(r'[;,.:]', text[:m.start()])[-1]
-        prev = re.findall(r"[\w']+", clause.lower())[-2:]
-        if not any(w in _NEGATION_WORDS for w in prev):
+        if not _is_negated(re.findall(r"[\w']+", clause.lower())):
             return True
     return False
 
@@ -282,7 +300,7 @@ def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[di
         elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
             st, detail = "failed", f"served without credentials (HTTP {code})"
         elif code is not None and 300 <= code < 400 and re.search(
-                r'(^|/)(login|signin|sign-in|auth|oauth)\b', extra, re.IGNORECASE):
+                r'(^|/)(login|signin|sign-in|auth|oauth)(?=[/?#]|$)', extra, re.IGNORECASE):
             st, detail = "passed", f"HTTP {code} redirect to {extra}"
         elif code is None:
             st, detail = "inconclusive", f"unreachable: {extra}"

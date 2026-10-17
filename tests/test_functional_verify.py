@@ -238,6 +238,30 @@ class AuthBehaviors(unittest.TestCase):
         out = FV.run(self.SPEC_AUTH, self._serve(302, location="https://x.io/auth/start?next=/a"))
         self.assertEqual(out["auth_behaviors"][0]["status"], "passed", out)
 
+    def test_not_public_means_protected(self):
+        for spec in ("GET /api/admin is not public and requires authentication",
+                     "GET /api/admin (not public) requires login",
+                     "GET /api/admin - never public - requires a token",
+                     "GET /api/admin requires authentication and rejects requests without credentials"):
+            self.assertEqual(FV.derive_auth_assertions(spec),
+                             [{"method": "GET", "path": "/api/admin"}], spec)
+            out = FV.run(spec, self._serve(200))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "failed", spec)
+
+    def test_public_with_never_401_is_not_protected(self):
+        for spec in ("GET /health is public and works without auth, never 401",
+                     "GET /health works without auth never 401"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+        self.assertEqual(len(FV.derive_auth_assertions("GET /a calls without auth get 401")), 1)
+
+    def test_redirect_end_anchor(self):
+        for loc in ("/static/login.png", "/api/auth-free"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "inconclusive", loc)
+        for loc in ("/login", "/oauth/x", "/auth?next=/a"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", loc)
+
     def test_early_return_has_auth_behaviors_key(self):
         self.assertEqual(FV.run("static page", "http://127.0.0.1:1")["auth_behaviors"], [])
 
