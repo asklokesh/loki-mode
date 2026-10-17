@@ -7229,7 +7229,7 @@ cmd_stats() {
         case "$1" in
             --json) show_json=true; shift ;;
             --efficiency) show_efficiency=true; shift ;;
-            *) shift ;;
+            *) echo "Unknown option: $1 (see: loki stats --help)" >&2; return 2 ;;
         esac
     done
 
