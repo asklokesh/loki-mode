@@ -472,6 +472,12 @@ export function deployFlagError(args: readonly string[]): string | null {
     }
     if (!ok) return `start: --env-file '${envFile}' does not exist or is not a readable file\n`;
   }
+  // TEN-DEPLOY-21: mirror loki deploy's destination enum, health-url requirement and canary rule before the paid build
+  const dest = val("--destination");
+  if (dest !== undefined && !["preview", "staging", "production"].includes(dest)) return `start: --destination must be one of: preview, staging, production, got '${dest}'\n`;
+  if (args.includes("--auto-rollback") && health === undefined) return "start: --auto-rollback requires --health-url (no health signal, no rollback)\n";
+  if (val("--health-match") !== undefined && health === undefined) return "start: --health-match requires --health-url\n";
+  if (args.includes("--canary") && dest !== undefined && dest !== "production") return "start: --canary only applies to --destination production\n";
   return null;
 }
 

@@ -489,6 +489,39 @@ describe("cap source line (TEN-COST-41)", () => {
   });
 });
 
+describe("deploy flags fail before build (TEN-DEPLOY-21)", () => {
+  const bad: Array<[string[], string]> = [
+    [["--deploy", "--destination", "prod"], "--destination"],
+    [["--deploy", "--destination=prod"], "--destination"],
+    [["--deploy", "--auto-rollback"], "--health-url"],
+    [["--deploy", "--health-match", "ok"], "--health-url"],
+    [["--deploy", "--canary", "--destination", "staging"], "--canary"],
+    [["--deploy", "--canary", "--destination=preview"], "--canary"],
+  ];
+  it("deploy flags fail before build: each invalid combination is named", () => {
+    for (const [a, flag] of bad) expect(deployFlagError(["p.md", ...a])).toContain(flag);
+  });
+  it("deploy flags fail before build: valid combinations unchanged", () => {
+    const h = ["--health-url", "https://x.io/h"];
+    expect(deployFlagError(["--deploy", "--destination", "staging"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--canary"])).toBeNull();
+    expect(deployFlagError(["--deploy", "--canary", "--destination", "production"])).toBeNull();
+    expect(deployFlagError(["--deploy", ...h, "--auto-rollback", "--health-match", "ok"])).toBeNull();
+  });
+  it("deploy flags fail before build: real entry (cli.ts start) exits 2 before any run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-d21-"));
+    try {
+      for (const [a, flag] of bad) {
+        const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a thing", ...a], { cwd: dir, encoding: "utf8", timeout: 20_000 });
+        expect(r.status).toBe(2);
+        expect(r.stderr).toContain(flag);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("deploy flag validation (TEN-DEPLOY-19)", () => {
   it("deploy flag validation: bad health-url and domain are named", () => {
     for (const u of ["notaurl", "ftp://x.io/h", "http://", "x.io/health", "javascript:alert(1)"]) {
