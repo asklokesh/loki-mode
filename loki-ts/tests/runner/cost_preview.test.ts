@@ -171,6 +171,13 @@ describe("loki estimate is the same estimator as the loki start preview (ESTIMAT
     expect(run(["--provider", "claude"]).rc).toBe(0);
     expect(run([], { LOKI_PROVIDER: "bogus" }).rc).toBe(1);
   });
+  test("model needs a value: empty or dash-leading value is rejected, never swallows the next flag", () => {
+    for (const args of [["--provider", "codex", "--model", "--json"], ["--provider", "codex", "--model="], ["--model=--json"], ["--provider", "--json"], ["--provider="]]) {
+      const r = run(args);
+      expect(r.rc).toBe(1); expect(r.out).toBe(""); expect(r.err).toContain("needs a value");
+    }
+    expect(run(["--provider", "codex", "--model=gpt-5.3-codex", "--json"]).rc).toBe(0);
+  });
   test("--iterations is removed and says so; unknown flags fail; --help documents the change", () => {
     const a = run(["--iterations", "10"]);
     expect(a.rc).toBe(1); expect(a.err).toContain("--iterations was removed"); expect(a.out).toBe("");
