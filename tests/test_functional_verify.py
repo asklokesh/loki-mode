@@ -254,6 +254,30 @@ class AuthBehaviors(unittest.TestCase):
             self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
         self.assertEqual(len(FV.derive_auth_assertions("GET /a calls without auth get 401")), 1)
 
+    def test_widened_negation_stays_unprotected(self):
+        for spec in ("GET /api/status no longer requires authentication",
+                     "GET /api/status does not even require auth",
+                     "GET /api/status does not really necessarily require auth"):
+            self.assertEqual(FV.derive_auth_assertions(spec), [], spec)
+
+    def test_not_public_requires_auth_is_protected_and_fails_when_served(self):
+        spec = "GET /a is not public requires authentication"
+        self.assertEqual(len(FV.derive_auth_assertions(spec)), 1)
+        out = FV.run(spec, self._serve(200))
+        self.assertEqual(out["auth_behaviors"][0]["status"], "failed", out)
+
+    def test_double_negator_stays_protected(self):
+        self.assertEqual(len(FV.derive_auth_assertions("GET /a is not no auth required")), 1)
+
+    def test_negation_does_not_cross_clause(self):
+        self.assertEqual(len(FV.derive_auth_assertions(
+            "GET /a is not cached but requires authentication")), 1)
+
+    def test_redirect_login_with_page_extension(self):
+        for loc in ("/login.html", "/login.php"):
+            out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))
+            self.assertEqual(out["auth_behaviors"][0]["status"], "passed", loc)
+
     def test_redirect_end_anchor(self):
         for loc in ("/static/login.png", "/api/auth-free"):
             out = FV.run(self.SPEC_AUTH, self._serve(302, location=loc))

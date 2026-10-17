@@ -78,33 +78,36 @@ _PROTECTED_RE = re.compile(
     re.IGNORECASE)
 _NEGATION_WORDS = {"no", "not", "never", "without",
                    "isn't", "doesn't", "don't", "cannot", "can't"}
-_NEGATION_AUX = {"does", "do", "is", "are", "need", "needs"}
+_NEGATION_AUX = {"does", "do", "is", "are", "need", "needs", "would", "will",
+                 "should", "must", "longer", "even", "actually", "really",
+                 "necessarily", "always", "ever", "also", "currently"}
 
 
 def _is_negated(words: list[str]) -> bool:
-    """True when the words right before a protected match negate it: the word
-    immediately before, or two back when the word between is an auxiliary. A
-    negator that is itself preceded by not/no/never does not count."""
-    for back in (1, 2):
+    """True when a negator sits right before a protected match, with at most two
+    intervening auxiliary or adverb words ("no longer", "does not even"). Any
+    other intervening word (e.g. "public") blocks it, so "not public requires
+    auth" stays protected. A negator that is itself preceded by not/no/never
+    does not count."""
+    for back in (1, 2, 3):
         if len(words) < back:
-            continue
+            return False
         i = len(words) - back
-        if words[i] not in _NEGATION_WORDS:
-            continue
-        if back == 2 and words[i + 1] not in _NEGATION_AUX:
-            continue
-        if i > 0 and words[i - 1] in ("not", "no", "never"):
-            continue
-        return True
+        if words[i] in _NEGATION_WORDS:
+            if i > 0 and words[i - 1] in ("not", "no", "never"):
+                return False
+            return True
+        if words[i] not in _NEGATION_AUX:
+            return False
     return False
 
 
 def _is_protected_text(text: str) -> bool:
     """True when a protected-wording match is not directly negated. Negation
-    cancels only the match it modifies, inside the same clause (no ; , . or :
+    cancels only the match it modifies, inside the same clause (no ; , . : and/but
     between). Words like "public" are not negators: "not public" means protected."""
     for m in _PROTECTED_RE.finditer(text or ""):
-        clause = re.split(r'[;,.:]', text[:m.start()])[-1]
+        clause = re.split(r'[;,.:]|\b(?:and|but)\b', text[:m.start()], flags=re.IGNORECASE)[-1]
         if not _is_negated(re.findall(r"[\w']+", clause.lower())):
             return True
     return False
@@ -300,7 +303,7 @@ def verify_auth_behaviors(base_url: str, auth_assertions: list[dict]) -> list[di
         elif code is not None and 200 <= code < 300 and (has_body or method != "GET"):
             st, detail = "failed", f"served without credentials (HTTP {code})"
         elif code is not None and 300 <= code < 400 and re.search(
-                r'(^|/)(login|signin|sign-in|auth|oauth)(?=[/?#]|$)', extra, re.IGNORECASE):
+                r'(^|/)(login|signin|sign-in|auth|oauth)(?=[/?#]|\.(?:html?|php|aspx?|jsp)(?:[?#]|$)|$)', extra, re.IGNORECASE):
             st, detail = "passed", f"HTTP {code} redirect to {extra}"
         elif code is None:
             st, detail = "inconclusive", f"unreachable: {extra}"
