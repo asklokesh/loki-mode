@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { run } from "../../src/util/shell.ts";
 import { stripAnsi } from "../../src/util/colors.ts";
 import { resolve } from "node:path";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
@@ -49,6 +49,26 @@ describe("provider list", () => {
     const plain = stripAnsi(a.stdout);
     for (const p of ["claude", "codex", "cline", "aider", "opencode"]) {
       expect(plain).toContain(p);
+    }
+  });
+});
+
+describe("provider list install hints", () => {
+  it("list shows install hint", async () => {
+    // PATH holds only bun, so every provider CLI reads as missing.
+    const dir = mkdtempSync(resolve(tmpdir(), "loki-prov-"));
+    try {
+      symlinkSync(process.execPath, resolve(dir, "bun"));
+      symlinkSync("/bin/sh", resolve(dir, "sh"));
+      const a = await run(["bun", CLI, "provider", "list"], { env: { PATH: dir } });
+      expect(a.exitCode).toBe(0);
+      expect(stripAnsi(a.stdout)).toContain("not installed");
+      const err = stripAnsi(a.stderr);
+      expect(err).toContain("npm install -g @anthropic-ai/claude-code");
+      expect(err).toContain("pip install aider-chat");
+      expect(err).toContain("npm install -g opencode-ai");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

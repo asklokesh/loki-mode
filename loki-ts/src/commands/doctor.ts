@@ -11,6 +11,7 @@
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
+import { PROVIDER_INSTALL } from "./provider.ts";
 import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -1280,13 +1281,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   // the Bun route but not bash and break parity. On stderr it is invisible to the
   // stdout-only gate AND aligned under local-ci's 2>&1 capture. The user still
   // sees the hint (stderr is shown on a real terminal).
-  const providerInstall: Record<string, string> = {
-    claude: "npm install -g @anthropic-ai/claude-code",
-    codex: "npm install -g @openai/codex",
-    cline: "npm install -g cline",
-    aider: "pip install aider-chat",
-    opencode: "npm install -g opencode-ai",
-  };
+  const providerInstall = PROVIDER_INSTALL;
   let anyProvider = false;
   let sdkOnly = false;
   for (const cmd of providerCmds) {
