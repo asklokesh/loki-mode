@@ -5,6 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.13 (2026-10-17)
+
+v11.17.12 was tagged but never published: its full test suite failed on one stale test assertion, so npm stayed at 11.17.11. Everything listed under v11.17.12 ships in this release.
+
+### Added
+- Heartbeat ETA (Q18-07): the `loki start` heartbeat line shows an estimated time remaining, and actual durations are recorded at seal so later estimates improve.
+- Group run output (Q18-11): grouped backlog runs emit group.started and group.unit events and render a live per-unit group view.
+- Cost cap share (Q17-02): the engine10 Cost line adds "N% of cap $X" when `--max-cost` or `LOKI_E10_MAX_COST_USD` is set. Without a cap the line is unchanged.
+- Live deploy URL (TEN-DEPLOY-01): `loki deploy --execute` captures the public URL the provider prints, shows "Live at: <url>", records it in the deploy receipt and health-checks it when no `--health-url` is given.
+- Failure-specific next step (TEN-UX-02): a failed `loki start` now names the exact fix for its failure class (login, billing or provider, attach, answer, doctor) instead of one generic hint. For providers other than Claude (TEN-UX-02b) the login hint names that provider's own re-authentication step instead of `claude login`.
+- Cost claim verdict (TEN-COST-03): `benchmarks/bench/cost_claim.py` proves a cost ratio only when a seeded paired bootstrap confidence interval clears the target with no acceptance loss, no partial cost, one engine version and at least 3 runs per task.
+- Lean Claude Code baseline (TEN-COST-02): the benchmark adapter can run raw Claude Code with the same tool set as engine10, so cost comparisons are like for like.
+
+### Fixed
+- Moat property P9 (Q18-03c, Q18-03d): the allowToken guard scans both raw and comment-stripped source, closing re-export, indirect-call and argv-prefix bypasses, with new positive controls for each.
+- Cost summary test (fix-forward for v11.17.12): the shared-predicate check matches the efficiency_cost import by name, so importing a second helper on the same line no longer fails the suite.
+- Benchmark suite (TEN-STABILITY-01): bench-suite passes environment variables through an env shim that hyperfine 1.20 accepts and fails when any command is skipped.
+- Nightly benchmark (TEN-STABILITY-08): hyperfine is pinned to v1.19.0 with sha256 checks, and a commit whose nightly failed is measured again instead of being skipped forever.
+- Release guard coverage (TEN-STABILITY-04): every repo-wide guard that has reached main red is listed in scripts/global-guards.tsv and checked by the selector tests.
+- Shell completions: zsh completion now offers `loki restore`, and bash completion offers `loki deploy --destination`.
+- Concurrency test flake (TEN-STABILITY-05): wall_concurrent builds its git template once and copies it per test, so it no longer races the 5 second test timeout under load.
+
+### Changed
+- Shared helpers (TEN-SECURE-SCAN-UTIL, TEN-BADGE-UTIL, TEN-CORE-TRIM): one typed TypeScript wrapper over secure-scan.py, one verdict badge helper for `loki share`, and test-file text helpers moved out of the engine core (4931 of 5000 lines) with no behavior change.
+- Failure classes (TEN-FC-ROWS): nine new FAILURE-CLASSES rows for the upcoming quality, cost, deploy, stability and UX fixes.
+
 ## v11.17.12 (2026-10-17)
 
 ### Fixed
