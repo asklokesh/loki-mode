@@ -538,13 +538,10 @@ export function claudeProvider(): ProviderInvoker {
       // shellRun already implements SIGTERM then SIGKILL after a 2s grace;
       // it just was not being asked to. See docs/stop-latency.md.
       //
-      // 0 or a non-numeric value means "no timeout", preserving the old
-      // behavior for anyone who set it deliberately.
-      const _callTimeoutSec = Number(process.env.LOKI_PROVIDER_CALL_TIMEOUT ?? "7200");
-      const _callTimeoutMs =
-        Number.isFinite(_callTimeoutSec) && _callTimeoutSec > 0
-          ? _callTimeoutSec * 1000
-          : undefined;
+      // 0 is the deliberate "no timeout" opt-out. A non-numeric value (for
+      // example "2h") used to silently disable the cap too; it now prints one
+      // stderr note and falls back to the 7200s default.
+      const _callTimeoutMs = providerCallTimeoutMs(process.env);
       const r = await shellRun(argv, {
         cwd: call.cwd,
         env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env), ...engine10CacheTtlEnv(process.env) },
@@ -559,6 +556,21 @@ export function claudeProvider(): ProviderInvoker {
       };
     },
   };
+}
+
+// Resolve LOKI_PROVIDER_CALL_TIMEOUT (seconds) to ms. Unset gives 7200s, 0 or
+// negative gives undefined (deliberate no timeout), a non-numeric value warns
+// once on stderr and uses the 7200s default instead of dropping the safety cap.
+export function providerCallTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env["LOKI_PROVIDER_CALL_TIMEOUT"];
+  let sec = Number(raw ?? "7200");
+  if (!Number.isFinite(sec)) {
+    process.stderr.write(
+      `loki: LOKI_PROVIDER_CALL_TIMEOUT=${JSON.stringify(raw)} is not a number of seconds; using the 7200s default (set 0 for no timeout)\n`,
+    );
+    sec = 7200;
+  }
+  return sec > 0 ? sec * 1000 : undefined;
 }
 
 // ---------------------------------------------------------------------------
