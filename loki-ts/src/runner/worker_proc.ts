@@ -34,12 +34,14 @@ export function spawnWorker(
     };
     process.on("SIGINT", onStop);
     process.on("SIGTERM", onStop);
+    process.on("SIGHUP", onStop); // terminal closed: the detached worker would otherwise outlive the supervisor and keep spending
     (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down while this supervisor owns the stop
     const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
       process.off("SIGINT", onStop);
       process.off("SIGTERM", onStop);
+      process.off("SIGHUP", onStop);
       (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = false;
       for (const t of timers) clearTimeout(t);
       rl.close();

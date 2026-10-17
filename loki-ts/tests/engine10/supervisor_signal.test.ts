@@ -45,7 +45,7 @@ process.exit(r.outcome === "CANCELLED" ? (r.notProven.some((n) => n.endsWith("SI
   expect(git(dir, "branch", "--show-current")).toBe("loki/e10-sig");
   sup.kill(sig);
   const code = await exited;
-  expect(code).toBe(sig === "SIGINT" ? 130 : 143);
+  expect(code).toBe(sig === "SIGTERM" ? 143 : 130);
   await new Promise((r) => setTimeout(r, 300));
   if (dirty) {
     expect(git(dir, "branch", "--show-current")).toBe("loki/e10-sig");
@@ -61,6 +61,7 @@ process.exit(r.outcome === "CANCELLED" ? (r.notProven.some((n) => n.endsWith("SI
 describe("supervisor stop signals", () => {
   test("SIGINT returns to the starting branch and leaves no orphans", () => run("SIGINT"), 30000);
   test("SIGTERM with an uncommitted run edit stays on the run branch and keeps the edit", () => run("SIGTERM", true), 30000);
+  test("sighup (terminal closed) returns to the starting branch and leaves no orphans", () => run("SIGHUP"), 30000);
   test("SIGTERM returns to the starting branch and leaves no orphans", () => run("SIGTERM"), 30000);
 });
 
