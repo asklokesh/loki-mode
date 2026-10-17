@@ -154,10 +154,10 @@ export const REGISTRY: readonly CmdSpec[] = [
     ],
   }),
   cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
-  cmd("kpis", "KEEP-MODERN", "bun", "KPI snapshot (alias of report kpis)", "Bun-native KPI report", { flags: [json] }),
+  cmd("kpis", "KEEP-MODERN", "bun", "KPI snapshot (alias of report kpis)", "Bun-native KPI report", { flags: [json, str("--since", "<Nd|YYYY-MM-DD>", "Limit iteration totals to a window")] }),
   cmd("report", "UPDATE", "both", "Reporting: kpis, session, metrics, cost, export, share, dogfood", "Mixed route; only kpis is Bun", {
     subcommands: [
-      sub("kpis", "Canonical KPI snapshot", { flags: [json] }),
+      sub("kpis", "Canonical KPI snapshot", { flags: [json, str("--since", "<Nd|YYYY-MM-DD>", "Limit iteration totals to a window")] }),
       sub("session", "Session report", { flags: [bool("--efficiency", "Token and cost stats")] }),
       sub("metrics", "Metrics report"),
       sub("cost", "Cost report"),

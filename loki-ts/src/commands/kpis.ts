@@ -20,7 +20,7 @@
 // deprecation pointer (alias contract), `report kpis` does not.
 //
 // Exit codes: 0 on success (including empty state), 1 only on flag parse error.
-import { computeKpis, formatKpisHuman, formatKpisJson } from "../metrics/kpis.ts";
+import { computeKpis, parseSince, formatKpisHuman, formatKpisJson } from "../metrics/kpis.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 import { emitDeprecatedAlias } from "../util/deprecated_alias.ts";
 
@@ -29,6 +29,8 @@ const HELP = `loki report kpis -- accuracy + efficiency KPI snapshot (v7.5.28 MV
 Usage:
   loki report kpis        Pretty-print KPI snapshot
   loki report kpis --json Emit KPIs as JSON
+  loki report kpis --since <Nd|YYYY-MM-DD>
+                          Limit iteration totals to the last N days or from a date
   loki report kpis --help Show this help
   (the old top-level 'loki kpis' still works; it prints a one-line pointer)
 
@@ -60,7 +62,9 @@ export function runKpis(args: readonly string[], opts: RunKpisOptions = {}): num
     emitDeprecatedAlias(opts.aliasOf, "report kpis", args);
   }
   let asJson = false;
-  for (const a of args) {
+  let sinceMs: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
     if (a === "--help" || a === "-h" || a === "help") {
       process.stdout.write(HELP);
       return 0;
@@ -79,10 +83,20 @@ export function runKpis(args: readonly string[], opts: RunKpisOptions = {}): num
     if (a === "-q" || a === "--quiet") {
       continue;
     }
+    if (a === "--since" || a.startsWith("--since=")) {
+      const raw = a === "--since" ? (args[++i] ?? "") : a.slice("--since=".length);
+      const ms = parseSince(raw);
+      if (ms === null) {
+        process.stderr.write(`loki kpis: invalid --since value: '${raw}' (use <N>d such as 7d, or YYYY-MM-DD)\n`);
+        return 1;
+      }
+      sinceMs = ms;
+      continue;
+    }
     process.stderr.write(`loki kpis: unknown arg: ${a}\nRun 'loki kpis --help' for usage.\n`);
     return 1;
   }
-  const snap = computeKpis(defaultLokiDir());
+  const snap = computeKpis(defaultLokiDir(), sinceMs === undefined ? {} : { sinceMs });
   process.stdout.write(asJson ? formatKpisJson(snap) + "\n" : formatKpisHuman(snap) + "\n");
   return 0;
 }
