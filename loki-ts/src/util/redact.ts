@@ -18,4 +18,8 @@ const RULES: [RegExp, string][] = [
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
-export const redactSecrets = (s: string): string => RULES.reduce((a, [re, to]) => a.replace(re, to), s);
+const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;
+const SECRET_PARAM = /([?&](?:access_token|token|api_key|apikey|password|secret|sig)=)[^&\s#"']*/gi;
+const redactQuery = (s: string): string =>
+  s.replace(QUERY_SEGMENT, (q) => q.replace(SECRET_PARAM, "$1[REDACTED]"));
+export const redactSecrets = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => a.replace(re, to), s));

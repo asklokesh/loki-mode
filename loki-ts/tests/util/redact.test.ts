@@ -44,3 +44,16 @@ test("existing redactions unchanged", () => {
   expect(redactSecrets("sk-ant-" + "a".repeat(24))).toBe("[REDACTED:ANTHROPIC_KEY]");
   expect(redactSecrets("Bearer " + "a".repeat(24))).toBe("Bearer [REDACTED]");
 });
+
+test("secret query parameters are redacted, others kept", () => {
+  expect(redactSecrets("https://h/x?access_token=abc123")).toBe("https://h/x?access_token=[REDACTED]");
+  expect(redactSecrets("GET https://h/x?a=1&api_key=k1&apikey=k2&b=2 ok")).toBe("GET https://h/x?a=1&api_key=[REDACTED]&apikey=[REDACTED]&b=2 ok");
+  expect(redactSecrets("https://h/x?TOKEN=t&password=p&secret=s&sig=z#frag")).toBe("https://h/x?TOKEN=[REDACTED]&password=[REDACTED]&secret=[REDACTED]&sig=[REDACTED]#frag");
+  expect(redactSecrets('"https://h/x?sig=abc"')).toBe('"https://h/x?sig=[REDACTED]"');
+});
+
+test("non-secret query params and non-URL text are untouched", () => {
+  expect(redactSecrets("https://h/x?page=2&sort=asc")).toBe("https://h/x?page=2&sort=asc");
+  expect(redactSecrets("https://h/x?refresh_token_ttl=5&mytoken=1")).toBe("https://h/x?refresh_token_ttl=5&mytoken=1");
+  expect(redactSecrets("a&token=x and password=y")).toBe("a&token=x and password=y");
+});
