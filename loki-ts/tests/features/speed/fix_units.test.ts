@@ -2,7 +2,9 @@
 // TEN-QUALITY-36: characterization of fix_units (effectiveDag, fixEnabled, integrateWithFixes, MAX_FIX_UNITS).
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { integrate } from "../../../src/engine10/integrate.ts";
 import { tmpdir } from "node:os";
 import { MAX_FIX_UNITS, effectiveDag, fixEnabled, integrateWithFixes, type FixIo, type FixUnit } from "../../../src/features/speed/fix_units.ts";
 import type { Dag } from "../../../src/features/decompose.ts";
@@ -169,4 +171,29 @@ test("a fix that does not pass returns the stopping result without recording it"
     expect(fixes).toHaveLength(0);
     expect(h.said.join("")).toContain("did not pass; stopping at suite");
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("suite fix reuses output: captured suiteOutput feeds the brief and the suite is not re-run", async () => {
+  const repoDir = tmp(), sentinel = join(repoDir, "reran");
+  try {
+    const h = harness([res({ ok: false, suiteExit: 1, suiteOutput: "FAIL captured-widget-test\n" }), res({})], () => "fixbranch");
+    const cmd = ["sh", "-c", `touch ${sentinel}; echo FAIL rerun-output; exit 1`];
+    await integrateWithFixes({ repoDir, env: {}, dag, fixes: [], branches: {}, failed: [], testCmd: cmd, io: h.io });
+    expect(h.launched[0]!.items[0]).toContain("captured-widget-test");
+    expect(existsSync(sentinel)).toBe(false);
+  } finally { rmSync(repoDir, { recursive: true, force: true }); }
+});
+
+test("suite fix reuses output: real integrate captures the failing suite output", () => {
+  const repoDir = tmp();
+  const g = (...a: string[]) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false", ...a], { cwd: repoDir, encoding: "utf8" });
+  try {
+    g("init", "-q", "-b", "main"); writeFileSync(join(repoDir, "x.txt"), "x\n"); g("add", "x.txt"); g("commit", "-qm", "base");
+    g("checkout", "-qb", "ub"); writeFileSync(join(repoDir, "a.txt"), "a\n"); g("add", "a.txt"); g("commit", "-qm", "a"); g("checkout", "-q", "main");
+    const one: Dag = { units: [unit("a")], sharedFiles: [], edges: [] };
+    const r = integrate({ repoDir, groupId: "t", baseRef: "main", dag: one, branches: { a: "ub" }, testCmd: ["sh", "-c", "echo FAIL widget-test; echo boom >&2; exit 1"] });
+    expect(r.suiteExit).toBe(1);
+    expect(r.suiteOutput).toContain("FAIL widget-test");
+    expect(r.suiteOutput).toContain("boom");
+  } finally { rmSync(repoDir, { recursive: true, force: true }); }
 });

@@ -38,9 +38,15 @@ function conflictInfo(repoDir: string, groupBranch: string, unitBranch: string):
   return { files, hunks: hunks.slice(0, 4000) };
 }
 
-function suiteTail(repoDir: string, cmd: readonly string[]): string {
+/** Brief from the failing-suite output integrate already captured; only re-runs the suite when no output was captured. */
+function suiteTail(repoDir: string, cmd: readonly string[], captured?: string): string {
+  if (captured !== undefined) return tailBrief(captured);
   const s = spawnSync(cmd[0]!, cmd.slice(1), { cwd: repoDir, encoding: "utf8", timeout: 600_000, env: { PATH: process.env["PATH"], HOME: process.env["HOME"], USER: process.env["USER"], LOGNAME: process.env["LOGNAME"], SHELL: process.env["SHELL"], CI: "1", LOKI_NO_BROWSER: "1" } });
-  const out = `${String(s.stdout)}\n${String(s.stderr)}`.split("\n");
+  return tailBrief(`${String(s.stdout)}\n${String(s.stderr)}`);
+}
+
+function tailBrief(text: string): string {
+  const out = text.split("\n");
   const names = out.filter((l) => /\b(fail|FAIL|not ok|Error)\b/.test(l)).slice(0, 20);
   return `Failing tests:\n${names.join("\n")}\nOutput tail:\n${out.slice(-40).join("\n")}`.slice(-4000);
 }
@@ -66,7 +72,7 @@ export async function integrateWithFixes(o: { repoDir: string; env: NodeJS.Proce
     const ub = o.branches[target] ?? "", c = target === "suite" ? null : conflictInfo(o.repoDir, r.branch, ub);
     const fix: FixUnit = c === null
       ? { ...base, fixKind: "suite", writeSet: all.length ? all : ["src/"], acceptance: [`${cmd} exits 0`],
-        items: [`Fix the failing test suite on the integrated group tree. Make the smallest change that makes \`${cmd}\` exit 0; do not weaken or delete tests.\n${suiteTail(o.repoDir, o.testCmd)}`] }
+        items: [`Fix the failing test suite on the integrated group tree. Make the smallest change that makes \`${cmd}\` exit 0; do not weaken or delete tests.\n${suiteTail(o.repoDir, o.testCmd, r.suiteOutput)}`] }
       : { ...base, fixKind: "conflict", writeSet: c.files.length ? c.files : o.dag.units.find((u) => u.id === target)?.writeSet ?? ["src/"], acceptance: [`merge of ${ub} is committed with no conflict markers left`],
         items: [`Resolve a merge conflict. Merge branch ${ub} (unit ${target}) into the current tree, keep the intent of both sides, remove every conflict marker, commit the merge.\nConflicted files: ${c.files.join(", ") || "unknown"}\n${c.hunks}`] };
     io.say(`loki: integration stopped on ${target}; running fix unit ${id} (${o.fixes.length + 1} of ${MAX_FIX_UNITS})\n`);
