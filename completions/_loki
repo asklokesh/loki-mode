@@ -435,7 +435,7 @@ function _loki_provider {
     cmds=(
         'show:Display current provider'
         'set:Set default provider'
-        'list:List available providers'
+        'list:List available providers (--json: name, tier, installed, version)'
         'info:Get provider information (--json: capability contract)'
         'matrix:Show the capability matrix'
         'help:Provider help'

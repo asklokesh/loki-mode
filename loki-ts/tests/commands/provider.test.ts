@@ -86,9 +86,50 @@ describe("opencode provider selection", () => {
 });
 
 describe("provider unknown subcommand", () => {
-  it("prints help on unknown subcommand", async () => {
+  it("unknown subcommand prints error plus help and exits 2", async () => {
     const a = await bunCmd(["provider", "definitelynotacommand"]);
-    expect(a.exitCode).toBe(0);
+    expect(a.exitCode).toBe(2);
+    expect(stripAnsi(a.stderr)).toContain("unknown subcommand 'definitelynotacommand'");
     expect(stripAnsi(a.stdout)).toContain("Loki Mode Provider Management");
+  });
+
+  it("help, -h, --help stay exit 0", async () => {
+    for (const w of ["help", "-h", "--help"]) {
+      const a = await bunCmd(["provider", w]);
+      expect(a.exitCode).toBe(0);
+      expect(stripAnsi(a.stdout)).toContain("Loki Mode Provider Management");
+    }
+  });
+});
+
+describe("provider list json", () => {
+  const check = (stdout: string) => {
+    const j = JSON.parse(stdout);
+    expect(j.providers.map((x: { name: string }) => x.name)).toEqual(["claude", "cline", "codex", "aider", "opencode"]);
+    for (const x of j.providers) {
+      expect(typeof x.tier).toBe("string");
+      expect(typeof x.installed).toBe("boolean");
+      if (!x.installed) expect(x.version).toBeNull();
+      else expect(x.version === null || typeof x.version === "string").toBe(true);
+    }
+    expect(j.providers.find((x: { name: string }) => x.name === "claude").tier).toBe("1");
+  };
+
+  it("bun CLI emits provider objects", async () => {
+    const a = await bunCmd(["provider", "list", "--json"]);
+    expect(a.exitCode).toBe(0);
+    check(a.stdout);
+  });
+
+  it("bash CLI delegates to the same JSON", async () => {
+    const b = await bashCmd(["provider", "list", "--json"]);
+    expect(b.exitCode).toBe(0);
+    check(b.stdout);
+  });
+
+  it("plain list is unchanged and not JSON", async () => {
+    const a = await bunCmd(["provider", "list"]);
+    expect(stripAnsi(a.stdout)).toContain("Available Providers");
+    expect(() => JSON.parse(a.stdout)).toThrow();
   });
 });

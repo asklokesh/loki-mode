@@ -7496,6 +7496,9 @@ cmd_provider() {
             cmd_provider_set "$@"
             ;;
         list)
+            case " $* " in
+                *" --json "*) _loki_bun_delegate provider list "$@" || { echo "loki provider list --json needs bun: ${_LOKI_DELEGATE_WHY}" >&2; return 1; } ;;
+            esac
             cmd_provider_list
             ;;
         info)
@@ -7518,7 +7521,7 @@ cmd_provider() {
             echo "Commands:"
             echo "  show     Show current provider (default)"
             echo "  set      Set provider for this project"
-            echo "  list     List available providers"
+            echo "  list     List available providers (--json: name, tier, installed, version)"
             echo "  info     Show provider details (--json: capability contract)"
             echo "  matrix   Show the capability matrix per provider and engine"
             echo "  models   Show resolved model configuration for all providers"
