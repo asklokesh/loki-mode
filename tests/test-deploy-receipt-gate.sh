@@ -1530,9 +1530,15 @@ echo "30. provenance ships with the build and the live URL is bound to the verif
 if [ "${D8S_EXECUTED:-0}" = "1" ]; then
     LB_SERVE="$WORKROOT/lb-serve"; LB_PORT_FILE="$WORKROOT/lb.port"; mkdir -p "$LB_SERVE"
     python3 - "$LB_PORT_FILE" "$LB_SERVE" <<'PYEOF' &
-import functools, http.server, socketserver, sys
+import functools, http.server, os, socketserver, sys
 class Q(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
+    def do_GET(self):
+        super().do_GET()
+        # flip mode: after one served provenance doc, the queued .next doc replaces it
+        doc = os.path.join(sys.argv[2], ".well-known", "loki-provenance.json")
+        if self.path.endswith("/.well-known/loki-provenance.json") and os.path.exists(doc + ".next"):
+            os.replace(doc + ".next", doc)
 srv = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Q, directory=sys.argv[2]))
 open(sys.argv[1], "w").write(str(srv.server_address[1]))
 srv.serve_forever()
@@ -1545,8 +1551,9 @@ PYEOF
     done
     LB_PORT="$(cat "$LB_PORT_FILE" 2>/dev/null || true)"
 
-    # stub vercel: replace the served dir with a copy of public/ (fresh), a prepared older doc (stale) or nothing
-    for mode in fresh stale none; do
+    # stub vercel: replace the served dir with a copy of public/ (fresh), a prepared older doc (stale),
+    # the older doc first and this build's doc after one fetch (flip), or nothing
+    for mode in fresh stale flip none; do
         mkdir -p "$WORKROOT/lb-$mode"
         cat > "$WORKROOT/lb-$mode/vercel" <<LBEOF
 #!/usr/bin/env bash
@@ -1554,6 +1561,8 @@ find "$LB_SERVE" -mindepth 1 -delete
 case "$mode" in
     fresh) cp -R public/. "$LB_SERVE"/ ;;
     stale) mkdir -p "$LB_SERVE/.well-known"; cp "$WORKROOT/stale-prov.json" "$LB_SERVE/.well-known/loki-provenance.json" ;;
+    flip) mkdir -p "$LB_SERVE/.well-known"; cp "$WORKROOT/stale-prov.json" "$LB_SERVE/.well-known/loki-provenance.json"
+          cp public/.well-known/loki-provenance.json "$LB_SERVE/.well-known/loki-provenance.json.next" ;;
 esac
 echo "http://127.0.0.1:$LB_PORT/"
 exit 0
@@ -1645,6 +1654,42 @@ LBEOF
             ok "30g. an unanchored override publishes no provenance doc and records live_binding=unanchored"
         else
             bad "30g. unanchored override published or claimed a binding" "rc=$RC30G lb=$LB30G"
+        fi
+
+        # 30h. a doc left by an earlier ANCHORED deploy never ships with a later --allow-unanchored
+        # deploy of a new commit: the stale doc is removed, nothing is served for the old SHA, and a
+        # third party asking for the old SHA is not told VERIFIED.
+        A30H="$(git -C "$D30A" rev-parse HEAD)"
+        echo "change" > "$D30A/CHANGE.md"; git -C "$D30A" add CHANGE.md; git -C "$D30A" commit -qm "new build"
+        ( cd "$D30A" && _LOKI_RUN_START_SHA="" python3 "$GENERATOR" --loki-dir "$D30A/.loki" >/dev/null 2>&1 )
+        OUT30H="$(run_lb "$D30A" fresh --allow-unanchored)"; RC30H=$?
+        LB30H="$(lb_field "$(lb_rec "$D30A")" live_binding)"
+        V30H="$( ( cd "$D30A" && bash "$LOKI_BIN" verify --url "http://127.0.0.1:$LB_PORT/" --expect-sha "$A30H" ) 2>&1 )"; VRC30H=$?
+        if [ "$RC30H" -eq 0 ] && [ "$LB30H" = "unanchored" ] && [ ! -e "$D30A/public/.well-known/loki-provenance.json" ] \
+           && [ ! -e "$LB_SERVE/.well-known/loki-provenance.json" ] && [ "$VRC30H" -ne 0 ] && ! grep -q "verdict: VERIFIED" <<<"$V30H"; then
+            ok "30h. an unanchored deploy after an anchored one removes the old doc; the old SHA is not VERIFIED live"
+        else
+            bad "30h. stale provenance shipped with an unanchored deploy" "rc=$RC30H lb=$LB30H vrc=$VRC30H $(printf '%s' "$V30H" | grep verdict)"
+        fi
+
+        # 30i. sibling: an unsupported project type also never ships a doc left in public/ earlier
+        mk_typed_fix d30i docker; D30I="$WORKROOT/d30i"
+        mkdir -p "$D30I/public/.well-known"; cp "$WORKROOT/stale-prov.json" "$D30I/public/.well-known/loki-provenance.json"
+        printf '%s\n' '**/.well-known/loki-provenance.json' >> "$D30I/.git/info/exclude"
+        OUT30I="$(run_lb "$D30I" none)"; RC30I=$?
+        if [ "$(lb_field "$(lb_rec "$D30I")" live_binding)" = "unsupported" ] && [ ! -e "$D30I/public/.well-known/loki-provenance.json" ]; then
+            ok "30i. an unsupported type removes a leftover doc and records live_binding=unsupported"
+        else
+            bad "30i. leftover doc survived an unsupported deploy" "rc=$RC30I $(printf '%s' "$OUT30I" | tail -3)"
+        fi
+
+        # 30j. a mismatch that recovers inside the retry budget (propagation) ends VERIFIED, exit 0
+        lb_fix d30j; D30J="$WORKROOT/d30j"
+        OUT30J="$(run_lb "$D30J" flip)"; RC30J=$?
+        if [ "$RC30J" -eq 0 ] && [ "$(lb_field "$(lb_rec "$D30J")" live_binding)" = "VERIFIED" ]; then
+            ok "30j. stale on the first probe then fresh on the retry ends live_binding=VERIFIED"
+        else
+            bad "30j. a recovering mismatch was not retried to VERIFIED" "rc=$RC30J $(printf '%s' "$OUT30J" | tail -3)"
         fi
     fi
     kill "$LB_PID" 2>/dev/null || true

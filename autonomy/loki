@@ -10245,6 +10245,19 @@ _deploy_provenance_root() {
     return 0
 }
 
+# _deploy_clear_provenance <dir>
+# Removes .well-known/loki-provenance.json from EVERY candidate static root (public/, dist/,
+# build/). Runs before each deploy decides whether to write a fresh doc, so a doc left by an
+# earlier deploy can never ship with a build it does not describe (unanchored override,
+# unsupported type, signing failure, or a root that moved between deploys).
+_deploy_clear_provenance() {
+    local dir="${1:-.}" r
+    for r in public dist build; do
+        rm -f "$dir/$r/.well-known/loki-provenance.json" 2>/dev/null || true
+    done
+    return 0
+}
+
 # _deploy_write_provenance <dir> <root> <head_sha> <tree_sha> <receipt_sha256> <run_id>
 # Writes <root>/.well-known/loki-provenance.json and signs it in place (loki verify
 # --sign-provenance). Called only after the gate (including the dirty-tree check) passed, so the
@@ -10278,9 +10291,10 @@ json.dump({"schema": "loki.provenance/1", "head_sha": os.environ["PV_H"], "tree_
 
 # _deploy_probe_live_binding <dir> <url> <anchor>
 # Fetches <url>/.well-known/loki-provenance.json through loki verify --url --expect-sha.
-# Returns 0 VERIFIED (signature holds and head_sha equals the anchor), 1 MISMATCH (a doc was
-# served but is forged or names a different SHA, still so after the same bounded retry), 2 UNCHECKED (no doc could be fetched or its
-# key is unknown, after a bounded retry with the health-probe tunables). Never VERIFIED on 2.
+# Returns 0 VERIFIED (signature holds and head_sha equals the anchor), 1 MISMATCH (a doc
+# was served but is forged or names a different SHA, still so on the last bounded retry),
+# 2 UNCHECKED (no doc could be fetched or its key is unknown, after a bounded retry with the
+# health-probe tunables). Never VERIFIED on 2.
 _deploy_probe_live_binding() {
     local dir="$1" url="$2" anchor="$3"
     local attempts="${LOKI_DEPLOY_HEALTH_ATTEMPTS:-5}" interval="${LOKI_DEPLOY_HEALTH_INTERVAL:-3}" i=0 vrc=2
@@ -10680,6 +10694,8 @@ _deploy_try_execute() {
     # Provenance doc: shipped with the build so the live URL can prove which SHA it serves.
     local live_binding="unchecked" prov_root="" prov_written=false
     prov_root="$(_deploy_provenance_root "$dir" "$type")"
+    # Every branch below starts from no doc: only a doc written by THIS deploy may ship.
+    _deploy_clear_provenance "$dir"
     if [ "$anchor_state" = "unanchored_overridden" ]; then
         live_binding="unanchored"
         echo "Live binding unanchored: the evidence gate was overridden with the anchor UNPROVEN, so no provenance doc is published and the live URL is not bound to ${anchor:0:12}." >&2
