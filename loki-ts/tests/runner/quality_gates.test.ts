@@ -65,6 +65,7 @@ const ENV_KEYS = [
   "LOKI_STUB_GATE_MAGIC_DEBATE",
   "LOKI_GATE_LSP_DIAGNOSTICS",
   "LOKI_GATE_SKILL_CHECKS",
+  "LOKI_GATE_SECURITY_SCAN",
   "LOKI_STUB_GATE_LSP_DIAGNOSTICS",
   "LOKI_GATE_LSP_WRITER",
   "LOKI_GATE_SEMANTIC_TESTS",
@@ -214,6 +215,7 @@ describe("escalation ladder boundaries", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
   });
 
   it("counts failures normally below CLEAR_LIMIT (count 1, 2)", async () => {
@@ -309,6 +311,7 @@ describe("runQualityGates orchestration", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
     const r = await runQualityGates(makeCtx());
     expect(r.failed).toEqual([]);
     expect(r.blocked).toBe(false);
@@ -364,6 +367,7 @@ describe("runQualityGates orchestration", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
     // mock_integrity and mutation_integrity are left default-on; with no
     // findings artifact they run and pass, so they appear in passed[]
     // ahead of code_review (sequence order).
@@ -735,7 +739,7 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
   });
 
   it("an inconclusive artifact does not block the gate battery, and is surfaced as INCONCLUSIVE (#82)", async () => {
-    for (const k of ["LOKI_GATE_SEMANTIC_TESTS", "LOKI_GATE_INVARIANTS", "LOKI_GATE_LSP_DIAGNOSTICS", "LOKI_GATE_SKILL_CHECKS"]) {
+    for (const k of ["LOKI_GATE_SEMANTIC_TESTS", "LOKI_GATE_INVARIANTS", "LOKI_GATE_LSP_DIAGNOSTICS", "LOKI_GATE_SKILL_CHECKS", "LOKI_GATE_SECURITY_SCAN"]) {
       process.env[k] = "false";
     }
     process.env["LOKI_STUB_GATE_STATIC_ANALYSIS"] = "pass";
@@ -1034,6 +1038,7 @@ describe("runSemanticTests (P1-3 spawn-based gate)", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
 
     const outcome = await runQualityGates(makeCtx());
     expect(outcome.passed).not.toContain("semantic_tests");
@@ -1079,6 +1084,7 @@ describe("runSemanticTests (P1-3 spawn-based gate)", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
 
     const outcome = await runQualityGates(makeCtx());
     expect(outcome.failed).toContain("semantic_tests");
@@ -1131,6 +1137,7 @@ describe("runSemanticTests (P1-3 spawn-based gate)", () => {
     process.env["LOKI_GATE_INVARIANTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
 
     const outcome = await runQualityGates(makeCtx());
     expect(outcome.failed).toContain("semantic_tests");
@@ -1294,6 +1301,7 @@ describe("runInvariants (P1-4 spawn-based gate)", () => {
     process.env["LOKI_GATE_SEMANTIC_TESTS"] = "false";
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
   }
 
   it("does NOT run when surfacing is opted OUT (LOKI_GATE_INVARIANTS=false)", async () => {
@@ -2122,6 +2130,7 @@ describe("runQualityGates LSP-diagnostics toggle (default ON, advisory)", () => 
   it("does NOT run lsp_diagnostics when opted out (LOKI_GATE_LSP_DIAGNOSTICS=false)", async () => {
     process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "false";
     process.env["LOKI_GATE_SKILL_CHECKS"] = "false";
+    process.env["LOKI_GATE_SECURITY_SCAN"] = "false";
     const r = await runQualityGates(makeCtx());
     expect(r.passed).not.toContain("lsp_diagnostics");
     expect(r.failed).not.toContain("lsp_diagnostics");
