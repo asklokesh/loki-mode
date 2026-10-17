@@ -16,10 +16,12 @@ import {
   buildVoterAgentsJson,
   buildDevilsAdvocateAgent,
   dispatchClaudeAgents,
+  dispatchDevilsAdvocate,
   VOTER_SLUGS,
   type ClaudeRunner,
 } from "../../src/council/voter_agents.ts";
 import { recordFromClaudeResult, recordFromUsage, withChildLedger } from "../../src/util/child_ledger.ts";
+import { __resetSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import type { CouncilEvaluateContext, AgentVerdict } from "../../src/runner/council.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -234,6 +236,49 @@ describe("COST-WALL child-session ledger", () => {
     } finally {
       process.env["PATH"] = savedPath; if (savedSdk !== undefined) process.env["LOKI_SDK_VOTER_AGENTS"] = savedSdk;
       _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("COST-WALL-c: the devil's-advocate real spawn also leaves exactly one council ledger line", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cwc-da-")), loki = join(dir, ".loki"), bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --agents  --json-schema"; exit 0;; esac\nprintf '%s' 'not a verdict'\n`, { mode: 0o755 });
+    const savedPath = process.env["PATH"], savedSdk = process.env["LOKI_SDK_VOTER_AGENTS"];
+    process.env["PATH"] = `${bin}:${savedPath}`; delete process.env["LOKI_SDK_VOTER_AGENTS"];
+    _resetClaudeHelpCacheForTest();
+    try {
+      await dispatchDevilsAdvocate(ctxIn(loki)).catch(() => undefined);
+      const lines = ledgerLines(loki);
+      expect(lines.length).toBe(1);
+      expect(lines[0]!["phase"]).toBe("council");
+    } finally {
+      process.env["PATH"] = savedPath; if (savedSdk !== undefined) process.env["LOKI_SDK_VOTER_AGENTS"] = savedSdk;
+      _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("COST-WALL-c: the SDK voter path (LOKI_SDK_VOTER_AGENTS=1) passes its ledger to judgeJson", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cwc-sdkv-")), loki = join(dir, ".loki"), bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --agents  --json-schema"; exit 0;; esac\nexit 1\n`, { mode: 0o755 });
+    const body = JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn", content: [{ type: "text", text: voters }], usage: { input_tokens: 1000, output_tokens: 500 } });
+    const srv = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-type": "application/json" } }) });
+    const keys = ["PATH", "LOKI_SDK_VOTER_AGENTS", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] as const;
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const k of keys) savedEnv[k] = process.env[k];
+    process.env["PATH"] = `${bin}:${savedEnv["PATH"]}`; process.env["LOKI_SDK_VOTER_AGENTS"] = "1";
+    process.env["ANTHROPIC_API_KEY"] = "sk-test"; process.env["ANTHROPIC_BASE_URL"] = `http://127.0.0.1:${srv.port}`;
+    __resetSdkClientForTests(); _resetClaudeHelpCacheForTest();
+    try {
+      await dispatchClaudeAgents(ctxIn(loki)).catch(() => undefined);
+      const lines = ledgerLines(loki);
+      expect(lines.length).toBe(1);
+      expect(lines[0]!["phase"]).toBe("council");
+      expect(lines[0]!["source"]).toBe("sdk-judge");
+    } finally {
+      srv.stop(true);
+      for (const k of keys) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]; }
+      __resetSdkClientForTests(); _resetClaudeHelpCacheForTest(); rmSync(dir, { recursive: true, force: true });
     }
   });
 
