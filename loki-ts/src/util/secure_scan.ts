@@ -3,8 +3,9 @@
 // script: 0 no findings, 1 findings, 2 bad input. Anything else, or output
 // that is not the expected JSON, is an error (never a silent pass).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
 import { findPython3 } from "./python.ts";
 import { safeGitSpawn } from "./safe_git.ts";
@@ -46,7 +47,15 @@ export interface SecureScanOpts {
 }
 
 export const ADDED_LINE_RULE = "provider-key-in-added-line";
-const MAX_ADDED_FILE_BYTES = 1_000_000;
+// Untracked files up to this size are scanned line by line (in chunks, because
+// the scanner skips any single file over 2 MiB). Larger ones are reported as
+// explicitly skipped, never silently dropped (TEN-SECURITY-22).
+const MAX_ADDED_FILE_BYTES = 64 * 1024 * 1024;
+const MIRROR_CHUNK_BYTES = 1_000_000;
+// 250k chars is at most 1,000,000 UTF-8 bytes; pieces overlap so a key on a seam is seen.
+const PIECE_CHARS = 250_000;
+const PIECE_OVERLAP = 512;
+export const SKIPPED_FILE_RULE = "untracked-file-not-scanned";
 
 export const DEFAULT_SECURE_SCAN_TIMEOUT_MS = 120_000;
 
@@ -231,10 +240,22 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
   }
   const untracked = git(repoDir, ["ls-files", "--others", "--exclude-standard", "-z"]);
   if (untracked === null) return fail("secure-scan: git ls-files failed");
+  const skipped: SecureScanFinding[] = [];
   for (const p of untracked.split("\0").filter(Boolean)) {
     try {
       const st = statSync(join(repoDir, p));
-      if (!st.isFile() || st.size > MAX_ADDED_FILE_BYTES) continue;
+      if (!st.isFile()) continue;
+      if (st.size > MAX_ADDED_FILE_BYTES) {
+        skipped.push({
+          rule: SKIPPED_FILE_RULE,
+          file: p,
+          line: 0,
+          severity: "MEDIUM",
+          message: `${p} is ${st.size} bytes, over the ${MAX_ADDED_FILE_BYTES} byte scan cap, so it was NOT scanned for provider keys.`,
+          fix: "Review the file for secrets by hand, split it, or keep it out of the change.",
+        });
+        continue;
+      }
       const lines = new Map<number, string>();
       readFileSync(join(repoDir, p), "utf8").split("\n").forEach((t, i) => lines.set(i + 1, t));
       added.set(p, lines);
@@ -242,28 +263,69 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
       // unreadable untracked file: nothing to scan
     }
   }
-  if (added.size === 0) return { ok: true, findings: [] };
+  if (added.size === 0) return { ok: true, findings: skipped };
 
   const mirror = mkdtempSync(join(tmpdir(), "loki-secure-added-"));
   try {
     const root = resolve(mirror) + sep;
+    const chunkMap = new Map<string, { file: string; lines: number[] }>();
+    // Random dir name: a real untracked file can never collide with a chunk path.
+    const chunkRoot = `.loki-chunks-${randomBytes(6).toString("hex")}`;
+    let chunkSeq = 0;
     for (const [p, lines] of added) {
       if (lines.size === 0) continue;
       const dest = resolve(mirror, p);
       if (!dest.startsWith(root)) continue;
-      const max = Math.max(...lines.keys());
-      const body: string[] = [];
-      for (let i = 1; i <= max; i++) body.push(lines.get(i) ?? "");
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, body.join("\n") + "\n");
+      let max = 0;
+      for (const k of lines.keys()) if (k > max) max = k;
+      // Entries are (original line, text); a line over PIECE_CHARS is split into
+      // overlapping pieces that keep the original line number. Chunks are sized in
+      // UTF-8 bytes so each mirror file stays under the scanner's 2 MiB cap.
+      const chunks: Array<{ orig: number[]; body: string[] }> = [];
+      let cur = { orig: [] as number[], body: [] as string[] };
+      let bytes = 0;
+      const push = (orig: number, t: string): void => {
+        const b = Buffer.byteLength(t, "utf8") + 1;
+        if (cur.body.length > 0 && bytes + b > MIRROR_CHUNK_BYTES) {
+          chunks.push(cur);
+          cur = { orig: [], body: [] };
+          bytes = 0;
+        }
+        cur.orig.push(orig);
+        cur.body.push(t);
+        bytes += b;
+      };
+      for (let ln = 1; ln <= max; ln++) {
+        const t = lines.get(ln) ?? "";
+        if (t.length <= PIECE_CHARS) {
+          push(ln, t);
+          continue;
+        }
+        for (let i = 0; i < t.length; i += PIECE_CHARS - PIECE_OVERLAP) {
+          push(ln, t.slice(i, i + PIECE_CHARS));
+          if (i + PIECE_CHARS >= t.length) break;
+        }
+      }
+      if (cur.body.length > 0) chunks.push(cur);
+      const whole = chunks.length === 1;
+      for (const c of chunks) {
+        const rel = whole ? p : join(chunkRoot, String(chunkSeq++), basename(p));
+        const out = whole ? dest : resolve(mirror, rel);
+        if (!out.startsWith(root)) break;
+        chunkMap.set(rel, { file: p, lines: c.orig });
+        mkdirSync(dirname(out), { recursive: true });
+        writeFileSync(out, c.body.join("\n") + "\n");
+      }
     }
     const r = await runSecureScan(mirror, { scriptPath: opts.scriptPath, timeoutMs: opts.timeoutMs, secretsEverywhere: true });
     if (!r.ok) return r;
     // One finding per line. An sk-ant key also matches the generic sk- shape,
     // so a more specific kind on the same line replaces openai-key.
     const byLine = new Map<string, { f: SecureScanFinding; kind: string }>();
-    for (const f of r.findings) {
+    for (let f of r.findings) {
       if (f.rule !== "secret-in-client-file") continue;
+      const c = chunkMap.get(f.file.split(sep).join("/"));
+      if (c) f = { ...f, file: c.file, line: c.lines[f.line - 1] ?? f.line };
       const kind = /A live (\S+)/.exec(f.message)?.[1] ?? "provider key";
       const k = `${f.file}|${f.line}`;
       const prev = byLine.get(k);
@@ -280,7 +342,7 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
           fix: "Remove the key from the change, rotate it (assume it is compromised), and read it at runtime from an environment variable or secret manager.",
         };
       });
-    return { ok: true, findings };
+    return { ok: true, findings: [...findings, ...skipped] };
   } finally {
     rmSync(mirror, { recursive: true, force: true });
   }
