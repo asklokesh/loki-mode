@@ -874,12 +874,12 @@ describe("loki.deploy/1 signed deploy records", () => {
     if (savedInline !== undefined) process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedInline;
     rmSync(dir, { recursive: true, force: true });
   });
-  async function run(args: string[]): Promise<{ code: number; out: string }> {
-    const out: string[] = [];
+  async function run(args: string[]): Promise<{ code: number; out: string; err: string }> {
+    const out: string[] = [], err: string[] = [];
     const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
     process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
-    process.stderr.write = (() => true) as typeof process.stderr.write;
-    try { return { code: await main(args, {}), out: out.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
+    process.stderr.write = ((c: string) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { return { code: await main(args, {}), out: out.join(""), err: err.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
   }
   /** A legacy proof.json (digest = sha256 of the sorted compact body) with an attestation, plus a deploy record citing it. */
   async function fixture(signedProof = true): Promise<{ rec: string; proof: string }> {
@@ -994,12 +994,12 @@ describe("loki.provenance/1 live provenance doc", () => {
     if (savedInline !== undefined) process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedInline;
     rmSync(dir, { recursive: true, force: true });
   });
-  async function run(args: string[]): Promise<{ code: number; out: string }> {
-    const out: string[] = [];
+  async function run(args: string[]): Promise<{ code: number; out: string; err: string }> {
+    const out: string[] = [], err: string[] = [];
     const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
     process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
-    process.stderr.write = (() => true) as typeof process.stderr.write;
-    try { return { code: await main(args, {}), out: out.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
+    process.stderr.write = ((c: string) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { return { code: await main(args, {}), out: out.join(""), err: err.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
   }
   async function signed(): Promise<Record<string, unknown>> {
     const { signProvenance } = await import("../../src/util/receipt_signer.ts");
@@ -1063,6 +1063,11 @@ describe("loki.provenance/1 live provenance doc", () => {
     const fresh = await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"]);
     expect(fresh.code).toBe(0);
     expect(fresh.out).toContain("verdict: VERIFIED");
+    serve(signProvenance("a".repeat(40), "b".repeat(40), "c".repeat(64), "run1", "2099-01-01T00:00:00Z"));
+    const fut = await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"]);
+    expect(fut.code).toBe(2);
+    expect(fut.out).toContain("in the future");
+    expect(fut.out).not.toContain("verdict: VERIFIED");
   });
   test("--max-age with a missing or unparseable built_at is UNCHECKED rc 2; a tampered doc stays TAMPERED rc 1", async () => {
     const { signDeployRecord, PROVENANCE_SCHEMA } = await import("../../src/util/receipt_signer.ts");
@@ -1076,8 +1081,12 @@ describe("loki.provenance/1 live provenance doc", () => {
     expect((await run(["--url", url(), "--pubkey", pub, "--max-age", "1h"])).code).toBe(1);
   });
   test("--max-age is refused (rc 2) with --seal-composite and --export-dsse rather than ignored", async () => {
-    expect((await run(["--seal-composite", dir, "--max-age", "1h"])).code).toBe(2);
-    expect((await run(["--export-dsse", "--max-age", "1h"])).code).toBe(2);
+    const c = await run(["--seal-composite", dir, "--max-age", "1h"]);
+    expect(c.code).toBe(2);
+    expect(c.err).toContain("--max-age is not supported");
+    const e = await run(["--export-dsse", "--max-age", "1h"]);
+    expect(e.code).toBe(2);
+    expect(e.err).toContain("--max-age is not supported");
   });
   test("a non-JSON body and a doc over 64KB are UNCHECKED rc 2", async () => {
     body = () => new Response("<html>");
