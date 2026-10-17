@@ -129,6 +129,23 @@ describe("file cap", () => {
     expect(map.files[0]).toBe("build/v0.js");
   });
 
+  test("bad max files note", () => {
+    seedBigRepo();
+    for (const bad of ["abc", "0", "-5", "1.5"]) {
+      process.env.LOKI_E10_REPOMAP_MAX_FILES = bad;
+      const orig = process.stderr.write.bind(process.stderr);
+      const seen: string[] = [];
+      process.stderr.write = ((c: string | Uint8Array) => { seen.push(String(c)); return true; }) as typeof process.stderr.write;
+      let map;
+      try { map = buildRepoMap(dir); } finally { process.stderr.write = orig; }
+      const notes = seen.filter((l) => l.includes("LOKI_E10_REPOMAP_MAX_FILES"));
+      expect(notes.length).toBe(1);
+      expect(notes[0]).toContain(JSON.stringify(bad));
+      expect(notes[0]).toContain("2000");
+      expect(map.files.length).toBe(25);
+    }
+  });
+
   test("filename containing a junk dir name is not junk", () => {
     mkdirSync(join(dir, "src"), { recursive: true });
     writeFileSync(join(dir, "src", "vendorish.js"), "export const a = 1;\n");

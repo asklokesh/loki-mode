@@ -16,7 +16,13 @@ export interface RepoMap {
   entries: RepoMapEntry[];
   truncated: boolean; // true when the file cap was hit
 }
-const maxFilesCap = (): number => { const n = Number(process.env.LOKI_E10_REPOMAP_MAX_FILES); return Number.isInteger(n) && n > 0 ? n : 2000; }; // LOKI_E10_REPOMAP_MAX_FILES overrides, default 2000
+// LOKI_E10_REPOMAP_MAX_FILES overrides, default 2000; a set but invalid value notes on stderr
+const maxFilesCap = (): number => {
+  const raw = process.env.LOKI_E10_REPOMAP_MAX_FILES, n = Number(raw);
+  if (Number.isInteger(n) && n > 0) return n;
+  if (raw) process.stderr.write(`loki: ignoring invalid LOKI_E10_REPOMAP_MAX_FILES=${JSON.stringify(raw)}; using default 2000\n`);
+  return 2000;
+};
 const MAX_SCAN_BYTES = 256_000; // per file, for symbol extraction only
 const MAX_SYMBOLS = 300; // per file
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py)$/;
