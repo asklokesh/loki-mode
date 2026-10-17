@@ -184,6 +184,27 @@ describe("doctor.checkDisk", () => {
   });
 });
 
+describe("doctor disk text volume label", () => {
+  for (const name of ["home", "cwd", "tmp"] as const) {
+    it(`names the ${name} volume on the text disk line when low`, async () => {
+      const volumes = (["home", "cwd", "tmp"] as const).map((n) => ({
+        name: n,
+        path: `/${n}`,
+        available_gb: n === name ? 3.2 : 100,
+      }));
+      const { cap } = await captureStdio(() => runDoctor([], { diskVolumes: volumes }));
+      expect(cap.out).toContain(`Disk space: 3GB available on ${name} volume (low)`);
+    }, 30_000);
+  }
+
+  it("omits the volume label when disk passes", async () => {
+    const volumes = [{ name: "home" as const, path: "/h", available_gb: 100 }];
+    const { cap } = await captureStdio(() => runDoctor([], { diskVolumes: volumes }));
+    expect(cap.out).toContain("Disk space: 100GB available\n");
+    expect(cap.out).not.toContain("volume");
+  }, 30_000);
+});
+
 // ---- checkSkills -------------------------------------------------------------
 
 describe("doctor.checkSkills", () => {

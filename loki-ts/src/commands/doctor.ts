@@ -409,6 +409,10 @@ export function checkDisk(
     }
   }
 
+  return diskCheckFromVolumes(volumes);
+}
+
+export function diskCheckFromVolumes(volumes: DiskVolume[]): DiskCheck {
   const { available_gb, low_volume } = lowestVolume(volumes);
 
   let status: Status = "pass";
@@ -1222,7 +1226,7 @@ function emitFirstRunBlocked(blockers: string): void {
   emitFunnel("first_run_blocked", key);
 }
 
-async function runText(): Promise<number> {
+async function runText(deps: DoctorDeps = {}): Promise<number> {
   process.stdout.write(`${BOLD}Loki Mode Doctor${NC}\n\n`);
   process.stdout.write(`Checking system prerequisites...\n\n`);
 
@@ -1601,7 +1605,7 @@ async function runText(): Promise<number> {
     bump(tally, bunCheck.status);
   }
 
-  const disk = checkDisk();
+  const disk = deps.diskVolumes ? diskCheckFromVolumes(deps.diskVolumes) : checkDisk();
   // Bash text uses `df -g` (integer GB, floored). JSON uses round(_, 1).
   // checkDisk() returns the JSON-friendly float; floor it here for text-mode parity.
   const diskTextGb = disk.available_gb === null ? null : Math.floor(disk.available_gb);
@@ -1953,7 +1957,7 @@ else:
 
 export interface RoundTripResult { ok: boolean; detail: string }
 export type RoundTripRunner = () => Promise<RoundTripResult>;
-export interface DoctorDeps { roundTrip?: RoundTripRunner }
+export interface DoctorDeps { roundTrip?: RoundTripRunner; diskVolumes?: DiskVolume[] }
 
 // Default harmless round-trip: one tiny prompt through the active provider CLI.
 const defaultRoundTrip: RoundTripRunner = async () => {
@@ -1983,7 +1987,7 @@ export function filterQuietDoctor(text: string): string {
   return out.join("\n");
 }
 
-async function runTextQuiet(): Promise<number> {
+async function runTextQuiet(deps: DoctorDeps = {}): Promise<number> {
   const orig = process.stdout.write.bind(process.stdout);
   let buf = "";
   (process.stdout as { write: unknown }).write = (chunk: string | Uint8Array): boolean => {
@@ -2000,7 +2004,7 @@ async function runTextQuiet(): Promise<number> {
   };
   let code: number;
   try {
-    code = await runText();
+    code = await runText(deps);
   } finally {
     (process.stdout as { write: unknown }).write = orig;
     (process.stderr as { write: unknown }).write = origErr;
@@ -2075,12 +2079,12 @@ export async function runDoctor(argv: readonly string[], deps: DoctorDeps = {}):
     return result.summary.ok ? 0 : 1;
   }
   if (fix) {
-    const code = quiet ? await runTextQuiet() : await runText();
+    const code = quiet ? await runTextQuiet(deps) : await runText(deps);
     const { runDoctorFix } = await import("./doctor_fix.ts");
     const fixCode = runDoctorFix({ yes });
     return code !== 0 ? code : fixCode;
   }
   // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
   process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);
-  return quiet ? runTextQuiet() : runText();
+  return quiet ? runTextQuiet(deps) : runText(deps);
 }
