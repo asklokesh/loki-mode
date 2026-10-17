@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { priceFor, usdFor } from "../../src/providers/price_table.ts";
 import { buildProviderCost } from "../../src/providers/provider_cost.ts";
 
@@ -50,5 +53,43 @@ describe("price table tiers", () => {
     const mini = buildProviderCost("codex", "gpt-5-mini", "x".repeat(4000), "y".repeat(4000));
     const full = buildProviderCost("codex", "gpt-5", "x".repeat(4000), "y".repeat(4000));
     expect(mini!.total_cost_usd as number).toBeLessThan(full!.total_cost_usd as number);
+  });
+});
+
+describe("price table override", () => {
+  const dirs: string[] = [];
+  const prev = process.env.LOKI_PRICE_TABLE;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LOKI_PRICE_TABLE;
+    else process.env.LOKI_PRICE_TABLE = prev;
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  function withFile(content: string): void {
+    const d = mkdtempSync(join(tmpdir(), "loki-price-"));
+    dirs.push(d);
+    const f = join(d, "p.json");
+    writeFileSync(f, content);
+    process.env.LOKI_PRICE_TABLE = f;
+  }
+  test("overrides an existing entry and extends with a new one", () => {
+    withFile(JSON.stringify({ "gpt-5": { input: 9, output: 18 }, "Acme-X": { input: 1, output: 2, cachedInput: 0.5 } }));
+    expect(priceFor("gpt-5").price).toEqual({ input: 9, output: 18 });
+    expect(priceFor("acme-x-1")).toEqual({ price: { input: 1, output: 2, cachedInput: 0.5 }, matched: true });
+    expect(priceFor("gpt-5-mini").price.input).toBe(0.25);
+    expect(usdFor("gpt-5", 1_000_000, 0)).toBe(9);
+  });
+  test("invalid file or entries fall back to the built-in table", () => {
+    withFile("{not json");
+    expect(priceFor("gpt-5").price.input).toBe(1.25);
+    withFile("[1,2]");
+    expect(priceFor("gpt-5").price.input).toBe(1.25);
+    withFile(JSON.stringify({ "gpt-5": { input: -1, output: "x" } }));
+    expect(priceFor("gpt-5").price.input).toBe(1.25);
+    process.env.LOKI_PRICE_TABLE = "/nonexistent/loki-price.json";
+    expect(priceFor("gpt-5").price.input).toBe(1.25);
+  });
+  test("unset env uses built-in table", () => {
+    delete process.env.LOKI_PRICE_TABLE;
+    expect(priceFor("gpt-5").price.input).toBe(1.25);
   });
 });

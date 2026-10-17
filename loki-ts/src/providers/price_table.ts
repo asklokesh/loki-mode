@@ -2,6 +2,8 @@
 // does not print a dollar figure (codex, cline, aider). Anything priced from this table is flagged estimated=true.
 // The Claude path never reads this file; it keeps using runner/budget.ts and provider-reported dollars.
 
+import { readFileSync, statSync } from "node:fs";
+
 export interface Price { input: number; output: number; cachedInput?: number }
 
 /** USD per 1M tokens. Longest-substring match, case-insensitive. Update as vendors publish new prices. */
@@ -32,11 +34,47 @@ export const PRICE_TABLE: Readonly<Record<string, Price>> = Object.freeze({
 /** Used when the model is unknown: a mid-range price so the cap still bites, flagged estimated by the caller. */
 export const DEFAULT_PRICE: Price = { input: 2.0, output: 10.0, cachedInput: 0.2 };
 
+function validPrice(v: unknown): Price | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  if (!ok(o.input) || !ok(o.output)) return null;
+  if (o.cachedInput !== undefined && !ok(o.cachedInput)) return null;
+  return o.cachedInput === undefined ? { input: o.input, output: o.output } : { input: o.input, output: o.output, cachedInput: o.cachedInput };
+}
+
+let overrideCache: { key: string; table: Record<string, Price> } | null = null;
+
+/**
+ * LOKI_PRICE_TABLE=<json file> overrides or extends PRICE_TABLE (keys matched case-insensitively as substrings).
+ * A missing, unreadable or non-object file falls back to the built-in table; invalid entries are skipped.
+ */
+function effectiveTable(): Readonly<Record<string, Price>> {
+  const file = process.env.LOKI_PRICE_TABLE;
+  if (!file) return PRICE_TABLE;
+  try {
+    const key = `${file}:${statSync(file).mtimeMs}`;
+    if (overrideCache?.key === key) return overrideCache.table;
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return PRICE_TABLE;
+    const table: Record<string, Price> = { ...PRICE_TABLE };
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const p = validPrice(v);
+      if (p && k) table[k.toLowerCase()] = p;
+    }
+    overrideCache = { key, table };
+    return table;
+  } catch {
+    return PRICE_TABLE;
+  }
+}
+
 export function priceFor(model: string | null | undefined): { price: Price; matched: boolean } {
   const m = (model ?? "").toLowerCase();
+  const table = effectiveTable();
   let best = "";
-  for (const k of Object.keys(PRICE_TABLE)) if (m.includes(k) && k.length > best.length) best = k;
-  return best ? { price: PRICE_TABLE[best]!, matched: true } : { price: DEFAULT_PRICE, matched: false };
+  for (const k of Object.keys(table)) if (m.includes(k) && k.length > best.length) best = k;
+  return best ? { price: table[best]!, matched: true } : { price: DEFAULT_PRICE, matched: false };
 }
 
 /** Rough token count: about 4 characters per token. */
