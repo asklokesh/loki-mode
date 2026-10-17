@@ -128,6 +128,80 @@ else
     bad "the emit is unguarded -- an absent telemetry.sh would error"
 fi
 
+# --- 5. Default engine10 route (TEN-UX-03) -----------------------------------
+# One TS helper owns the telemetry.sh spawn; doctor's private copy is gone.
+_spawns="$(grep -rn '"telemetry.sh"' "$REPO_ROOT/loki-ts/src" | wc -l | tr -d ' ')"
+if [ "$_spawns" = "1" ]; then
+    ok "exactly one telemetry.sh spawn in loki-ts/src"
+else
+    bad "$_spawns telemetry.sh spawns in loki-ts/src (want exactly 1)"
+fi
+
+_cli="$REPO_ROOT/loki-ts/src/engine10/cli.ts"
+_fun_ts="$REPO_ROOT/loki-ts/src/util/funnel.ts"
+if grep -q 'funnelAfterRun' "$_cli" && grep -q 'emitFunnel("first_run_blocked"' "$_fun_ts" \
+   && grep -q 'emitFunnel("build_verified"' "$_fun_ts"; then
+    ok "engine10/cli.ts reaches emitFunnel on preflight exit 2 and on a VERIFIED exit"
+else
+    bad "engine10/cli.ts does not reach emitFunnel for both exits"
+fi
+
+if command -v bun >/dev/null 2>&1; then
+    _W="$(mktemp -d)"
+    trap 'rm -rf "$_W"' EXIT
+    # curl stand-in: records the payload instead of sending it
+    cat > "$_W/curl" <<'RECORDER'
+#!/bin/sh
+for a in "$@"; do
+    case "$a" in '{"api_key"'*) printf '%s\n' "$a" >> "$LOKI_TEST_PAYLOAD" ;; esac
+done
+exit 0
+RECORDER
+    chmod +x "$_W/curl"
+    _BRIEF="build me a secret-brief-xyzzy crm"
+    _fun() {
+        # $1 = exit code, $2.. = extra env; runs the real helper from a non-repo, non-empty folder
+        env PATH="$_W:$PATH" HOME="$_W/home" LOKI_TEST_PAYLOAD="$_W/payload.log" LOKI_ANALYTICS=on LOKI_TELEMETRY=on "${@:2}" \
+            bun -e "await (await import('$REPO_ROOT/loki-ts/src/util/funnel.ts')).funnelAfterRun($1, process.cwd())" -- "$_BRIEF" >/dev/null 2>&1
+        sleep 1.5
+    }
+    mkdir -p "$_W/home" "$_W/proj"; echo hi > "$_W/proj/notes.txt"
+    cd "$_W/proj" || exit 1
+    : > "$_W/payload.log"
+    _fun 2
+    if [ "$(grep -c 'first_run_blocked' "$_W/payload.log")" = "1" ] && grep -q '"blocker": *"not_a_repo"' "$_W/payload.log"; then
+        ok "one first_run_blocked blocker=not_a_repo recorded"
+    else
+        bad "expected one first_run_blocked not_a_repo line, got: $(cat "$_W/payload.log")"
+    fi
+    _fun 2
+    if [ "$(grep -c 'first_run_blocked' "$_W/payload.log")" = "1" ]; then
+        ok "second identical run records nothing (once-per-install marker)"
+    else
+        bad "second run recorded again"
+    fi
+    if grep -qF "$_W" "$_W/payload.log" || grep -q 'secret-brief-xyzzy' "$_W/payload.log"; then
+        bad "payload leaks a path or the brief"
+    else
+        ok "payload carries no path, home dir or brief text"
+    fi
+    for _o in DO_NOT_TRACK=1 LOKI_TELEMETRY_DISABLED=true; do
+        rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+        _fun 2 "$_o"; _fun 0 "$_o"
+        if [ ! -s "$_W/payload.log" ]; then ok "$_o records zero lines"; else bad "$_o still recorded"; fi
+    done
+    rm -rf "${_W:?}/home"; mkdir -p "$_W/home"; : > "$_W/payload.log"
+    _fun 0
+    if grep -q '"headline": *"VERIFIED"' "$_W/payload.log" && grep -q '"route": *"engine10"' "$_W/payload.log"; then
+        ok "VERIFIED exit records build_verified headline=VERIFIED route=engine10"
+    else
+        bad "build_verified not recorded: $(cat "$_W/payload.log")"
+    fi
+    cd "$REPO_ROOT" || exit 1
+else
+    ok "bun absent; live funnel run skipped"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
