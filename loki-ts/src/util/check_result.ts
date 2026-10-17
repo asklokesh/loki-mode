@@ -351,6 +351,11 @@ export function recordRisk(repoDir: string, a: RiskAssessment): string | null {
  *  AssertionError, go "--- FAIL" + next lines, tsc/ruff diagnostics. Unknown shapes fall back to the last few lines. */
 export const EXCERPT_GROUP_CAP = 1500;
 export const EXCERPT_TOTAL_CAP = 6144;
+/** Cut to at most cap UTF-8 bytes without leaving a partial code point (a trailing U+FFFD from the cut is stripped). */
+export function truncateBytes(s: string, cap: number): string {
+  const buf = Buffer.from(s, "utf8");
+  return buf.length <= cap ? s : buf.subarray(0, Math.max(0, cap)).toString("utf8").replace(/\uFFFD$/, "");
+}
 export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CAP): string {
   let t = stripAnsi(out.slice(-65536)).replace(/\r/g, "");
   if (repoDir) t = t.split(repoDir.replace(/\/+$/, "") + "/").join("");
@@ -370,6 +375,5 @@ export function failureExcerpt(out: string, repoDir = "", cap = EXCERPT_GROUP_CA
   let body = [...pick].sort((a, b) => a - b).map((i) => lines[i]!).join("\n");
   if (!body) body = lines.filter((l) => l.trim()).slice(-6).join("\n");
   body = redactSecrets(body);
-  const buf = Buffer.from(body, "utf8");
-  return buf.length <= cap ? body : buf.subarray(0, cap).toString("utf8").replace(/�$/, "");
+  return truncateBytes(body, cap);
 }

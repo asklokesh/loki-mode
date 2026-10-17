@@ -11,7 +11,7 @@ import { testConfigChanged } from "../../features/runner_config.ts"; import { as
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { failureExcerpt, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
+import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -326,7 +326,7 @@ export const verifyStage: Stage = {
     const failuresGrouped = checks
       .filter((c) => c.result === "fail" && !preRed.names.includes(c.name) && !isHold(c))
       .map((c) => {
-        const x = isHold(c) ? "" : (excerpts.get(c) ?? "").slice(0, Math.max(0, excerptLeft));
+        const x = isHold(c) ? "" : truncateBytes(excerpts.get(c) ?? "", Math.max(0, excerptLeft));
         excerptLeft -= Buffer.byteLength(x);
         return { signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: x ? `${c.cmd}\n${x}` : c.cmd };
       });

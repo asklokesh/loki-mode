@@ -280,3 +280,61 @@ describe("TEN-QUALITY-01 fix brief carries a failure excerpt", () => {
     }
   }, 60_000);
 });
+
+describe("TEN-QUALITY-01 r2 verify-level excerpt guards", () => {
+  async function verifyRepo(tag: string, files: Record<string, string>, extra?: (ctxBase: string) => void) {
+    const repoDir = mkdtempSync(join(tmpdir(), `e10-${tag}-`));
+    const g = (a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repoDir, encoding: "utf8" });
+    mkdirSync(join(repoDir, "tests"));
+    writeFileSync(join(repoDir, ".gitignore"), ".loki\n__pycache__\n.pytest_cache\n");
+    writeFileSync(join(repoDir, "a.py"), "x = 1\n");
+    g(["init", "-q"]); g(["add", "."]); g(["commit", "-qm", "base"]);
+    const base = g(["rev-parse", "HEAD"]).trim();
+    for (const [n, c] of Object.entries(files)) writeFileSync(join(repoDir, "tests", n), c);
+    writeFileSync(join(repoDir, "a.py"), "x = 2\n");
+    g(["add", "."]); g(["commit", "-qm", "attempt"]);
+    extra?.(base);
+    const runDir = join(repoDir, ".loki", "runs", tag);
+    mkdirSync(runDir, { recursive: true });
+    const tests = Object.keys(files).map((n) => ({ runner: "pytest", path: `tests/${n}` }));
+    const ctx = {
+      ...fakeCtx(new FakeSessionRunner(doneResult), { intake: { task: "t", impacted_tests: tests.map((t) => t.path) } }, []),
+      repoDir, runDir, baseSha: base,
+      tests: { async detect() { return { runners: ["pytest"], tests }; }, impacted: () => tests },
+    } as unknown as RunContext;
+    const { verifyStage } = await import("../../src/engine10/stages/verify.ts");
+    const v = await verifyStage.run(ctx, new AbortController().signal);
+    return { repoDir, grouped: v.data.failures_grouped as FailureGroup[] };
+  }
+
+  test("6 KB total cap is byte-exact for multibyte output: no U+FFFD, no lone surrogate", async () => {
+    const body = (i: number): string => `def test_m${i}():\n    for k in range(60):\n        print("Expected: " + "\u6f22\U0001F600" * 30 + str(k))\n    assert False\n`;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 8; i++) files[`test_m${i}.py`] = body(i);
+    const { repoDir, grouped } = await verifyRepo("mbcap", files);
+    try {
+      expect(grouped.length).toBeGreaterThanOrEqual(5);
+      let sum = 0;
+      for (const f of grouped) {
+        const x = f.sample.includes("\n") ? f.sample.slice(f.sample.indexOf("\n") + 1) : "";
+        sum += Buffer.byteLength(x);
+        expect(x).not.toContain("\uFFFD");
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(x)).toBe(false);
+      }
+      expect(sum).toBeGreaterThan(0);
+      expect(sum).toBeLessThanOrEqual(6144);
+    } finally { rmSync(repoDir, { recursive: true, force: true }); }
+  }, 120_000);
+
+  test("signature is stable across runs differing only in a duration line and never contains the excerpt", async () => {
+    const mk = (n: number): string => `import time\n\ndef test_s():\n    print("Expected: ZEBRA_MARK")\n    print("took ${"${"}time.time()}s")\n    time.sleep(${n})\n    assert False\n`;
+    const a = await verifyRepo("sig1", { "test_s.py": mk(0) });
+    const b = await verifyRepo("sig2", { "test_s.py": mk(1) });
+    try {
+      expect(a.grouped.length).toBe(1);
+      expect(a.grouped[0]!.sample).toContain("ZEBRA_MARK");
+      expect(a.grouped[0]!.signature).toBe(b.grouped[0]!.signature);
+      expect(a.grouped[0]!.signature).not.toContain("ZEBRA_MARK");
+    } finally { rmSync(a.repoDir, { recursive: true, force: true }); rmSync(b.repoDir, { recursive: true, force: true }); }
+  }, 120_000);
+});
