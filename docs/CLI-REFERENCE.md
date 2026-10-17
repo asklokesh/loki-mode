@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.13. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.14. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -110,6 +110,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki config set` | Set a value |
 | `loki config get` | Get a value |
 | `loki mcp` | Launch the MCP server (stdio) |
+| `loki mcp install` | Register loki-mode in an MCP client config |
 | `loki acp` | Run Loki as an ACP agent |
 | `loki stop` | Stop execution immediately |
 | `loki pause` | Pause after the current session |

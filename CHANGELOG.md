@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.14 (2026-10-17)
+
+### Added
+- Deep-stage council (Q18-04): the deep stage now runs one read-only reviewer session instead of recording "council (not wired)". An empty or failed diff is refused before any session starts, and a reply counts as a review only when it says LGTM or lists FINDING lines.
+- Check provenance (TEN-GATES-01): every check is classed as exogenous, independent, agent authored or LLM judged, so a verdict proven only by tests the agent added in the same change is no longer counted as exogenous proof.
+- MCP install (TEN-ADOPTION-05): `loki mcp install` merges the Loki server into Cursor, VS Code and Claude configs without touching other entries, keeps a .bak copy, refuses invalid JSON, and `--print` writes nothing.
+- Publish to GitHub (TEN-DEPLOY-07): `loki publish` creates the GitHub repo (private by default, `--public` opt-in), pushes it and posts the receipt verdict as the loki/receipt commit status. A dirty tree is refused.
+- Dashboard first view (TEN-UX-06): the dashboard shows an empty state with the next command, a stage strip, and selects the newest run automatically.
+- Build verdict in proof (TEN-GATES-09): engine10 runs write build results so the proof shows a real build verdict; an unbuilt project never reads as green.
+- Relevant-file digest (TEN-QUALITY-06): the full-job brief carries a capped digest of signatures from the files most relevant to the task.
+- Localization recall (TEN-QUALITY-09): the SWE-bench loader measures whether a run touched the files the reference fix touched.
+- Cache detail per stage (TEN-COST-05): per-stage cost lines carry cache read, cache creation and cache hit ratio.
+- Receipt bundle (TEN-ADOPTION-02): a run's receipt packs into one portable bundle a third party can verify.
+- Cost proof tooling (TEN-COST-17, TEN-COST-18, TEN-COST-20): the C-F1 ledger records raw token classes, a cost_claim command states the measured ratio, and the seed tasks ship their own tests.
+
+### Fixed
+- Git token safety (Q18-02b): token-carrying git fetch and pull reset repo-local CA, TLS verify and curl resolve settings, and never recurse into submodules, closing paths where a hostile repo could see the token.
+- Lint attribution (TEN-QUALITY-02): comparing head lint to base fails closed when the head output has only a summary line or nothing parseable with a non-zero exit, so pre-existing lint is never excused by mistake.
+- Repo map (TEN-QUALITY-04): the repo map scans past the first 20 KB of a file and caches per tree.
+- Pulse (TEN-STABILITY-06): PROMOTION_LAG names its reason and the failing Nightly steps.
+- Deploy output (TEN-DEPLOY-01b): `loki deploy --execute` streams provider output live and keeps the provider exit code.
+- Fix rounds (TEN-QUALITY-07): the fix brief carries the current diff and its hunks instead of an empty stat.
+- Group runs (TEN-GROUP-AUTH): unit sessions keep USER, LOGNAME and SHELL so Claude login works on macOS, and the run prints one Cost line summed from every unit (partial when a unit is unmeasured).
+
+### Changed
+- Project model discovery (TEN-COST-07): tries the fast model tier first and uses the run model only on retry.
+- Cross review (TEN-COST-06): the Claude judge runs with lean flags and its spend lands in the run ledger.
+- Instant releases (TEN-RELEASE-INSTANT, D102): every release publishes to npm `latest` and `next` as soon as the package is built, with a never-backwards version guard. The nightly promotion workflow is removed.
+
 ## v11.17.13 (2026-10-17)
 
 v11.17.12 was tagged but never published: its full test suite failed on one stale test assertion, so npm stayed at 11.17.11. Everything listed under v11.17.12 ships in this release.
