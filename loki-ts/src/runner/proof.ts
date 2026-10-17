@@ -14,7 +14,7 @@
 // can never throw to the caller. Emits on both success and failure runs.
 
 import { resolve, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { REPO_ROOT } from "../util/paths.ts";
 import { findPython3 } from "../util/python.ts";
 import { run as shellRun } from "../util/shell.ts";
@@ -46,6 +46,89 @@ function mintRunId(): string {
 // Returns true if the generator was invoked, false if skipped.
 export interface ProofDeps {
   probe?: (repoDir: string, lokiDir: string, opts?: { specText?: string }) => Promise<unknown>;
+  // Test seam: path to the ablation producer. Production uses ablationPath().
+  ablationScript?: string;
+}
+
+// The load-bearing ablation producer (moat P8, TEN-GATES-11). Same parity rule
+// as the generator: one Python implementation, resolved from REPO_ROOT.
+function ablationPath(): string {
+  return resolve(REPO_ROOT, "autonomy", "lib", "ablation.py");
+}
+
+const ABLATION_STATUSES = new Set(["load_bearing", "not_load_bearing", "not_applicable"]);
+
+// The run's baseline commit: _LOKI_RUN_START_SHA (exported by run.sh at runner
+// init) wins, else the .loki/state/start-sha file run.sh persists. Empty when
+// neither exists, which records not_applicable rather than guessing a base.
+function runStartSha(lokiDir: string): string {
+  const env = (process.env["_LOKI_RUN_START_SHA"] ?? "").trim();
+  if (env) return env;
+  try {
+    return readFileSync(join(lokiDir, "state", "start-sha"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeAblationNotApplicable(lokiDir: string, reason: string): void {
+  const qdir = join(lokiDir, "quality");
+  mkdirSync(qdir, { recursive: true });
+  const rec = { ablated_exit_code: null, ablated_files: [], command: "", reason, status: "not_applicable" };
+  atomicWriteText(join(qdir, "ablation.json"), JSON.stringify(rec, null, 2) + "\n");
+}
+
+// Run ablation.py so quality/ablation.json exists before the generator copies
+// it into facts.ablation (TEN-GATES-12). A stale record from an earlier run is
+// removed first so it can never be copied into this run's proof. Any failure
+// (no base, script missing, non-zero exit, timeout, unreadable record) is
+// recorded as not_applicable with the reason and never blocks the proof.
+// LOKI_PROOF_ABLATION=0 opts out and leaves no record (facts carry no key).
+async function collectAblation(ctx: RunnerContext, py: string, deps: ProofDeps): Promise<void> {
+  if (process.env["LOKI_PROOF_ABLATION"] === "0") return;
+  const out = join(ctx.lokiDir, "quality", "ablation.json");
+  let failure = "";
+  try {
+    rmSync(out, { force: true });
+    const script = deps.ablationScript ?? ablationPath();
+    const base = runStartSha(ctx.lokiDir);
+    if (!base) {
+      failure = "no run start sha recorded (_LOKI_RUN_START_SHA or .loki/state/start-sha), so there is no change to ablate";
+    } else if (!existsSync(script)) {
+      failure = `ablation producer missing: ${script}`;
+    } else {
+      let timeoutSec = Number.parseInt(process.env["LOKI_ABLATION_TIMEOUT"] ?? "", 10);
+      if (!Number.isFinite(timeoutSec) || timeoutSec < 1) timeoutSec = 600;
+      // The script bounds its own re-run; the outer limit only catches a hang
+      // in git or the restore. SIGTERM lets ablation.py restore the tree.
+      const r = await shellRun(
+        [py, script, "--repo", ctx.cwd, "--base", base, "--loki-dir", ctx.lokiDir, "--timeout", String(timeoutSec)],
+        { cwd: ctx.cwd, timeoutMs: (timeoutSec + 60) * 1000 },
+      );
+      if (r.exitCode !== 0) {
+        const tail = (r.stderr || r.stdout || "").trim().split("\n").slice(-1)[0] ?? "";
+        failure = `ablation exited ${r.exitCode}${tail ? `: ${tail}` : ""}`;
+      } else {
+        const rec = JSON.parse(readFileSync(out, "utf8")) as { status?: unknown };
+        if (typeof rec.status !== "string" || !ABLATION_STATUSES.has(rec.status)) {
+          failure = `ablation record has no valid status (${String(rec.status)})`;
+        }
+      }
+    }
+  } catch (err) {
+    failure = `ablation failed: ${(err as Error).message}`;
+  }
+  if (!failure) return;
+  try {
+    writeAblationNotApplicable(ctx.lokiDir, failure);
+  } catch {
+    /* an absent record stays an honest "no ablation" in the proof */
+  }
+  try {
+    ctx.log(`[runner] proof ablation not_applicable: ${failure}`);
+  } catch {
+    /* logging must not throw either */
+  }
 }
 
 // Collect app health and functional facts before the generator reads them.
@@ -133,6 +216,7 @@ export async function maybeGenerateProof(ctx: RunnerContext, deps: ProofDeps = {
     }
 
     await collectAppFacts(ctx, deps);
+    await collectAblation(ctx, py, deps);
 
     await shellRun([py, ...args], { cwd: ctx.cwd, env, timeoutMs: 30_000 });
 
