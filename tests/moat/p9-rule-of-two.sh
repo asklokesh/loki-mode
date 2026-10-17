@@ -2148,6 +2148,17 @@ function scan(P) {
     if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
         || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && (sg(n.text) || [...H].some((h) => n.text.includes(h)))) strMention = true;
     if (ts.isElementAccessExpression(n) && H.has(lit(n.argumentExpression))) flags.add("indirect");
+    // A safe_git literal anywhere but a module specifier or the direct argument of
+    // require/import(): an aliased or wrapped loader (const r = require; r("..."),
+    // require.call(null, "..."), createRequire(url)("...")) hides the module.
+    if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && sg(n.text)) {
+      const p = n.parent;
+      const spec = (ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === n;
+      const ext = ts.isExternalModuleReference(p);
+      const direct = ts.isCallExpression(p) && p.arguments[0] === n
+        && (p.expression.kind === K.ImportKeyword || (ts.isIdentifier(p.expression) && p.expression.text === "require"));
+      if (!spec && !ext && !direct) flags.add("import");
+    }
     if (ts.isImportDeclaration(n)) {
       const from = lit(n.moduleSpecifier), nb = n.importClause && n.importClause.namedBindings;
       if (nb && ts.isNamespaceImport(nb) && sg(from)) flags.add("import");
@@ -2182,8 +2193,9 @@ if (mode === "strip") {
 }
 '
 
-# TypeScript compiler for the AST scan: loki-ts (declares typescript, installed by
-# every CI job that runs this suite) first, then web-app. P9_TS_CANDIDATES (a
+# TypeScript compiler for the AST scan: loki-ts (declares typescript, but not every
+# CI job installs it; run.sh installs web-app and control-plane, so in a fresh tree
+# the web-app fallback does the work) first, then web-app. P9_TS_CANDIDATES (a
 # space-separated list of typescript.js paths) replaces the list, so the
 # missing-compiler path can be exercised without touching real node_modules.
 p9_ts_path() {
@@ -2274,7 +2286,7 @@ allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require elem-access-param dyn-loader-keyvar import-alias import-namespace loader-literal reexport-local reexport-star import-equals loader-wrapped-require loader-call-require loader-create-require"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2296,7 +2308,7 @@ safeGitArgs.apply(null, [["fetch"], true]);' ;;
 const a: [NodeJS.ProcessEnv, boolean] = [process.env, true]; safeGitEnv(...a);' ;;
             shadow-default) printf '%s\n' "$real_bg" | sed 's/args: string\[\], timeout/args: string[] = ["fetch"], timeout/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-const)   { printf '%s\n' "$real_mu"; printf '%s\n' 'const args = ["fetch"];'; } > "$t/util/modernize_unit.ts"; body='export {};' ;;
-            shadow-catch)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  try { throw 1; } catch ([args]) {/' > "$t/util/base_guard.ts"; body='export {};' ;;
+            shadow-catch)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  try { try { throw 1; } catch (args) { void args; }/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-destructure) printf '%s\n' "$real_bg" | sed 's/^  try {$/  [args] = [["fetch"]]; try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-forof)   printf '%s\n' "$real_bg" | sed 's/^  try {$/  for (args of [["fetch"]]); try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
             shadow-method)  printf '%s\n' "$real_bg" | sed 's/^  try {$/  const o = { m(args: string[]) { return args; } }; try {/' > "$t/util/base_guard.ts"; body='export {};' ;;
@@ -2326,7 +2338,25 @@ const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
             elem-access-param) # indirect rule alone: no import, no loader, string-keyed call
                             body='export function f(m: any) { m["safeGitEnv"](process.env, true); }' ;;
             dyn-loader-keyvar) # import rule alone: computed loader plus helper name in a string, key held in a variable
-                            body='const k = "safeGitEnv"; const p = "./util/" + "safe_git.ts"; const m = await import(p); m[k](process.env, true);' ;;
+                            body='const k = "safeGitEnv"; const p = "./util/safe_" + "git.ts"; const m = await import(p); m[k](process.env, true);' ;;
+            import-alias)   # import rule alone: aliased named import
+                            body='import { safeGitEnv as g } from "./util/safe_git.ts"; g(process.env, true);' ;;
+            import-namespace) # import rule alone: namespace import, helper reached through a variable key
+                            body='import * as m from "./util/safe_git.ts"; const k = ["safe", "GitEnv"].join(""); m[k](process.env, true);' ;;
+            loader-literal) # import rule alone: literal require specifier
+                            body='const k = ["safe", "GitEnv"].join(""); const m = require("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            reexport-local) # indirect rule alone: local re-export of the helper
+                            body='import { safeGitEnv } from "./util/safe_git.ts"; export { safeGitEnv };' ;;
+            reexport-star)  # import rule alone: star re-export of safe_git
+                            body='export * from "./util/safe_git.ts";' ;;
+            import-equals)  # import rule alone: import = require
+                            body='import m = require("./util/safe_git.ts"); const k = ["safe", "GitEnv"].join(""); (m as any)[k](process.env, true);' ;;
+            loader-wrapped-require) # literal-outside-specifier rule alone: aliased require
+                            body='const r = require; const k = ["safe", "GitEnv"].join(""); const m = r("./util/safe_git.ts"); m[k](process.env, true);' ;;
+            loader-call-require) # literal-outside-specifier rule alone: require.call
+                            body='const k = ["safe", "GitEnv"].join(""); const m = require.call(null, "./util/safe_git.ts"); m[k](process.env, true);' ;;
+            loader-create-require) # literal-outside-specifier rule alone: createRequire(url)(...)
+                            body='import { createRequire } from "node:module"; const k = ["safe", "GitEnv"].join(""); const m = createRequire(import.meta.url)("./util/safe_git.ts"); m[k](process.env, true);' ;;
             probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
