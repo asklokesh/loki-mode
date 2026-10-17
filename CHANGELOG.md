@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.11 (2026-10-17)
+
+v11.17.10 never published: its Tests run was green, but the Release gate (run 38989985829) found that the committed loki-ts/dist/loki.js.map was not a fresh build of that commit. This release ships the v11.17.10 content with a freshly built dist and source map.
+
+### Fixed
+- Moat property P9 (Q18-03b): the allowToken guard pins the one permitted fetch-only use after stripping comments, so a token mention hidden in a comment can neither satisfy nor evade it, and it fails closed when safe_git is imported under an alias.
+- Runner config check (FC-09x): the guard now compares Bun patchedDependencies between the runner configs and parses CRLF line endings and multi-line flow-map patch targets, so a patch entry written in either form is no longer missed.
+- Benchmark cost accounting (COST-WALL-e): every cost aggregate (summarize_trials, cell_axes, report.summarize_row, compute_metrics) marks the result partial when any measured trial has no cost, nulls the cost-per-solved and cost-per-verified headlines and reports a lower bound instead, and counts invalid ledger lines, so an unmeasured run can no longer make Loki look cheaper than it is.
+
 ## v11.17.10 (2026-10-17)
 
 v11.17.9 never published. Its Tests run (38988194257) went red on bf3d2ae24 because two FC-25c(a) safe_git tests failed in the shared bun process. This release ships the v11.17.9 content plus the fix and the slices merged since.
