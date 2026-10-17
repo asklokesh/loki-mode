@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.10 (2026-10-17)
+
+v11.17.9 never published. Its Tests run (38988194257) went red on bf3d2ae24 because two FC-25c(a) safe_git tests failed in the shared bun process. This release ships the v11.17.9 content plus the fix and the slices merged since.
+
+### Added
+- Slack finished event (Q17-01): the message carries the receipt verdict; a tampered log reports TAMPERED first, and a run without a receipt reports (unattested).
+- Opt-in stall kill (Q18-06): with LOKI_E10_STALL_KILL_S set above 0, a session idle that many seconds is ended with reason stalled; unset or 0 keeps the old behavior.
+- AI-BOM at seal (Q18-05): a sealed run writes .loki ai-bom.cdx.json, a CycloneDX list of the models and provider that actually ran, after the receipt is final; a failing writer never changes the receipt.
+
+### Fixed
+- FC-25c(a) tests are hermetic: an earlier suite in the same process could leave GIT_SSH_COMMAND or a GIT_CONFIG_COUNT credential.helper reset in the environment, which overrode repo config and made the controls fail on CI only.
+- Modernize events (M-25w-b): `loki modernize` now emits unit.planned and codemod.skipped, and reslice runs in production, so every declared modernize event has a live producer.
+- Runner config registry (FC-09w): config file names match case-insensitively, and a .npmrc byte change or a changed patchedDependencies target caps the verdict.
+- Cost ledger coverage (COST-WALL-c): every judge, voter and code-reviewer spawn and SDK call writes a cost ledger line, and an SDK call that throws writes an unmeasured line, so run cost is never silently undercounted.
+- Cost benchmark honesty (COST-WALL-d): a partially measured loki cost is shown as a lower bound and its ratio as unmeasured, never as a complete headline; a cost taken only from the child-session ledger now counts as partial, and a spend-cap abort says when the spend is a lower bound.
+- Modernize producer guard (M-25w-c): the event-producer check ignores append( inside strings and comments, and a codemod tool that exits non-zero now records codemod.skipped with its reason.
+
 ## v11.17.9 (2026-10-17)
 
 v11.17.8 never published: its Tests run (38986362613) was red on 7fc08f186 because the real-run harness fixture receipt did not name the check that Q17-04 pinned. This release ships the v11.17.8 and v11.17.7 content plus the fix and the changes below.
