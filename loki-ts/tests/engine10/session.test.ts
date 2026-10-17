@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
+import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT, untrackedList } from "../../src/engine10/session.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
@@ -660,5 +660,24 @@ describe("TEN-COST-13 lean prefix default", () => {
       process.env["LOKI_E10_PREFIX"] = "off";
       expect(childEnv(o, cfg)["LOKI_E10_PREFIX"]).toBe("off");
     } finally { if (saved === undefined) delete process.env["LOKI_E10_PREFIX"]; else process.env["LOKI_E10_PREFIX"] = saved; }
+  });
+});
+
+describe("TEN-SPEED-21 heartbeat single ls-files", () => {
+  test("heartbeat single ls-files: one heartbeat tick runs ls-files once", async () => {
+    const d = mkdtempSync(join(tmpdir(), "ten-speed-21-")), bin = join(d, "bin"), log = join(d, "calls.log"), repo = join(d, "repo");
+    const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim(), oldPath = process.env["PATH"];
+    try {
+      mkdirSync(bin); mkdirSync(repo);
+      writeFileSync(join(bin, "git"), `#!/bin/sh\nfor a in "$@"; do [ "$a" = ls-files ] && echo x >> "${log}"; done\nexec "${real}" "$@"\n`, { mode: 0o755 });
+      execFileSync(real, ["init", "-q"], { cwd: repo }); writeFileSync(join(repo, "u.txt"), "a\n");
+      process.env["PATH"] = `${bin}:${oldPath}`;
+      const beats: number[] = [];
+      const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", "sleep 0.7"]], heartbeatMs: 100, emit: (type) => { if (type === "heartbeat") beats.push(1); } });
+      const r = await runner.run(baseOpts({ cwd: repo, limitS: 20 }));
+      expect(r.exit).toBe(0);
+      expect(beats.length).toBeGreaterThan(0);
+      expect(readFileSync(log, "utf8").trim().split("\n").length).toBe(beats.length);
+    } finally { process.env["PATH"] = oldPath; rmSync(d, { recursive: true, force: true }); }
   });
 });
