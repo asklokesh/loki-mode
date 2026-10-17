@@ -243,8 +243,8 @@ export function explainGates(receiptPath: string): ExplainGate[] {
 }
 const printable = (s: string): string => s.replace(/[\x00-\x1f\x7f]/g, "?"); // receipt text never drives the terminal
 /** What the receipt verifier saw: set once it resolves a run receipt and prints its verdict. */
-export interface ExplainRec { runId?: string; receiptPath?: string; verdict?: string }
-/** --explain lists each gate after the verdict; --json prints {run_id, verdict, exit_code, gates} on stdout with the human lines on stderr. Read-only: the exit code is the verifier's, unchanged; a TAMPERED receipt's gates are never listed. */
+export interface ExplainRec { runId?: string; receiptPath?: string; verdict?: string; reasons?: string[]; receiptSha256?: string | null; independent?: { k: number; of: number } | null }
+/** --explain lists each gate after the verdict; --json prints {run_id, run, verdict, exit_code, receipt_sha256, reasons, agent_independent:{k,of}, gates} on stdout (TEN-GATES-26) with the human lines on stderr. Read-only: the exit code is the verifier's, unchanged; a TAMPERED receipt's gates are never listed. */
 export async function withExplain(args: readonly string[], run: (args: readonly string[], rec: ExplainRec) => Promise<number>): Promise<number> {
   const explain = args.includes("--explain"), json = args.includes("--json");
   if (!explain && !json) return run(args, {});
@@ -256,7 +256,7 @@ export async function withExplain(args: readonly string[], run: (args: readonly 
   try { code = await run(args.filter((a) => a !== "--explain" && a !== "--json"), rec); } finally { if (json) process.stdout.write = w; }
   if (!rec.receiptPath || !rec.verdict) return (process.stderr.write("loki verify: --explain and --json apply to a run receipt only; nothing explained\n"), code);
   const gates = rec.verdict === "TAMPERED" ? null : explainGates(rec.receiptPath);
-  if (json) return (process.stdout.write(`${JSON.stringify({ run_id: rec.runId ?? null, verdict: rec.verdict, exit_code: code, gates })}\n`), code);
+  if (json) return (process.stdout.write(`${JSON.stringify({ run_id: rec.runId ?? null, run: rec.runId ?? null, verdict: rec.verdict, exit_code: code, receipt_sha256: rec.receiptSha256 ?? null, reasons: rec.reasons ?? [], agent_independent: rec.verdict === "TAMPERED" ? null : rec.independent ?? null, gates })}\n`), code);
   if (!gates) return (process.stdout.write("explain: receipt TAMPERED; its gates are untrusted and not listed\n"), code);
   process.stdout.write(`explain: ${gates.length} gate${gates.length === 1 ? "" : "s"} (exogenous: evidence the agent could not shape; agent-influenced: agent-authored test or LLM judge; unrecorded: no provenance)\n`);
   for (const g of gates) process.stdout.write(`  gate ${printable(g.name)}: ${g.class} (provenance ${g.provenance === null ? "not recorded" : printable(g.provenance)}), result ${printable(g.result)}, n ${g.n ?? "-"}, evidence: ${printable(g.evidence) || "-"}\n`);
