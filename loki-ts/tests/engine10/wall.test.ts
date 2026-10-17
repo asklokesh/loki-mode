@@ -132,6 +132,13 @@ describe("engine10 wall brief", () => {
     expect(b).toContain("Acceptance: login works");
     expect(b).toContain("Acceptance: export works");
   });
+  test("brief requires one negative-case assertion per acceptance line, under 400 chars", () => {
+    const m = buildWallBrief("t").match(/Negative case: [^\n]*?before the fix\./);
+    expect(m).not.toBeNull();
+    expect(m![0]).toContain("rejects bad input");
+    expect(m![0]).toContain("each acceptance line");
+    expect(m![0].length).toBeLessThan(400);
+  });
 });
 
 describe("engine10 wall stage", () => {
