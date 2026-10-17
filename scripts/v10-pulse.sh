@@ -840,8 +840,8 @@ def parse_npm_releases(rc, out):
         "count_24h": count_24h,
         "count_1h": count_1h,
         "latest_version": latest_version,
-        # A-01: releases land on `next`; the newest publish is next unless
-        # the registry says otherwise. `latest` moves only via promote.yml.
+        # A-01: the newest publish is next unless
+        # the registry says otherwise. D102: `latest` is published together with `next`.
         "next_version": dist_tags.get("next") or latest_version,
         "promoted_version": dist_tags.get("latest"),
     }

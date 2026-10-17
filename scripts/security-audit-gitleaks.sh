@@ -31,7 +31,7 @@ GITLEAKS_BIN="${GITLEAKS_BIN:-/tmp/gitleaks}"
 GITLEAKS_BEFORE="${GITLEAKS_BEFORE:-}"
 GITLEAKS_TIP="${GITLEAKS_TIP:-HEAD}"
 GITLEAKS_REPORT="${GITLEAKS_REPORT:-/tmp/gitleaks-report.json}"
-# E-157: release.yml required-ci scans only PARENT..SHA (all commits reachable from
+# E-157: the incremental scan covers only PARENT..SHA (all commits reachable from
 # SHA and not from PARENT, second parents of a merge included) before reusing the
 # parent's audit verdict. Default stays the full-history scan.
 # Set GITLEAKS_RANGE (e.g. PARENT..SHA) to scan only that range; empty = all history.

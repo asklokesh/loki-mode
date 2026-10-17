@@ -354,13 +354,12 @@ When a VERSION bump is pushed, main enters a release window that closes only
 when npm shows the new version. Inside that window the Release Captain owns
 main and NOBODY else pushes to it, including docs.
 
-This is not caution. `release.yml`'s `required-ci` job waits for Tests, Bun
-Parity and Security Audit to be green AT THE EXACT RELEASE SHA and fails
-closed, treating cancelled, timed_out, failure and skipped as non-passes
-(`release.yml:95-171`, grep `cancelled, timed_out, failure, skipped: none is a
-pass`). Any later push to the branch moves HEAD and GitHub's concurrency rules
-CANCEL the older run at the release SHA. `required-ci` then correctly reports
-failure although nothing was broken.
+D102 update: `release.yml` no longer has a `required-ci` job; `publish-npm` needs only
+`pack-npm`, so npm publishes within seconds and a later push cannot strand it. The
+history below explains why the window rule existed. It still protects the
+Tests signal: a later push moves HEAD and GitHub's concurrency rules CANCEL the
+older Tests run at the release SHA, which loses the fix-forward signal (nothing
+is broken, but the run cannot report).
 
 Measured twice. On 2026-08-08, v9.18.0 failed with `FAIL: a required workflow
 did not succeed at 8892f477` while Bun Parity and Security Audit were both

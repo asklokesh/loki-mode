@@ -121,10 +121,10 @@ If any check fails, do not release; fix the root cause first.
 
 Stage files by name (never `git add -A` or `git add .`), commit with the
 repo-local `asklokesh` identity, no co-author. The merge-gate merges approved
-slices to main and main publishes to npm `next` (D96); for a manual push
-(`git push origin main`), wait for Tests and Security Audit to go green on that
-exact SHA before bumping VERSION and releasing. GitHub Actions then creates the tag, the GitHub Release, publishes
-npm, builds/pushes Docker, and updates the Homebrew tap. Do not manually
+slices to main and a VERSION push publishes to npm under `latest` and `next` at once (D96, D102); the
+`publish-npm` job needs only `pack-npm` and never waits on Tests, Security Audit, nightly or the backstop.
+For a manual push (`git push origin main`), run `bash scripts/local-ci.sh` first. GitHub Actions publishes
+npm, then creates the tag and GitHub Release, builds/pushes Docker (including `:latest`), and updates the Homebrew tap. Do not manually
 create tags.
 
 Before pushing the release commit, run `bash scripts/release.sh --check-clean` (E-151): it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
@@ -143,7 +143,7 @@ gh release view vX.Y.Z
 ### Train cycle: previous release must be on npm
 `scripts/train-cycle.sh` (phase C) refuses to cut release N+1 until the previous `release: vX` version is visible on npm (`npm_has_version`). While it is missing, the cycle logs `PREV_NOT_ON_NPM X` and returns 0 (waiting is not a failure). An unreachable registry fails closed and adds `reason=NPM_UNREACHABLE`. After `LOKI_TC_NPM_WAIT_MIN` minutes (default 45) since the previous release commit the log becomes `PREV_NOT_ON_NPM_STALE ... refusing release, needs a human`; the release stays refused either way.
 
-Operator action: wait for the Release workflow publish to land and for the D49 auto-promote to run. Never manually promote or move the `latest` dist-tag, and never unpublish. If the STALE line appears, investigate the failed or stuck publish run rather than bypassing the check.
+Operator action: wait for the Release workflow publish-npm job to land (seconds after the push). `latest` and `next` are set together by that job (D102); do not move them by hand, and never unpublish (npm deprecate is allowed). If the STALE line appears, investigate the failed or stuck publish run rather than bypassing the check.
 
 ### Distribution Channel Checklist
 

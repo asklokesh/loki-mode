@@ -4,8 +4,8 @@ on:
   push:
     # D90: this workflow IS the fast gate (it absorbed Tier A). It runs on
     # main, train/** and slice-* pushes and on PRs; the full suites moved to
-    # nightly.yml (full-suite.yml), non-blocking for the push, blocking for
-    # the NEXT release through release.yml required-ci.
+    # nightly.yml (full-suite.yml), non-blocking for the push, informational
+    # (D102: release.yml publishes without waiting on it; red means fix forward).
     branches: [main, "train/**", "slice-*"]
   pull_request:
     branches: [main]
@@ -30,13 +30,13 @@ jobs:
   #    or forget a file that must track VERSION (server.json, plugin.json),
   #    so these never skip, whatever the gate decides.
   # 2. The skip decision (S-132). skip=true only when the push is a
-  #    version-bump-only commit by the same rules as release.yml required-ci
-  #    STEP 1 (tests/test-version-bump-only.sh holds the two in parity) AND
+  #    version-bump-only commit by the rules in scripts/ci/version-bump-only.sh
+  #    (tests/test-version-bump-only.sh holds the parity) AND
   #    the parent has a completed, successful push-event Tests run. Pending,
   #    red, absent, or unreadable means skip=false and the full suite runs;
   #    it never waits. This check matters because a Tests run whose jobs all
-  #    skip concludes success, and required-ci accepts success at the release
-  #    SHA without looking at the parent.
+  #    skip concludes success, and a skipped-green run at the release
+  #    SHA would otherwise hide a red parent.
   #
   # Every other job has `needs` on this one and `!cancelled()` in its `if`:
   # if this job fails, skip is empty, the full suite still runs, and the run

@@ -8,13 +8,12 @@
 #
 # test.yml's first job runs `gate` and skips its heavy jobs only on
 # skip=true. That matters because a Tests run whose jobs are all skipped
-# concludes success, and release.yml required-ci accepts success at the
-# release SHA without looking at the parent. So skip=true needs BOTH:
+# concludes success, so a skipped-green run would hide a red parent.
+# So skip=true needs BOTH:
 #
-#   1. eligibility no looser than release.yml required-ci STEP 1. The python
-#      below is a byte-for-byte copy of that STEP's heredoc (dedented);
-#      tests/test-version-bump-only.sh extracts STEP 1 from release.yml and
-#      asserts the same verdict on every fixture diff. Change both together.
+#   1. eligibility only for a pure version bump. The python below is the
+#      allowlist normalizer; tests/test-version-bump-only.sh asserts the
+#      verdict on every fixture diff.
 #   2. a completed push-event run named "Tests" with conclusion success at
 #      the parent. Pending, failed, cancelled, absent, or an API error all
 #      give skip=false: the full suite runs, it never waits.

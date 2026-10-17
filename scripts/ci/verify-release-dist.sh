@@ -11,7 +11,7 @@
 #           the dist committed at HEAD under the same debugId rule.
 #
 # Tests already runs tsc and the impacted bun tests on this tree (or on the
-# bump-only parent, FC-70); required-ci enforces that verdict before publish.
+# bump-only parent, FC-70); pack-npm runs this check before the publish job.
 # Neither belongs here. Exit 0 = match, 1 = mismatch, 2 = usage or tool error.
 set -uo pipefail
 

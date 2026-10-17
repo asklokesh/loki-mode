@@ -3,7 +3,7 @@
 # FC-57: a CI job or step must not hide a real failure from the workflow
 # conclusion. Nightly run 37780519439 concluded SUCCESS while the pinned
 # "Bun tests on macos-latest bun=1.3.13" leg failed, because the job carried a
-# job-level `continue-on-error: true`. D90 and release.yml required-ci read the
+# job-level `continue-on-error: true`. D90 and the backstop read the
 # workflow conclusion, so they saw green.
 #
 # Rules, applied to every .github/workflows/*.yml (override dir: WORKFLOW_DIR):
@@ -429,8 +429,8 @@ mut M09-true-then nightly.yml "$STEP" '        run: bun test || true; echo next
 '
 mut M10-true-comment nightly.yml "$STEP" '        run: bun test || true  # tolerated
 '
-mut M11-success-or-failure release.yml '    needs: [gate, required-ci, pack-npm]
-' '    needs: [gate, required-ci, pack-npm]
+mut M11-success-or-failure release.yml '    needs: [gate, pack-npm]
+' '    needs: [gate, pack-npm]
     if: success() || failure()
 '
 mut N01-exit-in-string nightly.yml "$STEP" '        run: bun test || echo "gate failed (exit 1), tolerated"
@@ -511,8 +511,8 @@ ok C05-capture-echo nightly.yml "$STEP" '        run: |
           echo "rc is $rc"
           exit $rc
 '
-mut M12-always release.yml '    needs: [gate, required-ci, pack-npm]
-' '    needs: [gate, required-ci, pack-npm]
+mut M12-always release.yml '    needs: [gate, pack-npm]
+' '    needs: [gate, pack-npm]
     if: always()
 '
 exit "$SELF_FAIL"
