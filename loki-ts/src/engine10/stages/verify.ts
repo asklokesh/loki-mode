@@ -4,18 +4,18 @@
 // the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
 // machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { scopedOutOf } from "../../project_model/scope.ts";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
+import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
+import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
@@ -39,37 +39,8 @@ export interface VerifyCheck {
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
   owner?: "harness"; // FC-02: the runner could not load or collect; not_run, never a code failure
 }
-// E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
-// else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
-function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
-  const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
-  const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
-  const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
-  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
-}
-// Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
-// "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
-export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
-  switch (t.runner) {
-    case "pytest": {
-      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
-      return [cmd, [...pre, "-m", "pytest", "-q", t.path], interpreter];
-    }
-    case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
-    case "jest": return ["npx", ["--no-install", "jest", t.path]];
-    case "bun": return ["bun", ["test", t.path]];
-    case "node": return ["node", ["--test", `./${t.path}`]];
-    case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", "-json", `./${dirname(t.path)}`]];
-    case "cargo": return ["cargo", ["test"]];
-  }
-}
-/** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
-export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
-  const site = siteFor(api, repoDir, t.path);
-  const [cmd, args, interpreter] = runnerCmd(site ? { runner: t.runner, path: site.file } : t, repoDir);
-  return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
-}
+export { runnerCmd, commandFor, firstError } from "../../util/check_result.ts"; // one owner: check_result.ts (test invocation resolver and failure-line normalizer)
+import { runnerCmd, commandFor, firstError, resolveTool } from "../../util/check_result.ts";
 /** TEN-QUALITY-01: stage-local failure excerpts keyed by check object; never on VerifyCheck, never emitted, never set for a held-out check. */
 const excerpts = new WeakMap<object, string>();
 const isHold = (c: { name: string }): boolean => isHoldoutCheck(c.name); // C-C4b-c: pubHold is the one public shape of a held-out check: result and counts only
@@ -111,11 +82,6 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
   await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   const cut = timeout.aborted || signal.aborted;
   return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : stripAnsi(tail) }; // FC-69
-}
-export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
-  const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" || e.Action === "build-output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output
-  const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
-  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a
  *  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
@@ -245,8 +211,6 @@ export async function runLintChecks(
   }
   return pre;
 }
-/** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */
-export const verifyJobs = (): number => { const n = Number.parseInt(process.env["LOKI_E10_VERIFY_JOBS"] ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; };
 export const verifyStage: Stage = {
   name: "verify",
   targetS: STAGE_BUDGETS.verify.targetS,
@@ -283,9 +247,8 @@ export const verifyStage: Stage = {
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
-    const slots = tests.map(() => [] as VerifyCheck[]); let next = 0; // TEN-SPEED-18: LOKI_E10_VERIFY_JOBS bounds concurrent test processes; slots keep the selected (failed-first) order whatever order they finish in
-    const work = async (): Promise<void> => { while (next < tests.length && !signal.aborted) { const i = next++, t = tests[i]!, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slots[i]!, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } };
-    await Promise.all(Array.from({ length: Math.min(verifyJobs(), tests.length) }, work)); checks.push(...slots.flat());
+    // TEN-SPEED-18: LOKI_E10_VERIFY_JOBS bounds concurrent test processes; mapPool keeps the selected (failed-first) order whatever order they finish in
+    checks.push(...(await mapPool(tests, verifyJobs(), async (t) => { const tc = commandFor(t, ctx.repoDir, api), slot: VerifyCheck[] = []; await runCheck(ctx, testCheckName(t), tc.cmd, tc.args, signal, slot, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); return slot; }, () => signal.aborted)).flat());
     const hold = wall.holdout_dir ? stageHoldout(wall.holdout_dir, ctx.repoDir) : null; // P12-05: held-out Wall tests, copied in under neutral names for this run only, blocking (protect), named holdout:N internally and "holdout" in every record that leaves this stage
     try { for (const [i, h] of (hold?.tests ?? []).entries()) { if (signal.aborted) break; const t = h as TestRef, tc = commandFor(t, ctx.repoDir, api); await runCheck(ctx, `holdout:${i + 1}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: true, opaque: true, ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } } finally { hold?.cleanup(); }
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log

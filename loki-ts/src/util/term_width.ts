@@ -14,3 +14,19 @@ export function terminalWidth(
   if (valid(e)) return Math.floor(e);
   return DEFAULT_TERM_WIDTH;
 }
+
+// Terminal display formatting shared by engine10 output and the run-summary views (moved out of engine10 core, TEN budget).
+export function formatClock(elapsedS: number): string {
+  const s = Math.max(0, Math.round(elapsedS));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+export function formatDuration(totalS: number): string {
+  const s = Math.max(0, Math.round(totalS));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+/** 212000 -> "212k"; under 1000 renders as-is. */
+export function formatTokens(n: number): string {
+  const v = Math.max(0, Math.round(n));
+  return v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`;
+}

@@ -5,7 +5,9 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { siteFor } from "../project_model/resolve.ts";
+import type { ProjectApi } from "../project_model/api.ts";
 import { isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
@@ -535,10 +537,12 @@ export function classify(f: TestRef, status: number | null, output: string, repo
 
 /** TEN-SPEED-19: LOKI_E10_BASE_JOBS, default 1 (sequential); an invalid value or one below 1 falls back to 1, capped at 16. */
 export function baseJobs(): number { const n = Number(process.env.LOKI_E10_BASE_JOBS); return Number.isInteger(n) && n >= 1 ? Math.min(n, 16) : 1; }
+/** TEN-SPEED-18: LOKI_E10_VERIFY_JOBS, an integer 1..8; unset, invalid or below 1 means 1. */
+export const verifyJobs = (): number => { const n = Number.parseInt(process.env["LOKI_E10_VERIFY_JOBS"] ?? "", 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 8) : 1; };
 /** TEN-SPEED-19: map items through an async fn with at most `jobs` in flight; results keep input order. */
-export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapPool<T, R>(items: T[], jobs: number, fn: (item: T) => Promise<R>, stop: () => boolean = () => false): Promise<R[]> { // stop() true: no new item starts; their slots stay empty
   const out: R[] = new Array(items.length); let next = 0;
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, jobs), items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]!); } }));
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, jobs), items.length) }, async () => { while (next < items.length && !stop()) { const i = next++; out[i] = await fn(items[i]!); } }));
   return out;
 }
 /** TEN-SPEED-19: async twin of the sync spawn used by RealBaseTestRunner: status is null on spawn error, signal or timeout; output is stdout and stderr merged by arrival. */
@@ -551,4 +555,41 @@ export function spawnCollect(cmd: string, args: string[], o: { cwd?: string; env
     c.stdout?.on("data", (d) => { out += d; over(); }); c.stderr?.on("data", (d) => { err += d; over(); });
     c.on("error", () => { error = true; fin(null); }); c.on("close", (code, sig) => fin(sig ? null : code));
   });
+}
+// E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
+// else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
+type Interpreter = "project" | "system";
+export function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter, string[]] {
+  const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
+  const venvEnv = process.env["VIRTUAL_ENV"], onPath = (b: string): string | null => Bun.which(b, { PATH: process.env["PATH"] ?? "" }); // Bun.which caches the startup PATH unless given the live one
+  const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
+  return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
+}
+// Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
+// "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
+export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
+  switch (t.runner) {
+    case "pytest": {
+      const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+      return [cmd, [...pre, "-m", "pytest", "-q", t.path], interpreter];
+    }
+    case "vitest": return ["npx", ["--no-install", "vitest", "run", t.path]];
+    case "jest": return ["npx", ["--no-install", "jest", t.path]];
+    case "bun": return ["bun", ["test", t.path]];
+    case "node": return ["node", ["--test", `./${t.path}`]];
+    case "npm": return ["npm", ["test", "--silent"]];
+    case "go": return ["go", ["test", "-json", `./${dirname(t.path)}`]];
+    case "cargo": return ["cargo", ["test"]];
+  }
+}
+/** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
+export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
+  const site = siteFor(api, repoDir, t.path);
+  const [cmd, args, interpreter] = runnerCmd(site ? { runner: t.runner, path: site.file } : t, repoDir);
+  return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
+}
+export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
+  const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" || e.Action === "build-output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output
+  const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }

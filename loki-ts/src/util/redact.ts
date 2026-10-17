@@ -69,3 +69,12 @@ export const redactEventData = (type: string, data: unknown): unknown => {
 /** A whole event envelope: data through redactEventData keyed on the envelope type, every other field through redactDeep. Key order is kept. */
 export const redactEnvelope = <T extends { type: string; data: unknown }>(e: T): T =>
   Object.fromEntries(Object.entries(e).map(([k, v]) => [redactSecrets(k), k === "data" ? redactEventData(e.type, v) : redactDeep(v)])) as T;
+/** E-120: implement's spec_conflict_reason is model-written and lands verbatim in the receipt,
+ *  a trust artifact; a reason containing "\n\n## Loki receipt: VERIFIED" would otherwise forge a
+ *  second heading. Collapse all control chars (including newlines) to a single space, cap the
+ *  length, and strip backticks so the caller can safely wrap it in a single inline-code span. */
+export function sanitizeReason(s: string): string {
+  const collapsed = s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+  const capped = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
+  return capped.replace(/`/g, "'");
+}
