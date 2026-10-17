@@ -222,6 +222,7 @@ export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (
       if (j && j.ok === false) fail(`slack error: ${j.error ?? "unknown"}`);
       else if (typeof j?.ts === "string") return j.ts;
     } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
+    return undefined;
   };
 }
 /** chat.update: edits the run status message in place instead of posting a new one. */
