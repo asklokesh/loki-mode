@@ -246,6 +246,29 @@ describe("loki issues run", () => {
     expect(h.out.join("")).toContain("estimated total: NOT AVAILABLE (0 prior verified runs for shape node, need 3)");
   });
 
+  test("dry run json prints one decision row per issue and nothing else on stdout", async () => {
+    const h = harness({ issues: [issue(1), issue(2)], prs: [{ headRefName: "loki/issue-2", body: "" }], isTTY: false });
+    expect(await runIssues(["run", SLUG, "--dry-run", "--json"], h.inject)).toBe(0);
+    expect(JSON.parse(h.out.join(""))).toEqual([
+      { number: 1, decision: "pending", reason: "not triaged (dry run makes no model calls)", covered_by_pr: false },
+      { number: 2, decision: "skip", reason: "open Loki PR exists", covered_by_pr: true },
+    ]);
+    expect(h.triaged).toEqual([]);
+    expect(h.ran).toEqual([]);
+  });
+
+  test("dry run json with every issue covered still prints the plan", async () => {
+    const h = harness({ issues: [issue(2)], prs: [{ headRefName: "loki/issue-2", body: "" }] });
+    expect(await runIssues(["run", SLUG, "--dry-run", "--json"], h.inject)).toBe(0);
+    expect(JSON.parse(h.out.join(""))).toHaveLength(1);
+  });
+
+  test("--json without --dry-run is refused with exit 2", async () => {
+    const h = harness({ issues: [issue(1)] });
+    expect(await runIssues(["run", SLUG, "--json", "--yes"], h.inject)).toBe(2);
+    expect(h.triaged).toEqual([]);
+  });
+
   test("no TTY and no --yes refuses with exit 2 before any billed call", async () => {
     const h = harness({ issues: [issue(1)], isTTY: false });
     expect(await runIssues(["run", SLUG], h.inject)).toBe(2);
