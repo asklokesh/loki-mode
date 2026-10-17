@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallTaskPath, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, modelRank, planMode, wallLimitS, resolveModelAlias, sizeTask, smallTaskPath, wallFirstModel, wallModel } from "../../src/engine10/sizing.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -16,6 +16,7 @@ import type { RunContext, SessionRunOptions, Stage, StageName, TestMap, TestRef 
 
 const dirs: string[] = [];
 const saved = { ...process.env };
+process.env.LOKI_E10_WALL_FIRST = "0"; // COST-11: these cases count Wall sessions against the sonnet pin; the haiku-first rung is covered in wall.test.ts and below
 afterEach(() => { for (const k of ["LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER", "LOKI_E10_WALL_LIMIT_S", "LOKI_E10_CASCADE", "LOKI_MODEL_OVERRIDE"]) delete process.env[k]; });
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); process.env = saved; });
 
@@ -109,6 +110,10 @@ describe("engine10 E-45 sizing", () => {
   });
 
   it("LOKI_E10_WALL_TIER overrides the wall model via the catalog alias", () => {
+    expect(wallFirstModel("small", {})).toContain("haiku");
+    expect(wallFirstModel("normal", {})).toContain("haiku");
+    expect(wallFirstModel("large", {})).toBe(wallModel({}));
+    for (const env of [{ LOKI_E10_WALL_TIER: "sonnet" }, { LOKI_MODEL_OVERRIDE: "opus" }, { LOKI_E10_WALL_FIRST: "off" }, { LOKI_E10_WALL_CONCURRENT: "1" }]) expect(wallFirstModel("small", env)).toBe(wallModel(env));
     expect(wallModel({ LOKI_E10_WALL_TIER: "haiku" })).toContain("haiku");
     expect(wallModel({ LOKI_E10_WALL_TIER: "my-model-id" })).toBe("my-model-id");
   });

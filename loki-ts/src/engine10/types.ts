@@ -27,7 +27,7 @@ export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s 
 export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
   "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
-  "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "wall.sealed",
+  "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "wall.sealed", "wall.reauthor",
   "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
   "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective",
@@ -129,6 +129,7 @@ export interface CostReader { // implemented by cost.ts (E-06)
 export interface Clock { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void>; } // epoch ms; sleep is optional so tests can fake the quota wait
 export interface RunContext {
   timeline?: { stage: StageName; startMs: number; endMs: number }[]; // every stage the machine ran (any outcome), for the receipt's time buckets
+  sessionIds?: () => string[]; // iteration ids of every session the machine started, recorded at launch; seal unions them into the cost read
   wallSealed?: boolean; // P12-13c: set when wall.sealed is emitted, so steer staleness holds even if outputs.wall never lands
   intentRevisions?: import("../util/steer.ts").IntentRevision[]; startedAtMs?: number; // intentRevisions: P12-02, machine memory, never the repo file; startedAtMs: set by the machine at run start (epoch ms); seal falls back to it for time.total_s
   runId: string;

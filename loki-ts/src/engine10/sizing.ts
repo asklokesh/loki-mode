@@ -60,6 +60,12 @@ export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_
 export const resolveModelAlias = resolveClaudeModel;
 /** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
 export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
+/** COST-11: first Wall author rung. Haiku for small/normal tasks, re-authored once on wallModel() when the result is unusable (wall.ts runWall).
+ *  Fail-safe: any pin (LOKI_E10_WALL_TIER, LOKI_MODEL_OVERRIDE), concurrent Wall (its base run is not validated at author time), an unknown/large size or LOKI_E10_WALL_FIRST=0 uses wallModel() directly, so no escalation applies. */
+export const wallFirstModel = (size: TaskSize, env = process.env): string => {
+  if (knob(env.LOKI_E10_WALL_FIRST, ["0", "off", "false"]) || env.LOKI_E10_WALL_TIER || env.LOKI_MODEL_OVERRIDE || env.LOKI_E10_WALL_CONCURRENT === "1") return wallModel(env);
+  return size === "small" || size === "normal" ? resolveModelAlias("haiku") : wallModel(env);
+};
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 

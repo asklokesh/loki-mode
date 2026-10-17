@@ -98,6 +98,7 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
+export const wallGreenOnBaseOf = (o: Partial<Record<StageName, Obj>>): boolean => { const b = (o.wall?.base_run ?? {}) as Obj; return typeof b.pass === "number" && b.pass > 0 && b.fail === 0 && (typeof b.not_run === "number" ? b.not_run : 0) === 0; }; // D42 (3)/B1 (r2): green only with real passes, no failure, no not_run; shared by seal, wall.ts runWall
 export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = []): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
@@ -178,7 +179,7 @@ export const sealStage: Stage = {
     // D42 (3)/B1 (r2): not_run must never seal ALREADY_SATISFIED, same weight as a real base-tree failure.
     const base = (o.wall?.base_run ?? {}) as Obj;
     const wallNotRun = typeof base.not_run === "number" ? base.not_run : 0;
-    const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0 && wallNotRun === 0;
+    const wallGreenOnBase = wallGreenOnBaseOf(o);
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
     const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
@@ -242,7 +243,7 @@ export const sealStage: Stage = {
     const stages: Partial<Record<StageName, number>> = {};
     for (const [s, d] of Object.entries(o)) if (typeof d?.duration_s === "number") stages[s as StageName] = d.duration_s;
     const T = hooks.time, time = T ? T.build(ctx, stages, T.firstEventMs(join(ctx.runDir, "events.jsonl"))) : { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages }, totalS = T?.reconciled(time) ?? null;
-    const iterIds = Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]);
+    const iterIds = [...new Set([...Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]), ...(ctx.sessionIds?.() ?? [])])]; // a killed or failed stage's data is dropped by the machine, so its sessions come from the launch record
     if (iterIds.length === 0) notProven.add("cost not measured (no iteration ids recorded)");
     const cost = ctx.cost.read(ctx.repoDir, iterIds);
     if (cost.unmetered) notProven.add("cost unmetered (CLI invoker; recorded as 0)");

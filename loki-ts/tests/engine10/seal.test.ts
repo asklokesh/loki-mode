@@ -190,6 +190,19 @@ describe("engine10 seal", () => {
     expect(r.cost.partial_usd).toBe(0.125);
   }, 30000);
 
+  test("TEN-COST-11 r3: ctx.sessionIds feeds the cost read and clears the cost-not-measured note", async () => {
+    noKey();
+    const { repo, base } = makeRepo("session-ids");
+    const { ctx } = ctxFor(repo, base);
+    let got: string[] = [];
+    ctx.cost = { read: (_d, ids) => { got = ids; return { usd: null, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 }; } };
+    ctx.sessionIds = () => ["x-wall", "x-wall-r2"];
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(got).toEqual(expect.arrayContaining(["x-wall", "x-wall-r2"]));
+    expect(r.not_proven.join("|")).not.toContain("cost not measured");
+  }, 30000);
+
   test("A-121 G5: clean HOME, no key env: seal auto-generates a 0600 key, signs, verify reports VERIFIED, one flipped byte is TAMPERED", async () => {
     const home = join(root, "clean-home");
     mkdirSync(home);
