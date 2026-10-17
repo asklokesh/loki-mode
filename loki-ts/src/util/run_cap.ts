@@ -60,7 +60,8 @@ export function yamlRunCapS(text: string): number | null {
 /** The cap the run starts with: a fixed cap if one is set, else DEFAULT_CAP_S (no plan exists yet; the worker resizes once after plan). Best effort: unreadable yaml falls back to the default. */
 export function resolveRunCapS(repoDir: string, subscription: boolean, env: NodeJS.ProcessEnv = process.env): { capS: number; fixedS?: number; ceilingS: number } {
   const texts = lokiYamlTexts(repoDir);
-  const yamlS = texts.length > 0 ? yamlRunCapS(texts[texts.length - 1]!) : null; // the last readable file wins
+  const first = texts.find((t) => yamlKey(t, "budgets", "run_cap_s") !== null); // the first file that sets the key wins, like resolveCap
+  const yamlS = first !== undefined ? yamlRunCapS(first) : null;
   const fixedS = fixedCapS(envCapS(env.LOKI_E10_CAP_S) ?? undefined, yamlS);
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
