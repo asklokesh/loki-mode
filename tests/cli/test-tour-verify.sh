@@ -104,7 +104,14 @@ done
 if PATH="$safe" command -v bun >/dev/null 2>&1; then
     log_fail "bun hidden from PATH" "bun still resolvable"
 else
-    out=$(PATH="$safe" "$(command -v bash)" "$LOKI" tour 2>&1); rc=$?
+    # The delegate also probes REPO_ROOT/node_modules/@oven/bun-* (present on CI
+    # after npm install), so run a copy of the tree that has no node_modules.
+    nb="$TMP/nobun-root"
+    mkdir -p "$nb"
+    for e in bin autonomy providers skills VERSION package.json; do
+        [ -e "$REPO_ROOT/$e" ] && cp -R "$REPO_ROOT/$e" "$nb/$e"
+    done
+    out=$(PATH="$safe" "$(command -v bash)" "$nb/bin/loki" tour 2>&1); rc=$?
     { [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q 'loki verify --pubkey' && ! printf '%s\n' "$out" | grep -q 'Result:'; } \
         && log_pass "no bun: command printed, no verdict claimed" || log_fail "mutation c" "rc=$rc $(printf '%s' "$out" | tail -6)"
 fi

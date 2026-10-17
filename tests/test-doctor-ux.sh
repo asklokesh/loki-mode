@@ -140,7 +140,7 @@ else
     bad "C3: ChromaDB network probe is NOT bounded with a timeout"
 fi
 
-if grep -q 'httpReachable(`${mfUrl}/health`)' "$TS_DOCTOR"; then
+if grep -q 'integrationImpl.http(`${mfUrl}/health`)' "$TS_DOCTOR" && grep -q 'http: (url) => httpReachable(url)' "$TS_DOCTOR"; then
     ok "C3: MiroFish probe goes through the bounded httpReachable"
 else
     bad "C3: MiroFish network probe is NOT bounded with a timeout"
