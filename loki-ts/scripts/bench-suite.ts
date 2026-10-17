@@ -9,6 +9,9 @@
 // Usage:
 //   bun run scripts/bench-suite.ts [--runs N] [--warmup K]
 //   bun run scripts/bench-suite.ts --compare-dist [--runs N] [--warmup K]
+//   bun run scripts/bench-suite.ts --verify-fast [--runs N] [--warmup K]
+//     times `loki verify --fast` and records p95_ms (LOKI_BENCH_METRICS_DIR
+//     overrides the output directory).
 import { run } from "../src/util/shell.ts";
 import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
@@ -29,13 +32,14 @@ const COMMANDS: ReadonlyArray<readonly [string, string]> = [
   ["doctor", "doctor"],
 ];
 
-type Route = "bash" | "bun-source" | "bun-dist";
+type Route = "bash" | "bun-source" | "bun-dist" | "verify-fast";
 
 interface BenchRecord {
   command: string;
   route: Route;
   mean_ms: number;
   stddev_ms: number;
+  p95_ms: number;
   timestamp: string;
 }
 
@@ -89,8 +93,19 @@ export function benchRouteArgv(
     case "bun-dist":
       invocation = `${shim} ${cmd}`;
       break;
+    case "verify-fast":
+      invocation = `${shim} verify --fast`;
+      break;
   }
   return ["hyperfine", "--warmup", warmup, "--runs", runs, "--ignore-failure", "--export-json", outPath, invocation];
+}
+
+// Nearest-rank p95 in milliseconds from hyperfine per-run times (seconds).
+export function p95Ms(timesSec: ReadonlyArray<number>): number {
+  if (timesSec.length === 0) return 0;
+  const sorted = [...timesSec].sort((a, b) => a - b);
+  const rank = Math.ceil(0.95 * sorted.length);
+  return +(sorted[rank - 1]! * 1000).toFixed(2);
 }
 
 // Any skipped command means hyperfine refused or failed; do not hide it.
@@ -156,7 +171,7 @@ async function benchRoute(
   }
   if (!existsSync(outPath)) return null;
   const data = JSON.parse(await Bun.file(outPath).text()) as {
-    results: Array<{ command: string; mean: number; stddev: number }>;
+    results: Array<{ command: string; mean: number; stddev: number; times?: number[] }>;
   };
   const res = data.results[0];
   if (!res) return null;
@@ -165,12 +180,13 @@ async function benchRoute(
     route,
     mean_ms: +(res.mean * 1000).toFixed(2),
     stddev_ms: +(res.stddev * 1000).toFixed(2),
+    p95_ms: p95Ms(res.times ?? []),
     timestamp: new Date().toISOString(),
   };
 }
 
 async function writeJsonl(records: ReadonlyArray<object>): Promise<string> {
-  const metricsDir = resolve(REPO_ROOT, ".loki", "metrics");
+  const metricsDir = process.env.LOKI_BENCH_METRICS_DIR || resolve(REPO_ROOT, ".loki", "metrics");
   await mkdir(metricsDir, { recursive: true });
   const out = resolve(metricsDir, "migration_bench.jsonl");
   for (const r of records) {
@@ -212,6 +228,18 @@ async function runDefault(runs: string, warmup: string): Promise<void> {
     process.stderr.write(`\n${skipped} command(s) SKIPPED.\n`);
     process.exit(1);
   }
+}
+
+async function runVerifyFast(runs: string, warmup: string): Promise<void> {
+  process.stdout.write(`verify --fast benchmark (runs=${runs}, warmup=${warmup})\n`);
+  const r = await benchRoute("verify --fast", "verify --fast", "verify-fast", runs, warmup);
+  if (!r) {
+    process.stderr.write("\nNo results produced.\n");
+    process.exit(1);
+  }
+  process.stdout.write(`verify --fast: mean=${r.mean_ms}ms p95=${r.p95_ms}ms\n`);
+  const out = await writeJsonl([r]);
+  process.stdout.write(`Recorded to ${out}\n`);
 }
 
 async function runCompareDist(runs: string, warmup: string): Promise<void> {
@@ -331,7 +359,9 @@ async function runCompareDist(runs: string, warmup: string): Promise<void> {
 async function main(): Promise<void> {
   const runs = arg("--runs", "20");
   const warmup = arg("--warmup", "3");
-  if (hasFlag("--compare-dist")) {
+  if (hasFlag("--verify-fast")) {
+    await runVerifyFast(runs, warmup);
+  } else if (hasFlag("--compare-dist")) {
     await runCompareDist(runs, warmup);
   } else {
     await runDefault(runs, warmup);
