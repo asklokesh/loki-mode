@@ -298,7 +298,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
     const gate = prGate(repoDir);
     if ("deny" in gate) return { url: null, draft: false, existing: null, notProven: [gate.deny] };
-    const evs = readEvents(eventsPath), sealed: Record<string, unknown> = { ...((evs.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }, base = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+    const evs = readEvents(eventsPath), sealed: Record<string, unknown> = { ...((evs.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: "note" in gate && gate.note ? [...notProven, gate.note] : notProven }, base = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
     const r = await (await import("../engine10/stages/pr.ts")).runPr({ runId: it.runId, repoDir, runDir, branch: br, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, provider, model, baseSha: typeof base === "string" ? base : "", outputs: () => ({ ...loadRunOutputs(runDir, evs), seal: { ...sealed, verdict, receipt_path: sealed["path"] } }), capHit: () => evs.some((e) => e.type === "cap.hit"), draft: gate.draft, emit: () => {} } as never, new AbortController().signal);
     const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
     return r.status !== "completed" ? { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] } : { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
@@ -328,7 +328,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   if ("deny" in gate) { out(`resume: ${gate.deny}\n`); return 5; }
   const log = new SupervisorLog(join(repoDir, eventsRelPath(it.runId)), it.runId);
   log.append("run.resumed", null, { phase: "publish", receipt_reused: true, receipt_sha256: sealedData["receipt_sha256"] ?? null });
-  const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption"];
+  const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption", ...("note" in gate && gate.note ? [gate.note] : [])];
   const runPr = deps.runPr ?? (async (c, s) => (await import("../engine10/stages/pr.ts")).runPr(c as never, s));
   const events = readEvents(log.path);
   const baseSha = it.events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
@@ -444,20 +444,21 @@ export function issueStatusProjector(o: { pushSh: string; env: NodeJS.ProcessEnv
 }
 export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
 /** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
-export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
+export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js"), timeoutMs: number = 30000): PolicyGate {
   if (policyFile(repoDir, env) === null) return { decision: "allow", reason: "no policy file" };
-  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
+  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "policy NOT evaluated: node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
   if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
   const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
-  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
-  if (r.error) return { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
+  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: timeoutMs });
+  if (r.error) return (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT" ? { decision: "deny", reason: `policy check timed out after ${timeoutMs}ms: cannot evaluate policy (fail-closed)` } : { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
   let why = ""; try { why = String((JSON.parse(r.stdout || "{}") as { reason?: string }).reason ?? ""); } catch { /* keep empty */ }
   return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
 }
 /** One PR-egress decision shared by the supervisor pr callback and resumePublish: deny = no PR plus a not-proven line; approval = draft via ctx.draft (never process.env). */
-export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
+export function prGate(repoDir: string): { deny: string } | { draft: boolean; note?: string } {
   const gate = policyGate(repoDir, "pr");
-  return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
+  if (gate.decision === "deny") return { deny: `PR not opened: policy denied (${gate.reason})` };
+  return gate.decision === "allow" && gate.reason.startsWith("policy NOT evaluated") ? { draft: false, note: gate.reason } : { draft: gate.decision === "approval" };
 }
 /** MASS-2: a stacked slice's PR targets its parent slice's run branch (LOKI_PR_BASE, set by `loki issues run`).
  *  undefined = no stacking (the default branch); null = set but not a safe branch name, so the stage fails closed. */

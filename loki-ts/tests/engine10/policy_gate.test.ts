@@ -29,6 +29,25 @@ describe("policyGate", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), stub(0, "ok")).decision).toBe("allow");
   });
+  test("policy not evaluated: node opt-out without node says so in reason and prGate note", () => {
+    withPolicy();
+    const bare = join(root, "bare"); mkdirSync(bare);
+    const e = { ...env(), PATH: bare, LOKI_POLICY_REQUIRE_NODE: "0" };
+    const g = policyGate(root, "pr", e, join(root, "missing.js"));
+    expect(g.decision).toBe("allow");
+    expect(g.reason).toContain("policy NOT evaluated");
+    const saved = { ...process.env }; Object.assign(process.env, e);
+    try { expect(prGate(root)).toEqual({ draft: false, note: g.reason }); } finally { for (const k of Object.keys(e)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  });
+  test("policy timeout reason: a slow check.js is a timeout, not node unavailable", () => {
+    withPolicy();
+    const slow = join(root, "slow.js"); writeFileSync(slow, "setTimeout(()=>{},10000);");
+    const g = policyGate(root, "pr", env(), slow, 300);
+    expect(g.decision).toBe("deny");
+    expect(g.reason).toContain("timed out");
+    expect(g.reason).not.toContain("node is unavailable");
+    expect(policyGate(root, "pr", { ...env(), PATH: join(root, "nobin") }, stub(0, "ok")).reason).toContain("node is unavailable");
+  });
   test("policy present and check.js missing fails closed", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), join(root, "missing.js")).decision).toBe("deny");
