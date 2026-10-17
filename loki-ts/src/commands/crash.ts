@@ -21,6 +21,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { suggestWord } from "../cli/registry.ts";
 import { lokiDir } from "../util/paths.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 
@@ -254,6 +255,8 @@ function extraArgs(usage: string, extra: readonly string[]): number {
   return 2;
 }
 
+const CRASH_SUBCOMMANDS = ["list", "show", "submit", "help"] as const;
+
 export async function runCrash(argv: readonly string[]): Promise<number> {
   const sub = argv[0];
   switch (sub) {
@@ -290,6 +293,10 @@ export async function runCrash(argv: readonly string[]): Promise<number> {
       return submitCrash(argv[1]);
     default:
       process.stderr.write(`${RED}Unknown crash subcommand: ${sub}${NC}\n`);
+      {
+        const hint = suggestWord(sub, CRASH_SUBCOMMANDS);
+        if (hint) process.stderr.write(`Did you mean '${hint}'?\n`);
+      }
       process.stdout.write(HELP);
       return 2;
   }

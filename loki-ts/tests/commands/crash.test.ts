@@ -486,3 +486,26 @@ describe("crash: opt-out gates captureCrashSync (defect 3)", () => {
     }
   });
 });
+
+describe("crash: unknown subcommand", () => {
+  it("did you mean: suggests nearest subcommand before help, exit 2", async () => {
+    const r = await runWithCapture(["lst"]);
+    expect(r.exitCode).toBe(2);
+    const err = stripAnsi(r.stderr);
+    expect(err).toContain("Unknown crash subcommand: lst");
+    expect(err).toContain("Did you mean 'list'?");
+    expect(r.stdout).toContain("Usage");
+  });
+
+  it("did you mean: no hint for a far-off word, exit 2", async () => {
+    const r = await runWithCapture(["zzzzzzzz"]);
+    expect(r.exitCode).toBe(2);
+    expect(stripAnsi(r.stderr)).not.toContain("Did you mean");
+  });
+
+  it("did you mean: works through bin/loki", () => {
+    const r = spawnSync(resolve(REPO_ROOT, "bin", "loki"), ["crash", "lst"], { encoding: "utf8" });
+    expect(r.status).toBe(2);
+    expect(stripAnsi(r.stderr)).toContain("Did you mean 'list'?");
+  });
+});
