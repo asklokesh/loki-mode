@@ -102,6 +102,8 @@ export interface SessionResult {
   killed: boolean;
   /** Optional tail of the agent's own final message (its diagnosis), fed to an escalated fix round. */
   summary?: string;
+  /** Tail of the provider's stderr; set by the real runner, read on error exits. */
+  stderrTail?: string;
 }
 export interface SessionRunner { // implemented by session.ts (E-07)
   run(opts: SessionRunOptions): Promise<SessionResult>;

@@ -98,7 +98,7 @@ export const planStage: Stage = {
     // past a failed plan: implement falls back to planning the change itself.
     if (!session.killed && session.exit !== 0) {
       pr.record({ planModel, planModelNote, skipReason: `plan session failed (exit ${session.exit})` });
-      const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
+      const stderrTail = session.stderrTail ?? "";
       mkdirSync(ctx.runDir, { recursive: true });
       const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
       writeFileSync(stderrPath, stderrTail, "utf8");

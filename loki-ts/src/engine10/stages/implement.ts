@@ -177,7 +177,7 @@ export const implementStage: Stage = {
 
     if (exit !== "error") return { status: "completed", data };
 
-    const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? ""; mkdirSync(ctx.runDir, { recursive: true }); const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`); writeFileSync(stderrPath, stderrTail, "utf8");
+    const stderrTail = session.stderrTail ?? ""; mkdirSync(ctx.runDir, { recursive: true }); const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`); writeFileSync(stderrPath, stderrTail, "utf8");
     data.stderr_path = stderrPath;
 
     return { status: "failed", reason: classifyExitCause(session.exit, false), data };
