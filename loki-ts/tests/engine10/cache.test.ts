@@ -6,6 +6,7 @@ import {
   cacheStats,
   cachedRepoMap,
   cachedTestMap,
+  pruneCache,
   readRepoMapCache,
   readTestMapCache,
   repoCacheDir,
@@ -224,5 +225,26 @@ describe("TEN-SPEED-04 tree-keyed reuse across fix rounds", () => {
     const file = join(tmpRoot(), "afile");
     require("node:fs").writeFileSync(file, "x");
     expect(cachedTestMap(join(file, "sub"), "t1", () => TESTMAP)).toEqual(TESTMAP);
+  });
+});
+
+describe("cache pruning (TEN-STABILITY-45)", () => {
+  test("prunes old trees: keeps newest 5 of each kind", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    for (let i = 0; i < 8; i++) {
+      writeRepoMapCache(dir, `tree${i}`, REPOMAP);
+      writeTestMapCache(dir, `tree${i}`, TESTMAP);
+    }
+    const files = readdirSync(dir);
+    expect(files.filter((f) => f.startsWith("repomap2-")).length).toBe(5);
+    expect(files.filter((f) => f.startsWith("testmap-")).length).toBe(5);
+    expect(readRepoMapCache(dir, "tree7")).not.toBeNull();
+    expect(readTestMapCache(dir, "tree7")).not.toBeNull();
+  });
+
+  test("prune failure never throws", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    writeRepoMapCache(dir, "t1", REPOMAP);
+    expect(() => pruneCache(join(dir, "missing"), "repomap2-", join(dir, "x.json"))).not.toThrow();
   });
 });
