@@ -449,6 +449,32 @@ describe("TEN-SPEED-05: login probe reuse", () => {
   });
 });
 
+describe("TEN-STABILITY-36: low disk", () => {
+  const mb = (n: number) => () => ({ bavail: n * 1024, bsize: 1024 });
+  const mk = (statfs: ((p: string) => { bavail: number; bsize: number }) | undefined, extra: Record<string, string> = {}) => {
+    const { dir, env } = identifiedRepo();
+    return checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", ...extra }, statfs });
+  };
+  test("under 2 GB warns naming the volume path", async () => {
+    const r = await mk(mb(1500)); expect(r.fatal).toBeNull(); expect(r.warnings.join("\n")).toMatch(/low disk: 1500 MB free on the volume holding .*e10-pf-repo-/);
+  });
+  test("under 200 MB is fatal", async () => {
+    const r = await mk(mb(50)); expect(r.fatal).toMatch(/only 50 MB free on the volume holding/);
+  });
+  test("normal disk prints nothing; LOKI_MIN_FREE_MB overrides", async () => {
+    const r = await mk(mb(10000)); expect(r.fatal).toBeNull(); expect(r.warnings.filter((w) => w.includes("disk"))).toEqual([]);
+    expect((await mk(mb(500), { LOKI_MIN_FREE_MB: "1000" })).fatal).toContain("need 1000 MB");
+  });
+  test("unreadable statfs is ignored", async () => {
+    const r = await mk(() => { throw new Error("x"); }); expect(r.fatal).toBeNull();
+  });
+  test("real preflight() entry exits 2 on a full volume", () => {
+    const { dir, env } = identifiedRepo();
+    const r = spawnSync("bun", ["-e", `import {preflight} from ${JSON.stringify(PREFLIGHT_TS)}; await preflight({repoDir:${JSON.stringify(dir)},provider:"claude",pr:false,env:${JSON.stringify({ ...env, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k", LOKI_MIN_FREE_MB: "999999999" })}});`], { encoding: "utf8" });
+    expect(r.status).toBe(2); expect(r.stderr).toContain("MB free on the volume holding");
+  });
+});
+
 describe("TEN-SPEED-08: gh auth probe reuse", () => {
   function ghDir(authExit: number): { path: string; count: () => number } {
     const d = tmpRoot("e10-pf-gh-"); const log = join(d, "log");

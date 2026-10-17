@@ -1,3 +1,4 @@
+import { statfsSync } from "node:fs";
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts";
 import { claudeLoginProbeCached, ghAuthProbeCached, requirementFix } from "../commands/doctor.ts";
@@ -5,9 +6,11 @@ import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
 const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
 const GITHUB_ORIGIN_RE = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
-export interface PreflightOptions { repoDir: string; provider: string; pr: boolean; env?: Record<string, string | undefined> }
+export interface PreflightOptions { repoDir: string; provider: string; pr: boolean; env?: Record<string, string | undefined>; statfs?: (path: string) => { bavail: number | bigint; bsize: number | bigint } }
 export interface PreflightResult { fatal: string | null; warnings: string[] }
 async function sh(argv: readonly string[], opts: ShellOpts): Promise<ShellResult> { try { return await run(argv, opts); } catch { return { stdout: "", stderr: "", exitCode: 127 }; } } // run() throws (Bun.spawn) when argv[0] does not resolve at all; treated as a failed check, never a crash
+/** TEN-STABILITY-36: free MB on the repo volume (same statfsSync math as doctor checkDisk), null when unreadable. */
+function freeMb(dir: string, statfs: NonNullable<PreflightOptions["statfs"]>): number | null { try { const s = statfs(dir); return (Number(s.bavail) * Number(s.bsize)) / (1024 * 1024); } catch { return null; } }
 export async function checkPreflight(o: PreflightOptions): Promise<PreflightResult> {
   const env = (o.env ?? process.env) as Record<string, string>; const warnings: string[] = []; const git = (a: string[]) => safeGitRun(o.repoDir, a, { env, timeoutMs: 10000 }); // FC-25: the supervisor holds the token; the repo config is untrusted
   let wt0 = await git(["rev-parse", "--is-inside-work-tree"]); let initFatal: string | undefined; // TEN-UX-01: only a truly empty folder is initialised
@@ -23,6 +26,9 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     head.exitCode !== 0 ? "repository has no commits; run: git add . && git commit -m init" :
     null;
   if (fatal) return { fatal, warnings };
+  const free = freeMb(o.repoDir, o.statfs ?? statfsSync); const minMb = Number(env["LOKI_MIN_FREE_MB"]) > 0 ? Number(env["LOKI_MIN_FREE_MB"]) : 200; // TEN-STABILITY-36: a full volume otherwise dies mid-run in worktree or event-log writes
+  if (free !== null && free < minMb) return { fatal: `only ${Math.floor(free)} MB free on the volume holding ${o.repoDir} (need ${minMb} MB); free disk space, or lower LOKI_MIN_FREE_MB`, warnings };
+  if (free !== null && free < Math.max(2048, minMb)) warnings.push(`low disk: ${Math.floor(free)} MB free on the volume holding ${o.repoDir}; a long run may fail mid-way (warns under 2 GB)`);
   if (o.provider === "claude" && !env["ANTHROPIC_API_KEY"] && !env["CLAUDE_CODE_OAUTH_TOKEN"]) { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
     const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
     if (li === "no") return { fatal: "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)", warnings };
