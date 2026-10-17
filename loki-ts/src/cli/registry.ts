@@ -167,7 +167,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("dogfood", "Dogfood report"),
     ],
   }),
-  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { subcommands: [sub("detail", "Trust metrics detail")] }),
+  cmd("trust", "KEEP-MODERN", "both", "Trust trajectory from proof history", "Trust moat surface", { flags: [bool("--json", "Print the trust trajectory as JSON")], subcommands: [sub("detail", "Trust metrics detail")] }),
   cmd("crash", "KEEP-MODERN", "both", "Inspect or submit scrubbed crash reports", "Local-only crash plumbing", {
     subcommands: [sub("list", "List stored crash reports"), sub("show", "Show one scrubbed crash report"), sub("submit", "Submit a scrubbed crash report"),sub("help", "Show crash usage")],
   }),

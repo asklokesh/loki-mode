@@ -199,6 +199,11 @@ describe("completions", () => {
     expect(complete(["loki", "control", "status", "--"])).toContain("--json");
   });
 
+  test("trust json", () => {
+    expect((findCommand("trust")?.flags ?? []).map((f) => f.name)).toContain("--json");
+    expect(complete(["loki", "trust", "--"])).toContain("--json");
+  });
+
   test("bash: commands, subcommands, flag values, exclusivity", () => {
     expect(complete(["loki", "sta"])).toContain("start");
     expect(complete(["loki", "control", ""])).toEqual(expect.arrayContaining(["serve", "prune"]));
