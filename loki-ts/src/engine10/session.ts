@@ -80,17 +80,20 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   }
   return env;
 }
-export function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
+export function untrackedList(cwd: string | undefined): string { // NUL-separated; read once per heartbeat tick and shared by diffShortstat and diffSignature (TEN-SPEED-21)
+  try { return safeGit(cwd ?? process.cwd(), ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], { timeout: 10_000 }); } catch { return ""; }
+}
+export function diffShortstat(cwd: string | undefined, untrackedRaw: string = untrackedList(cwd)): { files: number; insertions: number; deletions: number } {
   const dir = cwd ?? process.cwd(), o = { timeout: 10_000 }; // P12-12: bounded, since the heartbeat runs this synchronously every 30s
   let out = "";
   try { out = safeGit(dir, ["diff", "--shortstat", "--relative"], o).trim(); } catch { /* unreadable: counts stay zero */ } // --relative: same cwd scope as the name lists and ls-files, so the signature tracks only this run's subtree
-  let untracked = 0; // --shortstat misses untracked files: count them (without reading content) so an add-only stage is not zero change
-  try { untracked = safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o).split("\0").filter(Boolean).length; } catch { /* keep the tracked stat */ }
+  const untracked = untrackedRaw.split("\0").filter(Boolean).length; // --shortstat misses untracked files: count them (without reading content) so an add-only stage is not zero change
   const files = /(\d+) files? changed/.exec(out), ins = /(\d+) insertions?\(\+\)/.exec(out), del = /(\d+) deletions?\(-\)/.exec(out);
   return { files: (files ? Number(files[1]) : 0) + untracked, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
 }
 /** Watchdog signature: shortstat counts plus a cheap content signal (size and mtime of every changed file), so in-place growth of one already-modified file moves it. */
-export function diffSignature(cwd: string | undefined, stat: { files: number; insertions: number; deletions: number } = diffShortstat(cwd)): string {
+export function diffSignature(cwd: string | undefined, stat?: { files: number; insertions: number; deletions: number }, untrackedRaw: string = untrackedList(cwd)): string {
+  stat ??= diffShortstat(cwd, untrackedRaw);
   const dir = cwd ?? process.cwd(), o = { timeout: 10_000 };
   let bytes = 0, newest = 0;
   const add = (list: string): void => { // each list gets its own 1000-file budget, so a huge tracked list never starves the untracked one
@@ -101,7 +104,7 @@ export function diffSignature(cwd: string | undefined, stat: { files: number; in
     }
   };
   try { add(safeGit(dir, ["diff", "--name-only", "--relative", "-z"], o)); } catch { /* unreadable: counts only */ } // --relative: cwd-relative like ls-files --others, so join(dir, f) holds from a repo subdirectory
-  try { add(safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o)); } catch { /* tracked only */ }
+  add(untrackedRaw);
   return `${JSON.stringify(stat)}|${bytes}|${newest}`;
 }
 function parseMarkers(stdout: string): SessionMarkers {
@@ -214,7 +217,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
       const watchdog = createWatchdog(Date.now), stallKill = stallKillS(); // FC-17: 0 (default) never kills
       const heartbeatTimer = setInterval(() => {
-        const diff = diffShortstat(opts.cwd), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff));
+        const un = untrackedList(opts.cwd), diff = diffShortstat(opts.cwd, un), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff, un)); // one ls-files per tick, shared (TEN-SPEED-21)
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
         if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled");
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
