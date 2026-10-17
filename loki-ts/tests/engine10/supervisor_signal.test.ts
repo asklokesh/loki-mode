@@ -204,6 +204,32 @@ console.log("OUTCOME=" + r.outcome);`);
   }, 30_000);
 });
 
+// Q17-02: the supervisor passes started.max_cost_usd into the summary, so the finished summary Cost line shows "N% of cap $X".
+describe("supervisor summary cost cap", () => {
+  test("a measured cost plus started.max_cost_usd renders the percent-of-cap on the summary Cost line", async () => {
+    const bodies: { text: string }[] = [];
+    const hook = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { bodies.push(JSON.parse(await req.text()) as { text: string }); return new Response("ok"); } });
+    const base = mkdtempSync(join(tmpdir(), "e10-capsum-"));
+    roots.push(base);
+    try {
+      const dir = join(base, "repo");
+      execFileSync("git", ["init", "-q", "-b", "main", dir]);
+      git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+      writeFileSync(join(dir, "a.txt"), "base\n");
+      git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+      writeFileSync(join(base, "worker.js"), `console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_id: "s1", usd: 0.5 } }));\nconsole.log(JSON.stringify({ type: "cancel_effective", stage: null, data: {} }));\n`);
+      writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
+await runSupervisor({ runId: "e10-capsum", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: { provider: "claude", max_cost_usd: 2 } });`);
+      const p = Bun.spawn([process.execPath, join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_SLACK_WEBHOOK_URL: `http://127.0.0.1:${hook.port}/hook` }, stdout: "ignore", stderr: "pipe" });
+      const err = await new Response(p.stderr).text();
+      await p.exited;
+      const text = bodies.map((b) => b.text).join("\n");
+      if (!text.includes("% of cap $")) console.error(text + "\n" + err);
+      expect(text).toMatch(/Cost:\s+\$0\.50 .*25% of cap \$2\.00/);
+    } finally { hook.stop(true); }
+  }, 30_000);
+});
+
 // P12-10b smoke: `loki cancel` against a LIVE run (stub provider held in the implement stage) is honoured at the next stage boundary and the run completes CANCELLED.
 describe("loki cancel on a live run", () => {
   test("cancel written while a stage is running completes the run as cancelled with no PR", async () => {
