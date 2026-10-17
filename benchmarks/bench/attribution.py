@@ -446,8 +446,9 @@ def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def ensure_task_venv(workdir: str) -> bool:
-    """Create workdir/.venv (no pip, no network) and exclude it from the repo. Returns
-    True when .venv/bin/python exists afterwards. Never raises."""
+    """Create workdir/.venv (no pip, no network; system site-packages so pytest
+    resolves) and exclude it from the repo. Returns True when .venv/bin/python
+    exists afterwards. Never raises."""
     try:
         ex = os.path.join(workdir, ".git", "info", "exclude")
         os.makedirs(os.path.dirname(ex), exist_ok=True)
@@ -455,7 +456,8 @@ def ensure_task_venv(workdir: str) -> bool:
             fh.write("/.venv/\n")
         venv = os.path.join(workdir, ".venv")
         if not os.path.exists(os.path.join(venv, "bin", "python")):
-            subprocess.run([sys.executable, "-m", "venv", "--without-pip", venv],
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip",
+                            "--system-site-packages", venv],
                            check=True, capture_output=True, timeout=60)
     except Exception:  # noqa: BLE001
         pass

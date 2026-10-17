@@ -675,6 +675,21 @@ class TaskVenvEvidenceTest(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_seed_venv_python_can_run_pytest(self):
+        root = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            wd = os.path.join(root, "wd")
+            A.materialize_seed(self._task(root), wd)
+            open(os.path.join(wd, "test_a.py"), "w").write(
+                "def test_ok():\n    assert 1 == 1\n")
+            r = subprocess.run([os.path.join(wd, ".venv", "bin", "python"), "-m",
+                                "pytest", "-q", "test_a.py"], cwd=wd,
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("1 passed", r.stdout)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_evidence_skips_venv_and_records_error(self):
         wd = tempfile.mkdtemp(prefix="loki-attr-test-")
         dest = tempfile.mkdtemp(prefix="loki-attr-test-")
