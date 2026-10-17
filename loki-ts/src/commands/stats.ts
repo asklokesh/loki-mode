@@ -462,6 +462,7 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
 export type StatsResult = {
   exitCode: number;
   stdout: string;
+  stderr?: string;
 };
 
 const STATS_HELP = [
@@ -494,7 +495,8 @@ export function computeStats(argv: readonly string[]): StatsResult {
     else {
       return {
         exitCode: 2,
-        stdout: `Unknown option: ${arg} (see: loki stats --help)`,
+        stdout: "",
+        stderr: `Unknown option: ${arg} (see: loki stats --help)`,
       };
     }
   }
@@ -523,7 +525,7 @@ export async function runStats(argv: readonly string[]): Promise<number> {
   const { emitDeprecatedAlias } = await import("../util/deprecated_alias.ts");
   emitDeprecatedAlias("stats", "report session", argv);
   const r = computeStats(argv);
-  if (r.exitCode === 0) console.log(r.stdout);
-  else console.error(r.stdout);
+  if (r.stdout) console.log(r.stdout);
+  if (r.stderr) console.error(r.stderr);
   return r.exitCode;
 }

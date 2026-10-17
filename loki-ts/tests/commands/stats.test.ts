@@ -295,7 +295,16 @@ describe("stats: unknown flag is rejected (exit 2, one line)", () => {
     process.env["LOKI_DIR"] = FIXTURE;
     const r = computeStats(["--bogus", "--json"]);
     expect(r.exitCode).toBe(2);
-    expect(r.stdout).toBe("Unknown option: --bogus (see: loki stats --help)");
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toBe("Unknown option: --bogus (see: loki stats --help)");
+  });
+  it("stats unknown to stderr", () => {
+    const res = Bun.spawnSync(["bash", join(import.meta.dir, "..", "..", "..", "bin", "loki"), "stats", "--bogus", "--json"], {
+      env: { ...process.env, LOKI_DIR: FIXTURE },
+    });
+    expect(res.exitCode).toBe(2);
+    expect(res.stdout.toString()).toBe("");
+    expect(res.stderr.toString()).toContain("Unknown option: --bogus");
   });
   it("known flags and --help still exit 0", () => {
     process.env["LOKI_DIR"] = FIXTURE;
