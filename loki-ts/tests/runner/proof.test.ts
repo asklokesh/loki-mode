@@ -20,7 +20,7 @@
 // local script so the test is hermetic and does not depend on python deps.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -111,5 +111,51 @@ describe("maybeGenerateProof (runner proof-of-run hook)", () => {
     // `true` here is only returned after the python process is actually run,
     // never as a fabricated success before invocation.
     expect(result).toBe(true);
+  });
+
+  describe("app probe before the proof (TEN-GATES-04 reuse)", () => {
+    function readProof(): { facts: Record<string, Record<string, unknown>> } {
+      const dir = join(scratch, ".loki", "proofs");
+      const id = readdirSync(dir)[0] as string;
+      return JSON.parse(readFileSync(join(dir, id, "proof.json"), "utf8"));
+    }
+    const writingProbe = async (repoDir: string, lokiDir: string) => {
+      mkdirSync(join(repoDir, ".loki", "app-runner"), { recursive: true });
+      writeFileSync(join(repoDir, ".loki", "app-runner", "health.json"), JSON.stringify({ ok: true, checked_at: "t" }));
+      mkdirSync(join(lokiDir, "quality"), { recursive: true });
+      writeFileSync(join(lokiDir, "quality", "functional-results.json"), JSON.stringify({ functional_status: "verified", passed: 1, failed: 0, inconclusive: 0 }));
+      return { checks: [], pid: null, url: null };
+    };
+
+    it("probe artifacts make healthcheck and functional facts ran=true", async () => {
+      writeFileSync(join(scratch, "prd.md"), "Build a todo app");
+      const seen: Array<string | undefined> = [];
+      const probe = async (r: string, l: string, o?: { specText?: string }) => { seen.push(o?.specText); return writingProbe(r, l); };
+      expect(await maybeGenerateProof(makeCtx({ prdPath: join(scratch, "prd.md") }), { probe })).toBe(true);
+      const f = readProof().facts;
+      expect(f["healthcheck"]?.["ran"]).toBe(true);
+      expect(f["functional"]?.["ran"]).toBe(true);
+      expect(seen).toEqual(["Build a todo app"]);
+    });
+
+    it("throwing probe still invokes the generator, facts stay not_run", async () => {
+      const probe = async () => { throw new Error("boom"); };
+      expect(await maybeGenerateProof(makeCtx(), { probe })).toBe(true);
+      const f = readProof().facts;
+      expect(f["healthcheck"]?.["ran"]).toBe(false);
+      expect(f["functional"]?.["ran"]).toBe(false);
+    });
+
+    it("LOKI_PROOF_APP_PROBE=0 skips the probe", async () => {
+      process.env["LOKI_PROOF_APP_PROBE"] = "0";
+      let called = 0;
+      const probe = async (r: string, l: string) => { called++; return writingProbe(r, l); };
+      try {
+        expect(await maybeGenerateProof(makeCtx(), { probe })).toBe(true);
+      } finally {
+        delete process.env["LOKI_PROOF_APP_PROBE"];
+      }
+      expect(called).toBe(0);
+    });
   });
 });
