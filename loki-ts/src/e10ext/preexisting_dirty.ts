@@ -32,10 +32,10 @@ export function untrackedAtIntake(repoDir: string): string[] {
 /** D50-F1 r3: path -> "<blob> <octal mode>" for every untracked file at intake (blob written to the object store);
  *  "!<size>:<mtimeMs>:<ctimeMs>" when it cannot be snapshotted (over 50MB, not a regular file, hash failure). */
 export function snapshotUntracked(repoDir: string): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = {}; const mx = Number(process.env.LOKI_E10_SNAPSHOT_MAX), cap = mx > 0 && Number.isFinite(mx) ? mx : 50e6; // bad value -> 50MB default
   for (const p of untrackedAtIntake(repoDir)) {
     let st; try { st = lstatSync(join(repoDir, p)); } catch { out[p] = "!gone"; continue; }
-    try { if (!st.isFile() || st.size > Number(process.env.LOKI_E10_SNAPSHOT_MAX ?? 50e6)) throw new Error("skip"); out[p] = `${blob(repoDir, p)} ${(st.mode & 0o777).toString(8)}`; } catch { out[p] = `!${st.size}:${st.mtimeMs}:${st.ctimeMs}`; }
+    try { if (!st.isFile() || st.size > cap) throw new Error("skip"); out[p] = `${blob(repoDir, p)} ${(st.mode & 0o777).toString(8)}`; } catch { out[p] = `!${st.size}:${st.mtimeMs}:${st.ctimeMs}`; }
   }
   return out;
 }
