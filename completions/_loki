@@ -32,6 +32,12 @@ function _loki {
                 export)
                     _arguments '--sarif[Write findings.sarif for a run]'
                     ;;
+                control)
+                    _arguments \
+                        '--port[Port for the control plane server]:port:' \
+                        '--json[Output as JSON]' \
+                        '1:subcommand:(serve status help)'
+                    ;;
                 config)
                     _loki_config
                     ;;
