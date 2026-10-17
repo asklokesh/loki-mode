@@ -358,3 +358,64 @@ def test_cli_model_mismatch_not_proven(tmp_path):
     _write(f, rows)
     rc, out = _run(*_base_args(f))
     assert "NOT PROVEN" in out and "model" in out, out
+
+
+def test_cost_profile_named_in_verdict():
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r["cost_profile"] = "lean"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["cost_profile"] == "lean"
+    assert v["verdict"] == "PROVEN_AT(0.5)", v
+
+
+def test_cost_profile_absent_is_null_and_does_not_block():
+    loki, floor = _tight(0.4)
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["cost_profile"] is None
+    assert v["verdict"] == "PROVEN_AT(0.5)", v
+
+
+def test_cost_profile_mixed_arm_blocks():
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r["cost_profile"] = "lean"
+    loki[0]["cost_profile"] = "off"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["verdict"] == "NOT PROVEN"
+    assert v["cost_profile"] == "mixed"
+    assert any(r.startswith("cost_profile") for r in v["reasons"])
+
+
+def test_cost_profile_partly_missing_is_mixed():
+    loki, floor = _tight(0.4)
+    for r in loki[1:]:
+        r["cost_profile"] = "lean"
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["cost_profile"] == "mixed"
+    assert any(r.startswith("cost_profile") for r in v["reasons"])
+
+
+def test_cost_profile_ignores_floor_and_unmeasured_rows():
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r["cost_profile"] = "lean"
+    loki.append({"task_id": "t0", "unmeasured": True, "cost_profile": "off"})
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert v["cost_profile"] == "lean"
+    assert v["verdict"] == "PROVEN_AT(0.5)", v
+
+
+def test_cli_cost_profile_lean_and_mixed(tmp_path):
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    for r in rows:
+        if r["arm"] == "loki":
+            r["cost_profile"] = "lean"
+    f = tmp_path / "p.jsonl"
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    assert rc == 0 and json.loads(out)["cost_profile"] == "lean", out
+    next(r for r in rows if r["arm"] == "loki")["cost_profile"] = "off"
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    assert rc == 1 and json.loads(out)["cost_profile"] == "mixed", out
