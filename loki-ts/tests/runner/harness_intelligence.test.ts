@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
+import { attribute, attributeFullSuite, attributeStatic, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -657,6 +657,46 @@ describe("repo baseline profile (REPOMEM)", () => {
       expect(attribute(d, base, [{ name: "n", ids: ["a"], eligible: true }]).preExistingChecks).toEqual([]);
       prof(d, []);
       expect(attribute(d, base, [{ name: "n", ids: ["a"], eligible: true }]).line).toBeNull();
+    });
+  });
+
+  describe("attributeStatic (TEN-QUALITY-02)", () => {
+    const R = (l: string, m = "`os` imported but unused", c = "F401"): string => `a.py:${l}:8: ${c} [*] ${m}\nFound 1 error.\n[*] 1 fixable with the \`--fix\` option.\n`;
+    test("recorded real samples parse for all 3 tools", () => {
+      const ruff = "src/a.py:1:8: F401 [*] `os` imported but unused\nsrc/a.py:3:1: E402 Module level import not at top of file\nFound 2 errors.\n[*] 1 fixable with the `--fix` option.\n";
+      const sc = "In.sh:3:6: warning: Double quote to prevent globbing and word splitting. [SC2086]\nIn.sh:4:1: note: Use find instead of ls. [SC2012]\n";
+      const es = "/r/x.js:1:7: 'x' is assigned a value but never used. [Error/no-unused-vars]\n/r/x.js:2:1: Unexpected console statement. [Warning/no-console]\n\n2 problems\n";
+      expect(attributeStatic("ruff", ruff, ruff, 1).preExisting).toBe(true);
+      expect(attributeStatic("shellcheck", sc, sc, 1).preExisting).toBe(true);
+      expect(attributeStatic("eslint", es, es, 1).preExisting).toBe(true);
+      expect(attributeStatic("ruff", ruff, "src/a.py:1:8: F401 [*] `os` imported but unused\n", 1).introduced).toEqual(["src/a.py E402 Module level import not at top of file"]);
+      expect(attributeStatic("shellcheck", sc, sc.split("\n")[0] + "\n", 1).preExisting).toBe(false);
+      expect(attributeStatic("eslint", es, es.split("\n")[0] + "\n", 1).preExisting).toBe(false);
+    });
+    test("same diagnostic on base and head is pre-existing; shifted line alone is pre-existing", () => {
+      expect(attributeStatic("ruff", R("1"), R("1"), 1).preExisting).toBe(true);
+      expect(attributeStatic("ruff", R("40"), R("1"), 1).preExisting).toBe(true);
+    });
+    test("an extra instance on head is introduced", () => {
+      expect(attributeStatic("ruff", R("1") + R("9"), R("1"), 1).preExisting).toBe(false);
+    });
+    test("same code with a different message is introduced", () => {
+      expect(attributeStatic("ruff", R("1", "`sys` imported but unused"), R("1"), 1).preExisting).toBe(false);
+    });
+    test("fail closed: garbage head, empty parse with non-zero exit, null base, garbage base, unknown tool", () => {
+      expect(attributeStatic("ruff", "Traceback boom\n", R("1"), 2).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "", R("1"), 2).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "Traceback boom\n", R("1"), 0).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "", "garbage\n", 0).preExisting).toBe(false);
+      expect(attributeStatic("ruff", R("1"), null, 1).preExisting).toBe(false);
+      expect(attributeStatic("ruff", R("1"), "garbage\n", 1).preExisting).toBe(false);
+      expect(attributeStatic("pylint", R("1"), R("1"), 1).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "All checks passed!\n", R("1"), 0).preExisting).toBe(true);
+      // 3-arg form: exit unknown, empty or summary-only parse fails closed
+      expect(attributeStatic("ruff", "", R("1")).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "Found 2 errors.\n", R("1")).preExisting).toBe(false);
+      expect(attributeStatic("ruff", "Found 2 errors.\n", R("1"), 0).preExisting).toBe(false);
+      expect(attributeStatic("eslint", "2 problems\n", "", 0).preExisting).toBe(false);
     });
   });
 
