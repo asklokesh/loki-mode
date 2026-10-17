@@ -2488,3 +2488,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T07:11Z (CoS) v11.17.36
 - Wave AC released: TEN-QUALITY-11, TEN-QUALITY-12, TEN-ADOPTION-09 (HIGH), TEN-UX-12, TEN-ADOPTION-07, TEN-ADOPTION-08; 6 of 6 APPROVE, merged clean via merge.sh (merged-ac.txt).
+
+## 2026-10-17T07:20Z (CoS) v11.17.37
+- Wave AD released: TEN-COST-11-F1, TEN-COST-28, TEN-SPEED-03, TEN-QUALITY-13, TEN-GATES-14 (HIGH), TEN-UX-13, TEN-DEPLOY-11 (7 APPROVE, merged clean, merged-ad.txt). TEN-STABILITY-11 already shipped (run_pid.ts verifyRunPid). TEN-SECURITY-01 BLOCK 13bec58ff after fix round. Combined tree: bun test tests/engine10 had 1 fail, the core size budget (core is 5006 lines, cap 5000), pre-existing at 18900e64d and b81a1012a; P0 fix-forward dispatched.

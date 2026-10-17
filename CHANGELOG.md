@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.37 (2026-10-17)
+
+### Added
+- TEN-COST-28: the run summary prints each stage's share of spend and names the top stage.
+- TEN-SPEED-03: the Time line names the slowest stage and its share of wall time.
+- TEN-QUALITY-13: the cross-review prompt carries the intent card Acceptance lines and names unmet ones.
+- TEN-GATES-14: `loki verify --explain` lists each gate as exogenous or agent-influenced, with the evidence it read.
+- TEN-UX-13: `loki undo --dry-run` prints the diffstat it would revert.
+- TEN-DEPLOY-11: `loki rollback deploy` prints the provider rollback command for the last deploy record.
+
+### Tests
+- TEN-COST-11-F1: pin the concurrent wall distrust of a green base run when implement changed files.
+
+### Known
+- TEN-STABILITY-11 closed as already shipped: `loki-ts/src/util/run_pid.ts` verifyRunPid already compares process start time to catch PID reuse.
+- The engine10 core size budget test reports 5006 of 5000 lines on main (pre-existing since at least v11.17.35); a P0 fix-forward slice is open.
+- TEN-SECURITY-01 remains blocked after one fix round (git diff-prefix config bypass in the added-line scan); it is re-dispatched.
+
 ## v11.17.36 (2026-10-17)
 
 ### Added
