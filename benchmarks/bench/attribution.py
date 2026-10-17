@@ -365,7 +365,46 @@ def summarize(rows: List[Dict[str, Any]],
         if sub:
             by_class[c] = {a: compute_metrics([r for r in sub if r["arm"] == a])
                            for a in arms}
-    return {"by_arm": by_arm, "by_class": by_class}
+    return {"by_arm": by_arm, "by_class": by_class,
+            "attribution_cells": attribution_cells(rows)}
+
+
+def _models_of(row: Dict[str, Any]) -> List[str]:
+    ran = (row.get("usage_detail") or {}).get("models_ran") or []
+    if ran:
+        return sorted(ran)
+    return [row["model_used"]] if row.get("model_used") else []
+
+
+def _model_match(a: str, b: str) -> bool:
+    a, b = a.lower(), b.lower()
+    return a == b or a in b or b in a
+
+
+def attribution_cells(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One cell per (task, repeat) holding a loki row and a raw row. The cell is
+    invalid, with a reason, when the models that actually ran differ: the
+    loki-vs-raw comparison is then not an attribution of the harness."""
+    cells: List[Dict[str, Any]] = []
+    keys = sorted({(r.get("task"), r.get("repeat")) for r in rows},
+                  key=lambda k: (str(k[0]), str(k[1])))
+    for task, rep in keys:
+        grp = [r for r in rows if r.get("task") == task and r.get("repeat") == rep]
+        loki = next((r for r in grp if r.get("arm") == "loki"), None)
+        for raw in (r for r in grp if r.get("arm") in ("raw-configured", "raw-bare")):
+            if loki is None:
+                continue
+            lm, rm = _models_of(loki), _models_of(raw)
+            ok = bool(lm) and bool(rm) and all(
+                any(_model_match(x, y) for y in rm) for x in lm) and all(
+                any(_model_match(x, y) for y in lm) for x in rm)
+            reason = None
+            if not ok:
+                reason = ("model mismatch: loki ran %s, %s ran %s"
+                          % (lm or "unknown", raw["arm"], rm or "unknown"))
+            cells.append({"task": task, "repeat": rep, "raw_arm": raw["arm"],
+                          "valid": ok, "reason": reason})
+    return cells
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +525,7 @@ def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
         "reported_success": rc == 0 and not is_error,
         "cost_usd": cost, "cost_source": "claude_json.total_cost_usd" if cost is not None else None,
         "tokens_in": t_in, "tokens_out": t_out, "model_used": model_used or model,
+        "usage_detail": _claude_adapter.parse_usage_detail(out),
         "command": "claude -p <prompt> --output-format json --model %s "
                    "--dangerously-skip-permissions --max-budget-usd %s%s"
                    % (model, budget_usd, " --bare" if bare else ""),
