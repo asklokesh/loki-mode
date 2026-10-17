@@ -79,9 +79,9 @@ export const AI_BOM_FILE = "ai-bom.cdx.json";
 export interface SealedReceipt { run_id: string; provider: string; model: string; receipt_sha256: string; cost?: { per_model?: Record<string, unknown> } }
 
 /** Names that look like a path, an env assignment or a credential are dropped, never written. */
-const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/;
-const SECRETISH = /^(sk-|ghp_|gho_|xox|AKIA|eyJ)/;
-const safe = (s: unknown): string | null => (typeof s === "string" && SAFE_NAME.test(s.trim()) && !SECRETISH.test(s.trim()) ? s.trim() : null);
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}(\/[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127})?$/;
+const SECRETISH = /^(sk[-_]|gh[pousr]_|github_pat_|glpat-|xox|AKIA|ASIA|AIza|npm_|hf_|eyJ)/i;
+const safe = (s: unknown): string | null => { const t = typeof s === "string" ? s.trim() : ""; return SAFE_NAME.test(t) && !t.split("/").some((p) => SECRETISH.test(p)) ? t : null; };
 
 /** MARK-3: after the seal, write the BOM next to the receipt from what the run recorded. Throws on I/O failure; the caller (seal) swallows it. */
 export function writeAiBom(runDir: string, r: SealedReceipt): void {
