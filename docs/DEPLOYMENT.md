@@ -523,6 +523,28 @@ deliberately.
 
 ---
 
+## From brief to verified URL
+
+One command builds from a brief, deploys the result and proves what is live.
+
+```bash
+loki start "a todo app with login" --deploy \
+  --destination production --domain todo.example.com --env-file .env.production \
+  --health-url https://todo.example.com/health --auto-rollback --github
+loki verify --url https://todo.example.com
+```
+
+- `loki start` runs first. Only a start that exits 0 reaches the deploy; a non-zero start prints `not deploying` and returns its own code.
+- `--deploy` runs `loki deploy --execute` with `--destination`, `--canary`, `--env-file`, `--domain`, `--health-url`, `--health-match` and `--auto-rollback` passed through. The deploy still refuses without a VERIFIED receipt for this exact HEAD.
+- With `--deploy`, `--env-file` is the deploy env file (key names are recorded, values are not), not a config file.
+- `--github` runs `loki github publish` after a deploy that exited 0. A failed deploy skips it.
+- A flag value that starts with `-` exits 2. The deploy-only flags without `--deploy` exit 2.
+- `loki verify --url` fetches `/.well-known/loki-provenance.json` from the live host and is VERIFIED only when its signature and cited receipt both check out.
+
+In `loki chat`, `/deploy` takes the same deploy flags, prints the full argv and waits for a y before running.
+
+---
+
 ## Reference
 
 | Env var | Where | Meaning |

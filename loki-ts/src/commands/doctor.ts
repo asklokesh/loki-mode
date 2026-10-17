@@ -11,7 +11,7 @@
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
-import { appendFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsConstants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -915,6 +915,22 @@ export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv 
   } catch {
     return "";
   }
+}
+
+// TEN-SPEED-05: back-to-back `loki start` runs reuse a SUCCESSFUL login probe
+// for 10 minutes. Only "yes" is stored; "no" and "" always re-probe, so a
+// logged-out state is never hidden. Keyed on the CLI path; a missing or
+// corrupt file means probe.
+export const CLAUDE_LOGIN_TTL_MS = 10 * 60 * 1000;
+export function claudeLoginProbeCached(cli: string, env: NodeJS.ProcessEnv = process.env, now = Date.now()): "yes" | "no" | "" {
+  const file = join(env.HOME || homedir(), ".loki", "claude-login-ok.json");
+  try {
+    const c = JSON.parse(readFileSync(file, "utf8"));
+    if (c?.cli === cli && typeof c.at === "number" && now - c.at >= 0 && now - c.at < CLAUDE_LOGIN_TTL_MS) return "yes";
+  } catch { /* no usable cache */ }
+  let li = claudeAuthStatusLoggedIn(cli, env); if (li === "") li = claudeAuthStatusLoggedIn(cli, env); // one retry, as doctor does
+  if (li === "yes") { try { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, JSON.stringify({ cli, at: now })); } catch { /* best effort */ } }
+  return li;
 }
 
 export type ClaudeLoginResult = {

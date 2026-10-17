@@ -1,7 +1,5 @@
-// loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed
-// by HEAD^{tree}, plus flaky tests and failure signatures for the brief's "top 3 past failures".
-// Reads are O(1) and never throw (missing or corrupt = miss); nothing writes as a side effect of a
-// read. Callers time writes after the PR. Not yet in RunContext (a later CacheProvider slice).
+// loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed by HEAD^{tree}.
+// Reads never throw (missing or corrupt = miss) and write nothing; callers time writes after the PR.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,9 +33,7 @@ export function readJson<T>(path: string, isValid: (v: unknown) => v is T = (_v)
     return null; // a corrupt cache entry is a miss, never a crash
   }
 }
-// ponytail: top-level shape only (array-ness), not per-entry field checks --
-// this is what closes the demonstrated crash; a future slice can deep-check
-// RepoMap/TestMap entries if a corrupt-but-array-shaped file shows up.
+// Top-level shape only (array-ness); a deep per-entry check is a later slice if a corrupt array-shaped file shows up.
 function isRepoMap(v: unknown): v is RepoMap {
   return typeof v === "object" && v !== null && Array.isArray((v as RepoMap).files) && Array.isArray((v as RepoMap).entries);
 }
@@ -48,15 +44,19 @@ export function writeJson(path: string, dir: string, data: unknown): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(data));
 }
-export function readRepoMapCache(dir: string, tree: string): RepoMap | null {
-  return readJson<RepoMap>(resolve(dir, `repomap2-${tree}.json`), isRepoMap);
+export const readRepoMapCache = (dir: string, tree: string): RepoMap | null => readJson<RepoMap>(resolve(dir, `repomap2-${tree}.json`), isRepoMap);
+export const writeRepoMapCache = (dir: string, tree: string, map: RepoMap): void => writeJson(resolve(dir, `repomap2-${tree}.json`), dir, map);
+export const readTestMapCache = (dir: string, tree: string): TestMap | null => readJson<TestMap>(resolve(dir, `testmap-${tree}.json`), isTestMap);
+export const writeTestMapCache = (dir: string, tree: string, map: TestMap): void => writeJson(resolve(dir, `testmap-${tree}.json`), dir, map);
+/** TEN-SPEED-04: hit/miss counts for the tree-keyed builders below. */
+export const cacheStats = { hits: 0, misses: 0 };
+function viaCache<T>(hit: T | null, build: () => T, save: (m: T) => void): T {
+  if (hit) { cacheStats.hits++; return hit; }
+  cacheStats.misses++;
+  const m = build();
+  try { save(m); } catch { /* an unwritable cache only costs the next round a rebuild */ }
+  return m;
 }
-export function writeRepoMapCache(dir: string, tree: string, map: RepoMap): void {
-  writeJson(resolve(dir, `repomap2-${tree}.json`), dir, map);
-}
-export function readTestMapCache(dir: string, tree: string): TestMap | null {
-  return readJson<TestMap>(resolve(dir, `testmap-${tree}.json`), isTestMap);
-}
-export function writeTestMapCache(dir: string, tree: string, map: TestMap): void {
-  writeJson(resolve(dir, `testmap-${tree}.json`), dir, map);
-}
+/** Same tree hash as an earlier fix round: reuse the stored map; otherwise build once and store. */
+export const cachedRepoMap = (dir: string, tree: string, build: () => RepoMap): RepoMap => viaCache(readRepoMapCache(dir, tree), build, (m) => writeRepoMapCache(dir, tree, m));
+export const cachedTestMap = (dir: string, tree: string, build: () => TestMap): TestMap => viaCache(readTestMapCache(dir, tree), build, (m) => writeTestMapCache(dir, tree, m));

@@ -48,6 +48,18 @@ function repoOf(receiptPath: string): string | null {
   return basename(runs) === "runs" && basename(dirname(runs)) === ".loki" ? dirname(dirname(runs)) : null;
 }
 
+/** Paths changed since the seal (head_sha..HEAD) that the sealed diff (base_sha..head_sha) also touched. A moved HEAD with no overlap is benign (empty list).
+ *  Null when the sealed diff cannot be established (no usable base_sha, repo error, empty sealed diff): the caller then treats any HEAD move as drift. */
+function overlap(repo: string, base: unknown, sealedHead: string, head: string): string[] | null {
+  if (typeof base !== "string" || !/^[0-9a-f]{40,64}$/.test(base) || !/^[0-9a-f]{40,64}$/.test(sealedHead)) return null;
+  try {
+    const names = (a: string, b: string): string[] => safeGit(repo, ["diff", "--name-only", "--no-renames", "-z", a, b]).split("\0").filter((x) => x !== "");
+    const sealed = new Set(names(base, sealedHead));
+    if (sealed.size === 0) return null;
+    return names(sealedHead, head).filter((x) => sealed.has(x));
+  } catch { return null; }
+}
+
 export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
   let receiptPath = given;
   try { receiptPath = join(realpathSync(dirname(given)), basename(given)); } catch { /* keep the given path */ } // resolve the DIRECTORY only (as verifyReceipt/checkEventLog read the log from dirname(given)); a receipt.json symlink must not move the log and layout lookup
@@ -60,7 +72,11 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
   if (repo && env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"] !== "1" && typeof r["head_sha"] === "string") {
     let head = "";
     try { head = safeGit(repo, ["rev-parse", "HEAD"]).trim(); } catch { return null; }
-    if (head !== "" && head !== r["head_sha"]) return { verdict: "UNCHECKED", reason: `head drift: receipt head_sha ${r["head_sha"]} is not the current HEAD ${head} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
+    if (head !== "" && head !== r["head_sha"]) {
+      const hit = overlap(repo, r["base_sha"], r["head_sha"], head);
+      if (hit === null) return { verdict: "UNCHECKED", reason: `head drift: receipt head_sha ${r["head_sha"]} is not the current HEAD ${head} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
+      if (hit.length) return { verdict: "UNCHECKED", reason: `head drift: HEAD ${head} changed sealed path(s) after the seal: ${hit.join(", ")} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
+    }
   }
   return null;
 }

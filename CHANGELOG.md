@@ -5,6 +5,49 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.39 (2026-10-17)
+
+### Added
+- TEN-DEPLOY-09: `loki start --deploy` passes --destination, --canary, --env-file, --domain and --github through to `loki deploy`; chat help and docs describe the brief-to-verified-URL path. With --deploy, --env-file is no longer loaded as start config.
+
+### Fixed
+- TEN-STABILITY-14: the four loki-ts/tests/util structural guards are green again. funnel.ts spawns with a token-free env instead of the full parent env, --cost is declared in the start flag parity table, and the regex and module allowlists match the tree.
+
+### Known
+- A-112b closed as already shipped (commit bfd6b98d8 unfolded subtractBase).
+- TEN-DEPLOY-03, TEN-GATES-15, Q17-05b and Q18-03e remain blocked and are re-dispatched with opus fixers.
+
+## v11.17.38 (2026-10-17)
+
+### Added
+- TEN-DEPLOY-06: `loki deploy --domain` attaches a custom domain and proves TLS.
+- TEN-COST-29: the Spend summary flags cache-cold stages (cache read under 30 percent of input).
+- TEN-SPEED-04: cachedRepoMap and cachedTestMap reuse the stored map when the tree hash is unchanged, with hit and miss counts.
+- TEN-QUALITY-14: the Wall authoring prompt requires one negative-case assertion per acceptance line.
+- TEN-UX-14: `loki queue list` shows id, age and status columns with a count footer.
+- TEN-ADOPTION-11: `loki trust` prints a copyable README badge snippet for the last sealed run.
+- TEN-ADOPTION-12: a one-line what-is-new prints once after an upgrade.
+
+### Fixed
+- TEN-STABILITY-13: wall base-run classifiers moved to util/check_result.ts; engine10 core is 4949 lines, under the 5000 cap again.
+- TEN-SECURITY-01: the pre-PR secure scan matches provider keys in added lines and forces a/ b/ diff prefixes, so user diff config cannot hide a key.
+- TEN-SECURITY-02: redact strips URL userinfo and Authorization header values.
+- TEN-SECURITY-03: the bash secret scanners match Anthropic sk-ant keys.
+- TEN-GATES-17: a pre-existing test file the run edited is advisory provenance, not exogenous proof, for `loki verify --require-exogenous`.
+- TEN-SPEED-05: a successful claude login probe is reused for 10 minutes.
+- TEN-UX-15: `start --cost` is registered in shell completions; registry flags are guarded in every shell.
+- TEN-DEPLOY-12: `loki status --probe` retries once after 5s before reporting a regression.
+- TEN-STABILITY-12: a truncated outbox entry is quarantined with one warning instead of silently overwritten.
+
+### Tests
+- TEN-GATES-16: pin the fail-safe fallbacks of head-drift overlap.
+
+### Known
+- TEN-COST-30 closed as already shipped: start.ts warns on an unknown loki.yaml cost.profile and cost_profile.ts rejects an unknown --cost value.
+- TEN-QUALITY-15 closed as already shipped: fix.ts caps rounds after one escalation and machine.ts stops on three identical verify signatures.
+- Four tests/util structural guards are red on this tree (model-output regex allowlist count for wall.ts, full-env spawn allowlist for doctor.ts and funnel.ts, stale unregistered-modules entry for status.ts, undeclared --cost in the start flag parity table). Three were already red at v11.17.37; a P0 fix-forward slice is open.
+- TEN-DEPLOY-03 and TEN-GATES-15 remain blocked after one fix round and are re-dispatched.
+
 ## v11.17.37 (2026-10-17)
 
 ### Added

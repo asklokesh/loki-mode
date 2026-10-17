@@ -1383,6 +1383,138 @@ TOKEN="; D28B="$WORKROOT/d28b"
     else
         bad "28i. deploy ran after a failed env step" "rc=$RC28I calls=$(tr '\n' '|' < "$ENV_CALLS" 2>/dev/null)"
     fi
+
+    # 29. --domain: attach with the provider's documented verb, then PROVE TLS with
+    # openssl. vercel, openssl and curl are stubs; nothing leaves the machine.
+    echo "29. loki deploy --domain attaches a domain and proves TLS (never claims valid unchecked)"
+    DOM_CALLS="$SENTINEL_DIR/dom-calls"
+    DOM_MODE="$WORKROOT/dom-mode"
+    DOM_SHA="$WORKROOT/dom-sha"
+    mk_dom_bin() {  # <bindir> <cli>... ; deploy CLIs print a URL and log argv; plus openssl and curl stubs
+        local b="$1" c; shift; mkdir -p "$b"
+        for c in "$@"; do
+            printf '#!/usr/bin/env bash\necho "%s $*" >> "%s"\necho "https://app-abc.example-host.app"\nexit 0\n' "$c" "$DOM_CALLS" > "$b/$c"
+            chmod +x "$b/$c"
+        done
+        cat > "$b/openssl" <<EOF
+#!/usr/bin/env bash
+echo "openssl \$*" >> "$DOM_CALLS"
+mode="\$(cat "$DOM_MODE" 2>/dev/null)"
+case "\$1" in
+    s_client)
+        [ "\$mode" = hsfail ] && exit 1
+        echo "-----BEGIN CERTIFICATE-----"; echo "AAAA"; echo "-----END CERTIFICATE-----"
+        exit 0 ;;
+    x509)
+        cat >/dev/null
+        echo "notAfter=Jan  1 00:00:00 2030 GMT"
+        [ "\$mode" = expiring ] && { echo "Certificate will expire"; exit 1; }
+        echo "Certificate will not expire"; exit 0 ;;
+esac
+exit 0
+EOF
+        cat > "$b/curl" <<EOF
+#!/usr/bin/env bash
+echo "curl \$*" >> "$DOM_CALLS"
+case "\$*" in *provenance*) ;; *) printf 200; exit 0 ;; esac
+[ -s "$DOM_SHA" ] || exit 22
+printf '{"head_sha":"%s"}' "\$(cat "$DOM_SHA")"
+EOF
+        chmod +x "$b/openssl" "$b/curl"
+    }
+    run_dom() {  # <dir> <bindir> <path> [flags...]
+        local d="$1" bd="$2" p="$3"; shift 3
+        ( cd "$d" && PATH="$bd:$p" LOKI_DIR="$d/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+            bash "$LOKI_BIN" deploy --dir "$d" --no-clip --execute --domain shop.example.com "$@" 2>&1 )
+    }
+    dom_calls() { tr '\n' '|' < "$DOM_CALLS" 2>/dev/null; }
+    mk_dom_bin "$WORKROOT/dom-vercel" vercel
+    mk_dom_bin "$WORKROOT/dom-netlify" netlify
+
+    # 29a. GREEN: alias argv recorded, TLS probe ran, tls_status=valid, tls_not_after set, provenance matches
+    mk_envfix d29a; D29A="$WORKROOT/d29a"
+    git -C "$D29A" rev-parse HEAD > "$DOM_SHA"
+    echo ok > "$DOM_MODE"
+    reset_sentinels
+    OUT29A="$(run_dom "$D29A" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29A=$?
+    R29A="$(last_record "$D29A")"
+    if [ "$RC29A" -eq 0 ] && grep -q "^vercel alias set https://app-abc.example-host.app shop.example.com$" "$DOM_CALLS" \
+       && grep -q "^openssl s_client -servername shop.example.com -connect shop.example.com:443$" "$DOM_CALLS" \
+       && grep -q "^openssl x509 -noout -enddate -checkend 604800$" "$DOM_CALLS" \
+       && [ "$(rec_field "$R29A" domain)" = "shop.example.com" ] && [ "$(rec_field "$R29A" domain_status)" = "attached" ] \
+       && [ "$(rec_field "$R29A" tls_status)" = "valid" ] && [ "$(rec_field "$R29A" tls_not_after)" = "2030-01-01T00:00:00Z" ] \
+       && [ "$(rec_field "$R29A" domain_provenance)" = "match" ]; then
+        ok "29a. vercel alias set argv recorded, tls_status=valid, tls_not_after set, provenance match, exit 0"
+    else
+        bad "29a. domain green path wrong" "rc=$RC29A calls=$(dom_calls) rec=$R29A $(printf '%s' "$OUT29A" | tail -4)"
+    fi
+
+    # 29b. an openssl whose -checkend fails gives expiring (exit 0, never valid)
+    mk_envfix d29b; D29B="$WORKROOT/d29b"
+    echo expiring > "$DOM_MODE"
+    reset_sentinels
+    OUT29B="$(run_dom "$D29B" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29B=$?
+    R29B="$(last_record "$D29B")"
+    if [ "$RC29B" -eq 0 ] && [ "$(rec_field "$R29B" tls_status)" = "expiring" ]; then
+        ok "29b. a failing -checkend records tls_status=expiring"
+    else
+        bad "29b. expiring not recorded" "rc=$RC29B status=$(rec_field "$R29B" tls_status) $(printf '%s' "$OUT29B" | tail -3)"
+    fi
+
+    # 29c. a handshake failure gives invalid, exit 6, and the DNS record the provider needs
+    mk_envfix d29c; D29C="$WORKROOT/d29c"
+    echo hsfail > "$DOM_MODE"
+    reset_sentinels
+    OUT29C="$(run_dom "$D29C" "$WORKROOT/dom-vercel" "$(path_without $ALL_CLIS openssl curl)")"; RC29C=$?
+    R29C="$(last_record "$D29C")"
+    if [ "$RC29C" -eq 6 ] && [ "$(rec_field "$R29C" tls_status)" = "invalid" ] && grep -q "cname.vercel-dns.com" <<<"$OUT29C"; then
+        ok "29c. a handshake failure records tls_status=invalid, exits 6 and prints the Vercel DNS record"
+    else
+        bad "29c. invalid TLS wrong" "rc=$RC29C status=$(rec_field "$R29C" tls_status) $(printf '%s' "$OUT29C" | tail -3)"
+    fi
+
+    # 29d. Netlify: manual domain step, no alias call, TLS still checked
+    mk_envfix d29d; D29D="$WORKROOT/d29d"
+    echo ok > "$DOM_MODE"
+    reset_sentinels
+    OUT29D="$(run_dom "$D29D" "$WORKROOT/dom-netlify" "$(path_without $ALL_CLIS openssl curl)")"; RC29D=$?
+    R29D="$(last_record "$D29D")"
+    if [ "$RC29D" -eq 0 ] && [ "$(rec_field "$R29D" domain_status)" = "manual" ] && ! grep -q "alias\|certs" "$DOM_CALLS" \
+       && grep -q "^openssl s_client" "$DOM_CALLS" && [ "$(rec_field "$R29D" tls_status)" = "valid" ]; then
+        ok "29d. netlify records domain_status=manual, makes no alias call, still checks TLS"
+    else
+        bad "29d. netlify manual path wrong" "rc=$RC29D calls=$(dom_calls) $(printf '%s' "$OUT29D" | tail -3)"
+    fi
+
+    # 29e. no openssl on PATH gives unchecked, never valid
+    mk_dom_bin "$WORKROOT/dom-noossl" vercel
+    rm -f "$WORKROOT/dom-noossl/openssl"
+    mk_envfix d29e; D29E="$WORKROOT/d29e"
+    reset_sentinels
+    OUT29E="$(run_dom "$D29E" "$WORKROOT/dom-noossl" "$(path_without $ALL_CLIS openssl curl)")"; RC29E=$?
+    R29E="$(last_record "$D29E")"
+    if [ "$RC29E" -eq 0 ] && [ "$(rec_field "$R29E" tls_status)" = "unchecked" ] && [ "$(rec_field "$R29E" tls_not_after)" = "" ]; then
+        ok "29e. no openssl records tls_status=unchecked, never valid"
+    else
+        bad "29e. missing openssl was not unchecked" "rc=$RC29E status=$(rec_field "$R29E" tls_status) $(printf '%s' "$OUT29E" | tail -3)"
+    fi
+
+    # 29f. a failed alias exits 6 with domain_status=failed; --domain needs --execute and a hostname
+    mk_dom_bin "$WORKROOT/dom-aliasfail" vercel
+    printf '#!/usr/bin/env bash\necho "vercel $*" >> "%s"\n[ "$1" = alias ] && exit 2\necho "https://app-abc.example-host.app"\nexit 0\n' "$DOM_CALLS" > "$WORKROOT/dom-aliasfail/vercel"
+    mk_envfix d29f; D29F="$WORKROOT/d29f"
+    reset_sentinels
+    OUT29F="$(run_dom "$D29F" "$WORKROOT/dom-aliasfail" "$(path_without $ALL_CLIS openssl curl)")"; RC29F=$?
+    R29F="$(last_record "$D29F")"
+    OUT29G="$(cd "$D29F" && bash "$LOKI_BIN" deploy --dir "$D29F" --no-clip --domain shop.example.com 2>&1)"; RC29G=$?
+    OUT29H="$(cd "$D29F" && bash "$LOKI_BIN" deploy --dir "$D29F" --no-clip --execute --domain "bad host" 2>&1)"; RC29H=$?
+    if [ "$RC29F" -eq 6 ] && [ "$(rec_field "$R29F" domain_status)" = "failed" ] \
+       && [ "$RC29G" -eq 1 ] && grep -q "requires --execute" <<<"$OUT29G" \
+       && [ "$RC29H" -eq 1 ] && grep -q "not a valid hostname" <<<"$OUT29H"; then
+        ok "29f. failed alias exits 6 (domain_status=failed); --domain without --execute and a bad hostname exit 1"
+    else
+        bad "29f. alias failure or arg validation wrong" "rc=$RC29F/$RC29G/$RC29H $(printf '%s' "$OUT29F" | tail -2)"
+    fi
     kill "$HS_PID" 2>/dev/null || true
 else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
@@ -1390,11 +1522,11 @@ fi
 
 
 # ===========================================================================
-# 29. Live binding: the build ships a signed provenance doc and the live URL must serve the
+# 30. Live binding: the build ships a signed provenance doc and the live URL must serve the
 #     anchor's. A python http.server serves the dir a stubbed vercel copies public/ into.
 #     RED on main: no provenance file and the record has no live_binding.
 # ===========================================================================
-echo "29. provenance ships with the build and the live URL is bound to the verified SHA"
+echo "30. provenance ships with the build and the live URL is bound to the verified SHA"
 if [ "${D8S_EXECUTED:-0}" = "1" ]; then
     LB_SERVE="$WORKROOT/lb-serve"; LB_PORT_FILE="$WORKROOT/lb.port"; mkdir -p "$LB_SERVE"
     python3 - "$LB_PORT_FILE" "$LB_SERVE" <<'PYEOF' &
@@ -1406,7 +1538,7 @@ open(sys.argv[1], "w").write(str(srv.server_address[1]))
 srv.serve_forever()
 PYEOF
     LB_PID=$!
-    trap 'kill "$LB_PID" 2>/dev/null || true; cleanup' EXIT INT TERM
+    trap 'kill "${HS_PID:-}" "$LB_PID" 2>/dev/null || true; cleanup' EXIT INT TERM
     for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
         [ -s "$LB_PORT_FILE" ] && break
         sleep 0.25
@@ -1443,76 +1575,76 @@ LBEOF
     bash "$LOKI_BIN" verify --sign-provenance "$WORKROOT/stale-prov.json" >/dev/null 2>&1
 
     if [ -z "$LB_PORT" ]; then
-        bad "29. stub live server did not start; section would be vacuous"
+        bad "30. stub live server did not start; section would be vacuous"
     else
-        # 29a. GREEN: provenance in public/.well-known, live_binding VERIFIED, head_sha == HEAD
-        lb_fix d29a; D29A="$WORKROOT/d29a"
-        OUT29A="$(run_lb "$D29A" fresh)"; RC29A=$?
-        P29A="$D29A/public/.well-known/loki-provenance.json"
-        if [ "$RC29A" -eq 0 ] && [ -f "$P29A" ] && [ "$(lb_field "$(lb_rec "$D29A")" live_binding)" = "VERIFIED" ] \
-           && [ "$(lb_field "$P29A" head_sha)" = "$(git -C "$D29A" rev-parse HEAD)" ]; then
-            ok "29a. provenance is written to public/.well-known, the live URL serves it, live_binding=VERIFIED"
+        # 30a. GREEN: provenance in public/.well-known, live_binding VERIFIED, head_sha == HEAD
+        lb_fix d30a; D30A="$WORKROOT/d30a"
+        OUT30A="$(run_lb "$D30A" fresh)"; RC30A=$?
+        P30A="$D30A/public/.well-known/loki-provenance.json"
+        if [ "$RC30A" -eq 0 ] && [ -f "$P30A" ] && [ "$(lb_field "$(lb_rec "$D30A")" live_binding)" = "VERIFIED" ] \
+           && [ "$(lb_field "$P30A" head_sha)" = "$(git -C "$D30A" rev-parse HEAD)" ]; then
+            ok "30a. provenance is written to public/.well-known, the live URL serves it, live_binding=VERIFIED"
         else
-            bad "29a. live binding wrong" "rc=$RC29A $(printf '%s' "$OUT29A" | tail -4)"
+            bad "30a. live binding wrong" "rc=$RC30A $(printf '%s' "$OUT30A" | tail -4)"
         fi
 
-        # 29b. the untracked provenance file does not dirty the next deploy's gate
-        OUT29B="$(run_lb "$D29A" fresh)"; RC29B=$?
-        if [ "$RC29B" -eq 0 ] && ! grep -q "working tree is dirty" <<<"$OUT29B"; then
-            ok "29b. a second deploy is not refused as dirty by the provenance file"
+        # 30b. the untracked provenance file does not dirty the next deploy's gate
+        OUT30B="$(run_lb "$D30A" fresh)"; RC30B=$?
+        if [ "$RC30B" -eq 0 ] && ! grep -q "working tree is dirty" <<<"$OUT30B"; then
+            ok "30b. a second deploy is not refused as dirty by the provenance file"
         else
-            bad "29b. provenance file dirtied the tree" "rc=$RC29B $(printf '%s' "$OUT29B" | tail -3)"
+            bad "30b. provenance file dirtied the tree" "rc=$RC30B $(printf '%s' "$OUT30B" | tail -3)"
         fi
 
-        # 29c. a stub that serves an OLDER signed provenance gives FAILED_HEALTH, exit 4
-        lb_fix d29c; D29C="$WORKROOT/d29c"
-        OUT29C="$(run_lb "$D29C" stale)"; RC29C=$?
-        R29C="$(lb_rec "$D29C")"
-        if [ "$RC29C" -eq 4 ] && [ "$(lb_field "$R29C" live_binding)" = "FAILED" ] && [ "$(lb_field "$R29C" health_status)" = "FAILED_HEALTH" ] \
-           && grep -q "stale or wrong build served" <<<"$OUT29C"; then
-            ok "29c. a stale provenance doc served live exits 4 FAILED_HEALTH, live_binding=FAILED"
+        # 30c. a stub that serves an OLDER signed provenance gives FAILED_HEALTH, exit 4
+        lb_fix d30c; D30C="$WORKROOT/d30c"
+        OUT30C="$(run_lb "$D30C" stale)"; RC30C=$?
+        R30C="$(lb_rec "$D30C")"
+        if [ "$RC30C" -eq 4 ] && [ "$(lb_field "$R30C" live_binding)" = "FAILED" ] && [ "$(lb_field "$R30C" health_status)" = "FAILED_HEALTH" ] \
+           && grep -q "stale or wrong build served" <<<"$OUT30C"; then
+            ok "30c. a stale provenance doc served live exits 4 FAILED_HEALTH, live_binding=FAILED"
         else
-            bad "29c. stale serve not caught" "rc=$RC29C $(printf '%s' "$OUT29C" | tail -4)"
+            bad "30c. stale serve not caught" "rc=$RC30C $(printf '%s' "$OUT30C" | tail -4)"
         fi
 
-        # 29d. nothing served at all: unchecked, never VERIFIED, exit 0
-        lb_fix d29d; D29D="$WORKROOT/d29d"
-        OUT29D="$(run_lb "$D29D" none)"; RC29D=$?
-        if [ "$RC29D" -eq 0 ] && [ "$(lb_field "$(lb_rec "$D29D")" live_binding)" = "unchecked" ]; then
-            ok "29d. no provenance served: live_binding=unchecked, never VERIFIED"
+        # 30d. nothing served at all: unchecked, never VERIFIED, exit 0
+        lb_fix d30d; D30D="$WORKROOT/d30d"
+        OUT30D="$(run_lb "$D30D" none)"; RC30D=$?
+        if [ "$RC30D" -eq 0 ] && [ "$(lb_field "$(lb_rec "$D30D")" live_binding)" = "unchecked" ]; then
+            ok "30d. no provenance served: live_binding=unchecked, never VERIFIED"
         else
-            bad "29d. unserved provenance mis-recorded" "rc=$RC29D $(printf '%s' "$OUT29D" | tail -3)"
+            bad "30d. unserved provenance mis-recorded" "rc=$RC30D $(printf '%s' "$OUT30D" | tail -3)"
         fi
 
-        # 29e. docker: refusal reason printed, live_binding=unsupported, no file written
-        mk_typed_fix d29e docker; D29E="$WORKROOT/d29e"
-        OUT29E="$(run_lb "$D29E" none)"; RC29E=$?
-        if [ "$(lb_field "$(lb_rec "$D29E")" live_binding)" = "unsupported" ] && grep -q "Live binding unsupported" <<<"$OUT29E" \
-           && [ ! -e "$D29E/public/.well-known/loki-provenance.json" ]; then
-            ok "29e. a docker project prints the refusal and records live_binding=unsupported"
+        # 30e. docker: refusal reason printed, live_binding=unsupported, no file written
+        mk_typed_fix d30e docker; D30E="$WORKROOT/d30e"
+        OUT30E="$(run_lb "$D30E" none)"; RC30E=$?
+        if [ "$(lb_field "$(lb_rec "$D30E")" live_binding)" = "unsupported" ] && grep -q "Live binding unsupported" <<<"$OUT30E" \
+           && [ ! -e "$D30E/public/.well-known/loki-provenance.json" ]; then
+            ok "30e. a docker project prints the refusal and records live_binding=unsupported"
         else
-            bad "29e. docker binding wrong" "rc=$RC29E $(printf '%s' "$OUT29E" | tail -4)"
+            bad "30e. docker binding wrong" "rc=$RC30E $(printf '%s' "$OUT30E" | tail -4)"
         fi
 
-        # 29f. a dirty tree still refuses BEFORE the file is written
-        lb_fix d29f; D29F="$WORKROOT/d29f"; echo dirty > "$D29F/README.md"
-        OUT29F="$(run_lb "$D29F" fresh)"; RC29F=$?
-        if [ "$RC29F" -eq 1 ] && grep -q "working tree is dirty" <<<"$OUT29F" && [ ! -e "$D29F/public/.well-known" ]; then
-            ok "29f. the dirty-tree gate refuses before any provenance file is written"
+        # 30f. a dirty tree still refuses BEFORE the file is written
+        lb_fix d30f; D30F="$WORKROOT/d30f"; echo dirty > "$D30F/README.md"
+        OUT30F="$(run_lb "$D30F" fresh)"; RC30F=$?
+        if [ "$RC30F" -eq 1 ] && grep -q "working tree is dirty" <<<"$OUT30F" && [ ! -e "$D30F/public/.well-known" ]; then
+            ok "30f. the dirty-tree gate refuses before any provenance file is written"
         else
-            bad "29f. dirty tree wrote provenance" "rc=$RC29F"
+            bad "30f. dirty tree wrote provenance" "rc=$RC30F"
         fi
 
-        # 29g. --allow-unanchored: the anchor is UNPROVEN, so no provenance doc is published and the binding is never VERIFIED
-        b29g="$(make_fixture d29g)"; D29G="$WORKROOT/d29g"
-        ( cd "$D29G" && _LOKI_RUN_START_SHA="" python3 "$GENERATOR" --loki-dir "$D29G/.loki" >/dev/null 2>&1 )
-        OUT29G="$(run_lb "$D29G" fresh --allow-unanchored)"; RC29G=$?
-        LB29G="$(lb_field "$(lb_rec "$D29G")" live_binding)"
-        if [ "$RC29G" -eq 0 ] && [ "$LB29G" = "unanchored" ] && [ ! -e "$D29G/public/.well-known/loki-provenance.json" ] \
-           && grep -q "Live binding unanchored" <<<"$OUT29G"; then
-            ok "29g. an unanchored override publishes no provenance doc and records live_binding=unanchored"
+        # 30g. --allow-unanchored: the anchor is UNPROVEN, so no provenance doc is published and the binding is never VERIFIED
+        b30g="$(make_fixture d30g)"; D30G="$WORKROOT/d30g"
+        ( cd "$D30G" && _LOKI_RUN_START_SHA="" python3 "$GENERATOR" --loki-dir "$D30G/.loki" >/dev/null 2>&1 )
+        OUT30G="$(run_lb "$D30G" fresh --allow-unanchored)"; RC30G=$?
+        LB30G="$(lb_field "$(lb_rec "$D30G")" live_binding)"
+        if [ "$RC30G" -eq 0 ] && [ "$LB30G" = "unanchored" ] && [ ! -e "$D30G/public/.well-known/loki-provenance.json" ] \
+           && grep -q "Live binding unanchored" <<<"$OUT30G"; then
+            ok "30g. an unanchored override publishes no provenance doc and records live_binding=unanchored"
         else
-            bad "29g. unanchored override published or claimed a binding" "rc=$RC29G lb=$LB29G"
+            bad "30g. unanchored override published or claimed a binding" "rc=$RC30G lb=$LB30G"
         fi
     fi
     kill "$LB_PID" 2>/dev/null || true

@@ -5,6 +5,7 @@ import { resolve, join } from "node:path";
 import {
   findShadowedNewerInstall,
   isNewer,
+  maybePrintWhatsNew,
   maybePrintUpdateHint,
   resolveLatest,
   shouldSkipUpdateCheck,
@@ -364,5 +365,61 @@ describe("shadow check is independent of the registry", () => {
       write: (m) => { out += m; },
     });
     expect(out).toContain("A newer Loki Mode is available: 9.41.0");
+  });
+});
+
+describe("maybePrintWhatsNew", () => {
+  const seenFile = () => resolve(tmpDir, "last-seen-version.json");
+  const run = (cur: string, out: string[]) =>
+    maybePrintWhatsNew(cur, { write: (m) => out.push(m), seenFile: seenFile() });
+
+  it("first run records silently, an upgrade prints one line once", async () => {
+    await withTTY(true, async () => {
+      const out: string[] = [];
+      expect(run("1.0.0", out)).toBe(false);
+      expect(run("1.0.0", out)).toBe(false);
+      expect(run("1.1.0", out)).toBe(true);
+      expect(run("1.1.0", out)).toBe(false);
+      expect(out.length).toBe(1);
+      expect(out[0]).toContain("1.0.0 -> 1.1.0");
+      expect(out[0]!.trimEnd().includes("\n")).toBe(false);
+    });
+  });
+
+  it("silent in opt-out, CI and non-TTY modes and does not record", async () => {
+    const out: string[] = [];
+    await withTTY(true, async () => { run("1.0.0", out); });
+    process.env["LOKI_NO_UPDATE_CHECK"] = "1";
+    await withTTY(true, async () => { expect(run("1.1.0", out)).toBe(false); });
+    delete process.env["LOKI_NO_UPDATE_CHECK"];
+    process.env["CI"] = "1";
+    await withTTY(true, async () => { expect(run("1.1.0", out)).toBe(false); });
+    delete process.env["CI"];
+    await withTTY(false, async () => { expect(run("1.1.0", out)).toBe(false); });
+    expect(out.length).toBe(0);
+    await withTTY(true, async () => { expect(run("1.1.0", out)).toBe(true); });
+  });
+
+  it("boundaries: downgrade, unknown version, corrupt record", async () => {
+    await withTTY(true, async () => {
+      const out: string[] = [];
+      run("2.0.0", out);
+      expect(run("1.9.0", out)).toBe(false);
+      expect(run("unknown", out)).toBe(false);
+      writeFileSync(seenFile(), "not json");
+      expect(run("2.1.0", out)).toBe(false);
+      expect(out.length).toBe(0);
+    });
+  });
+
+  it("maybePrintUpdateHint entry point emits the notice once", async () => {
+    await withTTY(true, async () => {
+      const out: string[] = [];
+      const o = { write: (m: string) => out.push(m), cacheFile, env: { PATH: "" } as NodeJS.ProcessEnv, fetcher: async () => null };
+      await maybePrintUpdateHint("3.0.0", o);
+      await maybePrintUpdateHint("3.1.0", o);
+      await maybePrintUpdateHint("3.1.0", o);
+      expect(out.filter((m) => m.includes("upgraded")).length).toBe(1);
+    });
   });
 });

@@ -865,13 +865,19 @@ describe("status --probe: re-probe last deploy health URL", () => {
   let root = "";
   let savedDir: string | undefined;
   let savedTimeout: string | undefined;
+  let savedRetry: string | undefined;
+  let flakyHits = 0;
   beforeEach(() => {
     savedDir = process.env["LOKI_DIR"];
     savedTimeout = process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"];
+    savedRetry = process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"];
+    process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"] = "50";
+    flakyHits = 0;
     server = Bun.serve({
       port: 0,
       fetch(req) {
         const p = new URL(req.url).pathname;
+        if (p === "/flaky") return ++flakyHits === 1 ? new Response("cold", { status: 503 }) : new Response("ok");
         if (p === "/ok") return new Response("ok");
         if (p === "/redirect") return new Response(null, { status: 302, headers: { location: "/ok" } });
         if (p === "/slow") return new Promise<Response>((r) => setTimeout(() => r(new Response("late")), 3000));
@@ -883,6 +889,7 @@ describe("status --probe: re-probe last deploy health URL", () => {
     server.stop(true);
     if (savedDir === undefined) delete process.env["LOKI_DIR"]; else process.env["LOKI_DIR"] = savedDir;
     if (savedTimeout === undefined) delete process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"]; else process.env["LOKI_STATUS_PROBE_TIMEOUT_MS"] = savedTimeout;
+    if (savedRetry === undefined) delete process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"]; else process.env["LOKI_STATUS_PROBE_RETRY_DELAY_MS"] = savedRetry;
     if (root) rmSync(root, { recursive: true, force: true });
     root = "";
   });
@@ -912,6 +919,24 @@ describe("status --probe: re-probe last deploy health URL", () => {
     const out = stripAnsi(r.stdout);
     expect(out).toContain(url("/down"));
     expect(out).toContain("returned 500");
+  });
+  it("first 503 then 200 retries and exits 0, retry visible", async () => {
+    fixture({ health_url: url("/flaky") });
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(0);
+    expect(flakyHits).toBe(2);
+    const out = stripAnsi(r.stdout);
+    expect(out).toContain("retrying once");
+    expect(out).toContain("returned 503");
+    expect(out).toContain("Deploy health OK");
+  });
+  it("two failures exit 1 after exactly one retry", async () => {
+    fixture({ health_url: url("/down") });
+    const r = await runWithCapture(["--probe"]);
+    expect(r.exitCode).toBe(1);
+    const out = stripAnsi(r.stdout);
+    expect(out.match(/retrying once/g)?.length).toBe(1);
+    expect(out).toContain("Deploy health REGRESSED");
   });
   it("a timeout exits 1 naming the URL", async () => {
     fixture({ health_url: url("/slow") });

@@ -1904,6 +1904,9 @@ show_help_all() {
     echo "  --openspec PATH      Use OpenSpec change directory as input"
     echo "  --config PATH    Load settings from a config file (.yaml/.json/.env). Alias: --env-file, --vars"
     echo "                   Precedence: CLI flag > env var > --config file > defaults. Secrets via \${VAR}."
+    echo "  --deploy         After a start that exits 0, run the gated loki deploy --execute. Deploy flags: --destination preview|staging|production,"
+    echo "                   --canary, --env-file FILE (deploy env, not config, with --deploy), --domain HOST, --github (publish after deploy),"
+    echo "                   --health-url URL, --health-match STR, --auto-rollback"
     echo ""
     echo "Deprecated alias 'run': 'loki run <issue-ref>' still works as an alias"
     echo "for 'loki start'. See its options with 'loki run --help'."
@@ -2644,8 +2647,31 @@ cmd_start() {
     # that ended 0. cmd_deploy owns every gate: no VERIFIED HEAD-anchored
     # receipt means a refusal, never a deploy.
     local _ps_ws="" _ps_deploy=0 _ps_health="" _ps_hmatch="" _ps_rb=0 _ps_rest=() _ps_brief=() _ps_a
+    local _ps_dest="" _ps_canary=0 _ps_envf="" _ps_domain="" _ps_gh=0 _ps_dep_in=0
+    # --env-file and --github already mean config alias and issue sync for a plain
+    # start; they are deploy flags only when --deploy is on the line.
+    for _ps_a in "$@"; do [ "$_ps_a" = "--deploy" ] && _ps_dep_in=1; done
     while [ $# -gt 0 ]; do
         case "$1" in
+            --destination)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--destination requires preview, staging or production${NC}" >&2; exit 2; }
+                _ps_dest="$2"; shift 2 ;;
+            --destination=*) _ps_dest="${1#*=}"; shift ;;
+            --domain)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--domain requires a hostname${NC}" >&2; exit 2; }
+                _ps_domain="$2"; shift 2 ;;
+            --domain=*) _ps_domain="${1#*=}"; shift ;;
+            --env-file)
+                if [ "$_ps_dep_in" != 1 ]; then _ps_rest+=("$1"); shift; continue; fi
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--env-file requires a file path${NC}" >&2; exit 2; }
+                _ps_envf="$2"; shift 2 ;;
+            --env-file=*)
+                if [ "$_ps_dep_in" = 1 ]; then _ps_envf="${1#*=}"; else _ps_rest+=("$1"); fi
+                shift ;;
+            --canary) _ps_canary=1; shift ;;
+            --github)
+                if [ "$_ps_dep_in" = 1 ]; then _ps_gh=1; else _ps_rest+=("$1"); fi
+                shift ;;
             --workspace)
                 [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--workspace requires a workspace name${NC}" >&2; exit 2; }
                 _ps_ws="$2"; shift 2 ;;
@@ -2663,8 +2689,8 @@ cmd_start() {
             *) _ps_rest+=("$1"); shift ;;
         esac
     done
-    if { [ -n "$_ps_health" ] || [ -n "$_ps_hmatch" ] || [ "$_ps_rb" = 1 ]; } && [ "$_ps_deploy" != 1 ]; then
-        echo -e "${RED}--health-url, --health-match and --auto-rollback apply only with --deploy${NC}" >&2
+    if { [ -n "$_ps_health" ] || [ -n "$_ps_hmatch" ] || [ "$_ps_rb" = 1 ] || [ -n "$_ps_dest" ] || [ "$_ps_canary" = 1 ] || [ -n "$_ps_domain" ]; } && [ "$_ps_deploy" != 1 ]; then
+        echo -e "${RED}--health-url, --health-match, --auto-rollback, --destination, --canary and --domain apply only with --deploy${NC}" >&2
         exit 2
     fi
     if [ -n "$_ps_ws" ]; then
@@ -2708,8 +2734,17 @@ cmd_start() {
         [ -n "$_ps_health" ] && _ps_dargs+=(--health-url "$_ps_health")
         [ -n "$_ps_hmatch" ] && _ps_dargs+=(--health-match "$_ps_hmatch")
         [ "$_ps_rb" = 1 ] && _ps_dargs+=(--auto-rollback)
-        cmd_deploy "${_ps_dargs[@]}"
-        return $?
+        [ -n "$_ps_dest" ] && _ps_dargs+=(--destination "$_ps_dest")
+        [ "$_ps_canary" = 1 ] && _ps_dargs+=(--canary)
+        [ -n "$_ps_envf" ] && _ps_dargs+=(--env-file "$_ps_envf")
+        [ -n "$_ps_domain" ] && _ps_dargs+=(--domain "$_ps_domain")
+        local _ps_drc=0
+        cmd_deploy "${_ps_dargs[@]}" || _ps_drc=$?
+        if [ "$_ps_drc" -ne 0 ]; then return "$_ps_drc"; fi
+        if [ "$_ps_gh" = 1 ]; then
+            ( cmd_github publish ) || _ps_drc=$?
+        fi
+        return "$_ps_drc"
     fi
     # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
     # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
@@ -2841,6 +2876,11 @@ cmd_start() {
                 echo "  --quiet               Suppress [INFO]/[STEP]; warnings and errors still print"
                 echo "  --log-level LEVEL     debug | info | warn | error (default: info)"
                 echo "  --max-duration DUR    Wall-clock cap: seconds, or 90m / 2h (default: none)"
+                echo "  --deploy              After a start that exits 0, run the gated loki deploy --execute. Deploy flags:"
+                echo "                        --destination preview|staging|production, --canary, --domain HOST,"
+                echo "                        --env-file FILE (the deploy env file, not config, when --deploy is set),"
+                echo "                        --health-url URL, --health-match STR, --auto-rollback,"
+                echo "                        and, with --deploy, the flag --github runs loki github publish after a good deploy"
                 echo ""
                 echo "Issue-mode options (used when input is an ISSUE-REF or a --brief):"
                 echo "  --dry-run             Preview generated PRD without starting"
@@ -10009,7 +10049,7 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination] [deployed_url] [health_url_source] [env_keys_csv] [env_source] [live_binding]
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination] [deployed_url] [health_url_source] [env_keys_csv] [env_source] [domain] [domain_status] [tls_status] [tls_not_after] [domain_provenance] [live_binding]
 # Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
 # receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
 # authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
@@ -10036,7 +10076,10 @@ _deploy_record() {
     local deployed_url="${21:-}" hsrc="${22:-}"
     # --env-file: key NAMES only (comma-joined, validated identifiers) and the file
     # path. A value is never passed here, so the signed record cannot carry one.
-    local env_keys_csv="${23:-}" env_source="${24:-}" live_binding="${25:-}"
+    local env_keys_csv="${23:-}" env_source="${24:-}"
+    # --domain: tls_status is "unchecked" unless the openssl proof ran and said otherwise.
+    local domain_rec="${25:-}" domain_status="${26:-}" tls_status="${27:-unchecked}" tls_not_after="${28:-}" domain_prov="${29:-}"
+    local live_binding="${30:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
@@ -10045,7 +10088,8 @@ _deploy_record() {
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
     DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
     DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" DR_DEST="$dest_rec" DR_DURL="$deployed_url" DR_HSRC="$hsrc" \
-    DR_ENVK="$env_keys_csv" DR_ENVS="$env_source" DR_LB="$live_binding" \
+    DR_ENVK="$env_keys_csv" DR_ENVS="$env_source" \
+    DR_DOM="$domain_rec" DR_DOMS="$domain_status" DR_TLS="$tls_status" DR_TLSA="$tls_not_after" DR_DOMP="$domain_prov" DR_LB="$live_binding" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -10079,6 +10123,11 @@ json.dump({
     "health_url_source": os.environ.get("DR_HSRC", ""),
     "env_keys": sorted(k for k in os.environ.get("DR_ENVK", "").split(",") if k),
     "env_source": os.environ.get("DR_ENVS", ""),
+    "domain": os.environ.get("DR_DOM", ""),
+    "domain_status": os.environ.get("DR_DOMS", ""),
+    "tls_status": os.environ.get("DR_TLS") or "unchecked",
+    "tls_not_after": os.environ.get("DR_TLSA", ""),
+    "domain_provenance": os.environ.get("DR_DOMP", ""),
     "live_binding": os.environ.get("DR_LB") or "unchecked",
     "health_http_code": int(os.environ["DR_HC"]) if os.environ.get("DR_HC", "").isdigit() else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
@@ -10370,6 +10419,80 @@ for k in sorted(env):
     out(k + "=" + env[k])
 out("__LOKI_ENV_OK__")
 PYEOF
+}
+
+# _deploy_domain_step <dir> <command> <domain> <deployed_url> <head_sha>
+# --domain: attach <domain> with the provider's documented verb, then PROVE TLS with
+# openssl. Sets _DD_STATUS (attached|manual|failed), _DD_TLS (valid|expiring|invalid|
+# unchecked), _DD_NOTAFTER and _DD_PROV (match|mismatch|unchecked). Returns 6 when the
+# attach failed or the TLS handshake/cert is invalid, else 0. tls_status is "valid" ONLY
+# when the handshake gave a cert and 'openssl x509 -checkend 604800' accepted it.
+_deploy_domain_step() {
+    local dir="$1" command="$2" domain="$3" durl="$4" head="$5"
+    local arc=0 hint="" pem="" xout="" xrc=0 tmo="" na="" body="" psha=""
+    _DD_STATUS="" _DD_TLS="unchecked" _DD_NOTAFTER="" _DD_PROV="unchecked"
+    echo "Attaching domain: ${domain}"
+    case "$command" in
+        "vercel --prod")
+            hint="Vercel needs DNS for ${domain}: A 76.76.21.21 (apex) or CNAME cname.vercel-dns.com"
+            if [ -z "$durl" ]; then
+                echo "  The deploy printed no URL, so 'vercel alias set' has nothing to alias." >&2
+                _DD_STATUS=failed
+            else
+                _DD_STATUS=attached
+                ( cd "$dir" && vercel alias set "$durl" "$domain" ) || arc=$?
+                [ "$arc" -eq 0 ] || _DD_STATUS=failed
+            fi
+            ;;
+        "fly deploy")
+            hint="Fly needs DNS for ${domain}: the A/AAAA or CNAME records 'fly certs show ${domain}' prints"
+            _DD_STATUS=attached
+            ( cd "$dir" && fly certs add "$domain" ) || arc=$?
+            [ "$arc" -eq 0 ] || _DD_STATUS=failed
+            ;;
+        *)
+            _DD_STATUS=manual
+            hint="${command%% *} has no wired domain verb: add ${domain} in its dashboard, then point DNS at the record it shows"
+            echo "  Manual step: ${hint}."
+            ;;
+    esac
+    [ "$_DD_STATUS" != failed ] || echo -e "${RED}Domain attach failed (exit ${arc}).${NC}" >&2
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        echo "TLS: openssl not found. tls_status=unchecked (never a claim of valid)."
+    else
+        command -v timeout >/dev/null 2>&1 && tmo="timeout 15"
+        # shellcheck disable=SC2086
+        pem="$($tmo openssl s_client -servername "$domain" -connect "${domain}:443" </dev/null 2>/dev/null)" || true
+        case "$pem" in
+            *"BEGIN CERTIFICATE"*)
+                xout="$(printf '%s\n' "$pem" | openssl x509 -noout -enddate -checkend 604800 2>/dev/null)" || xrc=$?
+                na="$(sed -n 's/^notAfter=//p' <<<"$xout" | head -n 1)"
+                if [ -z "$na" ]; then _DD_TLS=invalid
+                elif [ "$xrc" -eq 0 ]; then _DD_TLS=valid
+                else _DD_TLS=expiring; fi
+                [ -z "$na" ] || _DD_NOTAFTER="$(python3 -c 'import sys,datetime
+try: print(datetime.datetime.strptime(sys.argv[1].strip(), "%b %d %H:%M:%S %Y GMT").strftime("%Y-%m-%dT%H:%M:%SZ"))
+except Exception: print(sys.argv[1].strip())' "$na" 2>/dev/null || printf '%s' "$na")"
+                ;;
+            *) _DD_TLS=invalid ;;
+        esac
+        echo "TLS: ${domain} tls_status=${_DD_TLS}${_DD_NOTAFTER:+ (not after ${_DD_NOTAFTER})}"
+        [ "$_DD_TLS" != expiring ] || echo -e "${YELLOW}  The certificate expires within 7 days.${NC}" >&2
+    fi
+
+    if [ "$_DD_TLS" = invalid ]; then
+        echo -e "${RED}TLS invalid for ${domain}: no usable certificate was served. DNS may not point at the provider yet.${NC}" >&2
+        [ -z "$hint" ] || echo "  ${hint}." >&2
+    elif command -v curl >/dev/null 2>&1; then
+        body="$(curl -fsS --max-time 5 "https://${domain}/.well-known/loki-provenance.json" 2>/dev/null)" || body=""
+        psha="$(python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("head_sha") or "")' <<<"$body" 2>/dev/null || true)"
+        if [ -n "$psha" ] && [ -n "$head" ] && [ "$psha" = "$head" ]; then _DD_PROV=match
+        elif [ -n "$psha" ]; then _DD_PROV=mismatch; echo -e "${YELLOW}Provenance head_sha ${psha:0:12} differs from the deployed ${head:0:12}.${NC}" >&2; fi
+        echo "Provenance: ${_DD_PROV}"
+    fi
+    if [ "$_DD_STATUS" = failed ] || [ "$_DD_TLS" = invalid ]; then return 6; fi
+    return 0
 }
 
 # _deploy_try_execute <dir> <type>
@@ -10704,12 +10827,21 @@ _deploy_try_execute() {
         fi
     fi
 
+    # --domain: only after a deploy that exited 0 and did not fail its health probe.
+    local domain="${_LOKI_DEPLOY_DOMAIN:-}" dom_rc=0
+    _DD_STATUS="" _DD_TLS="unchecked" _DD_NOTAFTER="" _DD_PROV=""
+    if [ -n "$domain" ] && [ "$rc" -eq 0 ] && [ "$health_status" != "FAILED_HEALTH" ]; then
+        _deploy_domain_step "$dir" "$command" "$domain" "$deployed_url" "$anchor" || dom_rc=$?
+        [ "$_DD_STATUS" != attached ] || exec_disp="${exec_disp}; domain ${domain}"
+    fi
+
     local rec rsha
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
     rec="$(_deploy_record "$dir" "$exec_disp" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
         "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
-        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest" "$deployed_url" "$health_src" "$env_keys" "$env_file" "$live_binding")"
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest" "$deployed_url" "$health_src" "$env_keys" "$env_file" \
+        "$domain" "$_DD_STATUS" "$_DD_TLS" "$_DD_NOTAFTER" "$_DD_PROV" "$live_binding")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -10740,6 +10872,8 @@ _deploy_try_execute() {
         [ "$post_rb" = "FAILED_HEALTH" ] && return 5
         return 4
     fi
+    # 6: the domain could not be attached or its TLS is invalid.
+    if [ "$rc" -eq 0 ] && [ "$dom_rc" -ne 0 ]; then return 6; fi
     return "$rc"
 }
 
@@ -10858,7 +10992,7 @@ cmd_deploy() {
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
     # Per-invocation like --execute; local so an ambient env var cannot set them.
     local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_HEALTH_MATCH="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false _LOKI_DEPLOY_DESTINATION=""
-    local _LOKI_DEPLOY_ENV_FILE=""
+    local _LOKI_DEPLOY_ENV_FILE="" _LOKI_DEPLOY_DOMAIN=""
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -10866,7 +11000,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary] [--env-file FILE]] [--destination preview|staging|production] [--health-url URL [--health-match STR] [--auto-rollback]]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary] [--env-file FILE] [--domain HOST]] [--destination preview|staging|production] [--health-url URL [--health-match STR] [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -10966,6 +11100,15 @@ cmd_deploy() {
                 echo "                 step fails the deploy is not run. Values are masked as K=*** in"
                 echo "                 output; the deploy record stores env_keys (names) and env_source,"
                 echo "                 never values."
+                echo "  --domain HOST  With --execute, after a deploy that exited 0 and is not FAILED_HEALTH:"
+                echo "                 attach HOST (Vercel: 'vercel alias set <deployed_url> HOST'; Fly:"
+                echo "                 'fly certs add HOST'; Netlify and Cloudflare print the manual dashboard"
+                echo "                 step, domain_status=manual). Then prove TLS with openssl s_client and"
+                echo "                 'openssl x509 -checkend 604800' and re-probe"
+                echo "                 https://HOST/.well-known/loki-provenance.json. The record stores domain,"
+                echo "                 domain_status, tls_status (valid|expiring|invalid|unchecked) and"
+                echo "                 tls_not_after; no openssl means unchecked, never valid. An invalid TLS"
+                echo "                 handshake or a failed attach exits 6 and prints the DNS record needed."
                 echo "  --allow-unanchored"
                 echo "                 Proceed when the receipt records NO baseline (nothing"
                 echo "                 about this tree is proven). Never bypasses a recorded"
@@ -11026,6 +11169,16 @@ cmd_deploy() {
                 _LOKI_DEPLOY_ENV_FILE="${1#--env-file=}"
                 [ -n "$_LOKI_DEPLOY_ENV_FILE" ] || { echo "loki deploy --env-file requires a file path" >&2; return 1; }
                 ;;
+            --domain)
+                case "${2:-}" in
+                    -*|"") echo "loki deploy --domain requires a hostname" >&2; return 1 ;;
+                    *) _LOKI_DEPLOY_DOMAIN="$2"; shift ;;
+                esac
+                ;;
+            --domain=*)
+                _LOKI_DEPLOY_DOMAIN="${1#--domain=}"
+                [ -n "$_LOKI_DEPLOY_DOMAIN" ] || { echo "loki deploy --domain requires a hostname" >&2; return 1; }
+                ;;
         esac
         shift
     done
@@ -11041,6 +11194,18 @@ cmd_deploy() {
         fi
         # Absolute, so a provider verb run from the project dir finds the same file.
         _LOKI_DEPLOY_ENV_FILE="$(cd "$(dirname -- "$_LOKI_DEPLOY_ENV_FILE")" && pwd -P)/$(basename -- "$_LOKI_DEPLOY_ENV_FILE")"
+    fi
+
+    if [ -n "$_LOKI_DEPLOY_DOMAIN" ]; then
+        if [ "$do_execute" != true ]; then
+            echo "loki deploy --domain requires --execute (the advisory run attaches nothing)" >&2
+            return 1
+        fi
+        _LOKI_DEPLOY_DOMAIN="$(printf '%s' "$_LOKI_DEPLOY_DOMAIN" | tr '[:upper:]' '[:lower:]')"
+        if ! printf '%s' "$_LOKI_DEPLOY_DOMAIN" | grep -Eq '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'; then
+            echo "loki deploy --domain: not a valid hostname: $_LOKI_DEPLOY_DOMAIN" >&2
+            return 1
+        fi
     fi
 
     if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then

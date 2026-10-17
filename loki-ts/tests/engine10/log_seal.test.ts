@@ -91,3 +91,66 @@ describe("P12-08c SUPERVISOR_ONLY", () => {
     expect(readFileSync(join(dir, "events.jsonl"), "utf8")).toContain("deep.started");
   });
 });
+
+// TEN-GATES-16: a moved HEAD is drift only when it touched a path the sealed diff touched.
+describe("TEN-GATES-16 head drift by sealed path overlap", () => {
+  const vcs = (cwd: string, ...a: string[]): string => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd }).stdout.toString().trim();
+  const sh = (s: string): string => new Bun.CryptoHasher("sha256").update(s).digest("hex");
+  function sealed(repo: string, id: string, baseOf: (head: string) => string | undefined = () => vcs(repo, "rev-parse", "HEAD~1")): void {
+    const head = vcs(repo, "rev-parse", "HEAD"), base = baseOf(head);
+    const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sh(""), time: { wall_s: 0, stages: {} }, ...(base === undefined ? {} : { base_sha: base }), head_sha: head };
+    const dir = join(repo, ".loki", "runs", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }));
+  }
+  async function verify(repo: string, id: string): Promise<{ code: number; out: string }> {
+    const out: string[] = [], w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    try { return { code: await main([id, "--allow-unsigned"], { runsRoot: join(repo, ".loki", "runs") }), out: out.join("") }; } finally { process.stdout.write = w; }
+  }
+  function mk(): string {
+    const repo = mkdtempSync(join(root, "g16-"));
+    vcs(repo, "init", "-q"); writeFileSync(join(repo, "base"), "0"); vcs(repo, "add", "base"); vcs(repo, "commit", "-qm", "base");
+    writeFileSync(join(repo, "a.ts"), "1"); vcs(repo, "add", "a.ts"); vcs(repo, "commit", "-qm", "sealed work");
+    return repo;
+  }
+  test("control: HEAD equals head_sha verifies OK", async () => {
+    const repo = mk(); sealed(repo, "r1");
+    expect((await verify(repo, "r1")).code).toBe(0);
+  });
+  test("amend on a sealed path: drift naming the path", async () => {
+    const repo = mk(); sealed(repo, "r2");
+    writeFileSync(join(repo, "a.ts"), "2"); vcs(repo, "commit", "-qa", "--amend", "-m", "sealed work v2");
+    const r = await verify(repo, "r2");
+    expect(r.code).toBe(2);
+    expect(r.out.includes("a.ts")).toBe(true);
+  });
+  test("unrelated later commit keeps OK; overlapping later commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r3");
+    writeFileSync(join(repo, "other.md"), "x"); vcs(repo, "add", "other.md"); vcs(repo, "commit", "-qm", "docs");
+    expect((await verify(repo, "r3")).code).toBe(0);
+    writeFileSync(join(repo, "a.ts"), "3"); vcs(repo, "commit", "-qam", "touch sealed");
+    const r = await verify(repo, "r3");
+    expect(r.code).toBe(2);
+    expect(r.out.includes("a.ts")).toBe(true);
+  });
+  test("a sealed path touched then reverted in the later range is not drift", async () => {
+    const repo = mk(); sealed(repo, "r4");
+    writeFileSync(join(repo, "a.ts"), "9"); vcs(repo, "commit", "-qam", "t");
+    writeFileSync(join(repo, "a.ts"), "1"); vcs(repo, "commit", "-qam", "revert");
+    expect((await verify(repo, "r4")).code).toBe(0);
+  });
+  const unrelated = (repo: string): void => { writeFileSync(join(repo, "other.md"), "x"); vcs(repo, "add", "other.md"); vcs(repo, "commit", "-qm", "docs"); };
+  test("fail-safe: empty sealed diff (base == head) plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r5", (h) => h); unrelated(repo);
+    expect((await verify(repo, "r5")).code).toBe(2);
+  });
+  test("fail-safe: absent base_sha plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r6", () => undefined); unrelated(repo);
+    expect((await verify(repo, "r6")).code).toBe(2);
+  });
+  test("fail-safe: non-hex base_sha plus an unrelated commit is drift", async () => {
+    const repo = mk(); sealed(repo, "r7", () => "not-a-sha"); unrelated(repo);
+    expect((await verify(repo, "r7")).code).toBe(2);
+  });
+});
