@@ -14,6 +14,7 @@ import {
   outcomeOf,
   reasonOf,
 } from "../../src/engine10/output.ts";
+import { reset as resetEta } from "../../src/contrib/eta.ts";
 
 describe("formatClock", () => {
   test("zero-padded mm:ss", () => {
@@ -95,8 +96,25 @@ describe("formatHeartbeatLine (golden, ENGINE.md section 11)", () => {
   });
 
   test("omits ETA and diff when absent", () => {
-    const line = formatHeartbeatLine({ clockS: 5, stage: "seal", waitingOn: "signing key", elapsedS: 5 });
+    const line = formatHeartbeatLine({ clockS: 5, stage: "seal", waitingOn: "signing key", elapsedS: 5, etaS: null });
     expect(line).toBe("[00:05] seal        waiting on signing key  5s");
+  });
+
+  test("Q18-07: the heartbeat computes an ETA from the stage target when none is passed", async () => {
+    resetEta();
+    formatHeartbeatLine({ clockS: 0, stage: "implement", waitingOn: "x", elapsedS: 0 }); // first call starts the lazy eta.ts load
+    await Bun.sleep(30);
+    expect(formatHeartbeatLine({ clockS: 65, stage: "implement", waitingOn: "claude session", elapsedS: 60 })).toContain("ETA 2m00s");
+    expect(formatHeartbeatLine({ clockS: 5, stage: "no-such-stage", waitingOn: "x", elapsedS: 5 })).not.toContain("ETA");
+  });
+
+  test("Q18-07: a done stage line records its actual so later ETAs learn the overrun", async () => {
+    resetEta();
+    formatHeartbeatLine({ clockS: 0, stage: "implement", waitingOn: "x", elapsedS: 0 });
+    await Bun.sleep(30);
+    formatStageLine({ clockS: 360, name: "implement", status: "done", durationS: 360, detail: "x" });
+    expect(formatHeartbeatLine({ clockS: 1, stage: "implement", waitingOn: "x", elapsedS: 60 })).toContain("ETA 5m00s");
+    resetEta();
   });
 });
 
