@@ -17,7 +17,8 @@ import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help 
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
-import { applyCostProfile } from "../util/cost_profile.ts";
+import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
+import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -276,7 +277,17 @@ export function parseStartArgs(
   if (tierRaw) applyEnv("LOKI_SESSION_MODEL", tierRaw);
 
   // TEN-COST-01: opt-in cost profile; fills only unset levers, records them, names them on one line.
-  const costRaw = args.find((a) => a.startsWith("--cost="))?.slice("--cost=".length) ?? argVal(args, "--cost") ?? process.env["LOKI_COST_PROFILE"];
+  // TEN-COST-27: loki.yaml cost.profile is the team default; --cost and LOKI_COST_PROFILE win. An invalid yaml value warns and falls back.
+  let costRaw = args.find((a) => a.startsWith("--cost="))?.slice("--cost=".length) ?? argVal(args, "--cost") ?? process.env["LOKI_COST_PROFILE"];
+  if (costRaw === undefined) {
+    for (const t of lokiYamlTexts(process.cwd())) {
+      const v = yamlKey(t, "cost", "profile");
+      if (v === null) continue;
+      if (Object.hasOwn(COST_PROFILES, v.trim().toLowerCase())) costRaw = v;
+      else err(`start: ignoring loki.yaml cost.profile '${v}' (expected lean or off)\n`);
+      break;
+    }
+  }
   try {
     const note = applyCostProfile(costRaw, process.env, applyEnv, process.env["LOKI_DIR"] ?? ".loki");
     if (note) out(note + "\n");
