@@ -1,0 +1,1606 @@
+{
+  "defects": [
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0001",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0001",
+      "summary": "range upper bound off by one",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0002",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0002",
+      "summary": "range upper bound off by one",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0003",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0003",
+      "summary": "range upper bound off by one",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0004",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0004",
+      "summary": "range upper bound off by one",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0005",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0005",
+      "summary": "range upper bound off by one",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0006",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0006",
+      "summary": "min and max swapped in clamp",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0007",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0007",
+      "summary": "min and max swapped in clamp",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0008",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0008",
+      "summary": "min and max swapped in clamp",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0009",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0009",
+      "summary": "min and max swapped in clamp",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0010",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0010",
+      "summary": "min and max swapped in clamp",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0011",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0011",
+      "summary": "leap-year rule ignores the 400-year exception",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0012",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0012",
+      "summary": "leap-year rule ignores the 400-year exception",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0013",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0013",
+      "summary": "leap-year rule ignores the 400-year exception",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0014",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0014",
+      "summary": "leap-year rule ignores the 400-year exception",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0015",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0015",
+      "summary": "leap-year rule ignores the 400-year exception",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0016",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0016",
+      "summary": "binary search never inspects the last element",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0017",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0017",
+      "summary": "binary search never inspects the last element",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0018",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0018",
+      "summary": "binary search never inspects the last element",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0019",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0019",
+      "summary": "binary search never inspects the last element",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "logic-bug",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0020",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0020",
+      "summary": "binary search never inspects the last element",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0021",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0021",
+      "summary": "normalizer strips whitespace but never lowercases",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0022",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0022",
+      "summary": "normalizer strips whitespace but never lowercases",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0023",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0023",
+      "summary": "normalizer strips whitespace but never lowercases",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0024",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0024",
+      "summary": "normalizer strips whitespace but never lowercases",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0025",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0025",
+      "summary": "normalizer strips whitespace but never lowercases",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0026",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0026",
+      "summary": "boolean parser accepts only the literal 'true'",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0027",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0027",
+      "summary": "boolean parser accepts only the literal 'true'",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0028",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0028",
+      "summary": "boolean parser accepts only the literal 'true'",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0029",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0029",
+      "summary": "boolean parser accepts only the literal 'true'",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0030",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0030",
+      "summary": "boolean parser accepts only the literal 'true'",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0031",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0031",
+      "summary": "average crashes on the empty list the spec defines",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0032",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0032",
+      "summary": "average crashes on the empty list the spec defines",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0033",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0033",
+      "summary": "average crashes on the empty list the spec defines",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0034",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0034",
+      "summary": "average crashes on the empty list the spec defines",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0035",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0035",
+      "summary": "average crashes on the empty list the spec defines",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0036",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0036",
+      "summary": "pagination is zero-based where the spec says one-based",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0037",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0037",
+      "summary": "pagination is zero-based where the spec says one-based",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0038",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0038",
+      "summary": "pagination is zero-based where the spec says one-based",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0039",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0039",
+      "summary": "pagination is zero-based where the spec says one-based",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "spec-miss",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0040",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0040",
+      "summary": "pagination is zero-based where the spec says one-based",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0041",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0041",
+      "summary": "square is a lookup table of the visible test inputs",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0042",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0042",
+      "summary": "square is a lookup table of the visible test inputs",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0043",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0043",
+      "summary": "square is a lookup table of the visible test inputs",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0044",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0044",
+      "summary": "square is a lookup table of the visible test inputs",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0045",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0045",
+      "summary": "square is a lookup table of the visible test inputs",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0046",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0046",
+      "summary": "slugify special-cases the visible test strings",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0047",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0047",
+      "summary": "slugify special-cases the visible test strings",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0048",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0048",
+      "summary": "slugify special-cases the visible test strings",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0049",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0049",
+      "summary": "slugify special-cases the visible test strings",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0050",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0050",
+      "summary": "slugify special-cases the visible test strings",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0051",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0051",
+      "summary": "temperature conversion hard-codes the two visible anchor points",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0052",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0052",
+      "summary": "temperature conversion hard-codes the two visible anchor points",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0053",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0053",
+      "summary": "temperature conversion hard-codes the two visible anchor points",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0054",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0054",
+      "summary": "temperature conversion hard-codes the two visible anchor points",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0055",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0055",
+      "summary": "temperature conversion hard-codes the two visible anchor points",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0056",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0056",
+      "summary": "word count counts spaces, which only fits single-spaced test input",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0057",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0057",
+      "summary": "word count counts spaces, which only fits single-spaced test input",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0058",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0058",
+      "summary": "word count counts spaces, which only fits single-spaced test input",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0059",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0059",
+      "summary": "word count counts spaces, which only fits single-spaced test input",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "test-fitting",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0060",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0060",
+      "summary": "word count counts spaces, which only fits single-spaced test input",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0061",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0061",
+      "summary": "visible test mocks discount() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0062",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0062",
+      "summary": "visible test mocks discount() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0063",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0063",
+      "summary": "visible test mocks discount() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0064",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0064",
+      "summary": "visible test mocks discount() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0065",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0065",
+      "summary": "visible test mocks discount() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0066",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0066",
+      "summary": "visible test mocks shipping() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0067",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0067",
+      "summary": "visible test mocks shipping() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0068",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0068",
+      "summary": "visible test mocks shipping() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0069",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0069",
+      "summary": "visible test mocks shipping() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0070",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0070",
+      "summary": "visible test mocks shipping() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0071",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0071",
+      "summary": "visible test mocks backoff() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0072",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0072",
+      "summary": "visible test mocks backoff() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0073",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0073",
+      "summary": "visible test mocks backoff() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0074",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0074",
+      "summary": "visible test mocks backoff() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0075",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0075",
+      "summary": "visible test mocks backoff() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0076",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0076",
+      "summary": "visible test mocks fee() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0077",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0077",
+      "summary": "visible test mocks fee() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0078",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0078",
+      "summary": "visible test mocks fee() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0079",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0079",
+      "summary": "visible test mocks fee() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "mock-abuse",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0080",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0080",
+      "summary": "visible test mocks fee() itself, so the wrong formula ships green",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0081",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0081",
+      "summary": "path join allows traversal out of the base directory",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0082",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0082",
+      "summary": "path join allows traversal out of the base directory",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0083",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0083",
+      "summary": "path join allows traversal out of the base directory",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0084",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0084",
+      "summary": "path join allows traversal out of the base directory",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0085",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0085",
+      "summary": "path join allows traversal out of the base directory",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0086",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0086",
+      "summary": "SQL query built by string formatting is injectable",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0087",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0087",
+      "summary": "SQL query built by string formatting is injectable",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0088",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0088",
+      "summary": "SQL query built by string formatting is injectable",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0089",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0089",
+      "summary": "SQL query built by string formatting is injectable",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0090",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0090",
+      "summary": "SQL query built by string formatting is injectable",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0091",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0091",
+      "summary": "user input rendered into HTML without escaping",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0092",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0092",
+      "summary": "user input rendered into HTML without escaping",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0093",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0093",
+      "summary": "user input rendered into HTML without escaping",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0094",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0094",
+      "summary": "user input rendered into HTML without escaping",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0095",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0095",
+      "summary": "user input rendered into HTML without escaping",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0096",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0096",
+      "summary": "shell command string interpolates an unquoted argument",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0097",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0097",
+      "summary": "shell command string interpolates an unquoted argument",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0098",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0098",
+      "summary": "shell command string interpolates an unquoted argument",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0099",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0099",
+      "summary": "shell command string interpolates an unquoted argument",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    },
+    {
+      "category": "security",
+      "check": "python3 -B check.py",
+      "dir": "cases/SD-0100",
+      "expected_verdict": "NOT_SEALED",
+      "files": [
+        "spec.md",
+        "src.py",
+        "test_visible.py",
+        "check.py"
+      ],
+      "id": "SD-0100",
+      "summary": "shell command string interpolates an unquoted argument",
+      "verdict_path": "deterministic",
+      "visible_tests": "python3 -B test_visible.py"
+    }
+  ],
+  "generator": "benchmarks/seeded-defects/generate.py",
+  "schema": "loki.seeded-defects/v2"
+}
