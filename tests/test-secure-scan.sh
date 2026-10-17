@@ -145,6 +145,34 @@ const apiKey = "AKIAXXXXXXXXXXXXXXXX"; // replace with your key
 EOF
 scan "$SAFE"; assert_silent "secret-in-client-file" "r2-placeholder"
 
+# TEN-SECURITY-14: vendor shapes beyond AWS/openai/github/anthropic/google/slack.
+# Bodies are built at runtime so this file itself carries no scannable literal.
+_b36=$(printf 'aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA2b3C')
+_b24=$(printf 'aB3dE5gH7jK9mN1pQ3rS5tU7')
+_s22=$(printf 'aB3dE5gH7jK9mN1pQ3rS5t')
+_s43=$(printf 'aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA2b3C4d5E6f7')
+sec14_check() { # <label> <expected-kind> <literal>
+    local d="$WORK/sec14-$1"; mkdir -p "$d/public"
+    printf 'const k = "%s";\n' "$3" > "$d/public/app.js"
+    scan "$d"
+    if fires "secret-in-client-file" && grep -q "$2" "$WORK/last.json"; then ok "sec14: $1 fires naming $2"
+    else bad "sec14: $1 did not fire naming $2" "$(cat "$WORK/last.json")"; fi
+}
+_gp="glpat""-"
+sec14_check gitlab gitlab-token "${_gp}${_b24:0:20}"
+sec14_check npm npm-token "npm_${_b36}"
+sec14_check hf huggingface-token "hf_${_b36}"
+sec14_check stripe stripe-key "sk_live_${_b24}"
+sec14_check stripe-rk stripe-key "rk_live_${_b24}"
+sec14_check sendgrid sendgrid-key "SG.${_s22}.${_s43}"
+SAFE="$WORK/sec14-placeholder"; mkdir -p "$SAFE/public"
+cat > "$SAFE/public/app.js" <<EOT
+const a = "${_gp}xxxxxxxxxxxxxxxxxxxx";
+const b = "sk_live_your_key_here_000000000000";
+const c = "hf_00000000000000000000000000000000000";
+EOT
+scan "$SAFE"; assert_silent "secret-in-client-file" "sec14-placeholder"
+
 # FP guard B: a real-shaped secret in a SERVER-ONLY file (no web-root path
 # component) must NOT trip rule 2.
 SAFE="$WORK/r2-safe-server"; mkdir -p "$SAFE/api"
@@ -547,6 +575,39 @@ ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 GRANT SELECT ON users TO anon;
 EOF
 scan "$BAD"; assert_fires "world-open-datastore" "r3-rls-sql-migration"
+
+# ---------------------------------------------------------------------------
+# rule 8: committed-env-secret (TEN-SECURITY-15)
+# ---------------------------------------------------------------------------
+BAD="$WORK/r8-env"; mkdir -p "$BAD"
+printf 'STRIPE_SECRET=abc123def456\n' > "$BAD/.env"
+printf 'export API_TOKEN="q9w8e7r6t5y4"\n' > "$BAD/.env.production"
+scan "$BAD"
+if fires committed-env-secret; then ok "r8-env-secret-fires"; else bad "r8-env-secret-fires" "no finding"; fi
+if grep -q 'abc123def456\|q9w8e7r6t5y4' "$WORK/last.json"; then bad "r8-value-not-echoed" "value leaked"; else ok "r8-value-not-echoed"; fi
+if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=[x for x in d["findings"] if x["rule"]=="committed-env-secret"]; sys.exit(0 if len(f)==2 and f[0]["line"]==1 and f[0]["file"] else 1)' "$WORK/last.json"; then ok "r8-file-and-line"; else bad "r8-file-and-line" "bad shape"; fi
+
+SAFE="$WORK/r8-safe"; mkdir -p "$SAFE"
+printf 'STRIPE_SECRET=abc123def456\n' > "$SAFE/.env.example"
+printf 'STRIPE_SECRET=abc123def456\n' > "$SAFE/.env.sample"
+printf 'STRIPE_SECRET=\nAPI_TOKEN=""\nDB_PASSWORD=changeme\nAUTH_KEY=${AUTH_KEY}\nNEXT_PUBLIC_MAP_KEY=pk12345678\nAPP_NAME=abc123def456\n# OLD_SECRET=abc123def456\n' > "$SAFE/.env"
+scan "$SAFE"
+if fires committed-env-secret; then bad "r8-safe-silent" "false positive"; else ok "r8-safe-silent"; fi
+
+# git-aware: gitignored untracked .env stays silent; tracked .env fires
+GIT="$WORK/r8-git"; mkdir -p "$GIT"
+( cd "$GIT" && git init -q . && printf '.env\n' > .gitignore \
+  && printf 'STRIPE_SECRET=abc123def456\n' > .env \
+  && printf 'API_TOKEN=q9w8e7r6t5y4\n' > .env.production \
+  && git add .gitignore .env.production ) >/dev/null 2>&1
+scan "$GIT"
+if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=[x["file"] for x in d["findings"] if x["rule"]=="committed-env-secret"]; sys.exit(0 if f==[".env.production"] else 1)' "$WORK/last.json"; then ok "r8-git-ignored-untracked-silent"; else bad "r8-git-ignored-untracked-silent" "wrong set"; fi
+
+# entry path: run_secure_scan (the run.sh gate) blocks on it under block mode
+if type run_secure_scan >/dev/null 2>&1; then
+    rc=0; ( TARGET_DIR="$BAD"; export TARGET_DIR; LOKI_SECURE_GATE=block; export LOKI_SECURE_GATE; run_secure_scan ) || rc=$?
+    [ "$rc" -eq 1 ] && ok "r8-gate-blocks-committed-env" || bad "r8-gate-blocks-committed-env" "rc=$rc"
+fi
 
 # ===========================================================================
 echo

@@ -18,7 +18,7 @@ The scanner is honest by construction:
     .git, vendor, bundled dist of dependencies) and oversized files, so it is
     cheap and deterministic.
 
-The v1 rules (rules 6 and 7 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
+The v1 rules (rules 6, 7 and 8 added later) (see internal/LOOP4-SECURE-BY-DEFAULT-PLAN.md):
   1. private-key-committed   (HIGH)   a PEM private-key block in any text file
   2. secret-in-client-file   (HIGH)   a real secret literal in a browser-served file
   3. world-open-datastore    (HIGH)   a literal world-open datastore rule
@@ -44,9 +44,10 @@ CLI (mirrors dashboard/audit.py / proof-verify.py shim style):
 import json
 import os
 import re
+import subprocess
 import sys
 
-RULES_VERSION = "1.2"
+RULES_VERSION = "1.4"
 
 # --- scan limits -----------------------------------------------------------
 # Cap per-file size so a giant generated bundle cannot stall the gate. 2 MiB is
@@ -122,6 +123,16 @@ _SECRET_PATTERNS = [
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     # Slack bot token: xoxb- + token body
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b")),
+    # GitLab personal access token
+    ("gitlab-token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}")),
+    # npm automation/publish token: npm_ + 36 alphanumerics
+    ("npm-token", re.compile(r"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])")),
+    # Hugging Face user access token
+    ("huggingface-token", re.compile(r"(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{34,}")),
+    # Stripe live secret / restricted key
+    ("stripe-key", re.compile(r"(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}")),
+    # SendGrid API key: SG.<22>.<43>
+    ("sendgrid-key", re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")),
 ]
 
 # Placeholder / example markers. If the matched secret (or its surrounding
@@ -146,7 +157,7 @@ def _is_placeholder_secret(secret):
             return True
     # strip the known prefix so we examine just the secret body
     body = secret
-    for prefix in ("akia", "sk-", "ghp_", "aiza", "xoxb-"):
+    for prefix in ("akia", "sk-", "ghp_", "aiza", "xoxb-", "glpat-", "npm_", "hf_", "sk_live_", "rk_live_"):
         if low.startswith(prefix):
             body = secret[len(prefix):]
             break
@@ -451,6 +462,39 @@ def _shell_injection_hit(text, node_file):
 
 
 # ---------------------------------------------------------------------------
+# rule 8: committed real env file with a secret assignment
+# ---------------------------------------------------------------------------
+# Only real env files (.env, .env.local, .env.production and the prod/staging
+# siblings); .env.example/.sample/.template never match the name regex. The
+# assigned name must end in KEY, SECRET, TOKEN or PASSWORD and the value must be
+# non-empty and not a placeholder or a ${VAR} reference. NEXT_PUBLIC_/PUBLIC
+# names are public by design and skipped. The value is never echoed.
+_REAL_ENVFILE_RE = re.compile(
+    r"(?:^|/)\.env(?:\.(?:local|production|prod|staging))?$", re.IGNORECASE)
+_ENV_SECRET_ASSIGN_RE = re.compile(
+    r"^\s*(?:export\s+)?([A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD))"
+    r"\s*=\s*(.*?)\s*$")
+
+
+def _env_secret_assignment(text):
+    """Name of a secret-shaped env assignment with a real value, else None."""
+    m = _ENV_SECRET_ASSIGN_RE.match(text)
+    if not m:
+        return None
+    name, value = m.group(1), m.group(2)
+    if "PUBLIC" in name.upper():
+        return None
+    if value[:1] in ("'", '"') and value[-1:] == value[:1] and len(value) >= 2:
+        value = value[1:-1]
+    elif " #" in value:
+        value = value.split(" #", 1)[0].rstrip()
+    value = value.strip()
+    if not value or _PLACEHOLDER_RE.search(value) or _is_placeholder_secret(value):
+        return None
+    return name
+
+
+# ---------------------------------------------------------------------------
 # file walking / reading
 # ---------------------------------------------------------------------------
 
@@ -475,6 +519,20 @@ def _iter_files(target_dir):
                 continue
             rel_path = os.path.relpath(abs_path, target_dir)
             yield abs_path, rel_path
+
+
+def _git_tracked_files(target_dir):
+    """Return the set of git-tracked rel paths under target_dir, or None when
+    target_dir is not inside a git work tree (or git is unavailable)."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", target_dir, "ls-files", "-z"],
+            capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return set(os.fsdecode(x) for x in r.stdout.split(b"\0") if x)
 
 
 def _read_lines(abs_path):
@@ -507,13 +565,19 @@ def _finding(rule, rel_path, line, severity, message, fix):
     }
 
 
-def _scan_file(rel_path, lines, secrets_everywhere=False):
+def _scan_file(rel_path, lines, secrets_everywhere=False, env_tracked=None):
     """Return a list of findings for one file. `lines` is [(lineno, text), ...]."""
     findings = []
     browser_served = _is_browser_served(rel_path)
     prod_config = _is_production_config(rel_path)
     tls_scan = _tls_rule_applies(rel_path)
     shell_scan = _shell_rule_applies(rel_path)
+    real_envfile = bool(_REAL_ENVFILE_RE.search(rel_path))
+    # env_tracked: None = not a git repo (report as a present env file);
+    # a set = only git-tracked env files are in version control.
+    env_in_git = env_tracked is not None
+    if real_envfile and env_in_git and rel_path not in env_tracked:
+        real_envfile = False
     node_file = shell_scan and any(_NODE_CP_FILE.search(t) for _, t in lines)
 
     # rule 3 / rule 5 need whole-file context for the AND conditions.
@@ -659,6 +723,21 @@ def _scan_file(rel_path, lines, secrets_everywhere=False):
                 "interpolate input into a command string.",
             ))
 
+        # --- rule 8: committed real env file with a secret value ---------
+        if real_envfile:
+            env_name = _env_secret_assignment(text)
+            if env_name:
+                findings.append(_finding(
+                    "committed-env-secret", rel_path, lineno, "HIGH",
+                    ("A committed env file assigns a value to %s; the value is "
+                     "in version control history." % env_name) if env_in_git
+                    else ("An env file assigns a value to %s; it is not in a "
+                          "git repo so it cannot be confirmed ignored." % env_name),
+                    "Remove the file from git (git rm --cached), add it to "
+                    ".gitignore, rotate the credential, and commit only a "
+                    ".env.example with empty or placeholder values.",
+                ))
+
         # --- rule 5: CORS wildcard + credentials (whole-file AND) --------
         # Skip prose/doc lines (_rule3_skip = comment-only line or .md/.rst/.txt
         # doc file): a README or comment WARNING about ACAO * + credentials is not
@@ -710,12 +789,13 @@ def scan(target_dir, secrets_everywhere=False):
 
     findings = []
     files_scanned = 0
+    env_tracked = _git_tracked_files(target_dir)
     for abs_path, rel_path in _iter_files(target_dir):
         lines = _read_lines(abs_path)
         if lines is None:
             continue
         files_scanned += 1
-        findings.extend(_scan_file(rel_path, lines, secrets_everywhere))
+        findings.extend(_scan_file(rel_path, lines, secrets_everywhere, env_tracked))
 
     # deterministic ordering: by file, then line, then rule
     findings.sort(key=lambda f: (f["file"], f["line"], f["rule"]))
