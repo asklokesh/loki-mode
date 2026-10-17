@@ -143,5 +143,16 @@ for c in proof verify; do
     fi
 done
 
+# The bash fallback `loki control --help` must name every subcommand the Bun
+# usage in loki-ts/src/commands/control.ts documents.
+CONTROL_HELP="$(bash "$LOKI" control --help 2>&1)"
+for needle in "prune" "stop" "status [--json]"; do
+    if printf '%s' "$CONTROL_HELP" | grep -qF -- "$needle"; then
+        ok "'loki control --help' names '${needle}'"
+    else
+        bad "'loki control --help' omits '${needle}'"
+    fi
+done
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

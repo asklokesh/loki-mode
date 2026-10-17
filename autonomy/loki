@@ -35041,7 +35041,10 @@ cmd_control() {
             echo "Commands:"
             echo "  serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1"
             echo "  backfill [DIR]                 Ship DIR/.loki/runs to the control plane"
-            echo "  status                         Show whether the control plane is reachable"
+            echo "  prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]"
+            echo "                                 Delete matching runs, their events and orphaned sources"
+            echo "  stop                           Stop the running control plane"
+            echo "  status [--json]                Show whether the control plane is reachable (--json: one JSON object)"
             return 0
             ;;
     esac
