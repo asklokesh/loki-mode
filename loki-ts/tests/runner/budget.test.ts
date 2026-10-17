@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
-import { PRICING, calculateCostFromRecords, calculateRateLimitBackoff, checkBudgetLimit, isRateLimited, parseRetryAfter, readBudgetState, readEfficiencyDir, writeBudgetState, partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
+import { PRICING, calculateCostFromRecords, calculateRateLimitBackoff, checkBudgetLimit, isRateLimited, parseRetryAfter, readBudgetState, readEfficiencyDir, writeBudgetState, partialUsagePath, recordPartialStreamCost, loadDefaultMaxCostUsd, resetPricingFallbackWarning } from "../../src/runner/budget.ts";
 import { fileURLToPath } from "node:url";
 
 let scratch: string;
@@ -273,6 +273,19 @@ describe("budget.read/writeBudgetState atomic round-trip", () => {
     mkdirSync(join(scratch, "metrics"), { recursive: true });
     writeFileSync(fp, "{not json");
     expect(readBudgetState(fp)).toBeNull();
+  });
+
+  it("corrupt budget state rebuilds used from efficiency records", () => {
+    const fp = join(scratch, "metrics", "budget.json");
+    const effDir = join(scratch, "metrics", "efficiency");
+    mkdirSync(effDir, { recursive: true });
+    writeFileSync(join(effDir, "iter-0.json"), JSON.stringify({ model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 }));
+    const expected = calculateCostFromRecords(readEfficiencyDir(effDir));
+    expect(expected).toBeGreaterThan(0);
+    writeFileSync(fp, "{not json");
+    expect(readBudgetState(fp)?.budget_used).toBe(expected);
+    writeFileSync(fp, JSON.stringify({ limit: 10, budget_limit: 10, exceeded: false }));
+    expect(readBudgetState(fp)?.budget_used).toBe(expected);
   });
 
   it("returns null when required field missing", () => {
@@ -603,5 +616,33 @@ describe("budget haiku 5.5 pricing", () => {
       expect(Number(m![1])).toBe(0.1);
       expect(Number(m![2])).toBe(0.5);
     });
+  });
+});
+
+describe("budget.loadDefaultMaxCostUsd fallback warning", () => {
+  it("pricing file missing warns", () => {
+    resetPricingFallbackWarning();
+    const writes: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (m: any) => { writes.push(String(m)); return true; };
+    try {
+      const bad = [["..", "..", "no-such-dir-cost40"]];
+      expect(loadDefaultMaxCostUsd(bad)).toBe(100);
+      expect(loadDefaultMaxCostUsd(bad)).toBe(100);
+    } finally {
+      (process.stderr as any).write = orig;
+    }
+    const warns = writes.filter((w) => w.includes("model-pricing.json"));
+    expect(warns.length).toBe(1);
+    expect(warns[0]).toContain("fallback default max cost $100");
+  });
+
+  it("pricing file present does not warn", () => {
+    resetPricingFallbackWarning();
+    const writes: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (m: any) => { writes.push(String(m)); return true; };
+    try { expect(loadDefaultMaxCostUsd()).toBeGreaterThan(0); } finally { (process.stderr as any).write = orig; }
+    expect(writes.filter((w) => w.includes("model-pricing.json")).length).toBe(0);
   });
 });
