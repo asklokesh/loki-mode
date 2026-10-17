@@ -1111,6 +1111,49 @@ EOF
         else
             bad "26d. production not allowed after staging" "rc=$RC26P $(printf '%s' "$OUT26P" | tail -4)"
         fi
+
+        # 27. captured deployed URL: recorded, probed by default, never invented
+        cat > "$FAKE_BIN/curl" <<'CEOF'
+#!/usr/bin/env bash
+printf '200'
+exit 0
+CEOF
+        chmod +x "$FAKE_BIN/curl"
+        printf '#!/usr/bin/env bash\necho "Production: https://app-x.vercel.app"\nexit 0\n' > "$FAKE_BIN/vercel"
+        chmod +x "$FAKE_BIN/vercel"
+        mk_hfix d27a; D27A="$WORKROOT/d27a"
+        OUT27A="$(run_h "$D27A" --execute)"; RC27A=$?
+        R27A="$(last_record "$D27A")"
+        if [ "$RC27A" -eq 0 ] && [ "$(rec_field "$R27A" deployed_url)" = "https://app-x.vercel.app" ] \
+           && [ "$(rec_field "$R27A" health_status)" = "healthy" ] \
+           && [ "$(rec_field "$R27A" health_url_source)" = "captured" ] \
+           && grep -q "Live at: https://app-x.vercel.app" <<<"$OUT27A"; then
+            ok "27a. a printed URL is recorded as deployed_url and probed by default"
+        else
+            bad "27a. captured URL not recorded or probed" "rc=$RC27A rec=$R27A $(printf '%s' "$OUT27A" | tail -3)"
+        fi
+        printf '#!/usr/bin/env bash\necho "deployed, no link"\nexit 0\n' > "$FAKE_BIN/vercel"
+        mk_hfix d27b; D27B="$WORKROOT/d27b"
+        OUT27B="$(run_h "$D27B" --execute)"; RC27B=$?
+        R27B="$(last_record "$D27B")"
+        if [ "$RC27B" -eq 0 ] && [ -z "$(rec_field "$R27B" deployed_url)" ] \
+           && [ "$(rec_field "$R27B" health_status)" = "unchecked" ] \
+           && ! grep -q "Live at:" <<<"$OUT27B"; then
+            ok "27b. no printed URL: deployed_url empty, health unchecked, nothing invented"
+        else
+            bad "27b. a URL was invented or health claimed" "rc=$RC27B rec=$R27B"
+        fi
+        printf '#!/usr/bin/env bash\necho "Production: https://app-x.vercel.app"\nexit 0\n' > "$FAKE_BIN/vercel"
+        mk_hfix d27c; D27C="$WORKROOT/d27c"
+        _="$(run_h "$D27C" --execute --health-url "http://127.0.0.1:$HS_PORT/ok")"; RC27C=$?
+        R27C="$(last_record "$D27C")"
+        if [ "$RC27C" -eq 0 ] && [ "$(rec_field "$R27C" health_url_source)" = "flag" ] \
+           && [ "$(rec_field "$R27C" health_url)" = "http://127.0.0.1:$HS_PORT/ok" ]; then
+            ok "27c. --health-url wins over the captured URL and records source=flag"
+        else
+            bad "27c. flag source wrong" "rc=$RC27C rec=$R27C"
+        fi
+        rm -f "$FAKE_BIN/curl"
         fi
     fi
     kill "$HS_PID" 2>/dev/null || true
