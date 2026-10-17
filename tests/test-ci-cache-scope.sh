@@ -231,6 +231,8 @@ for name, j in jobs.items():
 run = next((s['run'] for s in jobs.get('dedupe', {}).get('steps', []) if s.get('id') == 'check'), '')
 if not run: errs.append('dedupe has no check step')
 else:
+    hf = [str(st.get('run', '')) for j in jobs.values() for st in j.get('steps', []) if 'hyperfine' in str(st.get('run', '')) and 'bench-suite' not in str(st.get('run', ''))]
+    if not hf or any('releases/download/v' not in l or ('sha256sum -c' not in l and 'shasum -a 256 -c' not in l) for l in hf): errs.append('hyperfine install is not version- and checksum-pinned: %r' % hf)
     bindir = os.path.join(work, 'nbin'); os.makedirs(bindir, exist_ok=True)
     def attempt(event, runs, gh_ok=True):
         open(bindir + '/gh', 'w').write('#!/bin/sh\n' + ('printf %s \'' + json.dumps(runs) + '\'\n' if gh_ok else 'exit 1\n')); os.chmod(bindir + '/gh', 0o755)
@@ -242,7 +244,10 @@ else:
     cases = [
         ('schedule', [done(100, None), done(99, 'success')], 'skip=true', 'completed prior run'),
         ('schedule', [{'databaseId': 98, 'status': 'in_progress', 'conclusion': ''}], 'skip=true', 'in-progress prior run'),
-        ('schedule', [done(97, 'failure')], 'skip=true', 'failed prior run still measured the SHA'),
+        ('schedule', [done(97, 'failure')], 'skip=false', 'failed prior run is re-measured'),
+        ('workflow_run', [done(94, 'timed_out')], 'skip=false', 'timed-out prior run is re-measured'),
+        ('schedule', [done(93, 'failure'), done(92, 'success')], 'skip=true', 'green prior run wins over an older failed one'),
+        ('schedule', [done(91, 'failure'), {'databaseId': 90, 'status': 'in_progress', 'conclusion': ''}], 'skip=true', 'live retry wins over a failed run'),
         ('schedule', [done(96, 'cancelled'), done(95, 'skipped')], 'skip=false', 'only cancelled or skipped prior runs'),
         ('schedule', [{'databaseId': 100, 'status': 'in_progress', 'conclusion': ''}], 'skip=false', 'only this run'),
         ('workflow_run', [done(99, 'success')], 'skip=true', 'workflow_run: completed prior run'),

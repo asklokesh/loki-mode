@@ -23,7 +23,9 @@ name: Nightly
 # `next` to `latest`). `dedupe` makes an idle main free: a scheduled or workflow_run run whose
 # main HEAD already has a live or finished (not cancelled/skipped) nightly run
 # logs "nightly skip" and every other job is skipped. workflow_dispatch always
-# runs. NOTE: a skipped run still concludes success; read the `full` job (not
+# runs. A prior run that concluded failure or timed_out does not count as
+# measured: the SHA is re-measured on the next trigger, so one flake cannot make
+# it unpromotable forever (a later green run becomes the newest nightly). NOTE: a skipped run still concludes success; read the `full` job (not
 # the run conclusion) to know whether a SHA was actually measured.
 
 # BACKSTOP-TRIGGER: GitHub stopped firing the cron after 2026-10-08, so a
@@ -77,7 +79,7 @@ jobs:
           skip=false
           if [ "$EVENT" = "schedule" ] || [ "$EVENT" = "workflow_run" ]; then
             if runs=$(gh run list --workflow nightly.yml --commit "$SHA" --limit 50 --json databaseId,status,conclusion); then
-              prior=$(printf '%s' "$runs" | jq -r --argjson me "$RUN_ID" '[.[] | select(.databaseId != $me) | select(.status != "completed" or (.conclusion != "cancelled" and .conclusion != "skipped"))] | first // empty | "\(.databaseId) \(.status) \(.conclusion)"')
+              prior=$(printf '%s' "$runs" | jq -r --argjson me "$RUN_ID" '[.[] | select(.databaseId != $me) | select(.status != "completed" or (.conclusion != "cancelled" and .conclusion != "skipped" and .conclusion != "failure" and .conclusion != "timed_out"))] | first // empty | "\(.databaseId) \(.status) \(.conclusion)"')
               if [ -n "$prior" ]; then
                 skip=true
                 echo "nightly skip: $SHA already has nightly run ${prior%% *} (${prior#* }); nothing new to measure"
@@ -294,11 +296,30 @@ jobs:
 
       - name: Install hyperfine (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y hyperfine
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/hyperfine.deb" \
+            https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          printf '%s  %s\n' \
+            '5ffe6996aefbbf547f383116eea53569263cc7cf6598ee53f0081e37b702055d' \
+            "$RUNNER_TEMP/hyperfine.deb" | sha256sum -c -
+          sudo dpkg -i "$RUNNER_TEMP/hyperfine.deb"
+          hyperfine --version
 
       - name: Install hyperfine (macOS)
         if: runner.os == 'macOS'
-        run: brew install hyperfine
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/hyperfine.tar.gz" \
+            https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-aarch64-apple-darwin.tar.gz
+          printf '%s  %s\n' \
+            '502e7c7f99e7e1919321eaa23a4a694c34b1b92d99cbd773a4a2497e100e088f' \
+            "$RUNNER_TEMP/hyperfine.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/hyperfine.tar.gz" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.local/bin"
+          cp "$RUNNER_TEMP/hyperfine-v1.19.0-aarch64-apple-darwin/hyperfine" "$HOME/.local/bin/hyperfine"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/hyperfine" --version
 
       - name: Sanity bench-suite (hyperfine, 5 runs, 1 warmup)
         working-directory: loki-ts
