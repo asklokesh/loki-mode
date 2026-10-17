@@ -59,9 +59,10 @@ export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = f
 /** Every filter clean/smudge/process and diff textconv key defined at local, worktree or command scope (a key reached through a local
  *  include.path reports local). Global and system keys are the user's own (e.g. `git lfs install`) and stay live: blanking them breaks LFS
  *  (the global-scope residual is FC-25c). Enumeration runs hardened and token-free. Fails closed: an unreadable config throws. */
+const configEnumTimeoutMs = (): number => { const n = Number(process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? n : 30_000; };
 function driverKeys(repoDir: string): string[] {
-  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", DRIVER_KEY_RE], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  if (r.error) throw r.error;
+  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", DRIVER_KEY_RE], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
+  if (r.error) throw r.error; // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed
   if (r.status === 1) return []; // no match
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git config drivers (status ${r.status})`);
   // -z --show-scope emits "<scope>\0<key>\n<value>\0" per entry
@@ -92,8 +93,8 @@ const PACK_OPTS: ReadonlyArray<{ re: RegExp; dflt: string; flag: string; cmds: R
  *  PACK_OPTS) carrying the user's global value or the stock program. A key with no repo-scope value is left alone.
  *  Fails closed: an unreadable config throws. */
 function netCommandOverrides(repoDir: string, env: NodeJS.ProcessEnv): { cfg: string[]; opts: { flag: string; cmds: ReadonlySet<string> }[] } {
-  const r = spawnSync("git", [...CREDENTIAL_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", NET_CMD_KEY_RE], { cwd: repoDir, env: safeGitEnv(env, true), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  if (r.error) throw r.error;
+  const r = spawnSync("git", [...CREDENTIAL_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", NET_CMD_KEY_RE], { cwd: repoDir, env: safeGitEnv(env, true), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
+  if (r.error) throw r.error; // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed
   if (r.status === 1) return { cfg: [], opts: [] };
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git network config (status ${r.status})`);
   const t = r.stdout.split("\0"), all: { k: string; scope: string; value: string }[] = [];

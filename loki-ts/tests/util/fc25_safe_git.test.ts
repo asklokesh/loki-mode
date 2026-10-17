@@ -280,3 +280,15 @@ test("FC-25c(b) r2: a hostile submodule core.sshCommand never runs on an allowTo
   try { withGlobal(n.gcfg, () => safeGit(sup, ["fetch", "origin"], { allowToken: true })); } catch { /* ok */ }
   expect(existsSync(n.hit)).toBe(false);
 }));
+test("hung git config: driverKeys and netCommandOverrides time out and fail closed", () => {
+  const d = mkdtempSync(join(tmpdir(), "fc25-hung-")), bin = join(d, "bin"), repo = join(d, "r"); mkdirSync(bin); mkdirSync(repo);
+  writeFileSync(join(bin, "git"), "#!/bin/sh\nexec sleep 3\n"); chmodSync(join(bin, "git"), 0o755);
+  const saved = { p: process.env.PATH, t: process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS };
+  process.env.PATH = `${bin}:${saved.p}`; process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS = "300";
+  try {
+    for (const tok of [false, true]) { const t0 = Date.now(); expect(() => safeGitArgs(["status"], tok, repo)).toThrow(); expect(Date.now() - t0).toBeLessThan(2000); }
+  } finally {
+    process.env.PATH = saved.p; if (saved.t === undefined) delete process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS; else process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS = saved.t;
+    rmSync(d, { recursive: true, force: true });
+  }
+});
