@@ -293,11 +293,15 @@ function readEfficiencyDirSince(dir: string, sinceMs: number): EfficiencyRecord[
     if (!f.endsWith(".json")) continue;
     try {
       const fp = join(dir, f);
+      // A record's timestamp is written before the file, so mtime older than the cutoff means the record is too old.
+      // Skip it without reading or parsing.
+      const mtimeMs = statSync(fp).mtimeMs;
+      if (mtimeMs < sinceMs) continue;
       const parsed: unknown = JSON.parse(readFileSync(fp, "utf8"));
       if (!parsed || typeof parsed !== "object") continue;
       const ts = (parsed as { timestamp?: unknown }).timestamp;
       const parsedTs = typeof ts === "string" ? Date.parse(ts) : NaN;
-      const at = Number.isFinite(parsedTs) ? parsedTs : statSync(fp).mtimeMs;
+      const at = Number.isFinite(parsedTs) ? parsedTs : mtimeMs;
       if (at >= sinceMs) out.push(parsed as EfficiencyRecord);
     } catch {
       // ignore malformed file
