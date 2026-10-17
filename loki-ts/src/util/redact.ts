@@ -54,7 +54,7 @@ export const redactDeep = (x: unknown): unknown =>
   : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [redactSecrets(k), redactDeep(v)]))
   : x;
 /** Q17-05b: engine-computed crypto fields of the integrity lines. A base64url sig or kid matches a token rule by chance (about 1.7% of log.sealed sigs match
- *  GOOGLE_KEY), and a redacted one forges TAMPERED. Only a value of the exact shape the engine writes is exempt; every other field is redacted. */
+ *  an OPENAI sk- token rule), and a redacted one forges TAMPERED. Only a value of the exact shape the engine writes is exempt; every other field is redacted. */
 const B64 = (n: number): RegExp => new RegExp(`^[A-Za-z0-9_-]{${n}}$`), HEX64 = /^[0-9a-f]{64}$/;
 const SEAL_FIELDS = new Map<string, Map<string, RegExp>>([
   ["log.sealed", new Map([["kid", B64(43)], ["sig", B64(86)], ["events_sha256", HEX64]])],

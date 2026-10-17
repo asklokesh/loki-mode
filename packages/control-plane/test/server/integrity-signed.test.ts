@@ -398,7 +398,7 @@ test("local key: LOKI_CP_RECEIPT_PUBKEYS is merged with the local key, so a team
 });
 
 // --- Q17-05b round 3: seal crypto fields survive every redaction layer (engine writer, shipper, ingest) ---
-const TOKEN_RULE = /AI[a-zA-Z0-9_-]{30,}/; // GOOGLE_KEY: matches about 1.7% of base64url log.sealed signatures
+const TOKEN_RULE = /sk-[A-Za-z0-9_-]{20,}/; // OPENAI_KEY (live rule): matches about 1 in 5000 base64url log.sealed signatures
 /** A real engine run (SupervisorLog writes events.jsonl and seals it) shipped by the real shipper into the real /v1/ingest; returns the run detail. */
 async function engineShipIngest(signer: KeyObject, id: string, accept: (seal: any, sealed: any) => boolean, note = "key sk-abcdefghijklmnopqrstuvwxyz0123456789"): Promise<{ detail: any; seal: any; sealed: any } | null> {
   const saved = { k: process.env["LOKI_RECEIPT_SIGNING_KEY"], p: process.env["LOKI_CP_RECEIPT_PUBKEYS"] };
@@ -416,7 +416,7 @@ async function engineShipIngest(signer: KeyObject, id: string, accept: (seal: an
     log.sealLog();
     const lines = readFileSync(ev, "utf8").trim().split("\n").map((l: string) => JSON.parse(l));
     const seal = lines.at(-1), sealed = lines[1];
-    if (!accept(seal, sealed)) return null;
+    if (!accept(seal, sealed)) { rmSync(dir, { recursive: true, force: true }); return null; }
     const { app } = createApp({ dbPath: ":memory:" });
     const r = await shipRun({ runDir: dir, url: "http://cp", source: SRC, fetchImpl: ((u: string, init: RequestInit) => app.request(new URL(u).pathname, init)) as unknown as typeof fetch });
     expect(r).toMatchObject({ ok: true, sent: 4 });
@@ -430,7 +430,7 @@ async function engineShipIngest(signer: KeyObject, id: string, accept: (seal: an
 
 test("Q17-05b: an honest signed run whose log.sealed sig matches a token rule ships and ingests VERIFIED, never TAMPERED", async () => {
   let got: Awaited<ReturnType<typeof engineShipIngest>> = null;
-  for (let i = 0; i < 1000 && !got; i++) got = await engineShipIngest(privateKey, `q05b-sig-${i}`, (seal) => TOKEN_RULE.test(seal.data.sig));
+  for (let i = 0; i < 60000 && !got; i++) got = await engineShipIngest(privateKey, `q05b-sig-${i}`, (seal) => TOKEN_RULE.test(seal.data.sig));
   expect(got).not.toBeNull();
   expect(redactEvent(got!.seal)).toEqual(got!.seal); // the shipper keeps the seal bytes
   expect([got!.detail.tampered, got!.detail.effective_verdict]).toEqual([false, "VERIFIED"]);
@@ -458,7 +458,7 @@ test("Q17-05b: the seal exemption is shape-bound; a token in a seal field of the
 
 test("Q17-05b round 4: adjacent tokens that a single redaction pass leaves half-redacted (a \\b rule freed by a later rule's marker) still read VERIFIED through the real engine, shipper and ingest", async () => {
   const hex = "0123456789abcdef".repeat(2);
-  const notes = [`issue: SK${hex}AI${"x".repeat(30)}`, `dop_v1_${"ab".repeat(32)}sk-${"y".repeat(24)}`, `SK${hex}sk-${"z".repeat(24)} and ?token=SK${hex}`];
+  const notes = [`issue: SK${hex}AIza${"x".repeat(35)}`, `dop_v1_${"ab".repeat(32)}sk-${"y".repeat(24)}`, `SK${hex}sk-${"z".repeat(24)} and ?token=SK${hex}`];
   for (const [i, note] of notes.entries()) {
     const got = await engineShipIngest(privateKey, `q05b-adj-${i}`, () => true, note);
     expect(JSON.stringify(got!.detail)).not.toContain(hex);
