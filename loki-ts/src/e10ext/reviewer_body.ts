@@ -37,7 +37,7 @@ function tested(o: ReviewerBodyInput["outputs"]): string[] {
   }
   return out;
 }
-export function renderReviewerBody(i: ReviewerBodyInput): string {
+export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv = process.env): string {
   const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "";
   const title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
   const changed = arr<string>(i.outputs.verify?.["changed_files"]), planned = arr<string>(i.outputs.plan?.["relevant_files"]);
@@ -51,5 +51,7 @@ export function renderReviewerBody(i: ReviewerBodyInput): string {
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
   if (i.receiptPath) L.push(`- File: ${i.receiptPath}`);
   L.push(`- Verify: \`loki verify ${i.runId}\``);
+  L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`npx loki-mode verify --pubkey pubkey.jwk receipt.json\` or adds the receipt-check action`);
+  if (env["LOKI_PR_FOOTER"] !== "0") L.push("", `${i.verdict === "VERIFIED" && !i.draftReason ? "Built and verified with" : "Built with"} Loki Mode: https://github.com/asklokesh/loki-mode`); // static text, no network call, no telemetry
   return `${L.join("\n")}\n`;
 }
