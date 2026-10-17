@@ -22,7 +22,8 @@ import {
   writeTrajectoryCache,
 } from "../metrics/trust.ts";
 import type { AutonomyLevel } from "../metrics/trust.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { renderProofBadge } from "./proof.ts";
 import { join } from "node:path";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 
@@ -37,6 +38,35 @@ function currentAutonomy(lokiDir: string): AutonomyLevel | null {
   } catch {
     return null;
   }
+}
+
+// README badge for the newest proof whose honesty.headline is recognized (same
+// renderer as `loki proof badge`, so green is VERIFIED only). Null when none.
+function lastSealedBadge(lokiDir: string): string | null {
+  const dir = join(lokiDir, "proofs");
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort()
+      .reverse();
+  } catch {
+    return null;
+  }
+  for (const id of ids) {
+    try {
+      const d = JSON.parse(readFileSync(join(dir, id, "proof.json"), "utf8")) as {
+        honesty?: { headline?: unknown };
+      };
+      const h = d.honesty?.headline;
+      const md = renderProofBadge(typeof h === "string" ? h : null);
+      if (md) return md;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 const HELP = `loki trust -- visible trust trajectory (R4)
@@ -62,7 +92,8 @@ Derived read-only from proof-of-run history in .loki/proofs/. With fewer
 than 2 recorded runs it reports "not enough history yet" rather than a
 fabricated trend. Also prints advisory earned-autonomy advice (eligible for the
 next level after 10+ runs with recorded verdicts, zero false VERIFIED and no
-regressing axis); it never writes the policy file. Complements 'loki kpis' (single-run snapshot).
+regressing axis); it never writes the policy file. Complements 'loki kpis' (single-run snapshot). Also prints a copyable README badge
+snippet for the last sealed run (or the next step when there is none).
 `;
 
 export function runTrust(args: readonly string[]): number {
@@ -89,5 +120,13 @@ export function runTrust(args: readonly string[]): number {
   process.stdout.write(
     asJson ? formatTrajectoryJson(traj) + "\n" : formatTrajectoryHuman(traj) + "\n",
   );
+  if (!asJson) {
+    const badge = lastSealedBadge(lokiDir);
+    process.stdout.write(
+      badge
+        ? `\nREADME badge for the last sealed run (copy-paste markdown):\n${badge}\n`
+        : "\nNo README badge yet: no sealed run. Next step: run 'loki start' to completion, then 'loki trust'.\n",
+    );
+  }
   return 0;
 }
