@@ -395,6 +395,114 @@ def load_pinned_subset(
     }
 
 
+def gold_files(patch: str) -> List[str]:
+    """Paths touched by a unified diff, from its diff headers. /dev/null ignored."""
+    out: List[str] = []
+    for line in (patch or "").splitlines():
+        if not (line.startswith("--- ") or line.startswith("+++ ")):
+            continue
+        tok = line[4:].split("\t")[0].strip()
+        if tok == "/dev/null":
+            continue
+        path = tok[2:] if tok[:2] in ("a/", "b/") else tok
+        if path and path not in out:
+            out.append(path)
+    return out
+
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
+_LOC_SCRIPT = (
+    "const m=await import(process.argv[1]+'/loki-ts/src/engine10/repomap.ts');"
+    "const r=await import(process.argv[1]+'/loki-ts/src/engine10/relevant_files.ts');"
+    "const task=await Bun.stdin.text();"
+    "console.log(JSON.stringify(r.selectRelevantFiles(task,m.buildRepoMap(process.argv[2]),20)));"
+)
+
+
+def _checkout_dir(repos_root: str, repo: str, base_commit: str) -> Optional[str]:
+    for name in (repo, repo.replace("/", "__")):
+        cand = os.path.join(repos_root, "%s@%s" % (name, base_commit))
+        if os.path.isdir(cand):
+            return cand
+    return None
+
+
+def _select_files(checkout: str, problem: str) -> List[str]:
+    import subprocess
+
+    res = subprocess.run(
+        ["bun", "-e", _LOC_SCRIPT, _REPO_ROOT, checkout],
+        input=problem, capture_output=True, text=True, timeout=300,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip()[-300:] or "bun exited %d" % res.returncode)
+    return json.loads(res.stdout.strip().splitlines()[-1])
+
+
+def _recall(gold: List[str], picked: List[str]) -> Optional[float]:
+    if not gold:
+        return None
+    return len(set(gold) & set(picked)) / float(len(gold))
+
+
+def run_localization(
+    dataset_path: str,
+    repos_root: Optional[str],
+    manifest_path: str = PINNED_MANIFEST,
+) -> Dict[str, Any]:
+    """Offline recall@8 / recall@20 of selectRelevantFiles over the pinned subset.
+
+    An instance without a checkout (or without a gold patch) is listed as skipped
+    with a reason and recall None; it is never scored 0 and never averaged in.
+    """
+    manifest = load_pinned_manifest(manifest_path)
+    by_id = _index_by_id(_read_dataset(dataset_path))
+    rows: List[Dict[str, Any]] = []
+    for entry in manifest["instances"]:
+        iid = str(entry.get("id", ""))
+        inst = by_id.get(iid)
+        row: Dict[str, Any] = {"instance_id": iid, "recall_at_8": None, "recall_at_20": None}
+        rows.append(row)
+        if inst is None:
+            row.update(skipped=True, reason="instance not in dataset")
+            continue
+        gold = gold_files(str(inst.get("patch") or ""))
+        checkout = (
+            _checkout_dir(repos_root, str(inst.get("repo", "")), str(inst.get("base_commit", "")))
+            if repos_root else None
+        )
+        if not gold:
+            row.update(skipped=True, reason="no gold patch paths")
+            continue
+        if checkout is None:
+            row.update(skipped=True, reason="no checkout at $LOKI_SWEBENCH_REPOS/<repo>@<base_commit>")
+            continue
+        try:
+            picked = _select_files(checkout, str(inst.get("problem_statement") or ""))
+        except Exception as exc:  # noqa: BLE001
+            row.update(skipped=True, reason="selector failed: %s" % exc)
+            continue
+        row.update(
+            skipped=False, gold=gold, picked=picked[:20],
+            recall_at_8=_recall(gold, picked[:8]),
+            recall_at_20=_recall(gold, picked[:20]),
+            hits_at_8=sorted(set(gold) & set(picked[:8])),
+            hits_at_20=sorted(set(gold) & set(picked[:20])),
+        )
+    scored = [r for r in rows if not r["skipped"]]
+
+    def _mean(key: str) -> Optional[float]:
+        return sum(r[key] for r in scored) / len(scored) if scored else None
+
+    return {
+        "scored": len(scored),
+        "skipped": len(rows) - len(scored),
+        "recall_at_8": _mean("recall_at_8"),
+        "recall_at_20": _mean("recall_at_20"),
+        "instances": rows,
+    }
+
+
 def _main(argv=None):
     import argparse
 
@@ -406,7 +514,26 @@ def _main(argv=None):
     p.add_argument("--out", default=None, help="output root for materialized tasks")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--manifest", default=PINNED_MANIFEST)
+    p.add_argument("--repos", default=None, help="localization: checkout root (default $LOKI_SWEBENCH_REPOS)")
+    p.add_argument("--output", default=None, help="localization: write JSON here")
+    p.add_argument("command", nargs="?", choices=["materialize", "localization"], default="materialize")
     args = p.parse_args(argv)
+    if args.command == "localization":
+        ds = args.dataset or os.environ.get("SWEBENCH_DATASET_PATH", "")
+        try:
+            result = run_localization(
+                ds, args.repos or os.environ.get("LOKI_SWEBENCH_REPOS"), args.manifest
+            )
+        except DatasetUnavailable as exc:
+            print("dataset unavailable: %s" % exc)
+            return 3
+        text = json.dumps(result, indent=2, sort_keys=True)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+        else:
+            print(text)
+        return 0
     try:
         result = load_pinned_subset(
             dataset_path=args.dataset,
