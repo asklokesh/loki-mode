@@ -5,7 +5,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const COST_PROFILES: Record<string, Record<string, string>> = {
-  lean: { LOKI_ROUTER: "1", LOKI_E10_TRIM: "1" },
+  // No LOKI_ROUTER: the router plans every task (plan.ts) and overrides haiku-first, which is the fixed cost C-F1 run4 measured.
+  lean: { LOKI_IMPLEMENT_HAIKU_FIRST: "1", LOKI_E10_TRIM: "1", LOKI_E10_SMALL_NO_RUNNER: "1", LOKI_E10_SMALL_MAX_CHARS: "1200" },
   off: {},
 };
 
