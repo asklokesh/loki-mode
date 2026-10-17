@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.26 (2026-10-17)
+
+### Added
+- Haiku-first implement (TEN-COST-16): LOKI_IMPLEMENT_HAIKU_FIRST=1 runs the implement stage on haiku first and escalates to the run model when verify fails. The downgrade is printed on the start line and recorded, including when the cascade or router overrides it.
+- Proof app facts (TEN-GATES-07): the proof collects app boot health and functional facts before it is generated.
+
+### Fixed
+- Provenance freshness (TEN-DEPLOY-02): `loki verify --max-age` refuses a provenance document whose built_at is in the future, and `--seal-composite` and `--export-dsse` refuse `--max-age` with a clear message instead of ignoring it.
+
 ## v11.17.25 (2026-10-17)
 
 ### Added

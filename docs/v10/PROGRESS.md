@@ -2453,3 +2453,8 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - v11.17.24 Release run 39006796098: gate=success, release=success, publish-npm=success, homebrew and both SDKs success; tags resume after the P9 fix.
 - Ships UX-01-F1 (TL APPROVE e7d57b1f6), UX-08 r2 (TL APPROVE 46f0d3774), GATES-03-F1 (4a47a5b6f), ADOPTION-03-F1 (05d9cbbf3), QUALITY-03-F1 (24d55b07a), COST-01 (40ee12bb6), COST-24 (e4462cd41). COST-16 BLOCK r1 (haiku-first missing from modelDowngrades, L1); r2 building.
 - D103 committed 4eb9ee299: bash tests/test-v10-pulse.sh 170 passed, 0 failed, rc=0. Wave W (9 slices incl. TEN-RELEASE-FAST, GATES-02, P9-FIX-F1 on opus) building.
+
+## 2026-10-17T05:48Z (CoS) v11.17.26
+- Ships COST-16 (TL APPROVE r2 ceca06bf6), DEPLOY-02 (HIGH APPROVE r3 b3bba9745), GATES-07 (TL APPROVE ac4728a89).
+- COST-11 r3 BLOCK (wall.ts fail-closed left base_run green; reproduced seal_verdict=ALREADY_SATISFIED); r4 on opus. GATES-06 builder used origin/main as base and committed nothing; re-dispatched from local main.
+- Wave Y dispatched: GATES-06, GATES-10, DEPLOY-05, DEPLOY-08, DEPLOY-09. DEPLOY-03 and DEPLOY-06 wait for DEPLOY-05 (same function).
