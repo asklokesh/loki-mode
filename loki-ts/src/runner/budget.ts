@@ -262,9 +262,10 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[]): 
   return round4(total);
 }
 
-// Read all .loki/metrics/efficiency/*.json files; bad files are silently
-// skipped (matches Python `except: pass` at run.sh:7890).
-export function readEfficiencyDir(dir: string): EfficiencyRecord[] {
+// Read all .loki/metrics/efficiency/*.json files; bad files are skipped
+// (matches Python `except: pass` at run.sh:7890). Pass `stats` to learn how
+// many were skipped.
+export function readEfficiencyDir(dir: string, stats?: { skipped: number }): EfficiencyRecord[] {
   if (!existsSync(dir)) return [];
   const records: EfficiencyRecord[] = [];
   let entries: string[];
@@ -281,9 +282,11 @@ export function readEfficiencyDir(dir: string): EfficiencyRecord[] {
       const parsed: unknown = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
         records.push(parsed as EfficiencyRecord);
+      } else if (stats) {
+        stats.skipped++;
       }
     } catch {
-      // ignore malformed file
+      if (stats) stats.skipped++;
     }
   }
   return records;
@@ -314,10 +317,11 @@ const warnedCorruptBudget = new Set<string>();
 // budget_used from the efficiency records beside it; null only when there is
 // nothing to rebuild from. Warns once per file.
 function rebuildBudgetState(fp: string, efficiencyDir?: string): BudgetState | null {
-  const records = readEfficiencyDir(efficiencyDir ?? join(dirname(fp), "efficiency"));
+  const stats = { skipped: 0 };
+  const records = readEfficiencyDir(efficiencyDir ?? join(dirname(fp), "efficiency"), stats);
   if (!warnedCorruptBudget.has(fp)) {
     warnedCorruptBudget.add(fp);
-    console.warn(`[budget] malformed budget state at ${fp}; rebuilding spend from ${records.length} efficiency record(s)`);
+    console.warn(`[budget] malformed budget state at ${fp}; rebuilding spend from ${records.length} efficiency record(s), skipped ${stats.skipped} malformed`);
   }
   if (records.length === 0) return null;
   const used = calculateCostFromRecords(records);

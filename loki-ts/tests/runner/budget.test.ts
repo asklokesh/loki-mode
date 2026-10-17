@@ -321,6 +321,29 @@ describe("budget.read/writeBudgetState atomic round-trip", () => {
     }
   });
 
+  it("skipped malformed efficiency records are counted in the rebuild warning", () => {
+    const fp = join(scratch, "metrics", "budget-skipped.json");
+    const effDir = join(scratch, "metrics", "efficiency");
+    mkdirSync(effDir, { recursive: true });
+    writeFileSync(join(effDir, "iter-0.json"), JSON.stringify({ model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 }));
+    writeFileSync(join(effDir, "iter-1.json"), "{not json");
+    writeFileSync(join(effDir, "iter-2.json"), "null");
+    const expected = calculateCostFromRecords(readEfficiencyDir(effDir));
+    writeFileSync(fp, "{not json");
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => { warns.push(a.join(" ")); };
+    try {
+      const st = readBudgetState(fp);
+      expect(st?.budget_used).toBe(expected);
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.length).toBe(1);
+    expect(warns[0]).toContain("1 efficiency record(s)");
+    expect(warns[0]).toContain("skipped 2 malformed");
+  });
+
   it("returns null when required field missing", () => {
     const fp = join(scratch, "metrics", "missing-field.json");
     mkdirSync(join(scratch, "metrics"), { recursive: true });
