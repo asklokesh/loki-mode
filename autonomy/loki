@@ -1877,7 +1877,7 @@ show_help_all() {
     echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
     echo "  doctor [--json]  Check system prerequisites and skill symlinks"
     echo ""
-    echo "  version          Show version"
+    echo "  version [--json] Show version (--json for machine-readable)"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
     echo "More commands (the most useful; many more are dispatchable):"
@@ -15492,10 +15492,19 @@ cmd_version() {
         --help|-h|help)
             echo -e "${BOLD}Loki Mode -- print version${NC}"
             echo ""
-            echo "Usage: loki version"
+            echo "Usage: loki version [--json]"
             echo ""
             echo "Prints 'Loki Mode vX.Y.Z' from the VERSION file shipped with"
             echo "the package. Equivalent to 'loki --version' and 'loki -v'."
+            echo ""
+            echo "  --json    Print {\"version\",\"runtime\",\"install_path\"} as one JSON line"
+            return 0
+            ;;
+        --json)
+            local _vp="${SKILL_DIR:-}"
+            _vp="${_vp//\\/\\\\}"
+            _vp="${_vp//\"/\\\"}"
+            printf '{"version":"%s","runtime":"bash","install_path":"%s"}\n' "$(get_version)" "$_vp"
             return 0
             ;;
     esac

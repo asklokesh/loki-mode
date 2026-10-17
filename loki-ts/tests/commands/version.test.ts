@@ -27,3 +27,26 @@ describe("version command", () => {
     expect(a.stdout).toMatch(/^Loki Mode v\d+\.\d+\.\d+/);
   });
 });
+
+describe("version json", () => {
+  it("version json prints version, runtime, install_path via the CLI", async () => {
+    const a = await run(["bun", CLI, "version", "--json"]);
+    expect(a.exitCode).toBe(0);
+    const o = JSON.parse(a.stdout);
+    const plain = await run(["bun", CLI, "version"]);
+    expect(plain.stdout).toBe(`Loki Mode v${o.version}\n`);
+    expect(o.runtime).toBe("bun");
+    expect(o.install_path).toBe(REPO_ROOT);
+    expect(Object.keys(o)).toEqual(["version", "runtime", "install_path"]);
+  });
+
+  it("version json bash route matches version and shape", async () => {
+    const a = await run(["bun", CLI, "version", "--json"]);
+    const b = await run([BASH_CLI, "version", "--json"]);
+    expect(b.exitCode).toBe(0);
+    const o = JSON.parse(b.stdout);
+    expect(o.version).toBe(JSON.parse(a.stdout).version);
+    expect(o.runtime).toBe("bash");
+    expect(typeof o.install_path).toBe("string");
+  });
+});
