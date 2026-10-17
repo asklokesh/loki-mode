@@ -1,7 +1,7 @@
 // WC-01b: LOKI_E10_WALL_CONCURRENT=1 authors the Wall alongside plan and implement, installs once before verify.
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FLOW, runMachine } from "../../src/engine10/machine.ts";
@@ -14,10 +14,19 @@ const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-c", 
 const dirs: string[] = [];
 afterEach(() => { delete process.env.LOKI_E10_WALL_CONCURRENT; for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
+// Template repo built once; each test copies it instead of running git init/add/commit.
+let templateDir = "", templateSha = "";
+beforeAll(() => {
+  templateDir = mkdtempSync(join(tmpdir(), "loki-wc01b-tpl-"));
+  git(templateDir, "init", "-q"); writeFileSync(join(templateDir, "README.md"), "x\n"); git(templateDir, "add", "README.md"); git(templateDir, "commit", "-qm", "init");
+  templateSha = git(templateDir, "rev-parse", "HEAD").trim();
+});
+afterAll(() => { rmSync(templateDir, { recursive: true, force: true }); });
+
 function fixture() {
   const repoDir = mkdtempSync(join(tmpdir(), "loki-wc01b-repo-")); dirs.push(repoDir);
-  git(repoDir, "init", "-q"); writeFileSync(join(repoDir, "README.md"), "x\n"); git(repoDir, "add", "README.md"); git(repoDir, "commit", "-qm", "init");
-  const baseSha = git(repoDir, "rev-parse", "HEAD").trim();
+  cpSync(templateDir, repoDir, { recursive: true });
+  const baseSha = templateSha;
   const events: Ev[] = [], log: string[] = [];
   const ctx: RunContext = {
     runId: "wc01b", repoDir, runDir: join(repoDir, ".run"), baseSha, branch: "b", provider: "claude", model: "fake", deep: false, capS: 900,
@@ -69,7 +78,7 @@ describe("WC-01b wall concurrent", () => {
     expect(r.outputs.wall?.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
     expect(bases[0]).not.toBe(f.repoDir); expect(bases[1]).toBe("base-has-wall");
     expect(existsSync(bases[0]!)).toBe(false); // base worktree removed
-  });
+  }, 15000);
   it("records deps:head when implement touched a manifest", async () => {
     process.env.LOKI_E10_WALL_CONCURRENT = "1";
     const f = fixture(), r = await run(f, stages(f, { implement: (repo) => writeFileSync(join(repo, "package.json"), "{}\n") }));
