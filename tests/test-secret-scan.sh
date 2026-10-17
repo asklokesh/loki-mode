@@ -212,6 +212,22 @@ if _commit_scan_secret_file "$TMP_ROOT/s6/server/clean.py"; then _no "lib matche
 
 
 # -------------------------------------------------------------------------
+# Scenario 7: Hugging Face, SendGrid, Twilio, Azure storage formats in the lib
+# matcher (mirrors loki-ts export_sarif.ts). Keys built at runtime.
+# -------------------------------------------------------------------------
+mkdir -p "$TMP_ROOT/s7"
+_s7_case() { # name content expect(0=flag,1=clean)
+    printf '%s\n' "$2" > "$TMP_ROOT/s7/$1.txt"
+    _commit_scan_secret_file "$TMP_ROOT/s7/$1.txt"; local rc=$?
+    if [ "$rc" -eq "$3" ]; then _ok "lib matcher $1 rc=$rc"; else _no "lib matcher $1 expected rc=$3 got $rc"; fi
+}
+_s7_case hf "x = \"$(printf 'hf_%s' 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5')\"" 0
+_s7_case sendgrid "x = \"$(printf 'SG.%s.%s' 'aB3dE5gH7jK9mN1pQ3sT5v' 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7rT9u')\"" 0
+_s7_case twilio "x = \"$(printf 'SK%s' '0123456789abcdef0123456789abcdef')\"" 0
+_s7_case azure "$(printf 'Account%s%s' 'Key=' 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7rT9uVwXyZ0123456789+/abcd==')" 0
+_s7_case clean "hf_short SG.short.tok SK0123 AccountKey=short MASK0123456789abcdef0123456789abcdef" 1
+
+# -------------------------------------------------------------------------
 # Summary
 # -------------------------------------------------------------------------
 echo ""
