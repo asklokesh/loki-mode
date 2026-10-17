@@ -1,6 +1,9 @@
 // Token redaction for one-line terminal output. Patterns ported from autonomy/lib/proof_redact.py
 // (order matters: specific before generic). ponytail: tokens and Bearer only; full proof redaction stays in Python.
-const RULES: [RegExp, string][] = [
+/** TEN-SECURITY-25: key=value, key: value and JSON "key": "value" for names ending in password, passwd, secret, token or api_key. The name must END with the
+ *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
+const ASSIGNMENT = /((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)[^"\n]+")|(?:'(?!\[REDACTED)[^'\n]+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
@@ -29,6 +32,7 @@ const RULES: [RegExp, string][] = [
   [/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED:OPENAI_KEY]"],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"],
+  [ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];
 const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;

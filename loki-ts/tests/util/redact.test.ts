@@ -74,7 +74,7 @@ test("secret query parameters are redacted, others kept", () => {
 test("non-secret query params and non-URL text are untouched", () => {
   expect(redactSecrets("https://h/x?page=2&sort=asc")).toBe("https://h/x?page=2&sort=asc");
   expect(redactSecrets("https://h/x?refresh_token_ttl=5&mytoken=1")).toBe("https://h/x?refresh_token_ttl=5&mytoken=1");
-  expect(redactSecrets("a&token=x and password=y")).toBe("a&token=x and password=y");
+  expect(redactSecrets("a&page=x and note=y")).toBe("a&page=x and note=y");
 });
 
 // Q17-05b round 4: the engine hashes once-redacted bytes and the shipper and ingest redact again, so redaction must be a fixpoint.
@@ -157,4 +157,17 @@ test("slack stripe redact", () => {
   for (const benign of ["sk_test_short", "whsec_short", "hooks.slack.com/services/help", "task_sk_test_" + k.toLowerCase().slice(0, 3), "https://hooks.slack.com/docs", "hooks.slack.com/services/T0/B0/short"]) expect(redactSecrets(benign)).toBe(benign);
   for (const s of [w, `sk_test_${k}`, `whsec_${k}`, `x ${w}${w}`]) expect(redactSecrets(redactSecrets(s))).toBe(redactSecrets(s));
   expect(redactEventData("run.started", { u: w, k: `whsec_${k}` })).toEqual({ u: "hooks.slack.com/services/[REDACTED:SLACK_WEBHOOK]", k: "[REDACTED:STRIPE_WEBHOOK_SECRET]" });
+});
+
+test("assignment redact", () => {
+  expect(redactSecrets("password=hunter2 user=bob")).toBe("password=[REDACTED] user=bob");
+  expect(redactSecrets("DB_PASSWORD: hunter2")).toBe("DB_PASSWORD: [REDACTED]");
+  expect(redactSecrets('{"api_key": "abc123", "n": 1}')).toBe('{"api_key": "[REDACTED]", "n": 1}');
+  expect(redactSecrets("client_secret='s3cr3t value'")).toBe("client_secret='[REDACTED]'");
+  expect(redactSecrets("export GITHUB_TOKEN=abc123 && run")).toBe("export GITHUB_TOKEN=[REDACTED] && run");
+  expect(redactSecrets("passwd=x1;apikey=y2")).toBe("passwd=[REDACTED];apikey=[REDACTED]");
+  expect(redactSecrets("token=ghp_" + "a".repeat(30))).toBe("token=[REDACTED:GITHUB_TOKEN]");
+  for (const benign of ["max_tokens=4096", "tokens: 5", "token_count: 12", "password reset sent", "secrets are fine", "password=", "key=value"]) expect(redactSecrets(benign)).toBe(benign);
+  for (const s of ["password=hunter2", '"secret": "x y"', "a token: tk9 b"]) expect(redactSecrets(redactSecrets(s))).toBe(redactSecrets(s));
+  expect(redactEventData("run.started", { cmd: "curl -d password=hunter2" })).toEqual({ cmd: "curl -d password=[REDACTED]" });
 });
