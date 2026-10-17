@@ -370,3 +370,32 @@ describe("loki proof share --dry-run", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+// TEN-ADOPTION-14: list --json prints the index as a machine-readable array.
+describe("loki proof list --json", () => {
+  it("prints [{id, verdict, created}] newest first through the CLI", async () => {
+    seedProof("run-old", { run_id: "run-old", generated_at: "2026-06-01T00:00:00Z", council: { final_verdict: "APPROVE" } });
+    seedProof("run-new", { run_id: "run-new", generated_at: "2026-06-09T00:00:00Z", honesty: { headline: "VERIFIED WITH GAPS" } });
+    seedProof("run-none", {});
+    const r = await bunRoute(["proof", "list", "--json"]);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([
+      { id: "run-new", verdict: "VERIFIED WITH GAPS", created: "2026-06-09T00:00:00Z" },
+      { id: "run-old", verdict: "APPROVE", created: "2026-06-01T00:00:00Z" },
+      { id: "run-none", verdict: null, created: null },
+    ]);
+  });
+
+  it("text output is unchanged without --json", async () => {
+    seedProof("run-t", { run_id: "run-t", generated_at: "2026-06-01T00:00:00Z" });
+    const r = await bunRoute(["proof", "list"]);
+    expect(r.stdout).toContain("RUN_ID");
+    expect(r.stdout.trimStart().startsWith("[")).toBe(false);
+  });
+
+  it("empty or missing proofs dir prints []", async () => {
+    const r = await bunRoute(["proof", "list", "--json"]);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([]);
+  });
+});
