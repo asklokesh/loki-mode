@@ -497,3 +497,48 @@ def test_cli_cost_source_missing_not_proven(tmp_path):
     rc, out = _run(*_base_args(f))
     v = json.loads(out)
     assert rc == 1 and any(r.startswith("cost_source:") for r in v["reasons"]), out
+
+
+def _bad_cost_cases():
+    return [None, "missing", float("nan"), float("inf"), -0.1, "0.4", True]
+
+
+def test_bad_cost_row_blocks():
+    for bad in _bad_cost_cases():
+        loki, floor = _tight(0.4)
+        if bad == "missing":
+            del loki[0]["cost_usd"]
+        else:
+            loki[0]["cost_usd"] = bad
+        v = cc.cost_claim_verdict(loki, floor, 0.5)
+        assert v["verdict"] == "NOT PROVEN", (bad, v)
+        assert any(r.startswith("cost: 1 row(s)") for r in v["reasons"]), (bad, v)
+
+
+def test_bad_cost_row_floor_arm_blocks_and_zero_cost_is_fine():
+    loki, floor = _tight(0.4)
+    floor[3]["cost_usd"] = None
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert any(r.startswith("cost:") for r in v["reasons"])
+    loki, floor = _tight(0.4)
+    loki[0]["cost_usd"] = 0.0
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert not any(r.startswith("cost:") for r in v["reasons"]), v["reasons"]
+
+
+def test_bad_cost_row_unmeasured_not_counted():
+    loki, floor = _tight(0.4)
+    loki[0]["cost_usd"] = None
+    loki[0]["unmeasured"] = True
+    v = cc.cost_claim_verdict(loki, floor, 0.5)
+    assert not any(r.startswith("cost:") for r in v["reasons"]), v["reasons"]
+
+
+def test_bad_cost_row_cli_not_proven(tmp_path):
+    f = tmp_path / "a.jsonl"
+    rows = _attr_rows("loki", 0.4) + _attr_rows("raw-lean", 1.0)
+    rows[0]["cost_usd"] = None
+    _write(f, rows)
+    rc, out = _run(*_base_args(f))
+    v = json.loads(out)
+    assert rc == 1 and any(r.startswith("cost:") for r in v["reasons"]), out
