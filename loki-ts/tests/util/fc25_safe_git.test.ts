@@ -1,11 +1,11 @@
 // FC-25: a git call from the token-holding supervisor must never run a core.fsmonitor plant in the agent's repo.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRunCapS } from "../../src/util/run_cap.ts";
-import { tokenFreeEnv, safeGit, safeGitSpawn } from "../../src/util/safe_git.ts";
+import { tokenFreeEnv, safeGit, safeGitSpawn, safeGitRun } from "../../src/util/safe_git.ts";
 import { listRepoFiles } from "../../src/engine10/repomap.ts";
 import { restoreBranch } from "../../src/e10ext/stop_restore.ts";
 
@@ -184,3 +184,48 @@ test("FC-25c(a): remote.*.uploadpack and receivepack never run under allowToken;
   expect(() => safeGit(r, ["remote", "update"], { allowToken: true })).toThrow(/refused/); expect(existsSync(hit)).toBe(false);
   expect(safeGit(r, ["for-each-ref", "refs/remotes/origin"], { allowToken: true })).toContain("refs/remotes/origin/");
 }));
+
+// FC-25c(b): hostile-repo probes. Each plants a repo-controlled config, proves a plain git call fires it (control), then proves allowToken does not.
+type NetRepo = ReturnType<typeof netRepo>;
+type Probe = { name: string; setup: (n: NetRepo) => void; args: string[]; env?: NodeJS.ProcessEnv };
+const credIn = "protocol=https\nhost=example.test\n\n";
+const incCfg = (n: NetRepo, body: string): void => { writeFileSync(join(n.r, ".git", "inc.cfg"), body); };
+const PROBES: Probe[] = [
+  { name: "credential.helper with a leading !", args: ["credential", "fill"], setup: (n) => lc(n.r, "credential.helper", `!${n.rec}`) },
+  { name: "credential.<url>.helper with = in the url", args: ["credential", "fill"], setup: (n) => { lc(n.r, "credential.https://example.test.helper", n.rec); lc(n.r, "credential.https://example.test/?a=b.helper", n.rec); } },
+  { name: "include.path defining credential.helper", args: ["credential", "fill"], setup: (n) => { incCfg(n, `[credential]\n\thelper = ${n.rec}\n`); lc(n.r, "include.path", "inc.cfg"); } },
+  { name: "includeIf defining credential.helper", args: ["credential", "fill"], setup: (n) => { incCfg(n, `[credential]\n\thelper = ${n.rec}\n`); lc(n.r, `includeIf.gitdir:${realpathSync(n.r)}/.git.path`, "inc.cfg"); } },
+  { name: "include.path defining core.sshCommand", args: ["ls-remote", "ssh://example.test/x"], setup: (n) => { incCfg(n, `[core]\n\tsshCommand = ${n.rec}\n`); lc(n.r, "include.path", "inc.cfg"); } },
+  { name: "url.insteadOf to an ext:: transport", args: ["ls-remote", "origin"], setup: (n) => { lc(n.r, "remote.origin.url", "http://example.test/x"); lc(n.r, "protocol.ext.allow", "always"); lc(n.r, `url.ext::${n.rec}.insteadOf`, "http://example.test/x"); } },
+  { name: "core.askPass", args: ["credential", "fill"], setup: (n) => lc(n.r, "core.askPass", n.rec) },
+  { name: "extensions.worktreeConfig sshCommand", args: ["ls-remote", "ssh://example.test/x"], setup: (n) => { lc(n.r, "extensions.worktreeConfig", "true"); execFileSync("git", ["config", "--worktree", "core.sshCommand", n.rec], { cwd: n.r }); } },
+  { name: "extensions.worktreeConfig credential.helper", args: ["credential", "fill"], setup: (n) => { lc(n.r, "extensions.worktreeConfig", "true"); execFileSync("git", ["config", "--worktree", "credential.helper", n.rec], { cwd: n.r }); } },
+  { name: "caller GIT_CONFIG_COUNT core.fsmonitor", args: ["ls-files"], env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: "__REC__" }, setup: () => {} },
+];
+for (const p of PROBES) {
+  test(`FC-25c(b): ${p.name} never runs under allowToken`, hermeticGit(() => {
+    const n = netRepo("probe"); p.setup(n);
+    const withRec = (e: NodeJS.ProcessEnv): NodeJS.ProcessEnv => { const o = { ...e, ...(p.env ?? {}) }; for (const k of Object.keys(o)) if (o[k] === "__REC__") o[k] = n.rec; return o; };
+    const ran = (): boolean => existsSync(n.hit) || existsSync(join(n.r, "HIT"));
+    const swallow = (fn: () => unknown): void => { try { fn(); } catch { /* the plant fails the call by design */ } };
+    swallow(() => execFileSync("git", p.args, { cwd: n.r, input: credIn, env: withRec({ ...process.env, GIT_CONFIG_GLOBAL: n.gcfg, GIT_TERMINAL_PROMPT: "0" }), stdio: ["pipe", "ignore", "ignore"] }));
+    expect(ran()).toBe(true); rmSync(n.hit, { force: true }); rmSync(join(n.r, "HIT"), { force: true });
+    swallow(() => withGlobal(n.gcfg, () => safeGitSpawn(n.r, p.args, { allowToken: true, input: credIn, env: withRec({ ...process.env, GIT_TERMINAL_PROMPT: "0" }) })));
+    expect(ran()).toBe(false);
+  }));
+}
+
+// http.proxy redirects the authenticated connection (a Basic header or token goes to whoever the repo names).
+test("FC-25c(b): repo-local http.proxy is not honoured under allowToken", async () => {
+  const n = netRepo("proxy"); const seen: string[] = [];
+  const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(sock) { seen.push("hit"); sock.end(); }, open() { seen.push("hit"); } } });
+  try {
+    lc(n.r, "http.proxy", `http://127.0.0.1:${srv.port}`);
+    const base: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: n.gcfg, GIT_TERMINAL_PROMPT: "0" }; delete base.HTTP_PROXY; delete base.http_proxy; delete base.NO_PROXY;
+    const url = "http://example.test/x.git";
+    const ctl = Bun.spawn({ cmd: ["git", "ls-remote", url], cwd: n.r, env: base as Record<string, string>, stdout: "ignore", stderr: "ignore" }); await ctl.exited;
+    expect(seen.length).toBeGreaterThan(0); seen.length = 0;
+    await safeGitRun(n.r, ["ls-remote", url], { allowToken: true, env: base });
+    expect(seen.length).toBe(0);
+  } finally { srv.stop(true); }
+});
