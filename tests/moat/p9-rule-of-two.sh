@@ -2120,6 +2120,7 @@ function stripComments({ text, sf }) {
 }
 function scan(P) {
   const flags = new Set();
+  let dynLoader = false, strMention = false;
   const args = (c) => {
     if (c.arguments.length >= 2) flags.add("comma");
     if (c.arguments.some(ts.isSpreadElement)) flags.add("indirect");
@@ -2137,9 +2138,16 @@ function scan(P) {
     if (ts.isIdentifier(n) && H.has(n.text)) ident(n);
     if (ts.isCallExpression(n)) {
       const e = n.expression;
-      if (e.kind === K.ImportKeyword && sg(lit(n.arguments[0]))) flags.add("import");
-      if (ts.isIdentifier(e) && e.text === "require" && sg(lit(n.arguments[0]))) flags.add("import");
+      const loader = e.kind === K.ImportKeyword || (ts.isIdentifier(e) && e.text === "require");
+      if (loader && n.arguments.length > 0) {
+        const a0 = lit(n.arguments[0]);
+        if (a0 === null) dynLoader = true;
+        else if (sg(a0)) flags.add("import");
+      }
     }
+    if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n)
+        || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && (sg(n.text) || [...H].some((h) => n.text.includes(h)))) strMention = true;
+    if (ts.isElementAccessExpression(n) && H.has(lit(n.argumentExpression))) flags.add("indirect");
     if (ts.isImportDeclaration(n)) {
       const from = lit(n.moduleSpecifier), nb = n.importClause && n.importClause.namedBindings;
       if (nb && ts.isNamespaceImport(nb) && sg(from)) flags.add("import");
@@ -2156,6 +2164,9 @@ function scan(P) {
     }
     ts.forEachChild(n, visit);
   })(P.sf);
+  // A computed loader specifier in a file that spells safe_git or a helper name
+  // in a string is a hidden-module bypass; computed specifiers alone are common.
+  if (dynLoader && strMention) flags.add("import");
   return flags;
 }
 if (mode === "strip") {
@@ -2257,7 +2268,7 @@ allowtoken_controls() {
     local src="$REPO_ROOT/loki-ts/src" name body t saved_fails real_bg real_mu ext
     real_bg="$(cat "$src/util/base_guard.ts")"
     real_mu="$(cat "$src/util/modernize_unit.ts")"
-    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse"
+    local names="reexport-as reexport-barrel comment-line comment-block indirect-alias indirect-apply spread-args shadow-default shadow-const shadow-catch shadow-destructure shadow-forof shadow-method argv-prefix-bg argv-prefix-mu regex-comment regex-quote template-nest reexport-barrel2 comment-only-strip regex-comment-call regex-div-quote probe-of probe-jsx probe-parse elem-access-dyn-import elem-access-dyn-require"
     for name in $names; do
         t="$T_AT/$name"; ext=ts
         mkdir -p "$t/util"
@@ -2304,6 +2315,8 @@ const q = (4) / 2; const re = /'\''/; safeGitEnv(process.env /* '\'' */, true);'
 for (const x of [1]) /'\''/.test("a"); safeGitEnv(process.env /* '\'' */, true);' ;;
             probe-jsx)      ext=tsx; body='import { safeGitEnv } from "./util/safe_git.ts";
 const e = <div>{"//"}</div>; safeGitEnv(process.env /* '\'' */, true);' ;;
+            elem-access-dyn-import) body='const p = "./util/" + "safe_git.ts"; const m = await import(p); m["safeGitEnv"](process.env, true);' ;;
+            elem-access-dyn-require) body='const m = require(`./util/${"safe_git"}.ts`); m["safeGitArgs"]([], true);' ;;
             probe-parse)    body='import { safeGitEnv } from "./util/safe_git.ts";
 safeGitEnv(;' ;;
             argv-prefix-bg) printf '%s\n' "$real_bg" | sed 's/safeGit(repoDir, args, {/safeGit(repoDir, ["push", ...args], {/' > "$t/util/base_guard.ts"; body='export {};' ;;
