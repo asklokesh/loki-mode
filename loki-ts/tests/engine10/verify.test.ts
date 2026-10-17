@@ -607,6 +607,19 @@ describe("diffFiles and recordRisk against a real repo", () => {
   });
 });
 
+describe("engine10 verify: npx no install (TEN-SPEED-16)", () => {
+  test("npx no install: vitest and jest runnerCmd pass --no-install so a missing tool fails fast", () => {
+    expect(runnerCmd({ runner: "vitest", path: "a.test.ts" }, "/nonexistent")).toEqual(["npx", ["--no-install", "vitest", "run", "a.test.ts"]]);
+    expect(runnerCmd({ runner: "jest", path: "a.test.ts" }, "/nonexistent")).toEqual(["npx", ["--no-install", "jest", "a.test.ts"]]);
+  });
+  test("npx no install: the tsc and eslint lint checks never use bare npx", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/engine10/stages/verify.ts"), "utf8");
+    expect(src).not.toMatch(/"npx", \["(tsc|eslint|vitest|jest)"/);
+    expect(src).toContain('"npx", ["--no-install", "tsc"');
+    expect(src).toContain('"npx", ["--no-install", "eslint"');
+  });
+});
+
 describe("engine10 verify: full-suite evidence (P12-01)", () => {
   test("a medium-risk run emits a verify-stage test.result for each full-suite check it records", async () => {
     const repoDir = mkRepo();
