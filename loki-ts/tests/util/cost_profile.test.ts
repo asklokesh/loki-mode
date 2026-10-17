@@ -5,11 +5,20 @@ import { join } from "node:path";
 import { applyCostProfile, resolveCostProfile } from "../../src/util/cost_profile.ts";
 
 describe("resolveCostProfile", () => {
-  it("lean sets router and trim", () => {
-    expect(resolveCostProfile("lean", {})).toEqual({ LOKI_ROUTER: "1", LOKI_E10_TRIM: "1" });
+  const LEAN = { LOKI_IMPLEMENT_HAIKU_FIRST: "1", LOKI_E10_TRIM: "1", LOKI_E10_SMALL_NO_RUNNER: "1", LOKI_E10_SMALL_MAX_CHARS: "1200" };
+  it("lean sets haiku-first, trim and the sizing knobs, never the router", () => {
+    const p = resolveCostProfile("lean", {});
+    expect(p).toEqual(LEAN);
+    expect("LOKI_ROUTER" in p).toBe(false);
   });
   it("explicit user env wins", () => {
-    expect(resolveCostProfile("lean", { LOKI_ROUTER: "0" })).toEqual({ LOKI_E10_TRIM: "1" });
+    const { LOKI_E10_TRIM: _t, ...rest } = LEAN;
+    expect(resolveCostProfile("lean", { LOKI_E10_TRIM: "0" })).toEqual(rest);
+    expect(resolveCostProfile("lean", { LOKI_E10_SMALL_MAX_CHARS: "900" }).LOKI_E10_SMALL_MAX_CHARS).toBeUndefined();
+    expect(resolveCostProfile("lean", { LOKI_IMPLEMENT_HAIKU_FIRST: "0" }).LOKI_IMPLEMENT_HAIKU_FIRST).toBeUndefined();
+  });
+  it("a user LOKI_ROUTER=1 is left alone and not added by the profile", () => {
+    expect(resolveCostProfile("lean", { LOKI_ROUTER: "1" })).toEqual(LEAN);
   });
   it("unknown name throws", () => {
     expect(() => resolveCostProfile("cheap", {})).toThrow(/unknown cost profile/);
@@ -26,8 +35,9 @@ describe("applyCostProfile", () => {
     try {
       const set: Record<string, string> = {};
       const note = applyCostProfile("lean", { LOKI_E10_TRIM: "0" }, (k, v) => { set[k] = v; }, d);
-      expect(set).toEqual({ LOKI_ROUTER: "1" });
-      expect(note).toContain("LOKI_ROUTER=1");
+      const { LOKI_E10_TRIM: _t, ...rest } = { LOKI_IMPLEMENT_HAIKU_FIRST: "1", LOKI_E10_TRIM: "1", LOKI_E10_SMALL_NO_RUNNER: "1", LOKI_E10_SMALL_MAX_CHARS: "1200" };
+      expect(set).toEqual(rest);
+      expect(note).toContain("LOKI_IMPLEMENT_HAIKU_FIRST=1");
       const rec = JSON.parse(readFileSync(join(d, "cost-profile.json"), "utf8"));
       expect(rec.profile).toBe("lean");
       expect(rec.kept_user_env).toEqual(["LOKI_E10_TRIM"]);

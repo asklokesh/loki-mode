@@ -1895,7 +1895,7 @@ show_help_all() {
     echo "  --no-dashboard   Disable web dashboard"
     echo "  --isolation LVL  Per-run isolation dial: none (default) | worktree | docker"
     echo "  --skip-memory    Skip loading memory context at startup"
-    echo "  --cost PROFILE   Opt-in cost profile: lean sets LOKI_ROUTER=1 and LOKI_E10_TRIM=1 unless already set (also LOKI_COST_PROFILE)"
+    echo "  --cost PROFILE   Opt-in cost profile: lean sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set (also LOKI_COST_PROFILE)"
     echo "  --spec FILE      Run against an edited spec (written by 'loki plan <task> --spec'; see also --spec-first)"
     echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
@@ -2820,7 +2820,7 @@ cmd_start() {
                 echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
-                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_ROUTER=1, LOKI_E10_TRIM=1 unless already set) or off"
+                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -3288,8 +3288,9 @@ cmd_start() {
             --cost|--cost=*)
                 if [[ "$1" == --cost=* ]]; then _cost_val="${1#*=}"; _cost_n=1; else _cost_val="${2:-}"; _cost_n=2; fi
                 case "$_cost_val" in
-                    lean) : "${LOKI_ROUTER:=1}" "${LOKI_E10_TRIM:=1}"; export LOKI_ROUTER LOKI_E10_TRIM LOKI_COST_PROFILE=lean
-                          echo "cost profile lean: LOKI_ROUTER=$LOKI_ROUTER LOKI_E10_TRIM=$LOKI_E10_TRIM" ;;
+                    lean) : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
+                          export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_PROFILE=lean
+                          echo "cost profile lean: LOKI_IMPLEMENT_HAIKU_FIRST=$LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
                     off) ;;
                     *) echo -e "${RED}--cost must be lean or off${NC}" >&2; exit 2 ;;
                 esac
