@@ -170,25 +170,29 @@ _chat_run_launch() {
 
 # Startup readiness: at most 3 lines, nothing when everything is ready.
 _chat_readiness() {
-    local p="${_CHAT_PROVIDER:-claude}" out="" t
+    local p="${_CHAT_PROVIDER:-claude}" out="" t hint="" prov="" git_line=""
     if ! command -v "$p" >/dev/null 2>&1; then
-        echo "$p CLI not found. Fix (same as loki doctor):"
-        _loki_req_fix_line "$p"
-        [ "$p" = "claude" ] || echo "  or try /provider claude"
+        [ "$p" = "claude" ] || hint=" (or try /provider claude)"
+        prov="$p CLI not found$hint. Fix (same as loki doctor):"$'\n'"$(_loki_req_fix_line "$p")"
     elif [ "$p" = "claude" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
         t="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
         if [ -n "$t" ]; then out="$("$t" 5 claude auth status 2>/dev/null)" || out=""; else out="$(claude auth status 2>/dev/null)" || out=""; fi
         case "$out" in
-            *'"loggedIn"'*false*) echo "claude is logged out: claude login (or set ANTHROPIC_API_KEY)" ;;
+            *'"loggedIn"'*false*) prov="claude is logged out: claude login (or set ANTHROPIC_API_KEY)" ;;
         esac
     fi
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         if [ -z "$(ls -A 2>/dev/null)" ]; then
-            echo "Empty folder: /run will set it up as a new project."
+            git_line="Empty folder: /run will set it up as a new project."
         else
-            echo "Not a git repo: /run needs git init in this folder first."
+            git_line="Not a git repo: /run needs git init in this folder first."
         fi
     fi
+    # Cap: provider block keeps at most 2 lines (3 total with the folder line).
+    if [ -n "$prov" ]; then
+        if [ -n "$git_line" ]; then printf '%s\n' "$prov" | head -n 2; else printf '%s\n' "$prov" | head -n 3; fi
+    fi
+    [ -z "$git_line" ] || printf '%s\n' "$git_line"
     return 0
 }
 

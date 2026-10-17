@@ -279,6 +279,12 @@ rd_run() { # rd_run <path> <dir> <provider> <fn args...>
 CODEX_FIX="$(jq -r '.requirements[] | select(.id == "codex") | .fix' "$REPO_ROOT/autonomy/lib/setup-requirements.json" | head -n 1)"
 out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" codex _chat_readiness)"
 if [ -n "$CODEX_FIX" ] && grep -qF "$CODEX_FIX" <<<"$out" && grep -q '/provider claude' <<<"$out"; then ok "UX-05: missing codex prints the codex fix and /provider claude hint"; else bad "UX-05: codex readiness: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/plain" codex _chat_readiness)"
+if [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -le 3 ] && grep -q '/provider claude' <<<"$out" && grep -qi 'git' <<<"$out" && [ -n "$CODEX_FIX" ] && grep -qF "$CODEX_FIX" <<<"$out"; then ok "UX-05: missing provider plus non-git folder prints at most 3 lines"; else bad "UX-05: combined readiness: $out"; fi
+SAVE_FIXFN="$FIXFN"; FIXFN='_loki_req_fix_line() { printf "fix one\nfix two\nfix three\n"; }'
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/plain" codex _chat_readiness)"
+FIXFN="$SAVE_FIXFN"
+if [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -le 3 ] && grep -qi 'git' <<<"$out"; then ok "UX-05: multi-line fix output is capped at 3 lines and keeps the git line"; else bad "UX-05: multi-line fix cap: $out"; fi
 out="$(rd_run "$RD_DIR/cbin:$RD_DIR/bin" "$RD_DIR/repo" claude _chat_readiness)"
 if grep -q 'claude login' <<<"$out"; then ok "UX-05: logged-out claude prints claude login"; else bad "UX-05: logged-out output: $out"; fi
 out="$(rd_run "$RD_DIR/cbin-in:$RD_DIR/bin" "$RD_DIR/plain" claude _chat_readiness)"
@@ -293,6 +299,8 @@ out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /zzzz)"
 if [ -z "$out" ]; then ok "UX-05: /zzzz prints no suggestion"; else bad "UX-05: /zzzz suggestion: $out"; fi
 out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /stauts)"
 if [ -z "$out" ]; then ok "UX-05: transposition is not a single edit, no suggestion"; else bad "UX-05: /stauts suggestion: $out"; fi
+out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /eait)"
+if [ -z "$out" ]; then ok "UX-05: ambiguous single-edit match (/exit, /edit) gives no suggestion"; else bad "UX-05: /eait suggestion: $out"; fi
 out="$(rd_run "$RD_DIR/bin" "$RD_DIR/repo" claude _chat_suggest /stop)"
 if [ -z "$out" ]; then ok "UX-05: exact command name is not suggested as a typo"; else bad "UX-05: /stop suggestion: $out"; fi
 if grep -q '_chat_load_fail "\$_CHAT_PROVIDER"' "$CHAT_SH" && ! grep -q 'cannot load provider \$_CHAT_PROVIDER' "$CHAT_SH"; then ok "UX-05: provider load failure uses the fix line"; else bad "UX-05: bare cannot-load message remains"; fi
