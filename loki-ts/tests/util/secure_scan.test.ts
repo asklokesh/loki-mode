@@ -220,6 +220,42 @@ describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
     }
   });
 
+  it("oversized untracked file: one 3 MB line and multibyte chunks still yield the key at its line", async () => {
+    const d = repoWithBase();
+    try {
+      writeFileSync(join(d, "f.js"), `var a=${"1,".repeat(1_500_000)}k="${KEYS.ant}";\n`);
+      const cjk = "\u4e2d".repeat(999) + "\n";
+      writeFileSync(join(d, "cjk.txt"), `const k = "${KEYS.ant}";\n` + cjk.repeat(1000) + `const j = "${KEYS.ant}";\n`);
+      writeFileSync(join(d, "ok.txt"), `x\nconst k = "${KEYS.ant}";\n`);
+      const r = await runSecureScan(d);
+      expect(r.ok).toBe(true);
+      const got = r.findings.map((f) => `${f.rule} ${f.file}:${f.line}`).sort();
+      expect(got).toEqual([
+        `${ADDED_LINE_RULE} cjk.txt:1`,
+        `${ADDED_LINE_RULE} cjk.txt:1002`,
+        `${ADDED_LINE_RULE} f.js:1`,
+        `${ADDED_LINE_RULE} ok.txt:2`,
+      ]);
+      expect(JSON.stringify(r)).not.toContain(KEYS.ant);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("a real untracked file named like a chunk path does not collide", async () => {
+    const d = repoWithBase();
+    try {
+      const pad = "x".repeat(99) + "\n";
+      writeFileSync(join(d, "big.txt"), pad.repeat(30_000) + `const k = "${KEYS.ant}";\n`);
+      mkdirSync(join(d, "big.txt.loki-chunk-0"));
+      writeFileSync(join(d, "big.txt.loki-chunk-0", "big.txt"), "clean\n");
+      const r = await runSecureScan(d);
+      expect(r.findings.map((f) => `${f.file}:${f.line}`)).toEqual(["big.txt:30001"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   it("the security_scan gate blocks and its receipt names file:line without the value", async () => {
     const d = repoWithBase();
     try {

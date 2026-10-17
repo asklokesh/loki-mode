@@ -3,6 +3,7 @@
 // script: 0 no findings, 1 findings, 2 bad input. Anything else, or output
 // that is not the expected JSON, is an error (never a silent pass).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "./paths.ts";
@@ -51,6 +52,9 @@ export const ADDED_LINE_RULE = "provider-key-in-added-line";
 // explicitly skipped, never silently dropped (TEN-SECURITY-22).
 const MAX_ADDED_FILE_BYTES = 64 * 1024 * 1024;
 const MIRROR_CHUNK_BYTES = 1_000_000;
+// 250k chars is at most 1,000,000 UTF-8 bytes; pieces overlap so a key on a seam is seen.
+const PIECE_CHARS = 250_000;
+const PIECE_OVERLAP = 512;
 export const SKIPPED_FILE_RULE = "untracked-file-not-scanned";
 
 export const DEFAULT_SECURE_SCAN_TIMEOUT_MS = 120_000;
@@ -264,34 +268,53 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
   const mirror = mkdtempSync(join(tmpdir(), "loki-secure-added-"));
   try {
     const root = resolve(mirror) + sep;
-    const chunkMap = new Map<string, { file: string; offset: number }>();
+    const chunkMap = new Map<string, { file: string; lines: number[] }>();
+    // Random dir name: a real untracked file can never collide with a chunk path.
+    const chunkRoot = `.loki-chunks-${randomBytes(6).toString("hex")}`;
+    let chunkSeq = 0;
     for (const [p, lines] of added) {
       if (lines.size === 0) continue;
       const dest = resolve(mirror, p);
       if (!dest.startsWith(root)) continue;
       let max = 0;
       for (const k of lines.keys()) if (k > max) max = k;
-      // Split into chunks so each mirror file stays under the scanner's size cap.
-      let start = 1;
-      let n = 0;
-      while (start <= max) {
-        let end = start;
-        let bytes = 0;
-        const body: string[] = [];
-        for (; end <= max && (bytes < MIRROR_CHUNK_BYTES || body.length === 0); end++) {
-          const t = lines.get(end) ?? "";
-          bytes += t.length + 1;
-          body.push(t);
+      // Entries are (original line, text); a line over PIECE_CHARS is split into
+      // overlapping pieces that keep the original line number. Chunks are sized in
+      // UTF-8 bytes so each mirror file stays under the scanner's 2 MiB cap.
+      const chunks: Array<{ orig: number[]; body: string[] }> = [];
+      let cur = { orig: [] as number[], body: [] as string[] };
+      let bytes = 0;
+      const push = (orig: number, t: string): void => {
+        const b = Buffer.byteLength(t, "utf8") + 1;
+        if (cur.body.length > 0 && bytes + b > MIRROR_CHUNK_BYTES) {
+          chunks.push(cur);
+          cur = { orig: [], body: [] };
+          bytes = 0;
         }
-        const whole = n === 0 && end > max;
-        const rel = whole ? p : join(`${p}.loki-chunk-${n}`, basename(p));
+        cur.orig.push(orig);
+        cur.body.push(t);
+        bytes += b;
+      };
+      for (let ln = 1; ln <= max; ln++) {
+        const t = lines.get(ln) ?? "";
+        if (t.length <= PIECE_CHARS) {
+          push(ln, t);
+          continue;
+        }
+        for (let i = 0; i < t.length; i += PIECE_CHARS - PIECE_OVERLAP) {
+          push(ln, t.slice(i, i + PIECE_CHARS));
+          if (i + PIECE_CHARS >= t.length) break;
+        }
+      }
+      if (cur.body.length > 0) chunks.push(cur);
+      const whole = chunks.length === 1;
+      for (const c of chunks) {
+        const rel = whole ? p : join(chunkRoot, String(chunkSeq++), basename(p));
         const out = whole ? dest : resolve(mirror, rel);
         if (!out.startsWith(root)) break;
-        if (!whole) chunkMap.set(rel, { file: p, offset: start - 1 });
+        chunkMap.set(rel, { file: p, lines: c.orig });
         mkdirSync(dirname(out), { recursive: true });
-        writeFileSync(out, body.join("\n") + "\n");
-        start = end;
-        n++;
+        writeFileSync(out, c.body.join("\n") + "\n");
       }
     }
     const r = await runSecureScan(mirror, { scriptPath: opts.scriptPath, timeoutMs: opts.timeoutMs, secretsEverywhere: true });
@@ -302,7 +325,7 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
     for (let f of r.findings) {
       if (f.rule !== "secret-in-client-file") continue;
       const c = chunkMap.get(f.file.split(sep).join("/"));
-      if (c) f = { ...f, file: c.file, line: f.line + c.offset };
+      if (c) f = { ...f, file: c.file, line: c.lines[f.line - 1] ?? f.line };
       const kind = /A live (\S+)/.exec(f.message)?.[1] ?? "provider key";
       const k = `${f.file}|${f.line}`;
       const prev = byLine.get(k);
