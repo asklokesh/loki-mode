@@ -230,6 +230,7 @@ COMMON_ARGS=(
     "PULSE_PROGRESS_MD=$PROGRESS_FRESH"
     "PULSE_NPM_CMD=false"
     "PULSE_GH_CMD=false"
+    "PULSE_PROMOTE_CMD=false"
     "PULSE_GH_FALLBACK_CMD=false"
     "PULSE_GOVERNOR_CMD=cat $GOVERNOR_OK_JSON"
     "PULSE_GH_STREAK_CMD=cat $GH_STREAK_OK_JSON"
@@ -1933,6 +1934,7 @@ recs = {
     "npm": '{"1.0.0":"2026-09-27T01:30:00.000Z"}',
     "gh_ci": '[{"status":"completed","conclusion":"failure","workflowName":"Lint"}]',
     "gh_streak": '[{"status":"completed","conclusion":"success"}]',
+    "promote": "NIGHTLY-FAILED-STEPS: none",
     # gh_ci above already resolves cleanly (RED), so the E-75 fallback is
     # never consulted -- this entry only exists so a missing cache file for
     # it does not itself count as a cache miss and force a spurious refresh.
@@ -1950,7 +1952,7 @@ PYEOF
 T33_ARGS=(
     "PATH=$STUB_BIN:$PATH"
     "PULSE_REPO_ROOT=$FAKE_REPO" "PULSE_MAIN_REF=main" "CONTROL_MD=$CONTROL_OK"
-    "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=" "PULSE_GH_CMD=" "PULSE_GH_STREAK_CMD="
+    "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=" "PULSE_GH_CMD=" "PULSE_PROMOTE_CMD=" "PULSE_GH_STREAK_CMD="
     # Unlike npm/gh above (real binary names, intercepted via PATH stub),
     # the governor's default argv is a real path under $PULSE_REPO_ROOT
     # ($FAKE_REPO here, which has no scripts/usage-governor.py) -- it would
@@ -3528,6 +3530,49 @@ if [ "$rc" != 0 ] \
     ok "npm UNKNOWN: no RELEASE_SLO claim either way, exit nonzero (never a false pass)"
 else
     bad "npm UNKNOWN case wrong (rc=$rc)"; printf '%s\n' "$OUT"
+fi
+
+# --- TEN-STABILITY-06: PROMOTION_LAG names the blocking reason -------------
+echo "TEN-STABILITY-06: PROMOTION_LAG"
+mk_lag_npm() { # file next_time latest_time
+python3 - "$1" "$2" "$3" <<'PYEOF'
+import json, sys
+f, nxt, lat = sys.argv[1:4]
+print(json.dumps({"time": {"created": "2020-01-01T00:00:00.000Z", "modified": nxt,
+    "11.10.1": lat, "11.17.6": nxt},
+    "dist-tags": {"latest": "11.10.1", "next": "11.17.6"}}), file=open(f, "w"))
+PYEOF
+}
+LAG_NPM="$WORK/npm-lag.json"; mk_lag_npm "$LAG_NPM" 2026-09-27T01:40:00.000Z 2026-09-26T00:00:00.000Z
+LAG_NPM_SMALL="$WORK/npm-lag-small.json"; mk_lag_npm "$LAG_NPM_SMALL" 2026-09-27T01:40:00.000Z 2026-09-26T23:40:00.000Z
+LAG_NPM_SAME="$WORK/npm-lag-same.json"
+python3 -c "
+import json
+print(json.dumps({'time': {'11.10.1': '2026-09-26T00:00:00.000Z'}, 'dist-tags': {'latest': '11.10.1', 'next': '11.10.1'}}))
+" > "$LAG_NPM_SAME"
+LAG_PROMOTE="$WORK/promote-lag.txt"
+printf '%s\n' "promote	step	2026-09-27T01:00:00Z PROMOTE-BLOCK: the newest nightly at the promoted SHA abc is failure" \
+    "NIGHTLY-FAILED-STEPS: bench-gate, soak" > "$LAG_PROMOTE"
+lag_run() { # npm_file promote_cmd
+    run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $1" \
+        "PULSE_GH_CMD=cat $GH_GREEN_JSON" "PULSE_PROMOTE_CMD=$2" || true
+}
+lag_run "$LAG_NPM" "cat $LAG_PROMOTE"
+if printf '%s\n' "$OUT" | grep "^VIOLATION: PROMOTION_LAG" | grep -qF "PROMOTE-BLOCK: the newest nightly at the promoted SHA abc is failure" \
+    && printf '%s\n' "$OUT" | grep "^VIOLATION: PROMOTION_LAG" | grep -qF "bench-gate, soak"; then
+    ok "PROMOTION_LAG fires with the PROMOTE-BLOCK reason and Nightly failing steps"
+else
+    bad "PROMOTION_LAG reason line missing"; printf '%s\n' "$OUT"
+fi
+lag_run "$LAG_NPM_SMALL" "cat $LAG_PROMOTE"
+if ! printf '%s\n' "$OUT" | grep -q "PROMOTION_LAG"; then ok "lag under threshold: no PROMOTION_LAG"; else bad "under-threshold lag fired"; fi
+lag_run "$LAG_NPM_SAME" "cat $LAG_PROMOTE"
+if ! printf '%s\n' "$OUT" | grep -q "PROMOTION_LAG"; then ok "next==latest: no PROMOTION_LAG"; else bad "next==latest fired"; fi
+lag_run "$LAG_NPM" "false"
+if printf '%s\n' "$OUT" | grep "^VIOLATION: PROMOTION_LAG" | grep -qF "promote block: UNKNOWN"; then
+    ok "promote lookup failure: PROMOTION_LAG still fires with UNKNOWN reason"
+else
+    bad "gh failure case wrong"; printf '%s\n' "$OUT"
 fi
 
 TOTAL=$((PASS + FAIL))
