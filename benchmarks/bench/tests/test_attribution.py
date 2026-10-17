@@ -53,6 +53,17 @@ class MetricsTest(unittest.TestCase):
         self.assertIsNone(m["cost_per_accepted_usd"])
         self.assertIsNone(m["spend_measured_usd"])
 
+    def test_cost_partial_row_is_lower_bound_not_measured(self):
+        r = row(accepted=True, reported=True, cost=2.0)
+        r["cost_partial"] = True
+        m = A.compute_metrics([r])
+        self.assertEqual(m["cost_status"], "partial_lower_bound")
+        self.assertIsNone(m["cost_per_accepted_usd"])
+        self.assertEqual(m["cost_per_accepted_lower_bound_usd"], 2.0)
+        self.assertEqual(m["runs_with_unmeasured_cost"], 1)
+        r["cost_partial"] = False
+        self.assertEqual(A.compute_metrics([r])["cost_status"], "measured")
+
     def test_partial_cost_is_lower_bound_only(self):
         m = A.compute_metrics([row(accepted=True, reported=True, cost=2.0),
                                row(accepted=True, reported=True, cost=None)])
@@ -340,6 +351,11 @@ class SpendCapTest(unittest.TestCase):
         self.assertAlmostEqual(A.row_true_spend({"cost_usd": 2.0, "true_cost_usd": 1.0}), 2.0)
         self.assertEqual(A.row_true_spend({"cost_usd": None}), 0.0)
 
+    def test_true_spend_partial_flag_is_not_complete(self):
+        self.assertTrue(A.row_spend_is_partial({"cost_usd": 1.0, "cost_partial": True}))
+        self.assertFalse(A.row_spend_is_partial({"cost_usd": 1.0}))
+        self.assertFalse(A.row_spend_is_partial({"cost_usd": 1.0, "cost_partial": False}))
+
     def _plan(self, n):
         tasks = [{"id": "t%d" % i, "class": "bugfix", "prompt": "p",
                   "seed_sha256": "a", "acceptance_sha256": "b", "prompt_sha256": "c"}
@@ -596,6 +612,26 @@ class LokiLedgerRowTest(unittest.TestCase):
         self.assertAlmostEqual(res["cost_by_phase"]["main_session"], 0.25, places=4)
         self.assertNotIn("implement", res["cost_by_phase"])
         self.assertAlmostEqual(res["cost_by_phase"]["docs"], 0.2, places=4)
+
+    def test_token_only_main_with_ledger_marks_row_cost_partial(self):
+        def pop(loki, js):
+            eff = os.path.join(loki, "metrics", "efficiency")
+            os.makedirs(eff, exist_ok=True)
+            with open(os.path.join(eff, "iteration-1.json"), "w") as f:
+                js.dump({"iteration": 1, "input_tokens": 10, "output_tokens": 5,
+                         "cache_read_tokens": 0, "cache_creation_tokens": 0}, f)
+            with open(os.path.join(loki, "metrics", "child-sessions.jsonl"), "w") as f:
+                f.write(js.dumps({"phase": "docs", "model": "sonnet", "usd": 0.2,
+                                  "input_tokens": 1, "output_tokens": 1,
+                                  "cache_creation_tokens": 1,
+                                  "cache_read_tokens": 1, "source": "t"}) + "\n")
+        res = self._run(pop)
+        self.assertTrue(res["cost_partial"])
+        self.assertAlmostEqual(res["cost_usd"], 0.2, places=4)
+
+    def test_complete_cost_is_not_partial(self):
+        res = self._run(lambda loki, js: self._main(loki, js))
+        self.assertFalse(res["cost_partial"])
 
     def test_absent_ledger_is_flagged_not_silent(self):
         res = self._run(lambda loki, js: self._main(loki, js))

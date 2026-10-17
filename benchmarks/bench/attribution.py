@@ -299,7 +299,12 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     any_unmeasured = unmeasured_runs > 0
 
     measured = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
-    unmeasured_n = assigned - len(measured)
+    # A cost_partial row has a usd that is only a lower bound: it counts toward
+    # the measured spend but not as a fully measured run.
+    partial_n = sum(1 for r in rows
+                    if r.get("cost_usd") is not None and r.get("cost_partial"))
+    missing_n = assigned - len(measured)
+    unmeasured_n = missing_n + partial_n
     spend = round(sum(measured), 6)
     if assigned == 0:
         cost_status = "no_runs"
@@ -307,7 +312,7 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         cost_status = "unmeasured"
     elif accepted == 0:
         cost_status = "undefined_no_accepted"
-    elif unmeasured_n == assigned:
+    elif missing_n == assigned:
         cost_status = "unmeasured"
     elif unmeasured_n:
         cost_status = "partial_lower_bound"
@@ -416,9 +421,15 @@ def ledger_spend(workdir: str) -> Optional[float]:
     return round(total, 6) if seen else None
 
 
+def row_spend_is_partial(row: Dict[str, Any]) -> bool:
+    """True when the row's reported cost is a lower bound (cost_partial)."""
+    return bool(row.get("cost_partial"))
+
+
 def row_true_spend(row: Dict[str, Any]) -> float:
     """Spend a row counts toward the cap: the larger of the tool-reported cost and
-    the ledger sum, so a partial report can never hide child-session spend."""
+    the ledger sum, so a partial report can never hide child-session spend. When
+    row_spend_is_partial(row) the value is a lower bound, not a complete total."""
     vals = [v for v in (row.get("cost_usd"), row.get("true_cost_usd")) if v is not None]
     return float(max(vals)) if vals else 0.0
 
@@ -493,6 +504,7 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
         "stderr_tail": prov.get("stderr_tail"),
         "stdout_tail": prov.get("stdout_tail"),
         "cost_usd": res["cost_usd"],
+        "cost_partial": bool((res.get("provenance") or {}).get("cost_partial")),
         "cost_source": "loki.efficiency_cost" if res["cost_usd"] is not None else None,
         "tokens_in": res["tokens_in"], "tokens_out": res["tokens_out"],
         "model_used": res["model_used"], "iterations": res["iterations"],
@@ -764,6 +776,8 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         cost = ("unmeasured" if r.get("cost_usd") is None else _fmt(r["cost_usd"], usd=True))
+        if r.get("cost_usd") is not None and row_spend_is_partial(r):
+            cost = ">= " + cost
         unm = r.get("status") == "unmeasured"
         L.append("| %s | %s | %s | %d | %s | %s | %s | %s | %s |" % (
             r["task"], r["class"], r["arm"], r["repeat"], r.get("status", "n/a"),
@@ -984,6 +998,7 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         "plan": plan, "environment": env, "warnings": warnings,
         "max_spend_usd": args.max_spend_usd,
         "true_spend_usd": round(sum(row_true_spend(r) for r in rows), 6),
+        "true_spend_is_lower_bound": any(row_spend_is_partial(r) for r in rows),
         "rows": rows, "summary": summarize(rows, arms),
     }
     os.makedirs(args.out_dir, exist_ok=True)
