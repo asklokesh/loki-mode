@@ -68,10 +68,17 @@ describe("repomap/testmap cache, keyed by tree hash", () => {
     expect(readRepoMapCache(dir, "tree1")).toEqual(REPOMAP);
   });
 
+  test("a stale old-format repomap-<tree>.json is ignored", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    require("node:fs").writeFileSync(resolve(dir, "repomap-tree1.json"), JSON.stringify(REPOMAP));
+    expect(readRepoMapCache(dir, "tree1")).toBeNull();
+  });
+
   test("a corrupt cache file is a miss, not a crash", () => {
     const dir = repoCacheDir("k", tmpRoot());
     writeRepoMapCache(dir, "tree1", REPOMAP);
-    require("node:fs").writeFileSync(resolve(dir, "repomap-tree1.json"), "{not json");
+    require("node:fs").writeFileSync(resolve(dir, "repomap2-tree1.json"), "{not json");
     expect(readRepoMapCache(dir, "tree1")).toBeNull();
   });
 
@@ -81,7 +88,7 @@ describe("repomap/testmap cache, keyed by tree hash", () => {
   test("valid JSON of the wrong shape is a miss, not a crash", () => {
     const dir = repoCacheDir("k", tmpRoot());
     require("node:fs").mkdirSync(dir, { recursive: true });
-    require("node:fs").writeFileSync(resolve(dir, "repomap-tree1.json"), "42");
+    require("node:fs").writeFileSync(resolve(dir, "repomap2-tree1.json"), "42");
     require("node:fs").writeFileSync(resolve(dir, "testmap-tree1.json"), "null");
     expect(readRepoMapCache(dir, "tree1")).toBeNull();
     expect(readTestMapCache(dir, "tree1")).toBeNull();

@@ -49,10 +49,10 @@ export function writeJson(path: string, dir: string, data: unknown): void {
   writeFileSync(path, JSON.stringify(data));
 }
 export function readRepoMapCache(dir: string, tree: string): RepoMap | null {
-  return readJson<RepoMap>(resolve(dir, `repomap-${tree}.json`), isRepoMap);
+  return readJson<RepoMap>(resolve(dir, `repomap2-${tree}.json`), isRepoMap);
 }
 export function writeRepoMapCache(dir: string, tree: string, map: RepoMap): void {
-  writeJson(resolve(dir, `repomap-${tree}.json`), dir, map);
+  writeJson(resolve(dir, `repomap2-${tree}.json`), dir, map);
 }
 export function readTestMapCache(dir: string, tree: string): TestMap | null {
   return readJson<TestMap>(resolve(dir, `testmap-${tree}.json`), isTestMap);
