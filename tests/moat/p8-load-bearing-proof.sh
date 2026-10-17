@@ -161,7 +161,14 @@ produce_proof() {  # <kind>
     ec=$?
     printf '{"runner":"python","command":"python3 check_calc.py","exit_code":%s,"status":"%s","passed_count":1,"failed_count":0}\n' \
         "$ec" "$([ "$ec" -eq 0 ] && echo verified || echo failed)" > "$r/.loki/quality/test-results.json"
-    printf '{"applicable": false, "reason": "pure python, no build step"}\n' > "$r/.loki/quality/build-results.json"
+    # D104 (TEN-GATES-10): VERIFIED needs one agent-independent fact beside the
+    # agent's own suite, so the fixture records a REAL build: byte-compiling
+    # every source file (no .pyc written). Without it the positive control can
+    # never reach VERIFIED and the dead-code case proves nothing about ablation.
+    ( cd "$r" && python3 -c 'import sys
+for f in sys.argv[1:]: compile(open(f).read(), f, "exec")' calc.py check_calc.py ) >"$MOAT_TMP/$kind.build.log" 2>&1
+    printf '{"command":"python3 -c compile(calc.py, check_calc.py)","exit_code":%s,"ran":true}\n' \
+        "$?" > "$r/.loki/quality/build-results.json"
     printf '%s' "$ec" > "$MOAT_TMP/$kind.check.rc"
 
     before="$(tree_digest "$r")"
