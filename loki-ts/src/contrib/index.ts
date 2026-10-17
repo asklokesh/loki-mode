@@ -3,6 +3,7 @@
 // each module is optional, and core falls back to its pre-feature behavior for an empty slot.
 import { hooks } from "../engine10/hooks.ts";
 import { registerModule } from "../engine10/registry.ts";
+import { writeAiBom } from "./ai_bom.ts";
 import { briefFacts } from "./brief_facts.ts";
 import { buildRecords, resumeVerdicts } from "./cost_records.ts";
 import { fixEffort, resolveEffort } from "./effort_policy.ts";
@@ -15,6 +16,7 @@ export function registerContrib(): void {
   hooks.effort = { resolve: (stage, eff) => resolveEffort(stage, eff), fix: (round, codeOwned) => fixEffort(round, codeOwned) };
   hooks.wall = { snapshotTree: (d, s) => snapshotTree(d, s), changedSinceBase, manifests: MANIFESTS };
   hooks.briefFacts = briefFacts;
+  hooks.sealed = writeAiBom;
   registerModule("./status.ts", () => import("./status.ts"));
   registerModule("./plan_cmd.ts", () => import("./plan_cmd.ts"));
   registerModule("./eta.ts", () => import("./eta.ts"));
