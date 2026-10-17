@@ -1364,6 +1364,84 @@ describe("FC-69 not_run Wall is disclosed and does not change the verdict", () =
   }, 30000);
 });
 
+// TEN-GATES-02 (FC-AGENT-PROOF, D104): VERIFIED needs agent-independent proof; a test file the run ADDED is agent-authored evidence only.
+describe("TEN-GATES-02 seal requires agent-independent proof", () => {
+  const AGENT_ONLY = "only agent-authored tests executed (no agent-independent proof)";
+  async function sealWith(name: string, preexisting: boolean, env: Record<string, string> = {}, editOld = false) {
+    noKey();
+    const { repo, base: b0 } = makeRepo(name);
+    let base = b0;
+    mkdirSync(join(repo, "tests"), { recursive: true });
+    if (preexisting) { // commit the test at base, then keep the run diff to a.txt only (an edited old test would be a weakened test)
+      writeFileSync(join(repo, "tests/test_x.py"), "def test_x():\n    assert True\n");
+      sh(["git", "add", "tests/test_x.py"], repo); sh(["git", "commit", "-q", "-m", "old test"], repo); base = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      if (editOld) writeFileSync(join(repo, "tests/test_x.py"), "def test_x():\n    assert 1\n"); // status M in the run diff, never A
+    } else writeFileSync(join(repo, "tests/test_x.py"), "def test_x():\n    assert True\n");
+    const prev = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, env);
+    try {
+      const { ctx } = ctxFor(repo, base, "claude", { wall: { files: [] }, verify: { checks: [{ name: "pytest:tests/test_x.py", cmd: "pytest -q tests/test_x.py", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 } });
+      await commitStage.run(ctx, new AbortController().signal);
+      const s = await sealStage.run(ctx, new AbortController().signal);
+      return { s, r: receiptOf(s), md: readFileSync(join(ctx.runDir, "receipt.md"), "utf8") };
+    } finally { for (const [k, v] of Object.entries(prev)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  test("only a check on a test file ADDED in the diff passed, no Wall: PARTIAL with the agent-only NOT PROVEN line", async () => {
+    const { s, r, md } = await sealWith("gates02-added", false);
+    expect(s.data.verdict).toBe("PARTIAL");
+    expect(r.not_proven).toContain(AGENT_ONLY);
+    expect(r.not_proven).not.toContain("no tests executed");
+    expect(r.checks).toEqual([{ name: "pytest:tests/test_x.py", cmd: "pytest -q tests/test_x.py", result: "pass", duration_s: 1, provenance: "agent_authored" }]);
+    expect(md).toContain("### Agent-independent checks\n- none\n");
+    expect(md).toContain("### Agent-authored / advisory checks\n- pass: pytest:tests/test_x.py");
+    expect(md).not.toContain("### Checks");
+  }, 30000);
+  test("the same check on a PRE-EXISTING test file: VERIFIED, provenance exogenous", async () => {
+    const { s, r, md } = await sealWith("gates02-preexisting", true);
+    expect(s.data.verdict).toBe("VERIFIED");
+    expect(r.not_proven).not.toContain(AGENT_ONLY);
+    expect(r.checks[0]!.provenance).toBe("exogenous");
+    expect(md).toContain("### Agent-independent checks\n- pass: pytest:tests/test_x.py");
+    expect(md).toContain("### Agent-authored / advisory checks\n- none\n");
+  }, 30000);
+  test("a PRE-EXISTING test edited in the run (status M, in the diff) stays exogenous: only status A is agent-authored", async () => {
+    const { s, r } = await sealWith("gates02-edited-old", true, {}, true);
+    expect(r.checks[0]!.provenance).toBe("exogenous");
+    expect(r.not_proven).toContain("weakened test: tests/test_x.py"); // the A-119 edit rule still caps it, independently of provenance
+    expect(r.not_proven).not.toContain(AGENT_ONLY);
+    expect(s.data.verdict).toBe("PARTIAL");
+  }, 30000);
+  test("LOKI_EXOGENOUS_PROOF=0 restores the old verdict (VERIFIED) and only the opt-out (\"00\" or \"false\" stay on)", async () => {
+    expect((await sealWith("gates02-optout", false, { LOKI_EXOGENOUS_PROOF: "0" })).s.data.verdict).toBe("VERIFIED");
+    expect((await sealWith("gates02-optout-00", false, { LOKI_EXOGENOUS_PROOF: "00" })).s.data.verdict).toBe("PARTIAL");
+    expect((await sealWith("gates02-optout-1", false, { LOKI_EXOGENOUS_PROOF: "1" })).s.data.verdict).toBe("PARTIAL");
+  }, 60000);
+  test("a receipt with provenance still verifies end to end through loki verify (hash covers the additive key)", async () => {
+    const { s, r } = await sealWith("gates02-roundtrip", true);
+    sealedLog(dirname(s.data.receipt_path as string), r.receipt_sha256);
+    expect((await verifyReceipt(s.data.receipt_path as string)).verdict).toBe("VERIFIED");
+    // the real `loki verify --require-exogenous` entry reads the provenance seal recorded (TEN-GATES-03 consumer)
+    const out: string[] = [], w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    let rc = -1; try { rc = await verifyMain(["r1", "--require-exogenous"], { runsRoot: dirname(dirname(s.data.receipt_path as string)) }); } finally { process.stdout.write = w; }
+    expect(rc).toBe(0);
+    expect(out.join("")).toContain("agent-independent: 1 of 1 passing checks");
+  }, 30000);
+  test("receipt.md sections: exogenous and independent are agent-independent; agent_authored, llm_judge and an unknown value are advisory (fail closed)", () => {
+    const c = (name: string, provenance: string) => ({ name, cmd: "x", result: "pass" as const, duration_s: 1, provenance }) as Receipt["checks"][number];
+    const md = renderReceiptMd({ ...receiptWithCost({ usd: 0, input_tokens: 0, output_tokens: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 } as Receipt["cost"]), checks: [c("lint", "exogenous"), c("pytest:w.py", "independent"), c("pytest:n.py", "agent_authored"), c("council", "llm_judge"), c("odd", "bogus")] });
+    const [indep, adv] = md.split("### Agent-authored / advisory checks");
+    expect(indep).toContain("- pass: lint ");
+    expect(indep).toContain("- pass: pytest:w.py ");
+    for (const n of ["pytest:n.py", "council", "odd"]) { expect(indep).not.toContain(`- pass: ${n} `); expect(adv).toContain(`- pass: ${n} `); }
+  });
+  test("a receipt without provenance (older seal) renders the single ### Checks section unchanged", () => {
+    const md = renderReceiptMd({ ...receiptWithCost({ usd: 0, input_tokens: 0, output_tokens: 0, measured_sessions: 0, total_sessions: 0, partial_usd: 0 } as Receipt["cost"]), checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }] });
+    expect(md).toContain("### Checks\n- pass: pytest (`pytest -q`, 1s)\n");
+    expect(md).not.toContain("Agent-independent");
+  });
+});
+
 describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
   const factFor = async (name: string, env?: string) => {
     const { repo, base } = makeRepo(name);

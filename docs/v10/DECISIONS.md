@@ -848,3 +848,12 @@ Founder: "stability I don't want nightly delaying latest version in npm, make an
 3. Every builder brief carries the anti-BLOCK checklist: run the row's exact Wall command; for each new guard, show the mutation that turns it red, including the boundary case (numeric vs string compare, the token removed from one of two places); test through the real entry path (bin/loki start, runMachine), not only the helper; sweep siblings of the same mechanism. Most of today's BLOCKs were one of these.
 4. Every approved slice is merged and released in the same CoS turn (D102 unchanged). TEN-RELEASE-FAST extends scripts/release.sh so one command bumps, writes the notes, rebuilds dist, commits, runs the push checks and pushes.
 - Reverse: by founder directive, or by the CoS if load or memory limits are hit twice in an hour.
+
+## D104 (2026-10-17, CTO call under D99, CoS records): Seal VERIFIED requires agent-independent proof, default on (TEN-GATES-02)
+FC-AGENT-PROOF: a run whose only executed passing check is a test file the same run ADDED proves nothing an independent party wrote; the agent graded its own work.
+1. Every receipt check gains an additive `provenance` key from the TEN-GATES-01 classifier (`checkProvenance` in loki-ts/src/util/check_result.ts): exogenous, independent (a Wall file or the holdout), agent_authored (a runner on a path with status A in the run diff) or llm_judge. A receipt without the key (sealed before this change) still verifies: the hash covers whatever keys the body holds.
+2. seal.ts uses `hasExogenousProof` instead of `hasExecutedProof`. A green Wall base run still counts. When the only executed passes are agent_authored or llm_judge, the verdict caps at PARTIAL and NOT PROVEN gains "only agent-authored tests executed (no agent-independent proof)".
+3. receipt.md splits `### Agent-independent checks` (exogenous, independent) from `### Agent-authored / advisory checks` (agent_authored, llm_judge; an unknown value lands here, fail closed). A receipt without provenance keeps the single `### Checks` section.
+4. Default on. Opt-out: LOKI_EXOGENOUS_PROOF=0 (exact string "0"; any other value, including "00" or "false", keeps the gate) restores the FC-16 executed-proof verdict. Provenance is still recorded under the opt-out.
+- Cost accepted: some honest runs that only add new tests for new code now seal PARTIAL until a Wall or a pre-existing suite covers them. Reason: Seal accuracy ranks above delivered accuracy (operating model order).
+- Reverse: only by a CTO call recorded here with a measured false-PARTIAL rate.
