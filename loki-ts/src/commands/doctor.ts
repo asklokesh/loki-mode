@@ -941,13 +941,29 @@ async function requirementsSection(): Promise<RequirementsReport & { first_task_
   return { ...rep, first_task_ready: firstTaskReady(rep) };
 }
 
+// Test seam: wraps the three independent async JSON probes so a test can stub
+// slow ones and prove they overlap (TEN-SPEED-10).
+const jsonProbeImpl: {
+  sentrux: () => Promise<SentruxCheck>;
+  memory: () => Promise<MemoryHealth>;
+  requirements: () => Promise<RequirementsReport & { first_task_ready: boolean }>;
+} = { sentrux: checkSentrux, memory: checkMemoryHealth, requirements: requirementsSection };
+export function _setJsonProbesForTest(fns: Partial<typeof jsonProbeImpl> | null): void {
+  jsonProbeImpl.sentrux = fns?.sentrux ?? checkSentrux;
+  jsonProbeImpl.memory = fns?.memory ?? checkMemoryHealth;
+  jsonProbeImpl.requirements = fns?.requirements ?? requirementsSection;
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
-  const sentrux = await checkSentrux();
-  const memory = await checkMemoryHealth();
+  const [sentrux, memory, requirements] = await Promise.all([
+    jsonProbeImpl.sentrux(),
+    jsonProbeImpl.memory(),
+    jsonProbeImpl.requirements(),
+  ]);
 
   const statuses: Status[] = checks.map((c) => c.status);
   statuses.push(disk.status);
@@ -999,7 +1015,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
     model_catalog: describeCatalogFreshness(),
-    requirements: await requirementsSection(),
+    requirements,
     summary: summarizeStatuses(statuses),
   };
 }
