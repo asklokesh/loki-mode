@@ -2503,3 +2503,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T09:37Z (CoS) v11.17.41
 - v11.17.41: wave AJ, 9 of 9 slices approved and merged cleanly; tests/util plus budget and L0 guards 446 pass 0 fail, tsc clean outside control-plane. Follow-ups noted by reviewers: doctor JSON path still serial, help-changelog-drift red (TEN-STABILITY-18 owns it).
+
+## 2026-10-17T09:41Z (CoS) v11.17.42
+- v11.17.42: TEN-STABILITY-18 and TEN-STABILITY-19 merged; FAILURE-CLASSES append conflicts resolved as union. Results: tests/util plus pr_body_golden, sizing, router_optout_golden, verify, budget and l0 guards 538 pass 0 fail. sigpipe, ui-bare and local-ci-gitleaks rc 0; first-run-gate --stub 0 assertions failed. help-changelog-drift still red on new v11.17.40 flags (report --since, undo --list); TEN-STABILITY-20 dispatched.

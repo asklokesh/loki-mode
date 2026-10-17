@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.42 (2026-10-17)
+
+P0 fix-forward for the nightly 39016259458 failures.
+
+### Fixed
+
+- TEN-STABILITY-18: green the remaining nightly reds:
+  - util/check_result.ts is registered as a "not recorded" producer.
+  - The Wall brief size cap is re-measured.
+  - The router opt-out golden pins the pre-router Wall order.
+  - verify resolves uv with the live PATH (Bun.which).
+  - 15 legacy echo-into-grep forms are converted, and the sigpipe ceiling is lowered from 1728 to 1722.
+  - `loki verify --require-exogenous` routes through bin/loki and autonomy/loki and appears in help.
+  - The bare-loki UI test pins the new three-line control output.
+  - local-ci scopes gitleaks to origin/main..HEAD.
+- TEN-STABILITY-19: the moat P8 positive control records a real byte-compile build result again (P8 PROVEN). The first-run gate stub answers the login probe without touching the work tree (0 assertions failed).
+
 ## v11.17.41 (2026-10-17)
 
 Wave AJ: 9 reviewed slices.
