@@ -2090,16 +2090,34 @@ case_allowtoken() {
     done <<EOF_HITS
 $hits
 EOF_HITS
-    hits="$(grep -rlE 'safeGitEnv\([^()]*,' "$src" | grep -v -e '/util/safe_git\.ts$')"
+    # Whole-file scan: any safeGitEnv/safeGitArgs call outside safe_git.ts with a
+    # second argument (top-level comma, quote/bracket aware, multi-line, nested
+    # calls) is the positional allowToken opt-in. Single-arg calls stay legal.
+    hits="$(find "$src" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.mjs' \) ! -path '*/util/safe_git.ts' -print0 \
+        | xargs -0 perl -0777 -ne '
+            while (/\b(safeGitEnv|safeGitArgs)\s*\(/g) {
+                my ($d, $q, $i) = (0, "", pos());
+                for (; $i < length($_); $i++) {
+                    my $c = substr($_, $i, 1);
+                    if ($q ne "") { if ($c eq "\\") { $i++ } elsif ($c eq $q) { $q = "" } next }
+                    if ($c eq "\"" || $c eq "\x27" || $c eq "`") { $q = $c; next }
+                    if ($c =~ /[(\[{]/) { $d++; next }
+                    if ($c =~ /[)\]}]/) { last if $d == 0; $d--; next }
+                    if ($c eq "," && $d == 0) {
+                        if (substr($_, $i + 1) =~ /\A\s*\)/) { last }
+                        print "$ARGV\n"; last;
+                    }
+                }
+            }' | sort -u)"
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        nok "safeGitEnv called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
+        nok "safeGitEnv/safeGitArgs called with a positional token flag outside safe_git.ts: ${f#"$REPO_ROOT"/}"
     done <<EOF_HITS
 $hits
 EOF_HITS
     for f in base_guard modernize_unit; do
         if [ "$(grep -c 'allowToken' "$src/util/$f.ts")" -ne 1 ] \
-            || ! grep -qF 'allowToken: args[0] === "fetch"' "$src/util/$f.ts"; then
+            || ! grep -qE 'allowToken: args\[0\] === "fetch" *([,}]|$)' "$src/util/$f.ts"; then
             nok "$f.ts allowToken is not the single fetch-only form (allowToken: args[0] === \"fetch\")"
         fi
     done
