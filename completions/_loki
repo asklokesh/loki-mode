@@ -369,6 +369,7 @@ function _loki_start {
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
+        '--cost[Opt-in cost profile]:profile:(lean off)' \
         '--model[Model or route override]:model:' \
         '--max-cost[Spend cap in USD]:amount:' \
         '--no-pr[Build and verify without opening a pull request]' \
