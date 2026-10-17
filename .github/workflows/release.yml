@@ -133,6 +133,12 @@ jobs:
           # Rule of Two: never restore a cache an issue-triggered job could have written.
           no-cache: true
 
+      # The control-plane server bundle imports loki-ts source (runner, engine10),
+      # so @anthropic-ai/sdk and the other loki-ts deps must resolve during pack.
+      # v11.17.14 pack failed with: Could not resolve: "@anthropic-ai/sdk".
+      - name: Install loki-ts dependencies
+        run: bun install --cwd loki-ts --frozen-lockfile
+
       - name: Pack once and verify the PACKED tarball carries a fresh dist
         run: |
           # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
@@ -242,7 +248,7 @@ jobs:
           name: npm-tarball
           path: ${{ runner.temp }}/npm-tarball
 
-      - name: Verify digest, publish under latest, add next
+      - name: Verify digest, publish under next, then move latest and next if highest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
@@ -267,7 +273,11 @@ jobs:
             fi
           fi
           CUR="$(npm view loki-mode dist-tags.latest --prefer-online 2>/dev/null || true)"
-          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+          if [ -z "$CUR" ]; then
+            echo "::error::npm view returned no current latest for loki-mode; refusing to move latest (fail closed). ${VERSION} stays published under next."
+            exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
             npm dist-tag add "loki-mode@${VERSION}" latest
             npm dist-tag add "loki-mode@${VERSION}" next
           else
@@ -837,7 +847,11 @@ jobs:
             echo "loki-mode-sdk@${VERSION} already published"
           fi
           CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
-          if [ -z "$CUR" ] || [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+          if [ -z "$CUR" ]; then
+            echo "::error::npm view returned no current latest for loki-mode-sdk; refusing to move latest (fail closed). ${VERSION} stays published under next."
+            exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
             npm dist-tag add "loki-mode-sdk@${VERSION}" latest
             npm dist-tag add "loki-mode-sdk@${VERSION}" next
           fi

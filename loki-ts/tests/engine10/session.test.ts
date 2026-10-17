@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
+import { childEnv, classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
@@ -646,5 +646,19 @@ describe("P12-12 diffShortstat counts untracked files", () => {
       const r = diffShortstat(d);
       expect(r.files).toBeGreaterThanOrEqual(1); expect(r.insertions).toBe(1);
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("TEN-COST-13 lean prefix default", () => {
+  const cfg = { provider: "claude" } as Parameters<typeof childEnv>[1];
+  const o = { iterationId: "i", stage: "plan", brief: "b", tier: "development" } as Parameters<typeof childEnv>[0];
+  test("defaults LOKI_E10_PREFIX to lean, and an explicit user value wins", () => {
+    const saved = process.env["LOKI_E10_PREFIX"];
+    try {
+      delete process.env["LOKI_E10_PREFIX"];
+      expect(childEnv(o, cfg)["LOKI_E10_PREFIX"]).toBe("lean");
+      process.env["LOKI_E10_PREFIX"] = "off";
+      expect(childEnv(o, cfg)["LOKI_E10_PREFIX"]).toBe("off");
+    } finally { if (saved === undefined) delete process.env["LOKI_E10_PREFIX"]; else process.env["LOKI_E10_PREFIX"] = saved; }
   });
 });

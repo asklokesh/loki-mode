@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runWall } from "../../src/engine10/stages/wall.ts";
+import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import { conventionViolation, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
@@ -132,5 +132,15 @@ describe("FC-23 a type error inside a Wall file is harness-owned", () => {
     expect(wallOwnedFailure("error TS5083: Cannot read file tsconfig.json", "/r", "/r", wall)).toBe(false);
     expect(wallOwnedFailure("/r/tests/loki_wall_a.ts\n  3:1  error  no-undef  x", "/r", "/r", wall)).toBe(true);
     expect(wallOwnedFailure("", "/r", "/r", wall)).toBe(false);
+  });
+});
+
+describe("COST-14 Wall brief output budget", () => {
+  test("brief carries the budget line ahead of run-specific text", () => {
+    const b = buildWallBrief("add x", "src/a.ts", ["jest"], false, "", ["a1"]);
+    expect(b).toContain(WALL_OUTPUT_BUDGET);
+    expect(b).toContain("one test file");
+    expect(b).toContain("no closing summary");
+    expect(b.indexOf(WALL_OUTPUT_BUDGET)).toBeLessThan(b.indexOf("add x"));
   });
 });

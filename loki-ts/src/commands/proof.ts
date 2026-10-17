@@ -34,6 +34,9 @@ import { safeGit } from "../util/safe_git.ts";
 import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
+import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { buildReceiptBundle } from "../util/receipt_bundle.ts";
+import { runSecureScan } from "../util/secure_scan.ts";
 
 const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
 
@@ -50,6 +53,12 @@ Subcommands:
   share <id>           Publish the proof page as a GitHub Gist (opt-in)
   md <id>              Paste-able Markdown for a PR comment or Slack
   badge <id>           Print a copy-paste "Verified by Loki" markdown badge
+  bundle <run-id>      Write a portable receipt bundle for offline verification
+                       [--out <dir>] (default ./loki-bundle-<run-id>)
+
+For a 'loki start' run with no .loki/proofs/<id>, badge, bundle and share read
+.loki/runs/<id>/receipt.json. badge prints only when the signature verifies and
+the receipt verdict is VERIFIED or ALREADY_SATISFIED; otherwise exit 1.
 
 Options for 'share':
   --yes                Skip the redaction-preview confirmation prompt
@@ -393,6 +402,9 @@ export function renderProofBadge(
   } else if (h === "VERIFIED WITH GAPS") {
     message = "Verified with gaps";
     color = "yellow";
+  } else if (h === "ALREADY SATISFIED") {
+    message = "Already satisfied";
+    color = "blue";
   } else if (h === "NOT VERIFIED") {
     message = "Not verified";
     color = "red";
@@ -472,19 +484,160 @@ function mdProof(id: string | undefined): number {
 // badgeProof - `loki proof badge <id>`: print the shareable badge markdown only,
 // nothing published. Useful for pasting a badge that links to an already-shared
 // receipt (or an image-only badge with no link).
-function badgeProof(id: string | undefined): number {
+async function badgeProof(id: string | undefined): Promise<number> {
   if (!id) {
     process.stderr.write(`${RED}Missing proof id.${NC} Use 'loki proof list'.\n`);
     return 2;
   }
   const d = readProof(id);
   if (d === null) {
+    const rp = runReceiptPath(id);
+    if (rp) return printRunBadge(rp);
     process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
   }
   printProofBadge(id);
   return 0;
+}
+
+// A 'loki start' (engine10) run keeps its sealed receipt at .loki/runs/<id>/receipt.json
+// and never writes .loki/proofs/<id>. Returns that path only for a safe id.
+function runReceiptPath(id: string): string | null {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) || id.includes("..")) return null;
+  const p = join(lokiDir(), "runs", id, "receipt.json");
+  return existsSync(p) ? p : null;
+}
+
+// Badge text for a run receipt. Green needs BOTH the signature check (verifyReceipt) and the
+// receipt's own verdict to say VERIFIED; nothing else earns a badge.
+async function runBadgeMd(receiptPath: string, linkUrl?: string): Promise<{ md: string | null; why: string }> {
+  const v = await verifyReceipt(receiptPath);
+  let verdict = "";
+  try {
+    verdict = String((JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>)["verdict"] ?? "");
+  } catch {
+    /* unreadable receipt: verifyReceipt already reports it */
+  }
+  const headline =
+    v.verdict === "VERIFIED" && verdict === "VERIFIED" ? "VERIFIED"
+    : v.verdict === "VERIFIED" && verdict === "ALREADY_SATISFIED" ? "ALREADY SATISFIED"
+    : "";
+  const md = headline ? renderProofBadge(headline, linkUrl) : null;
+  return { md, why: `signature check ${v.verdict}${v.reasons.length ? ` (${v.reasons.join("; ")})` : ""}, receipt verdict ${verdict || "unknown"}` };
+}
+
+async function printRunBadge(receiptPath: string): Promise<number> {
+  const { md, why } = await runBadgeMd(receiptPath);
+  if (!md) {
+    process.stderr.write(`${RED}No badge:${NC} ${why}\n`);
+    return 1;
+  }
+  process.stdout.write(`\n${BOLD}Shareable badge${NC} (copy-paste markdown):\n${md}\n`);
+  return 0;
+}
+
+// `loki proof bundle <run-id> [--out <dir>]`: package a sealed run for verification elsewhere.
+async function bundleProof(argv: readonly string[]): Promise<number> {
+  let id = "";
+  let out = "";
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === "--out") {
+      out = argv[++i] ?? "";
+      if (!out) {
+        process.stderr.write(`${RED}--out needs a directory.${NC}\n`);
+        return 2;
+      }
+    } else if (a.startsWith("-")) {
+      process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
+      return 1;
+    } else id = a;
+  }
+  if (!id) {
+    process.stderr.write(`${RED}Missing run id.${NC}\n`);
+    return 2;
+  }
+  const rp = runReceiptPath(id);
+  if (!rp) {
+    process.stderr.write(`${RED}Run receipt not found: .loki/runs/${id}/receipt.json${NC}\n`);
+    return 1;
+  }
+  const outDir = resolve(out || join(process.cwd(), `loki-bundle-${id}`));
+  const r = await buildReceiptBundle(dirname(rp), outDir);
+  if (!r.ok) {
+    process.stderr.write(`${RED}Bundle refused:${NC} ${r.error}\n`);
+    return 1;
+  }
+  process.stdout.write(`${GREEN}Bundle written: ${r.outDir}${NC}\nVerify elsewhere: see ${join(r.outDir, "VERIFY.md")}\n`);
+  return 0;
+}
+
+// gh present and authenticated, else print why and return false.
+async function ghReady(): Promise<boolean> {
+  const ghCheck = await run(["gh", "--version"], { timeoutMs: 5000 });
+  if (ghCheck.exitCode !== 0) {
+    process.stderr.write(`${RED}gh CLI not found${NC}\n`);
+    process.stderr.write("Install the GitHub CLI to publish a proof:\n");
+    process.stderr.write("  brew install gh        # macOS\n");
+    process.stderr.write("  sudo apt install gh    # Ubuntu/Debian\n");
+    process.stderr.write("  https://cli.github.com # Other platforms\n");
+    return false;
+  }
+  const ghAuth = await run(["gh", "auth", "status"], { timeoutMs: 10000 });
+  if (ghAuth.exitCode !== 0) {
+    process.stderr.write(`${RED}GitHub CLI not authenticated${NC}\n`);
+    process.stderr.write("Run 'gh auth login' to authenticate, then try again.\n");
+    return false;
+  }
+  return true;
+}
+
+// share for a run with no proof page: gist ONLY the bundle files (never the key or .loki tree).
+async function shareRun(id: string, receiptPath: string, skipConfirm: boolean, visibility: string): Promise<number> {
+  if (!(await ghReady())) return 1;
+  const dir = mkdtempSync(join(tmpdir(), "loki-proof-"));
+  try {
+    const bdir = join(dir, "bundle");
+    const b = await buildReceiptBundle(dirname(receiptPath), bdir);
+    if (!b.ok) {
+      process.stderr.write(`${RED}Share refused:${NC} ${b.error}\n`);
+      return 1;
+    }
+    const files = ["receipt.json", "events.jsonl", "pubkey.jwk", "VERIFY.md"].map((f) => join(bdir, f));
+    const scan = await runSecureScan(bdir);
+    if (!scan.ok || scan.findings.length > 0) {
+      process.stderr.write(`${RED}Share refused:${NC} redaction scan ${scan.ok ? `found ${scan.findings.length} finding(s)` : `failed (${scan.error ?? "unknown"})`}\n`);
+      for (const f of scan.findings) process.stderr.write(`  - ${f.file}:${f.line} ${f.rule}\n`);
+      return 1;
+    }
+    const visLabel = visibility === "" ? "secret" : "public";
+    process.stdout.write(`${BOLD}Publishing run '${id}' bundle as a ${visLabel} GitHub Gist${NC}\n\nWhat will be shared:\n`);
+    for (const f of ["receipt.json", "events.jsonl", "pubkey.jwk (public key only)", "VERIFY.md"]) process.stdout.write(`  - ${f}\n`);
+    process.stdout.write(`  - redaction scan: 0 findings\n\n`);
+    if (!skipConfirm && !(await confirm(`Publish this bundle to a ${visLabel} gist? [y/N] `))) {
+      process.stdout.write("Aborted. Nothing was published.\n");
+      return 0;
+    }
+    const args = ["gh", "gist", "create", ...files, "--desc", `Loki Mode receipt bundle ${id}`];
+    if (visibility !== "") args.push(visibility);
+    const res = await run(args, { timeoutMs: 60000 });
+    if (res.exitCode !== 0) {
+      process.stderr.write(`${RED}Failed to create gist${NC}\n${res.stdout}${res.stderr}\n`);
+      return 1;
+    }
+    const url = res.stdout.trim();
+    process.stdout.write(`${GREEN}Shared: ${url}${NC}\n`);
+    const { md } = await runBadgeMd(receiptPath, url);
+    if (md) process.stdout.write(`\n${BOLD}Shareable badge${NC} (copy-paste markdown):\n${md}\n`);
+    return 0;
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  }
 }
 
 async function shareProof(argv: readonly string[]): Promise<number> {
@@ -508,6 +661,8 @@ async function shareProof(argv: readonly string[]): Promise<number> {
   }
   const html = join(proofsDir(), id, "index.html");
   if (!existsSync(html)) {
+    const rp = runReceiptPath(id);
+    if (rp && !hosted) return shareRun(id, rp, skipConfirm, visibility);
     process.stderr.write(`${RED}Proof page not found: ${id}/index.html${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
@@ -521,21 +676,7 @@ async function shareProof(argv: readonly string[]): Promise<number> {
   if (hosted) {
     return hostedPublishProof(id, html, join(proofsDir(), id, "proof.json"));
   }
-  const ghCheck = await run(["gh", "--version"], { timeoutMs: 5000 });
-  if (ghCheck.exitCode !== 0) {
-    process.stderr.write(`${RED}gh CLI not found${NC}\n`);
-    process.stderr.write("Install the GitHub CLI to publish a proof:\n");
-    process.stderr.write("  brew install gh        # macOS\n");
-    process.stderr.write("  sudo apt install gh    # Ubuntu/Debian\n");
-    process.stderr.write("  https://cli.github.com # Other platforms\n");
-    return 1;
-  }
-  const ghAuth = await run(["gh", "auth", "status"], { timeoutMs: 10000 });
-  if (ghAuth.exitCode !== 0) {
-    process.stderr.write(`${RED}GitHub CLI not authenticated${NC}\n`);
-    process.stderr.write("Run 'gh auth login' to authenticate, then try again.\n");
-    return 1;
-  }
+  if (!(await ghReady())) return 1;
 
   // Redaction preview. The generator already redacts the proof before
   // writing index.html; this is a transparency summary, not a second pass.
@@ -750,6 +891,8 @@ export async function runProof(argv: readonly string[]): Promise<number> {
       return shareProof(rest);
     case "badge":
       return badgeProof(rest[0]);
+    case "bundle":
+      return bundleProof(rest);
     case "md":
       return mdProof(rest[0]);
     default:

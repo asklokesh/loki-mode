@@ -40,6 +40,7 @@
 // retained for tests only and is injected through opts.reviewer; it is never the
 // production default.
 
+import { REVIEW_GUARD_DENYLIST } from "../providers/claude_flags.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -61,6 +62,7 @@ import { stripAnsi } from "../util/check_result.ts";
 import { safeGitRun } from "../util/safe_git.ts";
 import { hasPythonTests, ranZeroTests, runPythonTests } from "../util/python_build_check.ts";
 import { runSkillChecks } from "../util/skill_checks.ts";
+import { runSecureScan } from "../util/secure_scan.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
 // (which is sync because it sits inside the runQualityGates for-loop). Bun
@@ -103,7 +105,8 @@ export type GateName =
   | "doc_coverage"
   | "magic_debate"
   | "lsp_diagnostics"
-  | "skill_checks";
+  | "skill_checks"
+  | "security_scan";
 
 export type GateResult = {
   passed: boolean;
@@ -1565,8 +1568,10 @@ export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 //     autonomy/lib/claude-flags.sh.
 //   - CAVEMAN_DEFAULT_MODE=off: this is a parsed trust-gate subcall; a globally
 //     active caveman would reword the VERDICT line and flip the verdict.
-export const REVIEW_GUARD_DENYLIST =
-  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+// The value lives in providers/claude_flags.ts, a leaf module, so engine10
+// stages can import it without pulling this file's SDK invoker into bundles
+// that ship without loki-ts deps (the control-plane server, v11.17.14 FC).
+export { REVIEW_GUARD_DENYLIST };
 
 // v8.x: absolute path to the code-review verdict schema (distinct from the
 // council finding-schema; this one speaks PASS/FAIL + severity).
@@ -2940,6 +2945,59 @@ export async function runLSPDiagnostics(ctx?: RunnerContext): Promise<GateResult
   return { passed: true, detail: "lsp_diagnostics: 0 errors, 0 warnings" };
 }
 
+// --- security_scan (TEN-GATES-08) ------------------------------------------
+// Port of run.sh run_secure_scan. Runs autonomy/lib/secure-scan.py through the
+// shared util/secure_scan.ts wrapper and writes .loki/quality/security-findings.json
+// (the receipt proof-generator.py _collect_security reads; findings carry a
+// "waived" bool). Fails on an active (un-waived) HIGH finding. Python3 or the
+// scanner absent, or a scanner error, is INCONCLUSIVE (passed, flagged), never a
+// silent clean pass. LOKI_SECURE_SCAN overrides the scanner path.
+function readSecurityWaivers(qDir: string): Set<string> {
+  const out = new Set<string>();
+  try {
+    const doc = JSON.parse(readFileSync(join(qDir, "security-waivers.json"), "utf8")) as { waivers?: Array<{ rule?: unknown; file?: unknown }> };
+    for (const w of doc.waivers ?? []) {
+      if (typeof w.rule === "string" && typeof w.file === "string") out.add(`${w.rule}|${w.file}`);
+    }
+  } catch {
+    // absent or malformed waivers: nothing waived
+  }
+  return out;
+}
+
+export async function runSecurityScan(ctx: RunnerContext): Promise<GateResult> {
+  const qDir = join(ctx.lokiDir, "quality");
+  const out = join(qDir, "security-findings.json");
+  mkdirSync(qDir, { recursive: true });
+  const override = process.env["LOKI_SECURE_SCAN"];
+  const res = await runSecureScan(ctx.cwd, override ? { scriptPath: override } : {});
+  if (!res.ok) {
+    atomicWriteText(
+      out,
+      `${JSON.stringify({ rules_version: null, findings: [], summary: { total: 0, by_severity: {} }, skipped: "scanner-unavailable", error: res.error })}\n`,
+    );
+    return { passed: true, inconclusive: true, detail: `security_scan: ${res.error ?? "scanner unavailable"} -- inconclusive, not a clean pass` };
+  }
+  const waived = readSecurityWaivers(qDir);
+  let activeHigh = 0;
+  let active = 0;
+  let waivedCount = 0;
+  const findings = res.findings.map((f) => {
+    const isWaived = waived.has(`${f.rule}|${f.file}`);
+    if (isWaived) waivedCount++;
+    else {
+      active++;
+      if (String(f.severity).toUpperCase() === "HIGH") activeHigh++;
+    }
+    return { ...f, waived: isWaived };
+  });
+  atomicWriteText(out, `${JSON.stringify({ findings, waived: waivedCount, active, high_active: activeHigh }, null, 2)}\n`);
+  if (activeHigh > 0) {
+    return { passed: false, detail: `security_scan: ${activeHigh} active HIGH finding(s) (${active} active, ${waivedCount} waived); see .loki/quality/security-findings.json` };
+  }
+  return { passed: true, detail: `security_scan: ${active === 0 ? "clean" : `${active} active non-HIGH finding(s)`} (waived: ${waivedCount})` };
+}
+
 // --- Orchestrator ---------------------------------------------------------
 
 // Per-iteration toggles read from env. These mirror the bash gate-block guards
@@ -2958,6 +3016,7 @@ type GateToggles = {
   magicDebate: boolean;
   lspDiagnostics: boolean;
   skillChecks: boolean;
+  securityScan: boolean;
 };
 
 export function readToggles(): GateToggles {
@@ -3011,6 +3070,8 @@ export function readToggles(): GateToggles {
     lspDiagnostics: flag("LOKI_GATE_LSP_DIAGNOSTICS", true),
     // P12-44: checks declared by repo skills (.claude/skills/*/SKILL.md). Blocking, fail closed; no skills = pass.
     skillChecks: flag("LOKI_GATE_SKILL_CHECKS", true),
+    // TEN-GATES-08: exogenous secure-scan (deterministic pattern scan, not an LLM opinion).
+    securityScan: flag("LOKI_GATE_SECURITY_SCAN", true),
   };
 }
 
@@ -3200,6 +3261,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },
     { name: "lsp_diagnostics", enabled: toggles.lspDiagnostics, run: () => runLSPDiagnostics(ctx) },
     { name: "skill_checks", enabled: toggles.skillChecks, run: () => runSkillChecks(ctx.cwd) },
+    { name: "security_scan", enabled: toggles.securityScan, run: () => runSecurityScan(ctx) },
   ];
 
   for (const gate of sequence) {

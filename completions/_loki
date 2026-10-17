@@ -155,7 +155,7 @@ function _loki {
                         '--private[Create a secret gist when sharing]' \
                         '--hosted[Hosted publishing (coming in R9)]' \
                         '--help[Show help]' \
-                        '1:subcommand:(list show open share)'
+                        '1:subcommand:(list show open share badge md bundle)'
                     ;;
                 completions)
                     _arguments '1:shell:(bash zsh install)'
@@ -186,6 +186,7 @@ function _loki {
                         '--sign-deploy[Sign a loki.deploy/1 deploy record in place]:record:_files' \
                         '--receipt[Cited receipt file for a deploy record]:receipt:_files' \
                         '--max-age[Reject a receipt older than DUR]:duration:' \
+                        '--require-exogenous[Exit 4 when a VERIFIED receipt has no agent-independent passing check]' \
                         '--seal-composite[Sign a workspace composite]:run dir:_directories' \
                         '--help[Show help]' \
                         '*:receipt or deploy record:_files'

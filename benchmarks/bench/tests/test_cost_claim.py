@@ -172,3 +172,23 @@ def test_cli_exclude_task_printed(tmp_path):
     rc, out = _run(*_base_args(f), "--exclude-task", "bad0")
     assert rc == 0, out
     assert json.loads(out)["excluded_tasks"] == ["bad0"]
+
+
+def test_non_object_rows_skipped_with_count(tmp_path, capsys):
+    loki, floor = _tight(0.4)
+    for r in loki:
+        r.update(task=r["task_id"], arm="L")
+    for r in floor:
+        r.update(task=r["task_id"], arm="F")
+    f = tmp_path / "rows.jsonl"
+    lines = [json.dumps(r) for r in loki + floor]
+    lines[1:1] = ["[1, 2]", "7", "\"s\"", "null"]
+    f.write_text("\n".join(lines) + "\n")
+    rc = cc.main(["--rows", str(f), "--loki-arm", "L", "--floor-arm", "F",
+                  "--target", "0.5"])
+    cap = capsys.readouterr()
+    out = json.loads(cap.out)
+    assert rc == 0, cap
+    assert out["skipped_non_object_rows"] == 4, out
+    assert "skipped 4 non-object" in cap.err
+    assert out["verdict"] == "PROVEN_AT(0.5)", out

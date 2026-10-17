@@ -22,7 +22,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventType, RunContext, StageName } from "../../src/engine10/types.ts";
-import { runLintChecks, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { execFileSync } from "node:child_process";
+import { runLintChecks, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 
 const REAL_NODE_MODULES = join(import.meta.dir, "..", "..", "node_modules");
 const cleanupDirs: string[] = [];
@@ -183,4 +184,66 @@ describe("engine10 verify: lint tool absent from PATH (not_run, never a failure)
     // contract is the "not_run" result itself).
     expect(emitted.filter((e) => e.type === "test.result")).toHaveLength(2);
   });
+});
+
+// TEN-QUALITY-03: a static lint failure whose every diagnostic is already on the base content never drives a fix round.
+// A stub ruff on PATH emits one deterministic concise F401 per `import` line, from files or from stdin (`--stdin-filename p -`).
+describe("engine10 verify: pre-existing static lint (LINT-DRIVES-FIX)", () => {
+  const STUB = [
+    "#!/bin/sh",
+    "emit() { n=0; while IFS= read -r l; do n=$((n+1)); case \"$l\" in \"import \"*) echo \"$1:$n:8: F401 [*] \\`${l#import }\\` imported but unused\"; r=1;; esac; done; }",
+    "r=0; name=''; last=''; files=''",
+    "while [ $# -gt 0 ]; do case \"$1\" in --stdin-filename) name=\"$2\"; shift;; check|--*) ;; *) last=\"$1\"; [ \"$1\" != - ] && files=\"$files $1\";; esac; shift; done",
+    "if [ \"$last\" = - ]; then emit \"$name\"; else for f in $files; do emit \"$f\" < \"$f\"; done; fi",
+    "[ \"$r\" = 1 ] && { echo 'Found 1 error.'; exit 1; }; echo 'All checks passed!'; exit 0",
+  ].join("\n") + "\n";
+  const git = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d, encoding: "utf8" }).trim();
+  const oldPath = process.env["PATH"];
+  afterEach(() => { process.env["PATH"] = oldPath; });
+  type Out = { failures_grouped: unknown[]; pre_red_checks: string[]; baseline_line?: string; checks: { name: string; result: string }[] };
+  function fixture(base: Record<string, string>, head: Record<string, string>): { run: () => Promise<Out> } {
+    const dir = mkRepo(), bin = mkRepo();
+    writeFileSync(join(bin, "ruff"), STUB); chmodSync(join(bin, "ruff"), 0o755);
+    git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
+    for (const [f, c] of Object.entries(base)) writeFileSync(join(dir, f), c);
+    git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
+    const baseSha = git(dir, ["rev-parse", "HEAD"]);
+    for (const [f, c] of Object.entries(head)) writeFileSync(join(dir, f), c);
+    git(dir, ["add", "-A"]);
+    const { ctx } = fakeCtx(dir);
+    return { run: async () => { process.env["PATH"] = `${bin}:${oldPath}`; return (await verifyStage.run({ ...ctx, baseSha }, sig())).data as unknown as Out; } };
+  }
+  test("case 1: base already has the unused import, head edits another line: not in failures_grouped, baseline line names it", async () => {
+    const d = await fixture({ "mod.py": "import os\nx = 1\n" }, { "mod.py": "import os\nx = 2\n" }).run();
+    expect(d.checks.find((c) => c.name === "lint:ruff")?.result).toBe("fail");
+    expect(d.failures_grouped).toEqual([]);
+    expect(d.pre_red_checks).toContain("lint:ruff");
+    expect(d.baseline_line).toMatch(/lint:ruff/);
+  }, 60_000);
+  test("case 2: head adds a new unused import: lint:ruff still reported", async () => {
+    const d = await fixture({ "mod.py": "import os\nx = 1\n" }, { "mod.py": "import os\nimport sys\nx = 1\n" }).run();
+    expect(JSON.stringify(d.failures_grouped)).toContain("lint:ruff");
+    expect(d.pre_red_checks).not.toContain("lint:ruff");
+  }, 60_000);
+  test("case 3: a file new on head with F401 is never excused, even beside a pre-existing one", async () => {
+    const d = await fixture({ "mod.py": "import os\nx = 1\n" }, { "mod.py": "import os\nx = 2\n", "new.py": "import os\n" }).run();
+    expect(JSON.stringify(d.failures_grouped)).toContain("lint:ruff");
+    const only = await fixture({ "README.md": "x\n" }, { "new.py": "import os\n" }).run();
+    expect(JSON.stringify(only.failures_grouped)).toContain("lint:ruff");
+  }, 60_000);
+  test("abort mid-run: baseline reruns stop, elapsed far below N x sleep", async () => {
+    const dir = mkRepo(), bin = mkRepo(), files = ["a.py", "b.py", "c.py"];
+    writeFileSync(join(bin, "ruff"), ["#!/bin/sh", "for a in \"$@\"; do [ \"$a\" = - ] && sleep 3; done", "echo 'a.py:1:8: F401 unused'; exit 1"].join("\n") + "\n"); chmodSync(join(bin, "ruff"), 0o755);
+    git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
+    for (const f of files) writeFileSync(join(dir, f), "import os\n");
+    git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
+    const baseSha = git(dir, ["rev-parse", "HEAD"]);
+    process.env["PATH"] = `${bin}:${oldPath}`;
+    const ac = new AbortController(), t0 = Date.now();
+    setTimeout(() => ac.abort(), 1500);
+    const checks: VerifyCheck[] = [];
+    const pre = await runLintChecks({ ...fakeCtx(dir).ctx, baseSha }, files, ac.signal, checks, {});
+    expect(pre).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(5000);
+  }, 60_000);
 });
