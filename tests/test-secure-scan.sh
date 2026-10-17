@@ -97,6 +97,18 @@ assert_silent() {
 # 1. ENGINE PRECISION -- bad/safe matrix for all 5 rules + FP guards.
 # ===========================================================================
 
+# --- files_scanned (TEN-GATES-20): the result states how many files were read ---
+FS="$WORK/fs-two"; mkdir -p "$FS"; echo "a" > "$FS/a.txt"; echo "b" > "$FS/b.txt"
+scan "$FS"
+fs_n=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",{}).get("files_scanned",-1))' "$WORK/last.json" 2>/dev/null)
+if [ "$fs_n" = "2" ]; then ok "files_scanned: two text files report 2"
+else bad "files_scanned: expected 2 got $fs_n" "$(cat "$WORK/last.json")"; fi
+FS0="$WORK/fs-empty"; mkdir -p "$FS0"
+scan "$FS0"
+fs_n=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",{}).get("files_scanned",-1))' "$WORK/last.json" 2>/dev/null)
+if [ "$fs_n" = "0" ]; then ok "files_scanned: empty dir reports 0"
+else bad "files_scanned: empty dir expected 0 got $fs_n" "$(cat "$WORK/last.json")"; fi
+
 # --- rule 1: private-key-committed -----------------------------------------
 BAD="$WORK/r1-bad"; mkdir -p "$BAD"
 cat > "$BAD/server.js" <<'EOF'
