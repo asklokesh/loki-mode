@@ -495,10 +495,23 @@ describe("P12-21 cost attribution breakdown", () => {
       expect(c.usd).toBe(2);
       expect(b.usd).toBe(c.usd);
       expect(Object.values(b.per_stage).reduce((a, s) => a + (s.usd ?? NaN), 0)).toBe(c.usd as number);
-      expect(b.per_stage["dev"]).toEqual({ usd: 0.75, sessions: 2 });
+      expect(b.per_stage["dev"]).toMatchObject({ usd: 0.75, sessions: 2, cache_read_tokens: 200, cache_creation_tokens: 14 });
       expect(b.per_stage["unattributed"]!.usd).toBe(1);
       expect(b.retry_usd).toBe(0.5);
       expect(b.retry_sessions).toBe(2);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  test("per-stage cache_hit_ratio is read / (read + creation), null when no cache tokens", () => {
+    const d = tmpCheckout();
+    try {
+      put(d, "1", { input_tokens: 1, output_tokens: 1, cache_read_tokens: 7000, cache_creation_tokens: 0, total_cost_usd: 0.1, stage: "implement" });
+      put(d, "2", { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 7000, total_cost_usd: 0.1, stage: "implement" });
+      put(d, "3", { input_tokens: 1, output_tokens: 1, total_cost_usd: 0.1, stage: "plan" });
+      const b = sumResultCosts(d, ["1", "2", "3"]).breakdown!;
+      expect(b.per_stage["implement"]).toMatchObject({ cache_read_tokens: 7000, cache_creation_tokens: 7000, cache_hit_ratio: 0.5 });
+      expect(b.per_stage["plan"]!.cache_hit_ratio).toBeNull();
+      expect(b.per_stage["plan"]!.cache_read_tokens).toBe(0);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 
