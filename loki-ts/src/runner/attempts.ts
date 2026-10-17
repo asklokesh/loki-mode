@@ -292,6 +292,12 @@ export function pinnedOriginUsable(origin: string): boolean {
   return spawnSync("bash", [PUSH_SH, "check-origin"], { env, encoding: "utf8", timeout: 30_000 }).status === 0;
 }
 
+/** A hung gh/push must not stall the attempt forever; check-origin has 30s, a real push gets longer. Env override is for tests. */
+function pushPrTimeoutMs(): number {
+  const n = Number(process.env["LOKI_PUSH_PR_TIMEOUT_MS"]);
+  return Number.isFinite(n) && n > 0 ? n : 300_000;
+}
+
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
   const receiptDir = join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-"));
@@ -373,7 +379,8 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
         const bodyFile = join(receiptDir, "pr-body.md");
         writeFileSync(bodyFile, `Winner of a \`loki start --attempts\` run. Receipts for every attempt are kept under ${receiptDir}.\n`);
         const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
-        const r = spawnSync("bash", [PUSH_SH, "push-pr", wt, branch, `Loki attempts winner (${branch})`, bodyFile, "--draft"], { env, encoding: "utf8" });
+        const r = spawnSync("bash", [PUSH_SH, "push-pr", wt, branch, `Loki attempts winner (${branch})`, bodyFile, "--draft"], { env, encoding: "utf8", timeout: pushPrTimeoutMs(), killSignal: "SIGKILL" });
+        if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") throw new Error(`no PR opened: engine10-push.sh push-pr timed out after ${pushPrTimeoutMs()}ms`);
         if (r.status !== 0) throw new Error(`no PR opened: engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}`);
         return (r.stdout ?? "").trim().split("\n").pop() ?? "";
       },

@@ -163,6 +163,33 @@ describe("preflight parity with push-pr", () => {
   });
 });
 
+describe("hung push", () => {
+  it("hung push: push-pr past the timeout throws a timed-out error instead of stalling", () => {
+    const bare = join(root, "hung.git"), repo = join(root, "hung");
+    sh(root, ["init", "-q", "--bare", "-b", "trunk", bare]);
+    mkdirSync(join(bare, "hooks"), { recursive: true });
+    const hook = join(bare, "hooks", "pre-receive");
+    writeFileSync(hook, "#!/bin/sh\nsleep 4\nexit 0\n");
+    chmodSync(hook, 0o755);
+    mkdirSync(repo);
+    sh(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "x\n");
+    sh(repo, ["add", "a.txt"]);
+    sh(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    sh(repo, ["remote", "add", "origin", bare]);
+    const deps = productionDeps(repo, async () => 0, async () => 0, { noPr: false });
+    const wt = join(root, "attempt-hung");
+    deps.createWorktree(wt, deps.baseSha());
+    writeFileSync(join(wt, "h.txt"), "h\n");
+    process.env.LOKI_PUSH_PR_TIMEOUT_MS = "1000";
+    try {
+      expect(() => deps.openPr!(wt, "main")).toThrow(/timed out/);
+    } finally {
+      delete process.env.LOKI_PUSH_PR_TIMEOUT_MS;
+    }
+  });
+});
+
 describe("no direct credentialed push from attempts code", () => {
   const src = readFileSync(join(import.meta.dir, "../../src/runner/attempts.ts"), "utf8");
   it("attempts.ts never runs git push, gh pr create or allowToken", () => {
