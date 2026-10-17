@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.36 (2026-10-17)
+
+### Added
+- TEN-QUALITY-11: a uv.lock repo without a .venv runs pytest and ruff through `uv run` as the project interpreter.
+- TEN-QUALITY-12: `LOKI_E10_REPOMAP_MAX_FILES` knob; truncation drops vendored and generated dirs first.
+- TEN-ADOPTION-09: a gitlab.com pinned origin routes to `engine10-push-gitlab.sh push-mr`.
+- TEN-ADOPTION-07: gallery of verifiable receipts with an offline guard.
+- TEN-ADOPTION-08: install smoke covers tour, `mcp install --print` and the MCP stdio handshake.
+
+### Fixed
+- TEN-UX-12: preflight retries an unanswered `claude auth status` probe once, so a slow probe adds no warning line.
+
 ## v11.17.35 (2026-10-17)
 
 Wave Y: 4 HIGH slices.

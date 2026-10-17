@@ -2485,3 +2485,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T07:09Z (CoS) v11.17.35
 - Wave Y: GATES-06, GATES-10, DEPLOY-05, DEPLOY-08 HIGH APPROVE; DEPLOY-09 not built (deps DEPLOY-05/06 were unmerged; its row names a wrong completions path and a missing help-drift test). GATES-10 hand-merge renumbered D104 to D105; pytest -k ExogenousEvidence 10 passed after the merge.
+
+## 2026-10-17T07:11Z (CoS) v11.17.36
+- Wave AC released: TEN-QUALITY-11, TEN-QUALITY-12, TEN-ADOPTION-09 (HIGH), TEN-UX-12, TEN-ADOPTION-07, TEN-ADOPTION-08; 6 of 6 APPROVE, merged clean via merge.sh (merged-ac.txt).

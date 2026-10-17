@@ -149,3 +149,10 @@ bc0e97c6308c658927b3d540375e5bcba5807b0b:loki-ts/tests/engine10/check_result.tes
 710d1289b90f8faf44a6fdeb6186322801dd156e:skills/fixtures/demo-receipt/events.jsonl:generic-api-key:6
 5eb2d7df8f75e7309244c2179c1ad10c8eea002b:skills/fixtures/demo-receipt/receipt.json:jwt:114
 5eb2d7df8f75e7309244c2179c1ad10c8eea002b:skills/fixtures/demo-receipt/events.jsonl:generic-api-key:6
+# TEN-ADOPTION-07 receipt gallery fixture: public EdDSA JWS signature, public key thumbprint (kid) and a cache hash, no secret (pubkey.jwk has no d member)
+d996f53d0972df736fc839b0fc3db03a88d6ebe0:examples/receipts/add-fix/VERIFY.md:generic-api-key:9
+d996f53d0972df736fc839b0fc3db03a88d6ebe0:examples/receipts/add-fix/receipt.json:jwt:114
+d996f53d0972df736fc839b0fc3db03a88d6ebe0:examples/receipts/add-fix/events.jsonl:generic-api-key:6
+d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/VERIFY.md:generic-api-key:9
+d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/receipt.json:jwt:114
+d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/events.jsonl:generic-api-key:6
