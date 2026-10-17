@@ -27,7 +27,7 @@ import { lokiDir } from "../util/paths.ts";
 const HELP = `Usage: loki rollback <subcommand>
 
 Subcommands:
-  list                   List checkpoints (newest first)
+  list [--json]          List checkpoints (newest first); --json prints a JSON array
   show <id>              Print metadata for one checkpoint
   to <id>                Restore .loki/ state + context to that checkpoint
   latest                 Restore to the most recent checkpoint
@@ -59,7 +59,7 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
   }
 
   // Reject unknown flags so a mistyped safety flag never runs the real rollback.
-  const allowed = sub === "to" || sub === "latest" ? ["--force"] : [];
+  const allowed = sub === "to" || sub === "latest" ? ["--force"] : sub === "list" ? ["--json"] : [];
   if (["list", "show", "to", "latest", "deploy"].includes(sub)) {
     const bad = rest.find((a) => a.startsWith("-") && !allowed.includes(a));
     if (bad !== undefined) {
@@ -74,6 +74,10 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
       // listCheckpoints returns oldest-first; reverse so users see newest at
       // the top (matches the "latest" subcommand semantics below).
       const items = [...listCheckpoints()].reverse();
+      if (rest.includes("--json")) {
+        process.stdout.write(`${JSON.stringify(items, null, 2)}\n`);
+        return 0;
+      }
       if (items.length === 0) {
         process.stdout.write(`${YELLOW}No checkpoints found.${NC}\n`);
         return 0;

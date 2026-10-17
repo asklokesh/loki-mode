@@ -238,6 +238,43 @@ describe("v7.5.2 loki rollback CLI", () => {
   });
 });
 
+describe("TEN-DEPLOY-17 loki rollback list json", () => {
+  it("list json emits a newest-first JSON array", async () => {
+    seedCheckpoint("cp-1-1700000001", 1);
+    seedCheckpoint("cp-2-1700000002", 2);
+    const stop = captureOutput();
+    const code = await runRollback(["list", "--json"]);
+    const out = stop();
+    expect(code).toBe(0);
+    const arr = JSON.parse(out.stdout) as Array<{ id: string }>;
+    expect(arr.map((m) => m.id)).toEqual(["cp-2-1700000002", "cp-1-1700000001"]);
+  });
+
+  it("list json with no checkpoints emits []", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["list", "--json"]);
+    const out = stop();
+    expect(code).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual([]);
+  });
+
+  it("list text output unchanged without --json", async () => {
+    seedCheckpoint("cp-1-1700000001", 1);
+    const stop = captureOutput();
+    await runRollback(["list"]);
+    const out = stop();
+    expect(out.stdout).toContain("Checkpoints");
+    expect(out.stdout.trimStart().startsWith("[")).toBe(false);
+  });
+
+  it("--json stays rejected on other subcommands", async () => {
+    const stop = captureOutput();
+    const code = await runRollback(["latest", "--json"]);
+    stop();
+    expect(code).toBe(2);
+  });
+});
+
 describe("TEN-DEPLOY-11 loki rollback deploy", () => {
   function seedDeploy(name: string, rec: Record<string, unknown>): void {
     mkdirSync(join(scratch, "deploys"), { recursive: true });
