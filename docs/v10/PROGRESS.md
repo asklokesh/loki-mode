@@ -2533,3 +2533,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T13:29Z (CoS) v11.17.51
 - P0 fix-forward for the wave AO reds (doctor spawn env, engine10 budget, deep_wiring, workspace e2e, sigpipe, DEPS) released; evidence: targeted bun 570 pass 0 fail, four shell suites rc=0, tsc clean.
+
+## 2026-10-17T13:34Z (CoS) v11.17.52
+- TEN-COST-49 and TEN-COST-50 released; evidence: test_cost_claim.py 37 passed, reviewer mutations red then restored.

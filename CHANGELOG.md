@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.52 (2026-10-17)
+
+### Added
+- `cost_claim.py` verdicts name the loki arm's `cost_profile` (lean, default, off) and refuse a loki arm that mixes profiles, so a lean-profile cost claim versus Claude Code is explicit evidence (TEN-COST-49).
+
+### Fixed
+- `cost_claim.py --exclude-task` warns on stderr for any excluded name that matches no row and lists it as `unmatched_exclusions` in the verdict, so a mistyped exclusion no longer looks applied (TEN-COST-50).
+
 ## v11.17.51 (2026-10-17)
 
 ### Fixed
