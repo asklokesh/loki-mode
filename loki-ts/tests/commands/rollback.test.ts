@@ -185,6 +185,33 @@ describe("v7.5.2 loki rollback CLI", () => {
     expect(code).toBe(2);
   });
 
+  it("unknown flag on list/show/to/latest/deploy exits 2 and restores nothing", async () => {
+    seedCheckpoint("cp-7-1700000007", 7);
+    const before = listCheckpointIds();
+    for (const argv of [
+      ["list", "--bogus"],
+      ["show", "cp-7-1700000007", "--bogus"],
+      ["to", "cp-7-1700000007", "--dry-runn"],
+      ["latest", "--bogus"],
+      ["deploy", "--bogus"],
+    ]) {
+      const stop = captureOutput();
+      const code = await runRollback(argv);
+      const out = stop();
+      expect(code).toBe(2);
+      expect(out.stderr).toContain("Unknown flag");
+    }
+    expect(listCheckpointIds()).toEqual(before);
+  });
+
+  it("`rollback to <id> --force` still accepted", async () => {
+    seedCheckpoint("cp-8-1700000008", 8);
+    const stop = captureOutput();
+    const code = await runRollback(["to", "cp-8-1700000008", "--force"]);
+    stop();
+    expect(code).toBe(0);
+  });
+
   // R6: re-undoability invariant. A `rollback to` must first capture a forced
   // pre-rollback snapshot of CURRENT state, so the rollback is itself undoable.
   it("`rollback to <id>` creates a pre-rollback snapshot (re-undoable)", async () => {

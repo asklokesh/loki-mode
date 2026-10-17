@@ -58,6 +58,17 @@ export async function runRollback(argv: readonly string[]): Promise<number> {
     return sub === undefined ? 1 : 0;
   }
 
+  // Reject unknown flags so a mistyped safety flag never runs the real rollback.
+  const allowed = sub === "to" || sub === "latest" ? ["--force"] : [];
+  if (["list", "show", "to", "latest", "deploy"].includes(sub)) {
+    const bad = rest.find((a) => a.startsWith("-") && !allowed.includes(a));
+    if (bad !== undefined) {
+      process.stderr.write(`${RED}Unknown flag for rollback ${sub}:${NC} ${bad}\n`);
+      process.stderr.write(HELP);
+      return 2;
+    }
+  }
+
   switch (sub) {
     case "list": {
       // listCheckpoints returns oldest-first; reverse so users see newest at
