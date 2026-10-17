@@ -155,7 +155,7 @@ function _loki {
                         '--private[Create a secret gist when sharing]' \
                         '--hosted[Hosted publishing (coming in R9)]' \
                         '--help[Show help]' \
-                        '1:subcommand:(list show open share)'
+                        '1:subcommand:(list show open share badge md bundle)'
                     ;;
                 completions)
                     _arguments '1:shell:(bash zsh install)'
