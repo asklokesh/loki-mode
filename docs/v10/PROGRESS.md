@@ -2473,3 +2473,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T06:19Z (CoS) v11.17.31
 - Correction: v11.17.30 (9dcae642a) shipped only TEN-STABILITY-10; TEN-STABILITY-09 hit a FAILURE-CLASSES.md conflict in the merge loop, yet the release notes and BOARD named it. Conflict resolved as a union of both appended rows, merged, and shipped here. ship.sh notes are now written only after the merge loop reports every slice merged.
+
+## 2026-10-17T06:25Z (CoS) v11.17.32
+- Wave AA all APPROVE: COST-25 89f9108c0 (39 pass, help mutation red), GATES-12 fe1f31d46 HIGH (proof.test 15 pass, 7 mutations red), GATES-13 6553224cd HIGH (generate.py --check rc=0 401 files, moat run.sh rc=0 7 of 9, 2 mutations red), UX-10 6c7549979 (test-control-plane 33 passed, mutation 2 failed), COST-08 d86b9d40f (dry run rc=0, drift 3 passed), COST-19 822236dc5. v11.17.27 and v11.17.28 Release runs success while overlapping; npm latest=next=11.17.29 at 06:23Z.
