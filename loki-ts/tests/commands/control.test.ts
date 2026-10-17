@@ -183,3 +183,38 @@ describe("loki control backfill repo missing value", () => {
     expect(called).toBe(false);
   });
 });
+
+describe("loki control backfill repo DIR", () => {
+  // Distinct run counts per repo so the output proves which directory was shipped.
+  const mkRepo = (root: string, name: string, runIds: string[]): string => {
+    const dir = join(root, name);
+    for (const id of runIds) {
+      mkdirSync(join(dir, ".loki", "runs", id), { recursive: true });
+      writeFileSync(join(dir, ".loki", "runs", id, "events.jsonl"), "");
+    }
+    return dir;
+  };
+  let root = "";
+  let cwd = "";
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "loki-ctl-backfill-"));
+    cwd = process.cwd();
+    globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  });
+  afterEach(() => { process.chdir(cwd); rmSync(root, { recursive: true, force: true }); });
+
+  test("backfill repo DIR ships DIR, not cwd", async () => {
+    const here = mkRepo(root, "here", ["a"]);
+    const target = mkRepo(root, "target", ["x", "y", "z"]);
+    process.chdir(here);
+    expect(await runControl(["backfill", "--repo", target], env)).toBe(0);
+    expect(out).toContain("backfill 3 runs");
+  });
+  test("bare backfill DIR ships DIR, not cwd", async () => {
+    const here = mkRepo(root, "here", ["a"]);
+    const target = mkRepo(root, "target", ["x", "y"]);
+    process.chdir(here);
+    expect(await runControl(["backfill", target], env)).toBe(0);
+    expect(out).toContain("backfill 2 runs");
+  });
+});
