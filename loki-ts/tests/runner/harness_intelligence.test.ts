@@ -574,6 +574,17 @@ describe("repo baseline profile (REPOMEM)", () => {
       const e = repo({ "package.json": JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }) });
       expect(discoverCommands(e)).toEqual([]);
     });
+    test("typescript: tsconfig plus typescript dep gives a tsc --noEmit typecheck unless a script exists", () => {
+      const ts = (scripts: Record<string, string>, extra: Record<string, string> = {}) => ({ "package.json": JSON.stringify({ scripts, devDependencies: { typescript: "5" } }), "tsconfig.json": "{}", ...extra });
+      const tc = (d: string) => discoverCommands(d).filter((c) => c.kind === "typecheck").map((c) => `${c.cmd}[${c.source}]`);
+      expect(tc(repo(ts({ build: "x" })))).toEqual(["npx tsc --noEmit[tsconfig.json]"]);
+      expect(tc(repo(ts({}, { "bun.lock": "" })))).toEqual(["bunx tsc --noEmit[tsconfig.json]"]);
+      expect(tc(repo(ts({}, { "pnpm-lock.yaml": "" })))).toEqual(["pnpm exec tsc --noEmit[tsconfig.json]"]);
+      expect(tc(repo(ts({ typecheck: "tsc -p ." })))).toEqual(["npm run typecheck[package.json]"]);
+      expect(tc(repo({ "package.json": JSON.stringify({ scripts: {}, devDependencies: { typescript: "5" } }) }))).toEqual([]);
+      expect(tc(repo({ "package.json": JSON.stringify({ scripts: {} }), "tsconfig.json": "{}" }))).toEqual([]);
+      expect(manifestHash(repo(ts({}))) === manifestHash(repo(ts({}, { "tsconfig.json": '{"a":1}' })))).toBe(false);
+    });
     test("python: pytest, ruff, mypy from pyproject; a venv python wins", () => {
       const d = repo({ "pyproject.toml": "[tool.pytest.ini_options]\n[tool.ruff]\n[tool.mypy]\n", ".venv/bin/python": "" });
       expect(discoverCommands(d).map((c) => `${c.kind}=${c.cmd}`)).toEqual([`test=${join(".venv", "bin", "python")} -m pytest -q`, "lint=ruff check .", "typecheck=mypy ."]);
