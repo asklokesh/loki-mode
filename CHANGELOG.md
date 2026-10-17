@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.24 (2026-10-17)
+
+### Added
+- First-run funnel (TEN-UX-03): the default engine10 route reports first_run_blocked with a reason key (not_a_repo, git_identity or other) on a preflight refusal, and build_verified on a verified run, through the same opt-out analytics bridge doctor uses. No paths or task text are sent.
+
+### Fixed
+- Token isolation (TEN-P9-FIX): the first-run login probe (`claude auth status`) now runs with the GitHub token, gh config store, credential helper and SSH agent withheld, the same as a provider session. Since v11.17.22 the probe ran with the full environment, so the P9 injection moat failed.
+- Secret scanning (TEN-SEC-GITLEAKS-01): the pre-push gitleaks scan reads merge commits the same way as the CI Security Audit (first-parent), so a key added only in a merge result is refused locally. The check_result fixture builds its fake key at runtime instead of committing one.
+- Status badge (TEN-DEPLOY-04-F1): `loki status --badge` is routed by the dispatcher and listed in help, the command registry and shell completions.
+
 ## v11.17.23 (2026-10-17)
 
 ### Fixed
