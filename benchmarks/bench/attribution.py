@@ -620,6 +620,7 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
         "lever_env": prov.get("lever_env") or {},
         "cache_tokens_by_phase": prov.get("cache_tokens_by_phase"),
         "cost_by_phase": prov.get("cost_by_phase"),
+        "group_cost": prov.get("group_cost"),
         "ledger": prov.get("ledger"),
         "command": prov.get("command"),
     }

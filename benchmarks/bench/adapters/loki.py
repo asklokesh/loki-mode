@@ -311,6 +311,38 @@ def validate_lever_env(extra_env):
     return out
 
 
+def _read_group_cost(loki_dir):
+    """Group-run (multi-unit launcher) spend from the kind=group_cost efficiency
+    records run_group.ts writes. Returns {usd, units_measured, units_unmeasured}
+    or None when the run had no group records. usd is None when every group unit
+    was unmeasured: unknown is never $0."""
+    eff_dir = os.path.join(loki_dir, "metrics", "efficiency")
+    try:
+        names = sorted(os.listdir(eff_dir))
+    except Exception:
+        return None
+    usd, priced, measured, unmeasured, seen = 0.0, False, 0, 0, False
+    for name in names:
+        if not (name.startswith("iteration-") and name.endswith(".json")):
+            continue
+        rec = _read_json_file(os.path.join(eff_dir, name))
+        if rec is None or rec.get("kind") != "group_cost":
+            continue
+        seen = True
+        v = rec.get("cost_usd")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            usd += float(v)
+            priced = True
+            u = rec.get("units_measured")
+            measured += u if isinstance(u, int) and not isinstance(u, bool) else 1
+        else:
+            unmeasured += 1
+    if not seen:
+        return None
+    return {"usd": round(usd, 4) if priced else None,
+            "units_measured": measured, "units_unmeasured": unmeasured}
+
+
 def _cache_tokens_by_phase(loki_dir, cost, eff):
     """{phase: {cache_read, cache_creation}} so cache economics are comparable
     across lever configs. Ledger records give child phases; the remainder of the
@@ -422,10 +454,16 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     # The collector labels the main-session spend "implement", which misreads as a
     # phase split. With no ledger phases it is the whole run: call it "total";
     # beside ledger phases it is the main session: call it "main_session".
+    group_cost = _read_group_cost(loki_dir)
     phases = cost.get("cost_by_phase")
     if isinstance(phases, dict) and "implement" in phases:
         phases = dict(phases)
         main = phases.pop("implement")
+        # Group unit spend is written as "implement"; show it as its own phase
+        # so the main session is not overstated.
+        if group_cost and group_cost["usd"] is not None:
+            main = round(max(0.0, main - group_cost["usd"]), 4)
+            phases["group"] = group_cost["usd"]
         phases = {("main_session" if phases else "total"): main, **phases}
 
     return _base.build_output(
@@ -459,6 +497,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # was read ("present") or missing ("absent"), from the shared
             # efficiency_cost collector.
             "cost_by_phase": phases,
+            "group_cost": group_cost,
             "ledger": cost.get("ledger"),
             "cost_profile": profile or None,
             "lever_env": lever_env,
