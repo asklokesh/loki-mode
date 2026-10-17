@@ -3,7 +3,7 @@
 # Sourced by autonomy/loki; defines cmd_chat. Free text goes to the provider
 # in the current mode; slash commands delegate to existing loki commands.
 
-_LOKI_CHAT_SYSTEM_PROMPT="You are running inside Loki Mode chat. Be concise. Prefer small, verifiable changes. Loki commands available to the user: loki start (also --workspace and --deploy), loki quick, loki verify, loki receipt, loki undo. During a run, /steer sends a mid-run directive via loki steer (applied at the next plan or implement stage); /pause and /resume control the run, and /answer replies to a blocked run."
+_LOKI_CHAT_SYSTEM_PROMPT="You are running inside Loki Mode chat. Be concise. Prefer small, verifiable changes. Loki commands available to the user: loki start (also --workspace and --deploy; deploy takes --destination, --canary, --env-file, --domain and --health-url), loki quick, loki verify (loki verify --url https://host checks a live deploy against its provenance), loki receipt, loki undo. During a run, /steer sends a mid-run directive via loki steer (applied at the next plan or implement stage); /pause and /resume control the run, and /answer replies to a blocked run."
 
 _chat_loki_bin() {
     local d="${_LOKI_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -50,7 +50,8 @@ Loki chat commands:
   /resume            loki resume
   /answer <text>     loki answer --text: answer a BLOCKED run with a follow-up run
   /workspace <name> <brief>  loki start --workspace (multi-repo run, composite receipt)
-  /deploy [--health-url U] [--auto-rollback]  loki deploy --execute after you confirm (gated on a VERIFIED receipt)
+  /deploy [--destination D] [--canary] [--env-file F] [--domain H] [--health-url U] [--auto-rollback]
+                     loki deploy --execute after you confirm (gated on a VERIFIED receipt)
   /attach            attach to the current or most recent loki start run in this repo
   /quick <task>      loki quick
   /edit <change>     apply one change (build mode for this turn)
