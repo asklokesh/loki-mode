@@ -432,3 +432,44 @@ describe("TEN-SPEED-05: login probe reuse", () => {
     expect((await checkPreflight(o(dir, e))).fatal).toBeNull(); expect(c.count()).toBe(2);
   });
 });
+
+describe("TEN-SPEED-08: gh auth probe reuse", () => {
+  function ghDir(authExit: number): { path: string; count: () => number } {
+    const d = tmpRoot("e10-pf-gh-"); const log = join(d, "log");
+    writeFileSync(join(d, "gh"), `#!/bin/sh\n[ "$1" = auth ] && echo x >> '${log}'\nif [ "$1" = auth ]; then exit ${authExit}; fi\nexit 0\n`); chmodSync(join(d, "gh"), 0o755);
+    symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(d, "git"));
+    return { path: d, count: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").length : 0) };
+  }
+  function prRepo(g: { path: string }) {
+    const { dir, env } = identifiedRepo();
+    execFileSync("git", ["-C", dir, "remote", "add", "origin", "https://github.com/acme/widget.git"]);
+    return { dir, env: { ...env, PATH: g.path, LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } };
+  }
+  const o = (dir: string, env: Record<string, string>) => ({ repoDir: dir, provider: "claude", pr: true, env });
+  const cacheFile = (env: Record<string, string>) => join(env.HOME ?? "", ".loki", "gh-auth-ok.json");
+
+  test("two PR runs inside 10 min spawn gh auth status once", async () => {
+    const g = ghDir(0); const { dir, env } = prRepo(g);
+    expect((await checkPreflight(o(dir, env))).fatal).toBeNull();
+    expect((await checkPreflight(o(dir, env))).fatal).toBeNull();
+    expect(g.count()).toBe(1);
+  });
+
+  test("a failed probe is never cached", async () => {
+    const g = ghDir(1); const { dir, env } = prRepo(g);
+    expect((await checkPreflight(o(dir, env))).fatal).toContain("gh (GitHub CLI)");
+    expect((await checkPreflight(o(dir, env))).fatal).toContain("gh (GitHub CLI)");
+    expect(g.count()).toBe(2); expect(existsSync(cacheFile(env))).toBe(false);
+  });
+
+  test("expired entry, other gh path, and corrupt file all re-probe", async () => {
+    const g = ghDir(0); const { dir, env } = prRepo(g);
+    await checkPreflight(o(dir, env));
+    writeFileSync(cacheFile(env), JSON.stringify({ gh: join(g.path, "gh"), at: Date.now() - 10 * 60 * 1000 - 1000 }));
+    await checkPreflight(o(dir, env)); expect(g.count()).toBe(2);
+    writeFileSync(cacheFile(env), JSON.stringify({ gh: "/other/gh", at: Date.now() }));
+    await checkPreflight(o(dir, env)); expect(g.count()).toBe(3);
+    writeFileSync(cacheFile(env), "{not json");
+    expect((await checkPreflight(o(dir, env))).fatal).toBeNull(); expect(g.count()).toBe(4);
+  });
+});
