@@ -16,7 +16,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
+import { assertPreflight, checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
 import { runSupervisor } from "../../src/engine10/supervisor.ts";
 
 const PREFLIGHT_TS = join(import.meta.dir, "..", "..", "src", "engine10", "preflight.ts");
@@ -257,6 +257,25 @@ describe("first run (TEN-UX-01)", () => {
       expect(r.fatal).toBeNull();
       expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(1);
     }
+  });
+
+  test("TEN-UX-12: a silent first probe that answers on the retry adds no warning", async () => {
+    const { dir, env } = identifiedRepo();
+    const d = tmpRoot("e10-pf-flaky-"); const cli = join(d, "claude"); const n = join(d, "n");
+    writeFileSync(cli, `#!/bin/sh\nif [ -f '${n}' ]; then echo '{"loggedIn":true}'; else touch '${n}'; fi\nexit 0\n`); chmodSync(cli, 0o755);
+    const r = await checkPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: cli }));
+    expect(r.fatal).toBeNull();
+    expect(r.warnings.filter((w) => w.includes("claude auth status"))).toHaveLength(0);
+  });
+
+  test("TEN-UX-12: a persistently unanswered probe warns on stderr only, never stdout", async () => {
+    const { dir, env } = identifiedRepo();
+    const so = process.stdout.write, se = process.stderr.write; let out = "", err = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try { await assertPreflight(opts(dir, { ...env, LOKI_CLAUDE_CLI: fakeClaude("", 1).cli })); } finally { process.stdout.write = so; process.stderr.write = se; }
+    expect(out).toBe("");
+    expect(err.trim().split("\n").filter((l) => l.includes("could not confirm the Claude login"))).toHaveLength(1);
   });
 
   test("loggedIn:true is clean", async () => {
