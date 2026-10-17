@@ -115,6 +115,14 @@ export function decompose(spec: string, map: RepoMap, o: DecomposeOpts): Dag {
       }
     }
   });
+  // An item that names no file would become a unit with an empty write set, which unit mode refuses (exit 2 before any
+  // session). Fold such items into the first unit that owns files; with none, all items form one unit (caller falls back).
+  const anchor = raw.findIndex((r) => r.files.length > 0);
+  raw.forEach((r, i) => {
+    if (r.files.length > 0) return;
+    const a = find(i), b = find(anchor < 0 ? 0 : anchor);
+    if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+  });
   const groups = new Map<number, number[]>();
   raw.forEach((_, i) => {
     const r = find(i);
