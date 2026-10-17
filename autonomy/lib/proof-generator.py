@@ -782,6 +782,8 @@ def _collect_security(loki_dir):
     make here. Stated explicitly because those two say so in their own
     docstrings and this one did not, leaving the behaviour to be inferred from
     silence -- which is the exact failure the honesty ledger exists to prevent.
+    A scan that ran and came back clean IS read by _exogenous_corroboration
+    (TEN-GATES-10): it can only stand beside a green suite, never cause a gap.
     """
     out = {
         "ran": False, "total": 0, "active": 0, "waived": 0,
@@ -853,6 +855,8 @@ def _collect_functional(loki_dir):
     NOT change what "Verified" means. Making functional-satisfaction gate the green
     headline is a trust-semantics product decision (council + founder), the second
     half of FV-2. Recording it first lets the signal be seen and validated safely.
+    Exception (TEN-GATES-10): functional_status verified is read by
+    _exogenous_corroboration as agent-independent evidence beside a green suite.
     """
     out = {"ran": False, "functional_status": "not_run",
            "passed": 0, "failed": 0, "inconclusive": 0}
@@ -892,6 +896,8 @@ def _collect_healthcheck(loki_dir):
     NOT read by _compute_headline / _compute_degraded, so it does not change what
     "Verified" means. Gating on it is the founder-gated trust decision (mirrors the
     FV-2 opt-in gate). ponytail: reuses the health.json app-runner already writes.
+    Exception (TEN-GATES-10): ok:true is read by _exogenous_corroboration as
+    agent-independent evidence beside a green suite.
     """
     out = {"ran": False, "ok": False, "status": "not_run", "checked_at": ""}
     raw = _read_json(
@@ -1960,7 +1966,51 @@ def _compute_degraded(facts):
         if rec.get("state") == "gap":
             out.append({"item": "functionality:%s" % axis, "status": "failed",
                         "reason": rec.get("reason") or "axis disproven"})
+    # TEN-GATES-10 (D104): the agent writes both the code and the suite, so a
+    # green suite alone is the agent grading its own work. When the suite is the
+    # ONLY passing fact, record the gap here (pre-headline, so proof-verify.py
+    # re-derives the same amber headline from the recorded ledger) and VERIFIED
+    # becomes VERIFIED WITH GAPS. LOKI_PROOF_REQUIRE_EXOGENOUS=0 opts out.
+    tests_verified = (
+        tests.get("status") == "verified"
+        and bool(tests.get("command"))
+        and tests.get("exit_code") == 0
+    )
+    if (tests_verified
+            and os.environ.get("LOKI_PROOF_REQUIRE_EXOGENOUS", "1").strip() != "0"
+            and not _exogenous_corroboration(facts)):
+        out.append({"item": "exogenous_evidence", "status": "not_run",
+                    "reason": "no agent-independent evidence (only the agent's "
+                              "own test suite passed)"})
     return out
+
+
+def _exogenous_corroboration(facts):
+    """Names of agent-independent facts that ran and passed (TEN-GATES-10).
+
+    Counts: build verified, healthcheck ok, functional verified, a security scan
+    that actually ran and came back clean, or an EXOGENOUS quality gate that
+    passed. An advisory (model-authored) gate pass never counts: it is the same
+    plausibility signal the agent's own suite already is. Absent facts count as
+    nothing (fail-closed).
+    """
+    names = []
+    if (facts.get("build") or {}).get("status") == "verified":
+        names.append("build")
+    hc = facts.get("healthcheck") or {}
+    if hc.get("ran") and hc.get("ok") is True:
+        names.append("healthcheck")
+    fn = facts.get("functional") or {}
+    if fn.get("ran") and str(fn.get("functional_status") or "").lower() in (
+            "verified", "passed"):
+        names.append("functional")
+    sec = facts.get("security") or {}
+    if sec.get("ran") and sec.get("status") == "clean":
+        names.append("security")
+    for g in facts.get("quality_gates") or []:
+        if g.get("status") == "passed" and _is_exogenous(g):
+            names.append("quality_gate:%s" % g.get("name", ""))
+    return names
 
 
 def _compute_headline(facts, degraded):
@@ -1968,6 +2018,9 @@ def _compute_headline(facts, degraded):
     pass:true. Rules:
       - VERIFIED only when tests.status == verified AND there are no degraded
         items AND the diff is non-empty AND tests recorded a real command.
+        (TEN-GATES-10: _compute_degraded adds an exogenous_evidence gap when
+        the suite is the only passing fact, so VERIFIED also needs one
+        agent-independent fact; see _exogenous_corroboration.)
       - VERIFIED WITH GAPS when some facts verified but degraded is non-empty.
       - NOT VERIFIED otherwise.
     """

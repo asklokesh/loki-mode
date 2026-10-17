@@ -1147,8 +1147,12 @@ class HonestyHeadlineTests(unittest.TestCase):
                                      "command": "node --test", "exit_code": 0})
         self._write_build(loki_dir, {"applicable": False, "ran": False,
                                      "command": "", "exit_code": None})
+        # TEN-GATES-10: with the suite as the only passing fact the default
+        # headline is amber (see ExogenousEvidenceTests); the opt-out isolates
+        # the N/A-build rule this test locks.
         d = _run_generator(loki_dir, out_dir,
-                           env_extra={"_LOKI_RUN_START_SHA": base})
+                           env_extra={"_LOKI_RUN_START_SHA": base,
+                                      "LOKI_PROOF_REQUIRE_EXOGENOUS": "0"})
         self.assertEqual(d["facts"]["build"]["status"], "not_applicable")
         items = {x["item"]: x for x in d["honesty"]["degraded"]}
         self.assertNotIn("build", items,
@@ -1211,6 +1215,131 @@ class HonestyHeadlineTests(unittest.TestCase):
         items = {x["item"]: x for x in d["honesty"]["degraded"]}
         self.assertIn("build", items)
 
+
+
+class ExogenousEvidenceTests(unittest.TestCase):
+    """TEN-GATES-10 (D104): VERIFIED needs one agent-independent fact beside
+    the agent's own green suite. The fixture is the case that read VERIFIED
+    before: tests verified + real diff + an N/A build and nothing else."""
+
+    ITEM = "exogenous_evidence"
+    REASON = ("no agent-independent evidence (only the agent's own test "
+              "suite passed)")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-exo-")
+        h = HonestyHeadlineTests()
+        h.tmp = self.tmp
+        self.proj, self.base = h._git_repo_with_change()
+        self.loki = os.path.join(self.proj, ".loki")
+        os.makedirs(os.path.join(self.loki, "quality"))
+        h._write_tests(self.loki, {"status": "verified",
+                                   "command": "node --test", "exit_code": 0})
+        h._write_build(self.loki, {"applicable": False, "ran": False,
+                                   "command": "", "exit_code": None})
+        self.h = h
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, payload):
+        path = os.path.join(self.loki, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(payload, f)
+
+    def _gates(self, gates):
+        self._write(os.path.join("state", "quality-gates.json"), gates)
+
+    def _gen(self, **env):
+        env["_LOKI_RUN_START_SHA"] = self.base
+        out = os.path.join(self.tmp, "out-%s" % os.urandom(3).hex())
+        return _run_generator(self.loki, out, env_extra=env)
+
+    def _assert_gap(self, d):
+        self.assertEqual(d["honesty"]["headline"], "VERIFIED WITH GAPS")
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertIn(self.ITEM, items)
+        self.assertEqual(items[self.ITEM]["reason"], self.REASON)
+        self.assertNotIn("post_headline", items[self.ITEM],
+                         "the gap must be a headline input so proof-verify "
+                         "re-derives the same amber headline")
+
+    def _assert_verified(self, d):
+        self.assertEqual(d["honesty"]["headline"], "VERIFIED")
+        items = {x["item"] for x in d["honesty"]["degraded"]}
+        self.assertNotIn(self.ITEM, items)
+
+    def test_suite_only_is_verified_with_gaps(self):
+        self._assert_gap(self._gen())
+
+    def test_build_verified_corroborates(self):
+        self.h._write_build(self.loki, {"ran": True, "command": "npm run build",
+                                        "exit_code": 0})
+        self._assert_verified(self._gen())
+
+    def test_advisory_code_review_pass_does_not_corroborate(self):
+        self._gates({"code_review": {"status": "passed"},
+                     "devils-advocate": {"status": "passed"}})
+        self._assert_gap(self._gen())
+
+    def test_exogenous_gate_pass_corroborates(self):
+        # The same "passed" token on an advisory AND an exogenous gate: only
+        # the exogenous one counts, and one is enough.
+        self._gates({"code_review": {"status": "passed"},
+                     "static-analysis": {"status": "passed"}})
+        self._assert_verified(self._gen())
+
+    def test_healthcheck_ok_corroborates_and_unhealthy_does_not(self):
+        self._write(os.path.join("app-runner", "health.json"), {"ok": False})
+        self._assert_gap(self._gen())
+        self._write(os.path.join("app-runner", "health.json"), {"ok": True})
+        self._assert_verified(self._gen())
+
+    def test_functional_verified_corroborates_partial_does_not(self):
+        self._write(os.path.join("quality", "functional-results.json"),
+                    {"functional_status": "partial"})
+        self._assert_gap(self._gen())
+        self._write(os.path.join("quality", "functional-results.json"),
+                    {"functional_status": "verified"})
+        self._assert_verified(self._gen())
+
+    def test_security_clean_scan_corroborates_findings_do_not(self):
+        # A LOW active finding is not a gap (only HIGH is), but the scan is
+        # not clean, so it is not corroboration either.
+        self._write(os.path.join("quality", "security-findings.json"),
+                    {"findings": [{"rule": "r", "severity": "LOW"}]})
+        self._assert_gap(self._gen())
+        self._write(os.path.join("quality", "security-findings.json"),
+                    {"findings": []})
+        self._assert_verified(self._gen())
+
+    def test_opt_out_is_exact_zero(self):
+        self._assert_verified(self._gen(LOKI_PROOF_REQUIRE_EXOGENOUS="0"))
+        # Anything other than "0" keeps the requirement (fail-closed):
+        # "00" equals 0 numerically but is not the opt-out token.
+        for v in ("1", "00", "false", ""):
+            self._assert_gap(self._gen(LOKI_PROOF_REQUIRE_EXOGENOUS=v))
+
+    def test_not_verified_suite_adds_no_exogenous_item(self):
+        self.h._write_tests(self.loki, {"status": "failed",
+                                        "command": "node --test",
+                                        "exit_code": 1})
+        d = self._gen()
+        self.assertEqual(d["honesty"]["headline"], "NOT VERIFIED")
+        self.assertNotIn(self.ITEM,
+                         {x["item"] for x in d["honesty"]["degraded"]})
+
+    def test_proof_verify_rederives_the_amber_headline(self):
+        out = os.path.join(self.tmp, "out-verify")
+        _run_generator(self.loki, out,
+                       env_extra={"_LOKI_RUN_START_SHA": self.base})
+        verifier = os.path.join(_REPO, "autonomy", "lib", "proof-verify.py")
+        r = subprocess.run([sys.executable, verifier,
+                            os.path.join(out, "proof.json")],
+                           capture_output=True, text=True, timeout=60)
+        rep = json.loads(r.stdout)
+        self.assertIs(rep.get("headline_consistent"), True, r.stdout)
 
 class SecurityHonestyTests(unittest.TestCase):
     """Secure-by-default gate honesty (Loop 4): the Evidence Receipt must tell
