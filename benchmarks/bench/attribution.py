@@ -657,6 +657,7 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
     rows: List[Dict[str, Any]] = []
     try:
         spent = 0.0
+        lower_bound = False
         for cell in plan["cells"]:
             if max_spend_usd is not None and spent >= max_spend_usd:
                 # Abort before the next run; the cell stays in the table as UNMEASURED.
@@ -665,8 +666,10 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
                              "repeat": cell["repeat"], "accepted": False,
                              "reported_success": False, "status": "unmeasured",
                              "cost_usd": None, "elapsed_s": None,
-                             "unmeasured_reason": "spend cap reached: true spend %.4f USD >= "
-                                                  "--max-spend-usd %s" % (spent, max_spend_usd)})
+                             "unmeasured_reason": "spend cap reached: true spend %.4f USD%s >= "
+                                                  "--max-spend-usd %s"
+                                                  % (spent, " (lower bound)" if lower_bound else "",
+                                                     max_spend_usd)})
                 continue
             progress("run %s %s #%d" % (cell["task"], cell["arm"], cell["repeat"]))
             rows.append(run_cell(by_id[cell["task"]], cell["arm"], cell["repeat"],
@@ -675,6 +678,7 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
                                  runner=runner, droid_probe=droid_probe,
                                  bare_probe=bare_probe, evidence_dir=evidence_dir))
             spent += row_true_spend(rows[-1])
+            lower_bound = lower_bound or row_spend_is_partial(rows[-1])
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return rows
@@ -839,6 +843,10 @@ def _result_rows(out_dir: str) -> List[Dict[str, Any]]:
             led = ledger_spend(ev)
             vals = [v for v in (r.get("cost_usd"), r.get("true_cost_usd"), led)
                     if v is not None]
+            if r.get("cost_usd") is None and vals:
+                # No main-session cost was stored; the ledger or true cost alone
+                # excludes the main RARV session, so it is only a lower bound.
+                r["cost_partial"] = True
             r["cost_usd"] = float(max(vals)) if vals else None
             rows.append(r)
     return rows

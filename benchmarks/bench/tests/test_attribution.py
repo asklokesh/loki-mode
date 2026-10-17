@@ -863,6 +863,17 @@ class CostTableTest(unittest.TestCase):
         self.assertNotRegex(loki, r"\d\.\d\dx")  # no ratio computed from $0
         self.assertIn("unmeasured", loki)
 
+    def test_ledger_only_cost_is_partial_not_complete_ratio(self):
+        r = row("loki", True, cost=None)
+        r["true_cost_usd"] = 0.40
+        r["cost_partial"] = False
+        self._write([row("raw-configured", True, cost=1.0),
+                     row("raw-bare", True, cost=1.0), r])
+        loki = self._line(self._table(), "loki")
+        self.assertIn("unmeasured", loki)
+        self.assertNotRegex(loki, r"\d\.\d\dx")
+        self.assertRegex(loki, r"(&gt;|>)=")
+
     def test_malformed_ledger_line_keeps_valid_lines(self):
         r = row("loki", True, cost=1.0)
         r["task"] = "tk"
