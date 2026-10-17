@@ -148,6 +148,20 @@ describe("run_control pause liveness (P12-10b)", () => {
       expect(t).toBe(1200);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  it("timeout abandon event carries reason, user cancel does not", async () => {
+    const d = mk();
+    try {
+      writeRunControl(d, "pause");
+      const ev: { t: string; d?: Record<string, unknown> }[] = []; let t = 0;
+      const emit = (x: string, y?: Record<string, unknown>): void => { ev.push({ t: x, d: y }); };
+      expect(await runControlBoundary(d, emit, { sleep: async () => { t += 400; }, alive: () => true, timeoutMs: 1000, now: () => t })).toBe(true);
+      expect(ev.map((e) => e.t)).toEqual(["cancel_requested", "cancel_effective"]);
+      expect(ev.every((e) => e.d?.reason === "timeout_abandon")).toBe(true);
+      writeRunControl(d, "cancel"); ev.length = 0;
+      expect(await runControlBoundary(d, emit, { timeoutMs: 1000 })).toBe(true);
+      expect(ev.every((e) => e.d === undefined)).toBe(true);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   it("timeout env parses, 0 means unlimited", () => {
     expect(pauseTimeoutMs({ LOKI_PAUSE_TIMEOUT_S: "5" } as NodeJS.ProcessEnv)).toBe(5000);
     expect(pauseTimeoutMs({ LOKI_PAUSE_TIMEOUT_S: "0" } as NodeJS.ProcessEnv)).toBe(0);

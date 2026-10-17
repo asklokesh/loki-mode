@@ -48,16 +48,18 @@ export function pauseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 const pauseTimeoutWarned = new Set<string>();
 
 /** Called at a stage boundary. Blocks while paused; returns true when the run must stop (cancel, or a pause that outlived its timeout or its run), emitting the lifecycle events in order. */
-export async function runControlBoundary(runDir: string, emit: (type: string) => void, o: BoundaryOpts | (() => Promise<void>) = {}): Promise<boolean> {
+export async function runControlBoundary(runDir: string, emit: (type: string, data?: Record<string, unknown>) => void, o: BoundaryOpts | (() => Promise<void>) = {}): Promise<boolean> {
   const opts: BoundaryOpts = typeof o === "function" ? { sleep: o } : o;
   const sleep = opts.sleep ?? (() => wait(1000)), alive = opts.alive ?? parentAlive, now = opts.now ?? Date.now, limit = opts.timeoutMs ?? pauseTimeoutMs();
   const t0 = now();
-  let a = readRunControl(runDir), abandoned = false;
+  let a = readRunControl(runDir), abandoned: "timeout_abandon" | "owner_gone" | null = null;
   while (a === "pause") {
-    if (!alive() || (limit > 0 && now() - t0 >= limit)) { abandoned = true; break; }
+    if (!alive()) { abandoned = "owner_gone"; break; }
+    if (limit > 0 && now() - t0 >= limit) { abandoned = "timeout_abandon"; break; }
     await sleep(); a = readRunControl(runDir);
   }
   if (a !== "cancel" && !abandoned) return false;
-  emit("cancel_requested"); emit("cancel_effective");
+  const data = abandoned ? { reason: abandoned } : undefined; // abandoned pause is distinct from a user cancel
+  emit("cancel_requested", data); emit("cancel_effective", data);
   return true;
 }
