@@ -20,12 +20,41 @@ import { noteOf } from "./base_guard.ts";
 import { sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 import { redactSecrets } from "./redact.ts";
 import { readIntentRevisions, type IntentRevision } from "./steer.ts";
+import { REPO_ROOT } from "./paths.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
 export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
   const r = (revs ?? []).filter((r) => r.unapplied !== true).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
   return r.length ? { intent_revisions: r } : {};
+}
+
+/** Receipt field (TEN-GATES-15): the harness-shipped seeded-defect corpus (benchmarks/seeded-defects, or LOKI_SEEDED_DEFECTS_DIR set by the
+ *  operator) and its recorded catch rate. Harness metadata only: it states which corpus backs the ablation gate's calibration, never that a
+ *  gate ran in this run. It reads NOTHING under the agent's repoDir, so no file the agent under test can write decides its presence or value.
+ *  Present whenever the manifest is readable. corpus_version is the sha256 of the manifest bytes. catch_rate is the worst run's
+ *  NOT_SEALED / defects, and only when results/wrong-pass.json measured THIS manifest under the p4 results contract (exactly one top and one
+ *  floor run, each with an outcome for every manifest id and no other id, each SEALED or NOT_SEALED); anything else is null. The block sits
+ *  in the signed receipt body, so editing any value breaks receipt_sha256 and `loki verify` reports TAMPERED. */
+export interface SeededCorpus { corpus_version: string; corpus_defects: number; catch_rate: number | null }
+export function seededCorpusBlock(env: NodeJS.ProcessEnv = process.env): { seeded_corpus?: SeededCorpus } {
+  const dir = env["LOKI_SEEDED_DEFECTS_DIR"] || join(REPO_ROOT, "benchmarks", "seeded-defects");
+  try {
+    const bytes = readFileSync(join(dir, "manifest.json")), version = createHash("sha256").update(bytes).digest("hex");
+    const ids = ((JSON.parse(bytes.toString("utf8")) as { defects?: { id?: unknown }[] }).defects ?? []).map((d) => d.id);
+    let rate: number | null = null;
+    try {
+      const res = JSON.parse(readFileSync(join(dir, "results", "wrong-pass.json"), "utf8")) as { manifest_sha256?: unknown; runs?: { setup?: unknown; outcomes?: Record<string, unknown> }[] };
+      const runs = res.manifest_sha256 === version && Array.isArray(res.runs) ? res.runs : [];
+      const complete = (o: Record<string, unknown> | undefined): boolean => !!o && Object.keys(o).length === ids.length && ids.every((id) => typeof id === "string" && (o[id] === "SEALED" || o[id] === "NOT_SEALED"));
+      const top = runs.filter((r) => r.setup === "top"), floor = runs.filter((r) => r.setup === "floor");
+      if (ids.length > 0 && new Set(ids).size === ids.length && top.length === 1 && floor.length === 1 && [top[0], floor[0]].every((r) => complete(r!.outcomes))) {
+        const rates = [top[0]!, floor[0]!].map((r) => ids.filter((id) => r.outcomes![id as string] === "NOT_SEALED").length / ids.length);
+        rate = Math.round(Math.min(...rates) * 10000) / 10000;
+      }
+    } catch { /* no usable results: catch_rate stays null */ }
+    return { seeded_corpus: { corpus_version: version, corpus_defects: ids.length, catch_rate: rate } };
+  } catch { return {}; }
 }
 
 const REVERTED = "unrelated edit reverted:";
