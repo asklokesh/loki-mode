@@ -180,3 +180,20 @@ test("assignment redact is linear and handles escaped quotes", () => {
     expect(performance.now() - t0).toBeLessThan(100);
   }
 });
+
+test("assignment redact covers flag and separator-prefixed names", () => {
+  const pw = "hun" + "ter2";
+  expect(redactSecrets("--password=" + pw)).toBe("--password=[REDACTED]");
+  expect(redactSecrets("--db-password=" + pw)).toBe("--db-password=[REDACTED]");
+  expect(redactSecrets("-p --api-key=" + "abc123")).toBe("-p --api-key=[REDACTED]");
+  expect(redactSecrets("_token=" + "abc")).toBe("_token=[REDACTED]");
+  expect(redactSecrets("__SECRET=" + "s3")).toBe("__SECRET=[REDACTED]");
+  expect(redactSecrets("export .token=" + "abc")).toBe("export .token=[REDACTED]");
+  expect(redactSecrets("cmd --db__password=" + pw + " -x")).toBe("cmd --db__password=[REDACTED] -x");
+  for (const benign of ["mytoken=1", "https://h/x?refresh_token_ttl=5&mytoken=1", "x_mytoken=1", "--max-tokens=5", "--tokens=3"]) expect(redactSecrets(benign)).toBe(benign);
+  for (const big of ["-".repeat(20000), "_a".repeat(10000), "a__".repeat(7000) + "=", "--a".repeat(7000) + "token"]) {
+    const t0 = performance.now();
+    redactSecrets(big);
+    expect(performance.now() - t0).toBeLessThan(100);
+  }
+});

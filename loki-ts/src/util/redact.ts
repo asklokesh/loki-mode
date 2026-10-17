@@ -1,8 +1,9 @@
 // Token redaction for one-line terminal output. Patterns ported from autonomy/lib/proof_redact.py
 // (order matters: specific before generic). ponytail: tokens and Bearer only; full proof redaction stays in Python.
 /** TEN-SECURITY-25: key=value, key: value and JSON "key": "value" for names ending in password, passwd, secret, token or api_key. The name must END with the
- *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
-const ASSIGNMENT = /((?<![A-Za-z0-9_.-])(?:[A-Za-z0-9]+[_.-])*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
+ *  keyword as its own segment so max_tokens, token_count and tokens: stay readable. A match starts only where no name char precedes it (linear on long a_a_a runs, never mid-word
+ *  as in mytoken=1) and consumes leading and repeated separators, so --password=, --db-password=, _token= and __SECRET= still redact. Values already redacted ([REDACTED...]) are skipped, which keeps the rule idempotent. */
+const ASSIGNMENT = /((?<![A-Za-z0-9_.-])[_.-]*(?:[A-Za-z0-9]+[_.-]+)*(?:password|passwd|secret|token|api[_-]?key|apikey)["']?\s*[:=]\s*)((?:"(?!\[REDACTED)(?:\\.|[^"\\\n])+")|(?:'(?!\[REDACTED)(?:\\.|[^'\\\n])+')|(?!["']|\[REDACTED)[^\s"',;&]+)/gi;
 const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED:ANTHROPIC_KEY]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED:GITHUB_TOKEN]"],
@@ -39,7 +40,7 @@ const QUERY_SEGMENT = /\?[^\s#"'<>]+/g;
 const SECRET_PARAM = /([?&](?:access_token|token|api_key|apikey|password|secret|sig)=)[^&\s#"']*/gi;
 const redactQuery = (s: string): string =>
   s.replace(QUERY_SEGMENT, (q) => q.replace(SECRET_PARAM, "$1[REDACTED]"));
-const redactOnce = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => a.replace(re, to), s));
+const redactOnce = (s: string): string => redactQuery(RULES.reduce((a, [re, to]) => (typeof to === "string" ? a.replace(re, to) : a.replace(re, to)), s));
 /** Q17-05b: one pass is not idempotent. A \b rule (TWILIO, DIGITALOCEAN) runs before a later rule (GOOGLE_KEY, OPENAI) whose marker creates a new word
  *  boundary next to the earlier token, so a second pass redacts more. Layers that hash (engine) and re-redact (shipper, ingest) must agree on bytes, so
  *  iterate to a fixpoint. Every pass that changes the text removes a secret, so the bound is never reached by real data. */
