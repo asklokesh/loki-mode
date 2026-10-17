@@ -16,7 +16,9 @@ import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 import {
   _setClaudeVersionForTest,
+  _setIntegrationProbesForTest,
   _setPythonImportOkForTest,
+  probeIntegrations,
   evaluateClaudeCliCompat,
   loadClaudeCliRange,
   evaluateRequirements,
@@ -1183,5 +1185,77 @@ describe("doctor --fix consent-gated installs (TEN-UX-04)", () => {
     expect(r.stdout).toContain("fixed: claude login");
     expect(readFileSync(log, "utf8").trim().split("\n").filter((l) => l === "login")).toEqual(["login"]);
     rmSync(shim, { recursive: true, force: true });
+  });
+});
+
+// ---- TEN-SPEED-06: Integration probes run concurrently ------------------------
+
+describe("doctor Integration probes run concurrently (TEN-SPEED-06)", () => {
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  afterEach(() => {
+    _setIntegrationProbesForTest(null);
+    restorePythonImportOk();
+  });
+
+  it("three 200ms injected probes finish in well under the 600ms serial sum", async () => {
+    _setPythonImportOkForTest(async () => { await sleep(200); return true; });
+    _setIntegrationProbesForTest({
+      http: async () => { await sleep(200); return true; },
+      command: async (c) => { await sleep(200); return c === "gopls" ? "/x/gopls" : null; },
+      sentruxVersion: async () => "1.2.3",
+    });
+    const t0 = Date.now();
+    const r = await probeIntegrations("http://mf.invalid");
+    const dt = Date.now() - t0;
+    expect(dt).toBeLessThan(350);
+    expect(r).toEqual({
+      mcpOk: true, numpyOk: true, stOk: true, chromaOk: true,
+      lsp: ["gopls"], mirofishOk: true, sentruxVersion: null,
+    });
+  });
+
+  it("unset MiroFish url skips the probe; sentrux version only when on PATH", async () => {
+    _setPythonImportOkForTest(async () => false);
+    let httpCalls = 0;
+    _setIntegrationProbesForTest({
+      http: async () => { httpCalls++; return false; },
+      command: async (c) => (c === "sentrux" ? "/x/sentrux" : null),
+      sentruxVersion: async () => "9.9.9",
+    });
+    const r = await probeIntegrations(undefined);
+    expect(httpCalls).toBe(1);
+    expect(r.mirofishOk).toBeNull();
+    expect(r.sentruxVersion).toBe("9.9.9");
+    expect(r.lsp).toEqual([]);
+  });
+
+  it("runDoctor([]) starts every probe together and keeps the Integrations output order", async () => {
+    const starts: number[] = [];
+    const t0 = Date.now();
+    const mark = (): void => { starts.push(Date.now() - t0); };
+    _setPythonImportOkForTest(async () => { mark(); await sleep(150); return true; });
+    _setIntegrationProbesForTest({
+      http: async () => { mark(); await sleep(150); return true; },
+      command: async (c) => {
+        if (["pyright-langserver", "pylsp", "typescript-language-server", "gopls", "rust-analyzer", "jdtls", "sentrux"].includes(c)) {
+          mark(); await sleep(150);
+          return c === "sentrux" || c === "pylsp" ? `/x/${c}` : null;
+        }
+        const { commandExists } = await import("../../src/util/shell.ts");
+        return commandExists(c);
+      },
+      sentruxVersion: async () => "1.2.3",
+    });
+    const { cap } = await captureStdio(() => runDoctor([]));
+    const spread = Math.max(...starts) - Math.min(...starts);
+    expect(starts.length).toBe(3 + 1 + 6 + 1);
+    expect(spread).toBeLessThan(100);
+    const order = ["MCP SDK (Python)", "numpy (vector search)", "sentence-transformers (embeddings)", "ChromaDB server (port 8100)", "LSP servers detected (1): pylsp", "OTEL", "sentrux 1.2.3"];
+    let at = -1;
+    for (const needle of order) {
+      const i = cap.out.indexOf(needle);
+      expect(i).toBeGreaterThan(at);
+      at = i;
+    }
   });
 });
