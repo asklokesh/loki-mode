@@ -6,8 +6,8 @@ about the cost-per-accepted ratio (loki / floor). A paired bootstrap over tasks
 (fixed seed) gives the 95% CI; the claim is gated on the CI upper bound, never
 the point estimate.
 
-Row shape (dict): task_id, accepted (bool), cost_usd (float), and optionally
-cost_partial (bool), unmeasured (bool), cost_profile (str), engine (str), loki_version (str), model_used (str).
+Row shape (dict): task_id, accepted (bool), cost_usd (finite float >= 0; anything else blocks the verdict), and optionally
+cost_partial (bool), unmeasured (bool), cost_profile (str), engine (str), loki_version (str), model_used (str), cost_source (str; required, one per arm).
 Rows may also carry elapsed_s; the verdict adds an informational paired time
 ratio (floor / loki, above 1 means loki is faster) with the same bootstrap CI.
 Rows without a usable elapsed_s are excluded from it and counted. The time
@@ -29,12 +29,22 @@ BOOTSTRAP_ITERS = 2000
 DEFAULT_SEED = 20261016
 
 
+def _good_cost(r):
+    """True when cost_usd is a finite number >= 0 (bool, None, NaN, negative are not)."""
+    v = r.get("cost_usd")
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v) and v >= 0)
+
+
 def _cpa(rows):
-    """Cost per accepted task over rows; None when nothing was accepted."""
+    """Cost per accepted task over rows; None when nothing was accepted.
+
+    Rows with an unusable cost_usd add nothing here; the verdict blocks on them.
+    """
     accepted = sum(1 for r in rows if r.get("accepted"))
     if accepted == 0:
         return None
-    return sum(float(r.get("cost_usd") or 0.0) for r in rows) / accepted
+    return sum(r["cost_usd"] for r in rows if _good_cost(r)) / accepted
 
 
 def _group(rows):
@@ -147,6 +157,10 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
         reasons.append("no_data: an arm has no measured rows")
     if any(r.get("cost_partial") for r in rows):
         reasons.append("partial: cost_partial row present")
+    bad_cost = sum(1 for r in rows if not _good_cost(r))
+    if bad_cost:
+        reasons.append("cost: %d row(s) with missing, non-finite or negative "
+                       "cost_usd" % bad_cost)
 
     engines = {r.get("engine") for r in rows}
     versions = {r.get("loki_version") for r in rows}
@@ -179,6 +193,22 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     if loki and floor and _acc_rate(loki) < _acc_rate(floor):
         reasons.append("acceptance: loki %.3f below floor %.3f"
                        % (_acc_rate(loki), _acc_rate(floor)))
+
+    if loki and floor:
+        lt, ft = set(_group(loki)), set(_group(floor))
+        if lt != ft:
+            only = sorted(str(t) for t in lt ^ ft)
+            reasons.append("tasks: arms cover different task sets (%s)"
+                           % ",".join(only))
+
+    if rows and any(not r.get("cost_source") for r in rows):
+        reasons.append("cost_source: missing cost_source on a row")
+    else:
+        for name, arm in (("loki", loki), ("floor", floor)):
+            srcs = {r.get("cost_source") for r in arm}
+            if len(srcs) > 1:
+                reasons.append("cost_source: %s mixes sources (%s)"
+                               % (name, ",".join(sorted(srcs))))
 
     cost_profile = _loki_cost_profile(loki)
     if cost_profile == "mixed":
