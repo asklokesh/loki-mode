@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { firstError, runCheck } from "../../src/engine10/stages/verify.ts";
+import { hooks } from "../../src/engine10/hooks.ts";
 import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
@@ -543,4 +544,35 @@ describe("TEN-COST-11 r3: spend of failed or killed stages reaches seal", () => 
     expect(r.seen).toContain("w1");
   });
 });
+});
+
+describe("concurrent wall distrusts a green base run when implement changed files (TEN-COST-11-F1)", () => {
+  const saved = hooks.wall;
+  afterEach(() => { hooks.wall = saved; delete process.env.LOKI_E10_WALL_CONCURRENT; });
+  const go = async (changed: string[] | null) => {
+    process.env.LOKI_E10_WALL_CONCURRENT = "1";
+    const repo = mkdtempSync(join(tmpdir(), "loki-f1-")); const base = mkdtempSync(join(tmpdir(), "loki-f1-base-"));
+    try {
+      hooks.wall = { snapshotTree: async () => base, changedSinceBase: () => changed, manifests: /package\.json$/ };
+      const { ctx } = fakeCtx(); ctx.repoDir = repo;
+      const wall = { ...stage("wall"), split: {
+        author: async () => ({ kind: "authored", targetDir: join(repo, "tests"), contents: new Map([["loki_wall_a.test.ts", "t\n"]]) }),
+        install: (): StageResult => ({ status: "completed", data: { base_run: { pass: 3, fail: 0, not_run: 0 }, already_satisfied: true } }),
+      } } as Stage;
+      const r = await runMachine(ctx, { load: loaderOf(all({ wall })), flow: FLOW });
+      return r.outputs.wall as Record<string, unknown> & { base_run: Record<string, unknown> };
+    } finally { rmSync(repo, { recursive: true, force: true }); rmSync(base, { recursive: true, force: true }); }
+  };
+  it("implement changed a source file: already_satisfied false and base_run unproven", async () => {
+    const w = await go(["src/x.ts"]);
+    expect(w.already_satisfied).toBe(false); expect(w.already_satisfied_distrusted).toBe(true);
+    expect(w.base_run).toMatchObject({ pass: 3, fail: 0, not_run: 1, unproven: true });
+  });
+  it("changed set unknown (null): distrusted too", async () => {
+    expect((await go(null)).already_satisfied).toBe(false);
+  });
+  it("positive control: only .loki and wall files changed keeps already_satisfied true", async () => {
+    const w = await go([".loki/x", "tests/loki_wall_a.test.ts"]);
+    expect(w.already_satisfied).toBe(true); expect(w.base_run.unproven).toBeUndefined();
+  });
 });
