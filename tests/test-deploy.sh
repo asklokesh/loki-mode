@@ -285,7 +285,7 @@ t7() {
     local label="$1" want="$2"; shift 2
     local out rc
     out="$(cd "$WORKROOT" && PATH="$FAKE_BIN:$PATH" bash "$LOKI_BIN" start --deploy "$@" 2>&1)"; rc=$?
-    if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -qF "$want" && ! printf '%s\n' "$out" | grep -qi 'starting\|session'; then
+    if [ "$rc" -eq 2 ] && grep -qF "$want" <<<"$out" && ! grep -qi 'starting\|session' <<<"$out"; then
         pass "start --deploy $label: exit 2, matching message, no start output"
     else
         fail "start --deploy $label not rejected early" "rc=$rc out=$out"

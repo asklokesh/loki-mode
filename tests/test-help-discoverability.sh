@@ -147,7 +147,7 @@ done
 # usage in loki-ts/src/commands/control.ts documents.
 CONTROL_HELP="$(bash "$LOKI" control --help 2>&1)"
 for needle in "prune" "stop" "status [--json]"; do
-    if printf '%s' "$CONTROL_HELP" | grep -qF -- "$needle"; then
+    if grep -qF -- "$needle" <<<"$CONTROL_HELP"; then
         ok "'loki control --help' names '${needle}'"
     else
         bad "'loki control --help' omits '${needle}'"
@@ -156,7 +156,7 @@ done
 
 # Unknown `loki provider` subcommand must exit 2 with one stderr line; help stays 0.
 PROV_ERR="$(bash "$LOKI" provider frobnicate 2>&1 >/dev/null)"; PROV_RC=$?
-if [ "$PROV_RC" -eq 2 ] && printf '%s' "$PROV_ERR" | grep -q "unknown subcommand"; then
+if [ "$PROV_RC" -eq 2 ] && grep -q "unknown subcommand" <<<"$PROV_ERR"; then
     ok "'loki provider frobnicate' exits 2 with an unknown-subcommand line"
 else
     bad "'loki provider frobnicate' rc=${PROV_RC} (want 2): ${PROV_ERR}"
@@ -169,7 +169,7 @@ done
 # Unknown `loki config` / `loki api` subcommands must exit 2; bare and help forms stay 0.
 for cmdname in config api; do
     ERR="$(bash "$LOKI" "$cmdname" frobnicate 2>&1 >/dev/null)"; RC=$?
-    if [ "$RC" -eq 2 ] && printf '%s' "$ERR" | grep -q "unknown subcommand"; then
+    if [ "$RC" -eq 2 ] && grep -q "unknown subcommand" <<<"$ERR"; then
         ok "'loki ${cmdname} frobnicate' exits 2 with an unknown-subcommand line"
     else
         bad "'loki ${cmdname} frobnicate' rc=${RC} (want 2): ${ERR}"

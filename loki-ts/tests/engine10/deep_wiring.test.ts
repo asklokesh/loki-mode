@@ -29,6 +29,7 @@ function repo(): string {
   execFileSync("git", ["init", "-q", d]);
   execFileSync("git", ["-C", d, "config", "user.name", "t"]); // preflight needs an identity; CI hosts have none
   execFileSync("git", ["-C", d, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", d, "commit", "-q", "--allow-empty", "-m", "init"]); // preflight refuses a repo with no commits (TEN-STABILITY-35)
   execFileSync("git", ["-C", d, "remote", "add", "origin", "https://github.com/acme/widget.git"]);
   return d;
 }

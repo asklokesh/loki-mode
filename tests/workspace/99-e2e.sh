@@ -290,7 +290,7 @@ else
     bad "workspace e2e: docs/WORKSPACES.md lacks the verify section"
 fi
 
-if grep -qi 'deployed-SHA binding is not implemented' "$REPO_ROOT/docs/WORKSPACES.md" &&
+if grep -qi 'deployed-SHA binding is partial' "$REPO_ROOT/docs/WORKSPACES.md" &&
     ! grep -q 'stale-head child makes it TAMPERED or UNCHECKED' "$REPO_ROOT/docs/WORKSPACES.md"; then
     ok "workspace e2e: docs/WORKSPACES.md states what the composite Seal covers and the deploy gap"
 else

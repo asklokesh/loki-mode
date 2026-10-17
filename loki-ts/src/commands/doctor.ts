@@ -30,6 +30,7 @@ import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { withholdGithubTokens } from "../runner/github_token.ts";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 import { GATEWAY_LANE_LOSS, gatewayLaneLabel } from "../providers/model_routes.ts";
 
 // ---------- Setup requirements per execution path -----------------------------
@@ -643,7 +644,7 @@ function helperTimeoutMs(): number {
   return Number.isInteger(n) && n > 0 ? n : DOCTOR_HELPER_TIMEOUT_MS;
 }
 function helperSpawn(cmd: string, args: string[], opts: SpawnSyncOptions = {}): SpawnSyncReturns<string | Buffer> {
-  return spawnSync(cmd, args, { env: { ...process.env }, ...opts, timeout: helperTimeoutMs() });
+  return spawnSync(cmd, args, { env: tokenFreeEnv(), ...opts, timeout: helperTimeoutMs() });
 }
 function helperTimedOut(r: SpawnSyncReturns<unknown>): boolean {
   return (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
@@ -1372,7 +1373,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       if (process.stdout.isTTY) {
         const offerScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
         if (existsSync(offerScript)) {
-          spawnSync("bash", [offerScript, "report"], { env: { ...process.env }, stdio: "inherit" });
+          spawnSync("bash", [offerScript, "report"], { env: tokenFreeEnv(), stdio: "inherit" });
         }
       }
     }

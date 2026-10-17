@@ -17,6 +17,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `loki-ts/tests/fixtures/monorepo-fc01/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `loki-ts/tests/fixtures/project-model/firelater-17/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `loki-ts/tests/fixtures/monorepo-fc22/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
+| `loki-ts/todo-app/package.json` | `@types/bun` | `latest` | `1.4.2` | unknown | no numeric version in spec (unpinned or a dist-tag like 'latest'); cannot compute a bump class |
 | `package.json` | `@resvg/resvg-wasm` | `^2.6.2` | `2.6.2` | up-to-date |  |
 | `package.json` | `@types/node` | `^25.2.0` | `26.6.4` | MAJOR |  |
 | `package.json` | `jest` | `^29.7.0` | `30.5.2` | MAJOR |  |
