@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSecurityScan } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
-import { ADDED_LINE_RULE, parseAddedLines, runSecureScan } from "../../src/util/secure_scan.ts";
+import { ADDED_LINE_RULE, parseAddedLines, parseDiffHeaderPath, runSecureScan } from "../../src/util/secure_scan.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "secure-scan-test-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -201,6 +201,53 @@ describe("runSecureScan added-line provider keys (TEN-SECURITY-01)", () => {
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+
+  it("an added line starting with \"++ \" does not hide a later key or shift its line", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-diff-"));
+    try {
+      git(d, "init", "-q");
+      writeFileSync(join(d, "a.md"), "x\n");
+      git(d, "add", "a.md");
+      git(d, "commit", "-q", "-m", "base");
+      writeFileSync(join(d, "a.md"), `x\n++ note\nk=${KEYS.ant}\n`);
+      const r = await runSecureScan(d);
+      expect(r.ok).toBe(true);
+      expect(r.findings.map((f) => `${f.file}:${f.line}`)).toEqual(["a.md:3"]);
+      writeFileSync(join(d, "a.md"), `x\n++ b/a.md\nk=${KEYS.ant}\n`);
+      const r2 = await runSecureScan(d);
+      expect(r2.findings.map((f) => `${f.file}:${f.line}`)).toEqual(["a.md:3"]);
+      expect(JSON.stringify([r, r2])).not.toContain(KEYS.ant);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("paths with a space or a tab are named exactly as on disk", async () => {
+    const d = mkdtempSync(join(tmpdir(), "secure-scan-diff-"));
+    try {
+      git(d, "init", "-q");
+      writeFileSync(join(d, "my file.ts"), "x\n");
+      writeFileSync(join(d, "tab\there.ts"), "x\n");
+      git(d, "add", "my file.ts", "tab\there.ts");
+      git(d, "commit", "-q", "-m", "base");
+      writeFileSync(join(d, "my file.ts"), `x\nk=${KEYS.ant}\n`);
+      writeFileSync(join(d, "tab\there.ts"), `x\nk=${KEYS.github}\n`);
+      const r = await runSecureScan(d);
+      expect(r.ok).toBe(true);
+      expect(r.findings.map((f) => `${f.file}:${f.line}`).sort()).toEqual(["my file.ts:2", "tab\there.ts:2"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("parseDiffHeaderPath strips git's trailing tab and unquotes C-quoted paths", () => {
+    expect(parseDiffHeaderPath("b/my file.ts\t")).toBe("my file.ts");
+    expect(parseDiffHeaderPath('"b/tab\\there.ts"')).toBe("tab\there.ts");
+    expect(parseDiffHeaderPath('"b/back\\\\slash \\"q\\".ts"')).toBe('back\\slash "q".ts');
+    expect(parseDiffHeaderPath('"b/caf\\303\\251.ts"')).toBe("caf\u00e9.ts");
+    expect(parseDiffHeaderPath("/dev/null")).toBeNull();
+    expect(parseDiffHeaderPath('"b/unterminated')).toBeNull();
   });
 
   it("parseAddedLines keeps new-file line numbers across hunks", () => {

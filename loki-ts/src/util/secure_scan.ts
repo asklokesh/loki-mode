@@ -35,8 +35,8 @@ export interface SecureScanOpts {
    * root, lines added since this base (committed, uncommitted and untracked) are
    * also checked for provider keys (sk-ant, AIza, xoxb/xoxp, ghp_ and the rest of
    * the scanner's token rule) in EVERY file, not only browser-served ones.
-   * Default base: LOKI_SECURE_SCAN_BASE, else the merge-base with the upstream,
-   * else HEAD. false turns the added-line scan off.
+   * Default base: LOKI_SECURE_SCAN_BASE, else the merge-base with origin/HEAD,
+   * else with the upstream, else HEAD. false turns the added-line scan off.
    */
   diffBase?: string | false;
 }
@@ -107,31 +107,99 @@ function isWorkTreeRoot(dir: string): boolean {
 function resolveDiffBase(repoDir: string, explicit: string | undefined): string | null {
   const want = explicit ?? process.env["LOKI_SECURE_SCAN_BASE"];
   if (want) return git(repoDir, ["rev-parse", "--verify", "--quiet", `${want}^{commit}`])?.trim() || null;
-  for (const ref of ["@{upstream}", "refs/remotes/origin/HEAD"]) {
+  // The default branch first: a pre-PR diff is against what the PR targets.
+  for (const ref of ["refs/remotes/origin/HEAD", "@{upstream}"]) {
     const mb = git(repoDir, ["merge-base", "HEAD", ref])?.trim();
     if (mb) return mb;
   }
   return git(repoDir, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?.trim() || null;
 }
 
-/** Added lines per path (new-file line number to text) from a `git diff -U0` body. */
+/**
+ * Path from a `+++ ` diff header: null for /dev/null or a non-b/ side. git
+ * appends a tab after a path that contains a space and C-quotes a path with a
+ * tab, newline, quote or backslash; both forms are decoded here.
+ */
+export function parseDiffHeaderPath(header: string): string | null {
+  let p = header;
+  if (p.startsWith('"')) {
+    const bytes: number[] = [];
+    let i = 1;
+    let closed = false;
+    while (i < p.length) {
+      const c = String.fromCodePoint(p.codePointAt(i)!);
+      if (c === '"') {
+        closed = true;
+        break;
+      }
+      if (c !== "\\") {
+        for (const b of Buffer.from(c, "utf8")) bytes.push(b);
+        i += c.length;
+        continue;
+      }
+      const e = p[i + 1] ?? "";
+      const oct = /^[0-7]{3}/.exec(p.slice(i + 1, i + 4));
+      if (oct) {
+        bytes.push(parseInt(oct[0], 8));
+        i += 4;
+        continue;
+      }
+      const esc: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+      if (!(e in esc)) return null;
+      bytes.push(esc[e]!);
+      i += 2;
+    }
+    if (!closed) return null;
+    p = Buffer.from(bytes).toString("utf8");
+  } else if (p.endsWith("\t")) {
+    p = p.slice(0, -1);
+  }
+  return p.startsWith("b/") && p.length > 2 ? p.slice(2) : null;
+}
+
+/**
+ * Added lines per path (new-file line number to text) from a `git diff -U0`
+ * body. Each @@ header's old and new counts bound its hunk, so an added line
+ * whose text begins "++ " (rendered "+++ ...") is content, never a file header.
+ */
 export function parseAddedLines(diff: string): Map<string, Map<number, string>> {
   const out = new Map<string, Map<number, string>>();
   let cur: Map<number, string> | null = null;
   let next = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
   for (const line of diff.split("\n")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("\\")) continue; // "\ No newline at end of file"
+      if (line.startsWith("+")) {
+        if (cur) cur.set(next, line.slice(1));
+        next++;
+        newLeft--;
+      } else if (line.startsWith("-")) {
+        oldLeft--;
+      } else {
+        next++;
+        oldLeft--;
+        newLeft--;
+      }
+      continue;
+    }
+    if (line.startsWith("diff --git ")) {
+      cur = null;
+      continue;
+    }
     if (line.startsWith("+++ ")) {
-      const p = line.slice(4);
-      cur = p.startsWith("b/") ? (out.get(p.slice(2)) ?? new Map<number, string>()) : null;
-      if (cur) out.set(p.slice(2), cur);
+      const p = parseDiffHeaderPath(line.slice(4));
+      cur = p === null ? null : (out.get(p) ?? new Map<number, string>());
+      if (p !== null && cur) out.set(p, cur);
       continue;
     }
-    const m = /^@@ -\S+ \+(\d+)(?:,\d+)? @@/.exec(line);
+    const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (m) {
-      next = Number(m[1]);
-      continue;
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      next = Number(m[2]);
+      newLeft = m[3] === undefined ? 1 : Number(m[3]);
     }
-    if (cur && line.startsWith("+")) cur.set(next++, line.slice(1));
   }
   return out;
 }
@@ -176,7 +244,8 @@ export async function scanAddedLines(repoDir: string, opts: SecureScanOpts = {})
       if (!dest.startsWith(root)) continue;
       const max = Math.max(...lines.keys());
       const body: string[] = [];
-      for (let i = 1; i <= max; i++) body.push(lines.get(i) ?? "");      mkdirSync(dirname(dest), { recursive: true });
+      for (let i = 1; i <= max; i++) body.push(lines.get(i) ?? "");
+      mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, body.join("\n") + "\n");
     }
     const r = await runSecureScan(mirror, { scriptPath: opts.scriptPath, timeoutMs: opts.timeoutMs, secretsEverywhere: true });
