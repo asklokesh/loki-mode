@@ -89,7 +89,7 @@ test("redaction is idempotent on the reviewer's adjacency cases (a \\b rule free
   const cases = ["SK" + hex32 + "AI" + "x".repeat(30), "dop_v1_" + "ab".repeat(32) + "sk-" + "y".repeat(24), "SK" + hex32 + "sk-" + "z".repeat(24)];
   expect(cases.map(redactSecrets)).toEqual(["[REDACTED:TWILIO_KEY][REDACTED:GOOGLE_KEY]", "[REDACTED:DIGITALOCEAN_TOKEN][REDACTED:OPENAI_KEY]", "[REDACTED:TWILIO_KEY][REDACTED:OPENAI_KEY]"]);
   for (const c of cases) expect(idem(c)).toBe(true);
-  const data = { task: cases[0], not_proven: [cases[1]], [cases[2]]: 1 };
+  const data = { task: cases[0], not_proven: [cases[1]], [cases[2]!]: 1 };
   const once = redactEventData("run.started", data);
   expect(redactEventData("run.started", once)).toEqual(once);
   const env = { v: 1, seq: 0, run: cases[2], type: "run.started", data };
