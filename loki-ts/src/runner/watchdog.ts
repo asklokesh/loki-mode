@@ -10,6 +10,12 @@ export function stallThresholdS(env: string | undefined = process.env["LOKI_E10_
   return env !== undefined && env.trim() !== "" && Number.isFinite(n) && n > 0 ? n : DEFAULT_STALL_S;
 }
 
+/** LOKI_E10_STALL_KILL_S: idle seconds after which the session's own child is terminated. Unset, blank, non-numeric or <= 0 means 0 (off). */
+export function stallKillS(env: string | undefined = process.env["LOKI_E10_STALL_KILL_S"]): number {
+  const n = Number(env);
+  return env !== undefined && env.trim() !== "" && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export interface Watchdog {
   /** One observation: cumulative output bytes and a diff signature. */
   tick(bytes: number, diff: string): { cls: ProgressClass; idleS: number; stalledNow: boolean };
