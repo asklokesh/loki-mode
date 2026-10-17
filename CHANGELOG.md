@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.40 (2026-10-17)
+
+Wave AG: 14 reviewed slices.
+
+### Added
+
+- TEN-GATES-20: secure-scan reports files_scanned, and a zero-file scan is not_run instead of a pass.
+- TEN-COST-31: `loki report kpis --since <Nd|YYYY-MM-DD>` windows the iteration totals.
+- TEN-COST-34: the run summary spend line adds retry dollars when retry sessions cost money.
+- TEN-SPEED-07: a fix-round verify runs the previous round's failing test files first.
+- TEN-QUALITY-17: a test that fails and then passes on one immediate rerun is classified flaky, and flaky never counts as executed or exogenous proof.
+- TEN-QUALITY-18: TypeScript repos with no typecheck script get a `tsc --noEmit` typecheck.
+- TEN-UX-17: `loki undo --list` prints recent runs with verdict, files changed and age.
+- TEN-ADOPTION-13: `loki proof share --dry-run` runs the secret scan and lists what would be shared.
+
+### Fixed
+
+- TEN-GATES-18: risk classification reads manifest dependency changes from git data; the L0 guard allowlist records check_result.ts.
+- TEN-GATES-19: the composite seal records the node version only from a real probe, never bun's compat version.
+- TEN-SECURITY-04: redactSecrets strips GitLab, npm, Hugging Face and Stripe tokens and PEM private key blocks.
+- TEN-SPEED-08: preflight reuses a successful `gh auth status` probe for 10 minutes.
+- TEN-ADOPTION-15: the update hint and self-update share one registry helper.
+- TEN-DEPLOY-13: `loki status --probe` fails when the health URL redirects to a different origin.
+
 ## v11.17.39 (2026-10-17)
 
 ### Added

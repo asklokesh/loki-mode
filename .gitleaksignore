@@ -156,3 +156,9 @@ d996f53d0972df736fc839b0fc3db03a88d6ebe0:examples/receipts/add-fix/events.jsonl:
 d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/VERIFY.md:generic-api-key:9
 d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/receipt.json:jwt:114
 d462b180ec95f4e6d6943cd7db1f5f2dc5a16847:examples/receipts/add-fix/events.jsonl:generic-api-key:6
+
+# v11.17.40 test fixtures: TEN-ADOPTION-13 proof share --dry-run secret-scan test uses a patterned fake ghp_ token; TEN-SECURITY-04 redact test builds a synthetic PEM block from a template body. Neither is a real credential.
+bcd7a8214335dcbeb97b792cf5917b6a51b9f3e2:loki-ts/tests/commands/proof.test.ts:github-pat:359
+6da250f32a79e87bd1137daec452f53a028be0a1:loki-ts/tests/util/redact.test.ts:private-key:39
+719beb07763ef0975a4c74c6a19fb760c8208972:loki-ts/tests/commands/proof.test.ts:github-pat:359
+411c557f6118d6a7b57d4390d76af51692114ad4:loki-ts/tests/util/redact.test.ts:private-key:39
