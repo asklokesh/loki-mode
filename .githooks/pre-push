@@ -618,16 +618,22 @@ while read -r _lref _lsha _rref _rsha; do
         # net result). --root: a root commit has no parent to diff against;
         # without it `git diff-tree` on a parentless commit prints nothing
         # (this is also B1 -- see the --root on the scan's diff-tree below).
-        _ignore_added="$(git diff-tree -p -m --root -U0 "$_csha" -- .gitleaksignore 2>/dev/null \
+        # --diff-merges=first-parent (TEN-SEC-PREPUSH-MERGE-WARN): a bare -m also diffs a
+        # merge against its SECOND parent, so merging an older slice branch
+        # reported every line main gained since the fork as "added" (and made
+        # a .gitleaks.toml main already had look changed). Judge a merge
+        # against the first parent only: a merge that itself adds a line still
+        # differs from it, and each branch commit is its own list entry.
+        _ignore_added="$(git diff-tree -p --diff-merges=first-parent --root -U0 "$_csha" -- .gitleaksignore 2>/dev/null \
             | grep -E '^\+[^+]' | sed 's/^\+//' || true)"
         if [[ -n "$_ignore_added" ]]; then
             echo "[pre-push] WARNING: .gitleaksignore gained line(s) in commit ${_csha:0:12} ($_lref) -- a line here silences a real finding:" >&2
             printf '%s\n' "$_ignore_added" | sed 's/^/[pre-push]   + /' >&2
         fi
 
-        if [[ -n "$(git diff-tree --name-only -m --root "$_csha" -- .gitleaks.toml 2>/dev/null)" ]]; then
+        if [[ -n "$(git diff-tree --name-only --diff-merges=first-parent --root "$_csha" -- .gitleaks.toml 2>/dev/null)" ]]; then
             echo "[pre-push] WARNING: .gitleaks.toml added or changed in commit ${_csha:0:12} ($_lref) -- it can silently disable rules:" >&2
-            git diff-tree -p -m --root -U0 "$_csha" -- .gitleaks.toml 2>/dev/null | sed 's/^/[pre-push]   /' >&2 || true
+            git diff-tree -p --diff-merges=first-parent --root -U0 "$_csha" -- .gitleaks.toml 2>/dev/null | sed 's/^/[pre-push]   /' >&2 || true
             # Any change, not a pattern match against known-bad shapes: a
             # `.*` regex text search is trivially evaded (a title-only config
             # ships zero rules and disables everything just as completely;

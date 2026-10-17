@@ -1019,3 +1019,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: doctor.ts provider probe at the json route (already tokenFreeEnv); modernize/oracle/search.ts `--version` probe (already tokenFreeEnv); engine10 session spawns (worker env, assertWorkerEnv).
 - Mechanism: doctor.ts claudeAuthStatusLoggedIn, the one shared login probe, spawns with tokenFreeEnv plus GIT_SSH_COMMAND=false unless LOKI_ALLOW_AGENT_GITHUB_TOKEN=1.
 - Fixture: tests/engine10/preflight.test.ts "the login probe spawns the provider CLI without the GitHub token or SSH agent"; tests/moat/p9-rule-of-two.sh against a dist rebuilt from the tree.
+
+## FC-TEN-SEC-PREPUSH-MERGE-WARN Pre-push warns about .gitleaksignore lines a merge did not add (MERGE-SECOND-PARENT-DIFF)
+- User-visible vs raw: the v11.17.25 push printed 5 false ".gitleaksignore gained line(s)" warnings for merges c6d3894f1..0a16434e1 while the net .gitleaksignore diff of the push was empty; the raw cause was `diff-tree -m`, which also diffs a merge against its second parent (the older slice branch), so every line main gained since the fork looked added by the merge.
+- Law broken: a warning names what a commit changed relative to what it was merged onto; it never reports lines the base already had.
+- Siblings: the .gitleaks.toml name-only and patch diff-tree calls in .githooks/pre-push (same -m, fixed here; they could even FAIL the push on a toml main already had); the eval-fixture scan diff-tree -m in the same hook (kept: scanning both parents is conservative and fail-closed); scripts/security-audit-gitleaks.sh (comment only) and scripts/train-cycle.sh (plain non-merge name list).
+- Mechanism: the per-commit drift check in .githooks/pre-push passes `--diff-merges=first-parent` instead of `-m`; a merge that adds a line itself still differs from its first parent, and each branch commit is its own entry in the pushed list.
+- Fixture: tests/test-pre-push-gitleaks.sh case 19b (older-slice merge prints no warning; merge adding a line still warns); red with `-m` restored on all three calls, and red with the flag dropped from the ignore call.

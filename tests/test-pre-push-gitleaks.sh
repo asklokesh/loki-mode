@@ -992,6 +992,48 @@ else
     ko "the WARNING lists the added .gitleaksignore line" "$(cat "$D/push.out")"
 fi
 
+# --- case 19b (TEN-SEC-PREPUSH-MERGE-WARN): merge of an older slice does not warn
+# Main gains an ignore line and a toml and is pushed; then a branch forked
+# BEFORE that is merged in and pushed. A bare diff-tree -m also diffs the merge
+# against its second parent (the old branch), reporting main's lines as added.
+# Only the first-parent diff is judged. The evil-merge sub-case adds a line in
+# the merge result itself and must still warn (the boundary of the fix).
+D="$SCRATCH/c19b"; BARE="$SCRATCH/c19b.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+g "$D" checkout -q -b old-slice >/dev/null 2>&1
+echo "slice" > "$D/slice.txt"
+g "$D" add slice.txt >/dev/null 2>&1
+g "$D" commit -q -m "old slice change" --no-verify >/dev/null 2>&1
+g "$D" checkout -q main >/dev/null 2>&1
+printf '%s\n' "some/main/gained.json:generic-api-key:7" >> "$D/.gitleaksignore"
+printf 'title = "x"\n' > "$D/.gitleaks.toml"
+g "$D" add .gitleaksignore .gitleaks.toml >/dev/null 2>&1
+g "$D" commit -q -m "main gains ignore line and toml" --no-verify >/dev/null 2>&1
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
+[[ "$rc" == "RC=0" ]] || { echo "  FATAL: case 19b setup push failed: $(cat "$D/push.out")" >&2; exit 1; }
+g "$D" merge -q --no-ff -m "merge old slice" old-slice >"$D/merge.out" 2>&1 || { echo "  FATAL: case 19b merge failed: $(cat "$D/merge.out")" >&2; exit 1; }
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
+if [[ "$rc" == "RC=0" ]] && ! grep -q "WARNING: .gitleaksignore gained line" "$D/push.out" \
+   && ! grep -q "gitleaks.toml added or changed" "$D/push.out"; then
+    ok "case 19b: merging an older slice branch prints no ignore-line or toml warning"
+else
+    ko "case 19b: merging an older slice branch prints no ignore-line or toml warning" "$rc; out: $(cat "$D/push.out")"
+fi
+g "$D" checkout -q -b evil-src >/dev/null 2>&1
+echo "e" > "$D/e.txt"
+g "$D" add e.txt >/dev/null 2>&1
+g "$D" commit -q -m "evil-src clean" --no-verify >/dev/null 2>&1
+g "$D" checkout -q main >/dev/null 2>&1
+g "$D" merge -q --no-ff --no-commit evil-src >/dev/null 2>&1
+printf '%s\n' "some/evil/merge.json:generic-api-key:9" >> "$D/.gitleaksignore"
+g "$D" add .gitleaksignore >/dev/null 2>&1
+g "$D" commit -q -m "evil merge adds an ignore line" --no-verify >/dev/null 2>&1
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
+if grep -q "WARNING: .gitleaksignore gained line" "$D/push.out" && grep -qF "some/evil/merge.json:generic-api-key:9" "$D/push.out"; then
+    ok "case 19b: a merge that itself adds an ignore line still warns"
+else
+    ko "case 19b: a merge that itself adds an ignore line still warns" "$rc; out: $(cat "$D/push.out")"
+fi
+
 # --- case 20: a .gitleaks.toml change is refused unless overridden -----------
 # E-99: the gate is now "any change to .gitleaks.toml, in any push", not
 # scoped to a push that also touches eval (r4's scoping let an eval-untouched
