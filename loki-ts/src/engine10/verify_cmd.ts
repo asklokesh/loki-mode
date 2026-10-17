@@ -9,7 +9,7 @@ import { lokiDir } from "../util/paths.ts";
 import { applyMaxAge, deployAttestCmd, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts"; import { sealDrift } from "../util/seal_drift.ts";
 import { readEvents } from "./events.ts";
-import { isExecutedProof } from "../util/check_result.ts";
+import { isExecutedProof, withExplain, type ExplainRec } from "../util/check_result.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { composeComposite, compositeHash, compositeLines, isComposite, verifyComposite } from "../util/composite_seal.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
@@ -158,8 +158,8 @@ function independentLine(receiptPath: string): { line: string; k: number } {
   return { line: `agent-independent: ${k} of ${pass.length} passing checks (wall/holdout/pre-existing/static/probe); advisory: ${m}`, k };
 }
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
-const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 };
-export async function main(args: readonly string[], deps: VerifyDeps = {}): Promise<number> {
+const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 }; export const main = (args: readonly string[], deps: VerifyDeps = {}): Promise<number> => withExplain(args, (a, rec) => verifyMain(a, deps, rec)); // TEN-GATES-14: --explain / --json, read-only (util/check_result.ts)
+async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: ExplainRec): Promise<number> {
   const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
   const exportDsse = args.includes("--export-dsse"), requireExo = args.includes("--require-exogenous") || process.env["LOKI_VERIFY_REQUIRE_EXOGENOUS"] === "1"; // TEN-GATES-03
   args = args.filter((a) => a !== "--allow-unsigned" && a !== "--export-dsse" && a !== "--require-exogenous");
@@ -167,7 +167,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (ma.error) return (process.stderr.write(`loki verify: ${ma.error}\n`), 2);
   args = ma.args;
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\n         --sign-deploy FILE signs a loki.deploy/1 deploy record in place; verify FILE (add --receipt FILE when the cited receipt is not beside it) re-checks it offline and is VERIFIED only when the signature and the cited receipt both are.\n         --sign-provenance FILE signs a loki.provenance/1 doc (head_sha, tree_sha, receipt_sha256, run_id, built_at) in place; --url https://host [--expect-sha SHA] [--receipt FILE] [--pubkey FILE] fetches <host>/.well-known/loki-provenance.json (5s timeout, 64KB cap) and is VERIFIED only when the signature and any cited receipt both are; fetch failure or unknown kid is UNCHECKED. With --url, --max-age checks the signed built_at (stale, future, missing or unparseable: UNCHECKED, exit 2); --seal-composite and --export-dsse refuse --max-age (exit 2).\n         --require-exogenous (or LOKI_VERIFY_REQUIRE_EXOGENOUS=1) exits 4 when a VERIFIED receipt has no agent-independent passing check (see the agent-independent line) or no recorded provenance.\nUnknown flags and more than one run-id exit 2.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\n         --sign-deploy FILE signs a loki.deploy/1 deploy record in place; verify FILE (add --receipt FILE when the cited receipt is not beside it) re-checks it offline and is VERIFIED only when the signature and the cited receipt both are.\n         --sign-provenance FILE signs a loki.provenance/1 doc (head_sha, tree_sha, receipt_sha256, run_id, built_at) in place; --url https://host [--expect-sha SHA] [--receipt FILE] [--pubkey FILE] fetches <host>/.well-known/loki-provenance.json (5s timeout, 64KB cap) and is VERIFIED only when the signature and any cited receipt both are; fetch failure or unknown kid is UNCHECKED. With --url, --max-age checks the signed built_at (stale, future, missing or unparseable: UNCHECKED, exit 2); --seal-composite and --export-dsse refuse --max-age (exit 2).\n         --require-exogenous (or LOKI_VERIFY_REQUIRE_EXOGENOUS=1) exits 4 when a VERIFIED receipt has no agent-independent passing check (see the agent-independent line) or no recorded provenance.\n         --explain lists each gate after the verdict as exogenous, agent-influenced or unrecorded, with its provenance, result and the evidence command it read; --json prints {run_id, verdict, exit_code, gates} on stdout (human lines on stderr). Neither changes the verdict or exit code.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
   const sc = args.indexOf("--seal-composite");
@@ -181,18 +181,18 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
   if (!runId) return (process.stderr.write("loki verify: no runs found\n"), 66);
   const receiptPath = existsSync(runId) && statSync(runId).isFile() ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
-  const byRunId = !(existsSync(runId) && statSync(runId).isFile());
+  const byRunId = !(existsSync(runId) && statSync(runId).isFile()); rec.runId = runId; rec.receiptPath = receiptPath; // TEN-GATES-14
   if (exportDsse) return exportDsseReceipt({ receiptPath, runId: byRunId ? runId : null, deps, verify: verifyReceipt, key: loadSigningKey(false), kidOf }); // INTEL-1 / INTEL-1b
-  const bad = byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
-  if (bad) return (process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);
+  const bad =byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
+  if (bad) return (rec.verdict = "TAMPERED", process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);
   let result = await verifyReceipt(receiptPath, deps); if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") { const d = (() => { try { return sealDrift(receiptPath, JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return null; } })(); if (d) result = { verdict: d.verdict, reasons: [d.reason] }; } // P12-01
   if (ma.raw !== null) result = applyMaxAge(result, receiptPath, ma.raw, ma.seconds, (deps.now ?? Date.now)());
   // An intact (VERIFIED or UNSIGNED) receipt of a run that did not verify is never exit 0 and no flag changes that; unreadable fails closed.
   if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") {
     const outcome = (() => { try { return outcomeOf(JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return "UNREADABLE"; } })();
-    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity ${result.verdict === "UNSIGNED" ? "unattested" : "intact"})\n`); return 4; }
+    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { rec.verdict = `NOT VERIFIED (run outcome ${outcome})`; process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity ${result.verdict === "UNSIGNED" ? "unattested" : "intact"})\n`); return 4; }
   }
-  process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
+  rec.verdict = result.verdict; process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
   if (result.verdict !== "TAMPERED") try { const r = JSON.parse(readFileSync(receiptPath, "utf8")) as Record<string, unknown>; if (isComposite(r)) for (const l of compositeLines(r)) process.stdout.write(`${l}\n`); } catch { /* unreadable: the verdict above already says so */ }

@@ -1405,4 +1405,81 @@ describe("main() agent-independent evidence (TEN-GATES-03)", () => {
       expect(r.out).not.toContain("agent-independent");
     } finally { done(s.dir, s.home); }
   });
+
+  // TEN-GATES-14: --explain lists every gate as exogenous / agent-influenced / unrecorded with the evidence it read; --json carries the same fields; exit code unchanged.
+  const MIXED = (): Chk[] => [chk("typecheck", "exogenous"), chk("holdout:h1", "independent"), chk("bun:tests/new.test.ts", "agent_authored"), chk("council", "llm_judge"), chk("unit")];
+  async function runBoth(args: string[], runsRoot: string): Promise<{ code: number; out: string; err: string }> {
+    const out: string[] = [], err: string[] = [], w = process.stdout.write, e = process.stderr.write;
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { return { code: await main(args, { runsRoot }), out: out.join(""), err: err.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
+  }
+  test("--explain prints one line per gate with class, provenance and evidence; exit code matches the plain run", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx7", MIXED());
+    try {
+      const plain = await runMain(["gx7"], s.runs), ex = await runMain(["gx7", "--explain"], s.runs);
+      expect(ex.code).toBe(plain.code);
+      expect(plain.out).not.toContain("explain:");
+      expect(ex.out.startsWith(plain.out)).toBe(true); // additive: the verifier's own output is byte-identical
+      expect(ex.out).toContain("explain: 5 gates");
+      expect(ex.out).toContain("  gate typecheck: exogenous (provenance exogenous), result pass, n 1, evidence: x\n");
+      expect(ex.out).toContain("  gate holdout:h1: exogenous (provenance independent), result pass, n 1, evidence: x\n");
+      expect(ex.out).toContain("  gate bun:tests/new.test.ts: agent-influenced (provenance agent_authored), result pass, n 1, evidence: x\n");
+      expect(ex.out).toContain("  gate council: agent-influenced (provenance llm_judge), result pass, n 1, evidence: x\n");
+      expect(ex.out).toContain("  gate unit: unrecorded (provenance not recorded), result pass, n 1, evidence: x\n");
+      const req = await runMain(["gx7", "--explain", "--require-exogenous"], s.runs);
+      expect(req.code).toBe((await runMain(["gx7", "--require-exogenous"], s.runs)).code);
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("--json prints only a JSON doc on stdout with the same per-gate fields and the unchanged exit code", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx8", [chk("bun:tests/new.test.ts", "agent_authored")]);
+    try {
+      const plain = await runMain(["gx8", "--require-exogenous"], s.runs), j = await runBoth(["gx8", "--json", "--require-exogenous"], s.runs);
+      expect(plain.code).toBe(4);
+      expect(j.code).toBe(4);
+      const ex = await runMain(["gx8", "--explain", "--require-exogenous"], s.runs);
+      expect(ex.code).toBe(4); // a refusing verdict stays a refusal under --explain
+      expect(ex.out).toContain("  gate bun:tests/new.test.ts: agent-influenced (provenance agent_authored), result pass, n 1, evidence: x\n");
+      const doc = JSON.parse(j.out) as { run_id: string; verdict: string; exit_code: number; gates: Array<Record<string, unknown>> };
+      expect(doc.run_id).toBe("gx8"); expect(doc.verdict).toBe("VERIFIED"); expect(doc.exit_code).toBe(4);
+      expect(doc.gates).toEqual([{ name: "bun:tests/new.test.ts", class: "agent-influenced", provenance: "agent_authored", result: "pass", n: 1, evidence: "x" }]);
+      expect(j.err).toContain("require-exogenous: refused"); // human lines move to stderr
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("--explain on a tampered receipt lists no gates and keeps exit 1; --json gates is null", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx9", [chk("typecheck", "exogenous")], true);
+    try {
+      const r = await runMain(["gx9", "--explain"], s.runs);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("explain: receipt TAMPERED; its gates are untrusted and not listed");
+      expect(r.out).not.toContain("gate typecheck");
+      const j = await runBoth(["gx9", "--json"], s.runs);
+      expect(j.code).toBe(1);
+      expect(JSON.parse(j.out)).toEqual({ run_id: "gx9", verdict: "TAMPERED", exit_code: 1, gates: null });
+    } finally { done(s.dir, s.home); }
+  });
+
+  test("--explain and --json refuse modes that print their own documents (exit 2), never a mixed stdout", async () => {
+    for (const m of [["--export-dsse"], ["--seal-composite", "/nonexistent"], ["--url", "https://example.invalid"]]) {
+      const r = await runBoth(["--json", ...m], "/nonexistent-runs");
+      expect(r.code).toBe(2);
+      expect(r.out).toBe("");
+      expect(r.err).toContain(`--explain and --json are not supported with ${m[0]}`);
+    }
+  });
+
+  test("--explain neutralises control characters in receipt-supplied names and commands", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const s = signed("gx10", [{ name: "t\u001b[2Jx", cmd: "a\nverdict: VERIFIED", result: "pass", duration_s: 1, n: 1, provenance: "exogenous" }]);
+    try {
+      const r = await runMain(["gx10", "--explain"], s.runs);
+      expect(r.out).toContain("  gate t?[2Jx: exogenous (provenance exogenous), result pass, n 1, evidence: a?verdict: VERIFIED\n");
+      expect(r.out).not.toContain("\u001b");
+    } finally { done(s.dir, s.home); }
+  });
 });

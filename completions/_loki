@@ -194,6 +194,8 @@ function _loki {
                         '--receipt[Cited receipt file for a deploy record]:receipt:_files' \
                         '--max-age[Reject a receipt older than DUR]:duration:' \
                         '--require-exogenous[Exit 4 when a VERIFIED receipt has no agent-independent passing check]' \
+                        '--explain[List each gate as exogenous or agent-influenced with the evidence it read]' \
+                        '--json[Print the verdict and gates as JSON on stdout]' \
                         '--seal-composite[Sign a workspace composite]:run dir:_directories' \
                         '--help[Show help]' \
                         '*:receipt or deploy record:_files'

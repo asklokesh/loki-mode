@@ -217,6 +217,37 @@ export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenan
 /** True when some executed check (pass, n>0) is not backed solely by agent-authored or LLM-judge evidence. */
 export const hasExogenousProof = (checks: ReadonlyArray<{ name?: string; result?: unknown; n?: unknown }>, ctx: ProvenanceCtx): boolean =>
   checks.some((c) => isExecutedProof(c) && ((p) => p !== "agent_authored" && p !== "llm_judge")(checkProvenance(c.name ?? "", ctx)));
+/** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
+export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }
+export function explainGates(receiptPath: string): ExplainGate[] {
+  let checks: Array<Record<string, unknown>> = [];
+  try { const c = (JSON.parse(readFileSync(receiptPath, "utf8")) as { checks?: unknown }).checks; if (Array.isArray(c)) checks = c.filter((x): x is Record<string, unknown> => !!x && typeof x === "object"); } catch { /* unreadable: no gates */ }
+  return checks.map((c) => {
+    const p = typeof c.provenance === "string" ? c.provenance : null;
+    return { name: String(c.name ?? ""), class: p === "exogenous" || p === "independent" ? "exogenous" : p === "agent_authored" || p === "llm_judge" ? "agent-influenced" : "unrecorded", provenance: p, result: String(c.result ?? "not_run"), n: typeof c.n === "number" ? c.n : null, evidence: String(c.cmd ?? "") };
+  });
+}
+const printable = (s: string): string => s.replace(/[\x00-\x1f\x7f]/g, "?"); // receipt text never drives the terminal
+/** What the receipt verifier saw: set once it resolves a run receipt and prints its verdict. */
+export interface ExplainRec { runId?: string; receiptPath?: string; verdict?: string }
+/** --explain lists each gate after the verdict; --json prints {run_id, verdict, exit_code, gates} on stdout with the human lines on stderr. Read-only: the exit code is the verifier's, unchanged; a TAMPERED receipt's gates are never listed. */
+export async function withExplain(args: readonly string[], run: (args: readonly string[], rec: ExplainRec) => Promise<number>): Promise<number> {
+  const explain = args.includes("--explain"), json = args.includes("--json");
+  if (!explain && !json) return run(args, {});
+  const mode = args.find((a) => /^--(export-dsse|seal-composite|sign-deploy|sign-provenance|url)(=|$)/.test(a)); // these print their own documents, not a receipt verdict
+  if (mode) return (process.stderr.write(`loki verify: --explain and --json are not supported with ${mode.split("=")[0]}\n`), 2);
+  const rec: ExplainRec = {}, w = process.stdout.write;
+  if (json) process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
+  let code: number;
+  try { code = await run(args.filter((a) => a !== "--explain" && a !== "--json"), rec); } finally { if (json) process.stdout.write = w; }
+  if (!rec.receiptPath || !rec.verdict) return (process.stderr.write("loki verify: --explain and --json apply to a run receipt only; nothing explained\n"), code);
+  const gates = rec.verdict === "TAMPERED" ? null : explainGates(rec.receiptPath);
+  if (json) return (process.stdout.write(`${JSON.stringify({ run_id: rec.runId ?? null, verdict: rec.verdict, exit_code: code, gates })}\n`), code);
+  if (!gates) return (process.stdout.write("explain: receipt TAMPERED; its gates are untrusted and not listed\n"), code);
+  process.stdout.write(`explain: ${gates.length} gate${gates.length === 1 ? "" : "s"} (exogenous: evidence the agent could not shape; agent-influenced: agent-authored test or LLM judge; unrecorded: no provenance)\n`);
+  for (const g of gates) process.stdout.write(`  gate ${printable(g.name)}: ${g.class} (provenance ${g.provenance === null ? "not recorded" : printable(g.provenance)}), result ${printable(g.result)}, n ${g.n ?? "-"}, evidence: ${printable(g.evidence) || "-"}\n`);
+  return code;
+}
 
 // RISKTIER: classify risk on the ARTIFACT (the actual diff), never the prompt, and map the tier to a verification plan.
 // The bash `loki review --risk` scorer (autonomy/lib/review_risk.py) stays a separate 0-100 advisory view.
