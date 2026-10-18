@@ -123,19 +123,6 @@ describe("engine10 machine", () => {
     expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
   });
 
-  it("a no-op fix round that itself claims spec_conflict confirms implement's claim: stops after one round", async () => {
-    const { ctx, events } = fakeCtx();
-    let fixes = 0;
-    const r = await runMachine(ctx, { load: loaderOf(all({
-      implement: stage("implement", async () => ({ status: "completed", data: { exit: "spec_conflict" } })),
-      verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "same" }] } })),
-      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0", signatures: "same", spec_conflict: true } }; }),
-    })) });
-    expect(r.stopped).toBe("spec_conflict");
-    expect(fixes).toBe(1);
-    expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
-  });
-
   it("one no-op fix round still gets its verify: a flaky check may pass on the same tree", async () => {
     const { ctx, events } = fakeCtx();
     let verifies = 0, fixes = 0;
@@ -445,7 +432,7 @@ describe("engine10 machine", () => {
     expect(of(events, "stage.completed").slice(-3)).toEqual(["commit", "seal", "pr"]);
   });
 
-  it("spec_conflict still runs verify and the fix loop; seal still reports SPEC_CONFLICT (E-98b)", async () => {
+  it("spec_conflict still runs verify (E-98b) but no fix round (FC-FIX-OVER-CONFLICT); seal still reports SPEC_CONFLICT", async () => {
     const { ctx, events } = fakeCtx();
     let fixRan = false;
     await runMachine(ctx, {
@@ -460,8 +447,8 @@ describe("engine10 machine", () => {
         }),
       })),
     });
-    expect(of(events, "stage.started")).toContain("verify");
-    expect(fixRan).toBe(true);
+    expect(of(events, "stage.started").filter((n) => n === "verify")).toHaveLength(1);
+    expect(fixRan).toBe(false);
     const seal = events.find((e) => e.type === "stage.completed" && e.stage === "seal");
     expect(seal?.data.verdict).toBe("SPEC_CONFLICT");
   });

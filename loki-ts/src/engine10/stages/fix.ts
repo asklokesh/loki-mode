@@ -98,7 +98,7 @@ export const fixStage: Stage = {
     return {
       status: "completed",
       // Every round's session id, since each round replaces this stage's output.
-      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeFingerprint(ctx.repoDir, ctx.baseSha), killed: r.session.killed, ...(r.session.markers.specConflict ? { spec_conflict: true } : {}), cascade: repeated, model: actualModel,
+      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeFingerprint(ctx.repoDir, ctx.baseSha), killed: r.session.killed, cascade: repeated, model: actualModel,
         ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead }] },
     };

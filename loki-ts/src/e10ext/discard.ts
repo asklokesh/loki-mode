@@ -23,10 +23,9 @@ export function safeRestore(repoDir: string, f: string, want: Buffer, mode: numb
   chmodSync(fp, mode);
 }
 
-/** Run-level "nothing to change" signals, the same three seal's verdictOf honours. */
+/** Run-level "nothing to change" signals, the same two seal's verdictOf honours. */
 export function alreadySatisfied(o: Partial<Record<string, Obj>>): boolean {
-  const b = (o.wall?.base_run ?? {}) as Obj;
-  return o.intake?.already_satisfied === true || o.implement?.exit === "already_done" || (typeof b.pass === "number" && b.pass > 0 && b.fail === 0 && (b.not_run ?? 0) === 0);
+  return o.intake?.already_satisfied === true || o.implement?.exit === "already_done"; // FC-VACUOUS-WALL-GREEN: a green Wall base run alone is not a claim
 }
 
 /** Null when the run is not already-satisfied (nothing touched). Otherwise restores every staged path to base

@@ -26,7 +26,7 @@ export const FIXED_RULES = [
   "- Run any tests you need, including the package's full suite (the Project Model commands below say how). The impacted tests named below are a starting hint, not a limit. The harness re-runs those checks after you stop; a pass that exists only in your reply does not count.",
   "- Never leave a long-lived server running.",
   "- Never kill processes.",
-  "- Write no documentation unless the task explicitly asks for it.",
+  "- Write no documentation unless the task explicitly asks for it. Never write documentation, changelog or README text that announces a behavior the code does not have, even to make a test pass: if the task needs code that is not in this repository, finish with LOKI_SPEC_CONFLICT.",
   "- Do not commit or push.",
   "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,

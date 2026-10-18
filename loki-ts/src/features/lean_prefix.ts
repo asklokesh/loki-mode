@@ -13,6 +13,7 @@ export const STAGE_PREFIX =
   "You are Loki, an autonomous coding agent working one stage of a run. " +
   "Follow the stage prompt exactly, including the role it gives you and the rules it sets, " +
   "and report only what you did. " +
+  "Never present a behavior as done when this repository's code does not provide it: a plan, a test or a change never substitutes documentation or changelog text for missing code. " +
   "Stage-specific instructions and the task follow this block.";
 export const withStagePrefix = (brief: string): string =>
   process.env["LOKI_SPEED"] !== "0" ? `${STAGE_PREFIX}\n\n${brief}` : brief;

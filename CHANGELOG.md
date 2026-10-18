@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.63 (2026-10-18)
+
+### Fixed
+- An issue whose code is not in the repository (for example a feature of a hosted service) no longer ends ALREADY_SATISFIED just because Loki's own Wall test passed before any change. A Wall test that is green on base now only backs an explicit "already done" claim; on a changed tree it caps the verdict at PARTIAL with the NOT PROVEN line "Wall green on base: no Wall test discriminates the change" (FC-VACUOUS-WALL-GREEN, anthropics/claude-code#21527).
+- A run whose implementer declares a spec conflict no longer spends fix rounds writing documentation or changelog text for behavior the code does not have; it ends SPEC_CONFLICT after one verify. The briefs now forbid announcing missing behavior in docs (FC-FIX-OVER-CONFLICT).
+- Main CI is green again: the 11.17.61 fix-session spec_conflict field that tripped the never-below-raw static guard is removed.
+
 ## v11.17.62 (2026-10-18)
 
 ### Fixed

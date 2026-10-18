@@ -61,8 +61,8 @@ function defaultLoader(dir: string) {
   };
 }
 export const hasFailures = (d: Obj | undefined): boolean => (Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0) || (typeof d?.holdout_failed === "number" && d.holdout_failed > 0); // C-C4b: a held-out failure is only an opaque count
-// Only already_satisfied short-circuits to the tail. spec_conflict must still run verify and
-// the fix loop (E-98b); seal.ts:110 already reads implement.exit off outputs for the verdict.
+// Only already_satisfied short-circuits to the tail. spec_conflict still runs verify (E-98b) but no
+// fix round (FC-FIX-OVER-CONFLICT); seal reads implement.exit off outputs for the verdict.
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
@@ -244,10 +244,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (capHit && !isTail) { jumped = true; continue; }
       if (wallConcurrent() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
       if (wallJob && todo.includes("implement") && !(await (wallJob as WallJob).snap)) { const j = wallJob as WallJob, t0 = j.t0; abortWall(); ctx.emit("stage.failed", "wall", { duration_s: (ctx.clock.now() - t0) / 1000, reason: "wall base snapshot unavailable: nothing installed" }); } // the base copy must be complete before implement edits the tree; no copy means no Wall
-      if (wallJob && todo[0] === "verify") {
-        await installWallJob();
-        if (outputs.wall?.already_satisfied === true) { jumped = true; continue; } // moved after implement by WC-01b; same exit as before
-      }
+      if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
@@ -261,11 +258,10 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         sigs.push(sigOf(outputs.verify, results[0]));
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
-        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify); round++) {
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify) && outputs.implement?.exit !== "spec_conflict"; round++) { // FC-FIX-OVER-CONFLICT: seal pins SPEC_CONFLICT on implement.exit, so a fix round can only spend or paper over the conflict
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
           const noop = fx.status === "completed" && repeatedNoopFix(outputs.fix), fedBy = sigs[sigs.length - 1] ?? null;
-          if (noop && outputs.fix?.spec_conflict === true && outputs.implement?.exit === "spec_conflict") { ctx.emit("loop.repeat", "fix", { reason: "a fix round confirmed the spec conflict and left the tree unchanged", round: outputs.fix?.round ?? null }); stopped = "spec_conflict"; break; } // independent confirmation of implement's claim; the verdict stays SPEC_CONFLICT (seal reads implement.exit)
           // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
           if (noop && noopSig !== null && noopSig === fedBy && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) {
             ctx.emit("loop.repeat", "fix", { reason: "two fix rounds left the tree unchanged against the same failure", round: outputs.fix?.round ?? null });

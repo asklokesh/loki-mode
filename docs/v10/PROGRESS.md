@@ -2560,3 +2560,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T20:38Z (CoS) v11.17.62
 - FC-LOKI-DIR-DIRT (asklokesh/FireLater#20): intake blocked on deleted tracked .loki/ legacy files; deleter traced to manual rm in shell history, not Loki (scratch-clone repro on 11.17.60 left them intact). Fix in intake dirtyTrackedFiles. Checks: intake + budget 82 pass 0 fail (new test red first with the exact reported reason); tsc clean (control-plane excluded); e2e, supervisor_backstop, seal, spawn_env_guard, contract, e10ext 380 pass 0 fail.
+
+## 2026-10-18T21:32Z (CoS) v11.17.63
+- FC-VACUOUS-WALL-GREEN + FC-FIX-OVER-CONFLICT (anthropics/claude-code#21527). HIGH review (review-21527) BLOCK B1 (green-on-base Wall counted as VERIFIED proof) fixed, re-review APPROVE: 430 pass 0 fail across check_result/seal/wall/machine/wall_concurrent/already_done/verify/discard_proto/budget, tsc 0. Full suite shards aa-ad + ae1 0 fail (ae1 723 pass); route_matrix rerun pending (timed out together, fix-forward signal). CI-only guards help-drift/sigpipe/select-tests rc=0.

@@ -201,7 +201,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
       base_run: baseRun,
       ...(notRunFiles.length ? { not_run_files: notRunFiles } : {}),
       iteration_ids: [a.iterationId ?? `${ctx.runId}-wall`],
-      already_satisfied: alreadySatisfied, ...(a.holdoutDir ? { holdout_dir: a.holdoutDir } : {}), // opaque path only: names stay in the private store
+      already_satisfied: false, ...(alreadySatisfied ? { green_on_base: true } : {}), ...(a.holdoutDir ? { holdout_dir: a.holdoutDir } : {}), // opaque path only: names stay in the private store
       ...(discarded.length ? { discarded } : {}),
     },
   };

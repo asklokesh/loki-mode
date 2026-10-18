@@ -140,6 +140,12 @@ describe("verdict gate", () => {
     expect(verdictOf(a, [], true, false, false, false)).toBe("PARTIAL");
     expect(verdictOf(a, [pass0], true, false, false, true)).toBe("ALREADY_SATISFIED");
   });
+  test("FC-VACUOUS-WALL-GREEN: a Wall green on base never makes a changed tree VERIFIED, and proves only a claim", () => {
+    expect(verdictOf(o(), [pass0], false, false, true, true)).toBe("PARTIAL"); // implement done, non-empty diff, passing exogenous check
+    expect(verdictOf(o({ implement: { exit: "killed", limit_s: 60 } }), [pass0], false, false, true, true, true)).toBe("PARTIAL");
+    expect(verdictOf(o({ implement: { exit: "already_done" } }), [pass0], true, false, true, false)).toBe("ALREADY_SATISFIED");
+    expect(verdictOf(o({ intake: { already_satisfied: true } }), [], true, false, true, false)).toBe("ALREADY_SATISFIED");
+  });
 });
 
 // FC-16 B1 (HIGH review): forged or skipped output must never count as an executed pass. Real tool output shapes.

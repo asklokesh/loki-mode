@@ -181,7 +181,7 @@ describe("engine10 wall stage", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test("all Wall tests passing on the base tree short-circuits to already_satisfied", async () => {
+  test("FC-VACUOUS-WALL-GREEN: all Wall tests passing on the base tree records green_on_base proof, never the already_satisfied claim", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
     const events: string[] = [];
     const sessions = new FakeSessionRunner((opts) => {
@@ -192,7 +192,7 @@ describe("engine10 wall stage", () => {
 
     const result = await runWall(ctx, new AbortController().signal, { baseRunner });
 
-    expect(result.data.already_satisfied).toBe(true);
+    expect(result.data.green_on_base).toBe(true); expect(result.data.already_satisfied).toBe(false); // FC-VACUOUS-WALL-GREEN
     rmSync(repoDir, { recursive: true, force: true });
   });
 
@@ -826,10 +826,10 @@ describe("COST-11 r2: escalation on doubt", () => {
     expect((r.result.data.files as { path: string }[]).map((f) => f.path.split("/").pop())).toEqual(["loki_wall_a2.test.ts"]);
     expect(seen).toEqual([{ repo: false, sealedCopy: false, flag: false }]);
   });
-  test("B1: sonnet also green means already_satisfied stands (two sessions, no loop)", async () => {
+  test("B1: sonnet also green records green_on_base (two sessions, no loop)", async () => {
     const r = await go((n) => ({ files: [`loki_wall_a${n}.test.ts`] }), () => true);
     expect(r.models).toEqual([HAIKU, SONNET]);
-    expect(r.result.data.already_satisfied).toBe(true);
+    expect(r.result.data.green_on_base).toBe(true); expect(r.result.data.already_satisfied).toBe(false); // FC-VACUOUS-WALL-GREEN
   });
   test("B1 control: a haiku Wall red on base keeps a single session", async () => {
     const r = await go(() => ({ files: ["loki_wall_a.test.ts"] }), () => false);
@@ -839,7 +839,7 @@ describe("COST-11 r2: escalation on doubt", () => {
     try {
       const r = await go(() => ({ files: ["loki_wall_a.test.ts"] }), () => true, { LOKI_E10_WALL_TIER: "sonnet" });
       expect(r.models).toHaveLength(1);
-      expect(r.result.data.already_satisfied).toBe(true);
+      expect(r.result.data.green_on_base).toBe(true); expect(r.result.data.already_satisfied).toBe(false); // FC-VACUOUS-WALL-GREEN
     } finally { delete process.env.LOKI_E10_WALL_TIER; }
   });
 
@@ -868,10 +868,14 @@ describe("COST-11 r2: escalation on doubt", () => {
       expect(wallGreenOnBaseOf(o)).toBe(false);
       expect(verdictOf(o, [], false, false, wallGreenOnBaseOf(o), wallGreenOnBaseOf(o))).not.toBe("ALREADY_SATISFIED");
       expect(alreadySatisfied(o)).toBe(false);
-      // positive control: the same green base run, not distrusted, is ALREADY_SATISFIED for both consumers
+      // FC-VACUOUS-WALL-GREEN: the same green base run, not distrusted, is proof only, never the claim by itself
       const ctl = { wall: { ...g.result.data, already_satisfied: true, base_run: { pass: 1, fail: 0, not_run: 0 } } } as Partial<Record<StageName, Record<string, unknown>>>;
-      expect(verdictOf(ctl, [], false, false, wallGreenOnBaseOf(ctl), wallGreenOnBaseOf(ctl))).toBe("ALREADY_SATISFIED");
-      expect(alreadySatisfied(ctl)).toBe(true);
+      expect(verdictOf(ctl, [], false, false, wallGreenOnBaseOf(ctl), wallGreenOnBaseOf(ctl))).not.toBe("ALREADY_SATISFIED");
+      expect(alreadySatisfied(ctl)).toBe(false);
+      // positive control: with intake's evidence-cited claim the green base run is the proof, so both consumers agree
+      const claimed = { ...ctl, intake: { already_satisfied: true } } as Partial<Record<StageName, Record<string, unknown>>>;
+      expect(verdictOf(claimed, [], false, false, wallGreenOnBaseOf(claimed), wallGreenOnBaseOf(claimed))).toBe("ALREADY_SATISFIED");
+      expect(alreadySatisfied(claimed)).toBe(true);
       off = 0;
       const k = await go(() => { off += WALL_STAGE_LIMIT_S * 1000; return { files: [], result: KILLED }; }, () => false);
       expect(k.models).toEqual([HAIKU]);
@@ -913,7 +917,7 @@ describe("COST-11 r2: escalation on doubt", () => {
     const g = await go((n, _o, c) => { if (n === 1) c.abort(); return { files: ["loki_wall_a.test.ts"] }; }, () => true);
     expect(g.models).toEqual([HAIKU]);
     expect(g.events).not.toContain("wall.reauthor:wall");
-    expect(g.result.data.already_satisfied).toBe(true);
+    expect(g.result.data.green_on_base).toBe(true); expect(g.result.data.already_satisfied).toBe(false); // FC-VACUOUS-WALL-GREEN
   });
   test("N1: the first attempt's holdout is removed before the retry (>= WALL_HOLDOUT_MIN files)", async () => {
     const names = Array.from({ length: WALL_HOLDOUT_MIN }, (_, i) => `loki_wall_h${i}.test.ts`);
