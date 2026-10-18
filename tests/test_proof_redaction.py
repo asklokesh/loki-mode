@@ -273,7 +273,11 @@ class RedactionCorpusTests(unittest.TestCase):
         for s in ("a" * 200000,
                   "password=" + "x" * 200000,
                   "postgres://" + "u" * 100000 + ":" + "p" * 100000 + "@h",
-                  "postgres://" + "u" * 200000):
+                  "postgres://" + "u" * 200000,
+                  # TEN-SECURITY-26: scheme-run restart and "@"-free tail scans.
+                  "--a" * 70000,
+                  "a://" * 50000,
+                  "a://u:" * 35000):
             start = time.monotonic()
             proof_redact.redact_value(s)
             elapsed = time.monotonic() - start

@@ -4,6 +4,8 @@ import { redactEnvelope, redactEventData, redactSecrets } from "../../src/util/r
 test("URL userinfo is replaced", () => {
   expect(redactSecrets("clone https://user:pass@example.com/repo now")).toBe("clone https://[REDACTED]@example.com/repo now");
   expect(redactSecrets("ssh://tok@host:22/x")).toBe("ssh://[REDACTED]@host:22/x");
+  // TEN-SECURITY-26: a match starts at the scheme-run start; outputs pinned to the pre-fix \b rule.
+  for (const [s, want] of [["x-git+ssh://u:p@h/r", "x-git+ssh://[REDACTED]@h/r"], ["9a-https://u@h", "9a-https://[REDACTED]@h"], ["--a-https://t@h", "--a-https://[REDACTED]@h"], ["1.2+svn://u@h", "1.2+svn://[REDACTED]@h"], ["_https://u@h", "_https://u@h"]]) expect(redactSecrets(s)).toBe(want);
 });
 
 test("plain URLs and mid-path @ are unchanged", () => {
@@ -191,7 +193,8 @@ test("assignment redact covers flag and separator-prefixed names", () => {
   expect(redactSecrets("export .token=" + "abc")).toBe("export .token=[REDACTED]");
   expect(redactSecrets("cmd --db__password=" + pw + " -x")).toBe("cmd --db__password=[REDACTED] -x");
   for (const benign of ["mytoken=1", "https://h/x?refresh_token_ttl=5&mytoken=1", "x_mytoken=1", "--max-tokens=5", "--tokens=3"]) expect(redactSecrets(benign)).toBe(benign);
-  for (const big of ["-".repeat(20000), "_a".repeat(10000), "a__".repeat(7000) + "=", "--a".repeat(7000) + "token"]) {
+  // "--a" restarted the URL userinfo rule at every letter (TEN-SECURITY-26): 850ms at 28000 before, under 2ms after.
+  for (const big of ["-".repeat(20000), "_a".repeat(10000), "a__".repeat(7000) + "=", "--a".repeat(7000) + "token", "--a".repeat(28000) + "://"]) {
     const t0 = performance.now();
     redactSecrets(big);
     expect(performance.now() - t0).toBeLessThan(100);
