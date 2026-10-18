@@ -86,15 +86,16 @@ export interface StackedSkip { branch: string; target: string; commits: number; 
  *  new run must not inherit it. Returns the PR target tip to branch from instead (not the merge-base: a squash-merged run must see its work on the target). Null (keep HEAD as the base) when the range is empty,
  *  holds any commit without the trailer (the operator built on it deliberately), the target does not resolve, or the target tip cannot be read. */
 export function stackedOnLokiRun(repoDir: string, target: ResolvedBase | null = resolveBase(repoDir)): StackedSkip | null {
-  if (!target) return null;
+  if (!target || process.env.LOKI_PR_BASE) return null; // a stacked slice (loki issues run) builds on its parent's run branch on purpose
+  const branch = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
+  if (!branch || !/^loki\/e10-/.test(branch)) return null; // only an engine run branch (loki/${runId}, supervisor.ts); never main (fast-forward accept), loki/epic-*, loki/group-*, loki/unit-* or a user branch
   const log = git(repoDir, ["log", `${target.ref}..HEAD`, "--format=%x01%(trailers:key=Loki-Run,valueonly)"]);
   if (log === null) return null;
   const chunks = log.split("\x01").slice(1);
   if (chunks.length === 0 || chunks.some((c) => c.trim() === "")) return null;
   const mb = git(repoDir, ["rev-parse", "--verify", "-q", `${target.ref}^{commit}`]);
   if (!mb || !/^[0-9a-f]{40}$/.test(mb)) return null;
-  const branch = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
-  return { branch, target: target.ref, commits: chunks.length, base_sha: mb, message: `skipped ${chunks.length} unaccepted Loki commit(s) on ${branch}; merge them first to build on them` };
+  return { branch, target: target.ref, commits: chunks.length, base_sha: mb, message: `skipped ${chunks.length} unaccepted Loki commit(s) on ${branch}; merge them first to build on them; base moved to the ${target.ref} tip, which may include upstream commits not yet pulled locally` };
 }
 
 /** Start-line fragment naming the PR target and the base the run starts from (no network). Agrees with intake via stackedOnLokiRun. */

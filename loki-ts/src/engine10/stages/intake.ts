@@ -61,8 +61,8 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
   if (dirty.length > 0) return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
   let baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]); const startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
-  // FC-STACKED-ON-LOKI-RUN: HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the merge-base, leave that branch untouched.
-  let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; process.stderr.write(`engine10: base: ${stacked.target} (${stacked.message})\n`); } catch { stacked = null; } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
+  // FC-STACKED-ON-LOKI-RUN: HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the PR target tip, leave that branch untouched.
+  let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; process.stderr.write(`engine10: base: ${stacked.target} (${stacked.message})\n`); } catch { stacked = null; process.stderr.write("engine10: skip not applied (checkout failed); base stays HEAD\n"); } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
   const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]); excludeLokiDir(ctx.repoDir);
   const issueJsonPath = opts.issueJsonPath ?? process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
   const taskText = opts.taskText ?? process.env.LOKI_E10_TASK_TEXT;

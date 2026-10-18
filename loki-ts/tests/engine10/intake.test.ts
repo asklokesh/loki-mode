@@ -631,6 +631,30 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
       expect(line).toContain(`base: origin/main (skipped 1 unaccepted Loki commit(s) on ${OLD}`);
       rmSync(root, { recursive: true, force: true });
     });
+    test("B1: a stacked slice (LOKI_PR_BASE set, loki/epic-* branch) keeps its parent's work in the base", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1"; process.env.LOKI_PR_BASE = "loki/e10-parent";
+      git(clone, ["branch", "-m", "loki/epic-1-s2"]);
+      const head = ids(clone).head, line = baseLine(clone);
+      try {
+        const r = await intakeOn(clone);
+        expect(r.data.base_sha).toBe(head);
+        expect(r.data.stacked_loki_skip).toBeUndefined();
+        expect(line).toBe("PR target: origin/main, base: loki/epic-1-s2");
+      } finally { delete process.env.LOKI_PR_BASE; }
+      rmSync(root, { recursive: true, force: true });
+    });
+    test("B2: main fast-forwarded to accepted Loki commits is not a skipped run branch", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1";
+      git(clone, ["checkout", "-q", "main"]); git(clone, ["merge", "-q", "--ff-only", OLD]);
+      const head = ids(clone).head, line = baseLine(clone);
+      const r = await intakeOn(clone);
+      expect(r.data.base_sha).toBe(head);
+      expect(r.data.stacked_loki_skip).toBeUndefined();
+      expect(line).toBe("PR target: origin/main, base: main");
+      rmSync(root, { recursive: true, force: true });
+    });
     test("an operator commit anywhere in the range keeps base = HEAD", async () => {
       const { root, clone } = originAndClone();
       process.env.LOKI_E10_NO_FETCH = "1";
