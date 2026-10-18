@@ -42,8 +42,9 @@ Also accepted: `loki start prd.md`, `loki start owner/repo#123`, and a
 one-word brief as `loki start <word>`. Add `--no-pr` to skip the pull request.
 The PR uses your existing `gh auth login` (and git) credentials; no extra token
 is needed. On a repo you cannot push to, Loki pushes the branch to your fork and
-opens the PR upstream from it; a draft outcome (anything but VERIFIED) stays on
-the fork, and Loki posts no status comment on that repo's issue.
+opens the PR upstream from it (the branch is public on your fork); a draft
+outcome (anything but VERIFIED) stays on the fork, and Loki posts no status
+comment on that repo's issue.
 `LOKI_PR_FORK=0` turns the fork fallback off.
 Preview the route first with `loki route start prd.md`.
 

@@ -14,6 +14,7 @@ import {
   outcomeOf,
   reasonOf,
 } from "../../src/engine10/output.ts";
+import { clipWords } from "../../src/util/term_width.ts";
 import { reset as resetEta } from "../../src/contrib/eta.ts";
 
 describe("formatClock", () => {
@@ -331,6 +332,7 @@ describe("reasonOf (A-130 round 4)", () => {
     expect(r.endsWith("...")).toBe(true);
     expect(`spec conflict: ${why}`.startsWith(r.slice(0, -3))).toBe(true);
     expect(`spec conflict: ${why}`.charAt(r.length - 3)).toBe(" ");
+    expect(clipWords("abcdef", 2)).toBe("ab");
   });
   test("stalled", () => expect(reasonOf([vfy([{ name: "t", result: "fail" }])], false, "stalled", "STALLED")).toBe("stalled: same failure 3 times"));
   test("a red suite names the failing check and first_error", () => expect(reasonOf([vfy([{ name: "bun:calc.test.ts", result: "fail", first_error: "expected 6 got 5" }])], false, null, "FAILED")).toBe("bun:calc.test.ts failed: expected 6 got 5"));

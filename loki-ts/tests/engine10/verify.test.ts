@@ -234,6 +234,10 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(testChecks).toHaveLength(1);
     expect(testChecks[0]?.result).toBe("pass");
     expect(res.data.wall_passed).toBe(true); // seal reads this into receipt.wall.passed; it was never written before
+    const part = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }, { path: join(repoDir, "gone.test.ts") }] } } });
+    const pr = await verifyStage.run(part.ctx, sig()), gone = (pr.data.checks as VerifyCheck[]).find((c) => c.name === "bun:gone.test.ts");
+    expect(gone?.result).not.toBe("pass");
+    expect(pr.data.wall_passed).not.toBe(true); // a Wall check that did not pass never yields wall.passed true
     const prev = process.env.LOKI_WALL_HARNESS_RUNNER; process.env.LOKI_WALL_HARNESS_RUNNER = "0";
     try { const off = await verifyStage.run(ctx, sig()); expect((off.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); expect(off.data.wall_passed).toBeUndefined(); }
     finally { if (prev === undefined) delete process.env.LOKI_WALL_HARNESS_RUNNER; else process.env.LOKI_WALL_HARNESS_RUNNER = prev; }

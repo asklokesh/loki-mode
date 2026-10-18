@@ -33,6 +33,7 @@ export function formatTokens(n: number): string {
 /** Clips at the last word boundary within max and marks the cut with "..." (the full text stays in the receipt and HANDOFF). */
 export function clipWords(s: string, max: number): string {
   if (s.length <= max) return s;
+  if (max < 4) return s.slice(0, Math.max(0, max));
   const cut = s.slice(0, max - 3), sp = cut.lastIndexOf(" ");
   return `${(sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:]+$/, "")}...`;
 }
