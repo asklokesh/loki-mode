@@ -1152,3 +1152,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: the ratchet pass (autonomy/loki, started in the background first) and the per-file pool in tests/run-shellcheck.sh; both could hold a multi-GB shellcheck at once. Measured RSS: autonomy/loki 8.4 GB, autonomy/run.sh 9.8 GB, 16 GB runner.
 - Mechanism: one scheduling rule in tests/run-shellcheck.sh: a file of at least LOKI_SHELLCHECK_HEAVY_LINES (default 5000) lines runs alone (pool drained first, nothing starts until it ends); the ratchet runs serially. Verdict logic unchanged (598 pass, 0 fail locally, 1m45s).
 - Fixture: tests/test-shellcheck-heavy-serial.sh (fake shellcheck records overlap; red on the previous script, green now).
+
+## FC-TEST-LEAKS-INTO-REPO Running the engine10 tests left an untracked loki-ts/calc.ts in the checkout (TEST-LEAKS-INTO-REPO)
+- User-visible vs raw: raw (a dirty tree after any full `bun test tests/engine10`; seen in main and in engineers' worktrees). No user run is affected.
+- Law broken: a test must not write outside its temp repo; a probe must not run in the caller checkout.
+- Writer: preflight's codex login probe (providerLoginIssue, `codex login status`) spawned the stub codex CLI in the process cwd (loki-ts); the stub ignored its args and appended multiply() to calc.ts. Only tests/engine10/providers.test.ts reaches it. Not a session write: sessions already run in ctx.repoDir.
+- Siblings: the cline and aider stubs have no probe today (they only warn on login); the e2e claude stub answers `--help` and `auth status` before touching files.
+- Mechanism: the codex stub exits 0 for `login ...` before any edit, and providerLoginIssue runs the probe in tmpdir() so no probe ever executes in the caller checkout.
+- Fixture: loki-ts/tests/engine10/providers.test.ts snapshots untracked files under loki-ts before and after each provider run and expects none new (red on the old stub, green now).

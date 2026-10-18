@@ -1036,7 +1036,7 @@ export function providerLoginIssue(provider: string, cli: string, env: Record<st
   const home = env.HOME || homedir(); const key = (k: string) => !!env[k]?.trim();
   if (provider === "codex") {
     if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return null;
-    const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000 });
+    const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000, cwd: tmpdir() }) /* FC-TEST-LEAKS-INTO-REPO: a probe never runs in the caller checkout */;
     if (r.status === 0) return null;
     return /not logged in/i.test(`${r.stdout}${r.stderr}`) ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
   }

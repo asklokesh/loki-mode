@@ -51,6 +51,11 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+/** Untracked files under dir in the surrounding checkout (FC-TEST-LEAKS-INTO-REPO guard). */
+function untrackedIn(dir: string): string[] {
+  return git(dir, "ls-files", "--others", "--exclude-standard", "--", ".").split("\n").filter(Boolean);
+}
+
 /** Fresh repo from fixtures/providers/repo, base-committed on `main`. */
 function makeRepo(): { repo: string; base: string } {
   const dir = mkdtempSync(join(tmpdir(), "e10-providers-"));
@@ -122,8 +127,9 @@ function workerDriverCode(): string {
 
 async function runProvider(provider: Provider, opts: { modelOverride?: string } = {}): Promise<{
   verdict: string; workerExit: number | null; notProven: string[]; costUsd: number | null;
-  stubEnv: Record<string, string> | null; calcAfter: string;
+  stubEnv: Record<string, string> | null; calcAfter: string; leaked: string[];
 }> {
+  const before = untrackedIn(LOKI_TS);
   const { repo, base } = makeRepo();
   const runId = `e37-${provider}`;
   const stubEnvLog = join(repo, "..", "stub-env.log");
@@ -146,6 +152,7 @@ async function runProvider(provider: Provider, opts: { modelOverride?: string } 
     started: { provider }, // as main() does: preflight checks this provider's stub CLI, not claude
     workerArgv: [process.execPath, "-e", workerDriverCode()],
   });
+  const leaked = untrackedIn(LOKI_TS).filter((f) => !before.includes(f)); // FC-TEST-LEAKS-INTO-REPO
   const stubEnv = existsSync(stubEnvLog)
     ? Object.fromEntries(readFileSync(stubEnvLog, "utf8").trim().split("\n").filter(Boolean).map((l) => {
       const i = l.indexOf("=");
@@ -161,6 +168,7 @@ async function runProvider(provider: Provider, opts: { modelOverride?: string } 
     costUsd: receipt?.cost.usd ?? null,
     stubEnv,
     calcAfter: readFileSync(join(repo, "calc.ts"), "utf8"),
+    leaked,
   };
 }
 
@@ -172,6 +180,8 @@ describe("E-37 non-claude provider paths (codex, cline, aider)", () => {
     expect(r.workerExit).toBe(0);
     // implement really ran the stub CLI: calc.ts carries its edit.
     expect(r.calcAfter).toContain("multiply");
+    // FC-TEST-LEAKS-INTO-REPO: no stub CLI call (preflight login probe included) may write into the checkout running the tests.
+    expect(r.leaked).toEqual([]);
     // No verify stage ran (checks.length === 0), so seal reports PARTIAL --
     // still "reaches seal": receipt.json/seal.ts's Green line is about the
     // run getting there, not the verdict value.

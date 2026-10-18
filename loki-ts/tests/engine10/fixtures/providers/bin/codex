@@ -4,6 +4,7 @@
 # Dumps its own env (STUB_ENV_LOG) so the test can assert LOKI_HOST_GUARD is
 # absent, then appends multiply() to calc.ts once so implement sees a diff.
 set -u
+if [ "${1:-}" = "login" ]; then exit 0; fi # preflight login probe (`codex login status`) runs in the caller cwd, never a session: it must not edit calc.ts
 if [ -n "${STUB_ENV_LOG:-}" ]; then env > "$STUB_ENV_LOG"; fi
 if [ -n "${STUB_ARGV_LOG:-}" ]; then printf '%s\n' "$@" >> "$STUB_ARGV_LOG"; fi
 printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
