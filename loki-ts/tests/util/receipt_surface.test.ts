@@ -25,6 +25,20 @@ describe("receipt comment", () => {
     expect(body).toContain("PROVEN: sealed verdict VERIFIED");
     expect(body).toContain("- none");
     expect(body).toContain("not recorded");
+    expect(body).not.toContain("- Proof:");
+  });
+
+  test("a fail-to-pass line is the proof a reviewer sees", () => {
+    const body = renderReceiptComment({
+      verdict: "VERIFIED",
+      draft: false,
+      draftReason: null,
+      notProven: [],
+      receiptSha256: "abc",
+      runId: "e10-3",
+      mutationProof: "test fails without the fix: yes",
+    });
+    expect(body).toContain("- Proof: test fails without the fix: yes");
   });
 
   test("only a GitHub pull URL yields a number", () => {

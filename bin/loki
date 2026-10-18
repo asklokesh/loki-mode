@@ -328,6 +328,33 @@ if [ "$_hk_has" = "1" ]; then
 fi
 unset _hk_has _hk_out _hk_a
 
+# Fail-to-pass, on for a real start. SWE-bench counts a fix only when a test
+# fails on the base and passes on the head. mutation_proof.ts already re-runs
+# the Wall tests on the old tree; LOKI_MUTATION_STRICT=1 is what refuses
+# VERIFIED when they still pass and the plan declared a behavior change.
+# The library default stays off. This command turns it on. Opt out with
+# LOKI_MUTATION_STRICT=0. --help does not set it.
+_loki_f2p_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *" "*|*/*\#[0-9]*|http://*|https://*) ;;
+        *) return 0 ;;
+    esac
+    local _a
+    for _a in "$@"; do
+        case "$_a" in --help|-h) return 0 ;; esac
+    done
+    if [ -z "${LOKI_MUTATION_STRICT:-}" ]; then
+        export LOKI_MUTATION_STRICT=1
+        export LOKI_F2P_DEFAULTED=1
+    fi
+}
+_loki_f2p_banner() {
+    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || return 0
+    echo "Proof: a behavior change is verified only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out."
+}
+_loki_f2p_default "$@"
+
 _loki_print_autonomy() {
     local _pol="" _f _data="${LOKI_DATA_DIR:-${HOME}/.loki}"
     for _f in ".loki/policies.json" ".loki/policies.yaml" "${_data}/policies.json" "${_data}/policies.yaml"; do
@@ -716,6 +743,7 @@ case "v10" in
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
+            _loki_f2p_banner
             _loki_print_autonomy
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi

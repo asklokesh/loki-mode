@@ -11,6 +11,8 @@ export interface ReceiptCommentInput {
   notProven: readonly string[];
   receiptSha256: string | null;
   runId: string;
+  /** Wall-on-the-old-tree line from seal, when mutation proof ran. Absent on older callers. */
+  mutationProof?: string | null;
 }
 
 /** Structured PR comment: outcome, receipt hash, verify command, PROVEN vs NOT PROVEN. */
@@ -26,6 +28,7 @@ export function renderReceiptComment(i: ReceiptCommentInput): string {
     `- Receipt: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}`,
     `- Verify: \`loki verify ${i.runId}\``,
     `- ${proven}`,
+    ...(i.mutationProof ? [`- Proof: ${i.mutationProof}`] : []),
     "## NOT PROVEN",
     ...items,
     "",

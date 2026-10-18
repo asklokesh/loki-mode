@@ -35,11 +35,16 @@ check "start outside a repo shows a receipt" "$(printf '%s' "$empty" | grep -Eq 
 check "start outside a repo points at start" "$(printf '%s' "$empty" | grep -q 'Ready for your repo? loki start' && echo 1 || echo 0)"
 check "start outside a repo does not ask for a provider" "$(printf '%s' "$empty" | grep -Eq 'npm install -g @anthropic-ai|provider CLI is not installed' && echo 0 || echo 1)"
 
-dump="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_E10_SMALL_NO_RUNNER -u LOKI_E10_SMALL_MAX_CHARS -u LOKI_COST_FIRST -u LOKI_COST_DEFAULTED -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL LOKI_CONFIG_DUMP=1 "$LOKI" start ./ignored.md 2>/dev/null || true)"
+dump="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_E10_SMALL_NO_RUNNER -u LOKI_E10_SMALL_MAX_CHARS -u LOKI_COST_FIRST -u LOKI_COST_DEFAULTED -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL -u LOKI_MUTATION_STRICT -u LOKI_F2P_DEFAULTED LOKI_CONFIG_DUMP=1 "$LOKI" start ./ignored.md 2>/dev/null || true)"
 check "start keeps the provider model" "$(printf '%s' "$dump" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 0 || echo 1)"
 hai="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_E10_SMALL_NO_RUNNER -u LOKI_E10_SMALL_MAX_CHARS -u LOKI_COST_FIRST -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL LOKI_CONFIG_DUMP=1 "$LOKI" start --haiku ./ignored.md 2>/dev/null || true)"
 check "--haiku opts into haiku-first" "$(printf '%s' "$hai" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 1 || echo 0)"
 check "--haiku opts into trim" "$(printf '%s' "$hai" | grep -q '^LOKI_E10_TRIM=1$' && echo 1 || echo 0)"
 check "--haiku opts into cost-first" "$(printf '%s' "$hai" | grep -q '^LOKI_COST_FIRST=1$' && echo 1 || echo 0)"
+check "start turns on fail-to-pass" "$(printf '%s' "$dump" | grep -q '^LOKI_MUTATION_STRICT=1$' && echo 1 || echo 0)"
+offf2p="$(env -u LOKI_MUTATION_STRICT -u LOKI_F2P_DEFAULTED LOKI_MUTATION_STRICT=0 LOKI_CONFIG_DUMP=1 "$LOKI" start ./ignored.md 2>/dev/null || true)"
+check "explicit 0 keeps fail-to-pass off" "$(printf '%s' "$offf2p" | grep -q '^LOKI_MUTATION_STRICT=0$' && echo 1 || echo 0)"
+helpstrict="$(env -u LOKI_MUTATION_STRICT -u LOKI_F2P_DEFAULTED LOKI_CONFIG_DUMP=1 "$LOKI" start --help 2>/dev/null || true)"
+check "help does not turn fail-to-pass on" "$(printf '%s' "$helpstrict" | grep -q '^LOKI_MUTATION_STRICT=1$' && echo 0 || echo 1)"
 
 exit "$fail"

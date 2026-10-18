@@ -2644,6 +2644,27 @@ loki_apply_haiku_optin() {
     done
 }
 
+# Same fail-to-pass default as _loki_f2p_default in bin/loki. Direct bash
+# starts never see the shim. Explicit 0 or 1 wins. --help does not set it.
+loki_f2p_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *) return 0 ;;
+    esac
+    local _a
+    for _a in "$@"; do
+        case "$_a" in --help|-h) return 0 ;; esac
+    done
+    if [ -z "${LOKI_MUTATION_STRICT:-}" ]; then
+        export LOKI_MUTATION_STRICT=1
+        export LOKI_F2P_DEFAULTED=1
+    fi
+}
+loki_f2p_banner() {
+    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || return 0
+    echo "Proof: a behavior change is verified only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out."
+}
+
 loki_print_autonomy() {
     local pol="" f data_dir="${LOKI_DATA_DIR:-${HOME}/.loki}"
     for f in ".loki/policies.json" ".loki/policies.yaml" "${data_dir}/policies.json" "${data_dir}/policies.yaml"; do
@@ -2923,6 +2944,7 @@ cmd_start() {
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
                 echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
                 echo "  --haiku                Opt in to haiku for the first implement. Same levers as --cost lean, plus LOKI_COST_FIRST=1. A failed check climbs back to the session model. Default is the provider model"
+                echo "  Proof                 Default LOKI_MUTATION_STRICT=1. A behavior change is VERIFIED only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -3656,6 +3678,7 @@ cmd_start() {
     # empty non-repo receipt above. The Loki 10 engine path prints the same
     # lines from bin/loki and does not reach here.
     loki_print_autonomy
+    loki_f2p_banner
 
     # Clear any stale raw-brief marker from a PRIOR run before we decide the
     # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
@@ -22678,6 +22701,7 @@ main() {
             fi
             # --haiku is opt-in. The dump below shows the levers when the flag is present.
             loki_apply_haiku_optin "$@"
+            loki_f2p_default "$command" "$@"
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
             # the resolved LOKI_* environment (after the config pre-pass AND any
             # ambient env) and exit 0 WITHOUT running a build. Lets operators and
