@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts";
+import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { findInterrupted, phaseOf, resumeMain, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -147,6 +147,27 @@ describe("engine10 pr stage", () => {
     ctx.outputs = () => ({ seal: {} }); // no verdict key at all
     const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
     expect(result.data.draft).toBe(true);
+  });
+
+  test("fork-only (exit 4): a draft run on a repo the user cannot push to reports the fork notice as one line, no PR", async () => {
+    const script = join(stubDir, "fork-only.sh");
+    writeFileSync(script, "#!/bin/bash\necho 'INFO: no push access to o/r: pushing to the fork me/r' >&2\necho 'fork-only: pushed loki/x to me/r; no draft PR is opened on o/r, which you cannot push to. Open one yourself: gh pr create --repo o/r --head me:loki/x' >&2\nexit 4\n", { mode: 0o755 });
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.status).toBe("failed");
+    expect(result.reason).toBe("fork-only: pushed loki/x to me/r; no draft PR is opened on o/r, which you cannot push to. Open one yourself: gh pr create --repo o/r --head me:loki/x");
+  });
+  test("exit 4 with no fork notice keeps the script, mode and exit status", async () => {
+    const script = join(stubDir, "exit4.sh"); writeFileSync(script, "#!/bin/bash\nexit 4\n", { mode: 0o755 });
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.reason).toBe("engine10-push.sh push-pr failed (exit 4): ");
+  });
+  test("pushErrLine keeps the die line and the permission denial, on one line", () => {
+    const raw = "remote: Permission to anthropics/claude-code.git denied to asklokesh.\nfatal: unable to access 'https://github.com/anthropics/claude-code.git/': The requested URL returned error: 403\nengine10-push: push refused or failed (rc=128)\n";
+    expect(pushErrLine(raw)).toBe("engine10-push: push refused or failed (rc=128): Permission to anthropics/claude-code.git denied to asklokesh.");
+    expect(pushErrLine("")).toBe("");
+    expect(pushErrLine("glab: 401\nengine10-push-gitlab: push-mr failed\n")).toBe("engine10-push-gitlab: push-mr failed");
   });
 
   test("the stub sees both pin env vars", async () => {

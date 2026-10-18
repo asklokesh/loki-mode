@@ -10,7 +10,7 @@ import { basename, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { isTestFile } from "../testmap.ts";
+import { harnessRunners, isTestFile } from "../testmap.ts";
 import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
@@ -241,9 +241,9 @@ export const verifyStage: Stage = {
     const wallPaths = new Set(
       (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
     );
-    const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
-    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", loadRepoMap(intake?.repomap_ref)));
+    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
+    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallTests = [...map.tests.filter((t) => wallPaths.has(t.path)), ...(harness ? [...wallPaths].filter((p) => /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p) && !map.tests.some((t) => t.path === p)).map((path): TestRef => ({ runner: harness, path })) : [])]; // no project runner: a Wall-sealed file bun discovers as a test (*.test, *_test, *.spec, *_spec) runs with Loki's bun; `bun test <name>` skips any other name
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
@@ -300,7 +300,8 @@ export const verifyStage: Stage = {
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[testCheckName(t)]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
     const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
     const notProven = [...weakened, ...pub.filter((c) => c.name === "holdout" && c.result !== "pass").map((c) => (c.result === "not_run" ? "holdout not executed" : "holdout check failed")), ...[...fullNotProven].filter((n) => !n.startsWith("full suite (no test runner")), ...pub.filter((c) => c.owner === "harness" && c.name !== "holdout").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks: pub, flaky, failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
+    const wallNames = new Set(wallTests.map(testCheckName)), wallRun = checks.filter((c) => wallNames.has(c.name) || isHold(c)), wallPassed = wallRun.some((c) => c.result === "fail") ? false : wallRun.length > 0 && wallRun.every((c) => c.result === "pass") ? true : undefined; // the receipt's wall.passed: false on any failure, true only when every Wall and holdout check ran and passed, unset otherwise
+    return { status: "completed", data: { checks: pub, flaky, ...(wallPassed === undefined ? {} : { wall_passed: wallPassed }), failures_grouped: failuresGrouped, holdout_failed: holdoutFailed, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => (isHold(c) ? "holdout" : c.name)), risk } };
   },
 };
 export const stage = verifyStage;

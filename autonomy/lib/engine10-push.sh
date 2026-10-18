@@ -8,6 +8,16 @@
 #   engine10-push.sh issue-comment [--update] <issue-ref> <body-file>
 #   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
 #
+# Fork mode: when gh reports the authenticated user cannot push to the pinned
+# repo (permissions.push false), push-pr pushes to that user's fork (created
+# if missing, verified as a fork of the pinned repo owned by that user) and
+# opens the PR upstream from <user>:<branch>. A draft run in fork mode pushes
+# to the fork only and exits 4: Loki does not open draft PRs on a repository
+# the user cannot push to. issue-comment (status and backstop comments) is a
+# no-op there for the same reason; a receipt comment on the user's own PR is
+# still posted. LOKI_PR_FORK=0 turns fork mode off (the direct push runs and
+# fails as before). No token is needed beyond the user's gh/git login.
+#
 # Holds GitHub credentials, runs no LLM, reads no untrusted text. Inputs come
 # only from argv and the origin pinned by P0 before any provider ran
 # (_LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN=<url>). The target repository is
@@ -128,6 +138,37 @@ _e10_find_pr() {
         --jq "[.[] | select(.isCrossRepository == false and .state == \"OPEN\" and (.headRepositoryOwner.login | ascii_downcase) == \"$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')\")] | .[0].url // empty"
 }
 
+# Fork mode probe. Prints true, false, or nothing (unknown: gh failed or did not say). Only a literal false means no push
+# access; anything else keeps the direct path (fail open, so a gh hiccup never reroutes a push the user could make).
+_e10_can_push() { _e10_gh api "repos/$_e10_repo" --jq '.permissions.push' 2>/dev/null | head -n 1; }
+_e10_fork_off() { [ "${LOKI_PR_FORK:-}" = "0" ]; }
+# Creates or finds the gh user's fork of the pinned repo; prints OWNER/REPO only after gh confirms it is a fork of
+# that repo owned by that user. A fork can take a few seconds to appear after the create call.
+_e10_fork() {
+    local me="$1" fork="" info i
+    fork="$(_e10_gh api -X POST "repos/$_e10_repo/forks" --jq .full_name 2>/dev/null | head -n 1)" || fork=""
+    [[ "$fork" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+    for i in 1 2 3 4 5 6; do
+        info="$(_e10_gh api "repos/$fork" --jq '[(.fork|tostring), (.parent.full_name // ""), .owner.login] | join(" ")' 2>/dev/null)" || info=""
+        if [ -n "$info" ]; then
+            [ "$(printf '%s' "$info" | tr '[:upper:]' '[:lower:]')" = "$(printf 'true %s %s' "$_e10_repo" "$me" | tr '[:upper:]' '[:lower:]')" ] || return 1
+            printf '%s\n' "$fork"
+            return 0
+        fi
+        [ "$i" -lt 6 ] && sleep 2
+    done
+    return 3 # the fork exists by name but GitHub has not served it yet
+}
+# Fork-mode twin of _e10_find_pr: the open cross-repo PR whose head is <me>:<branch> (--head matches the branch name
+# only; the jq owner filter is what pins it to <me>).
+_e10_find_fork_pr() {
+    local me="$1"
+    case "$me" in '' | *[!A-Za-z0-9_.-]*) return 1 ;; esac
+    _e10_gh pr list --repo "$_e10_repo" --head "$2" --state open \
+        --json url,isCrossRepository,headRepositoryOwner,headRefName,state \
+        --jq "[.[] | select(.isCrossRepository == true and .state == \"OPEN\" and (.headRepositoryOwner.login | ascii_downcase) == \"$(printf '%s' "$me" | tr '[:upper:]' '[:lower:]')\")] | .[0].url // empty"
+}
+
 mode="${1:-}"
 shift || true
 case "$mode" in
@@ -155,6 +196,33 @@ case "$mode" in
         if [ -n "$_e10_local" ]; then
             _e10_local_push "$dir" "$branch" || die "push refused or failed (rc=$?)"
             printf 'local://%s#%s\n' "$_LOKI_PINNED_ORIGIN" "$branch"
+            exit 0
+        fi
+        if ! _e10_fork_off && [ "$(_e10_can_push)" = "false" ]; then
+            # A stacked parent published in fork mode lives on the fork, not upstream, so an upstream base would not exist.
+            [ "${#base[@]}" -eq 0 ] || die "no push access to $_e10_repo: a stacked PR (--base) needs push access there; rerun without LOKI_PR_BASE"
+            _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
+            [[ "$_e10_me" =~ ^[A-Za-z0-9_.-]+$ ]] || die "no push access to $_e10_repo and the gh user could not be resolved for a fork; run gh auth login"
+            log_info "no push access to $_e10_repo: creating or reusing the fork under $_e10_me (LOKI_PR_FORK=0 turns this off)"
+            _e10_fork_repo="$(_e10_fork "$_e10_me")" || { [ "$?" -eq 3 ] && die "no push access to $_e10_repo: the fork under $_e10_me is still being created on GitHub; rerun to push once it exists"
+                die "no push access to $_e10_repo and its fork under $_e10_me could not be created or verified"; }
+            log_info "no push access to $_e10_repo: pushing to the fork $_e10_fork_repo"
+            _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" "$_e10_fork_repo" || die "push to fork $_e10_fork_repo refused or failed (rc=$?)"
+            if [ "${#draft[@]}" -gt 0 ]; then
+                printf 'fork-only: pushed %s to %s; no draft PR is opened on %s, which you cannot push to. Open one yourself: gh pr create --repo %s --head %s:%s\n' \
+                    "$branch" "$_e10_fork_repo" "$_e10_repo" "$_e10_repo" "$_e10_me" "$branch" >&2
+                exit 4
+            fi
+            url="$(_e10_find_fork_pr "$_e10_me" "$branch")" || die "gh pr list failed"
+            _e10_pr_state=reused
+            if [ -z "$url" ]; then
+                _e10_pr_state=created
+                url="$(_e10_gh pr create --repo "$_e10_repo" --head "$_e10_me:$branch" --title "$title" --body-file "$body" "${base[@]}")" \
+                    || die "gh pr create failed"
+                url="$(printf '%s\n' "$url" | tail -n 1)"
+            fi
+            printf '%s\n' "$_e10_pr_state"
+            printf '%s\n' "$url"
             exit 0
         fi
         # RECOVERY: a resumed publish skips the push when the remote branch is already at the local commit.
@@ -215,6 +283,15 @@ case "$mode" in
         case "$num" in '' | *[!0-9]*) die "cannot extract issue number from: $1" ;; esac
         [ -f "$2" ] || die "body file not found: $2"
         [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
+        # Status and backstop comments are for a repo the user maintains; on one they cannot push to they would land on
+        # someone else's issue. The receipt comment rides the user's own PR and is still posted.
+        # The receipt body starts with its marker (receipt_surface.ts); only that first line exempts a comment, so issue
+        # text quoting the marker inside a status body cannot. Unlike push-pr this fails closed: a status or backstop
+        # comment is posted only when gh confirms push access, since a wrong guess is a public comment on someone's issue.
+        if [ "$(head -n 1 -- "$2")" != '<!-- loki-receipt -->' ] && [ "$(_e10_can_push)" != "true" ]; then
+            log_info "push access to $_e10_repo not confirmed: not commenting on its issue $num"
+            exit 0
+        fi
         if [ -n "$_e10_upd" ]; then
             _e10_marker=""
             for _e10_m in '<!-- loki-status -->' '<!-- loki-receipt -->'; do

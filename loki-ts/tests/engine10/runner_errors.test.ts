@@ -155,7 +155,8 @@ describe("FC-02 load error ownership (HIGH review B1, B2, N1)", () => {
 
 describe("FC-17 Wall no-op precheck", () => {
   test("no runnable test command: skipped in under 10s with a reason, no model session", async () => {
-    const repoDir = mkdtempSync(join(tmpdir(), "loki-fc17-"));
+    const repoDir = mkdtempSync(join(tmpdir(), "loki-fc17-")), prev = process.env.LOKI_WALL_HARNESS_RUNNER;
+    process.env.LOKI_WALL_HARNESS_RUNNER = "0"; // the bun harness fallback off: FC-17's skip is what remains
     try {
       const runDir = join(repoDir, ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
       const ref = join(runDir, "repomap.json");
@@ -169,7 +170,7 @@ describe("FC-17 Wall no-op precheck", () => {
       expect(r.status).toBe("skipped");
       expect(r.reason).toContain("no runnable test command");
       expect(called).toBe(0);
-    } finally { rmSync(repoDir, { recursive: true, force: true }); }
+    } finally { if (prev === undefined) delete process.env.LOKI_WALL_HARNESS_RUNNER; else process.env.LOKI_WALL_HARNESS_RUNNER = prev; rmSync(repoDir, { recursive: true, force: true }); }
   });
 });
 

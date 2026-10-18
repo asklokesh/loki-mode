@@ -30,3 +30,17 @@ export function formatTokens(n: number): string {
   const v = Math.max(0, Math.round(n));
   return v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`;
 }
+/** Clips at the last word boundary within max and marks the cut with "..." (the full text stays in the receipt and HANDOFF). */
+export function clipWords(s: string, max: number): string {
+  if (s.length <= max) return s;
+  if (max < 4) return s.slice(0, Math.max(0, max));
+  const cut = s.slice(0, max - 3), sp = cut.lastIndexOf(" ");
+  return `${(sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:]+$/, "")}...`;
+}
+/** One summary line from a push child's stderr: the fork-only notice as is, else the script's own die line, plus gh/git's "Permission to X denied" when present. Raw multi-line stderr never reaches NOT PROVEN. */
+export function pushErrLine(stderr: string): string {
+  const lines = stderr.split("\n").map((l) => l.replace(/[\x00-\x1f\x7f]+/g, " ").trim()).filter(Boolean);
+  const fork = lines.find((l) => l.startsWith("fork-only: ")); if (fork) return fork;
+  const die = lines.findLast((l) => /^engine10-push(?:-gitlab)?: /.test(l)) ?? lines.at(-1) ?? "", denied = lines.find((l) => /Permission to \S+ denied to/.test(l))?.replace(/^remote:\s*/, "");
+  return clipWords(denied && !die.includes(denied) ? `${die}: ${denied}` : die, 300);
+}

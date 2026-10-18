@@ -225,6 +225,31 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(testChecks[0]?.result).toBe("pass");
   }, 20_000);
 
+  test("no project runner: the Wall file runs with Loki's bun, so the receipt gets a real Wall result (not 'no tests to run')", async () => {
+    const repoDir = mkRepo("bun-target");
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src.txt"), "changed\n");
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } } });
+    const res = await verifyStage.run(ctx, sig()), testChecks = (res.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"));
+    expect(testChecks).toHaveLength(1);
+    expect(testChecks[0]?.result).toBe("pass");
+    expect(res.data.wall_passed).toBe(true); // seal reads this into receipt.wall.passed; it was never written before
+    const part = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }, { path: join(repoDir, "gone.test.ts") }] } } });
+    const pr = await verifyStage.run(part.ctx, sig()), gone = (pr.data.checks as VerifyCheck[]).find((c) => c.name === "bun:gone.test.ts");
+    expect(gone?.result).not.toBe("pass");
+    expect(pr.data.wall_passed).not.toBe(true); // a Wall check that did not pass never yields wall.passed true
+    writeFileSync(join(repoDir, "loki_wall_feature_test.ts"), 'import { test, expect } from "bun:test";\ntest("w", () => expect(1).toBe(1));\n');
+    const us = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_feature_test.ts") }] } } });
+    const ur = await verifyStage.run(us.ctx, sig());
+    expect((ur.data.checks as VerifyCheck[]).find((c) => c.name === "bun:loki_wall_feature_test.ts")?.result).toBe("pass"); // bun accepts _test names; a Wall file is a test whatever its suffix
+    const rm = join(repoDir, "repomap-py.json"); writeFileSync(rm, JSON.stringify({ files: ["app.py", "tests/test_app.py"], entries: [], truncated: false }));
+    const py = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { intake: { repomap_ref: rm }, wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } } });
+    expect(((await verifyStage.run(py.ctx, sig())).data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); // a Python test suite keeps its own rules, in verify as in the Wall
+    const prev = process.env.LOKI_WALL_HARNESS_RUNNER; process.env.LOKI_WALL_HARNESS_RUNNER = "0";
+    try { const off = await verifyStage.run(ctx, sig()); expect((off.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); expect(off.data.wall_passed).toBeUndefined(); }
+    finally { if (prev === undefined) delete process.env.LOKI_WALL_HARNESS_RUNNER; else process.env.LOKI_WALL_HARNESS_RUNNER = prev; }
+  }, 20_000);
+
   test("select-tests.sh runs when the target carries it (self-hosting)", async () => {
     const repoDir = mkRepo("loki-mode-repo");
     const sha = baseSha(repoDir);
