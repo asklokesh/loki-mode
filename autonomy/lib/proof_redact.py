@@ -196,6 +196,29 @@ def _env_assign_sub(m):
 _URI_CREDENTIAL = re.compile(
     r"\b([A-Za-z][A-Za-z0-9+.\-]{0,63}://[^\s:/@]*:)([^\s@]+)(@)"  # bounded scheme: linear (TEN-SECURITY-26)
 )
+_TOKEN = re.compile(r"\S+")
+
+
+def _redact_uri_credentials(s):
+    """Apply _URI_CREDENTIAL to the part of each whitespace-delimited token up to
+    its last "@". No match ends past that "@" (the password class stops at "@"),
+    and scanning an "@"-free tail from every scheme start is quadratic even with
+    the bounded scheme ("a://" * 16000 took 5.6s). TEN-SECURITY-26 follow-up.
+    Returns (new_string, count)."""
+    total = 0
+
+    def tok(m):
+        nonlocal total
+        t = m.group(0)
+        cut = t.rfind("@") + 1
+        if not cut:
+            return t
+        head, n = _URI_CREDENTIAL.subn(r"\1[REDACTED]\3", t[:cut])
+        total += n
+        return head + t[cut:]
+
+    return _TOKEN.sub(tok, s), total
+
 
 # Absolute user home paths -> ~ . Applied to every string (paths, diffs,
 # brief, summaries). Windows form handled separately to keep the backslash
@@ -289,7 +312,8 @@ def _redact_value(s):
     # Connection-string / URI credentials: scheme://user:PASSWORD@ -> redact
     # the password. Runs before the generic env-assign so the "scheme://user:"
     # prefix is consumed and the assign rule does not double-process it.
-    s, n = _URI_CREDENTIAL.subn(r"\1[REDACTED]\3", s)
+    # The helper applies _URI_CREDENTIAL per token; keep the two in sync.
+    s, n = _redact_uri_credentials(s)
     total += n
 
     # Secret assignments (bare, JSON-quoted, YAML-quoted): keep key, redact value.
