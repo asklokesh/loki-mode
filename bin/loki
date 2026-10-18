@@ -289,8 +289,9 @@ esac
 
 # Optional cheaper-model preference. Stripped for every command so the engine
 # never sees an unknown flag, including a bare `loki "<task>" --cost-first`.
-# LOKI_COST_FIRST=1 keeps a low-risk advisor haiku route; the hard cap
-# (--max-cost, budgets.per_run) is unchanged. Off by default.
+# The start default already sets LOKI_COST_FIRST=1 (see _loki_apply_cost_default).
+# This flag forces it when a pin or --cost off would otherwise skip the default.
+# The hard cap (--max-cost, budgets.per_run) is unchanged.
 _cf_has=0
 for _cf_a in "$@"; do
     case "$_cf_a" in --cost-first) _cf_has=1 ;; esac
@@ -304,6 +305,64 @@ if [ "$_cf_has" = "1" ]; then
     set -- ${_cf_out[@]+"${_cf_out[@]}"}
 fi
 unset _cf_has _cf_out _cf_a
+
+# Default cost route for a real run. Haiku implements first; a failed check
+# climbs back to the session model (runner/model_rank.ts). Prompt trim stays
+# on so a long session does not resend the whole transcript every turn.
+# LOKI_COST_FIRST=1 keeps a low-risk advisor haiku when the router is on.
+# Opt out: --cost off, LOKI_COST_PROFILE=off, LOKI_COST_FIRST=0, or a model
+# pin (--model, --session-model, LOKI_MODEL_OVERRIDE, LOKI_SESSION_MODEL).
+# Keep in sync with loki_apply_cost_default in autonomy/loki.
+_loki_apply_cost_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *" "*|*/*\#[0-9]*|http://*|https://*) ;;
+        *) return 0 ;;
+    esac
+    local _a _prev=""
+    for _a in "$@"; do
+        case "$_a" in
+            --help|-h|--cost=off|--session-model|--session-model=*|--model|--model=*) return 0 ;;
+        esac
+        if [ "$_prev" = "--cost" ] && [ "$_a" = "off" ]; then return 0; fi
+        if [ "$_prev" = "--session-model" ] || [ "$_prev" = "--model" ]; then return 0; fi
+        _prev="$_a"
+    done
+    case "${LOKI_COST_PROFILE:-}" in off|OFF) return 0 ;; esac
+    case "${LOKI_COST_FIRST:-}" in 0|false|off|FALSE|OFF) return 0 ;; esac
+    if [ -n "${LOKI_MODEL_OVERRIDE:-}${LOKI_SESSION_MODEL:-}" ]; then return 0; fi
+    local _keys=()
+    # Do not export LOKI_COST_PROFILE. The Bun start command writes
+    # .loki/cost-profile.json whenever that name is set, including on --dry-run.
+    # The levers are the profile. --cost lean still sets the name itself.
+    if [ -z "${LOKI_IMPLEMENT_HAIKU_FIRST:-}" ]; then export LOKI_IMPLEMENT_HAIKU_FIRST=1; _keys+=("LOKI_IMPLEMENT_HAIKU_FIRST"); fi
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then export LOKI_E10_TRIM=1; _keys+=("LOKI_E10_TRIM"); fi
+    if [ -z "${LOKI_E10_SMALL_NO_RUNNER:-}" ]; then export LOKI_E10_SMALL_NO_RUNNER=1; _keys+=("LOKI_E10_SMALL_NO_RUNNER"); fi
+    if [ -z "${LOKI_E10_SMALL_MAX_CHARS:-}" ]; then export LOKI_E10_SMALL_MAX_CHARS=1200; _keys+=("LOKI_E10_SMALL_MAX_CHARS"); fi
+    if [ -z "${LOKI_COST_FIRST:-}" ]; then export LOKI_COST_FIRST=1; _keys+=("LOKI_COST_FIRST"); fi
+    if [ "${#_keys[@]}" -gt 0 ]; then
+        local _old="${LOKI_COST_DEFAULTED:-}"
+        local _joined
+        _joined="$(IFS=','; printf '%s' "${_keys[*]}")"
+        if [ -n "$_old" ]; then export LOKI_COST_DEFAULTED="${_old},${_joined}"; else export LOKI_COST_DEFAULTED="$_joined"; fi
+    fi
+}
+_loki_print_autonomy() {
+    local _pol="" _f _data="${LOKI_DATA_DIR:-${HOME}/.loki}"
+    for _f in ".loki/policies.json" ".loki/policies.yaml" "${_data}/policies.json" "${_data}/policies.yaml"; do
+        if [ -f "$_f" ]; then _pol="$_f"; break; fi
+    done
+    if [ -n "$_pol" ]; then
+        echo "Autonomy: policy file $_pol (propose, execute, operate; the file decides PR allow, draft or deny)."
+    else
+        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate."
+    fi
+}
+_loki_cost_banner() {
+    [ -n "${LOKI_COST_DEFAULTED:-}" ] || return 0
+    echo "Cost route: haiku implements first. Checks run outside the model. A failed check climbs to your session model. --cost off starts there."
+}
+_loki_apply_cost_default "$@"
 
 # First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
 #
@@ -682,6 +741,8 @@ case "v10" in
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
+            _loki_cost_banner
+            _loki_print_autonomy
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args _e10_hard

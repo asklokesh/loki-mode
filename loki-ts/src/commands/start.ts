@@ -168,7 +168,7 @@ export const START_USAGE =
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
-  "  --cost lean   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
+  "  --cost lean|off   default lean (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set. A failed check climbs. --cost off or a model pin skips the default\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +

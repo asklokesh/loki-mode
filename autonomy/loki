@@ -2627,6 +2627,69 @@ _loki_e10_resume_map() {
     return 0
 }
 
+# Default cost route. Same rules as _loki_apply_cost_default in bin/loki.
+# Fills only unset levers, after config load, so a config file still wins.
+# --cost off undoes only the keys this function set (LOKI_COST_DEFAULTED).
+loki_apply_cost_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *) return 0 ;;
+    esac
+    local _a _prev=""
+    for _a in "$@"; do
+        case "$_a" in
+            --help|-h|--cost=off|--session-model|--session-model=*|--model|--model=*) return 0 ;;
+        esac
+        if [ "$_prev" = "--cost" ] && [ "$_a" = "off" ]; then return 0; fi
+        if [ "$_prev" = "--session-model" ] || [ "$_prev" = "--model" ]; then return 0; fi
+        _prev="$_a"
+    done
+    case "${LOKI_COST_PROFILE:-}" in off|OFF) return 0 ;; esac
+    case "${LOKI_COST_FIRST:-}" in 0|false|off|FALSE|OFF) return 0 ;; esac
+    if [ -n "${LOKI_MODEL_OVERRIDE:-}${LOKI_SESSION_MODEL:-}" ]; then return 0; fi
+    local _keys=()
+    # Do not export LOKI_COST_PROFILE. Bun start writes .loki/cost-profile.json
+    # whenever that name is set, including on --dry-run. The levers are the default.
+    if [ -z "${LOKI_IMPLEMENT_HAIKU_FIRST:-}" ]; then export LOKI_IMPLEMENT_HAIKU_FIRST=1; _keys+=("LOKI_IMPLEMENT_HAIKU_FIRST"); fi
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then export LOKI_E10_TRIM=1; _keys+=("LOKI_E10_TRIM"); fi
+    if [ -z "${LOKI_E10_SMALL_NO_RUNNER:-}" ]; then export LOKI_E10_SMALL_NO_RUNNER=1; _keys+=("LOKI_E10_SMALL_NO_RUNNER"); fi
+    if [ -z "${LOKI_E10_SMALL_MAX_CHARS:-}" ]; then export LOKI_E10_SMALL_MAX_CHARS=1200; _keys+=("LOKI_E10_SMALL_MAX_CHARS"); fi
+    if [ -z "${LOKI_COST_FIRST:-}" ]; then export LOKI_COST_FIRST=1; _keys+=("LOKI_COST_FIRST"); fi
+    if [ "${#_keys[@]}" -gt 0 ]; then
+        local _old="${LOKI_COST_DEFAULTED:-}"
+        local _joined
+        _joined="$(IFS=','; printf '%s' "${_keys[*]}")"
+        if [ -n "$_old" ]; then export LOKI_COST_DEFAULTED="${_old},${_joined}"; else export LOKI_COST_DEFAULTED="$_joined"; fi
+    fi
+}
+
+loki_cost_default_undo() {
+    local _k _ks=()
+    IFS=',' read -r -a _ks <<< "${LOKI_COST_DEFAULTED:-}"
+    for _k in ${_ks[@]+"${_ks[@]}"}; do
+        [ -n "$_k" ] || continue
+        unset "$_k"
+    done
+    unset LOKI_COST_DEFAULTED
+}
+
+loki_print_autonomy() {
+    local pol="" f data_dir="${LOKI_DATA_DIR:-${HOME}/.loki}"
+    for f in ".loki/policies.json" ".loki/policies.yaml" "${data_dir}/policies.json" "${data_dir}/policies.yaml"; do
+        if [ -f "$f" ]; then pol="$f"; break; fi
+    done
+    if [ -n "$pol" ]; then
+        echo "Autonomy: policy file $pol (propose, execute, operate; the file decides PR allow, draft or deny)."
+    else
+        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate."
+    fi
+}
+
+loki_cost_banner() {
+    [ -n "${LOKI_COST_DEFAULTED:-}" ] || return 0
+    echo "Cost route: haiku implements first. Checks run outside the model. A failed check climbs to your session model. --cost off starts there."
+}
+
 cmd_start() {
     # First-run welcome (once): open the branded welcome page on the very
     # first start. Writes ~/.loki/.welcomed and never repeats; non-blocking,
@@ -2892,7 +2955,7 @@ cmd_start() {
                 echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
-                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
+                echo "  --cost PROFILE        lean (default) or off. lean: haiku implements first, prompt trim, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200, each only if unset. A failed check climbs. --cost off or a model pin skips the default"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -3368,7 +3431,7 @@ cmd_start() {
                     lean) : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
                           export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_PROFILE=lean
                           echo "cost profile lean: LOKI_IMPLEMENT_HAIKU_FIRST=$LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
-                    off) ;;
+                    off) loki_cost_default_undo; export LOKI_COST_PROFILE=off ;;
                     *) echo -e "${RED}--cost must be lean or off${NC}" >&2; exit 2 ;;
                 esac
                 shift "$_cost_n"
@@ -3517,6 +3580,20 @@ cmd_start() {
         esac
     done
 
+    # No task and no git repo: do not ask for a provider and do not spend.
+    # The offline receipt (same sample as loki tour) is the first thing they see.
+    if [ -z "$brief_text" ] && [ -z "$prd_file" ] && [ -z "$positional_arg" ] \
+       && [ -z "$explicit_mode" ] && [ -z "${LOKI_PRD_FILE:-}" ] \
+       && [ -z "$remote_url" ] && [ -z "${_ps_ws:-}" ] && [ "${_ps_deploy:-0}" != 1 ] \
+       && [ -z "${bmad_project_path:-}" ] && [ -z "${openspec_change_path:-}" ]; then
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "No repo and no task. Showing a real receipt (no key, no spend)."
+            echo ""
+            wow_offline_finish
+            return $?
+        fi
+    fi
+
     # --remote: submit to a deployed cluster instead of building locally.
     #
     # Branches HERE, after arg parsing but BEFORE the provider pre-flight and
@@ -3603,6 +3680,12 @@ cmd_start() {
             exit 2
         fi
     fi
+
+    # One line each. Printed on the path that will spend, not on --help or the
+    # empty non-repo receipt above. The Loki 10 engine path prints the same
+    # lines from bin/loki and does not reach here.
+    loki_print_autonomy
+    loki_cost_banner
 
     # Clear any stale raw-brief marker from a PRIOR run before we decide the
     # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
@@ -16669,35 +16752,25 @@ EOF
 
 cmd_factory() {
     if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-        echo "loki factory \"<task|prd|issue>\" - loki start, with the autonomy policy printed first"
+        echo "loki factory \"<task|prd|issue>\" - same as loki start"
         echo ""
-        echo "This is a thin wrapper around loki start. It does not change how a policy file gates a run."
+        echo "loki start prints the autonomy policy and runs. factory does not change that."
+        echo "It does not write a policy file."
         echo ""
         echo "Autonomy levels (unchanged):"
         echo "  propose   plan and ask before changing the tree"
-        echo "  execute   build, verify, seal a receipt, open a PR (factory default when no policy file)"
+        echo "  execute   build, verify, seal a receipt, open a PR (default when no policy file)"
         echo "  operate   execute, and deploy only when you pass --deploy"
         echo ""
         echo "A .loki/policies.json or policies.yaml (repo, or LOKI_DATA_DIR, or ~/.loki) still decides"
-        echo "allow, approval (draft PR) or deny. Factory does not write that file."
+        echo "allow, approval (draft PR) or deny."
         echo "When the contract cannot be satisfied the run stops with one question (BLOCKED)."
         echo "The summary still prints outcome, receipt, cost and the next command."
         echo ""
-        echo "Flags are the same as loki start, including --provider opencode, --max-cost and --cost-first."
-        echo "--cost-first prefers a lower-cost model only when the advisor marks the route low risk."
-        echo "The hard cap remains --max-cost and budgets.per_run."
+        echo "loki start uses haiku for the first implement. A failed check climbs."
+        echo "--cost off or a model pin keeps your session model. --max-cost stays the hard cap."
         return 0
     fi
-    local pol="" f data_dir="${LOKI_DATA_DIR:-${HOME}/.loki}"
-    for f in ".loki/policies.json" ".loki/policies.yaml" "${data_dir}/policies.json" "${data_dir}/policies.yaml"; do
-        if [ -f "$f" ]; then pol="$f"; break; fi
-    done
-    if [ -n "$pol" ]; then
-        echo "Factory autonomy: policy file $pol (propose, execute, operate unchanged; the file decides PR allow, draft or deny)."
-    else
-        echo "Factory autonomy: execute (no policy file, same PR gate as loki start). Levels: propose, execute, operate."
-    fi
-    echo "Factory runs: loki start $*"
     exec "$SKILL_DIR/bin/loki" start "$@"
 }
 
@@ -22633,6 +22706,9 @@ main() {
             if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
                 loki_maybe_apply_config_file "$@"
             fi
+            # After config, so a file can set LOKI_COST_PROFILE=off or pin a lever.
+            # --cost off in the argv skips the default. The dump below then shows it.
+            loki_apply_cost_default "$command" "$@"
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
             # the resolved LOKI_* environment (after the config pre-pass AND any
             # ambient env) and exit 0 WITHOUT running a build. Lets operators and

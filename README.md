@@ -26,8 +26,8 @@ The npm package installs the Bun runtime the engine needs as an optional depende
 Want to see a result before you install or spend anything?
 
 ```bash
-npx loki-mode tour    # prints a real receipt from a past build: no key, no spend, no network
-npx loki-mode wow     # a tiny real task when a provider is ready; the same sample when it is not
+npx loki-mode start   # no git repo: a real receipt, no key, no spend, no network
+npx loki-mode tour    # the same receipt when you are already inside a repo
 ```
 
 ## First run
@@ -92,7 +92,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 
 | Command | What it does |
 |---------|--------------|
-| `loki start "<task>"` | The primary path: build a task, PRD file or issue, verify it, seal a receipt, open a PR (`--no-pr`, `--deep`, `--provider`, `--max-cost`). `loki "<task>"` and `loki owner/repo#N` are shorthand |
+| `loki start "<task>"` | The only command you need: haiku implements first, a failed check climbs, the run verifies, seals a receipt, and opens a PR (`--no-pr`, `--provider`, `--max-cost`, `--cost off` to skip the cheap start). `loki "<task>"` and `loki owner/repo#N` are shorthand. No task and no git repo shows a receipt and spends nothing |
 | `loki edit "<change>"` | One targeted change in one pass, no PR, plan or council (`--verify`, `--receipt`, `--commit`, `--dry-run`) |
 | `loki quick "<task>"` | One small task with a verify loop, no PR |
 | `loki chat` | Interactive alternative: Plan and Build modes, slash commands, `/run` starts a `loki start` run, `--attach` joins one |
@@ -107,9 +107,9 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 | `loki doctor [--fix] [--json]` | Check prerequisites, providers and login; `--fix` applies safe fixes |
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
-| `loki tour` | Show a sample receipt offline |
-| `loki wow` | Tiny real task in a temp repo, or the offline sample when no provider is ready (`loki tour --live`) |
-| `loki factory "<task>"` | `loki start` with the autonomy policy printed (`propose`, `execute`, `operate`) |
+| `loki tour` | Show a sample receipt offline. `loki start` does this when you are not in a git repo and did not pass a task |
+| `loki wow` | Same live mini-task as a normal start, in a temp repo. Offline sample when no provider is ready |
+| `loki factory "<task>"` | Same as `loki start`. The policy line is printed by start |
 | `loki --help` | Everything else; `loki help <command>` for one command |
 
 Core verbs: [docs/CLI-CORE-VERBS.md](docs/CLI-CORE-VERBS.md). Every command (generated): [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Engine guide, provider table, model routes, custom agents and chat: [docs/v10/GUIDE.md](docs/v10/GUIDE.md). Honest comparison with opencode: [docs/COMPARE-OPENCODE.md](docs/COMPARE-OPENCODE.md).

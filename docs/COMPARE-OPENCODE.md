@@ -11,15 +11,15 @@ Loki can also drive opencode as a provider (`loki start --provider opencode`).
 
 | Category | Loki Mode | opencode | Edge |
 |---|---|---|---|
-| Everyday UX | `loki start` with one unified summary; `loki chat` for interactive use; `loki wow` for a first verified receipt | Polished TUI as the main surface | opencode for interactive feel; Loki for hands-off runs |
-| Install and onboarding | npm install, `loki setup`, `loki doctor --fix`, `loki tour` with no key, `loki wow` when a provider is ready | Single binary or npm, provider login flow | opencode lighter; Loki now shows a real receipt first |
-| Learning curve | Few core verbs (`loki help`), one route for every input, `loki route` explains it, `loki factory` names the autonomy level | Learn one TUI | Roughly even |
+| Everyday UX | One command, `loki start`. No task and no repo shows a receipt before any spend. The run prints its autonomy level | Polished TUI as the main surface | opencode for interactive feel; Loki for one command that finishes |
+| Install and onboarding | npm install, then `loki start`. No key shows a real receipt. A provider is required only when there is a repo or a task | Single binary or npm, provider login flow | Loki shows proof before it asks for a key |
+| Learning curve | `loki start` is the factory. Policy, receipt, and cost route are printed by that command. `loki help` lists the rest | Learn one TUI | Loki if you do not want a second verb |
 | Interactive coding | `loki chat`: Plan/Build modes, slash commands, `--attach` | Full TUI with sessions and rich editing flow | opencode |
 | Small changes | `loki edit` (one pass, diff, opt-in verify and receipt) | Prompt in the TUI or `opencode run` | Even |
 | Provider flexibility | Claude default; codex, cline, aider, opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
 | Local models | `loki models --local`, `LOKI_MODEL_ROUTE=ollama/...`, lmstudio, llamacpp, vllm, custom URL | Local providers via config | Even |
 | Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, the run view names the active stage | Configurable agents and subagents | Loki when you want the receipt to name who ran |
-| Cost control | `--max-cost` and `budgets.per_run` are hard caps; `--cost-first` prefers a cheaper model only on a low-risk advisor route | User watches the TUI | Loki for a cap you cannot talk your way past |
+| Cost control | `loki start` uses haiku first and trims context. A failed check climbs. `--max-cost` and `budgets.per_run` stay hard caps. `--cost off` or a model pin keeps the session model | User watches the TUI | Loki when the cheap model has to pass a check the expensive model does not grade itself |
 | Proof | Signed receipt, `loki verify`, NOT PROVEN list, and the same summary posted as a PR comment | The diff in the TUI | Loki |
 | Docs consistency | One routing story, one cap rule, generated CLI table | Single product surface | Even |
 | Predictability | Order-independent routing, documented exit-code contract, spend cap, STALLED is never a verified receipt | Interactive, user-driven | Loki for unattended use |
