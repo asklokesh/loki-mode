@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.62 (2026-10-18)
+
+### Fixed
+- A repo that committed Loki's own .loki/ state files can start runs again after that folder is cleared. Before, intake refused with "dirty tracked tree: D .loki/CONTINUITY.md, ..." on every run; Loki's own state is now never treated as your change, and the run still never commits those deletions (FC-LOKI-DIR-DIRT).
+
 ## v11.17.61 (2026-10-18)
 
 ### Fixed

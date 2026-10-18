@@ -2557,3 +2557,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T20:30Z (CoS) v11.17.61
 - P1 FC-NO-DIFF-PUBLISH (anthropics/claude-code#21527 rerun): empty fork push, skipped comment logged ok, glued reason, extra fix rounds. Slices P1-AD (551267ec5) and P1-C (8fcc1315b) merged. Checks: tsc clean (control-plane excluded); bun test budget, supervisor_backstop, machine, sdk_stream_parser, spawn_env_guard, contract 192 pass 0 fail; e2e, issue_ref_e2e, already_done, pr, tests/util 571 tests 0 fail; test-engine10-push.sh 85 passed 0 failed; sigpipe 4 passed; select-tests 119 passed.
+
+## 2026-10-18T20:38Z (CoS) v11.17.62
+- FC-LOKI-DIR-DIRT (asklokesh/FireLater#20): intake blocked on deleted tracked .loki/ legacy files; deleter traced to manual rm in shell history, not Loki (scratch-clone repro on 11.17.60 left them intact). Fix in intake dirtyTrackedFiles. Checks: intake + budget 82 pass 0 fail (new test red first with the exact reported reason); tsc clean (control-plane excluded); e2e, supervisor_backstop, seal, spawn_env_guard, contract, e10ext 380 pass 0 fail.
