@@ -241,9 +241,9 @@ export const verifyStage: Stage = {
     const wallPaths = new Set(
       (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
     );
-    const harness = map.runners.length === 0 ? harnessRunners(map.runners)[0] : undefined, wallTests = [...map.tests.filter((t) => wallPaths.has(t.path)), ...(harness ? [...wallPaths].filter((p) => /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p) && !map.tests.some((t) => t.path === p)).map((path): TestRef => ({ runner: harness, path })) : [])]; // no project runner: a Wall-sealed file bun discovers as a test (*.test, *_test, *.spec, *_spec) runs with Loki's bun; `bun test <name>` skips any other name
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
-    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", loadRepoMap(intake?.repomap_ref)));
+    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
+    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallTests = [...map.tests.filter((t) => wallPaths.has(t.path)), ...(harness ? [...wallPaths].filter((p) => /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p) && !map.tests.some((t) => t.path === p)).map((path): TestRef => ({ runner: harness, path })) : [])]; // no project runner: a Wall-sealed file bun discovers as a test (*.test, *_test, *.spec, *_spec) runs with Loki's bun; `bun test <name>` skips any other name
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });

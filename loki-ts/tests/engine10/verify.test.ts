@@ -242,6 +242,9 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     const us = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_feature_test.ts") }] } } });
     const ur = await verifyStage.run(us.ctx, sig());
     expect((ur.data.checks as VerifyCheck[]).find((c) => c.name === "bun:loki_wall_feature_test.ts")?.result).toBe("pass"); // bun accepts _test names; a Wall file is a test whatever its suffix
+    const rm = join(repoDir, "repomap-py.json"); writeFileSync(rm, JSON.stringify({ files: ["app.py", "tests/test_app.py"], entries: [], truncated: false }));
+    const py = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { intake: { repomap_ref: rm }, wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } } });
+    expect(((await verifyStage.run(py.ctx, sig())).data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); // a Python test suite keeps its own rules, in verify as in the Wall
     const prev = process.env.LOKI_WALL_HARNESS_RUNNER; process.env.LOKI_WALL_HARNESS_RUNNER = "0";
     try { const off = await verifyStage.run(ctx, sig()); expect((off.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); expect(off.data.wall_passed).toBeUndefined(); }
     finally { if (prev === undefined) delete process.env.LOKI_WALL_HARNESS_RUNNER; else process.env.LOKI_WALL_HARNESS_RUNNER = prev; }
