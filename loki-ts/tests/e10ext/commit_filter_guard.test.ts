@@ -99,7 +99,7 @@ test("T16 a deleted file and a .loki file are never formatted", async () => {
 });
 
 test("T16 real gofmt via go.mod formats the run's go file", async () => {
-  if (Bun.spawnSync({ cmd: ["gofmt", "-h"], stdout: "ignore", stderr: "ignore" }).exitCode === undefined) return;
+  if (!Bun.which("gofmt")) return; // no Go toolchain (macOS runners): spawnSync throws ENOENT there rather than returning no exit code
   const r = await commitRun({ "go.mod": "module x\n" }, { "m.go": "package main\nfunc  main( ){\n}\n" });
   expect(r.show("m.go")).toBe("package main\n\nfunc main() {\n}\n");
 });

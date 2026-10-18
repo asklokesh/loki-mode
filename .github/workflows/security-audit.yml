@@ -307,9 +307,10 @@ jobs:
     runs-on: ubuntu-latest
     # D74: the full-history scan grows with history and passed in 11-15 min on
     # trains 83-87, then hit the old 15 min limit on trains 86/88/89/90. The
-    # limit stays 30 min because the daily schedule and workflow_dispatch still
-    # run the full-history scan here; a main push now takes the short range.
-    timeout-minutes: 30
+    # limit was 30 min for the daily schedule and workflow_dispatch full-history
+    # scan; the 2026-10-18 scheduled run (39125084669) was cancelled at 30, so
+    # it is 60 now. A main push takes the short range and finishes in minutes.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:

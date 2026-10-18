@@ -32,7 +32,7 @@ const RULES: [RegExp, string | ((...a: string[]) => string)][] = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[REDACTED:PRIVATE_KEY]"],
   [/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED:OPENAI_KEY]"],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, "$1[REDACTED]"],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"],
+  [/(\b[a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/?#@]+@/gi, "$1[REDACTED]@"], // TEN-SECURITY-26: a bounded scheme keeps this linear; unbounded, every word start in a long a--a run rescanned it (quadratic)
   [ASSIGNMENT, (_m: string, pre: string, val: string) => (val[0] === '"' || val[0] === "'" ? `${pre}${val[0]}[REDACTED]${val[0]}` : `${pre}[REDACTED]`)],
   [/(\bAuthorization\s*[:=]\s*)(?:Basic|Bearer|Token|Digest)?\s*[^\s,;"']+/gi, "$1[REDACTED]"],
 ];

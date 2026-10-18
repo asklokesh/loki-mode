@@ -273,7 +273,11 @@ class RedactionCorpusTests(unittest.TestCase):
         for s in ("a" * 200000,
                   "password=" + "x" * 200000,
                   "postgres://" + "u" * 100000 + ":" + "p" * 100000 + "@h",
-                  "postgres://" + "u" * 200000):
+                  "postgres://" + "u" * 200000,
+                  # TEN-SECURITY-26: a long run of scheme chars with many word
+                  # starts (a--a--a) made the unbounded scheme quadratic (2.4s at 84KB).
+                  "--a" * 28000 + "token",
+                  "a." * 50000 + "x"):
             start = time.monotonic()
             proof_redact.redact_value(s)
             elapsed = time.monotonic() - start

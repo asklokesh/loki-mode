@@ -194,7 +194,7 @@ def _env_assign_sub(m):
 # The password class is [^\s@]+ (stops only at the closing @) so passwords that
 # contain "/" (e.g. postgres://user:p/ss@host) are still fully captured.
 _URI_CREDENTIAL = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]*:)([^\s@]+)(@)"
+    r"\b([A-Za-z][A-Za-z0-9+.\-]{0,63}://[^\s:/@]*:)([^\s@]+)(@)"  # bounded scheme: linear (TEN-SECURITY-26)
 )
 
 # Absolute user home paths -> ~ . Applied to every string (paths, diffs,
