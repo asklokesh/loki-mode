@@ -438,6 +438,11 @@ p4 "$LIB" push-pr "$A" loki/e10-fkp "E10 title" "$W/body.md" >/dev/null 2>"$W/er
     && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkp >/dev/null \
     && ok "fork mode: a fork whose parent is not the pinned repo is refused, nothing pushed" \
     || bad "fork mode parent mismatch rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+git -C "$A" branch loki/e10-fks; n0="$(creates)"
+p4 "$LIB" push-pr "$A" loki/e10-fks "E10 title" "$W/body.md" --base loki/e10-fk >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'a stacked PR (--base) needs push access' "$W/err" && [ "$(creates)" = "$n0" ] \
+    && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fks >/dev/null \
+    && ok "fork mode: a stacked PR (--base) is refused before anything is pushed" || bad "fork mode --base rc=$rc err=$(tr '\n' ' ' < "$W/err")"
 rm -f "$W/fork.parent"; touch "$W/fork.pending"; git -C "$A" branch loki/e10-fkw
 p4 "$LIB" push-pr "$A" loki/e10-fkw "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
 [ "$rc" -eq 2 ] && grep -q 'still being created on GitHub; rerun' "$W/err" && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkw >/dev/null \

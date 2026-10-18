@@ -199,6 +199,8 @@ case "$mode" in
             exit 0
         fi
         if ! _e10_fork_off && [ "$(_e10_can_push)" = "false" ]; then
+            # A stacked parent published in fork mode lives on the fork, not upstream, so an upstream base would not exist.
+            [ "${#base[@]}" -eq 0 ] || die "no push access to $_e10_repo: a stacked PR (--base) needs push access there; rerun without LOKI_PR_BASE"
             _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
             [[ "$_e10_me" =~ ^[A-Za-z0-9_.-]+$ ]] || die "no push access to $_e10_repo and the gh user could not be resolved for a fork; run gh auth login"
             log_info "no push access to $_e10_repo: creating or reusing the fork under $_e10_me (LOKI_PR_FORK=0 turns this off)"

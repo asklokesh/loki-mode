@@ -157,6 +157,12 @@ describe("engine10 pr stage", () => {
     expect(result.status).toBe("failed");
     expect(result.reason).toBe("fork-only: pushed loki/x to me/r; no draft PR is opened on o/r, which you cannot push to. Open one yourself: gh pr create --repo o/r --head me:loki/x");
   });
+  test("exit 4 with no fork notice keeps the script, mode and exit status", async () => {
+    const script = join(stubDir, "exit4.sh"); writeFileSync(script, "#!/bin/bash\nexit 4\n", { mode: 0o755 });
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.reason).toBe("engine10-push.sh push-pr failed (exit 4): ");
+  });
   test("pushErrLine keeps the die line and the permission denial, on one line", () => {
     const raw = "remote: Permission to anthropics/claude-code.git denied to asklokesh.\nfatal: unable to access 'https://github.com/anthropics/claude-code.git/': The requested URL returned error: 403\nengine10-push: push refused or failed (rc=128)\n";
     expect(pushErrLine(raw)).toBe("engine10-push: push refused or failed (rc=128): Permission to anthropics/claude-code.git denied to asklokesh.");
