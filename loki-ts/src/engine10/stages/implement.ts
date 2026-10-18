@@ -1,4 +1,5 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
+import { installOwned } from "../../project_model/install.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
@@ -62,7 +63,7 @@ export function restoreReadOnly(files: ReadOnlyFile[]): string[] {
 
 /** FC-43: the exact set verify.ts judges "empty diff" on; an unreadable tree is "not empty" so the resume never fires on a guess. */
 function treeIsEmpty(ctx: RunContext): boolean {
-  try { return changedFiles(ctx.repoDir, ctx.baseSha).length === 0; } catch { return false; }
+  try { return changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)).length === 0; } catch { return false; }
 }
 
 /** INJECT: top relevant learnings (.loki/state/relevant-learnings.json) as a fenced untrusted block. Missing or malformed file means "". Confidence is a fixed 0.50 because the writer records none: never claim more than ran. */

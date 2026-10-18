@@ -4,6 +4,7 @@
 // suite or a secret match is failure. Rule of Two: assertWorkerEnv asserts no real GitHub token,
 // since the deep worker runs repo code and reads untrusted diffs. Council goes through the
 // injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+import { installOwned } from "../../project_model/install.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -223,7 +224,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   }
   let changed: string[];
   try {
-    changed = changedFiles(ctx.repoDir, ctx.baseSha);
+    changed = changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created));
   } catch (err) {
     return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` };
   }

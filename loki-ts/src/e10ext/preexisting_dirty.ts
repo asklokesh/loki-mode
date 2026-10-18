@@ -23,7 +23,6 @@ export function splitDirty(repoDir: string, lines: string[]): { blocking: string
   return { blocking, preexisting };
 }
 
-/** Recorded lockfiles the run left byte-identical to intake: never attributed to the run, so Commit must not stage them. */
 /** D50-F1 r2: untracked, non-ignored paths present at intake. A discard must never delete or stage them. */
 export function untrackedAtIntake(repoDir: string): string[] {
   return safeGit(repoDir, ["ls-files", "-o", "--exclude-standard", "-z"]).split("\0").filter(Boolean);

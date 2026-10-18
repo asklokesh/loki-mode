@@ -395,18 +395,18 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
  *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
  *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
-export function changedFiles(repoDir: string, baseSha: string): string[] {
+export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): string[] {
   const run = (args: string[]): string[] =>
     safeGit(repoDir, args)
       .split("\n").map((l) => l.trim()).filter(Boolean);
   const tracked = run(["diff", "--name-only", baseSha]);
   const untracked = run(["ls-files", "--others", "--exclude-standard"]);
-  return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/"));
+  return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
 
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
-export function diffFiles(repoDir: string, baseSha: string): DiffFile[] {
-  const paths = changedFiles(repoDir, baseSha), stat = new Map<string, DiffFile>();
+export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): DiffFile[] {
+  const paths = changedFiles(repoDir, baseSha, skip), stat = new Map<string, DiffFile>();
   for (const l of safeGit(repoDir, ["diff", "--numstat", baseSha]).split("\n")) {
     const [a, d, ...p] = l.split("\t"), path = p.join("\t");
     if (path) stat.set(path, { path, added: Number(a) || 0, deleted: Number(d) || 0 });

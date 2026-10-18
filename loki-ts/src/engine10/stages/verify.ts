@@ -3,6 +3,7 @@
 // ("not_run"), never a failure; a failing check gets one rerun, fail-then-pass is "flaky". An empty diff with
 // the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
 // machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
+import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -218,7 +219,7 @@ export const verifyStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     let changed: string[];
     try {
-      changed = changedFiles(ctx.repoDir, ctx.baseSha);
+      changed = changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created));
     } catch (err) {
       return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` };
     }
@@ -229,7 +230,7 @@ export const verifyStage: Stage = {
       }
       return { status: "failed", data: { changed_files: [] }, reason: "empty diff without an already_done marker" };
     }
-    let risk = (() => { try { const r = classifyRisk(diffFiles(ctx.repoDir, ctx.baseSha)); recordRisk(ctx.repoDir, r); return r; } catch { return null; } })(); // RISKTIER: artifact-based tier, recorded; deferred checks are never a pass
+    let risk = (() => { try { const r = classifyRisk(diffFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); recordRisk(ctx.repoDir, r); return r; } catch { return null; } })(); // RISKTIER: artifact-based tier, recorded; deferred checks are never a pass
     const checks: VerifyCheck[] = [];
     const api = loadProjectApi(ctx.repoDir); // FC-01: null (repo-root behavior) unless the model has a package below the root
     const map = await ctx.tests.detect(ctx.repoDir);

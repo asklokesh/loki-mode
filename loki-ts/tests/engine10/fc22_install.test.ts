@@ -5,6 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
+import { changedFiles } from "../../src/util/check_result.ts";
+import { dropSet, parseStaged } from "../../src/e10ext/commit_filter.ts";
+import { installOwned } from "../../src/project_model/install.ts";
 import { absentDepRoots, intakeDeps, prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
 
@@ -207,19 +210,60 @@ describe("absentDepRoots and intakeDeps (FC-DEPS-NOT-INSTALLED)", () => {
     mkdirSync(join(repo, "node_modules")); writeFileSync(join(repo, "node_modules/x"), "");
     expect(absentDepRoots(repo, lockModel({ ".": `sh ${FIX}/ok.sh` }))).toEqual([]);
   });
-  test("install-created untracked paths (node_modules without a gitignore, lockfiles) never reach changedFiles or a commit set", async () => {
-    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
-    mkdirSync(join(repo, ".loki"));
-    writeFileSync(join(repo, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package-lock.json"], fingerprintFiles: ["a/package-lock.json"], packages: [lockPkg("a", `sh -c "mkdir -p node_modules .venv && : > node_modules/x && : > .venv/y && echo l > bun.lock && echo p > pnpm-lock.yaml"`)] }));
-    writeFileSync(join(repo, "mine.txt"), "operator file\n");
-    const ctx = { repoDir: repo, runId: "r-excl", emit: () => {} };
+  // FC-DEPS-NOT-INSTALLED: what the install created is recorded as intake data (file hashes, created dirs); nothing is written to the repo's git config or exclude files.
+  const INSTALL = `sh -c "mkdir -p node_modules .venv && : > node_modules/x && : > .venv/y && echo l > bun.lock && echo p > pnpm-lock.yaml && echo l > ../package-lock.json"`;
+  const prep = (dir: string, cmd: string) => {
+    mkdirSync(join(dir, ".loki"), { recursive: true });
+    writeFileSync(join(dir, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package-lock.json"], fingerprintFiles: ["a/package-lock.json"], packages: [lockPkg("a", cmd)] }));
+  };
+  const runDeps = async (dir: string): Promise<Record<string, unknown>> => {
     const saved = process.env["LOKI_E10_PROJECT_MODEL"]; process.env["LOKI_E10_PROJECT_MODEL"] = "1";
+    try { return await intakeDeps({ repoDir: dir, runId: "r-ic", emit: () => {} } as never, new AbortController().signal, []); } finally { if (saved === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved; }
+  };
+  /** The commit stage's set: git add -A, then what dropSet keeps. */
+  const commitSet = (dir: string, installCreated: unknown): string[] => {
+    execFileSync("git", [...GIT, "add", "-A", "--", ".", ":(exclude).loki"], { cwd: dir });
+    const staged = parseStaged(execFileSync("git", [...GIT, "diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD"], { cwd: dir, encoding: "utf8" }));
+    const drop = new Set(dropSet(dir, staged, undefined, process.env, installCreated).map(({ f }) => f));
+    return staged.map(({ f }) => f).filter((f) => !drop.has(f)).sort();
+  };
+  const baseOf = (dir: string): string => execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+  const visible = (dir: string, ic: unknown): string[] => changedFiles(dir, baseOf(dir), installOwned(dir, ic)).filter((f) => !f.startsWith(".loki/")).sort();
+  test("install-created paths (node_modules without a gitignore, lockfiles, .venv) are absent from changedFiles and the commit set", async () => {
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    prep(repo, INSTALL); writeFileSync(join(repo, "mine.txt"), "operator file\n");
+    const ic = (await runDeps(repo))["install_created"];
+    expect(ic).toBeTruthy();
+    expect(visible(repo, ic)).toEqual(["mine.txt"]);
+    expect(commitSet(repo, ic)).toEqual(["mine.txt"]);
+  });
+  test("an agent-modified install-created lockfile IS in changedFiles and the commit set; the dependency tree stays out", async () => {
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    prep(repo, INSTALL);
+    const ic = (await runDeps(repo))["install_created"];
+    writeFileSync(join(repo, "package-lock.json"), "agent changed this\n");
+    writeFileSync(join(repo, "a/node_modules/extra"), "dep tree content is never a change\n");
+    expect(visible(repo, ic)).toEqual(["package-lock.json"]);
+    expect(commitSet(repo, ic)).toEqual(["package-lock.json"]);
+  });
+  test("intakeDeps leaves .git/info/exclude unchanged, in a clone and in a linked worktree (common dir)", async () => {
+    const exclude = (d: string): string => { const p = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], { cwd: d, encoding: "utf8" }).trim(); const f = resolve(d, p); return existsSync(f) ? readFileSync(f, "utf8") : ""; };
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    const before = exclude(repo); prep(repo, INSTALL); await runDeps(repo);
+    expect(exclude(repo)).toBe(before);
+    const wt = `${repo}-wt`;
     try {
-      await intakeDeps(ctx as never, new AbortController().signal, []);
-      expect(existsSync(join(repo, "a/node_modules/x"))).toBe(true);
-      const others = git("ls-files", "--others", "--exclude-standard").split("\n").filter((f) => f && !f.startsWith(".loki/"));
-      expect(others).toEqual(["mine.txt"]);
-    } finally { if (saved === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved; }
+      git("worktree", "add", "-q", "--detach", wt, "HEAD"); resetInstallMemo(); prep(wt, INSTALL);
+      expect((await runDeps(wt))["install_created"]).toBeTruthy();
+      expect(exclude(wt)).toBe(before); expect(exclude(repo)).toBe(before);
+    } finally { rmSync(wt, { recursive: true, force: true }); }
+  });
+  test("a failed install records nothing that hides files", async () => {
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    prep(repo, `sh -c "mkdir -p node_modules && : > node_modules/x && echo l > bun.lock; exit 3"`);
+    const out = await runDeps(repo);
+    expect(out["install_created"]).toBeUndefined();
+    expect(visible(repo, out["install_created"])).toEqual(["a/bun.lock", "a/node_modules/x"]);
   });
   test("intakeDeps installs absent packages once, emits deps.install, and a failure is NOT PROVEN while the run goes on", async () => {
     mkdirSync(join(repo, ".loki"));

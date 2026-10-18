@@ -11,8 +11,8 @@
 import { spawn } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { baselineSuites } from "../runner/repo_profile.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
@@ -214,30 +214,32 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
   return roots;
 }
 
-/** Untracked, non-ignored entries (whole directories collapsed), as repo-relative paths. */
-const untrackedTop = (repoDir: string): Set<string> => { try { return new Set(safeGit(repoDir, ["ls-files", "-o", "--directory", "--exclude-standard", "-z"]).split("\0").filter(Boolean)); } catch { return new Set(); } };
-/** Whatever the install created (node_modules without a gitignore, lockfiles, .venv) is the harness's, not the change's: excluded through
- *  .git/info/exclude the way .loki/ is, so verify's changedFiles and the commit set never see it. Tracked files are unaffected. */
-function excludeNew(repoDir: string, before: Set<string>): void {
-  try {
-    const add = [...untrackedTop(repoDir)].filter((p) => !before.has(p) && !p.startsWith(".loki/"));
-    if (!add.length) return;
-    const path = resolve(repoDir, safeGit(repoDir, ["rev-parse", "--git-path", "info/exclude"]).trim()), have = existsSync(path) ? readFileSync(path, "utf8") : "";
-    const lines = add.map((p) => `/${p.replace(/[\\*?[#!]/g, "\\$&")}`).filter((l) => !have.split("\n").includes(l));
-    if (!lines.length) return;
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
-  } catch { /* best effort: the install result is already recorded */ }
-}
-
 /** Intake's wired pre-step (FC-DEPS-NOT-INSTALLED, then FC-BASELINE-PER-PACKAGE): installs each package absentDepRoots names, once,
  *  through prepareDeps (event deps.install per package; a failure is NOT PROVEN and the run goes on), then records the per-command
  *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
 export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[]): Promise<Record<string, unknown>> {
-  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTop(ctx.repoDir);
+  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTops(ctx.repoDir);
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
-  if (r.checks.length) excludeNew(ctx.repoDir, before);
+  const created = r.checks.some((c) => c.result === "pass") ? installCreatedSince(ctx.repoDir, before) : null; // a failed install records nothing, so nothing is hidden
   baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
-  return r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {};
+  return { ...(r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {}), ...(created ? { install_created: created } : {}) };
+}
+
+// --no-filters: never run a clean filter from the agent-writable .git/config
+const hashOf = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string => safeGit(repoDir, ["hash-object", "-w", "--no-filters", "--", path], { env }).trim();
+/** FC-DEPS-NOT-INSTALLED: untracked entries (a wholly untracked directory collapsed to "dir/") the dependency install created. Files carry a
+ *  content hash, directories are dependency trees. Nothing is written into the repo's git config or exclude files. */
+export interface InstallCreated { files: Record<string, string>; dirs: string[] }
+export const untrackedTops = (repoDir: string): Set<string> => { try { return new Set(safeGit(repoDir, ["ls-files", "-o", "--directory", "--exclude-standard", "-z"]).split("\0").filter(Boolean)); } catch { return new Set(); } };
+export function installCreatedSince(repoDir: string, before: Set<string>): InstallCreated | null {
+  const files: Record<string, string> = {}, dirs: string[] = [];
+  for (const p of untrackedTops(repoDir)) if (!before.has(p) && !p.startsWith(".loki/")) { if (p.endsWith("/")) dirs.push(p); else { try { files[p] = hashOf(repoDir, p); } catch { /* unreadable: left visible */ } } }
+  return dirs.length || Object.keys(files).length ? { files, dirs } : null;
+}
+/** True for what the install made and the run has not touched: a recorded file only while its content still matches its intake hash
+ *  (an agent-edited lockfile stays a change), anything under a recorded directory unconditionally. */
+export function installOwned(repoDir: string, rec: unknown, env: NodeJS.ProcessEnv = process.env): (f: string) => boolean {
+  const r = rec as Partial<InstallCreated> | null | undefined, files = r && typeof r.files === "object" && r.files ? r.files : {}, dirs = Array.isArray(r?.dirs) ? r.dirs : [];
+  return (f) => dirs.some((d) => typeof d === "string" && f.startsWith(d)) || (Object.hasOwn(files, f) && (() => { try { return hashOf(repoDir, f, env) === files[f]; } catch { return false; } })());
 }
