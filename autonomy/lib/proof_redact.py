@@ -312,6 +312,7 @@ def _redact_value(s):
     # Connection-string / URI credentials: scheme://user:PASSWORD@ -> redact
     # the password. Runs before the generic env-assign so the "scheme://user:"
     # prefix is consumed and the assign rule does not double-process it.
+    # The helper applies _URI_CREDENTIAL per token; keep the two in sync.
     s, n = _redact_uri_credentials(s)
     total += n
 
