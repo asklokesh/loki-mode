@@ -207,6 +207,20 @@ describe("absentDepRoots and intakeDeps (FC-DEPS-NOT-INSTALLED)", () => {
     mkdirSync(join(repo, "node_modules")); writeFileSync(join(repo, "node_modules/x"), "");
     expect(absentDepRoots(repo, lockModel({ ".": `sh ${FIX}/ok.sh` }))).toEqual([]);
   });
+  test("install-created untracked paths (node_modules without a gitignore, lockfiles) never reach changedFiles or a commit set", async () => {
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    mkdirSync(join(repo, ".loki"));
+    writeFileSync(join(repo, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package-lock.json"], fingerprintFiles: ["a/package-lock.json"], packages: [lockPkg("a", `sh -c "mkdir -p node_modules .venv && : > node_modules/x && : > .venv/y && echo l > bun.lock && echo p > pnpm-lock.yaml"`)] }));
+    writeFileSync(join(repo, "mine.txt"), "operator file\n");
+    const ctx = { repoDir: repo, runId: "r-excl", emit: () => {} };
+    const saved = process.env["LOKI_E10_PROJECT_MODEL"]; process.env["LOKI_E10_PROJECT_MODEL"] = "1";
+    try {
+      await intakeDeps(ctx as never, new AbortController().signal, []);
+      expect(existsSync(join(repo, "a/node_modules/x"))).toBe(true);
+      const others = git("ls-files", "--others", "--exclude-standard").split("\n").filter((f) => f && !f.startsWith(".loki/"));
+      expect(others).toEqual(["mine.txt"]);
+    } finally { if (saved === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved; }
+  });
   test("intakeDeps installs absent packages once, emits deps.install, and a failure is NOT PROVEN while the run goes on", async () => {
     mkdirSync(join(repo, ".loki"));
     writeFileSync(join(repo, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package-lock.json"], fingerprintFiles: ["a/package-lock.json"], packages: [lockPkg("a", `sh ${FIX}/ok.sh`), lockPkg("b", `sh ${FIX}/fail.sh`)] }));

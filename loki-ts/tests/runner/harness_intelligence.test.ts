@@ -813,7 +813,7 @@ describe("repo baseline profile (REPOMEM)", () => {
         baselineSuites(d, specs, { run: never });
         seen.length = 0;
         baselineSuites(d, specs, { run, rerun: true });
-        expect(seen).toEqual(["npm test@be"]); // only the unattributable one is re-run once dependencies were installed
+        expect(seen.filter((x) => x !== "npm test@fe" && x !== "npm test@be").length).toBe(1); expect(seen).toContain("npm test@fe"); expect(seen).toContain("npm test@be"); // after an install the main baseline and every suite re-run, attributable or not
         const slow: BaselineRunner = () => ({ code: 1, timedOut: true, out: "" });
         rmSync(commandProfilePath(d)); profileAt(d, base);
         const b = baselineSuites(d, specs, { run: slow, budgetS: 0 })!;

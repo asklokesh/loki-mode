@@ -417,19 +417,19 @@ export function runBaseline(repoDir: string, commands: ProfileCommand[], opts: B
 const normCmd = (s: string): string => s.replace(/\s+--silent\b/, "").trim();
 export const SUITE_BASELINE_BUDGET_S = 120;
 /** FC-BASELINE-PER-PACKAGE: a baseline per full-suite command verify will run (`specs`: package_suite.ts fullSuiteSpecs, the one source), added to the
- *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless it was unattributable and `rerun` (dependencies were
- *  installed since; an unattributable main baseline is then re-run too). A root command the main baseline already ran is not run twice. One shared
+ *  profile ensureProfile wrote for this HEAD. An entry for the same command is reused unless `rerun` (a dependency install succeeded
+ *  since, so a baseline measured before it is stale: the main baseline and every entry are re-run, attributable or not). A root command the main baseline already ran is not run twice. One shared
  *  budget; a suite past it is recorded not run, so nothing it fails is excused (fail-closed). Never throws: null when there is no current profile. */
 export function baselineSuites(repoDir: string, specs: { name: string; cmd: string; cwd: string; run: string }[], opts: BuildOpts & { rerun?: boolean; budgetS?: number } = {}): CommandProfile | null {
   try {
     const p = loadProfile(repoDir);
     if (!p || p.revision !== headOf(repoDir)) return null;
-    if (opts.rerun && p.baseline.ran && !p.baseline.attributable) p.baseline = runBaseline(repoDir, p.commands, opts);
+    if (opts.rerun && p.baseline.ran) p.baseline = runBaseline(repoDir, p.commands, opts);
     let left = opts.budgetS ?? SUITE_BASELINE_BUDGET_S;
     const old = p.suites ?? [];
     p.suites = specs.filter((s) => s.cwd !== "." || normCmd(s.run) !== normCmd(p.baseline.command ?? "")).map((s) => {
       const prev = old.find((o) => o.command === s.cmd);
-      if (prev?.ran && (prev.attributable || !opts.rerun)) return prev;
+      if (prev?.ran && !opts.rerun) return prev;
       const tmo = Math.min(opts.timeoutS ?? DEFAULT_TIMEOUT_S, Math.floor(left)), t0 = Date.now();
       if (tmo < 1) return { name: s.name, ran: false, command: s.cmd, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false, reason: "baseline budget used up" };
       const { b } = runOnce(repoDir, s.run, join(repoDir, s.cwd), tmo, opts);

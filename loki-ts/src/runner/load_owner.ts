@@ -52,6 +52,8 @@ function loadSignature(out: string, roots: string[]): { keys: Set<string>; reaso
   const keys = new Set<string>();
   for (const m of o.matchAll(/Cannot find (?:module|package) '([^']+)'/g)) keys.add(`mod:${m[1]}`);
   for (const m of o.matchAll(/([\w.-]+): command not found/g)) keys.add(`cmd:${m[1]}`);
+  for (const m of o.matchAll(/^(?:\S+: )?\d+: ([\w.-]+): not found$/gm)) keys.add(`cmd:${m[1]}`); // POSIX sh
+  for (const m of o.matchAll(/canceled due to missing packages[^\[\n]*\[([^\]\n]*)\]/g)) for (const p of (m[1] ?? "").split(",")) { const n = p.trim().replace(/^["']|["']$/g, "").replace(/(?<=.)@[^@/]*$/, ""); if (n) keys.add(`pkg:${n}`); } // npx
   return { keys, reason: (classifyRunnerOutput(o).reason ?? "").replace(/:\d+(?::\d+)?/g, "") };
 }
 /** True when base's load error is head's own error (not merely "also broken"): a hermetic base has no node_modules or tools, so

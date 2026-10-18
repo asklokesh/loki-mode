@@ -129,6 +129,10 @@ describe("engine10 verify: baseline subtract (A-112)", () => {
     expect(failIds(vt("5ms"))).toEqual(["s > c", "src/a.test.ts > s > c"]);
     expect(failIds(vt("1.2s"))).toEqual(failIds(vt("5ms")));
   });
+  test("FC-BASELINE-PER-PACKAGE: a FAIL line keeps a trailing duration-like word (only the x-line is stripped)", () => {
+    expect(failIds(" FAIL  src/a.test.ts > retry gives up after 10s\n Tests  1 failed | 2 passed")).toEqual(["src/a.test.ts > retry gives up after 10s"]);
+    expect(failIds(" FAIL  src/a.test.ts > gives up after 10s\n Tests  1 failed")).not.toEqual(failIds(" FAIL  src/a.test.ts > gives up after 20s\n Tests  1 failed"));
+  });
 });
 
 describe("engine10 verify: bare-filename test name (A-111b)", () => {

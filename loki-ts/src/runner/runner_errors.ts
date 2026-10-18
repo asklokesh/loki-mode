@@ -43,7 +43,7 @@ const LOAD_PATTERNS: [RegExp, string][] = [
 /** First line carrying the error, capped, for the NOT PROVEN reason. */
 function firstLoadLine(out: string): string {
   const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-  const l = lines.find((x) => /^(?:E\s+)?(?:Error|\w*Error|ERROR|Failed|FAIL)\b|Cannot find|Interrupted:|No test files found/.test(x)) ?? lines[0] ?? "";
+  const l = lines.find((x) => /^(?:E\s+)?(?:Error|\w*Error|ERROR|Failed|FAIL)\b|Cannot find|Interrupted:|No test files found|\d+: [\w.-]+: not found$|: command not found$|canceled due to missing packages/.test(x)) ?? lines[0] ?? "";
   return l.replace(/\s+/g, " ").slice(0, 160);
 }
 

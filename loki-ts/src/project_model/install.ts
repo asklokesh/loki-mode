@@ -11,8 +11,8 @@
 import { spawn } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { baselineSuites } from "../runner/repo_profile.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
@@ -214,13 +214,30 @@ export function absentDepRoots(repoDir: string, model: ProjectApi | null | undef
   return roots;
 }
 
+/** Untracked, non-ignored entries (whole directories collapsed), as repo-relative paths. */
+const untrackedTop = (repoDir: string): Set<string> => { try { return new Set(safeGit(repoDir, ["ls-files", "-o", "--directory", "--exclude-standard", "-z"]).split("\0").filter(Boolean)); } catch { return new Set(); } };
+/** Whatever the install created (node_modules without a gitignore, lockfiles, .venv) is the harness's, not the change's: excluded through
+ *  .git/info/exclude the way .loki/ is, so verify's changedFiles and the commit set never see it. Tracked files are unaffected. */
+function excludeNew(repoDir: string, before: Set<string>): void {
+  try {
+    const add = [...untrackedTop(repoDir)].filter((p) => !before.has(p) && !p.startsWith(".loki/"));
+    if (!add.length) return;
+    const path = resolve(repoDir, safeGit(repoDir, ["rev-parse", "--git-path", "info/exclude"]).trim()), have = existsSync(path) ? readFileSync(path, "utf8") : "";
+    const lines = add.map((p) => `/${p.replace(/[\\*?[#!]/g, "\\$&")}`).filter((l) => !have.split("\n").includes(l));
+    if (!lines.length) return;
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
+  } catch { /* best effort: the install result is already recorded */ }
+}
+
 /** Intake's wired pre-step (FC-DEPS-NOT-INSTALLED, then FC-BASELINE-PER-PACKAGE): installs each package absentDepRoots names, once,
  *  through prepareDeps (event deps.install per package; a failure is NOT PROVEN and the run goes on), then records the per-command
  *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
 export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[]): Promise<Record<string, unknown>> {
-  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model);
+  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model), before = untrackedTop(ctx.repoDir);
   const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
   for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
+  if (r.checks.length) excludeNew(ctx.repoDir, before);
   baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
   return r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {};
 }

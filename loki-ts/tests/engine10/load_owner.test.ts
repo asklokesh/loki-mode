@@ -55,6 +55,25 @@ describe("B2: base load error must match head's", () => {
   });
 });
 
+describe("FC-DEPS-NOT-INSTALLED: sh not-found and npx missing-packages errors carry a tool key", () => {
+  const BANNER = "\n> frontend@0.1.0 test\n> mytool run\n\n";
+  const sh = (t: string) => `${BANNER}sh: 1: ${t}: not found\n`;
+  const npx = (p: string) => `${BANNER}npm error npx canceled due to missing packages and no YES option: ["${p}"]\n`;
+  test("head 'mytool: not found' vs base 'vitest: not found' is a code failure", async () => {
+    const { dir, sha } = repo();
+    expect(await run(dir, sha, sh("mytool"), sh("vitest"))).toBe(false);
+  });
+  test("positive control: the same missing tool on both sides is harness-owned", async () => {
+    const { dir, sha } = repo();
+    expect(await run(dir, sha, sh("vitest"), sh("vitest"))).toBe(true);
+  });
+  test("npx missing packages: a different package is a code failure, the same one harness-owned", async () => {
+    const { dir, sha } = repo();
+    expect(await run(dir, sha, npx("mytool@1.0.0"), npx("vitest@2.1.0"))).toBe(false);
+    expect(await run(dir, sha, npx("vitest@2.1.0"), npx("vitest@2.1.0"))).toBe(true);
+  });
+});
+
 describe("B2: changedFilesNamed widening", () => {
   test("package-relative path", () => {
     expect(changedFilesNamed("Error at src/index.ts:4", "/r", ["packages/a/src/index.ts"])).toEqual(["packages/a/src/index.ts"]);

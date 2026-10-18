@@ -158,6 +158,8 @@ describe("FC-02 load error ownership (HIGH review B1, B2, N1)", () => {
     expect(o(npx).reason).toContain("not installed");
     expect(o("npm ERR! canceled due to missing packages and no YES option: [\"jest@29\"]").kind).toBe("load_error");
     expect(o("sh: 1: vitest: not found").kind).toBe("load_error");
+    expect(o("> frontend@0.1.0 test\n> vitest run\n\nsh: 1: mytool: not found").reason).toContain("mytool: not found"); // the error line, never the npm banner
+    expect(o(npx).reason).toContain("canceled due to missing packages");
     expect(o("expected log to say: npx canceled due to missing packages\n Tests  1 failed | 2 passed").kind).toBe("test_failure");
     expect(o("AssertionError: expected 'sh: 1: x: not found' to be ''").kind).toBe("test_failure");
   });
