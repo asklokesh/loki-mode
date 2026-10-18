@@ -223,9 +223,15 @@ case "$mode" in
             [ -n "$_e10_marker" ] || die "status body must carry <!-- loki-status --> or <!-- loki-receipt -->"
             _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
             _e10_cid=""
+            # A receipt upsert never posts on a failed lookup: that would stack a duplicate and still report success.
+            if [ -z "$_e10_me" ] && [ "$_e10_marker" = '<!-- loki-receipt -->' ]; then die "cannot resolve the gh user for the receipt comment lookup"; fi
             if [ -n "$_e10_me" ]; then
-                _e10_cid="$(_e10_gh api "repos/$_e10_repo/issues/$num/comments" --paginate \
-                    --jq ".[] | select(.user.login == \"$_e10_me\") | select(.body | contains(\"$_e10_marker\")) | .id" 2>/dev/null | head -n 1)" || _e10_cid=""
+                if _e10_ids="$(_e10_gh api "repos/$_e10_repo/issues/$num/comments" --paginate \
+                    --jq ".[] | select(.user.login == \"$_e10_me\") | select(.body | contains(\"$_e10_marker\")) | .id" 2>/dev/null)"; then
+                    _e10_cid="$(printf '%s\n' "$_e10_ids" | head -n 1)"
+                elif [ "$_e10_marker" = '<!-- loki-receipt -->' ]; then
+                    die "receipt comment lookup failed"
+                fi
             fi
             case "$_e10_cid" in
                 '')

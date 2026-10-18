@@ -88,6 +88,7 @@ describe("resolveExecutor (4.4, 4.6)", () => {
     expect(resolveExecutor({ ...base, env: cf, advisorAvailable: false }).model).toBe("sonnet");
     expect(resolveExecutor({ ...base, env: cf, shapeDefault: "sonnet" }).model).toBe("sonnet");
     expect(resolveExecutor({ ...base, env: cf, route: { ...good, source: "default" } }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: cf, route: { ...good, source: "history" } }).model).toBe("sonnet");
     const ov = resolveExecutor({ ...base, env: { ...cf, LOKI_MODEL_OVERRIDE: "opus" } });
     expect(ov).toMatchObject({ model: "opus", source: "override" });
   });

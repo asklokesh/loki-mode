@@ -21,12 +21,16 @@ describe("repeatedNoopFix", () => {
 describe("treeFingerprint", () => {
   test("two different edits with the same diff stat hash differently; an untracked file counts; .loki does not", () => {
     const dir = mkdtempSync(join(tmpdir(), "anti-loop-"));
+    // Run from a hook, an inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE would point every git call at the caller's repo.
+    const ISOLATE = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"] as const;
+    const saved = ISOLATE.map((k) => [k, process.env[k]] as const);
+    for (const k of ISOLATE) delete process.env[k];
     try {
-      const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: dir, stdio: "pipe" });
+      const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { cwd: dir, stdio: "pipe", env: process.env });
       git("init", "-q");
       writeFileSync(join(dir, "a.js"), "export const x = 1;\n");
       git("add", "a.js"); git("commit", "-q", "-m", "base");
-      const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+      const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8", env: process.env }).trim();
       const clean = treeFingerprint(dir, base);
       expect(clean).toMatch(/^[0-9a-f]{64}$/);
       writeFileSync(join(dir, "a.js"), "export const x = 2;\n");
@@ -42,6 +46,11 @@ describe("treeFingerprint", () => {
       writeFileSync(join(dir, ".loki", "state.json"), "{}");
       expect(treeFingerprint(dir, base)).toBe(withNew);
       expect(treeFingerprint(join(dir, "missing"), base)).toBeNull();
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+      execFileSync("ln", ["-s", join(dir, "gone"), join(dir, "dangling")]); // untracked but unreadable: null, never a stable sentinel
+      expect(treeFingerprint(dir, base)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      for (const [k, v] of saved) if (v !== undefined) process.env[k] = v;
+    }
   });
 });

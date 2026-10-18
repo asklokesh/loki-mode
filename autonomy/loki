@@ -2923,7 +2923,7 @@ cmd_start() {
                 echo "                PROJ-123, #123, or bare number -> generate PRD from issue"
                 echo "  BRIEF mode  - a quoted one-line description (with spaces) -> fast"
                 echo "                zero-config first run; visible artifact + proof quickly"
-                echo "  no input    - analyze current directory, auto-generate PRD"
+                echo "  no input    - analyze current directory, auto-generate PRD (outside a git repo: the offline sample receipt)"
                 echo ""
                 echo "Arguments:"
                 echo "  REPO                  Existing project directory"
@@ -3014,7 +3014,7 @@ cmd_start() {
                 echo "  LOKI_BUDGET_LIMIT     Cost cap in USD (default $(loki_budget_default_usd); empty means unlimited)"
                 echo ""
                 echo "Examples:"
-                echo "  loki start                              # Interactive, analyze current dir"
+                echo "  loki start                              # Interactive, analyze current dir (no git repo: offline sample)"
                 echo "  loki start ./my-project                 # Improve an existing project"
                 echo "  loki start \"build a todo app\"           # BRIEF mode (zero-config fast run)"
                 echo "  loki start --brief \"snake\"              # BRIEF mode (single-word escape hatch)"
@@ -16745,6 +16745,10 @@ cmd_wow() {
     fi
 
     local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
+    case "$use_provider" in
+        claude|opencode|codex|cline|aider) ;;
+        *) echo "loki wow: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
+    esac
     if ! wow_provider_ready "$use_provider"; then
         if [ "$dry_run" = true ]; then
             echo "loki wow: no provider ready for '$use_provider'. A real run would show the offline sample."
@@ -16779,11 +16783,17 @@ cmd_wow() {
         'import test from "node:test";' \
         'import { greet } from "./greet.js";' \
         'test("greet says hello", () => { assert.equal(greet(), "hello"); });' > "$demo_dir/greet.test.js"
-    git -C "$demo_dir" init -q
-    git -C "$demo_dir" config user.email "loki-wow@example.com"
-    git -C "$demo_dir" config user.name "Loki Wow"
-    git -C "$demo_dir" add package.json greet.js greet.test.js
-    git -C "$demo_dir" commit -q -m "failing greet"
+    # Inherited GIT_DIR and friends would point -C at the caller's repo; signing or hooks could fail the commit.
+    if ! (
+        unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
+        g() { git -c commit.gpgsign=false -c core.hooksPath=/dev/null -C "$demo_dir" "$@"; }
+        g init -q && g config user.email "loki-wow@example.com" && g config user.name "Loki Wow" \
+            && g add package.json greet.js greet.test.js && g commit -q -m "failing greet"
+    ); then
+        echo "loki wow: could not set up the temp git repo" >&2
+        if [ "$keep" != true ]; then trap - INT TERM; wow_cleanup_dir "$demo_dir"; fi
+        return 1
+    fi
     echo "Directory: $demo_dir"
     local rc=0
     (

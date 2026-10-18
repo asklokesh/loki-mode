@@ -72,7 +72,7 @@ export function resolveExecutor(i: ResolveInput): Resolved {
   // LOKI_COST_FIRST, the advisor marked the risk low. History floor and no-advisor
   // still raise. Hard spend caps are not decided here.
   const advisorHaiku = i.advisorAvailable && rankOf(best.model) === 0 && best.source !== "default" && i.historyFloor !== "sonnet";
-  const costFirstLow = costFirst && i.shapeDefault !== "haiku" && i.route.risk === "low";
+  const costFirstLow = costFirst && best.source === "advisor" && i.shapeDefault !== "haiku" && i.route.risk === "low"; // advisor-picked haiku only
   const earnedHaiku = advisorHaiku && (i.shapeDefault === "haiku" || costFirstLow);
   if (rankOf(best.model) === 0 && !earnedHaiku) raise("sonnet", "no-evidence", "no evidence the shape earned haiku: executor sonnet");
   else if (earnedHaiku && costFirstLow) best = { ...best, reason: `${best.reason}; cost-first kept the lower-cost model` };

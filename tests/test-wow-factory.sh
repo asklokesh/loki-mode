@@ -16,6 +16,7 @@ hasE() { grep -Eq -- "$2" <<<"$1" && echo 1 || echo 0; }
 lacksE() { grep -Eq -- "$2" <<<"$1" && echo 0 || echo 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-wow-test.XXXXXXXX")"
+WORK="$(cd "$WORK" && pwd -P)" # cmd_wow prints the physical path (macOS /var -> /private/var)
 trap 'rm -rf -- "$WORK"' EXIT
 
 help_out="$("$LOKI" wow --help 2>&1)"
@@ -36,6 +37,10 @@ check "wow rejects a non-numeric --max-cost" "$([ "$bad_cost_rc" = "2" ] && has 
 zero_rc=0
 "$LOKI" wow --dry-run --max-cost 0 >/dev/null 2>&1 || zero_rc=$?
 check "wow rejects a zero --max-cost" "$([ "$zero_rc" = "2" ] && echo 1 || echo 0)"
+
+typo_rc=0
+typo="$("$LOKI" wow --provider claud 2>&1)" || typo_rc=$?
+check "wow rejects an unknown provider instead of showing the sample" "$([ "$typo_rc" = "2" ] && has "$typo" "unknown provider 'claud'" || echo 0)$(lacksE "$typo" 'Sample Receipt')"
 
 fac="$("$LOKI" factory --help 2>&1)"
 check "factory names propose execute operate" "$(has "$fac" 'propose')$(has "$fac" 'execute')$(has "$fac" 'operate')"

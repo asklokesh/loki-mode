@@ -2,7 +2,7 @@
 // three times (machine.ts). This catches a fix round that left the tree byte-identical,
 // so the next verify (same tree, same checks) is not spent on a no-op.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { safeGit } from "./safe_git.ts";
 
@@ -18,7 +18,9 @@ export function treeFingerprint(repoDir: string, baseSha: string): string | null
       .filter((f) => f && f !== ".loki" && !f.startsWith(".loki/")).sort();
     for (const f of fresh) {
       h.update(`\0${f}\0`);
-      try { h.update(readFileSync(join(repoDir, f))); } catch { h.update("\0unreadable"); }
+      const path = join(repoDir, f);
+      if (statSync(path).size > MAX_BUFFER) return null; // a huge artifact is not worth reading twice per round; null never claims a loop
+      h.update(readFileSync(path)); // an unreadable file throws: null, never a stable sentinel that could fake "unchanged"
     }
     return h.digest("hex");
   } catch { return null; }
