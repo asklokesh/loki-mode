@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.65 (2026-10-18)
+
+### Fixed
+- Tests: the engine10 provider suite no longer leaves an untracked `loki-ts/calc.ts` in the repo checkout. The supervisor preflight `codex login status` probe ran in the caller's directory, where the codex test stub wrote its edit; the probe now runs from the temp directory and the stub answers `login` without touching files. A guard asserts no new untracked file appears under loki-ts after a provider run (FC-TEST-LEAKS-INTO-REPO).
+
 ## v11.17.64 (2026-10-18)
 
 ### Fixed

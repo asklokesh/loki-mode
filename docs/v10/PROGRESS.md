@@ -2566,3 +2566,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T21:52Z (CoS) v11.17.64
 - FC-LINT-OOM: Tests shard 0 killed (runner shutdown, exit 143) mid ShellCheck on 303d5df9b and d8293520e; measured shellcheck RSS loki 8.4 GB, run.sh 9.8 GB. Heavy files lint alone. tests/test-shellcheck-heavy-serial.sh red on old script, green now; real lint 598 pass 0 fail 1m45s; shard-coverage, sigpipe, select-tests, registration, help-drift, no-dashes rc 0. LOW review (review-21527) APPROVE.
+
+## 2026-10-18T22:54Z (CoS) v11.17.65
+- FC-TEST-LEAKS-INTO-REPO: writer was providers.test.ts codex stub via preflight providerLoginIssue in process cwd. Fix 3c09faeb5: probe cwd tmpdir, stub exits 0 on login. Guard red on parent (codex case fails at providers.test.ts:184, calc.ts appears), green now: providers+preflight 58 pass 0 fail; help-drift rc 0, sigpipe rc 0. TL review APPROVE (note: relative LOKI_CODEX_CLI path resolves against tmpdir; warning only, follow-up).
