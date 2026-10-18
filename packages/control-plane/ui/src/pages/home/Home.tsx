@@ -7,7 +7,7 @@ import { Badge, Button, Card, EmptyState, KpiTile, Spinner } from "../../design/
 import { EmptyState as FirstRun } from "../../Shell"; // no runs at all: import and CLI first-run state
 import { openNewRun } from "../compose/store";
 import { PrLink } from "../runs";
-import { useAllRuns } from "../runs/data";
+import { useRecentRuns } from "../runs/data";
 import { groupByIssue, inboxOf, kpisOf, runHref, verdictOf, whenOf, type IssueGroup, type Kpis } from "../runs/issues";
 import { OutcomeChip } from "../runs/OutcomeChip";
 
@@ -115,7 +115,13 @@ export function GettingStarted({ doctor, noRuns }: { doctor: DoctorState; noRuns
 
 export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunRow[]; now?: number; doctor?: DoctorState }) {
   const groups = useMemo(() => groupByIssue(runs), [runs]);
-  const tiles = useMemo(() => kpiTiles(kpisOf(runs, groups, now)), [runs, groups, now]);
+  const tiles = useMemo(() => {
+    const base = kpiTiles(kpisOf(runs, groups, now));
+    const priced = runs.map((r) => r.cost_usd).filter((n): n is number => typeof n === "number");
+    if (priced.length === 0) return base;
+    const avg = priced.reduce((a, b) => a + b, 0) / priced.length;
+    return base.map((t) => t.id === "kpi-cost" ? { ...t, trend: [t.trend, `avg ${fmtUsd(avg)} across ${priced.length} priced`].filter(Boolean).join(" / ") } : t);
+  }, [runs, groups, now]);
   return (
     <div data-testid="overview" style={{ display: "flex", flexDirection: "column", gap: 32, maxWidth: 960 }}>
       <header style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -133,7 +139,7 @@ export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunR
 }
 
 export function Home(): ReactNode {
-  const { runs, error } = useAllRuns();
+  const { runs, error } = useRecentRuns(20);
   const [doctor, setDoctor] = useState<DoctorState>(null);
   useEffect(() => {
     let live = true;

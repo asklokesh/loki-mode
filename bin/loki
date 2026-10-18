@@ -287,6 +287,24 @@ case "${1:-}" in
         ;;
 esac
 
+# Optional cheaper-model preference. Stripped for every command so the engine
+# never sees an unknown flag, including a bare `loki "<task>" --cost-first`.
+# LOKI_COST_FIRST=1 keeps a low-risk advisor haiku route; the hard cap
+# (--max-cost, budgets.per_run) is unchanged. Off by default.
+_cf_has=0
+for _cf_a in "$@"; do
+    case "$_cf_a" in --cost-first) _cf_has=1 ;; esac
+done
+if [ "$_cf_has" = "1" ]; then
+    export LOKI_COST_FIRST=1
+    _cf_out=()
+    for _cf_a in "$@"; do
+        [ "$_cf_a" = "--cost-first" ] || _cf_out+=("$_cf_a")
+    done
+    set -- ${_cf_out[@]+"${_cf_out[@]}"}
+fi
+unset _cf_has _cf_out _cf_a
+
 # First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
 #
 # WHY HERE. This shim runs for BOTH routes before any exec, so one emit at this

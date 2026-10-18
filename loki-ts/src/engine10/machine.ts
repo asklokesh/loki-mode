@@ -8,6 +8,7 @@ import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
+import { repeatedNoopFix } from "../util/anti_loop.ts";
 import type { EventType, Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 
 /** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
@@ -260,7 +261,13 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         sigs.push(sigOf(outputs.verify, results[0]));
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify); round++) {
+          const priorFix = outputs.fix;
           const fx = await runStage("fix", true);
+          if (repeatedNoopFix(priorFix, outputs.fix) && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) {
+            ctx.emit("loop.repeat", "fix", { reason: "identical diff and failure signature" });
+            process.stderr.write("loki: anti-loop: the fix repeated the same diff and the same failure; stopping as STALLED\n");
+            stopped = "stalled"; break;
+          }
           if (!fx || mustJump("fix", fx) || fatal) break;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));

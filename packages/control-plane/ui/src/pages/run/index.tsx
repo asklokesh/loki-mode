@@ -358,7 +358,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         <div className="cp-term-bar">
           <span style={{ display: "inline-flex", gap: 6 }} aria-hidden="true"><Dot color="#FF5F57" /><Dot color="#FEBC2E" /><Dot color="#28C840" /></span>
           <span className="cp-trunc">Control Plane / {d.model ?? `model ${UNMEASURED}`}</span>
-          <span>{d.provider ?? `provider ${UNMEASURED}`}</span>
+          <span data-testid="run-active-stage">{running ? `now: ${d.current_stage ?? "starting"}` : (d.provider ?? `provider ${UNMEASURED}`)}</span>
         </div>
         <div className="cp-term-body">
           <Stages d={d} />

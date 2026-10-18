@@ -27,6 +27,7 @@ Want to see a result before you install or spend anything?
 
 ```bash
 npx loki-mode tour    # prints a real receipt from a past build: no key, no spend, no network
+npx loki-mode wow     # a tiny real task when a provider is ready; the same sample when it is not
 ```
 
 ## First run
@@ -107,6 +108,8 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
 | `loki tour` | Show a sample receipt offline |
+| `loki wow` | Tiny real task in a temp repo, or the offline sample when no provider is ready (`loki tour --live`) |
+| `loki factory "<task>"` | `loki start` with the autonomy policy printed (`propose`, `execute`, `operate`) |
 | `loki --help` | Everything else; `loki help <command>` for one command |
 
 Core verbs: [docs/CLI-CORE-VERBS.md](docs/CLI-CORE-VERBS.md). Every command (generated): [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Engine guide, provider table, model routes, custom agents and chat: [docs/v10/GUIDE.md](docs/v10/GUIDE.md). Honest comparison with opencode: [docs/COMPARE-OPENCODE.md](docs/COMPARE-OPENCODE.md).

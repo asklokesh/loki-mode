@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.58. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.17.59. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -143,6 +143,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki export` | Export session data |
 | `loki notify` | Notifications |
 | `loki tour` | See a sample result |
+| `loki wow` | Tiny real task, or the offline sample |
+| `loki factory` | loki start with the autonomy policy printed |
 | `loki welcome` | First-run opener |
 | `loki onboard` | Onboard to a codebase |
 | `loki setup-skill` | Install the skill symlinks |

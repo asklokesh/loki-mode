@@ -67,9 +67,13 @@ export function resolveExecutor(i: ResolveInput): Resolved {
   const routerExec = (env.LOKI_ROUTER_EXECUTOR ?? "").trim();
   if (routerExec) best = { model: routerExec, source: "advisor", reason: "LOKI_ROUTER_EXECUTOR route input" };
   const raise = (model: string, source: ResolvedSource, reason: string): void => { if (rankOf(model) > rankOf(best.model)) best = { model, source, reason }; };
-  // CTO 21:40Z + founder 21:45Z: Haiku only when Opus routed it, the shape earned it (shipped "haiku" listing, floor not tripped) and the advisor is attached.
-  const earnedHaiku = i.advisorAvailable && rankOf(best.model) === 0 && best.source !== "default" && i.shapeDefault === "haiku" && i.historyFloor !== "sonnet";
+  const costFirst = /^(1|true)$/i.test((env.LOKI_COST_FIRST ?? "").trim());
+  // Haiku only when the advisor routed it and either the shape earned it or, with
+  // LOKI_COST_FIRST, the advisor marked the risk low. History floor and no-advisor
+  // still raise. Hard spend caps are not decided here.
+  const earnedHaiku = i.advisorAvailable && rankOf(best.model) === 0 && best.source !== "default" && i.historyFloor !== "sonnet" && (i.shapeDefault === "haiku" || (costFirst && i.route.risk === "low"));
   if (rankOf(best.model) === 0 && !earnedHaiku) raise("sonnet", "no-evidence", "no evidence the shape earned haiku: executor sonnet");
+  else if (costFirst && i.shapeDefault !== "haiku" && i.route.risk === "low" && rankOf(best.model) === 0 && best.source !== "default") best = { ...best, reason: `${best.reason}; cost-first kept the lower-cost model` };
   if (i.shapeDefault === "sonnet") raise("sonnet", "shape-default", "shipped shape default");
   else if (i.shapeDefault === "prior-default") raise(i.priorDefaultModel, "shape-default", "shipped shape default: prior-default");
   if (i.historyFloor === "sonnet") raise("sonnet", "history", "Haiku lost 2 of the last 3 runs on this shape");

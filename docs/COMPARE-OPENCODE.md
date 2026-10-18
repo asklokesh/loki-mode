@@ -9,18 +9,20 @@ Loki can also drive opencode as a provider (`loki start --provider opencode`).
 
 ## Summary
 
-| Category | Loki Mode (11.4.0) | opencode | Edge |
+| Category | Loki Mode | opencode | Edge |
 |---|---|---|---|
-| Everyday UX | `loki start` with one unified summary; `loki chat` for interactive use | Polished TUI as the main surface | opencode for interactive feel; Loki for hands-off runs |
-| Install and onboarding | npm install, `loki setup`, `loki doctor --fix`; needs Node, Python, git, jq, curl and a model | Single binary or npm, provider login flow | opencode lighter; Loki now guided |
-| Learning curve | Few core verbs (`loki help`), one route for every input, `loki route` explains it | Learn one TUI | Roughly even |
+| Everyday UX | `loki start` with one unified summary; `loki chat` for interactive use; `loki wow` for a first verified receipt | Polished TUI as the main surface | opencode for interactive feel; Loki for hands-off runs |
+| Install and onboarding | npm install, `loki setup`, `loki doctor --fix`, `loki tour` with no key, `loki wow` when a provider is ready | Single binary or npm, provider login flow | opencode lighter; Loki now shows a real receipt first |
+| Learning curve | Few core verbs (`loki help`), one route for every input, `loki route` explains it, `loki factory` names the autonomy level | Learn one TUI | Roughly even |
 | Interactive coding | `loki chat`: Plan/Build modes, slash commands, `--attach` | Full TUI with sessions and rich editing flow | opencode |
 | Small changes | `loki edit` (one pass, diff, opt-in verify and receipt) | Prompt in the TUI or `opencode run` | Even |
 | Provider flexibility | Claude default; codex, cline, aider, opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
 | Local models | `loki models --local`, `LOKI_MODEL_ROUTE=ollama/...`, lmstudio, llamacpp, vllm, custom URL | Local providers via config | Even |
-| Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, export to Claude Code subagents | Configurable agents and subagents | Even; Loki adds council |
+| Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, the run view names the active stage | Configurable agents and subagents | Loki when you want the receipt to name who ran |
+| Cost control | `--max-cost` and `budgets.per_run` are hard caps; `--cost-first` prefers a cheaper model only on a low-risk advisor route | User watches the TUI | Loki for a cap you cannot talk your way past |
+| Proof | Signed receipt, `loki verify`, NOT PROVEN list, and the same summary posted as a PR comment | The diff in the TUI | Loki |
 | Docs consistency | One routing story, one cap rule, generated CLI table | Single product surface | Even |
-| Predictability | Order-independent routing, documented exit-code contract, spend cap | Interactive, user-driven | Loki for unattended use |
+| Predictability | Order-independent routing, documented exit-code contract, spend cap, STALLED is never a verified receipt | Interactive, user-driven | Loki for unattended use |
 
 ## Per category
 
@@ -86,6 +88,16 @@ that applies on every engine10 provider.
 - **Verification.** Checks written from the task before code, a deterministic
   `loki verify` for CI, and test-weakening detection.
 - **Council.** Specialist review selected from the changed files and diff.
+
+## Switching from Claude Code or opencode
+
+`loki start` and `loki factory` both run the Loki 10 engine. `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
+
+There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
+
+A rate limit is retried. A hard billing failure is not. Repeating the same diff against the same failure stops as STALLED with a receipt, and that receipt is not VERIFIED.
+
+The MCP server and the Claude plugin return the same receipt-capable result as the CLI. Uninstalling Loki removes the command only. Receipts stay in the project's `.loki/runs` and in `~/.loki` until you delete them.
 
 ## When to pick which
 

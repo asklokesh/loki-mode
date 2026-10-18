@@ -16,6 +16,11 @@ body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: 
 .cp-tl-row { display: grid; grid-template-columns: 64px 96px minmax(0, 1fr); gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--cp-term-line); font-size: 12px; line-height: 1.55; }
 .cp-tl-meta { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--cp-font-mono); font-size: 11px; color: var(--cp-term-muted); }
 .cp-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+[data-testid="run-reply-card"] { border: 2px solid var(--cp-warning, #c9a227); border-radius: 12px; }
+@media (max-width: 640px) {
+  [data-testid="inbox-row"], [data-testid="latest-row"] { flex-wrap: wrap; }
+  [data-testid="run-thread"] h1 { font-size: 24px !important; }
+}
 .cp-eyebrow { font-family: var(--cp-font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cp-text-muted); }
 .cp-display { font-family: var(--cp-font-sans); font-weight: 650; letter-spacing: -0.025em; line-height: 1.12; }
 .cp-pill-btn { border-radius: 9999px; }

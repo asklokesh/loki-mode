@@ -110,6 +110,18 @@ describe("engine10 machine", () => {
     expect(r.stopped).toBe("stalled");
   });
 
+  it("an identical fix diff and failure signature stalls without a third verify", async () => {
+    const { ctx, events } = fakeCtx();
+    let verifies = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "same" }] } }; }),
+      fix: stage("fix", async () => ({ status: "completed", data: { diff_stat: " greets.js | 2 +-", signatures: "same" } })),
+    })) });
+    expect(r.stopped).toBe("stalled");
+    expect(verifies).toBe(2);
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
+  });
+
   it("changing signatures are not stalled", async () => {
     const { ctx } = fakeCtx();
     let n = 0;

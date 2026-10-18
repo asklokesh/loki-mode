@@ -1929,6 +1929,9 @@ show_help_all() {
     echo "  loki start PROJ-456           # Jira issue"
     echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine)"
     echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
+    echo "  loki tour --live              # Same as loki wow: a tiny real task when a provider is ready"
+    echo "  loki wow                      # Live mini-task, or the offline sample when no key is available"
+    echo "  loki factory \"<task>\"         # loki start, and print the autonomy policy"
     echo "  loki demo                     # Build a sample todo app end to end"
     echo "  loki init -t saas-starter     # Scaffold from template"
     echo "  loki template install <src>   # Install a community PRD template"
@@ -16490,6 +16493,214 @@ print('{}{}'.format(iters, rng_str))
     return 0
 }
 
+# loki wow: a tiny real Loki 10 task in a temp repo, or the offline tour when no provider is ready.
+wow_offline_finish() {
+    echo "No live provider for this run. Showing the offline sample (no key, no spend)."
+    echo ""
+    cmd_demo --offline
+    echo ""
+    echo "Ready for your repo? loki start"
+}
+
+wow_provider_ready() {
+    local p="${1:-}"
+    [ -n "$p" ] || p="${LOKI_PROVIDER:-claude}"
+    case "$p" in
+        claude)
+            command -v claude >/dev/null 2>&1 || return 1
+            if [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then return 0; fi
+            [ -e "${HOME}/.claude.json" ] || [ -d "${HOME}/.claude" ] || return 1
+            return 0
+            ;;
+        opencode|codex|cline|aider)
+            command -v "$p" >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+wow_show_receipt() {
+    local demo_dir="$1" receipt verdict
+    receipt="$(find "$demo_dir/.loki/runs" -name receipt.json -type f 2>/dev/null | tail -n 1 || true)"
+    if [ -z "$receipt" ]; then
+        echo "No receipt file was written. The run summary above is the record."
+        return 0
+    fi
+    echo ""
+    echo "Receipt: $receipt"
+    python3 - "$receipt" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1], encoding="utf-8"))
+verdict = str(r.get("verdict") or "unknown")
+cost = r.get("cost") if isinstance(r.get("cost"), dict) else {}
+usd = cost.get("usd")
+tokens = sum(int(cost.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"))
+np = r.get("not_proven") if isinstance(r.get("not_proven"), list) else []
+print(f"Outcome: {verdict}")
+if isinstance(usd, (int, float)):
+    print(f"Cost: ${usd:.4f}")
+else:
+    print("Cost: not recorded on the receipt")
+print(f"Tokens: {tokens}")
+if verdict == "VERIFIED":
+    print("PROVEN: sealed verdict VERIFIED")
+else:
+    print(f"PROVEN: no verified claim (verdict {verdict})")
+print("NOT PROVEN:")
+if np:
+    for item in np:
+        print(f"  - {item}")
+else:
+    print("  - none")
+PY
+    echo ""
+    echo "Verify offline:"
+    (cd "$demo_dir" && "$SKILL_DIR/bin/loki" verify) || true
+}
+
+cmd_wow() {
+    local offline=false dry_run=false provider="" max_cost="2"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo "loki wow - a tiny real task in a temporary git repo"
+                echo ""
+                echo "Creates a temp repo, runs one small fix through the Loki 10 engine,"
+                echo "seals a receipt, and prints PROVEN vs NOT PROVEN, cost and tokens."
+                echo "With no provider key it runs the offline sample instead (loki tour)."
+                echo ""
+                echo "Usage: loki wow [--offline] [--dry-run] [--provider P] [--max-cost N]"
+                echo ""
+                echo "  --offline     Always show the offline sample"
+                echo "  --dry-run     Print the plan. No model call, no spend"
+                echo "  --provider P  claude (default) or opencode, codex, cline, aider"
+                echo "  --max-cost N  Hard per-run cap in USD (default 2). budgets.per_run still applies"
+                echo ""
+                echo "loki tour stays the offline sample. loki tour --live is this command."
+                echo "Ready for your repo? loki start"
+                return 0
+                ;;
+            --offline) offline=true; shift ;;
+            --dry-run) dry_run=true; shift ;;
+            --provider)
+                provider="${2:-}"
+                if [ -z "$provider" ]; then echo "loki wow: --provider requires a value" >&2; return 1; fi
+                shift 2
+                ;;
+            --provider=*) provider="${1#*=}"; shift ;;
+            --max-cost)
+                max_cost="${2:-}"
+                if [ -z "$max_cost" ]; then echo "loki wow: --max-cost requires a value" >&2; return 1; fi
+                shift 2
+                ;;
+            --max-cost=*) max_cost="${1#*=}"; shift ;;
+            *)
+                echo "loki wow: unknown option: $1" >&2
+                echo "Run 'loki wow --help'." >&2
+                return 1
+                ;;
+        esac
+    done
+
+    if [ "$offline" = true ]; then
+        wow_offline_finish
+        return $?
+    fi
+
+    local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
+    if ! wow_provider_ready "$use_provider"; then
+        if [ "$dry_run" = true ]; then
+            echo "loki wow: no provider ready for '$use_provider'. A real run would show the offline sample."
+            echo "Ready for your repo? loki start"
+            return 0
+        fi
+        wow_offline_finish
+        return $?
+    fi
+
+    local task='Make greet() in greet.js return the string hello so `node --test greet.test.js` passes. Do not change the test.'
+    echo "loki wow: temp repo, provider $use_provider, max-cost \$$max_cost, no PR (local receipt)."
+    echo "Task: $task"
+    if [ "$dry_run" = true ]; then
+        echo "[dry-run] Would create a git repo with a failing node:test and run:"
+        echo "  loki start \"<task>\" --no-pr --provider $use_provider --max-cost $max_cost"
+        echo "Then print the receipt, PROVEN vs NOT PROVEN, and: Ready for your repo? loki start"
+        return 0
+    fi
+
+    local demo_dir
+    demo_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-wow.XXXXXXXX")" || return 1
+    cat > "$demo_dir/package.json" <<'EOF'
+{ "type": "module", "name": "loki-wow" }
+EOF
+    cat > "$demo_dir/greet.js" <<'EOF'
+export function greet() { return "hi"; }
+EOF
+    cat > "$demo_dir/greet.test.js" <<'EOF'
+import assert from "node:assert/strict";
+import test from "node:test";
+import { greet } from "./greet.js";
+test("greet says hello", () => { assert.equal(greet(), "hello"); });
+EOF
+    git -C "$demo_dir" init -q
+    git -C "$demo_dir" config user.email "loki-wow@example.com"
+    git -C "$demo_dir" config user.name "Loki Wow"
+    git -C "$demo_dir" add package.json greet.js greet.test.js
+    git -C "$demo_dir" commit -q -m "failing greet"
+    echo "Directory: $demo_dir"
+    local rc=0
+    (
+        cd "$demo_dir" && LOKI_ASSUME_YES=1 "$SKILL_DIR/bin/loki" start "$task" --no-pr --provider "$use_provider" --max-cost "$max_cost"
+    ) || rc=$?
+    if [ "$rc" != "0" ]; then
+        echo ""
+        echo "The live mini-task exited $rc. Showing the offline sample so you still see a real receipt."
+        echo ""
+        wow_offline_finish
+        return 0
+    fi
+    wow_show_receipt "$demo_dir"
+    echo ""
+    echo "Ready for your repo? loki start"
+    return 0
+}
+
+cmd_factory() {
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        echo "loki factory \"<task|prd|issue>\" - loki start, with the autonomy policy printed first"
+        echo ""
+        echo "This is a thin wrapper around loki start. It does not change how a policy file gates a run."
+        echo ""
+        echo "Autonomy levels (unchanged):"
+        echo "  propose   plan and ask before changing the tree"
+        echo "  execute   build, verify, seal a receipt, open a PR (factory default when no policy file)"
+        echo "  operate   execute, and deploy only when you pass --deploy"
+        echo ""
+        echo "A .loki/policies.json or policies.yaml (repo, or LOKI_DATA_DIR, or ~/.loki) still decides"
+        echo "allow, approval (draft PR) or deny. Factory does not write that file."
+        echo "When the contract cannot be satisfied the run stops with one question (BLOCKED)."
+        echo "The summary still prints outcome, receipt, cost and the next command."
+        echo ""
+        echo "Flags are the same as loki start, including --provider opencode, --max-cost and --cost-first."
+        echo "--cost-first prefers a lower-cost model only when the advisor marks the route low risk."
+        echo "The hard cap remains --max-cost and budgets.per_run."
+        return 0
+    fi
+    local pol="" f data_dir="${LOKI_DATA_DIR:-${HOME}/.loki}"
+    for f in ".loki/policies.json" ".loki/policies.yaml" "${data_dir}/policies.json" "${data_dir}/policies.yaml"; do
+        if [ -f "$f" ]; then pol="$f"; break; fi
+    done
+    if [ -n "$pol" ]; then
+        echo "Factory autonomy: policy file $pol (propose, execute, operate unchanged; the file decides PR allow, draft or deny)."
+    else
+        echo "Factory autonomy: execute (no policy file, same PR gate as loki start). Levels: propose, execute, operate."
+    fi
+    echo "Factory runs: loki start $*"
+    exec "$SKILL_DIR/bin/loki" start "$@"
+}
+
 # Demo mode - build a real project from a bundled PRD template
 cmd_demo() {
     # Handle --help
@@ -16517,6 +16728,8 @@ cmd_demo() {
         echo "Examples:"
         echo "  loki demo --offline              # Replay a sample receipt (no spend)"
         echo "  loki tour                        # Same as 'loki demo --offline'"
+        echo "  loki tour --live                 # Tiny real task (loki wow); offline sample if no provider"
+        echo "  loki wow                         # Live mini-task, or the offline sample with no key"
         echo "  loki demo                        # Build todo app in temp dir"
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
         echo "  loki demo --provider codex       # Use Codex instead of Claude"
@@ -22476,13 +22689,24 @@ main() {
         demo)
             cmd_demo "$@"
             ;;
+        wow)
+            cmd_wow "$@"
+            ;;
+        factory)
+            cmd_factory "$@"
+            ;;
         tour)
             # Zero-key/zero-spend taste path: an alias for 'demo --offline' that
             # replays a bundled real Evidence Receipt. --help routes straight to
-            # the demo help (which documents --offline / tour); otherwise inject
-            # --offline ahead of any user args.
+            # the demo help (which documents --offline / tour); --live is loki wow;
+            # otherwise inject --offline ahead of any user args.
             if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
                 cmd_demo --help
+                echo "  loki tour --live                 # Tiny real task (same as loki wow)"
+                echo "  loki wow                         # Live mini-task, or this sample with no key"
+            elif [ "${1:-}" = "--live" ]; then
+                shift
+                cmd_wow "$@"
             else
                 cmd_demo --offline "$@"
             fi
