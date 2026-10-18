@@ -164,6 +164,8 @@ export async function consumeSdkStream(
   let sessionModel: string | undefined; // E-59: from system/init, overridden by a result message's own model if present
   let totalCostUsd: number | null | undefined;
   let captured = ""; // load-bearing capture (final assistant text + result.result)
+  // Blocks are newline-separated so a line-anchored marker never swallows the next block's prose.
+  const capture = (t: string) => { captured += (captured && !captured.endsWith("\n") ? "\n" : "") + t; };
   let rateLimit: { resetSeconds?: number } | undefined;
   let sawResult = false;
   // E-98e: per-message usage, keyed by message.id so a repeated streamed
@@ -241,7 +243,7 @@ export async function consumeSdkStream(
           const text = (item["text"] as string) ?? "";
           // Capture EVERY final text block (independent of the live-print dedup):
           // the streamedText guard only prevents double-PRINTING, not capture.
-          if (text) captured += text;
+          if (text) capture(text);
           if (text && !streamedText) write(text);
         } else if (itype === "tool_use") {
           const tool = (item["name"] as string) ?? "unknown";
@@ -362,7 +364,7 @@ export async function consumeSdkStream(
     // --- result: mark all agents complete, write cost, set exit code
     if (msgType === "result") {
       sawResult = true;
-      if (data.result) captured += data.result;
+      if (data.result) capture(data.result);
       const completedAt = nowIso(clock);
       for (const id of Object.keys(agents)) {
         if (agents[id]!.status === "active") {

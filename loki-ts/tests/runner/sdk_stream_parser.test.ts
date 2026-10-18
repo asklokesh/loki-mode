@@ -118,6 +118,15 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     expect(existsSync(eventsPath())).toBe(false);
   });
 
+  test("consecutive text blocks are newline-separated so a line-anchored marker stops at its own block", async () => {
+    const msgs: StreamMsg[] = [
+      { type: "assistant", message: { content: [{ type: "text", text: "LOKI_SPEC_CONFLICT: the issue says GitLab Slack support has shipped" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "I still haven't changed anything." }] } },
+    ];
+    const r = await consumeSdkStream(msgs, ctx(), clock);
+    expect(/^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(r.capturedText)![1]).toBe("the issue says GitLab Slack support has shipped");
+  });
+
   test("captured text = assistant text + result.result (load-bearing for scanners)", async () => {
     const msgs: StreamMsg[] = [
       { type: "assistant", message: { content: [{ type: "text", text: "Working on it. " }] } },
@@ -597,7 +606,7 @@ describe("consumeSdkStream transcript fixtures", () => {
     expect(r.sawResult).toBe(true);
     expect(r.exitCode).toBe(0);
     expect(r.sessionId).toBe("s-resumed");
-    expect(r.capturedText).toBe("before compaction. after resume. done");
+    expect(r.capturedText).toBe("before compaction. \nafter resume.\n done");
     expect(r.truncated).toBe(false);
   });
 
