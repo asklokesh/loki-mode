@@ -19,7 +19,7 @@ Loki can also drive opencode as a provider (`loki start --provider opencode`).
 | Provider flexibility | Claude default; codex, cline, aider, opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
 | Local models | `loki models --local`, `LOKI_MODEL_ROUTE=ollama/...`, lmstudio, llamacpp, vllm, custom URL | Local providers via config | Even |
 | Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, the run view names the active stage | Configurable agents and subagents | Loki when you want the receipt to name who ran |
-| Cost control | Same provider model as a raw session. `--max-cost` and `budgets.per_run` are hard caps. `--haiku` or `--cost lean` opts the first implement onto haiku; a failed check climbs back | User watches the TUI | Loki when the result has to be a check the model did not grade |
+| Cost control | Same provider model as a raw session. Tool logs are trimmed before the next turn so a long run does not resend them. `--max-cost` and `budgets.per_run` are hard caps. `--haiku` or `--cost lean` opts the first implement onto haiku; a failed check climbs back | User watches the TUI | Loki when the result has to be a check the model did not grade |
 | Proof | Signed receipt, `loki verify`, NOT PROVEN list, and a PR comment. A behavior change is verified only when a Wall test fails on the old code and passes after (`LOKI_MUTATION_STRICT=0` opts out) | The diff in the TUI | Loki |
 | Docs consistency | One routing story, one cap rule, generated CLI table | Single product surface | Even |
 | Predictability | Order-independent routing, documented exit-code contract, spend cap, STALLED is never a verified receipt | Interactive, user-driven | Loki for unattended use |

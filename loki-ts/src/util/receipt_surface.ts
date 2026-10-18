@@ -15,6 +15,25 @@ export interface ReceiptCommentInput {
   mutationProof?: string | null;
 }
 
+/** The last lines of a run. Same facts as the receipt: verdict, money, time, checks the harness ran, fail-to-pass, hash. A null dollar amount is "not measured", never $0. */
+export function renderProofCard(i: {
+  verdict: string;
+  usd: number | null;
+  wallS: number;
+  checks: number;
+  mutationProof: string | null;
+  sha: string | null;
+  tampered?: boolean;
+}): string {
+  const verdict = i.tampered ? "TAMPERED" : i.verdict;
+  const cost = i.usd == null ? "cost not measured" : `$${i.usd.toFixed(2)}`;
+  const secs = Number.isFinite(i.wallS) && i.wallS >= 0 ? Math.round(i.wallS) : 0;
+  const n = Number.isFinite(i.checks) && i.checks > 0 ? Math.floor(i.checks) : 0;
+  const proof = i.mutationProof ?? "fail-to-pass: not recorded";
+  const sha = i.sha ? `sha256:${i.sha}` : "receipt not sealed";
+  return [`LOKI ${verdict}`, `${cost} in ${secs}s, ${n} checks run outside the model`, proof, sha].join("\n");
+}
+
 /** Structured PR comment: outcome, receipt hash, verify command, PROVEN vs NOT PROVEN. */
 export function renderReceiptComment(i: ReceiptCommentInput): string {
   const proven = i.verdict === "VERIFIED" && !i.draft

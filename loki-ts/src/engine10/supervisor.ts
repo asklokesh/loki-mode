@@ -21,6 +21,7 @@ import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUB
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
+import { renderProofCard } from "../util/receipt_surface.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
 import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -232,7 +233,20 @@ export { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type 
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);
   const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
-  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n`;
+  const verify = events.findLast((e) => e.type === "stage.completed" && e.stage === "verify");
+  const checks = Array.isArray(verify?.data.checks) ? verify.data.checks.length : 0;
+  const seal = events.findLast((e) => e.type === "stage.completed" && e.stage === "seal");
+  const mutation = typeof seal?.data.mutation_line === "string" ? seal.data.mutation_line : null;
+  const card = renderProofCard({
+    verdict: summary.outcome ?? summary.verdict,
+    usd: summary.cost.usd,
+    wallS: summary.wallS,
+    checks,
+    mutationProof: mutation,
+    sha: summary.receipt?.sha ?? null,
+    tampered: summary.receipt?.tampered === true,
+  });
+  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n\n${card}\n`;
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.

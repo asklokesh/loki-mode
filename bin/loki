@@ -348,10 +348,17 @@ _loki_f2p_default() {
         export LOKI_MUTATION_STRICT=1
         export LOKI_F2P_DEFAULTED=1
     fi
+    # Tool logs are shortened before the next turn. The tail of a command
+    # stays (trim.ts never halves it), so a failure is not cut off. Earlier
+    # turns are not rewritten, so the prompt cache stays valid. Opt out: 0.
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then
+        export LOKI_E10_TRIM=1
+        export LOKI_TRIM_DEFAULTED=1
+    fi
 }
 _loki_f2p_banner() {
-    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || return 0
-    echo "Proof: a behavior change is verified only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out."
+    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ] || return 0
+    echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0."
 }
 _loki_f2p_default "$@"
 

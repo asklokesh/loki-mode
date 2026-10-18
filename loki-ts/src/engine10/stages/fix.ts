@@ -31,9 +31,13 @@ export function buildFixBrief(
     ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n")
     : "(no grouped failures were provided)";
   const diffText = diffStat ?? "(diff stat is not available)";
+  const located = groups[0]?.signature
+    ? `Failure location (the harness found this; fix this location; do not hunt for a different bug; do not edit or delete an existing test):\n${groups[0].signature}`
+    : "";
   return [
     base,
     "The previous Fast verify run failed. Fix these grouped failures:",
+    ...(located ? [located] : []),
     groupsText,
     ...holdoutNote(holdoutFailed),
     `Diff so far:\n${diffText}`,

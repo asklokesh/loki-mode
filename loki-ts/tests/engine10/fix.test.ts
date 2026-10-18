@@ -89,6 +89,8 @@ describe("buildFixBrief", () => {
     expect(brief).toContain("tests/x.test.ts");
     expect(brief.toLowerCase()).toContain("read-only");
     expect(brief).toContain("Fast verify run failed");
+    expect(brief).toContain("Failure location (the harness found this");
+    expect(brief.indexOf("Failure location")).toBeLessThan(brief.indexOf("1. (2x)"));
     expect(brief).toContain("AssertionError: expected # to equal #");
     expect(brief).toContain("AssertionError: expected 1 to equal 2");
     expect(brief).toContain("1 file changed, +3 -1");

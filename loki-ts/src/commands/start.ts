@@ -171,7 +171,7 @@ export const START_USAGE =
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
   "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
   "  --haiku          opt in to haiku for the first implement (same levers as --cost lean, plus LOKI_COST_FIRST=1). A failed check climbs back. The default model is the provider default, same as a raw session\n" +
-  "  Proof            loki start sets LOKI_MUTATION_STRICT=1 unless you set it. A behavior change is VERIFIED only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out\n" +
+  "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +

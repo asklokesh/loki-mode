@@ -2659,10 +2659,14 @@ loki_f2p_default() {
         export LOKI_MUTATION_STRICT=1
         export LOKI_F2P_DEFAULTED=1
     fi
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then
+        export LOKI_E10_TRIM=1
+        export LOKI_TRIM_DEFAULTED=1
+    fi
 }
 loki_f2p_banner() {
-    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || return 0
-    echo "Proof: a behavior change is verified only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out."
+    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ] || return 0
+    echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0."
 }
 
 loki_print_autonomy() {
@@ -2944,7 +2948,7 @@ cmd_start() {
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
                 echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
                 echo "  --haiku                Opt in to haiku for the first implement. Same levers as --cost lean, plus LOKI_COST_FIRST=1. A failed check climbs back to the session model. Default is the provider model"
-                echo "  Proof                 Default LOKI_MUTATION_STRICT=1. A behavior change is VERIFIED only when a Wall test fails on the old code and passes after. LOKI_MUTATION_STRICT=0 opts out"
+                echo "  Proof                 Default LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn; a command's tail is kept. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"

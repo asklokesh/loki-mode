@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { prNumberFromUrl, renderReceiptComment } from "../../src/util/receipt_surface.ts";
+import { prNumberFromUrl, renderProofCard, renderReceiptComment } from "../../src/util/receipt_surface.ts";
 
 describe("receipt comment", () => {
   test("names outcome, hash, verify, PROVEN and NOT PROVEN", () => {
@@ -39,6 +39,23 @@ describe("receipt comment", () => {
       mutationProof: "test fails without the fix: yes",
     });
     expect(body).toContain("- Proof: test fails without the fix: yes");
+  });
+
+  test("the card states money, time, checks, fail-to-pass and the hash", () => {
+    const card = renderProofCard({
+      verdict: "VERIFIED",
+      usd: 0.42,
+      wallS: 38.2,
+      checks: 4,
+      mutationProof: "test fails without the fix: yes",
+      sha: "abc",
+    });
+    expect(card).toBe("LOKI VERIFIED\n$0.42 in 38s, 4 checks run outside the model\ntest fails without the fix: yes\nsha256:abc");
+    const unknown = renderProofCard({ verdict: "PARTIAL", usd: null, wallS: 1, checks: 0, mutationProof: null, sha: null, tampered: true });
+    expect(unknown.startsWith("LOKI TAMPERED\n")).toBe(true);
+    expect(unknown).toContain("cost not measured");
+    expect(unknown).toContain("fail-to-pass: not recorded");
+    expect(unknown).toContain("receipt not sealed");
   });
 
   test("only a GitHub pull URL yields a number", () => {
