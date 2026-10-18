@@ -129,6 +129,47 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
   }, 15_000);
 
+  test("P1: a sealed SPEC_CONFLICT or PARTIAL with no net diff never calls pr (no empty branch), and the blocked run still comments", async () => {
+    for (const verdict of ["SPEC_CONFLICT", "PARTIAL"]) {
+      const { dir, baseSha } = repoWithCommit();
+      const code = `
+        ${intakeLine(baseSha)}
+        console.log(JSON.stringify({ type: "stage.completed", stage: "implement", data: { spec_conflict_reason: "contradiction" } }));
+        console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: ${JSON.stringify(verdict)}, not_proven: [] } }));
+        process.exit(0);
+      `;
+      const pr = prSpy(), comment = commentSpy();
+      const r = await runSupervisor({ runId: `e10-p1-${verdict.toLowerCase()}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step, started: { task_source: "issue", issue_ref: "acme/widget#42" }, comment: comment.step });
+      expect(r.verdict as string).toBe(verdict);
+      expect(pr.calls.length).toBe(0);
+      expect(r.prUrl).toBeNull();
+      if (verdict === "SPEC_CONFLICT") expect(comment.calls.length).toBe(1);
+    }
+  }, 20_000);
+
+  test("P1: a sealed SPEC_CONFLICT with a real diff still opens its draft PR (A-110)", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `
+      ${intakeLine(baseSha)}
+      ${COMMIT_A_CHANGE}
+      console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "SPEC_CONFLICT", not_proven: [] } }));
+      process.exit(0);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-p1-diff", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+    expect(pr.calls.length).toBe(1);
+    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+  }, 10_000);
+
+  test("P1: a comment step reporting skipped lands skipped:true on the issue.commented event", async () => {
+    const { dir } = repoWithCommit();
+    const skipping: CommentStep = async ({ issueRef }) => ({ argv: ["issue-comment", issueRef, "b.md"], ok: true, skipped: true });
+    await runSupervisor({ runId: "e10-p1-skip", repoDir: dir, env: ENV, workerArgv: worker(`process.exit(1);`), capS: 20, graceS: 5, started: { task_source: "issue", issue_ref: "acme/widget#42" }, comment: skipping });
+    const ev = readFileSync(join(dir, ".loki", "runs", "e10-p1-skip", "events.jsonl"), "utf8").split("\n").filter((l) => l.includes('"issue.commented"'));
+    expect(ev.length).toBe(1);
+    expect(JSON.parse(ev[0]!).data.skipped).toBe(true);
+  }, 10_000);
+
   test("hung worker with no diff, on an issue run: posts an issue comment with the exact reason", async () => {
     const { dir } = repoWithCommit(); // no extra commit: base_sha stays HEAD, so there is no diff
     const code = `setInterval(() => {}, 1000);`;

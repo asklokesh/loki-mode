@@ -282,7 +282,7 @@ case "$mode" in
         num="${1##*#}"
         case "$num" in '' | *[!0-9]*) die "cannot extract issue number from: $1" ;; esac
         [ -f "$2" ] || die "body file not found: $2"
-        [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
+        [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; echo "skipped: local origin"; exit 0; }
         # Status and backstop comments are for a repo the user maintains; on one they cannot push to they would land on
         # someone else's issue. The receipt comment rides the user's own PR and is still posted.
         # The receipt body starts with its marker (receipt_surface.ts); only that first line exempts a comment, so issue
@@ -290,6 +290,7 @@ case "$mode" in
         # comment is posted only when gh confirms push access, since a wrong guess is a public comment on someone's issue.
         if [ "$(head -n 1 -- "$2")" != '<!-- loki-receipt -->' ] && [ "$(_e10_can_push)" != "true" ]; then
             log_info "push access to $_e10_repo not confirmed: not commenting on its issue $num"
+            echo "skipped: no push access to $_e10_repo"
             exit 0
         fi
         if [ -n "$_e10_upd" ]; then
