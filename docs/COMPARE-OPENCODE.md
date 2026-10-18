@@ -95,7 +95,7 @@ that applies on every engine10 provider.
 
 There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run on the Claude SDK path, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`; other providers start implement fresh. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
 
-A rate limit is retried. A hard billing failure is not. A fix round that leaves the tree byte-identical stops as STALLED with a receipt instead of re-running the same checks, and that receipt is not VERIFIED.
+A rate limit is retried. A hard billing failure is not. Two fix rounds in a row that leave the tree byte-identical against the same failure stop as STALLED with a receipt, and that receipt is not VERIFIED.
 
 The MCP server and the Claude plugin return the same receipt-capable result as the CLI. Uninstalling Loki removes the command only. Receipts stay in the project's `.loki/runs` and in `~/.loki` until you delete them.
 

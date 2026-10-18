@@ -110,7 +110,7 @@ describe("engine10 machine", () => {
     expect(r.stopped).toBe("stalled");
   });
 
-  it("a fix round that left the tree unchanged stalls without re-running verify", async () => {
+  it("two fix rounds that left the tree unchanged against the same failure stall without a third verify", async () => {
     const { ctx, events } = fakeCtx();
     let verifies = 0, fixes = 0;
     const r = await runMachine(ctx, { load: loaderOf(all({
@@ -118,9 +118,36 @@ describe("engine10 machine", () => {
       fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0", signatures: "same" } }; }),
     })) });
     expect(r.stopped).toBe("stalled");
-    expect(fixes).toBe(1);
-    expect(verifies).toBe(1);
+    expect(fixes).toBe(2);
+    expect(verifies).toBe(2);
     expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
+  });
+
+  it("one no-op fix round still gets its verify: a flaky check may pass on the same tree", async () => {
+    const { ctx, events } = fakeCtx();
+    let verifies = 0, fixes = 0;
+    await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: verifies === 1 ? [{ signature: "flaky" }] : [] } }; }),
+      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0" } }; }),
+    })) });
+    expect(fixes).toBe(1);
+    expect(verifies).toBe(2);
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(false);
+  });
+
+  it("a crashed verify between two no-op fix rounds is not a repeat (A-113b)", async () => {
+    const { ctx, events } = fakeCtx();
+    let verifies = 0, fixes = 0;
+    await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => {
+        verifies++;
+        if (verifies === 2) return { status: "failed", reason: "verify crashed", data: {} };
+        return { status: "completed", data: { failures_grouped: [{ signature: "same" }] } };
+      }),
+      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0" } }; }),
+    })) });
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(false);
+    expect(verifies).toBe(3);
   });
 
   it("a fix round that changed the tree is verified, even with the same failure", async () => {

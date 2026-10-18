@@ -35,6 +35,10 @@ function bunFlags(): Set<string> {
     for (const f of body.matchAll(/"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1] ?? "");
   }
   for (const f of src.matchAll(/BOOL_ENV_FLAGS\.set\(\s*"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1] ?? "");
+  // acceptedFlags() also adds flags one by one (`s.add("--haiku")`); those are accepted too.
+  const acc = src.match(/function acceptedFlags\([\s\S]*?\n\}/)?.[0] ?? "";
+  expect(acc).not.toBe("");
+  for (const f of acc.matchAll(/\bs\.add\("(-[-a-zA-Z0-9]+)"\)/g)) out.add(f[1] ?? "");
   return out;
 }
 

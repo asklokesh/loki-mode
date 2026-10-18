@@ -757,11 +757,17 @@ case "v10" in
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
-            # Only a run prints the policy lines; keys, export, status, verify, dashboard and plan --spec
-            # are data commands whose output callers parse.
+            # Only a run prints the policy lines, and only with --verbose: the default Loki 10 output is
+            # held to 8 lines (D48). keys, export, status, verify, dashboard and plan --spec are data
+            # commands whose output callers parse, so they never print them.
             case "${1:-}" in
                 keys|export|status|verify|dashboard|plan) ;;
-                *) _loki_f2p_banner; _loki_print_autonomy ;;
+                *)
+                    for _e10_v in "${_e10_args[@]}"; do
+                        if [ "$_e10_v" = "--verbose" ]; then _loki_f2p_banner; _loki_print_autonomy; break; fi
+                    done
+                    unset _e10_v
+                    ;;
             esac
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi

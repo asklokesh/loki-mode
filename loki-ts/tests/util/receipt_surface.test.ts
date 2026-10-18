@@ -27,7 +27,7 @@ describe("receipt comment", () => {
     const body = renderReceiptComment({ verdict: "VERIFIED", draft: false, draftReason: null, notProven: [], receiptSha256: null, runId: "e10-2" });
     expect(body).toContain("PROVEN: sealed verdict VERIFIED");
     expect(body).toContain("- none");
-    expect(body).toContain("not recorded");
+    expect(body).toContain("- Receipt: not sealed");
     expect(body).not.toContain("- Proof:");
   });
 
@@ -57,7 +57,7 @@ describe("receipt comment", () => {
     const unknown = renderProofCard({ verdict: "PARTIAL", usd: null, wallS: 1, checks: 0, mutationProof: null, sha: null, tampered: true });
     expect(unknown.startsWith("LOKI TAMPERED\n")).toBe(true);
     expect(unknown).toContain("cost not measured");
-    expect(unknown).toContain("fail-to-pass: not recorded");
+    expect(unknown).toContain("fail-to-pass: no proof line on the receipt");
     expect(unknown).toContain("receipt not sealed");
   });
 

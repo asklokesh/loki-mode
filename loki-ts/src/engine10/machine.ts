@@ -260,14 +260,19 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
+        let noopSig: string | null = null; // anti-loop: the verify signature that fed the last fix round that left the tree unchanged
         for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify); round++) {
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
-          if (fx.status === "completed" && repeatedNoopFix(outputs.fix) && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) { // same tree, same checks: the next verify would only repeat the failure
-            ctx.emit("loop.repeat", "fix", { reason: "the fix round left the tree unchanged", round: outputs.fix?.round ?? null });
-            process.stderr.write("loki: anti-loop: the fix round changed nothing in the tree; stopping as STALLED\n");
+          const noop = fx.status === "completed" && repeatedNoopFix(outputs.fix), fedBy = sigs[sigs.length - 1] ?? null;
+          // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them
+          // never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
+          if (noop && noopSig !== null && noopSig === fedBy && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) {
+            ctx.emit("loop.repeat", "fix", { reason: "two fix rounds left the tree unchanged against the same failure", round: outputs.fix?.round ?? null });
+            process.stderr.write("loki: anti-loop: two fix rounds changed nothing in the tree against the same failure; stopping as STALLED\n");
             stopped = "stalled"; break;
           }
+          noopSig = noop ? fedBy : null;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;

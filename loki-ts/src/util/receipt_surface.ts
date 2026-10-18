@@ -29,7 +29,7 @@ export function renderProofCard(i: {
   const cost = i.usd == null ? "cost not measured" : `$${i.usd.toFixed(2)}`;
   const secs = Number.isFinite(i.wallS) && i.wallS >= 0 ? Math.round(i.wallS) : 0;
   const n = Number.isFinite(i.checks) && i.checks > 0 ? Math.floor(i.checks) : 0;
-  const proof = i.mutationProof ?? "fail-to-pass: not recorded";
+  const proof = i.mutationProof ?? "fail-to-pass: no proof line on the receipt";
   const sha = i.sha ? `sha256:${i.sha}` : "receipt not sealed";
   return [`LOKI ${verdict}`, `${cost} in ${secs}s, ${n} checks run outside the model`, proof, sha].join("\n");
 }
@@ -44,7 +44,7 @@ export function renderReceiptComment(i: ReceiptCommentInput): string {
     "<!-- loki-receipt -->",
     "## Loki receipt",
     `- Outcome: ${i.verdict}${i.draft ? ` (DRAFT${i.draftReason ? `: ${i.draftReason}` : ""})` : ""}`,
-    `- Receipt: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}`,
+    `- Receipt: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not sealed"}`,
     `- Verify: \`loki verify ${i.runId}\``,
     `- ${proven}`,
     ...(i.mutationProof ? [`- Proof: ${i.mutationProof}`] : []),

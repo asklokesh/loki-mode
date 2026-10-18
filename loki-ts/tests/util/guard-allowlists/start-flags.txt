@@ -21,13 +21,14 @@
 --compliance | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --config | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --detach | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
---dry-run | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
+--dry-run | both
 --env-file | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --fast | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --fresh-prd | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --full | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --github | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --help | both
+--haiku | both
 --isolation | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --issue | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --log-level | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
