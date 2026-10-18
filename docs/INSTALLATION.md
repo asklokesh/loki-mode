@@ -2,7 +2,7 @@
 
 Loki Mode, by [Autonomi](https://www.autonomi.dev/), turns a spec or an issue into a verified pull request with a receipt you can check. This page covers installing it, a first run, and the options around it.
 
-**Version:** v11.17.58
+**Version:** v11.17.59
 
 **Engine note:** `loki start` is the primary command. `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick` all run the Loki 10 engine, whatever the flag order or input form (PRD file, issue ref, task or one-word brief). The previous loop runs only on `--engine legacy`, `LOKI_ENGINE=legacy`, or for one call when a flag Loki 10 cannot honor is present. See the [user guide](v10/GUIDE.md) and the [5-minute quickstart](QUICKSTART.md).
 
@@ -196,7 +196,11 @@ loki completions bash > ~/.loki-completion.bash   # or print the script
 | Bun | `bun update -g loki-mode` | `bun remove -g loki-mode` |
 | Homebrew | `brew upgrade loki-mode` | `brew uninstall loki-mode` |
 
-Run state lives in `.loki/` inside each project and in `~/.loki/`. Remove those directories to delete it.
+Run state lives in `.loki/` inside each project and in `~/.loki/`. Uninstalling the CLI does not delete those directories. Receipts stay yours. Remove `.loki/` and `~/.loki/` yourself only when you want the history gone.
+
+`loki wow` runs one small task in a temporary repo when Claude or OpenCode is ready, and falls back to `loki tour` when it is not. `loki factory "<task>"` is `loki start` with the autonomy policy named first. `--cost-first` prefers a lower-cost model only when the advisor marks the route low risk. `--max-cost` and `budgets.per_run` stay the hard cap.
+
+There is no importer that copies a Claude Code or OpenCode transcript into a Loki run. Inside one Loki run, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`. A rate limit stays a retry; a hard billing failure does not (`loki-ts/src/runner/retry_class.ts`). Checkpoint resume is `loki resume`. The handoff from another tool is the repo plus the task: `loki start --provider opencode` or the default Claude path, then `loki chat --attach` to watch. The MCP server and the Claude plugin return the same receipt-capable results as the CLI.
 
 ---
 

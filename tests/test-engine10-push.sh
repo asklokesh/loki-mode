@@ -63,9 +63,9 @@ case "\$1 \$2" in
         git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-resume 2>/dev/null ;;
     "pr list") W_PRURL="$W/pr.url" W_PRFORK="$W/pr.fork" W_PRCLOSED="$W/pr.closed" sh "$W/prlist.sh" "\$@" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
-    "api user") echo "loki-bot" ;;
+    "api user") [ -f "$W/user.fail" ] && exit 1; echo "loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
-    "issue comment") [ "\$3" = 9 ] && echo 555 > "$W/status.cid" ;;
+    "issue comment"|"pr comment") [ "\$3" = 9 ] && echo 555 > "$W/status.cid" ;;
 esac
 exit 0
 EOF
@@ -178,6 +178,23 @@ p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>&
     && grep -q ' api -X PATCH repos/octocat/hello/issues/comments/555 -F body=@' "$GHLOG" \
     && ! grep -q ' issue comment ' "$GHLOG" \
     && ok "issue-comment --update edits the existing status comment, no duplicate" || bad "issue-comment --update edit ($(tr '\n' '|' < "$GHLOG"))"
+# The PR receipt comment rides the same upsert with its own marker (a PR number is an issue number to the API).
+printf '<!-- loki-receipt -->\n## Loki receipt\n' > "$W/receipt.md"
+rm -f "$W/status.cid"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "#9" "$W/receipt.md" >/dev/null 2>&1 \
+    && grep -q ' pr comment 9 --repo octocat/hello --body-file ' "$GHLOG" \
+    && ! grep -q ' issue comment ' "$GHLOG" \
+    && grep -qF 'contains("<!-- loki-receipt -->")' "$GHLOG" \
+    && ok "issue-comment --update accepts the receipt marker and searches by it" || bad "issue-comment --update receipt ($(tr '\n' '|' < "$GHLOG"))"
+: > "$GHLOG"
+p4 "$LIB" issue-comment --update "#9" "$W/receipt.md" >/dev/null 2>&1 \
+    && grep -q ' api -X PATCH repos/octocat/hello/issues/comments/555 -F body=@' "$GHLOG" \
+    && ok "a re-run edits the one receipt comment, no duplicate" || bad "issue-comment --update receipt edit ($(tr '\n' '|' < "$GHLOG"))"
+touch "$W/user.fail"; : > "$GHLOG"
+refused "a receipt upsert refuses to post when the gh user lookup fails (no duplicate)" "cannot resolve the gh user" \
+    p4 "$LIB" issue-comment --update "#9" "$W/receipt.md"
+! grep -q ' comment 9 ' "$GHLOG" && ok "a failed receipt lookup posts nothing" || bad "a failed receipt lookup still posted ($(tr '\n' '|' < "$GHLOG"))"
+rm -f "$W/user.fail"
 printf 'no marker here\n' > "$W/nomark.md"
 refused "issue-comment --update refuses a body without the marker" "must carry" p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/nomark.md"
 refused "issue-comment rejects a ref with no number" "cannot extract issue number" p4 "$LIB" issue-comment "octocat/hello" "$W/body.md"

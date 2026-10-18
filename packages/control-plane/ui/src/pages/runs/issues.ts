@@ -82,6 +82,9 @@ export interface Kpis {
   /** Null when no finished run this week. */
   verifiedShare: number | null;
   costWeek: number | null;
+  /** Mean over this week's priced runs; null when none are priced. Same window as costWeek. */
+  avgCostWeek: number | null;
+  pricedWeek: number;
   costPartial: boolean;
   needsYou: number;
 }
@@ -108,6 +111,8 @@ export function kpisOf(runs: RunRow[], groups: IssueGroup[], now: number): Kpis 
     verifiedWeek: ver.length,
     verifiedShare: fin.length ? ver.length / fin.length : null,
     costWeek: priced.length ? priced.reduce((a, r) => a + (r.cost_usd ?? 0), 0) : null,
+    avgCostWeek: priced.length ? priced.reduce((a, r) => a + (r.cost_usd ?? 0), 0) / priced.length : null,
+    pricedWeek: priced.length,
     costPartial: priced.length < week.length,
     needsYou: inbox.blocked.length + inbox.partial.length + inbox.prs.length,
   };

@@ -32,6 +32,17 @@ function _loki {
                 export)
                     _arguments '--sarif[Write findings.sarif for a run]'
                     ;;
+                tour)
+                    _arguments '--live[Tiny real task, same as loki wow]'
+                    ;;
+                wow)
+                    _arguments \
+                        '--offline[Always show the offline sample]' \
+                        '--dry-run[Print the plan, no model call]' \
+                        '--keep[Keep the temp repo]' \
+                        '--provider[Provider]:provider:(claude opencode codex cline aider)' \
+                        '--max-cost[Hard per-run cap in USD]:usd:'
+                    ;;
                 control)
                     _arguments \
                         '--port[Port for the control plane server]:port:' \
@@ -241,6 +252,8 @@ function _loki_commands {
         'monitor:Monitor Docker Compose services with auto-fix'
         'demo:Interactive 60-second demo'
         'tour:Offline sample receipt replay (no key, no spend)'
+        'wow:Tiny real task in a temp repo, or the offline sample'
+        'factory:loki start with the autonomy policy printed'
         'welcome:Friendly first-run opener (what Loki is, next steps)'
         'init:Interactive PRD builder'
         'stop:Stop execution'

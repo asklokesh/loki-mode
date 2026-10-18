@@ -21,6 +21,7 @@ import { budgetNext, capNote, groupEnv, parseCapUsd, priorSpend, resolveCap, SUB
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
+import { renderProofCard } from "../util/receipt_surface.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
 import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
@@ -232,7 +233,20 @@ export { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type 
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);
   const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
-  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n`;
+  const verify = events.findLast((e) => e.type === "stage.completed" && e.stage === "verify");
+  const checks = Array.isArray(verify?.data.checks) ? verify.data.checks.length : 0;
+  const seal = events.findLast((e) => e.type === "stage.completed" && e.stage === "seal");
+  const mutation = typeof seal?.data.mutation_line === "string" ? seal.data.mutation_line : null;
+  const card = renderProofCard({
+    verdict: summary.outcome ?? summary.verdict,
+    usd: summary.cost.usd,
+    wallS: summary.wallS,
+    checks,
+    mutationProof: mutation,
+    sha: summary.receipt?.sha ?? null,
+    tampered: summary.receipt?.tampered === true,
+  });
+  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n${verbose ? `\n${card}\n` : ""}`; // D48: the default stays within 8 lines; the card is --verbose only
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
@@ -403,5 +417,6 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const rdy = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.readiness, foldTail = [handoffRef, typeof rdy === "string" ? rdy : ""].filter(Boolean).join("; "); // FV-readiness-env-3: D48 default mode folds readiness into the last line
   const riskLine = readRiskSummary(repoDir, t0); // RISKTIER: this run's recorded tier, deferred checks stated as not run
   process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withRiskLine(foldTail ? withNextLine(out, ui).replace(/\n$/, `; ${foldTail}\n`) : withNextLine(out, ui), riskLine, 7, capLine ? 1 : 0)); // D48: default output stays within 8 lines, so the summary collapses to one line
+  if (!json && res.outcome === "VERIFIED") await import("../util/satisfaction.ts").then((m) => m.maybeAsk({ runId, env: process.env, isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true })).catch(() => {});
   return res.outcome === "CANCELLED" && res.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : EXIT[res.outcome]; // a SIGTERM cancel keeps the conventional 128+15
 }

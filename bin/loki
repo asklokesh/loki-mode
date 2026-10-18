@@ -287,6 +287,99 @@ case "${1:-}" in
         ;;
 esac
 
+# Optional cheaper-model preference. Stripped for every command so the engine
+# never sees an unknown flag, including a bare `loki "<task>" --cost-first`.
+# Off unless the flag or --haiku is passed. The hard cap (--max-cost,
+# budgets.per_run) is unchanged.
+_cf_has=0
+for _cf_a in "$@"; do
+    case "$_cf_a" in --cost-first) _cf_has=1 ;; esac
+done
+if [ "$_cf_has" = "1" ]; then
+    export LOKI_COST_FIRST=1
+    _cf_out=()
+    for _cf_a in "$@"; do
+        [ "$_cf_a" = "--cost-first" ] || _cf_out+=("$_cf_a")
+    done
+    set -- ${_cf_out[@]+"${_cf_out[@]}"}
+fi
+unset _cf_has _cf_out _cf_a
+
+# --haiku opts the first implement onto haiku (the existing lean levers).
+# The default model stays the provider default, the same one a raw claude
+# session uses. A failed check still climbs back (haikuFirstDowngrade).
+# Explicit env wins. Stripped so neither engine treats it as an unknown flag.
+_hk_has=0
+for _hk_a in "$@"; do
+    case "$_hk_a" in --haiku) _hk_has=1 ;; esac
+done
+if [ "$_hk_has" = "1" ]; then
+    : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}"
+    : "${LOKI_E10_TRIM:=1}"
+    : "${LOKI_E10_SMALL_NO_RUNNER:=1}"
+    : "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
+    : "${LOKI_COST_FIRST:=1}"
+    export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_FIRST
+    _hk_out=()
+    for _hk_a in "$@"; do
+        [ "$_hk_a" = "--haiku" ] || _hk_out+=("$_hk_a")
+    done
+    set -- ${_hk_out[@]+"${_hk_out[@]}"}
+fi
+unset _hk_has _hk_out _hk_a
+
+# Fail-to-pass, on for a real start. SWE-bench counts a fix only when a test
+# fails on the base and passes on the head. mutation_proof.ts already re-runs
+# the Wall tests on the old tree; LOKI_MUTATION_STRICT=1 is what refuses
+# VERIFIED when they still pass and the plan declared a behavior change.
+# The library default stays off. This command turns it on. Opt out with
+# LOKI_MUTATION_STRICT=0. --help does not set it.
+_loki_f2p_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *" "*|*/*\#[0-9]*|http://*|https://*) ;;
+        *) return 0 ;;
+    esac
+    local _a
+    for _a in "$@"; do
+        case "$_a" in --help|-h) return 0 ;; esac
+    done
+    if [ -z "${LOKI_MUTATION_STRICT:-}" ]; then
+        export LOKI_MUTATION_STRICT=1
+        export LOKI_F2P_DEFAULTED=1
+    fi
+    # Tool logs are shortened before the next turn. The tail of a command
+    # stays (trim.ts never halves it), so a failure is not cut off. Earlier
+    # turns are not rewritten, so the prompt cache stays valid. Opt out: 0.
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then
+        export LOKI_E10_TRIM=1
+        export LOKI_TRIM_DEFAULTED=1
+    fi
+}
+# Same text as loki_f2p_banner in autonomy/loki: names only the defaults this run turned on.
+# stderr, so a --json run's stdout stays one JSON document.
+_loki_f2p_banner() {
+    if [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] && [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0." >&2
+    elif [ "${LOKI_F2P_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code. Opt out: LOKI_MUTATION_STRICT=0." >&2
+    elif [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: tool logs are trimmed before the next turn. Opt out: LOKI_E10_TRIM=0." >&2
+    fi
+}
+_loki_f2p_default "$@"
+
+_loki_print_autonomy() {
+    local _pol="" _f _data="${LOKI_DATA_DIR:-${HOME}/.loki}"
+    for _f in ".loki/policies.json" ".loki/policies.yaml" "${_data}/policies.json" "${_data}/policies.yaml"; do
+        if [ -f "$_f" ]; then _pol="$_f"; break; fi
+    done
+    if [ -n "$_pol" ]; then
+        echo "Autonomy: policy file $_pol (propose, execute, operate; the file decides PR allow, draft or deny)." >&2
+    else
+        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate." >&2
+    fi
+}
 # First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
 #
 # WHY HERE. This shim runs for BOTH routes before any exec, so one emit at this
@@ -664,6 +757,18 @@ case "v10" in
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
+            # Only a run prints the policy lines, and only with --verbose: the default Loki 10 output is
+            # held to 8 lines (D48). keys, export, status, verify, dashboard and plan --spec are data
+            # commands whose output callers parse, so they never print them.
+            case "${1:-}" in
+                keys|export|status|verify|dashboard|plan) ;;
+                *)
+                    for _e10_v in "${_e10_args[@]}"; do
+                        if [ "$_e10_v" = "--verbose" ]; then _loki_f2p_banner; _loki_print_autonomy; break; fi
+                    done
+                    unset _e10_v
+                    ;;
+            esac
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args _e10_hard

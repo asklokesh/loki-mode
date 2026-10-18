@@ -26,7 +26,14 @@ The npm package installs the Bun runtime the engine needs as an optional depende
 Want to see a result before you install or spend anything?
 
 ```bash
-npx loki-mode tour    # prints a real receipt from a past build: no key, no spend, no network
+npx loki-mode start   # no git repo: a real receipt, no key, no spend
+npx loki-mode tour    # the same receipt when you are already inside a repo
+```
+
+`npx` downloads the package the first time, so that step needs the network. The receipt itself replays offline and checks with no provider and no key.
+
+```bash
+npx loki-mode wow     # a provider is ready: one tiny real task in a temp repo, its own receipt
 ```
 
 ## First run
@@ -57,7 +64,7 @@ Every run starts from a delivery contract derived from your task, writes checks 
 loki verify              # newest run; or: loki verify <run-id>
 ```
 
-`loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints a verdict and exits 0 (VERIFIED), 1 (TAMPERED), 2 (UNCHECKED), 3 (UNSIGNED, refused unless `--allow-unsigned`), 4 (run outcome not verified) or 66 (no runs); `[ $rc -eq 0 ]` is the only safe test for "verified". Full table: [docs/exit-codes.md](docs/exit-codes.md). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
+`loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints a verdict and exits 0 (VERIFIED), 1 (TAMPERED), 2 (UNCHECKED), 3 (UNSIGNED, refused unless `--allow-unsigned`), 4 (run outcome not verified) or 66 (no runs); `[ $rc -eq 0 ]` is the only safe test for "verified". `loki start` also requires fail-to-pass for a declared behavior change: a Wall test must fail on the old code and pass after, or the verdict stays PARTIAL (`LOKI_MUTATION_STRICT=0` opts out). Full table: [docs/exit-codes.md](docs/exit-codes.md). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
 For a multi-repo change set, `loki start --workspace <name> "<brief>"` seals one signed `composite.json` over every child receipt, and `loki verify <run-dir>/composite.json` re-checks it offline ([docs/WORKSPACES.md](docs/WORKSPACES.md)). A composite never reads higher than its weakest child.
 
@@ -91,7 +98,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 
 | Command | What it does |
 |---------|--------------|
-| `loki start "<task>"` | The primary path: build a task, PRD file or issue, verify it, seal a receipt, open a PR (`--no-pr`, `--deep`, `--provider`, `--max-cost`). `loki "<task>"` and `loki owner/repo#N` are shorthand |
+| `loki start "<task>"` | The command you run: same provider model as a raw session, then the harness re-runs the checks and seals a receipt (`--no-pr`, `--provider`, `--max-cost`, `--haiku` to opt the first implement onto haiku). `loki "<task>"` and `loki owner/repo#N` are shorthand. No task and no git repo shows a receipt and spends nothing |
 | `loki edit "<change>"` | One targeted change in one pass, no PR, plan or council (`--verify`, `--receipt`, `--commit`, `--dry-run`) |
 | `loki quick "<task>"` | One small task with a verify loop, no PR |
 | `loki chat` | Interactive alternative: Plan and Build modes, slash commands, `/run` starts a `loki start` run, `--attach` joins one |
@@ -106,7 +113,9 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 | `loki doctor [--fix] [--json]` | Check prerequisites, providers and login; `--fix` applies safe fixes |
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
-| `loki tour` | Show a sample receipt offline |
+| `loki tour` | Show a sample receipt offline. `loki start` does this when you are not in a git repo and did not pass a task |
+| `loki wow` | Same live mini-task as a normal start, in a temp repo. Offline sample when no provider is ready |
+| `loki factory "<task>"` | Same as `loki start`. The policy line is printed by start |
 | `loki --help` | Everything else; `loki help <command>` for one command |
 
 Core verbs: [docs/CLI-CORE-VERBS.md](docs/CLI-CORE-VERBS.md). Every command (generated): [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Engine guide, provider table, model routes, custom agents and chat: [docs/v10/GUIDE.md](docs/v10/GUIDE.md). Honest comparison with opencode: [docs/COMPARE-OPENCODE.md](docs/COMPARE-OPENCODE.md).

@@ -20,7 +20,7 @@ export function kpiTiles(k: Kpis): { id: string; label: string; value: string; t
   return [
     { id: "kpi-runs", label: "Runs this week", value: String(k.runsWeek) },
     { id: "kpi-verified", label: "Verified share", value: share, trend: k.finishedWeek ? `${k.verifiedWeek} of ${k.finishedWeek} finished` : undefined },
-    { id: "kpi-cost", label: "Cost this week", value: k.costWeek === null ? "No priced runs" : `${fmtUsd(k.costWeek)}${k.costPartial ? "+" : ""}` },
+    { id: "kpi-cost", label: "Cost this week", value: k.costWeek === null ? "No priced runs" : `${fmtUsd(k.costWeek)}${k.costPartial ? "+" : ""}`, trend: k.avgCostWeek === null ? undefined : `avg ${fmtUsd(k.avgCostWeek)} across ${k.pricedWeek} priced` },
     { id: "kpi-needs", label: "Needs you", value: String(k.needsYou) },
   ];
 }
@@ -133,7 +133,7 @@ export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunR
 }
 
 export function Home(): ReactNode {
-  const { runs, error } = useAllRuns();
+  const { runs, error } = useAllRuns(); // NEEDS YOU and the weekly KPIs need every run, not a recent page
   const [doctor, setDoctor] = useState<DoctorState>(null);
   useEffect(() => {
     let live = true;

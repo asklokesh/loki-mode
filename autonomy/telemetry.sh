@@ -170,7 +170,7 @@ _loki_known_command() {
         |audit|bench|checkpoint|ci|cleanup|cluster|cockpit|code\
         |completion|completions|compliance|compound|config|context|control|cost|council|cp\
         |crash|ctx|dashboard|demo|deploy|docker|docs|doctor\
-        |dogfood|enterprise|explain|export|failover|github|grill|handoff\
+        |dogfood|enterprise|explain|export|factory|failover|github|grill|handoff\
         |heal|help|import|init|internal|issue|kpis|logs\
         |magic|mcp|memory|metrics|migrate|modernize|monitor|next\
         |notify|onboard|open|optimize|otel|own|pause|plan\
@@ -180,7 +180,7 @@ _loki_known_command() {
         |ship|spec|start|state|stats|status|steer|stop\
         |syslog|telemetry|template|test|tour|trigger|trust|trust-metrics\
         |ultracode|update|verify|version|voice|watch|watchdog|web\
-        |welcome|why|wiki|worktree|wt)
+        |welcome|why|wiki|worktree|wow|wt)
             printf '%s' "$1" ;;
         *)
             printf 'other' ;;

@@ -207,6 +207,7 @@ case "$mode" in
         # --update: the status projector. One comment carrying the marker below is edited in place (created when absent),
         # so an issue shows live run state without a new comment per event. Only a comment written by the authenticated
         # gh user counts, and the body file must carry the marker (it is built by the supervisor, never from task text).
+        # The PR receipt comment (<!-- loki-receipt -->) uses the same upsert: a PR number is an issue number to the API.
         _e10_upd=""
         [ "${1:-}" != "--update" ] || { _e10_upd=1; shift; }
         [ "$#" -eq 2 ] || die "usage: issue-comment [--update] <issue-ref> <body-file>"
@@ -215,16 +216,32 @@ case "$mode" in
         [ -f "$2" ] || die "body file not found: $2"
         [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
         if [ -n "$_e10_upd" ]; then
-            _e10_marker='<!-- loki-status -->'
-            grep -qF -- "$_e10_marker" "$2" || die "status body must carry $_e10_marker"
+            _e10_marker=""
+            for _e10_m in '<!-- loki-status -->' '<!-- loki-receipt -->'; do
+                if grep -qF -- "$_e10_m" "$2"; then _e10_marker="$_e10_m"; break; fi
+            done
+            [ -n "$_e10_marker" ] || die "status body must carry <!-- loki-status --> or <!-- loki-receipt -->"
             _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
             _e10_cid=""
+            # A receipt upsert never posts on a failed lookup: that would stack a duplicate and still report success.
+            if [ -z "$_e10_me" ] && [ "$_e10_marker" = '<!-- loki-receipt -->' ]; then die "cannot resolve the gh user for the receipt comment lookup"; fi
             if [ -n "$_e10_me" ]; then
-                _e10_cid="$(_e10_gh api "repos/$_e10_repo/issues/$num/comments" --paginate \
-                    --jq ".[] | select(.user.login == \"$_e10_me\") | select(.body | contains(\"$_e10_marker\")) | .id" 2>/dev/null | head -n 1)" || _e10_cid=""
+                if _e10_ids="$(_e10_gh api "repos/$_e10_repo/issues/$num/comments" --paginate \
+                    --jq ".[] | select(.user.login == \"$_e10_me\") | select(.body | contains(\"$_e10_marker\")) | .id" 2>/dev/null)"; then
+                    _e10_cid="$(printf '%s\n' "$_e10_ids" | head -n 1)"
+                elif [ "$_e10_marker" = '<!-- loki-receipt -->' ]; then
+                    die "receipt comment lookup failed"
+                fi
             fi
             case "$_e10_cid" in
-                '') _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed" ;;
+                '')
+                    # A PR number is not an issue to `gh issue comment`; the receipt marker only ever rides a PR.
+                    if [ "$_e10_marker" = '<!-- loki-receipt -->' ]; then
+                        _e10_gh pr comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh pr comment failed"
+                    else
+                        _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed"
+                    fi
+                    ;;
                 *[!0-9]*) die "unexpected comment id" ;;
                 *) _e10_gh api -X PATCH "repos/$_e10_repo/issues/comments/$_e10_cid" -F "body=@$2" >/dev/null || die "gh api comment update failed" ;;
             esac

@@ -229,6 +229,8 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("export", "UPDATE", "bash", "Export session data", "Duplicates report export", { flags: [bool("--sarif", "Write findings.sarif for a run (SARIF 2.1.0)")] }),
   cmd("notify", "KEEP-MODERN", "bash", "Notifications", "Engine-neutral"),
   cmd("tour", "KEEP-MODERN", "bash", "See a sample result", "Onboarding"),
+  cmd("wow", "KEEP-MODERN", "bash", "Tiny real task, or the offline sample", "Onboarding: loki tour --live"),
+  cmd("factory", "KEEP-MODERN", "bash", "loki start with the autonomy policy printed", "propose, execute, operate unchanged"),
   cmd("welcome", "KEEP-MODERN", "bash", "First-run opener", "Onboarding"),
   cmd("onboard", "UPDATE", "bash", "Onboard to a codebase", "Overlaps wiki"),
   cmd("setup-skill", "KEEP-MODERN", "bash", "Install the skill symlinks", "Setup"),

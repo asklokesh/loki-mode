@@ -75,6 +75,23 @@ describe("resolveExecutor (4.4, 4.6)", () => {
   test("an earned listing without the advisor still gives sonnet", () => {
     expect(resolveExecutor({ ...base, shapeDefault: "haiku", advisorAvailable: false }).model).toBe("sonnet");
   });
+  test("LOKI_COST_FIRST keeps a low-risk advisor haiku and ignores a high-risk one", () => {
+    const kept = resolveExecutor({ ...base, env: { LOKI_COST_FIRST: "1" } });
+    expect(kept.model).toBe("haiku");
+    expect(kept.reason).toContain("cost-first kept the lower-cost model");
+    expect(resolveExecutor({ ...base, env: { LOKI_COST_FIRST: "1" }, route: { ...good, risk: "high" } }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: { LOKI_COST_FIRST: "1" }, historyFloor: "sonnet" }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: {} }).model).toBe("sonnet");
+  });
+  test("LOKI_COST_FIRST never beats the no-advisor floor, a sonnet shape default or an explicit override", () => {
+    const cf = { LOKI_COST_FIRST: "1" };
+    expect(resolveExecutor({ ...base, env: cf, advisorAvailable: false }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: cf, shapeDefault: "sonnet" }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: cf, route: { ...good, source: "default" } }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, env: cf, route: { ...good, source: "history" } }).model).toBe("sonnet");
+    const ov = resolveExecutor({ ...base, env: { ...cf, LOKI_MODEL_OVERRIDE: "opus" } });
+    expect(ov).toMatchObject({ model: "opus", source: "override" });
+  });
   test("advisor unavailable raises a haiku route to sonnet", () => {
     const r = resolveExecutor({ ...base, advisorAvailable: false }); expect(r.model).toBe("sonnet");
   });

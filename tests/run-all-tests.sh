@@ -1485,6 +1485,7 @@ run_test "the verification demo runs the real tools" "$SCRIPT_DIR/test-verify-de
 run_test "cost and estimate are reachable from the CLI" "$SCRIPT_DIR/test-cost-cli.sh"
 run_test "quickstart names the provider that will run" "$SCRIPT_DIR/test-quickstart-provider-detect.sh"
 run_test "explicit provider preflight" "$SCRIPT_DIR/test-provider-preflight.sh"
+run_test "wow and factory onboarding" "$SCRIPT_DIR/test-wow-factory.sh"
 run_test "doctor shows provider availability" "$SCRIPT_DIR/test-doctor-providers.sh"
 run_test "interrupted runs surface how to resume" "$SCRIPT_DIR/test-resume-discoverability.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"

@@ -26,6 +26,7 @@ describe("FC-19 full-job brief", () => {
     expect(FIXED_RULES).toContain("never edit or delete an existing one");
     expect(FIXED_RULES).toContain("Never kill processes");
     expect(FIXED_RULES).toContain("Do not commit or push");
+    expect(FIXED_RULES).toContain("The harness re-runs those checks after you stop");
   });
   test("states the full job and allows the full suite", () => {
     expect(FIXED_RULES).toContain("complete task");

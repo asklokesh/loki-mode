@@ -766,3 +766,4 @@ loki github publish (receipt-stamped GitHub export)	10
 loki tour verifies the bundled sealed receipt (VERIFIED, then TAMPERED)	3
 examples gallery receipts all verify with their own pubkey (TEN-ADOPTION-07)	5
 loki self-update --check reports installed vs latest (TEN-ADOPTION-15)	5
+wow and factory onboarding	4

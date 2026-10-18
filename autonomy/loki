@@ -1929,6 +1929,9 @@ show_help_all() {
     echo "  loki start PROJ-456           # Jira issue"
     echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine)"
     echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
+    echo "  loki tour --live              # Same as loki wow: a tiny real task when a provider is ready"
+    echo "  loki wow                      # Live mini-task, or the offline sample when no key is available"
+    echo "  loki factory \"<task>\"         # loki start, and print the autonomy policy"
     echo "  loki demo                     # Build a sample todo app end to end"
     echo "  loki init -t saas-starter     # Scaffold from template"
     echo "  loki template install <src>   # Install a community PRD template"
@@ -1994,7 +1997,7 @@ show_help_all() {
     echo "  acp agent analyze api assets audit backlog backup bench cancel checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
-    echo "  enterprise estimate explain export failover github grill heal help"
+    echo "  enterprise estimate explain export factory failover github grill heal help"
     echo "  import init intent"
     echo "  issue keys kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
@@ -2003,7 +2006,7 @@ show_help_all() {
     echo "  serve setup setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode undo update verify version voice watch watchdog web welcome why"
-    echo "  wiki workspace worktree (wt)"
+    echo "  wiki workspace worktree (wt) wow"
     echo "  control"
     echo ""
     echo "Any command: loki <command> --help"
@@ -2596,7 +2599,7 @@ _loki_start_flag_kind() {
     case "${1%%=*}" in
         --provider|--brief|--budget|--cost|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
         --mirofish) _LOKI_START_FLAG_KIND=optional ;;
-        --parallel|--allow-haiku|--regen-prd|--regenerate-prd|--regen|--fresh-prd|--bg|--background|--simple|--complex|--github|--no-dashboard|--api|--sandbox|--skip-memory|--yes|-y|--quiet|--mirofish-bg|--no-mirofish|--no-plan|--fast|--repo-fast|--full|--repo-full|--dry-run|--no-start|--worktree|-w|--pr|--prepare-pr|--ship|--detach|-d|--help|-h|--resume|--) _LOKI_START_FLAG_KIND=bool ;;
+        --parallel|--allow-haiku|--haiku|--regen-prd|--regenerate-prd|--regen|--fresh-prd|--bg|--background|--simple|--complex|--github|--no-dashboard|--api|--sandbox|--skip-memory|--yes|-y|--quiet|--mirofish-bg|--no-mirofish|--no-plan|--fast|--repo-fast|--full|--repo-full|--dry-run|--no-start|--worktree|-w|--pr|--prepare-pr|--ship|--detach|-d|--help|-h|--resume|--) _LOKI_START_FLAG_KIND=bool ;;
         *) return 1 ;;
     esac
     # A "--flag=value" token carries its own value, so it never consumes the next one.
@@ -2622,6 +2625,73 @@ _loki_e10_resume_map() {
         *) _LOKI_E10_RC="$1"; return 1 ;;
     esac
     return 0
+}
+
+# TEN-COST-01 lean levers (the bash twin of COST_PROFILES.lean in loki-ts/src/util/cost_profile.ts).
+# Fills only unset variables, so explicit env wins. Shared by --cost lean and --haiku.
+loki_lean_levers() {
+    : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
+    export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS
+}
+
+# --haiku opt-in: the lean levers plus LOKI_COST_FIRST=1. Does not change the
+# default model. bin/loki strips the flag and sets the same levers before
+# engine10; this covers a direct bash start and LOKI_CONFIG_DUMP.
+loki_apply_haiku_optin() {
+    local _a
+    for _a in "$@"; do
+        [ "$_a" = "--haiku" ] || continue
+        loki_lean_levers
+        : "${LOKI_COST_FIRST:=1}"
+        export LOKI_COST_FIRST
+        return 0
+    done
+}
+
+# Same fail-to-pass default as _loki_f2p_default in bin/loki. Direct bash
+# starts never see the shim. Explicit 0 or 1 wins. --help does not set it.
+loki_f2p_default() {
+    case "${1:-}" in
+        start|run|quick) ;;
+        *) return 0 ;;
+    esac
+    local _a
+    for _a in "$@"; do
+        case "$_a" in --help|-h) return 0 ;; esac
+    done
+    if [ -z "${LOKI_MUTATION_STRICT:-}" ]; then
+        export LOKI_MUTATION_STRICT=1
+        export LOKI_F2P_DEFAULTED=1
+    fi
+    if [ -z "${LOKI_E10_TRIM:-}" ]; then
+        export LOKI_E10_TRIM=1
+        export LOKI_TRIM_DEFAULTED=1
+    fi
+}
+# Names only the defaults this run actually turned on (an explicit 0 or 1 is the user's, not a default).
+loki_f2p_banner() {
+    local f2p="${LOKI_F2P_DEFAULTED:-}" trim="${LOKI_TRIM_DEFAULTED:-}"
+    if [ "$f2p" = "1" ] && [ "$trim" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0." >&2
+    elif [ "$f2p" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code. Opt out: LOKI_MUTATION_STRICT=0." >&2
+    elif [ "$trim" = "1" ]; then
+        echo "Factory: tool logs are trimmed before the next turn. Opt out: LOKI_E10_TRIM=0." >&2
+    fi
+}
+
+# $1 (optional): the repo the run targets, so `loki factory ./other-repo` reports that repo's policy.
+loki_print_autonomy() {
+    local pol="" f pre="" data_dir="${LOKI_DATA_DIR:-${HOME}/.loki}"
+    if [ -n "${1:-}" ] && [ "$1" != "." ] && [ -d "$1" ]; then pre="${1%/}/"; fi
+    for f in "${pre}.loki/policies.json" "${pre}.loki/policies.yaml" "${data_dir}/policies.json" "${data_dir}/policies.yaml"; do
+        if [ -f "$f" ]; then pol="$f"; break; fi
+    done
+    if [ -n "$pol" ]; then
+        echo "Autonomy: policy file $pol (propose, execute, operate; the file decides PR allow, draft or deny)." >&2
+    else
+        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate." >&2
+    fi
 }
 
 cmd_start() {
@@ -2853,7 +2923,7 @@ cmd_start() {
                 echo "                PROJ-123, #123, or bare number -> generate PRD from issue"
                 echo "  BRIEF mode  - a quoted one-line description (with spaces) -> fast"
                 echo "                zero-config first run; visible artifact + proof quickly"
-                echo "  no input    - analyze current directory, auto-generate PRD"
+                echo "  no input    - analyze current directory, auto-generate PRD (outside a git repo: the offline sample receipt)"
                 echo ""
                 echo "Arguments:"
                 echo "  REPO                  Existing project directory"
@@ -2890,6 +2960,8 @@ cmd_start() {
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
                 echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
+                echo "  --haiku                Opt in to haiku for the first implement. Same levers as --cost lean, plus LOKI_COST_FIRST=1. A failed check climbs back to the session model. Default is the provider model"
+                echo "  Proof                 Default LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn; a command's tail is kept. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -2942,7 +3014,7 @@ cmd_start() {
                 echo "  LOKI_BUDGET_LIMIT     Cost cap in USD (default $(loki_budget_default_usd); empty means unlimited)"
                 echo ""
                 echo "Examples:"
-                echo "  loki start                              # Interactive, analyze current dir"
+                echo "  loki start                              # Interactive, analyze current dir (no git repo: offline sample)"
                 echo "  loki start ./my-project                 # Improve an existing project"
                 echo "  loki start \"build a todo app\"           # BRIEF mode (zero-config fast run)"
                 echo "  loki start --brief \"snake\"              # BRIEF mode (single-word escape hatch)"
@@ -3359,11 +3431,15 @@ cmd_start() {
                 shift
                 ;;
             # TEN-COST-01: opt-in cost profile; fills only unset levers (explicit env wins).
+            --haiku)
+                loki_apply_haiku_optin --haiku
+                shift
+                ;;
             --cost|--cost=*)
                 if [[ "$1" == --cost=* ]]; then _cost_val="${1#*=}"; _cost_n=1; else _cost_val="${2:-}"; _cost_n=2; fi
                 case "$_cost_val" in
-                    lean) : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
-                          export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_PROFILE=lean
+                    lean) loki_lean_levers
+                          export LOKI_COST_PROFILE=lean
                           echo "cost profile lean: LOKI_IMPLEMENT_HAIKU_FIRST=$LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
                     off) ;;
                     *) echo -e "${RED}--cost must be lean or off${NC}" >&2; exit 2 ;;
@@ -3514,6 +3590,23 @@ cmd_start() {
         esac
     done
 
+    # No task and no git repo: do not ask for a provider and do not spend.
+    # The offline receipt (same sample as loki tour) is the first thing they see.
+    # An explicit provider (--provider or LOKI_PROVIDER) keeps its preflight, so a
+    # missing or unknown provider still fails loudly instead of showing a sample.
+    if [ -z "$brief_text" ] && [ -z "$prd_file" ] && [ -z "$positional_arg" ] \
+       && [ -z "$provider" ] && [ -z "${LOKI_PROVIDER:-}" ] \
+       && [ -z "$explicit_mode" ] && [ -z "${LOKI_PRD_FILE:-}" ] \
+       && [ -z "$remote_url" ] && [ -z "${_ps_ws:-}" ] && [ "${_ps_deploy:-0}" != 1 ] \
+       && [ -z "${bmad_project_path:-}" ] && [ -z "${openspec_change_path:-}" ]; then
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "No repo and no task. Showing a real receipt (no key, no spend)."
+            echo ""
+            wow_offline_finish
+            return $?
+        fi
+    fi
+
     # --remote: submit to a deployed cluster instead of building locally.
     #
     # Branches HERE, after arg parsing but BEFORE the provider pre-flight and
@@ -3600,6 +3693,12 @@ cmd_start() {
             exit 2
         fi
     fi
+
+    # One line each. Printed on the path that will spend, not on --help or the
+    # empty non-repo receipt above. The Loki 10 engine path prints the same
+    # lines from bin/loki and does not reach here.
+    loki_print_autonomy "${positional_arg:-}"
+    loki_f2p_banner
 
     # Clear any stale raw-brief marker from a PRIOR run before we decide the
     # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
@@ -16490,6 +16589,266 @@ print('{}{}'.format(iters, rng_str))
     return 0
 }
 
+# loki wow: a tiny real Loki 10 task in a temp repo, or the offline tour when no provider is ready.
+wow_offline_finish() {
+    echo "No live provider for this run. Showing the offline sample (no key, no spend)."
+    echo ""
+    cmd_demo --offline
+    echo ""
+    echo "Ready for your repo? loki start"
+}
+
+# Heuristic, not an auth check: an installed claude CLI with a key, an OAuth token,
+# or a config dir counts as ready. A logged-out install passes this and then fails
+# the live run; cmd_wow reports that failure and its exit code, it never hides it.
+wow_provider_ready() {
+    local p="${1:-}"
+    [ -n "$p" ] || p="${LOKI_PROVIDER:-claude}"
+    case "$p" in
+        claude)
+            command -v claude >/dev/null 2>&1 || return 1
+            if [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then return 0; fi
+            [ -e "${HOME}/.claude.json" ] || [ -d "${HOME}/.claude" ] || return 1
+            return 0
+            ;;
+        opencode|codex|cline|aider)
+            command -v "$p" >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Prints the newest receipt under $1/.loki/runs. Returns 1 when none was written.
+wow_show_receipt() {
+    local demo_dir="$1" receipt vrc=0
+    receipt="$(python3 - "$demo_dir/.loki/runs" <<'PY'
+import os, sys
+root, best = sys.argv[1], None
+for d, _, files in os.walk(root):
+    if "receipt.json" in files:
+        p = os.path.join(d, "receipt.json")
+        if best is None or os.path.getmtime(p) > os.path.getmtime(best):
+            best = p
+print(best or "")
+PY
+)" || receipt=""
+    if [ -z "$receipt" ]; then
+        return 1
+    fi
+    echo ""
+    echo "Receipt: $receipt"
+    python3 - "$receipt" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        r = json.load(fh)
+    if not isinstance(r, dict):
+        raise ValueError("not a JSON object")
+except (OSError, ValueError) as exc:
+    print(f"Outcome: unreadable receipt ({exc.__class__.__name__}); loki verify below is the check")
+    sys.exit(0)
+verdict = str(r.get("verdict") or "unknown")
+cost = r.get("cost") if isinstance(r.get("cost"), dict) else {}
+usd = cost.get("usd")
+tokens = 0
+for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+    try:
+        tokens += int(cost.get(k) or 0)
+    except (TypeError, ValueError):
+        pass
+np = r.get("not_proven") if isinstance(r.get("not_proven"), list) else []
+print(f"Outcome: {verdict}")
+print(f"Cost: ${usd:.4f}" if isinstance(usd, (int, float)) else "Cost: not recorded on the receipt")
+print(f"Tokens: {tokens}")
+print("PROVEN: sealed verdict VERIFIED" if verdict == "VERIFIED" else f"PROVEN: no verified claim (verdict {verdict})")
+print("NOT PROVEN:")
+for item in np or ["none"]:
+    print(f"  - {item}")
+PY
+    echo ""
+    echo "Verify offline:"
+    (cd "$demo_dir" && "$SKILL_DIR/bin/loki" verify) || vrc=$?
+    if [ "$vrc" = "0" ]; then
+        echo "loki verify exited 0"
+    else
+        echo "loki verify exited $vrc (the receipt did not check out; that is the evidence)"
+    fi
+    return 0
+}
+
+# Removes only a directory this command created: a direct child of the temp root named loki-wow.*.
+wow_cleanup_dir() {
+    local d="${1:-}" root
+    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || return 0
+    root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 0
+    case "$d" in "$root"/loki-wow.*) ;; *) return 0 ;; esac
+    [ "$(dirname -- "$d")" = "$root" ] || return 0
+    rm -rf -- "$d"
+}
+
+cmd_wow() {
+    local offline=false dry_run=false keep=false provider="" max_cost="2"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo "loki wow - a tiny real task in a temporary git repo"
+                echo ""
+                echo "Creates a temp repo, runs one small fix through the Loki 10 engine,"
+                echo "seals a receipt, and prints PROVEN vs NOT PROVEN, cost and tokens."
+                echo "With no provider key it runs the offline sample instead (loki tour)."
+                echo "A failed live run shows its own receipt and exit code, never the sample."
+                echo ""
+                echo "Usage: loki wow [--offline] [--dry-run] [--keep] [--provider P] [--max-cost N]"
+                echo ""
+                echo "  --offline     Always show the offline sample"
+                echo "  --dry-run     Print the plan. No model call, no spend"
+                echo "  --keep        Keep the temp repo (default: removed after the receipt is printed)"
+                echo "  --provider P  claude (default) or opencode, codex, cline, aider"
+                echo "  --max-cost N  Hard per-run cap in USD, a positive number (default 2). budgets.per_run still applies"
+                echo ""
+                echo "loki tour stays the offline sample. loki tour --live is this command."
+                echo "Ready for your repo? loki start"
+                return 0
+                ;;
+            --offline) offline=true; shift ;;
+            --dry-run) dry_run=true; shift ;;
+            --keep) keep=true; shift ;;
+            --provider)
+                provider="${2:-}"
+                if [ -z "$provider" ]; then echo "loki wow: --provider requires a value" >&2; return 1; fi
+                shift 2
+                ;;
+            --provider=*) provider="${1#*=}"; shift ;;
+            --max-cost)
+                max_cost="${2:-}"
+                if [ -z "$max_cost" ]; then echo "loki wow: --max-cost requires a value" >&2; return 1; fi
+                shift 2
+                ;;
+            --max-cost=*) max_cost="${1#*=}"; shift ;;
+            *)
+                echo "loki wow: unknown option: $1" >&2
+                echo "Run 'loki wow --help'." >&2
+                return 1
+                ;;
+        esac
+    done
+    if ! [[ "$max_cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v c="$max_cost" 'BEGIN { exit !(c > 0) }'; then
+        echo "loki wow: --max-cost must be a positive number of USD, got: $max_cost" >&2
+        return 2
+    fi
+
+    if [ "$offline" = true ]; then
+        wow_offline_finish
+        return $?
+    fi
+
+    local use_provider="${provider:-${LOKI_PROVIDER:-claude}}"
+    case "$use_provider" in
+        claude|opencode|codex|cline|aider) ;;
+        *) echo "loki wow: unknown provider '$use_provider' (use claude, opencode, codex, cline or aider)" >&2; return 2 ;;
+    esac
+    if ! wow_provider_ready "$use_provider"; then
+        if [ "$dry_run" = true ]; then
+            echo "loki wow: no provider ready for '$use_provider'. A real run would show the offline sample."
+            echo "Ready for your repo? loki start"
+            return 0
+        fi
+        wow_offline_finish
+        return $?
+    fi
+
+    local task='Make greet() in greet.js return the string hello so `node --test greet.test.js` passes. Do not change the test.'
+    echo "loki wow: temp repo, provider $use_provider, max-cost \$$max_cost, no PR (local receipt)."
+    echo "Task: $task"
+    if [ "$dry_run" = true ]; then
+        echo "[dry-run] Would create a git repo with a failing node:test and run:"
+        echo "  loki start \"<task>\" --no-pr --provider $use_provider --max-cost $max_cost"
+        echo "Then print the receipt, PROVEN vs NOT PROVEN, and: Ready for your repo? loki start"
+        return 0
+    fi
+
+    local demo_dir temp_root
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || { echo "loki wow: cannot resolve the temp root" >&2; return 1; }
+    demo_dir="$(mktemp -d "${temp_root}/loki-wow.XXXXXXXX")" || return 1
+    if [ "$keep" != true ]; then
+        # shellcheck disable=SC2064  # expand demo_dir now; it is local to this call
+        trap "wow_cleanup_dir '$demo_dir'; trap - INT TERM; exit 130" INT TERM
+    fi
+    printf '%s\n' '{ "type": "module", "name": "loki-wow" }' > "$demo_dir/package.json"
+    printf '%s\n' 'export function greet() { return "hi"; }' > "$demo_dir/greet.js"
+    printf '%s\n' \
+        'import assert from "node:assert/strict";' \
+        'import test from "node:test";' \
+        'import { greet } from "./greet.js";' \
+        'test("greet says hello", () => { assert.equal(greet(), "hello"); });' > "$demo_dir/greet.test.js"
+    # Inherited GIT_DIR and friends would point -C at the caller's repo; signing or hooks could fail the commit.
+    if ! (
+        unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
+        g() { git -c commit.gpgsign=false -c core.hooksPath=/dev/null -C "$demo_dir" "$@"; }
+        g init -q && g config user.email "loki-wow@example.com" && g config user.name "Loki Wow" \
+            && g add package.json greet.js greet.test.js && g commit -q -m "failing greet"
+    ); then
+        echo "loki wow: could not set up the temp git repo" >&2
+        if [ "$keep" != true ]; then trap - INT TERM; wow_cleanup_dir "$demo_dir"; fi
+        return 1
+    fi
+    echo "Directory: $demo_dir"
+    local rc=0
+    (
+        cd "$demo_dir" && LOKI_ASSUME_YES=1 "$SKILL_DIR/bin/loki" start "$task" --no-pr --provider "$use_provider" --max-cost "$max_cost"
+    ) || rc=$?
+    if ! wow_show_receipt "$demo_dir"; then
+        echo ""
+        if [ "$rc" != "0" ]; then
+            echo "The live mini-task exited $rc before a receipt was sealed (often a provider that is installed but not logged in)."
+            echo "Nothing below is the result of this run. It is the offline sample, for reference."
+            echo ""
+            cmd_demo --offline
+        else
+            echo "No receipt file was written. The run summary above is the record."
+        fi
+    elif [ "$rc" != "0" ]; then
+        echo ""
+        echo "The live mini-task exited $rc. The receipt above is this run's own result."
+    fi
+    if [ "$keep" = true ]; then
+        echo ""
+        echo "Kept: $demo_dir (remove it with: rm -rf \"$demo_dir\")"
+    else
+        trap - INT TERM
+        wow_cleanup_dir "$demo_dir"
+    fi
+    echo ""
+    echo "Ready for your repo? loki start"
+    return "$rc"
+}
+
+cmd_factory() {
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        echo "loki factory \"<task|prd|issue>\" - same as loki start"
+        echo ""
+        echo "loki start prints the autonomy policy and runs. factory does not change that."
+        echo "It does not write a policy file."
+        echo ""
+        echo "Autonomy levels (unchanged):"
+        echo "  propose   plan and ask before changing the tree"
+        echo "  execute   build, verify, seal a receipt, open a PR (default when no policy file)"
+        echo "  operate   execute, and deploy only when you pass --deploy"
+        echo ""
+        echo "A .loki/policies.json or policies.yaml (repo, or LOKI_DATA_DIR, or ~/.loki) still decides"
+        echo "allow, approval (draft PR) or deny."
+        echo "When the contract cannot be satisfied the run stops with one question (BLOCKED)."
+        echo "The summary still prints outcome, receipt, cost and the next command."
+        echo ""
+        echo "loki start keeps the provider model. Pass --haiku (or --cost lean) to try haiku for"
+        echo "the first implement; a failed check climbs back. --max-cost stays the hard cap."
+        return 0
+    fi
+    exec "$SKILL_DIR/bin/loki" start "$@"
+}
+
 # Demo mode - build a real project from a bundled PRD template
 cmd_demo() {
     # Handle --help
@@ -16517,6 +16876,8 @@ cmd_demo() {
         echo "Examples:"
         echo "  loki demo --offline              # Replay a sample receipt (no spend)"
         echo "  loki tour                        # Same as 'loki demo --offline'"
+        echo "  loki tour --live                 # Tiny real task (loki wow); offline sample if no provider"
+        echo "  loki wow                         # Live mini-task, or the offline sample with no key"
         echo "  loki demo                        # Build todo app in temp dir"
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
         echo "  loki demo --provider codex       # Use Codex instead of Claude"
@@ -22420,6 +22781,9 @@ main() {
             if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
                 loki_maybe_apply_config_file "$@"
             fi
+            # --haiku is opt-in. The dump below shows the levers when the flag is present.
+            loki_apply_haiku_optin "$@"
+            loki_f2p_default "$command" "$@"
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
             # the resolved LOKI_* environment (after the config pre-pass AND any
             # ambient env) and exit 0 WITHOUT running a build. Lets operators and
@@ -22476,13 +22840,24 @@ main() {
         demo)
             cmd_demo "$@"
             ;;
+        wow)
+            cmd_wow "$@"
+            ;;
+        factory)
+            cmd_factory "$@"
+            ;;
         tour)
             # Zero-key/zero-spend taste path: an alias for 'demo --offline' that
             # replays a bundled real Evidence Receipt. --help routes straight to
-            # the demo help (which documents --offline / tour); otherwise inject
-            # --offline ahead of any user args.
+            # the demo help (which documents --offline / tour); --live is loki wow;
+            # otherwise inject --offline ahead of any user args.
             if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
                 cmd_demo --help
+                echo "  loki tour --live                 # Tiny real task (same as loki wow)"
+                echo "  loki wow                         # Live mini-task, or this sample with no key"
+            elif [ "${1:-}" = "--live" ]; then
+                shift
+                cmd_wow "$@"
             else
                 cmd_demo --offline "$@"
             fi

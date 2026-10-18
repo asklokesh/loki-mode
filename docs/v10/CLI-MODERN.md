@@ -6,12 +6,12 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 74
+- KEEP-MODERN: 76
 - UPDATE: 22
 - DROP-LEGACY: 31
 - DELETE: 14
-- Total rows: 141
-- Registry paths (commands and nested subcommands): 209
+- Total rows: 143
+- Registry paths (commands and nested subcommands): 211
 
 ## Commands
 
@@ -83,6 +83,8 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | export | autonomy/loki | UPDATE | Duplicates report export |
 | notify | autonomy/loki | KEEP-MODERN | Engine-neutral |
 | tour | autonomy/loki | KEEP-MODERN | Onboarding |
+| wow | autonomy/loki | KEEP-MODERN | Onboarding: loki tour --live |
+| factory | autonomy/loki | KEEP-MODERN | propose, execute, operate unchanged |
 | welcome | autonomy/loki | KEEP-MODERN | Onboarding |
 | onboard | autonomy/loki | UPDATE | Overlaps wiki |
 | setup-skill | autonomy/loki | KEEP-MODERN | Setup |
