@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.60 (2026-10-18)
+
+Issue mode works on a repository you cannot push to, a repo with no test runner now gets a real Wall result, and run output stays on one line per item.
+
+### Added
+- On a GitHub repository you cannot push to (gh reports `permissions.push: false`), `loki start` pushes the run branch to your fork and opens the PR upstream from `you:branch`. The fork is created if missing and is used only after gh confirms it is a fork of that repository owned by you. A draft outcome (anything but VERIFIED) stays on the fork with a one-line notice and the `gh pr create` command to open it yourself; Loki does not open draft PRs on someone else's repository. Fork creation is logged before it happens, and the branch is public on your fork. `LOKI_PR_FORK=0` turns this off. No token is needed beyond your `gh auth login` and git login. Repositories you can push to are unchanged.
+- A repository with no detected test runner and no Python or Go test suite (docs, plugins, config) now has its Wall check run by Loki's own bun, in the Wall and in verify, so the receipt records a real Wall result instead of "no tests to run". `LOKI_WALL_HARNESS_RUNNER=0` turns this off.
+
+### Fixed
+- Status and backstop comments are no longer posted on an issue in a repository you cannot push to. They post only when gh confirms push access; a failed check skips them. The receipt comment on your own PR is still posted, and a status body quoting the receipt marker cannot bypass this.
+- The receipt's `wall.passed` is now recorded: true only when every Wall and holdout check ran and passed, false on any failure, unset otherwise. Before this, every receipt with Wall files listed "wall result not recorded by verify".
+- A Wall file is handed to a JS test runner only when it is a JS or TS file.
+- The Reason line is clipped at a word boundary with "..." instead of mid-word. NOT PROVEN items stay on one line each: a failed push reads as the push script's reason plus any "Permission to X denied", never raw git or gh stderr. A fork GitHub has not served yet says to rerun.
+- The intent card no longer runs into the live progress line on a terminal.
+- `autonomy/lib/proof_redact.py`: URI credential redaction skips the "@"-free tail of each token, so a long scheme-like token without "@" no longer takes seconds (TEN-SECURITY-26 follow-up, #226).
+
 ## v11.17.59 (2026-10-18)
 
 ### Added
