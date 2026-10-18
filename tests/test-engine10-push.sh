@@ -65,7 +65,7 @@ case "\$1 \$2" in
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
     "api user") [ -f "$W/user.fail" ] && exit 1; echo "loki-bot" ;;
     # Fork mode: noperm makes the pinned repo report permissions.push false; fork.parent is the parent the fork reports.
-    "api repos/octocat/hello") [ -f "$W/noperm" ] && echo false; [ -f "$W/garbage" ] && echo "<html>rate limited" ;;
+    "api repos/octocat/hello") if [ -f "$W/noperm" ]; then echo false; elif [ -f "$W/garbage" ]; then echo "<html>rate limited"; else echo true; fi ;;
     "api -X") echo "loki-bot/hello" ;;
     "api repos/loki-bot/hello") echo "true \$(cat "$W/fork.parent" 2>/dev/null || echo octocat/hello) loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
@@ -461,6 +461,10 @@ p4 "$LIB" push-pr "$A" loki/e10-fkg "E10 title" "$W/body.md" >/dev/null 2>"$W/er
 [ "$rc" -eq 0 ] && git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fkg >/dev/null \
     && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkg >/dev/null \
     && ok "a garbage permission probe keeps the direct push (fail open)" || bad "garbage probe rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+rm -f "$W/status.cid"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" \
+    && ok "a garbage permission probe posts no status comment (fail closed)" || bad "garbage probe comment: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
 rm -f "$W/garbage"
 
 echo "$PASS passed, $FAIL failed"

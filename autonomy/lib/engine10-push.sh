@@ -159,7 +159,8 @@ _e10_fork() {
     done
     return 1
 }
-# Fork-mode twin of _e10_find_pr: the open cross-repo PR whose head is <me>:<branch>.
+# Fork-mode twin of _e10_find_pr: the open cross-repo PR whose head is <me>:<branch> (--head matches the branch name
+# only; the jq owner filter is what pins it to <me>).
 _e10_find_fork_pr() {
     local me="$1"
     case "$me" in '' | *[!A-Za-z0-9_.-]*) return 1 ;; esac
@@ -200,6 +201,7 @@ case "$mode" in
         if ! _e10_fork_off && [ "$(_e10_can_push)" = "false" ]; then
             _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
             [[ "$_e10_me" =~ ^[A-Za-z0-9_.-]+$ ]] || die "no push access to $_e10_repo and the gh user could not be resolved for a fork; run gh auth login"
+            log_info "no push access to $_e10_repo: creating or reusing the fork under $_e10_me (LOKI_PR_FORK=0 turns this off)"
             _e10_fork_repo="$(_e10_fork "$_e10_me")" || die "no push access to $_e10_repo and its fork under $_e10_me could not be created or verified"
             log_info "no push access to $_e10_repo: pushing to the fork $_e10_fork_repo"
             _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" "$_e10_fork_repo" || die "push to fork $_e10_fork_repo refused or failed (rc=$?)"
@@ -281,9 +283,10 @@ case "$mode" in
         # Status and backstop comments are for a repo the user maintains; on one they cannot push to they would land on
         # someone else's issue. The receipt comment rides the user's own PR and is still posted.
         # The receipt body starts with its marker (receipt_surface.ts); only that first line exempts a comment, so issue
-        # text quoting the marker inside a status body cannot. An unknown probe (gh failed) posts as before: fail open.
-        if [ "$(head -n 1 -- "$2")" != '<!-- loki-receipt -->' ] && [ "$(_e10_can_push)" = "false" ]; then
-            log_info "no push access to $_e10_repo: not commenting on its issue $num"
+        # text quoting the marker inside a status body cannot. Unlike push-pr this fails closed: a status or backstop
+        # comment is posted only when gh confirms push access, since a wrong guess is a public comment on someone's issue.
+        if [ "$(head -n 1 -- "$2")" != '<!-- loki-receipt -->' ] && [ "$(_e10_can_push)" != "true" ]; then
+            log_info "push access to $_e10_repo not confirmed: not commenting on its issue $num"
             exit 0
         fi
         if [ -n "$_e10_upd" ]; then
