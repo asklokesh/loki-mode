@@ -265,8 +265,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
           const noop = fx.status === "completed" && repeatedNoopFix(outputs.fix), fedBy = sigs[sigs.length - 1] ?? null;
-          // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them
-          // never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
+          if (noop && outputs.fix?.spec_conflict === true && outputs.implement?.exit === "spec_conflict") { ctx.emit("loop.repeat", "fix", { reason: "a fix round confirmed the spec conflict and left the tree unchanged", round: outputs.fix?.round ?? null }); stopped = "spec_conflict"; break; } // independent confirmation of implement's claim; the verdict stays SPEC_CONFLICT (seal reads implement.exit)
+          // Two no-op rounds in a row against the same fully-run failure: the model is looping. A crashed verify between them never matches (sigOf), so a flaky or harness-owned verify still gets its re-run (A-113b).
           if (noop && noopSig !== null && noopSig === fedBy && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) {
             ctx.emit("loop.repeat", "fix", { reason: "two fix rounds left the tree unchanged against the same failure", round: outputs.fix?.round ?? null });
             process.stderr.write("loki: anti-loop: two fix rounds changed nothing in the tree against the same failure; stopping as STALLED\n");
