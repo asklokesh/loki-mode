@@ -6043,8 +6043,11 @@ _loki_run_neutral() {
 # the credentialed process. <runner> is the credential re-grant wrapper
 # (_loki_with_github_tokens, or on_run_complete's timed _loki_net). The agent
 # repo's branch gets no upstream set (it did with `push -u`); nothing reads it.
+# Optional <dest> OWNER/REPO (engine10-push.sh fork mode): the pinned origin is
+# still validated, then the push goes to https://github.com/<dest>.git, a fork
+# the push child resolved from gh and checked, never a value from the tree.
 _loki_trusted_push() {
-    local _runner="$1" _dir="$2" _branch="$3" _url _tmp _rc=1
+    local _runner="$1" _dir="$2" _branch="$3" _dest="${4:-}" _url _tmp _rc=1
     _dir="$(cd "$_dir" 2>/dev/null && pwd -P)" || return 1
     git check-ref-format --branch "$_branch" >/dev/null 2>&1 || return 1
     _url="$(git -C "$_dir" config --get remote.origin.url 2>/dev/null)" || _url=""
@@ -6068,6 +6071,13 @@ _loki_trusted_push() {
             return 2 ;;
     esac
     _repo="$(_loki_github_repo_from_url "$_url")"
+    if [ -n "$_dest" ]; then
+        if ! _loki_github_repo_from_url "https://github.com/${_dest}.git" >/dev/null; then
+            log_warn "Not pushing branch '$_branch': fork destination '$_dest' is not a plain OWNER/REPO."
+            return 2
+        fi
+        _repo="$_dest" _url="https://github.com/${_dest}.git"
+    fi
     _def="$(_loki_run_neutral "$_repo" "$_runner" gh repo view "$_repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null)" || _def=""
     if [ -z "$_def" ]; then
         log_warn "Not pushing branch '$_branch': could not resolve the default branch of $_repo, and Loki never risks a direct push to it."

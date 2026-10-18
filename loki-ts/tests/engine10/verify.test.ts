@@ -225,6 +225,20 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(testChecks[0]?.result).toBe("pass");
   }, 20_000);
 
+  test("no project runner: the Wall file runs with Loki's bun, so the receipt gets a real Wall result (not 'no tests to run')", async () => {
+    const repoDir = mkRepo("bun-target");
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src.txt"), "changed\n");
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } } });
+    const res = await verifyStage.run(ctx, sig()), testChecks = (res.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"));
+    expect(testChecks).toHaveLength(1);
+    expect(testChecks[0]?.result).toBe("pass");
+    expect(res.data.wall_passed).toBe(true); // seal reads this into receipt.wall.passed; it was never written before
+    const prev = process.env.LOKI_WALL_HARNESS_RUNNER; process.env.LOKI_WALL_HARNESS_RUNNER = "0";
+    try { const off = await verifyStage.run(ctx, sig()); expect((off.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("bun:"))).toHaveLength(0); expect(off.data.wall_passed).toBeUndefined(); }
+    finally { if (prev === undefined) delete process.env.LOKI_WALL_HARNESS_RUNNER; else process.env.LOKI_WALL_HARNESS_RUNNER = prev; }
+  }, 20_000);
+
   test("select-tests.sh runs when the target carries it (self-hosting)", async () => {
     const repoDir = mkRepo("loki-mode-repo");
     const sha = baseSha(repoDir);

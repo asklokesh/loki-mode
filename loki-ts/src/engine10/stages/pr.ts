@@ -15,7 +15,7 @@ import { withSealRoute } from "../../runner/router/route_block.ts"; import { aiM
 import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
-import { safeGit } from "../../util/safe_git.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { pushErrLine } from "../../util/term_width.ts";
 import { stackBase, stackSection } from "../../util/run_outputs.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
@@ -56,7 +56,7 @@ export function toPushShellArgs(args: PushArgs): string[] {
 /** TEN-STABILITY-50: every push/pr-ready/status child is bounded so one hung script cannot block the run. LOKI_PR_PUSH_TIMEOUT_MS overrides (default 50s, inside the 60s stage limit). */
 export function prChildTimeoutMs(environ: NodeJS.ProcessEnv = process.env): number { const n = Number(environ.LOKI_PR_PUSH_TIMEOUT_MS); return Number.isFinite(n) && n >= 100 ? Math.floor(n) : 50_000; }
 function spawnBounded(args: string[], env: NodeJS.ProcessEnv) { return spawnSync("bash", args, { env, encoding: "utf8", timeout: prChildTimeoutMs(), killSignal: "SIGKILL" }); }
-function failReason(script: string, mode: string, r: ReturnType<typeof spawnBounded>): string { const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"; return timedOut ? `${script} ${mode} timed out after ${prChildTimeoutMs()}ms (hung script killed)` : `${script} ${mode} failed (exit ${r.status}): ${(r.stderr ?? "").trim()}`; }
+function failReason(script: string, mode: string, r: ReturnType<typeof spawnBounded>): string { const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"; return timedOut ? `${script} ${mode} timed out after ${prChildTimeoutMs()}ms (hung script killed)` : r.status === 4 && mode === "push-pr" ? pushErrLine(r.stderr ?? "") : `${script} ${mode} failed (exit ${r.status}): ${pushErrLine(r.stderr ?? "")}`; }
 function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   if (resolvePrAuthor(repoDir) === "bot") {

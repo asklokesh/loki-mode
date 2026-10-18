@@ -97,7 +97,7 @@ export async function workerConfirm(card: string[] | null, runDir: string, env: 
 export async function applyIntent(raw: string, on: boolean, runDir: string, emit: (data: Record<string, unknown>) => void): Promise<{ rest: string; data: Record<string, unknown> }> {
   if (!on || raw.trim() === "") return { rest: raw, data: {} };
   const { card, rest } = parseIntentCard(raw);
-  process.stderr.write(`${renderIntent(card)}\n`);
+  process.stderr.write(`${process.stderr.isTTY ? "\r\x1b[2K" : ""}${renderIntent(card)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
   const declined = await workerConfirm(card, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
   return { rest, data: { intent_enabled: true, intent_card: card, ...(declined ? { intent_declined: true } : {}) } };
 }

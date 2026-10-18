@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { buildTestMap, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import { buildTestMap, harnessRunners, impactedRefs, projectInterpreter, RealTestMapProvider } from "../../src/engine10/testmap.ts";
 
 const MIXED = resolve(import.meta.dir, "fixtures/testmap");
 
@@ -316,5 +316,19 @@ describe("single read per test file (TEN-SPEED-22)", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("harnessRunners (no project runner: Loki's bun runs the Wall)", () => {
+  const env = { PATH: process.env.PATH ?? "" };
+  test("no runner, docs/plugin repo: bun", () => expect(harnessRunners([], ["README.md", "plugins/x/hook.py"], env)).toEqual(["bun"]));
+  test("a detected runner is kept", () => expect(harnessRunners(["vitest"], [], env)).toEqual(["vitest"]));
+  test("a Python or Go test suite keeps its own rules", () => {
+    expect(harnessRunners([], ["app.py", "tests/test_app.py"], env)).toEqual([]);
+    expect(harnessRunners([], ["x_test.go"], env)).toEqual([]);
+  });
+  test("off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH", () => {
+    expect(harnessRunners([], [], { ...env, LOKI_WALL_HARNESS_RUNNER: "0" })).toEqual([]);
+    expect(harnessRunners([], [], { PATH: "/nonexistent" })).toEqual([]);
   });
 });

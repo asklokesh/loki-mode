@@ -64,6 +64,10 @@ case "\$1 \$2" in
     "pr list") W_PRURL="$W/pr.url" W_PRFORK="$W/pr.fork" W_PRCLOSED="$W/pr.closed" sh "$W/prlist.sh" "\$@" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
     "api user") [ -f "$W/user.fail" ] && exit 1; echo "loki-bot" ;;
+    # Fork mode: noperm makes the pinned repo report permissions.push false; fork.parent is the parent the fork reports.
+    "api repos/octocat/hello") [ -f "$W/noperm" ] && echo false ;;
+    "api -X") echo "loki-bot/hello" ;;
+    "api repos/loki-bot/hello") echo "true \$(cat "$W/fork.parent" 2>/dev/null || echo octocat/hello) loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
     "issue comment"|"pr comment") [ "\$3" = 9 ] && echo 555 > "$W/status.cid" ;;
 esac
@@ -409,6 +413,45 @@ out="$(GH_TOKEN="$CANARY" _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="$LB" bash "
 [ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -s "$GHLOG" ] && grep -q "local origin: no PR to mark ready" "$W/err" \
     && ok "pr-ready on a local origin is a no-op (exit 0, no gh)" || bad "pr-ready local: rc=$rc out=$out gh=$(tr '\n' '|' < "$GHLOG")"
 refused "pr-ready needs the pr-url argument" "usage: pr-ready" p4 "$LIB" pr-ready "$A" loki/e10-ready "$W/body.md"
+
+# Fork mode: no push access to the pinned repo. The branch goes to the user's verified fork, never upstream, and the
+# PR is opened upstream from loki-bot:<branch>; a draft run stops at the fork (exit 4); status comments are skipped.
+FORK="$W/gh/loki-bot/hello.git"; mkdir -p "$W/gh/loki-bot"; git init -q --bare "$FORK"
+git -C "$A" branch loki/e10-fk
+touch "$W/noperm"; rm -f "$W/pr.url" "$W/fork.parent"; : > "$GHLOG"
+out="$(p4 "$LIB" push-pr "$A" loki/e10-fk "E10 title" "$W/body.md" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] \
+    && [ "$(git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fk)" = "$(git -C "$A" rev-parse loki/e10-fk)" ] \
+    && ! git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fk >/dev/null \
+    && grep -q ' pr create --repo octocat/hello --head loki-bot:loki/e10-fk --title E10 title --body-file ' "$GHLOG" \
+    && ok "fork mode: no push access pushes to the verified fork and opens the PR upstream from user:branch" \
+    || bad "fork mode push-pr rc=$rc out=$out err=$(tr '\n' ' ' < "$W/err") gh=$(tr '\n' '|' < "$GHLOG")"
+git -C "$A" branch loki/e10-fkd; rm -f "$W/pr.url"; n0="$(creates)"
+p4 "$LIB" push-pr "$A" loki/e10-fkd "E10 title" "$W/body.md" --draft >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 4 ] && grep -q '^fork-only: pushed loki/e10-fkd to loki-bot/hello' "$W/err" && [ "$(creates)" = "$n0" ] \
+    && git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkd >/dev/null \
+    && ok "fork mode: a draft run pushes to the fork only and opens no PR upstream (exit 4)" \
+    || bad "fork mode draft rc=$rc creates=$(creates)/$n0 err=$(tr '\n' ' ' < "$W/err")"
+git -C "$A" branch loki/e10-fkp; echo stranger/hello > "$W/fork.parent"; n0="$(creates)"
+p4 "$LIB" push-pr "$A" loki/e10-fkp "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'could not be created or verified' "$W/err" && [ "$(creates)" = "$n0" ] \
+    && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkp >/dev/null \
+    && ok "fork mode: a fork whose parent is not the pinned repo is refused, nothing pushed" \
+    || bad "fork mode parent mismatch rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+rm -f "$W/fork.parent"; git -C "$A" branch loki/e10-fko
+LOKI_PR_FORK=0 p4 "$LIB" push-pr "$A" loki/e10-fko "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fko >/dev/null \
+    && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fko >/dev/null \
+    && ok "LOKI_PR_FORK=0 keeps the direct push to the pinned origin" || bad "LOKI_PR_FORK=0 rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+rm -f "$W/status.cid"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" && grep -q 'not commenting on its issue 9' "$W/err" \
+    && ok "no push access: the status comment is not posted on someone else's issue" || bad "status comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
+printf '<!-- loki-receipt -->\nreceipt\n' > "$W/receipt.md"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/receipt.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && grep -q ' pr comment 9 ' "$GHLOG" \
+    && ok "no push access: the receipt comment on the user's own PR is still posted" || bad "receipt comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
+rm -f "$W/noperm"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

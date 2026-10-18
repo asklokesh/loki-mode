@@ -14,7 +14,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts"; import { projectInterpreter } from "../testmap.ts";
+import { commandFor } from "./verify.ts"; import { harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
@@ -92,11 +92,11 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
   const first = existingTests[0];
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
-/** Runner for a generated file: extension decides for Python/Go, else the repo's detected JS runner; unknown never guesses (unselectable). */
+/** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
 function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
   if (fileName.endsWith(".go")) return "go";
-  return (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null;
+  return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
 }
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
@@ -114,12 +114,12 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   const repomapRef = prior.intake?.repomap_ref as string | undefined;
   const testMap = (prior.intake?.testmap as TestMap | undefined) ?? null;
   const existingTests: TestRef[] = testMap?.tests ?? [];
-  const runners: RunnerName[] = testMap?.runners ?? [];
 
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant").
   // LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan
   // still gets the Wall's independent acceptance tests.
   const repoMap = loadRepoMap(repomapRef);
+  const runners: RunnerName[] = testMap ? harnessRunners(testMap.runners, repoMap?.files ?? []) : [];
   const sz = sizeTask(task, repoMap, testMap);
   if (planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
