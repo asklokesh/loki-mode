@@ -5,7 +5,7 @@ test("URL userinfo is replaced", () => {
   expect(redactSecrets("clone https://user:pass@example.com/repo now")).toBe("clone https://[REDACTED]@example.com/repo now");
   expect(redactSecrets("ssh://tok@host:22/x")).toBe("ssh://[REDACTED]@host:22/x");
   // TEN-SECURITY-26: a match starts at the scheme-run start; outputs pinned to the pre-fix \b rule.
-  for (const [s, want] of [["x-git+ssh://u:p@h/r", "x-git+ssh://[REDACTED]@h/r"], ["9a-https://u@h", "9a-https://[REDACTED]@h"], ["--a-https://t@h", "--a-https://[REDACTED]@h"], ["1.2+svn://u@h", "1.2+svn://[REDACTED]@h"], ["_https://u@h", "_https://u@h"]]) expect(redactSecrets(s)).toBe(want);
+  for (const [s, want] of [["x-git+ssh://u:p@h/r", "x-git+ssh://[REDACTED]@h/r"], ["9a-https://u@h", "9a-https://[REDACTED]@h"], ["--a-https://t@h", "--a-https://[REDACTED]@h"], ["1.2+svn://u@h", "1.2+svn://[REDACTED]@h"], ["_https://u@h", "_https://u@h"]] as const) expect(redactSecrets(s)).toBe(want);
 });
 
 test("plain URLs and mid-path @ are unchanged", () => {
