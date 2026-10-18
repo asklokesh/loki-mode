@@ -15,7 +15,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { runPackageSuites } from "../../project_model/package_suite.ts";
-import { classifyCheck, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
+import { classifyCheck, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
@@ -79,16 +79,6 @@ const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
-const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
-  pytest: { cmd: "python", args: ["-m", "pytest", "-q"] },
-  vitest: { cmd: "npx", args: ["vitest", "run"] },
-  jest: { cmd: "npx", args: ["jest"] },
-  bun: { cmd: "bun", args: ["test"] },
-  node: { cmd: "node", args: ["--test"] },
-  npm: { cmd: "npm", args: ["test", "--silent"] },
-  go: { cmd: "go", args: ["test", "-json", "./..."] },
-  cargo: { cmd: "cargo", args: ["test"] },
-};
 /** One check per detected runner, run to completion (no retry: flaky-rerun
  *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {

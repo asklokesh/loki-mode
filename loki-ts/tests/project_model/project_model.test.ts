@@ -194,9 +194,10 @@ describe("intake wiring", () => {
     for (const a of [["config", "user.email", "t@example.com"], ["config", "user.name", "t"], ["commit", "-q", "-m", "init"]]) execFileSync("git", a, { cwd: d, stdio: "pipe", env: process.env });
     const m = mock([RECORDED]);
     const ctx = { ...ctxFor(d, m.runner), branch: "loki/pm-test", tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] } } as unknown as RunContext;
-    const prev = process.env["LOKI_E10_PROJECT_MODEL"];
+    const prev = process.env["LOKI_E10_PROJECT_MODEL"], prevInstall = process.env["LOKI_E10_INSTALL"];
     try {
       delete process.env["LOKI_E10_PROJECT_MODEL"]; // FC-01: default ON
+      process.env["LOKI_E10_INSTALL"] = "0"; // FC-DEPS-NOT-INSTALLED: the recorded model's real install command must not reach the network here
       const r = await runIntake(ctx, sig, { taskText: "do a thing" });
       const pm = (r.data as any).project_model;
       expect(pm.status).toBe("ok");
@@ -207,7 +208,10 @@ describe("intake wiring", () => {
       const before = m.briefs.length;
       expect((await runIntake(ctx, sig, { taskText: "do a thing" })).data).not.toHaveProperty("project_model");
       expect(m.briefs.length).toBe(before);
-    } finally { if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev; }
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev;
+      if (prevInstall === undefined) delete process.env["LOKI_E10_INSTALL"]; else process.env["LOKI_E10_INSTALL"] = prevInstall;
+    }
   });
 });
 

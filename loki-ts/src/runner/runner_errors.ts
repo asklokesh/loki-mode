@@ -36,6 +36,8 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/\[setup failed\]|cannot find package|no required module provides package/, "go package could not be set up"],
   [/could not determine executable to run/i, "test runner executable not found"],
   [/^(?:\S+: )?(?:line \d+: )?[\w.-]+: command not found$/m, "test runner executable not found"],
+  [/^(?:\S+: )?\d+: [\w.-]+: not found$/m, "test runner executable not found (not installed)"], // POSIX sh: "sh: 1: <tool>: not found"
+  [/^npm (?:error|ERR!) (?:npx )?canceled due to missing packages/m, "test runner package not installed"], // FC-DEPS-NOT-INSTALLED
 ];
 
 /** First line carrying the error, capped, for the NOT PROVEN reason. */

@@ -23,9 +23,6 @@ src/engine10/modernize/targets/java21.ts	pom.xml
 src/engine10/modernize/targets/python3.ts	pytest
 src/engine10/output.ts	pytest
 src/engine10/output.ts	vitest
-src/engine10/stages/deep.ts	jest
-src/engine10/stages/deep.ts	pytest
-src/engine10/stages/deep.ts	vitest
 src/engine10/stages/verify.ts	pytest
 src/engine10/stages/wall.ts	jest
 src/engine10/stages/wall.ts	pytest

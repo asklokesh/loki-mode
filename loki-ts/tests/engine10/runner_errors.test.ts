@@ -151,6 +151,16 @@ describe("FC-02 load error ownership (HIGH review B1, B2, N1)", () => {
     expect(o("Error: Cannot find module '/app/x.js'\nRequire stack:")).toBe("load_error");
     expect(o("bash: line 1: vitest: command not found")).toBe("load_error");
   });
+  test("FC-DEPS-NOT-INSTALLED: a runner whose package is not installed is harness-owned; the same words in test output are not", () => {
+    const o = (s: string) => classifyRunnerOutput(s);
+    const npx = "> frontend@0.1.0 test\n> vitest run\n\nnpm error npx canceled due to missing packages and no YES option: [\"vitest@5.0.5\"]\nnpm error A complete log of this run can be found in: /x.log";
+    expect(o(npx)).toMatchObject({ kind: "load_error", owner: "harness" });
+    expect(o(npx).reason).toContain("not installed");
+    expect(o("npm ERR! canceled due to missing packages and no YES option: [\"jest@29\"]").kind).toBe("load_error");
+    expect(o("sh: 1: vitest: not found").kind).toBe("load_error");
+    expect(o("expected log to say: npx canceled due to missing packages\n Tests  1 failed | 2 passed").kind).toBe("test_failure");
+    expect(o("AssertionError: expected 'sh: 1: x: not found' to be ''").kind).toBe("test_failure");
+  });
 });
 
 describe("FC-17 Wall no-op precheck", () => {

@@ -1,5 +1,6 @@
-// loki-ts/src/project_model/install.ts -- FC-22b: the install pre-step library (wiring is S4, not here).
-// Evidence-triggered: a package is installed only when a selected check in it came back as a harness-owned load error (FC-02).
+// loki-ts/src/project_model/install.ts -- FC-22b: the install pre-step library, wired at intake by intakeDeps (FC-DEPS-NOT-INSTALLED).
+// Evidence-triggered: a package is installed only when a selected check in it came back as a harness-owned load error (FC-02),
+// or when absentDepRoots shows its dependencies were never installed (a fresh clone), before the baseline and the Wall base run.
 // Once per package per run (memo), timeout min(300s, cap left), recorded as check `install:<root>`. A failed install is
 // not_run owned by the harness, never fail. No install command: nothing runs, NOT PROVEN names the package (never guess).
 // Opt-out: LOKI_E10_INSTALL=0 or loki.yaml `verify.install_deps: false`.
@@ -10,10 +11,14 @@
 import { spawn } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
+import { baselineSuites } from "../runner/repo_profile.ts";
+import type { RunContext, RunnerName } from "../engine10/types.ts";
 import type { ProjectApi } from "./api.ts";
+import { fullSuiteSpecs } from "./package_suite.ts";
+import { loadProjectApi } from "./resolve.ts";
 
 export const INSTALL_CAP_MS = 300_000;
 const memo = new Set<string>(); // `${runId}\0${root}`: once per package per run, across fix rounds
@@ -190,4 +195,32 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     res.notProven.push(`${reason} (${name}; harness-owned)`);
   }
   return res;
+}
+
+/** FC-DEPS-NOT-INSTALLED: roots of model packages whose install command cites a manifest or lockfile inside the package root while git
+ *  shows no untracked or ignored directory directly in that root (nothing was ever installed there: a fresh clone). Ecosystem-agnostic:
+ *  git decides, never a list of dependency directory names. A git failure is not evidence of absence, so that package is left alone. */
+export function absentDepRoots(repoDir: string, model: ProjectApi | null | undefined, env?: Record<string, string | undefined>): string[] {
+  if (!model?.known()) return [];
+  const e = mergedEnv(env), roots: string[] = [];
+  for (const p of model.packages()) {
+    const mc = model.installFor(p.root), pre = p.root === "." ? "" : `${p.root}/`;
+    if (!mc || !(mc.cite ?? []).some((f) => f.startsWith(pre) && existsSync(join(repoDir, f)))) continue;
+    let out: string;
+    try { out = git(repoDir, e, ["ls-files", "--others", "--directory", "--", p.root]); } catch { continue; }
+    const installed = out.split("\n").some((l) => l.startsWith(pre) && l.endsWith("/") && !l.slice(pre.length, -1).includes("/") && l !== ".loki/");
+    if (!installed) roots.push(p.root);
+  }
+  return roots;
+}
+
+/** Intake's wired pre-step (FC-DEPS-NOT-INSTALLED, then FC-BASELINE-PER-PACKAGE): installs each package absentDepRoots names, once,
+ *  through prepareDeps (event deps.install per package; a failure is NOT PROVEN and the run goes on), then records the per-command
+ *  baseline for the full-suite commands verify will run. Returns intake's data; deps_not_proven reaches the receipt via verify's not_proven. */
+export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "emit">, signal: AbortSignal, runners: RunnerName[]): Promise<Record<string, unknown>> {
+  const model = loadProjectApi(ctx.repoDir), roots = absentDepRoots(ctx.repoDir, model);
+  const r = await prepareDeps({ repoDir: ctx.repoDir, model, failed: roots.map((root) => ({ root, harnessOwned: true })), signal, timeoutMs: INSTALL_CAP_MS, opts: { runId: ctx.runId } });
+  for (const c of r.checks) ctx.emit("deps.install", "intake", { ...c });
+  baselineSuites(ctx.repoDir, fullSuiteSpecs(ctx.repoDir, runners), { rerun: r.checks.some((c) => c.result === "pass") });
+  return r.checks.length || r.notProven.length ? { deps_install: r.checks, deps_not_proven: r.notProven } : {};
 }

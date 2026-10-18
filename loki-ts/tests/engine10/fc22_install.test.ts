@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
-import { prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
+import { absentDepRoots, intakeDeps, prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
 
 const FIX = resolve(import.meta.dir, "../fixtures/install-fc22");
@@ -175,5 +175,51 @@ describe("prepareDeps", () => {
     expect(r.checks[0]!.reason).toBe("install exited 3: boom");
     const t = await prepareDeps({ ...base(), timeoutMs: 400, model: model({ b: `sh ${FIX}/slow.sh` }), failed: failed("b") });
     expect(t.checks[0]!.reason).toContain("timed out after 0.4s");
+  });
+});
+
+// FC-DEPS-NOT-INSTALLED: a fresh clone (manifest present, nothing ever installed) is installed once at intake, before the baseline.
+const lockPkg = (root: string, cmd: string | null) => ({
+  name: root, root, runner: null, commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null }, cite: [`${root}/package-lock.json`], dependsOn: [],
+  install: cmd === null ? null : { cmd, cwd: root, cite: [`${root}/package-lock.json`] },
+});
+const lockModel = (installs: Record<string, string | null>) => projectApi({
+  schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: [], fingerprintFiles: [],
+  packages: Object.entries(installs).map(([root, cmd]) => lockPkg(root, cmd)),
+} as unknown as ProjectModel);
+
+describe("absentDepRoots and intakeDeps (FC-DEPS-NOT-INSTALLED)", () => {
+  test("a fresh clone names every package with a cited lockfile; an installed one is left alone", () => {
+    const m = lockModel({ a: `sh ${FIX}/ok.sh`, b: `sh ${FIX}/ok.sh` });
+    expect(absentDepRoots(repo, m)).toEqual(["a", "b"]);
+    mkdirSync(join(repo, "a/node_modules")); writeFileSync(join(repo, "a/node_modules/x"), "");
+    expect(absentDepRoots(repo, m)).toEqual(["b"]);
+  });
+  test("a cited file that does not exist, no install command, or no model: nothing is named", () => {
+    expect(absentDepRoots(repo, model({ a: `sh ${FIX}/ok.sh` }))).toEqual([]);
+    expect(absentDepRoots(repo, lockModel({ a: null }))).toEqual([]);
+    expect(absentDepRoots(repo, null)).toEqual([]);
+  });
+  test("Loki's own .loki/ at the repo root is not an installed dependency directory", () => {
+    writeFileSync(join(repo, "package-lock.json"), "lock\n"); git("add", "package-lock.json"); git("commit", "-qm", "root");
+    mkdirSync(join(repo, ".loki")); writeFileSync(join(repo, ".loki/x"), "");
+    expect(absentDepRoots(repo, lockModel({ ".": `sh ${FIX}/ok.sh` }))).toEqual(["."]);
+    mkdirSync(join(repo, "node_modules")); writeFileSync(join(repo, "node_modules/x"), "");
+    expect(absentDepRoots(repo, lockModel({ ".": `sh ${FIX}/ok.sh` }))).toEqual([]);
+  });
+  test("intakeDeps installs absent packages once, emits deps.install, and a failure is NOT PROVEN while the run goes on", async () => {
+    mkdirSync(join(repo, ".loki"));
+    writeFileSync(join(repo, ".loki/project.json"), JSON.stringify({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package-lock.json"], fingerprintFiles: ["a/package-lock.json"], packages: [lockPkg("a", `sh ${FIX}/ok.sh`), lockPkg("b", `sh ${FIX}/fail.sh`)] }));
+    const events: [string, string | null, Record<string, unknown>][] = [];
+    const ctx = { repoDir: repo, runId: "r-intake", emit: (t: string, s: string | null, d: Record<string, unknown>) => { events.push([t, s, d]); } };
+    const saved = process.env["LOKI_E10_PROJECT_MODEL"];
+    process.env["LOKI_E10_PROJECT_MODEL"] = "1"; // tests/preload.ts turns the model off
+    try {
+      const out = await intakeDeps(ctx as never, new AbortController().signal, []);
+      expect(events.map(([t, s, d]) => [t, s, d.name, d.result])).toEqual([["deps.install", "intake", "install:a", "pass"], ["deps.install", "intake", "install:b", "not_run"]]);
+      expect(existsSync(join(repo, "a/node_modules/.installed"))).toBe(true);
+      expect((out.deps_not_proven as string[]).join("\n")).toContain("install exited 3: boom (install:b; harness-owned)");
+      expect(await intakeDeps(ctx as never, new AbortController().signal, [])).toEqual({}); // a is installed now, b ran once this run
+    } finally { if (saved === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved; }
   });
 });

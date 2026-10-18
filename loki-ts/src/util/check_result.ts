@@ -582,6 +582,17 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "cargo": return ["cargo", ["test"]];
   }
 }
+/** The legacy per-runner full suite (no multi-root model), one check per detected runner: run by deep.ts, baselined via package_suite.ts fullSuiteSpecs. */
+export const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
+  pytest: { cmd: "python", args: ["-m", "pytest", "-q"] },
+  vitest: { cmd: "npx", args: ["vitest", "run"] },
+  jest: { cmd: "npx", args: ["jest"] },
+  bun: { cmd: "bun", args: ["test"] },
+  node: { cmd: "node", args: ["--test"] },
+  npm: { cmd: "npm", args: ["test", "--silent"] },
+  go: { cmd: "go", args: ["test", "-json", "./..."] },
+  cargo: { cmd: "cargo", args: ["test"] },
+};
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
   const site = siteFor(api, repoDir, t.path);
