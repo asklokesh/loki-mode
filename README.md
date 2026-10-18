@@ -92,7 +92,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 
 | Command | What it does |
 |---------|--------------|
-| `loki start "<task>"` | The only command you need: haiku implements first, a failed check climbs, the run verifies, seals a receipt, and opens a PR (`--no-pr`, `--provider`, `--max-cost`, `--cost off` to skip the cheap start). `loki "<task>"` and `loki owner/repo#N` are shorthand. No task and no git repo shows a receipt and spends nothing |
+| `loki start "<task>"` | The command you run: same provider model as a raw session, then the harness re-runs the checks and seals a receipt (`--no-pr`, `--provider`, `--max-cost`, `--haiku` to opt the first implement onto haiku). `loki "<task>"` and `loki owner/repo#N` are shorthand. No task and no git repo shows a receipt and spends nothing |
 | `loki edit "<change>"` | One targeted change in one pass, no PR, plan or council (`--verify`, `--receipt`, `--commit`, `--dry-run`) |
 | `loki quick "<task>"` | One small task with a verify loop, no PR |
 | `loki chat` | Interactive alternative: Plan and Build modes, slash commands, `/run` starts a `loki start` run, `--attach` joins one |

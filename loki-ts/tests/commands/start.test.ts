@@ -198,10 +198,12 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(parseStartArgs(["--help"], collect, (s) => outs.push(s))).toBe(0);
     expect(outs.join("")).toContain("usage: loki start");
     // TEN-COST-25: the --cost lean help line names the real lean levers, not the dropped router.
-    const costLine = outs.join("").split("\n").find((l) => l.includes("default lean")) ?? "";
+    const costLine = outs.join("").split("\n").find((l) => l.includes("--cost lean|off   opt-in")) ?? "";
     expect(costLine).toContain("LOKI_IMPLEMENT_HAIKU_FIRST=1");
     expect(costLine).toContain("LOKI_E10_SMALL_MAX_CHARS=1200");
     expect(costLine).not.toContain("LOKI_ROUTER");
+    const haikuLine = outs.join("").split("\n").find((l) => l.includes("--haiku") && l.includes("provider default")) ?? "";
+    expect(haikuLine).toContain("LOKI_COST_FIRST=1");
     expect(parseStartArgs(["-h"], collect, (s) => outs.push(s))).toBe(0);
   });
 

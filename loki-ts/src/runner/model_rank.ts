@@ -17,7 +17,7 @@ export const haikuFirstEnabled = (env = process.env): boolean => ["1", "on", "tr
 /** TEN-COST-16: the haiku-first pin for the first implement session only; null when off or when the run model is not stronger. Fix rounds never use it: a failed verify always escalates to the run model, so no haiku attempt that failed verify ships. */
 export function haikuFirstDowngrade(runModel: string, env = process.env): { from: string; to: string; note: string } | null {
   const to = resolveModelAlias("haiku");
-  return haikuFirstEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by haiku-first: ${runModel} -> ${to} (a failed verify escalates to ${runModel})` } : null;
+  return haikuFirstEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by haiku-first: ${runModel} -> ${to} (opt-in; a failed verify escalates to ${runModel})` } : null;
 }
 const klass = (m: string): string => resolveModelAlias(m).toLowerCase();
 export type EscalationTrigger = "code_fail" | "escalate_marker" | "spec_conflict" | "limit_kill" | "stall";

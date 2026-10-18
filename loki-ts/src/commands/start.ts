@@ -130,6 +130,7 @@ function acceptedFlags(attemptsMode: boolean, specMode = false): Set<string> {
   s.add("--help");
   s.add("-h");
   s.add("--dry-run");
+  if (!engineOnly) s.add("--haiku");
   return s;
 }
 
@@ -161,14 +162,15 @@ export const START_USAGE =
   "                        [--provider claude|codex|cline|aider|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
-  "                        [--regen-prd] [--skip-memory] [--cost lean|off]\n" +
+  "                        [--regen-prd] [--skip-memory] [--cost lean|off] [--haiku]\n" +
   "                        [--spec FILE | --spec-first] [--dry-run]\n" +
   "                        [--workspace NAME | --deploy [--health-url URL [--health-match STR]] [--auto-rollback]\n" +
   "                                  [--destination preview|staging|production] [--canary] [--env-file FILE] [--domain HOST] [--github]]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
-  "  --cost lean|off   default lean (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set. A failed check climbs. --cost off or a model pin skips the default\n" +
+  "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
+  "  --haiku          opt in to haiku for the first implement (same levers as --cost lean, plus LOKI_COST_FIRST=1). A failed check climbs back. The default model is the provider default, same as a raw session\n" +
   "  --dry-run     validate every flag, run the preflight and print the provider, model and cost cap this run would use, then exit 0 without spending a token\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
@@ -247,6 +249,18 @@ export function parseStartArgs(
         seenValueFlags.add(name);
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
+      if (name === "--haiku") {
+        for (const [k, v] of [
+          ["LOKI_IMPLEMENT_HAIKU_FIRST", "1"],
+          ["LOKI_E10_TRIM", "1"],
+          ["LOKI_E10_SMALL_NO_RUNNER", "1"],
+          ["LOKI_E10_SMALL_MAX_CHARS", "1200"],
+          ["LOKI_COST_FIRST", "1"],
+        ] as const) {
+          if (process.env[k] === undefined || process.env[k] === "") applyEnv(k, v);
+        }
+        continue;
+      }
       if (boolEnv) {
         applyEnv(boolEnv[0], boolEnv[1]);
         continue;

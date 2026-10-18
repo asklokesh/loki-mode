@@ -2627,50 +2627,21 @@ _loki_e10_resume_map() {
     return 0
 }
 
-# Default cost route. Same rules as _loki_apply_cost_default in bin/loki.
-# Fills only unset levers, after config load, so a config file still wins.
-# --cost off undoes only the keys this function set (LOKI_COST_DEFAULTED).
-loki_apply_cost_default() {
-    case "${1:-}" in
-        start|run|quick) ;;
-        *) return 0 ;;
-    esac
-    local _a _prev=""
+# --haiku opt-in. Does not change the default model. bin/loki strips the flag
+# and sets the same levers before engine10; this covers a direct bash start
+# and LOKI_CONFIG_DUMP. Explicit env wins.
+loki_apply_haiku_optin() {
+    local _a
     for _a in "$@"; do
-        case "$_a" in
-            --help|-h|--cost=off|--session-model|--session-model=*|--model|--model=*) return 0 ;;
-        esac
-        if [ "$_prev" = "--cost" ] && [ "$_a" = "off" ]; then return 0; fi
-        if [ "$_prev" = "--session-model" ] || [ "$_prev" = "--model" ]; then return 0; fi
-        _prev="$_a"
+        [ "$_a" = "--haiku" ] || continue
+        : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}"
+        : "${LOKI_E10_TRIM:=1}"
+        : "${LOKI_E10_SMALL_NO_RUNNER:=1}"
+        : "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
+        : "${LOKI_COST_FIRST:=1}"
+        export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_FIRST
+        return 0
     done
-    case "${LOKI_COST_PROFILE:-}" in off|OFF) return 0 ;; esac
-    case "${LOKI_COST_FIRST:-}" in 0|false|off|FALSE|OFF) return 0 ;; esac
-    if [ -n "${LOKI_MODEL_OVERRIDE:-}${LOKI_SESSION_MODEL:-}" ]; then return 0; fi
-    local _keys=()
-    # Do not export LOKI_COST_PROFILE. Bun start writes .loki/cost-profile.json
-    # whenever that name is set, including on --dry-run. The levers are the default.
-    if [ -z "${LOKI_IMPLEMENT_HAIKU_FIRST:-}" ]; then export LOKI_IMPLEMENT_HAIKU_FIRST=1; _keys+=("LOKI_IMPLEMENT_HAIKU_FIRST"); fi
-    if [ -z "${LOKI_E10_TRIM:-}" ]; then export LOKI_E10_TRIM=1; _keys+=("LOKI_E10_TRIM"); fi
-    if [ -z "${LOKI_E10_SMALL_NO_RUNNER:-}" ]; then export LOKI_E10_SMALL_NO_RUNNER=1; _keys+=("LOKI_E10_SMALL_NO_RUNNER"); fi
-    if [ -z "${LOKI_E10_SMALL_MAX_CHARS:-}" ]; then export LOKI_E10_SMALL_MAX_CHARS=1200; _keys+=("LOKI_E10_SMALL_MAX_CHARS"); fi
-    if [ -z "${LOKI_COST_FIRST:-}" ]; then export LOKI_COST_FIRST=1; _keys+=("LOKI_COST_FIRST"); fi
-    if [ "${#_keys[@]}" -gt 0 ]; then
-        local _old="${LOKI_COST_DEFAULTED:-}"
-        local _joined
-        _joined="$(IFS=','; printf '%s' "${_keys[*]}")"
-        if [ -n "$_old" ]; then export LOKI_COST_DEFAULTED="${_old},${_joined}"; else export LOKI_COST_DEFAULTED="$_joined"; fi
-    fi
-}
-
-loki_cost_default_undo() {
-    local _k _ks=()
-    IFS=',' read -r -a _ks <<< "${LOKI_COST_DEFAULTED:-}"
-    for _k in ${_ks[@]+"${_ks[@]}"}; do
-        [ -n "$_k" ] || continue
-        unset "$_k"
-    done
-    unset LOKI_COST_DEFAULTED
 }
 
 loki_print_autonomy() {
@@ -2683,11 +2654,6 @@ loki_print_autonomy() {
     else
         echo "Autonomy: execute (no policy file). Levels: propose, execute, operate."
     fi
-}
-
-loki_cost_banner() {
-    [ -n "${LOKI_COST_DEFAULTED:-}" ] || return 0
-    echo "Cost route: haiku implements first. Checks run outside the model. A failed check climbs to your session model. --cost off starts there."
 }
 
 cmd_start() {
@@ -2955,7 +2921,8 @@ cmd_start() {
                 echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
-                echo "  --cost PROFILE        lean (default) or off. lean: haiku implements first, prompt trim, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200, each only if unset. A failed check climbs. --cost off or a model pin skips the default"
+                echo "  --cost PROFILE        Opt-in cost profile: lean (LOKI_IMPLEMENT_HAIKU_FIRST=1, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1, LOKI_E10_SMALL_MAX_CHARS=1200 unless already set) or off"
+                echo "  --haiku                Opt in to haiku for the first implement. Same levers as --cost lean, plus LOKI_COST_FIRST=1. A failed check climbs back to the session model. Default is the provider model"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -3425,13 +3392,17 @@ cmd_start() {
                 shift
                 ;;
             # TEN-COST-01: opt-in cost profile; fills only unset levers (explicit env wins).
+            --haiku)
+                loki_apply_haiku_optin --haiku
+                shift
+                ;;
             --cost|--cost=*)
                 if [[ "$1" == --cost=* ]]; then _cost_val="${1#*=}"; _cost_n=1; else _cost_val="${2:-}"; _cost_n=2; fi
                 case "$_cost_val" in
                     lean) : "${LOKI_IMPLEMENT_HAIKU_FIRST:=1}" "${LOKI_E10_TRIM:=1}" "${LOKI_E10_SMALL_NO_RUNNER:=1}" "${LOKI_E10_SMALL_MAX_CHARS:=1200}"
                           export LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS LOKI_COST_PROFILE=lean
                           echo "cost profile lean: LOKI_IMPLEMENT_HAIKU_FIRST=$LOKI_IMPLEMENT_HAIKU_FIRST LOKI_E10_TRIM=$LOKI_E10_TRIM LOKI_E10_SMALL_NO_RUNNER=$LOKI_E10_SMALL_NO_RUNNER LOKI_E10_SMALL_MAX_CHARS=$LOKI_E10_SMALL_MAX_CHARS" ;;
-                    off) loki_cost_default_undo; export LOKI_COST_PROFILE=off ;;
+                    off) ;;
                     *) echo -e "${RED}--cost must be lean or off${NC}" >&2; exit 2 ;;
                 esac
                 shift "$_cost_n"
@@ -3685,7 +3656,6 @@ cmd_start() {
     # empty non-repo receipt above. The Loki 10 engine path prints the same
     # lines from bin/loki and does not reach here.
     loki_print_autonomy
-    loki_cost_banner
 
     # Clear any stale raw-brief marker from a PRIOR run before we decide the
     # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
@@ -22706,9 +22676,8 @@ main() {
             if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
                 loki_maybe_apply_config_file "$@"
             fi
-            # After config, so a file can set LOKI_COST_PROFILE=off or pin a lever.
-            # --cost off in the argv skips the default. The dump below then shows it.
-            loki_apply_cost_default "$command" "$@"
+            # --haiku is opt-in. The dump below shows the levers when the flag is present.
+            loki_apply_haiku_optin "$@"
             # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
             # the resolved LOKI_* environment (after the config pre-pass AND any
             # ambient env) and exit 0 WITHOUT running a build. Lets operators and

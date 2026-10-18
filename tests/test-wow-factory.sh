@@ -36,12 +36,10 @@ check "start outside a repo points at start" "$(printf '%s' "$empty" | grep -q '
 check "start outside a repo does not ask for a provider" "$(printf '%s' "$empty" | grep -Eq 'npm install -g @anthropic-ai|provider CLI is not installed' && echo 0 || echo 1)"
 
 dump="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_E10_SMALL_NO_RUNNER -u LOKI_E10_SMALL_MAX_CHARS -u LOKI_COST_FIRST -u LOKI_COST_DEFAULTED -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL LOKI_CONFIG_DUMP=1 "$LOKI" start ./ignored.md 2>/dev/null || true)"
-check "start defaults haiku-first" "$(printf '%s' "$dump" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 1 || echo 0)"
-check "start defaults trim" "$(printf '%s' "$dump" | grep -q '^LOKI_E10_TRIM=1$' && echo 1 || echo 0)"
-check "start defaults cost-first" "$(printf '%s' "$dump" | grep -q '^LOKI_COST_FIRST=1$' && echo 1 || echo 0)"
-offdump="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_COST_FIRST -u LOKI_COST_DEFAULTED -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL LOKI_CONFIG_DUMP=1 "$LOKI" start --cost off ./ignored.md 2>/dev/null || true)"
-check "cost off does not force haiku" "$(printf '%s' "$offdump" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 0 || echo 1)"
-pindump="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_COST_FIRST -u LOKI_COST_DEFAULTED LOKI_SESSION_MODEL=opus LOKI_CONFIG_DUMP=1 "$LOKI" start ./ignored.md 2>/dev/null || true)"
-check "a model pin does not force haiku" "$(printf '%s' "$pindump" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 0 || echo 1)"
+check "start keeps the provider model" "$(printf '%s' "$dump" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 0 || echo 1)"
+hai="$(env -u LOKI_COST_PROFILE -u LOKI_IMPLEMENT_HAIKU_FIRST -u LOKI_E10_TRIM -u LOKI_E10_SMALL_NO_RUNNER -u LOKI_E10_SMALL_MAX_CHARS -u LOKI_COST_FIRST -u LOKI_MODEL_OVERRIDE -u LOKI_SESSION_MODEL LOKI_CONFIG_DUMP=1 "$LOKI" start --haiku ./ignored.md 2>/dev/null || true)"
+check "--haiku opts into haiku-first" "$(printf '%s' "$hai" | grep -q '^LOKI_IMPLEMENT_HAIKU_FIRST=1$' && echo 1 || echo 0)"
+check "--haiku opts into trim" "$(printf '%s' "$hai" | grep -q '^LOKI_E10_TRIM=1$' && echo 1 || echo 0)"
+check "--haiku opts into cost-first" "$(printf '%s' "$hai" | grep -q '^LOKI_COST_FIRST=1$' && echo 1 || echo 0)"
 
 exit "$fail"
