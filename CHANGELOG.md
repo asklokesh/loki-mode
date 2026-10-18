@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.66 (2026-10-18)
+
+### Fixed
+- Intake: a `loki start owner/repo#123` run started while the checkout sits on an earlier, unaccepted Loki run branch (`loki/e10-*`, every commit carrying a Loki-Run trailer) now branches from the PR target tip instead of stacking on that prior run. The start line names the skipped commits, intake records `stacked_loki_skip`, and setting LOKI_PR_BASE keeps the old behavior. A failed checkout keeps base at HEAD and says so (FC-STACKED-ON-LOKI-RUN).
+
 ## v11.17.65 (2026-10-18)
 
 ### Fixed

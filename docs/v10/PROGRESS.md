@@ -2569,3 +2569,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T22:54Z (CoS) v11.17.65
 - FC-TEST-LEAKS-INTO-REPO: writer was providers.test.ts codex stub via preflight providerLoginIssue in process cwd. Fix 3c09faeb5: probe cwd tmpdir, stub exits 0 on login. Guard red on parent (codex case fails at providers.test.ts:184, calc.ts appears), green now: providers+preflight 58 pass 0 fail; help-drift rc 0, sigpipe rc 0. TL review APPROVE (note: relative LOKI_CODEX_CLI path resolves against tmpdir; warning only, follow-up).
+
+## 2026-10-18T22:58Z (CoS) v11.17.66
+- FC-STACKED-ON-LOKI-RUN: #21527 rerun on 11.17.64 based its run on loki/e10-20261018T205304Z-fdfc. Fix 304566e37 (base_guard.stackedOnLokiRun + intake checkout from target tip). HIGH review BLOCK on e869305 (B1/B2), APPROVE on f810c19; merged content equals approved (diff only 3c09faeb5 released files). intake.test.ts 54 pass; engine10 subset 138 pass 0 fail rc=0. help-drift was red (no backticked loki invocation in newest 5 sections); this section restores it.
