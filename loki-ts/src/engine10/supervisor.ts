@@ -66,8 +66,8 @@ export type PrStep = (p: {
   notProven: string[]; // accumulated so far (backstop/tamper included): the only place the PR body learns why when a killed worker never sealed a receipt
 }) => Promise<PrOutcome | null>;
 // Backstop fallback for a FAILED run with no PR (no diff, or no remote): on an issue run, posts a comment naming the reason instead of vanishing.
-export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string; prUrl?: string | null }) => Promise<{ argv: string[]; ok: boolean } | null>;
-export type StatusStep = (p: { prUrl?: string | null; outcome?: string; reason?: string }) => Promise<{ argv: string[]; ok: boolean } | null>; // FV-gh-steer-3: upserts the one status comment on the issue
+export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string; prUrl?: string | null }) => Promise<{ argv: string[]; ok: boolean; skipped?: boolean } | null>;
+export type StatusStep = (p: { prUrl?: string | null; outcome?: string; reason?: string }) => Promise<{ argv: string[]; ok: boolean; skipped?: boolean } | null>; // FV-gh-steer-3: upserts the one status comment on the issue
 export interface SupervisorOptions {
   runId: string;
   repoDir: string;
@@ -185,16 +185,16 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the
   // PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against
   // intake's base_sha) sees it. No diff falls to the comment/print branch below.
-  let hasDiff = false;
-  if (verdict === "FAILED" && !cancelled) {
+  let hasDiff = false; // P1: every verdict needs a net diff to publish; a SPEC_CONFLICT or PARTIAL that changed nothing must not push an empty branch
+  if (!cancelled) {
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
     const baseE = stages["intake"], base = validBase(baseE?.type === "stage.completed" ? baseE.data.base_sha : null); // D50-F4b: a worker-written base is never an option or ref
-    if (stages["commit"]?.type !== "stage.failed") { const why = guardedBackstop(intact, opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); if (why) notProven.push(why); } // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
-    try { // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
+    if (verdict === "FAILED" && stages["commit"]?.type !== "stage.failed") { const why = guardedBackstop(intact, opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); if (why) notProven.push(why); } // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
+    if (base === null && verdict !== "FAILED") hasDiff = true; else try { // no recorded base: nothing to compare, keep the pre-P1 behaviour; otherwise // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
       safeGit(opts.repoDir, ["diff", "--quiet", String(base), "HEAD", "--", ".", ":(exclude).loki"], { env: workerEnv, stdio: "ignore" });
     } catch { hasDiff = base !== null; }
   }
-  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && (verdict !== "FAILED" || hasDiff)) {
+  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && hasDiff) {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven });
     notProven.push(...(out?.notProven ?? []));
@@ -216,10 +216,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== ""; if (opts.status) statusReason = reason;
     if (isIssueWithRef && opts.comment && !opts.status) {
       const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason, prUrl });
-      log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
+      log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, ...(out?.skipped ? { skipped: true } : {}), reason });
     } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
-  if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, reason: statusReason ?? String(outcome) }); }
+  if (opts.status) { const st = await opts.status({ prUrl, outcome: String(outcome), reason: statusReason }); log.append("issue.commented", null, { argv: st?.argv ?? [], ok: st?.ok ?? false, ...(st?.skipped ? { skipped: true } : {}), reason: statusReason ?? String(outcome) }); }
   log.append("run.completed", null, { verdict, ...(cancelled ? { cancelled: true, signal: cancelled, outcome: "CANCELLED" } : {}), pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
   log.sealLog(); recordFingerprints(join(opts.repoDir, ".loki", "state"), opts.runId, "failed", failedCheckNames(folded.stages["verify"]?.data.checks), cleanTreeId(opts.repoDir)); // Q17-03: real failing checks, read by decideRecovery so a flaky check does not mask them
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
@@ -386,7 +386,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       writeFileSync(bodyFile, `<!-- loki-backstop -->\nLoki 10 run ${runId} ${prUrl ? `opened draft PR ${prUrl}` : "ended without a PR"}.\n\n${prUrl ? "One question" : "Reason"}: ${reason}\n`);
       const argv = pushArgv({ cmd: "issue-comment", issueRef, bodyFile });
       const origin = readOriginUrl(repoDir), r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env: origin ? { ...env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : env, encoding: "utf8" }); // the push script refuses an unpinned origin
-      return { argv, ok: r.status === 0 };
+      return { argv, ok: r.status === 0, ...(/^skipped: /m.test(String(r.stdout)) ? { skipped: true } : {}) };
     },
   }).catch((e) => { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); return null; });
   clearInterval(tailTimer); stopPlan();

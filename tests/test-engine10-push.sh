@@ -453,9 +453,10 @@ LOKI_PR_FORK=0 p4 "$LIB" push-pr "$A" loki/e10-fko "E10 title" "$W/body.md" >/de
     && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fko >/dev/null \
     && ok "LOKI_PR_FORK=0 keeps the direct push to the pinned origin" || bad "LOKI_PR_FORK=0 rc=$rc err=$(tr '\n' ' ' < "$W/err")"
 rm -f "$W/status.cid"; : > "$GHLOG"
-p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>"$W/err"; rc=$?
+out="$(p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" 2>"$W/err")"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" && grep -q 'not commenting on its issue 9' "$W/err" \
-    && ok "no push access: the status comment is not posted on someone else's issue" || bad "status comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
+    && [ "$out" = "skipped: no push access to octocat/hello" ] \
+    && ok "no push access: the status comment is not posted on someone else's issue and says skipped on stdout" || bad "status comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
 printf '<!-- loki-status -->\nissue text quoting <!-- loki-receipt -->\n' > "$W/quoted.md"; : > "$GHLOG"
 p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/quoted.md" >/dev/null 2>"$W/err"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" \
