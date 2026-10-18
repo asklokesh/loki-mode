@@ -1145,3 +1145,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: the machine fix loop (ran on any failing verify regardless of implement.exit), the 11.17.61 confirmation rule in the loop (required a second conflict claim from fix; removed), fix stage output spec_conflict (only consumer was that rule; removed), the implement/fix briefs (context.ts FIXED_RULES) and the shared stage prefix (lean_prefix.ts) that plan, wall and implement read.
 - Mechanism: the fix loop condition stops when implement.exit is spec_conflict (verify still runs once, E-98b); FIXED_RULES and the stage prefix forbid docs, changelog or README text announcing behavior the code lacks and direct the agent to LOKI_SPEC_CONFLICT. The A-110/E-67 draft PR for a conflict with real implement work is kept.
 - Fixture: loki-ts/tests/engine10/machine.test.ts E-98b case (one verify, no fix round; red on the old loop), implement brief and spec-first goldens re-captured.
+
+## FC-LINT-OOM Tests shard 0 died with "runner has received a shutdown signal" (exit 143) during ShellCheck Linting (LINT-OOM)
+- User-visible vs raw: user-visible (red Tests on main for 11.17.61 and 11.17.63). Raw: no suite failed; the hosted runner was killed mid-lint.
+- Law broken: a gate must fit its machine; resource exhaustion read as a red verdict hides real results.
+- Siblings: the ratchet pass (autonomy/loki, started in the background first) and the per-file pool in tests/run-shellcheck.sh; both could hold a multi-GB shellcheck at once. Measured RSS: autonomy/loki 8.4 GB, autonomy/run.sh 9.8 GB, 16 GB runner.
+- Mechanism: one scheduling rule in tests/run-shellcheck.sh: a file of at least LOKI_SHELLCHECK_HEAVY_LINES (default 5000) lines runs alone (pool drained first, nothing starts until it ends); the ratchet runs serially. Verdict logic unchanged (598 pass, 0 fail locally, 1m45s).
+- Fixture: tests/test-shellcheck-heavy-serial.sh (fake shellcheck records overlap; red on the previous script, green now).

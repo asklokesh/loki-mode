@@ -2563,3 +2563,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T21:32Z (CoS) v11.17.63
 - FC-VACUOUS-WALL-GREEN + FC-FIX-OVER-CONFLICT (anthropics/claude-code#21527). HIGH review (review-21527) BLOCK B1 (green-on-base Wall counted as VERIFIED proof) fixed, re-review APPROVE: 430 pass 0 fail across check_result/seal/wall/machine/wall_concurrent/already_done/verify/discard_proto/budget, tsc 0. Full suite shards aa-ad + ae1 0 fail (ae1 723 pass); route_matrix rerun pending (timed out together, fix-forward signal). CI-only guards help-drift/sigpipe/select-tests rc=0.
+
+## 2026-10-18T21:52Z (CoS) v11.17.64
+- FC-LINT-OOM: Tests shard 0 killed (runner shutdown, exit 143) mid ShellCheck on 303d5df9b and d8293520e; measured shellcheck RSS loki 8.4 GB, run.sh 9.8 GB. Heavy files lint alone. tests/test-shellcheck-heavy-serial.sh red on old script, green now; real lint 598 pass 0 fail 1m45s; shard-coverage, sigpipe, select-tests, registration, help-drift, no-dashes rc 0. LOW review (review-21527) APPROVE.

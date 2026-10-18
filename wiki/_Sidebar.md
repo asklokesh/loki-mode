@@ -41,6 +41,6 @@
 
 ---
 
-**Version:** 11.17.63
+**Version:** 11.17.64
 
 [Autonomi](https://www.autonomi.dev/) | [GitHub](https://github.com/asklokesh/loki-mode) | [npm](https://www.npmjs.com/package/loki-mode)

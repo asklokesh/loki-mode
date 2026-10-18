@@ -1716,6 +1716,7 @@ run_test "measure-run and guard-changed help is read-only (PO5)" "timeout -k 10 
 run_test "cp-redesign image allowlist guard (D26)" "timeout -k 10 120 bash $SCRIPT_DIR/test-cp-redesign-images.sh"
 run_test "mobile emulator tests: NOT VERIFIED without a device" "timeout -k 10 120 bash $SCRIPT_DIR/test-mobile-verify.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
+run_test "ShellCheck heavy files lint alone, never in parallel (FC-LINT-OOM)" "timeout -k 10 120 bash $SCRIPT_DIR/test-shellcheck-heavy-serial.sh"
 run_test "MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)" "timeout -k 10 60 bash $SCRIPT_DIR/test-mcp-spec-doc.sh"
 run_test "in-toto agent-change predicate draft example parses and maps to receipt fields (SIGS-DOC)" "timeout -k 10 60 bash $SCRIPT_DIR/test-predicate-doc.sh"
 

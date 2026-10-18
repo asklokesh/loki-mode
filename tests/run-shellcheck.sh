@@ -82,11 +82,22 @@ _sc_jobs="${LOKI_SHELLCHECK_JOBS:-$( { command -v nproc >/dev/null 2>&1 && nproc
 case "$_sc_jobs" in ''|*[!0-9]*) _sc_jobs=4 ;; esac
 [ "$_sc_jobs" -lt 1 ] && _sc_jobs=1
 
+# MEMORY: shellcheck peaks at ~8-10 GB RSS on autonomy/loki and autonomy/run.sh
+# (measured 2026-10-18), so two of them in parallel exhausted the 16 GB hosted
+# runner, which died as "runner has received a shutdown signal" (exit 143) in
+# Tests shard 0 on 303d5df9b and d8293520e (FC-LINT-OOM). A heavy file (at least
+# LOKI_SHELLCHECK_HEAVY_LINES lines) therefore always runs ALONE: the pool drains
+# first and nothing else starts until it finishes. Scheduling only; verdicts are
+# unchanged.
+_sc_heavy_lines="${LOKI_SHELLCHECK_HEAVY_LINES:-5000}"
+case "$_sc_heavy_lines" in ''|*[!0-9]*) _sc_heavy_lines=5000 ;; esac
+_sc_is_heavy() { [ "$(wc -l < "$1" 2>/dev/null || echo 0)" -ge "$_sc_heavy_lines" ]; }
+
 # COUNT RATCHET for extensionless scripts the *.sh scan above never lints
 # (autonomy/loki). Counts warning-level findings against the per-file baseline
 # in tests/shellcheck-baselines.tsv: more than baseline fails, fewer prints a
-# hint to lower the baseline. Started first so the largest file runs in
-# parallel with the rest and total wall time does not grow.
+# hint to lower the baseline. Runs serially before the pool (FC-LINT-OOM: these
+# are the heaviest files).
 # LOKI_SHELLCHECK_RATCHET_ROOT lets a test point at a scratch copy.
 _sc_ratchet_root="${LOKI_SHELLCHECK_RATCHET_ROOT:-.}"
 _sc_ratchet_dir="$_sc_results/ratchet"
@@ -96,7 +107,7 @@ while IFS=$'\t' read -r _rpath _rbase; do
     (
         _rcount=$(shellcheck -S warning -e "$GLOBAL_EXCLUDES" -f gcc "$_sc_ratchet_root/$_rpath" 2>/dev/null | grep -c ': \(warning\|error\): ')
         printf '%s\n' "$_rcount" > "$_sc_ratchet_dir/$(printf '%s' "$_rpath" | tr '/.' '__')"
-    ) &
+    )
 done < "$(dirname "${BASH_SOURCE[0]}")/shellcheck-baselines.tsv"
 
 for file in $FILES; do
@@ -117,6 +128,8 @@ for file in $FILES; do
         local_excludes="${local_excludes},${TEST_EXCLUDES}"
     fi
 
+    _sc_alone=0
+    if _sc_is_heavy "$file"; then _sc_alone=1; wait; fi
     # Each file is checked in a background job writing a one-line verdict to its
     # own result file. The DECISION LOGIC is byte-identical to the serial
     # version: same two invocations, same exit-code test, same info-level probe.
@@ -135,6 +148,7 @@ for file in $FILES; do
             printf 'FAIL\t%s\n%s\n' "$file" "$output"
         fi
     ) > "$_sc_results/$(printf '%s' "$file" | tr '/.' '__')" 2>&1 &
+    [ "$_sc_alone" -eq 1 ] && wait
 
     # Bound concurrency so 581 shellcheck processes do not stampede the box.
     while [ "$(jobs -rp | wc -l)" -ge "$_sc_jobs" ]; do wait -n 2>/dev/null || break; done
