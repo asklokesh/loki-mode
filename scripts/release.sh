@@ -885,7 +885,9 @@ run_ship() {
         [ -f "$ROOT_DIR/$f" ] || ship_refuse SHIP_DIST_MISSING "$f does not exist after the build"
         git -C "$ROOT_DIR" add -f -- "$f"
     done
-    git -C "$ROOT_DIR" show ":loki-ts/dist/loki.js" | grep -qF "$new" \
+    # No pipe into grep -q: under pipefail, grep exiting on its first match SIGPIPEs the still-writing git show (rc 141)
+    # on a multi-MB bundle, which read as "does not embed" (v11.17.60 ship). A here-string reads the blob in full.
+    grep -qF -- "$new" <<<"$(git -C "$ROOT_DIR" show ":loki-ts/dist/loki.js")" \
         || ship_refuse SHIP_DIST_STALE "staged loki-ts/dist/loki.js does not embed $new"
     staged="$(git -C "$ROOT_DIR" diff --cached --name-only)"
     hit=""
