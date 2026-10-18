@@ -67,6 +67,19 @@ test("Overview with nothing waiting says so, and an empty KPI states why instead
   expect(t.length).toBe(4);
   expect(t.find((x) => x.id === "kpi-verified")!.value).toBe("No finished runs");
   expect(t.find((x) => x.id === "kpi-cost")!.value).toBe("No priced runs");
+  expect(t.find((x) => x.id === "kpi-cost")!.trend).toBeUndefined();
+});
+
+test("the cost tile average uses this week's priced runs only, never an older run", () => {
+  const old = row({ run_id: "old", cost_usd: 9, started_at: "2026-08-01T10:00:00Z", ended_at: "2026-08-01T10:05:00Z" });
+  const onlyOld = kpiTiles(kpisOf([old], groupByIssue([old]), NOW)).find((x) => x.id === "kpi-cost")!;
+  expect(onlyOld.value).toBe("No priced runs");
+  expect(onlyOld.trend).toBeUndefined();
+  const mixed = [old, row({ run_id: "w1", cost_usd: 1 }), row({ run_id: "w2", cost_usd: 3 }), free];
+  const k = kpisOf(mixed, groupByIssue(mixed), NOW);
+  expect(k.avgCostWeek).toBe(2);
+  expect(k.pricedWeek).toBe(2);
+  expect(kpiTiles(k).find((x) => x.id === "kpi-cost")!.trend).toContain("across 2 priced");
 });
 
 test("Runs table is grouped by issue, attempts expand, filters narrow, no unmeasured and no raw enums", () => {

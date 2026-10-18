@@ -26,8 +26,14 @@ The npm package installs the Bun runtime the engine needs as an optional depende
 Want to see a result before you install or spend anything?
 
 ```bash
-npx loki-mode start   # no git repo: a real receipt, no key, no spend, no network
+npx loki-mode start   # no git repo: a real receipt, no key, no spend
 npx loki-mode tour    # the same receipt when you are already inside a repo
+```
+
+`npx` downloads the package the first time, so that step needs the network. The receipt itself replays offline and checks with no provider and no key.
+
+```bash
+npx loki-mode wow     # a provider is ready: one tiny real task in a temp repo, its own receipt
 ```
 
 ## First run

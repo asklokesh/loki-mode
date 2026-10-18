@@ -110,16 +110,44 @@ describe("engine10 machine", () => {
     expect(r.stopped).toBe("stalled");
   });
 
-  it("an identical fix diff and failure signature stalls without a third verify", async () => {
+  it("a fix round that left the tree unchanged stalls without re-running verify", async () => {
     const { ctx, events } = fakeCtx();
-    let verifies = 0;
+    let verifies = 0, fixes = 0;
     const r = await runMachine(ctx, { load: loaderOf(all({
       verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "same" }] } }; }),
-      fix: stage("fix", async () => ({ status: "completed", data: { diff_stat: " greets.js | 2 +-", signatures: "same" } })),
+      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0", signatures: "same" } }; }),
     })) });
     expect(r.stopped).toBe("stalled");
-    expect(verifies).toBe(2);
+    expect(fixes).toBe(1);
+    expect(verifies).toBe(1);
     expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
+  });
+
+  it("a fix round that changed the tree is verified, even with the same failure", async () => {
+    const { ctx, events } = fakeCtx();
+    let verifies = 0, fixes = 0;
+    await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "same" }] } }; }),
+      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: `t${fixes}`, tree_after: `t${fixes + 1}`, signatures: "same" } }; }),
+    })) });
+    expect(verifies).toBe(3);
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(false);
+  });
+
+  it("a failed fix stage keeps the old output but is never read as a repeat", async () => {
+    const { ctx, events } = fakeCtx();
+    let verifies = 0, fixes = 0;
+    await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: `s${verifies}` }] } }; }),
+      fix: stage("fix", async () => {
+        fixes++;
+        return fixes === 1
+          ? { status: "completed", data: { round: 1, tree_before: "t0", tree_after: "t1" } }
+          : { status: "failed", reason: "session error", data: {} };
+      }),
+    })) });
+    expect(verifies).toBe(3);
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(false);
   });
 
   it("changing signatures are not stalled", async () => {

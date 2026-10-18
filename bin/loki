@@ -356,9 +356,16 @@ _loki_f2p_default() {
         export LOKI_TRIM_DEFAULTED=1
     fi
 }
+# Same text as loki_f2p_banner in autonomy/loki: names only the defaults this run turned on.
+# stderr, so a --json run's stdout stays one JSON document.
 _loki_f2p_banner() {
-    [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] || [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ] || return 0
-    echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0."
+    if [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] && [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0." >&2
+    elif [ "${LOKI_F2P_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: a behavior change is verified only when a Wall test fails on the old code. Opt out: LOKI_MUTATION_STRICT=0." >&2
+    elif [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
+        echo "Factory: tool logs are trimmed before the next turn. Opt out: LOKI_E10_TRIM=0." >&2
+    fi
 }
 _loki_f2p_default "$@"
 
@@ -368,9 +375,9 @@ _loki_print_autonomy() {
         if [ -f "$_f" ]; then _pol="$_f"; break; fi
     done
     if [ -n "$_pol" ]; then
-        echo "Autonomy: policy file $_pol (propose, execute, operate; the file decides PR allow, draft or deny)."
+        echo "Autonomy: policy file $_pol (propose, execute, operate; the file decides PR allow, draft or deny)." >&2
     else
-        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate."
+        echo "Autonomy: execute (no policy file). Levels: propose, execute, operate." >&2
     fi
 }
 # First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
@@ -750,8 +757,12 @@ case "v10" in
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
-            _loki_f2p_banner
-            _loki_print_autonomy
+            # Only a run prints the policy lines; keys, export, status, verify, dashboard and plan --spec
+            # are data commands whose output callers parse.
+            case "${1:-}" in
+                keys|export|status|verify|dashboard|plan) ;;
+                *) _loki_f2p_banner; _loki_print_autonomy ;;
+            esac
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args _e10_hard

@@ -201,7 +201,8 @@ describe("engine10 pr stage", () => {
     expect(calls).toHaveLength(3);
     expect(calls[0]).toContain("mode=push-pr");
     expect(calls[1]).toContain("mode=status");
-    expect(calls[2]).toContain("mode=comment");
+    expect(calls[2]).toContain("mode=issue-comment");
+    expect(calls[2]).toContain("args=--update #");
     const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
     expect(calls[1]).toContain(`args=${headSha} pending`);
   });

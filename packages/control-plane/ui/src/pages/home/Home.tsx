@@ -7,7 +7,7 @@ import { Badge, Button, Card, EmptyState, KpiTile, Spinner } from "../../design/
 import { EmptyState as FirstRun } from "../../Shell"; // no runs at all: import and CLI first-run state
 import { openNewRun } from "../compose/store";
 import { PrLink } from "../runs";
-import { useRecentRuns } from "../runs/data";
+import { useAllRuns } from "../runs/data";
 import { groupByIssue, inboxOf, kpisOf, runHref, verdictOf, whenOf, type IssueGroup, type Kpis } from "../runs/issues";
 import { OutcomeChip } from "../runs/OutcomeChip";
 
@@ -20,7 +20,7 @@ export function kpiTiles(k: Kpis): { id: string; label: string; value: string; t
   return [
     { id: "kpi-runs", label: "Runs this week", value: String(k.runsWeek) },
     { id: "kpi-verified", label: "Verified share", value: share, trend: k.finishedWeek ? `${k.verifiedWeek} of ${k.finishedWeek} finished` : undefined },
-    { id: "kpi-cost", label: "Cost this week", value: k.costWeek === null ? "No priced runs" : `${fmtUsd(k.costWeek)}${k.costPartial ? "+" : ""}` },
+    { id: "kpi-cost", label: "Cost this week", value: k.costWeek === null ? "No priced runs" : `${fmtUsd(k.costWeek)}${k.costPartial ? "+" : ""}`, trend: k.avgCostWeek === null ? undefined : `avg ${fmtUsd(k.avgCostWeek)} across ${k.pricedWeek} priced` },
     { id: "kpi-needs", label: "Needs you", value: String(k.needsYou) },
   ];
 }
@@ -115,13 +115,7 @@ export function GettingStarted({ doctor, noRuns }: { doctor: DoctorState; noRuns
 
 export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunRow[]; now?: number; doctor?: DoctorState }) {
   const groups = useMemo(() => groupByIssue(runs), [runs]);
-  const tiles = useMemo(() => {
-    const base = kpiTiles(kpisOf(runs, groups, now));
-    const priced = runs.map((r) => r.cost_usd).filter((n): n is number => typeof n === "number");
-    if (priced.length === 0) return base;
-    const avg = priced.reduce((a, b) => a + b, 0) / priced.length;
-    return base.map((t) => t.id === "kpi-cost" ? { ...t, trend: [t.trend, `avg ${fmtUsd(avg)} across ${priced.length} priced`].filter(Boolean).join(" / ") } : t);
-  }, [runs, groups, now]);
+  const tiles = useMemo(() => kpiTiles(kpisOf(runs, groups, now)), [runs, groups, now]);
   return (
     <div data-testid="overview" style={{ display: "flex", flexDirection: "column", gap: 32, maxWidth: 960 }}>
       <header style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -139,7 +133,7 @@ export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunR
 }
 
 export function Home(): ReactNode {
-  const { runs, error } = useRecentRuns(20);
+  const { runs, error } = useAllRuns(); // NEEDS YOU and the weekly KPIs need every run, not a recent page
   const [doctor, setDoctor] = useState<DoctorState>(null);
   useEffect(() => {
     let live = true;

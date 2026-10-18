@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { maybeAsk, parseScore, satisfactionEnabled } from "../../src/util/satisfaction.ts";
+import { PassThrough } from "node:stream";
+import { askLine, maybeAsk, parseScore, satisfactionEnabled } from "../../src/util/satisfaction.ts";
 
 describe("satisfaction", () => {
   test("the prompt is opt-in and off without a TTY, in CI, or when disabled", () => {
@@ -11,6 +12,21 @@ describe("satisfaction", () => {
     expect(satisfactionEnabled({ CI: "true" }, true)).toBe(false);
     expect(satisfactionEnabled({ LOKI_SATISFACTION: "0" }, true)).toBe(false);
     expect(satisfactionEnabled({ LOKI_SATISFACTION: "off" }, true)).toBe(false);
+    expect(satisfactionEnabled({ CI: "yes" }, true)).toBe(false);
+    expect(satisfactionEnabled({ CI: "false" }, true)).toBe(true);
+    expect(satisfactionEnabled({ GITHUB_ACTIONS: "true" }, true)).toBe(false);
+    expect(satisfactionEnabled({ JENKINS_URL: "http://ci" }, true)).toBe(false);
+  });
+  test("askLine resolves a skip on EOF and on the timeout, and the answer otherwise", async () => {
+    const eof = new PassThrough();
+    const p1 = askLine("> ", 5000, eof, new PassThrough());
+    eof.end();
+    expect(await p1).toBe("");
+    expect(await askLine("> ", 20, new PassThrough(), new PassThrough())).toBe("");
+    const typed = new PassThrough();
+    const p3 = askLine("> ", 5000, typed, new PassThrough());
+    typed.write("5 y\n");
+    expect(await p3).toBe("5 y");
   });
   test("parseScore accepts 1-5 and an optional y or n, and skips junk", () => {
     expect(parseScore("5 y")).toEqual({ score: 5, again: true });

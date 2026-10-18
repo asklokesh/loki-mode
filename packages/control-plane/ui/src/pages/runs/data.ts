@@ -22,27 +22,6 @@ export async function fetchAllRuns(): Promise<RunRow[]> {
   return out;
 }
 
-export async function fetchRecentRuns(limit = 20): Promise<RunRow[]> {
-  const t = authToken();
-  const q = new URLSearchParams({ limit: String(limit) });
-  const res = await fetch(`${base()}/v1/runs?${q}`, { headers: t ? { authorization: `Bearer ${t}` } : {} });
-  if (!res.ok) throw new Error(`/v1/runs: HTTP ${res.status}`);
-  const j = (await res.json()) as RunsResponse;
-  return j.runs;
-}
-
-export function useRecentRuns(limit = 20, live = true): { runs: RunRow[] | null; error: string | null } {
-  const [s, set] = useState<{ runs: RunRow[] | null; error: string | null }>({ runs: null, error: null });
-  const load = useCallback(() => {
-    fetchRecentRuns(limit).then((runs) => set({ runs, error: null }), (e: Error) => set((p) => ({ runs: p.runs, error: e.message })));
-  }, [limit]);
-  useEffect(() => {
-    load();
-    return live ? watchRuns(load) : undefined;
-  }, [load, live]);
-  return s;
-}
-
 export function useAllRuns(live = true): { runs: RunRow[] | null; error: string | null } {
   const [s, set] = useState<{ runs: RunRow[] | null; error: string | null }>({ runs: null, error: null });
   const load = useCallback(() => {

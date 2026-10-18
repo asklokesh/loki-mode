@@ -61,9 +61,10 @@ export function prNumberFromUrl(url: string): string | null {
 }
 
 /**
- * Post the receipt comment through engine10-push.sh comment.
+ * Upsert the receipt comment through engine10-push.sh issue-comment --update, keyed on the
+ * <!-- loki-receipt --> marker, so a re-run or resume on the same PR edits one comment.
  * Returns null when there is nothing to post or the post succeeded.
- * Returns a NOT PROVEN line when the post failed. Never throws.
+ * Returns a NOT PROVEN line (with the exit status and first stderr line) when the post failed. Never throws.
  */
 export function postReceiptComment(a: {
   scriptPath: string;
@@ -78,13 +79,15 @@ export function postReceiptComment(a: {
   try {
     const file = join(a.runDir, "receipt-comment.md");
     writeFileSync(file, a.comment, "utf8");
-    const r = spawnSync("bash", [a.scriptPath, "comment", num, file], {
+    const r = spawnSync("bash", [a.scriptPath, "issue-comment", "--update", `#${num}`, file], {
       env: a.env,
       encoding: "utf8",
       timeout: a.timeoutMs,
       killSignal: "SIGKILL",
     });
-    return r.status === 0 ? null : "receipt comment not posted";
+    if (r.status === 0) return null;
+    const why = (r.stderr ?? "").split("\n").map((l) => l.trim()).find(Boolean)?.slice(0, 160);
+    return `receipt comment not posted (exit ${r.status ?? r.signal ?? "unknown"}${why ? `: ${why}` : ""})`;
   } catch {
     return "receipt comment not posted";
   }

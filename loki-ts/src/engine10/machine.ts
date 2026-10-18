@@ -261,14 +261,13 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         sigs.push(sigOf(outputs.verify, results[0]));
         let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
         for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify); round++) {
-          const priorFix = outputs.fix;
           const fx = await runStage("fix", true);
-          if (repeatedNoopFix(priorFix, outputs.fix) && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) {
-            ctx.emit("loop.repeat", "fix", { reason: "identical diff and failure signature" });
-            process.stderr.write("loki: anti-loop: the fix repeated the same diff and the same failure; stopping as STALLED\n");
+          if (!fx || mustJump("fix", fx) || fatal) break;
+          if (fx.status === "completed" && repeatedNoopFix(outputs.fix) && !stallClimb(ctx.model, outputs, String(outputs.fix?.signatures ?? ""))) { // same tree, same checks: the next verify would only repeat the failure
+            ctx.emit("loop.repeat", "fix", { reason: "the fix round left the tree unchanged", round: outputs.fix?.round ?? null });
+            process.stderr.write("loki: anti-loop: the fix round changed nothing in the tree; stopping as STALLED\n");
             stopped = "stalled"; break;
           }
-          if (!fx || mustJump("fix", fx) || fatal) break;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;

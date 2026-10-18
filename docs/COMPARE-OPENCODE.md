@@ -19,7 +19,7 @@ Loki can also drive opencode as a provider (`loki start --provider opencode`).
 | Provider flexibility | Claude default; codex, cline, aider, opencode; OpenRouter and local routes | Very wide provider catalog, first-class | opencode |
 | Local models | `loki models --local`, `LOKI_MODEL_ROUTE=ollama/...`, lmstudio, llamacpp, vllm, custom URL | Local providers via config | Even |
 | Multi-agent | Role agents, council review, custom agents in `.loki/agents/*.md`, the run view names the active stage | Configurable agents and subagents | Loki when you want the receipt to name who ran |
-| Cost control | Same provider model as a raw session. Tool logs are trimmed before the next turn so a long run does not resend them. `--max-cost` and `budgets.per_run` are hard caps. `--haiku` or `--cost lean` opts the first implement onto haiku; a failed check climbs back | User watches the TUI | Loki when the result has to be a check the model did not grade |
+| Cost control | Same provider model as a raw session. Tool logs are trimmed before the next turn so a long run does not resend them. `--max-cost` and `budgets.per_run` are hard caps. `--haiku` or `--cost lean` opts the first implement onto haiku; a failed check climbs back. `--cost-first` (or `LOKI_COST_FIRST=1`, also set by `--haiku`) keeps a haiku route only when the advisor marks the risk low; a history floor, no advisor, or an explicit model override still raise it | User watches the TUI | Loki when the result has to be a check the model did not grade |
 | Proof | Signed receipt, `loki verify`, NOT PROVEN list, and a PR comment. A behavior change is verified only when a Wall test fails on the old code and passes after (`LOKI_MUTATION_STRICT=0` opts out) | The diff in the TUI | Loki |
 | Docs consistency | One routing story, one cap rule, generated CLI table | Single product surface | Even |
 | Predictability | Order-independent routing, documented exit-code contract, spend cap, STALLED is never a verified receipt | Interactive, user-driven | Loki for unattended use |
@@ -91,11 +91,11 @@ that applies on every engine10 provider.
 
 ## Switching from Claude Code or opencode
 
-`loki start` and `loki factory` both run the Loki 10 engine. `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
+`loki start` and `loki factory` run the Loki 10 engine for an issue reference or a multi-word task, when bun is available and the provider is claude, codex, cline, aider or opencode. A PRD file or a one-word argument takes the legacy engine, and so does a host with no bun or an unsupported `LOKI_PROVIDER` (those two print a one-line notice). On the Loki 10 path, `--provider opencode` and the default Claude path are the same loop: plan, implement, verify, seal, and a pull request unless you pass `--no-pr`. The receipt is still written with `--no-pr`, and `loki verify` checks it with no network.
 
-There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
+There is no transcript importer. A Claude Code or opencode session is not copied in. The handoff is the repository and the task. Inside one Loki run on the Claude SDK path, the plan session resumes into implement unless `LOKI_E10_FIX_RESUME=0`; other providers start implement fresh. `loki chat --attach` joins a run that is already going. `loki resume` continues a paused or interrupted run from its checkpoint.
 
-A rate limit is retried. A hard billing failure is not. Repeating the same diff against the same failure stops as STALLED with a receipt, and that receipt is not VERIFIED.
+A rate limit is retried. A hard billing failure is not. A fix round that leaves the tree byte-identical stops as STALLED with a receipt instead of re-running the same checks, and that receipt is not VERIFIED.
 
 The MCP server and the Claude plugin return the same receipt-capable result as the CLI. Uninstalling Loki removes the command only. Receipts stay in the project's `.loki/runs` and in `~/.loki` until you delete them.
 

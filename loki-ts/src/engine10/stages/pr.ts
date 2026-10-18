@@ -137,7 +137,11 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   } else {
     notProvenOut.push("commit status loki/deep-verify not set (HEAD sha not resolvable)");
   }
-  const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: renderReceiptComment({ verdict, draft, draftReason: draftReason(verdict, capHit), notProven, receiptSha256: seal.receipt_sha256 ?? null, runId: ctx.runId, mutationProof: seal.mutation_line ?? null }) });
+  const receiptComment = renderReceiptComment({
+    verdict, draft, draftReason: draftReason(verdict, capHit), notProven: [...notProven, ...notProvenOut],
+    receiptSha256: seal.receipt_sha256 ?? null, runId: ctx.runId, mutationProof: seal.mutation_line ?? null,
+  }); // the same items as the PR body (no new exposure), plus this stage's own commit-status misses
+  const commentMiss = postReceiptComment({ scriptPath, env, runDir: ctx.runDir, url, timeoutMs: prChildTimeoutMs(), comment: receiptComment });
   if (commentMiss) notProvenOut.push(commentMiss);
   await (await import("../../integrations/writeback.ts")).writeBack({ phase: "done", verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
   return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };

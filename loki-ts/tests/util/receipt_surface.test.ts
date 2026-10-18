@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { prNumberFromUrl, renderProofCard, renderReceiptComment } from "../../src/util/receipt_surface.ts";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { postReceiptComment, prNumberFromUrl, renderProofCard, renderReceiptComment } from "../../src/util/receipt_surface.ts";
 
 describe("receipt comment", () => {
   test("names outcome, hash, verify, PROVEN and NOT PROVEN", () => {
@@ -62,5 +65,20 @@ describe("receipt comment", () => {
     expect(prNumberFromUrl("https://github.com/o/r/pull/12")).toBe("12");
     expect(prNumberFromUrl("local:///tmp/bare.git#loki/x")).toBeNull();
     expect(prNumberFromUrl("https://gitlab.com/o/r/-/merge_requests/3")).toBeNull();
+  });
+
+  test("posting upserts by marker, a failure is a NOT PROVEN line with the reason, a non-GitHub URL posts nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "receipt-comment-"));
+    try {
+      const log = join(dir, "calls.log");
+      const ok = join(dir, "ok.sh"), bad = join(dir, "bad.sh");
+      writeFileSync(ok, `printf '%s\\n' "$*" >> "${log}"\n`);
+      writeFileSync(bad, `echo "gh api comment update failed" >&2\nexit 4\n`);
+      const base = { env: process.env, runDir: dir, comment: "<!-- loki-receipt -->\nbody", timeoutMs: 5000 };
+      expect(postReceiptComment({ ...base, scriptPath: ok, url: "https://github.com/o/r/pull/7" })).toBeNull();
+      expect(readFileSync(log, "utf8").trim()).toBe(`issue-comment --update #7 ${join(dir, "receipt-comment.md")}`);
+      expect(postReceiptComment({ ...base, scriptPath: bad, url: "https://github.com/o/r/pull/7" })).toBe("receipt comment not posted (exit 4: gh api comment update failed)");
+      expect(postReceiptComment({ ...base, scriptPath: bad, url: "local:///tmp/x.git#b" })).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

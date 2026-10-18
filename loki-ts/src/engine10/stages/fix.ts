@@ -9,6 +9,7 @@ import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
 import { hooks } from "../hooks.ts";
+import { treeFingerprint } from "../../util/anti_loop.ts";
 import { buildFixResumeBrief, currentDiff, holdoutNote, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
@@ -32,7 +33,7 @@ export function buildFixBrief(
     : "(no grouped failures were provided)";
   const diffText = diffStat ?? "(diff stat is not available)";
   const located = groups[0]?.signature
-    ? `Failure location (the harness found this; fix this location; do not hunt for a different bug; do not edit or delete an existing test):\n${groups[0].signature}`
+    ? `First failure signature (the harness found this; fix the code it names; do not hunt for a different bug; do not edit or delete an existing test):\n${groups[0].signature}`
     : "";
   return [
     base,
@@ -65,6 +66,7 @@ export const fixStage: Stage = {
     const holdoutFailed = (prior.verify?.holdout_failed as number | undefined) ?? 0;
     const diffStat = currentDiff(ctx.repoDir, ctx.baseSha, 6000, round > 1);
     const repoMap = briefCtx(ctx);
+    const treeBefore = treeFingerprint(ctx.repoDir, ctx.baseSha); // anti-loop: compared with tree_after in machine.ts
     // L1: escalation only goes up: a repeated test failure gets the strongest model (never below the run's) plus the prior diagnosis, before STALLED.
     const testFailures = groups.filter(isTestFailure);
     const signatures = groups.map((g) => g.signature).sort().join("|");
@@ -96,7 +98,7 @@ export const fixStage: Stage = {
     return {
       status: "completed",
       // Every round's session id, since each round replaces this stage's output.
-      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, killed: r.session.killed, cascade: repeated, model: actualModel,
+      data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, tree_before: treeBefore, tree_after: treeFingerprint(ctx.repoDir, ctx.baseSha), killed: r.session.killed, cascade: repeated, model: actualModel,
         ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead }] },
     };

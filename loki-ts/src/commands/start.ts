@@ -250,14 +250,8 @@ export function parseStartArgs(
         seenValueFlags.add(name);
       }
       const boolEnv = BOOL_ENV_FLAGS.get(name);
-      if (name === "--haiku") {
-        for (const [k, v] of [
-          ["LOKI_IMPLEMENT_HAIKU_FIRST", "1"],
-          ["LOKI_E10_TRIM", "1"],
-          ["LOKI_E10_SMALL_NO_RUNNER", "1"],
-          ["LOKI_E10_SMALL_MAX_CHARS", "1200"],
-          ["LOKI_COST_FIRST", "1"],
-        ] as const) {
+      if (name === "--haiku") { // the lean profile's levers plus LOKI_COST_FIRST; explicit env wins
+        for (const [k, v] of Object.entries({ ...COST_PROFILES.lean, LOKI_COST_FIRST: "1" })) {
           if (process.env[k] === undefined || process.env[k] === "") applyEnv(k, v);
         }
         continue;
