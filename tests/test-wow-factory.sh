@@ -41,7 +41,7 @@ fac="$("$LOKI" factory --help 2>&1)"
 check "factory names propose execute operate" "$(has "$fac" 'propose')$(has "$fac" 'execute')$(has "$fac" 'operate')"
 check "factory says it wraps start" "$(has "$fac" 'loki start')"
 check "factory help says the provider model is the default" "$(has "$fac" 'keeps the provider model')"
-check "factory help does not claim haiku by default" "$(lacksE "$fac" 'loki start uses haiku')"
+check "factory help does not claim haiku by default" "$(lacksE "$fac" 'start uses haiku for the first')"
 
 tour="$("$LOKI" tour --help 2>&1)"
 check "tour help still documents the sample" "$(has "$tour" 'offline')"
