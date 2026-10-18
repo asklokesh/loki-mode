@@ -132,6 +132,23 @@ describe("engine10 intake", () => {
     expect(result.reason).toContain("dirty");
   });
 
+  test("FC-LOKI-DIR-DIRT: tracked .loki/ state the repo committed and then lost does not block intake or reach the commit", async () => {
+    mkdirSync(join(repoDir, ".loki", "dashboard"), { recursive: true });
+    writeFileSync(join(repoDir, ".loki", "CONTINUITY.md"), "legacy\n");
+    writeFileSync(join(repoDir, ".loki", "dashboard", "index.html"), "<p>x</p>\n");
+    git(repoDir, ["add", "-f", ".loki"]);
+    git(repoDir, ["commit", "-q", "-m", "legacy loki state"]);
+    rmSync(join(repoDir, ".loki"), { recursive: true, force: true });
+    const ctx = makeCtx(repoDir, runDir, fakeTests());
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
+    expect(result.reason ?? "").not.toContain("dirty");
+    expect(result.status).toBe("completed");
+    writeFileSync(join(repoDir, "README.md"), "run change\n");
+    const c = await commitStage.run({ ...ctx, baseSha: String(result.data.base_sha), outputs: () => ({ intake: result.data }) } as RunContext, new AbortController().signal);
+    expect(c.status).toBe("completed");
+    expect(gitOut(repoDir, ["show", "--name-only", "--format=", "HEAD"]).split("\n").filter(Boolean)).toEqual(["README.md"]);
+  });
+
   test("E-164: lockfile-only dirt starts the run, is recorded, and is not attributed to the commit", async () => {
     writeFileSync(join(repoDir, "package-lock.json"), "{}\n");
     git(repoDir, ["add", "package-lock.json"]);

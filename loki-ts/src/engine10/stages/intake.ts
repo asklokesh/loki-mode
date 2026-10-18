@@ -25,7 +25,7 @@ function issueRefOf(raw: { repo?: unknown; number?: unknown }): string | null { 
 function git(repoDir: string, args: string[]): string { return safeGit(repoDir, args).trim(); }
 /** Tracked-only dirty check: untracked files never block Intake. */
 function dirtyTrackedFiles(repoDir: string): string[] {
-  const out = git(repoDir, ["status", "--porcelain", "--untracked-files=no"]); return out === "" ? [] : out.split("\n");
+  const out = git(repoDir, ["status", "--porcelain", "--untracked-files=no"]); return out === "" ? [] : out.split("\n").filter((l) => !/^[ MADRCU?!]{1,2} (.+)$/.exec(l)?.[1]!.split(" -> ").every((f) => /^"?\.loki\//.test(f))); // FC-LOKI-DIR-DIRT: .loki/ is Loki's own state (excluded from every diff and commit); a repo that once committed it is never dirty through it. The caller's trim can eat line 1's leading space, hence the 1-2 char status
 }
 function ensureBranch(repoDir: string, branch: string): void {
   try { safeGit(repoDir, ["checkout", "-b", branch], { repoDrivers: true }); } catch {
