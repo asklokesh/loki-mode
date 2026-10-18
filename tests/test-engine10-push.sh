@@ -67,7 +67,7 @@ case "\$1 \$2" in
     # Fork mode: noperm makes the pinned repo report permissions.push false; fork.parent is the parent the fork reports.
     "api repos/octocat/hello") if [ -f "$W/noperm" ]; then echo false; elif [ -f "$W/garbage" ]; then echo "<html>rate limited"; else echo true; fi ;;
     "api -X") echo "loki-bot/hello" ;;
-    "api repos/loki-bot/hello") echo "true \$(cat "$W/fork.parent" 2>/dev/null || echo octocat/hello) loki-bot" ;;
+    "api repos/loki-bot/hello") [ -f "$W/fork.pending" ] && exit 1; echo "true \$(cat "$W/fork.parent" 2>/dev/null || echo octocat/hello) loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
     "issue comment"|"pr comment") [ "\$3" = 9 ] && echo 555 > "$W/status.cid" ;;
 esac
@@ -438,7 +438,11 @@ p4 "$LIB" push-pr "$A" loki/e10-fkp "E10 title" "$W/body.md" >/dev/null 2>"$W/er
     && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkp >/dev/null \
     && ok "fork mode: a fork whose parent is not the pinned repo is refused, nothing pushed" \
     || bad "fork mode parent mismatch rc=$rc err=$(tr '\n' ' ' < "$W/err")"
-rm -f "$W/fork.parent"; git -C "$A" branch loki/e10-fko
+rm -f "$W/fork.parent"; touch "$W/fork.pending"; git -C "$A" branch loki/e10-fkw
+p4 "$LIB" push-pr "$A" loki/e10-fkw "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'still being created on GitHub; rerun' "$W/err" && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkw >/dev/null \
+    && ok "fork mode: a fork GitHub has not served yet says so, nothing pushed" || bad "fork pending rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+rm -f "$W/fork.pending"; git -C "$A" branch loki/e10-fko
 LOKI_PR_FORK=0 p4 "$LIB" push-pr "$A" loki/e10-fko "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
 [ "$rc" -eq 0 ] && git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fko >/dev/null \
     && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fko >/dev/null \

@@ -44,7 +44,8 @@ The PR uses your existing `gh auth login` (and git) credentials; no extra token
 is needed. On a repo you cannot push to, Loki pushes the branch to your fork and
 opens the PR upstream from it (the branch is public on your fork); a draft
 outcome (anything but VERIFIED) stays on the fork, and Loki posts no status
-comment on that repo's issue.
+comment on that repo's issue. Status and backstop issue comments post only when
+gh confirms you can push; a failed check skips them rather than guessing.
 `LOKI_PR_FORK=0` turns the fork fallback off.
 Preview the route first with `loki route start prd.md`.
 

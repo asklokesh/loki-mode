@@ -157,7 +157,7 @@ _e10_fork() {
         fi
         [ "$i" -lt 6 ] && sleep 2
     done
-    return 1
+    return 3 # the fork exists by name but GitHub has not served it yet
 }
 # Fork-mode twin of _e10_find_pr: the open cross-repo PR whose head is <me>:<branch> (--head matches the branch name
 # only; the jq owner filter is what pins it to <me>).
@@ -202,7 +202,8 @@ case "$mode" in
             _e10_me="$(_e10_gh api user --jq .login 2>/dev/null)" || _e10_me=""
             [[ "$_e10_me" =~ ^[A-Za-z0-9_.-]+$ ]] || die "no push access to $_e10_repo and the gh user could not be resolved for a fork; run gh auth login"
             log_info "no push access to $_e10_repo: creating or reusing the fork under $_e10_me (LOKI_PR_FORK=0 turns this off)"
-            _e10_fork_repo="$(_e10_fork "$_e10_me")" || die "no push access to $_e10_repo and its fork under $_e10_me could not be created or verified"
+            _e10_fork_repo="$(_e10_fork "$_e10_me")" || { [ "$?" -eq 3 ] && die "no push access to $_e10_repo: the fork under $_e10_me is still being created on GitHub; rerun to push once it exists"
+                die "no push access to $_e10_repo and its fork under $_e10_me could not be created or verified"; }
             log_info "no push access to $_e10_repo: pushing to the fork $_e10_fork_repo"
             _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" "$_e10_fork_repo" || die "push to fork $_e10_fork_repo refused or failed (rc=$?)"
             if [ "${#draft[@]}" -gt 0 ]; then

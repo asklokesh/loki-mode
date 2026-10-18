@@ -161,6 +161,7 @@ describe("engine10 pr stage", () => {
     const raw = "remote: Permission to anthropics/claude-code.git denied to asklokesh.\nfatal: unable to access 'https://github.com/anthropics/claude-code.git/': The requested URL returned error: 403\nengine10-push: push refused or failed (rc=128)\n";
     expect(pushErrLine(raw)).toBe("engine10-push: push refused or failed (rc=128): Permission to anthropics/claude-code.git denied to asklokesh.");
     expect(pushErrLine("")).toBe("");
+    expect(pushErrLine("glab: 401\nengine10-push-gitlab: push-mr failed\n")).toBe("engine10-push-gitlab: push-mr failed");
   });
 
   test("the stub sees both pin env vars", async () => {
