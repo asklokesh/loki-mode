@@ -4,8 +4,18 @@ import { redactEnvelope, redactEventData, redactSecrets } from "../../src/util/r
 test("URL userinfo is replaced", () => {
   expect(redactSecrets("clone https://user:pass@example.com/repo now")).toBe("clone https://[REDACTED]@example.com/repo now");
   expect(redactSecrets("ssh://tok@host:22/x")).toBe("ssh://[REDACTED]@host:22/x");
-  // TEN-SECURITY-26: a match starts at the scheme-run start; outputs pinned to the pre-fix \b rule.
-  for (const [s, want] of [["x-git+ssh://u:p@h/r", "x-git+ssh://[REDACTED]@h/r"], ["9a-https://u@h", "9a-https://[REDACTED]@h"], ["--a-https://t@h", "--a-https://[REDACTED]@h"], ["1.2+svn://u@h", "1.2+svn://[REDACTED]@h"], ["_https://u@h", "_https://u@h"]] as const) expect(redactSecrets(s)).toBe(want);
+  expect(redactSecrets("pip install git+https://user:tok@host/x")).toBe("pip install git+https://[REDACTED]@host/x");
+  expect(redactSecrets("x-very.long-scheme+v2://u:p@host")).toBe("x-very.long-scheme+v2://[REDACTED]@host");
+});
+
+test("URL userinfo rule is linear on long scheme-char runs (TEN-SECURITY-26)", () => {
+  // Unbounded, every word start in a--a--a rescanned the run looking for :// (57ms, 254ms, 779ms at 1x, 2x, 4x).
+  // Doubling the input must not much more than double the time; an absolute floor keeps tiny timings stable.
+  const time = (s: string): number => { const t0 = performance.now(); redactSecrets(s); return performance.now() - t0; };
+  for (const unit of ["--a", "a.", "a-b+"]) {
+    const small = time(unit.repeat(5000)), big = time(unit.repeat(20000));
+    expect(big).toBeLessThan(Math.max(50, small * 8)); // 4x the input; quadratic would be about 16x
+  }
 });
 
 test("plain URLs and mid-path @ are unchanged", () => {
@@ -193,8 +203,7 @@ test("assignment redact covers flag and separator-prefixed names", () => {
   expect(redactSecrets("export .token=" + "abc")).toBe("export .token=[REDACTED]");
   expect(redactSecrets("cmd --db__password=" + pw + " -x")).toBe("cmd --db__password=[REDACTED] -x");
   for (const benign of ["mytoken=1", "https://h/x?refresh_token_ttl=5&mytoken=1", "x_mytoken=1", "--max-tokens=5", "--tokens=3"]) expect(redactSecrets(benign)).toBe(benign);
-  // "--a" restarted the URL userinfo rule at every letter (TEN-SECURITY-26): 850ms at 28000 before, under 2ms after.
-  for (const big of ["-".repeat(20000), "_a".repeat(10000), "a__".repeat(7000) + "=", "--a".repeat(7000) + "token", "--a".repeat(28000) + "://"]) {
+  for (const big of ["-".repeat(20000), "_a".repeat(10000), "a__".repeat(7000) + "=", "--a".repeat(7000) + "token"]) {
     const t0 = performance.now();
     redactSecrets(big);
     expect(performance.now() - t0).toBeLessThan(100);

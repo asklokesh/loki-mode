@@ -50,7 +50,7 @@ const BLOCKING_SEVERITY = new Set(["CRITICAL", "HIGH"]);
 const ANCHOR_EXEMPT_ROLES = new Set(["requirements-verifier", "test-auditor", "convergence-voter"]);
 export const UNANCHORED_TAG = "[unanchored]";
 const NO_FILE_MARKER = /\(no file\)|\[no-file\]/i;
-const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const URL_RE = /\b[a-z][a-z0-9+.-]{0,63}:\/\/\S+/gi; // bounded scheme: linear (TEN-SECURITY-26)
 const ANCHOR_RE = /([\w./@-]+)[`'"]?(?::L?|#L|\s*\(line\s+)([1-9]\d*)(?!\d)/g;
 const EXTENSIONLESS = /^(?:.*\/)?(?:Makefile|GNUmakefile|Dockerfile|Jenkinsfile|Rakefile|Gemfile|Procfile|Vagrantfile)$/;
 

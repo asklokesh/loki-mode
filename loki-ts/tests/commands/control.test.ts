@@ -258,7 +258,10 @@ describe("loki control unknown subcommand", () => {
     expect(err).not.toContain("Did you mean");
   });
   test("did you mean: works through bin/loki", () => {
-    const r = spawnSync(join(import.meta.dir, "..", "..", "..", "bin", "loki"), ["control", "statsu"], { encoding: "utf8" });
+    // The preload sets LOKI_CONTROL=0 ("control is off", exit 0). Bun 1.3.13 spawned with the startup env, newer Bun passes the
+    // mutated process.env, so pass an env without it: this test is about the suggestion, not the off switch.
+    const { LOKI_CONTROL: _off, ...childEnv } = process.env;
+    const r = spawnSync(join(import.meta.dir, "..", "..", "..", "bin", "loki"), ["control", "statsu"], { encoding: "utf8", env: childEnv });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("Did you mean 'status'?");
   });

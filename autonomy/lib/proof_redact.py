@@ -186,19 +186,15 @@ def _env_assign_sub(m):
 
 # Connection-string / URI credentials: scheme://user:PASSWORD@host -> redact
 # the password component for ANY scheme, keeping scheme/user/host intact.
-# TEN-SECURITY-26: an attempt starts only at the beginning of a scheme-char run;
-# the lookahead requires a letter where the old leading \b[A-Za-z] held (run
-# start, or right after - + .). The old form restarted at every such letter and
-# rescanned the run (quadratic on "--a" * 7000); every start in a run reaches the
-# same "://", so the result is unchanged.
+# The leading \b anchors each attempt; the negated classes ([^\s:/@] etc.) make
+# each segment a single linear pass with no nested quantifier overlap.
 #   1 -> scheme://user:    2 -> password    3 -> @
 # Covers postgres://, mongodb://, redis:// (empty user), amqp://, https://, etc.
 # A URL with no "user:pass@" credential (https://host/path) does not match.
 # The password class is [^\s@]+ (stops only at the closing @) so passwords that
 # contain "/" (e.g. postgres://user:p/ss@host) are still fully captured.
 _URI_CREDENTIAL = re.compile(
-    r"((?<![A-Za-z0-9+.\-])(?=\b[A-Za-z]|[A-Za-z0-9+.\-]*?[+.\-][A-Za-z])"
-    r"[A-Za-z0-9+.\-]+://[^\s:/@]*:)([^\s@]+)(@)"
+    r"\b([A-Za-z][A-Za-z0-9+.\-]{0,63}://[^\s:/@]*:)([^\s@]+)(@)"  # bounded scheme: linear (TEN-SECURITY-26)
 )
 _TOKEN = re.compile(r"\S+")
 
@@ -206,8 +202,9 @@ _TOKEN = re.compile(r"\S+")
 def _redact_uri_credentials(s):
     """Apply _URI_CREDENTIAL to the part of each whitespace-delimited token up to
     its last "@". No match ends past that "@" (the password class stops at "@"),
-    and scanning an "@"-free tail from every scheme start is quadratic
-    ("a://" * 4000 took 0.5s). Returns (new_string, count)."""
+    and scanning an "@"-free tail from every scheme start is quadratic even with
+    the bounded scheme ("a://" * 16000 took 5.6s). TEN-SECURITY-26 follow-up.
+    Returns (new_string, count)."""
     total = 0
 
     def tok(m):

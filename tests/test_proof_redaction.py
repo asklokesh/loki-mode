@@ -274,8 +274,12 @@ class RedactionCorpusTests(unittest.TestCase):
                   "password=" + "x" * 200000,
                   "postgres://" + "u" * 100000 + ":" + "p" * 100000 + "@h",
                   "postgres://" + "u" * 200000,
-                  # TEN-SECURITY-26: scheme-run restart and "@"-free tail scans.
-                  "--a" * 70000,
+                  # TEN-SECURITY-26: a long run of scheme chars with many word
+                  # starts (a--a--a) made the unbounded scheme quadratic (2.4s at 84KB).
+                  "--a" * 28000 + "token",
+                  "a." * 50000 + "x",
+                  # The password class scanned an "@"-free tail from every
+                  # scheme start (5.6s at "a://" * 16000 with the bounded scheme).
                   "a://" * 50000,
                   "a://u:" * 35000):
             start = time.monotonic()

@@ -16,12 +16,20 @@ const freePort = (): Promise<string> => new Promise((res, rej) => {
   s.listen(0, "127.0.0.1", () => { const p = (s.address() as { port: number }).port; s.close(() => res(String(p))); });
 });
 const by = (r: Awaited<ReturnType<typeof appProbe>>, n: string) => r.checks.find((c) => c.name === n);
+// A red http probe on a runner we cannot reach (macOS nightly) must carry its own evidence: print app-runner's files.
+const explain = (d: string, r: Awaited<ReturnType<typeof appProbe>>): void => {
+  if (by(r, "http probe")?.result === "pass") return;
+  const ar = join(d, ".loki", "app-runner");
+  const dump = ["detection.json", "state.json", "health.json", "app.log"].map((f) => `--- ${f}\n${existsSync(join(ar, f)) ? readFileSync(join(ar, f), "utf8").slice(-4000) : "(missing)"}`);
+  console.error(`appProbe diagnostics ${JSON.stringify(r.checks)}\n${dump.join("\n")}`);
+};
 
 describe("appProbe", () => {
   it("static site: boot pass, http probe pass, nothing left on the PID", async () => {
     const d = fixture();
     writeFileSync(join(d, "index.html"), "<h1>hi</h1>");
     const r = await appProbe(d, join(d, ".loki"), { env: { LOKI_APP_PORT: await freePort() }, timeoutMs: 40_000 });
+    explain(d, r);
     expect(by(r, "app boot")?.result).toBe("pass");
     expect(by(r, "http probe")?.result).toBe("pass");
     expect(r.pid).not.toBeNull();
@@ -70,6 +78,7 @@ describe("appProbe", () => {
     const d = fixture();
     writeFileSync(join(d, "index.html"), "<h1>hi</h1>");
     const r = await appProbe(d, join(d, ".loki"), { specText: "GET /index.html", env: { LOKI_APP_PORT: await freePort() }, timeoutMs: 40_000 });
+    explain(d, r);
     expect(by(r, "functional verify")).toBeDefined();
     expect(existsSync(join(d, ".loki", "quality", "functional-results.json"))).toBe(true);
   }, 60_000);
