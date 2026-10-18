@@ -12,7 +12,7 @@ import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
-import { unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
+import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile, repoReadiness } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
@@ -27,8 +27,8 @@ function git(repoDir: string, args: string[]): string { return safeGit(repoDir, 
 function dirtyTrackedFiles(repoDir: string): string[] {
   const out = git(repoDir, ["status", "--porcelain", "--untracked-files=no"]); return out === "" ? [] : out.split("\n").filter((l) => !/^[ MADRCU?!]{1,2} (.+)$/.exec(l)?.[1]!.split(" -> ").every((f) => /^"?\.loki\//.test(f))); // FC-LOKI-DIR-DIRT: .loki/ is Loki's own state (excluded from every diff and commit); a repo that once committed it is never dirty through it. The caller's trim can eat line 1's leading space, hence the 1-2 char status
 }
-function ensureBranch(repoDir: string, branch: string): void {
-  try { safeGit(repoDir, ["checkout", "-b", branch], { repoDrivers: true }); } catch {
+function ensureBranch(repoDir: string, branch: string, from?: string): void {
+  try { safeGit(repoDir, ["checkout", "-b", branch, ...(from ? [from] : [])], { repoDrivers: true }); } catch {
     // Resume, or the branch already exists for another reason: reuse it.
     safeGit(repoDir, ["checkout", branch], { repoDrivers: true });
   }
@@ -60,8 +60,10 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const t0 = Date.now(); if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
   if (dirty.length > 0) return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
-  const baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]), startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
-  const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]); ensureBranch(ctx.repoDir, ctx.branch); excludeLokiDir(ctx.repoDir);
+  let baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]); const startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
+  // FC-STACKED-ON-LOKI-RUN: HEAD is an earlier run's unaccepted output (every commit past the PR target is a Loki-Run commit): branch from the merge-base, leave that branch untouched.
+  let stacked = stackedOnLokiRun(ctx.repoDir); if (stacked) { try { ensureBranch(ctx.repoDir, ctx.branch, stacked.base_sha); baseSha = stacked.base_sha; ctx.baseSha = baseSha; process.stderr.write(`engine10: base: ${stacked.target} (${stacked.message})\n`); } catch { stacked = null; } } if (!stacked) ensureBranch(ctx.repoDir, ctx.branch);
+  const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]); excludeLokiDir(ctx.repoDir);
   const issueJsonPath = opts.issueJsonPath ?? process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
   const taskText = opts.taskText ?? process.env.LOKI_E10_TASK_TEXT;
   let source: "text" | "issue"; let taskSha256: string;
@@ -84,7 +86,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   }
   const origin = readOriginUrl(ctx.repoDir);
   // resumed is constant false: the engine has no resume.
-  const common = { task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
+  const common = { ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return { status: "completed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };

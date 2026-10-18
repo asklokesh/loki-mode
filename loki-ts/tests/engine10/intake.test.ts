@@ -12,6 +12,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { baseLine } from "../../src/util/base_guard.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
 import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
@@ -487,8 +488,9 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     return { root, clone };
   }
 
-  test("checkout on a loki branch with unmerged commits: not refused, no ALREADY_SATISFIED from the loki commit, reported as unmerged Loki work", async () => {
+  test("checkout on a loki branch with unmerged Loki commits plus an operator commit (mixed range): not refused, no ALREADY_SATISFIED from the loki commit, reported as unmerged Loki work", async () => {
     const { root, clone } = originAndClone();
+    writeFileSync(join(clone, "operator.txt"), "mine"); git(clone, ["add", "operator.txt"]); git(clone, ["commit", "-q", "-m", "operator: on top"]);
     const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
     const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
     ctx.sessions = confirm.runner;
@@ -599,8 +601,58 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     const r = await intakeOn(fresh, CONFIRMED);
     expect(r.status).toBe("completed");
     expect(r.data.already_satisfied).toBe(false);
-    expect((r.data.unmerged_loki_work as { commits: number }).commits).toBe(1);
+    expect(r.data.unmerged_loki_work).toBeUndefined(); // FC-STACKED-ON-LOKI-RUN: the lone Loki commit is skipped, so it is absent from the base
+    expect((r.data.stacked_loki_skip as { commits: number }).commits).toBe(1);
     rmSync(root, { recursive: true, force: true });
+  });
+
+  // FC-STACKED-ON-LOKI-RUN: a run started while HEAD is an earlier unaccepted Loki run branch must not inherit that run's commits.
+  describe("FC-STACKED-ON-LOKI-RUN", () => {
+    const OLD = "loki/e10-20261003T150744Z-59b1";
+    const ids = (c: string): { head: string; main: string } => ({ head: gitOut(c, ["rev-parse", "HEAD"]).trim(), main: gitOut(c, ["rev-parse", "origin/main"]).trim() });
+    test("all-Loki range: new run branches from the PR target, old branch intact, note recorded, ctx.baseSha and tree follow", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1";
+      const before = ids(clone);
+      const line = baseLine(clone); // the supervisor prints this before intake moves HEAD
+      const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+      ctx.sessions = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } }).runner;
+      const r = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+      expect(r.status).toBe("completed");
+      expect(r.data.base_sha).toBe(before.main);
+      expect(ctx.baseSha).toBe(before.main);
+      expect(gitOut(clone, ["rev-parse", "HEAD"]).trim()).toBe(before.main);
+      expect(r.data.tree).toBe(gitOut(clone, ["rev-parse", `${before.main}^{tree}`]).trim());
+      expect(gitOut(clone, ["rev-parse", OLD]).trim()).toBe(before.head); // old branch untouched
+      expect(existsSync(join(clone, "search-command.ts"))).toBe(false); // the earlier run's file is not in the working tree
+      const s = r.data.stacked_loki_skip as { branch: string; target: string; commits: number; message: string };
+      expect(s.branch).toBe(OLD); expect(s.target).toBe("origin/main"); expect(s.commits).toBe(1);
+      expect(s.message).toContain("merge them first to build on them");
+      expect(line).toContain(`base: origin/main (skipped 1 unaccepted Loki commit(s) on ${OLD}`);
+      rmSync(root, { recursive: true, force: true });
+    });
+    test("an operator commit anywhere in the range keeps base = HEAD", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1";
+      writeFileSync(join(clone, "operator.txt"), "mine"); git(clone, ["add", "operator.txt"]); git(clone, ["commit", "-q", "-m", "operator: on top"]);
+      const head = ids(clone).head, line = baseLine(clone);
+      const r = await intakeOn(clone);
+      expect(r.data.base_sha).toBe(head);
+      expect(r.data.stacked_loki_skip).toBeUndefined();
+      expect(line).toBe(`PR target: origin/main, base: ${OLD}`);
+      rmSync(root, { recursive: true, force: true });
+    });
+    test("unresolved PR target keeps base = HEAD", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1";
+      git(clone, ["remote", "remove", "origin"]); git(clone, ["branch", "-m", "main", "trunk"]);
+      const head = gitOut(clone, ["rev-parse", "HEAD"]).trim(), line = baseLine(clone);
+      const r = await intakeOn(clone);
+      expect(r.data.base_sha).toBe(head);
+      expect(r.data.stacked_loki_skip).toBeUndefined();
+      expect(line).toBe(`PR target: unresolved, base: ${OLD}`);
+      rmSync(root, { recursive: true, force: true });
+    });
   });
 
   test("a feature branch in a fresh clone carrying the user's own commit: not refused, no claim, not labelled Loki's", async () => {

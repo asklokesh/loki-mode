@@ -80,15 +80,33 @@ export function unmergedEvidenceNote(u: UnmergedEvidence): string {
   return `work exists on ${u.branch ?? "HEAD"}, not on ${u.target} (${u.commits} commit(s)); open or resume it. The task is not reported as already satisfied because its evidence (${u.paths.slice(0, 3).join(", ")}${u.paths.length > 3 ? ` (+${u.paths.length - 3} more)` : ""}) is not on the PR target`;
 }
 
-/** Start-line fragment naming the PR target and the base the run starts from (no network). */
+export interface StackedSkip { branch: string; target: string; commits: number; base_sha: string; message: string }
+
+/** FC-STACKED-ON-LOKI-RUN: when every commit in target..HEAD carries the Loki-Run trailer, HEAD is an earlier run's unaccepted output and a
+ *  new run must not inherit it. Returns the PR target tip to branch from instead (not the merge-base: a squash-merged run must see its work on the target). Null (keep HEAD as the base) when the range is empty,
+ *  holds any commit without the trailer (the operator built on it deliberately), the target does not resolve, or the target tip cannot be read. */
+export function stackedOnLokiRun(repoDir: string, target: ResolvedBase | null = resolveBase(repoDir)): StackedSkip | null {
+  if (!target) return null;
+  const log = git(repoDir, ["log", `${target.ref}..HEAD`, "--format=%x01%(trailers:key=Loki-Run,valueonly)"]);
+  if (log === null) return null;
+  const chunks = log.split("\x01").slice(1);
+  if (chunks.length === 0 || chunks.some((c) => c.trim() === "")) return null;
+  const mb = git(repoDir, ["rev-parse", "--verify", "-q", `${target.ref}^{commit}`]);
+  if (!mb || !/^[0-9a-f]{40}$/.test(mb)) return null;
+  const branch = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
+  return { branch, target: target.ref, commits: chunks.length, base_sha: mb, message: `skipped ${chunks.length} unaccepted Loki commit(s) on ${branch}; merge them first to build on them` };
+}
+
+/** Start-line fragment naming the PR target and the base the run starts from (no network). Agrees with intake via stackedOnLokiRun. */
 export function baseLine(repoDir: string): string {
   const t = resolveBase(repoDir, undefined, false);
+  const sk = stackedOnLokiRun(repoDir, t);
   const b = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
-  return `PR target: ${t ? t.ref : "unresolved"}, base: ${b}`;
+  return `PR target: ${t ? t.ref : "unresolved"}, base: ${sk ? `${sk.target} (${sk.message})` : b}`;
 }
 
 /** The recorded note from an intake stage.completed data object (null when absent). */
 export function noteOf(intake: Record<string, unknown> | undefined): string | null {
-  const m = (intake?.["unmerged_loki_work"] as { message?: unknown } | undefined)?.message;
+  const m = (intake?.["unmerged_loki_work"] as { message?: unknown } | undefined)?.message ?? (intake?.["stacked_loki_skip"] as { message?: unknown } | undefined)?.message;
   return typeof m === "string" && m !== "" ? m : null;
 }
