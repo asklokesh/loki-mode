@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.61 (2026-10-18)
+
+### Fixed
+- A run that changed nothing no longer pushes a branch or opens a PR, whatever its verdict. Before, a spec conflict or partial run with an empty diff pushed an empty branch, on a repo you cannot push to as well as your own (FC-NO-DIFF-PUBLISH).
+- A status or backstop issue comment that Loki skipped (no push access, or a local origin) is now recorded as skipped in the run's events instead of as posted.
+- A spec-conflict or already-done reason no longer runs two model messages together mid-word; consecutive text blocks are kept on separate lines before markers are read.
+- When a fix round confirms the implement session's spec conflict and changes nothing, the run stops there with its SPEC_CONFLICT result instead of spending more fix rounds.
+
 ## v11.17.60 (2026-10-18)
 
 Issue mode works on a repository you cannot push to, a repo with no test runner now gets a real Wall result, and run output stays on one line per item.

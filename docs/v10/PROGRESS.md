@@ -2554,3 +2554,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-17T16:07Z (CoS) v11.17.58
 - STAB-1 follow-up: Tests 39046745996 on v11.17.57 failed only on shard 1 help drift (FAIL: 'loki queue rm' (CHANGELOG) is absent from help), caused by the 11.17.57 notes. Reworded; tests/test-help-changelog-drift.sh 4 passed, 0 failed. Release 39046745968 all jobs success; npm latest and next 11.17.57.
+
+## 2026-10-18T20:30Z (CoS) v11.17.61
+- P1 FC-NO-DIFF-PUBLISH (anthropics/claude-code#21527 rerun): empty fork push, skipped comment logged ok, glued reason, extra fix rounds. Slices P1-AD (551267ec5) and P1-C (8fcc1315b) merged. Checks: tsc clean (control-plane excluded); bun test budget, supervisor_backstop, machine, sdk_stream_parser, spawn_env_guard, contract 192 pass 0 fail; e2e, issue_ref_e2e, already_done, pr, tests/util 571 tests 0 fail; test-engine10-push.sh 85 passed 0 failed; sigpipe 4 passed; select-tests 119 passed.
