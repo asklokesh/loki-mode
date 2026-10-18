@@ -41,5 +41,5 @@ export function pushErrLine(stderr: string): string {
   const lines = stderr.split("\n").map((l) => l.replace(/[\x00-\x1f\x7f]+/g, " ").trim()).filter(Boolean);
   const fork = lines.find((l) => l.startsWith("fork-only: ")); if (fork) return fork;
   const die = lines.findLast((l) => /^engine10-push(?:-gitlab)?: /.test(l)) ?? lines.at(-1) ?? "", denied = lines.find((l) => /Permission to \S+ denied to/.test(l))?.replace(/^remote:\s*/, "");
-  return (denied && !die.includes(denied) ? `${die}: ${denied}` : die).slice(0, 300);
+  return clipWords(denied && !die.includes(denied) ? `${die}: ${denied}` : die, 300);
 }

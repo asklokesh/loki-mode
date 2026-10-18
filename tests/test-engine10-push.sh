@@ -65,7 +65,7 @@ case "\$1 \$2" in
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
     "api user") [ -f "$W/user.fail" ] && exit 1; echo "loki-bot" ;;
     # Fork mode: noperm makes the pinned repo report permissions.push false; fork.parent is the parent the fork reports.
-    "api repos/octocat/hello") [ -f "$W/noperm" ] && echo false ;;
+    "api repos/octocat/hello") [ -f "$W/noperm" ] && echo false; [ -f "$W/garbage" ] && echo "<html>rate limited" ;;
     "api -X") echo "loki-bot/hello" ;;
     "api repos/loki-bot/hello") echo "true \$(cat "$W/fork.parent" 2>/dev/null || echo octocat/hello) loki-bot" ;;
     "api repos/octocat/hello/issues/9/comments") [ -f "$W/status.cid" ] && cat "$W/status.cid" ;;
@@ -447,11 +447,21 @@ rm -f "$W/status.cid"; : > "$GHLOG"
 p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>"$W/err"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" && grep -q 'not commenting on its issue 9' "$W/err" \
     && ok "no push access: the status comment is not posted on someone else's issue" || bad "status comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
+printf '<!-- loki-status -->\nissue text quoting <!-- loki-receipt -->\n' > "$W/quoted.md"; : > "$GHLOG"
+p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/quoted.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" \
+    && ok "no push access: a status body quoting the receipt marker is still not posted" || bad "quoted marker: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
 printf '<!-- loki-receipt -->\nreceipt\n' > "$W/receipt.md"; : > "$GHLOG"
 p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/receipt.md" >/dev/null 2>"$W/err"; rc=$?
 [ "$rc" -eq 0 ] && grep -q ' pr comment 9 ' "$GHLOG" \
     && ok "no push access: the receipt comment on the user's own PR is still posted" || bad "receipt comment without push: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
 rm -f "$W/noperm"
+touch "$W/garbage"; git -C "$A" branch loki/e10-fkg
+p4 "$LIB" push-pr "$A" loki/e10-fkg "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 0 ] && git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fkg >/dev/null \
+    && ! git -C "$FORK" rev-parse -q --verify refs/heads/loki/e10-fkg >/dev/null \
+    && ok "a garbage permission probe keeps the direct push (fail open)" || bad "garbage probe rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+rm -f "$W/garbage"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

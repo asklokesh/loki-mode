@@ -138,7 +138,8 @@ _e10_find_pr() {
         --jq "[.[] | select(.isCrossRepository == false and .state == \"OPEN\" and (.headRepositoryOwner.login | ascii_downcase) == \"$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')\")] | .[0].url // empty"
 }
 
-# Fork mode probe. Prints true, false, or nothing (unknown: gh failed or did not say). Only a literal false means no push access.
+# Fork mode probe. Prints true, false, or nothing (unknown: gh failed or did not say). Only a literal false means no push
+# access; anything else keeps the direct path (fail open, so a gh hiccup never reroutes a push the user could make).
 _e10_can_push() { _e10_gh api "repos/$_e10_repo" --jq '.permissions.push' 2>/dev/null | head -n 1; }
 _e10_fork_off() { [ "${LOKI_PR_FORK:-}" = "0" ]; }
 # Creates or finds the gh user's fork of the pinned repo; prints OWNER/REPO only after gh confirms it is a fork of
@@ -279,7 +280,9 @@ case "$mode" in
         [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
         # Status and backstop comments are for a repo the user maintains; on one they cannot push to they would land on
         # someone else's issue. The receipt comment rides the user's own PR and is still posted.
-        if ! grep -qF -- '<!-- loki-receipt -->' "$2" && [ "$(_e10_can_push)" = "false" ]; then
+        # The receipt body starts with its marker (receipt_surface.ts); only that first line exempts a comment, so issue
+        # text quoting the marker inside a status body cannot. An unknown probe (gh failed) posts as before: fail open.
+        if [ "$(head -n 1 -- "$2")" != '<!-- loki-receipt -->' ] && [ "$(_e10_can_push)" = "false" ]; then
             log_info "no push access to $_e10_repo: not commenting on its issue $num"
             exit 0
         fi
