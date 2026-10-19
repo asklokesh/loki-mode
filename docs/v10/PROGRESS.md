@@ -2572,3 +2572,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-18T22:58Z (CoS) v11.17.66
 - FC-STACKED-ON-LOKI-RUN: #21527 rerun on 11.17.64 based its run on loki/e10-20261018T205304Z-fdfc. Fix 304566e37 (base_guard.stackedOnLokiRun + intake checkout from target tip). HIGH review BLOCK on e869305 (B1/B2), APPROVE on f810c19; merged content equals approved (diff only 3c09faeb5 released files). intake.test.ts 54 pass; engine10 subset 138 pass 0 fail rc=0. help-drift was red (no backticked loki invocation in newest 5 sections); this section restores it.
+
+## 2026-10-19T00:10Z (CoS) v11.17.67
+- FC-LAZY-CONTROL-ENV: Tests 39174561642 shard 6 red on 8cc81a1b8. Causes reproduced: env GIT_SSH_COMMAND=false or GIT_NO_LAZY_FETCH=1 fails the control; clean env failed 1/20 (racy index). Fix 4735b5c14: env isolation + f.txt mtime 2030 + control-first fail. 40/40 clean runs 21/0; hostile env 21/0. TL APPROVE with mutation (drop GIT_NO_LAZY_FETCH in run.sh:10826 -> real leg FAIL 20/1, restored 21/0); select-tests 119/0.

@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.67 (2026-10-19)
+
+### Fixed
+- Tests: the S-218r lazy-fetch control in tests/test-untracked-status-fsmonitor.sh is now deterministic. It failed main CI (shard 6/8) when an inherited GIT_SSH_COMMAND or GIT_NO_LAZY_FETCH silenced the hook, and about 1 run in 20 in a clean env because `git status` only lazy-fetches when the index entry is racily clean. Both fixtures now isolate git env and config and force a stat mismatch; a dead control fails and marks the real leg NOT PROVEN instead of passing (FC-LAZY-CONTROL-ENV).
+
 ## v11.17.66 (2026-10-18)
 
 ### Fixed
