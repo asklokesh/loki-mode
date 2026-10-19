@@ -17,6 +17,7 @@ import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, 
 import { spawnSync } from "node:child_process"; import { chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { reviewExtraLimitS } from "../../src/engine10/stages/xreview.ts";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
@@ -1751,6 +1752,31 @@ describe("medium default review at seal", () => {
       expect(r.outputs.seal).toBeDefined();
       const rc = receiptOf({ data: r.outputs.seal as Record<string, unknown> }) as unknown as { review?: Record<string, unknown> };
       expect(rc.review?.level).toBe("not_run");
+    });
+  }, 60000);
+  test("slow reviewer keeps receipt: a non-exec wrapper is killed as a group within the box and leaves no grandchild", async () => {
+    const { ctx, stub } = setup("wrap", 0), pidf = `${stub}.pid`;
+    writeFileSync(stub, `#!/bin/sh\nsleep 45 &\necho $! > ${pidf}\nwait\necho VERDICT: PASS\n`);
+    await withEnv(stub, { LOKI_E10_REVIEW_BOX_S: "1" }, async () => {
+      const t0 = Date.now(), r = await sealed(ctx, 1);
+      expect(r.outputs.seal).toBeDefined();
+      expect(Date.now() - t0).toBeLessThan(25000);
+      const rc = receiptOf({ data: r.outputs.seal as Record<string, unknown> }) as unknown as { review?: Record<string, unknown> };
+      expect(rc.review?.level).toBe("not_run");
+      expect(() => process.kill(Number(readFileSync(pidf, "utf8").trim()), 0)).toThrow();
+    });
+  }, 60000);
+  test("slow reviewer keeps receipt: a run with little time left before the backstop spawns no review and clamps seal's extra limit", async () => {
+    const { ctx, stub } = setup("lowtime", 0), mark = `${stub}.ran`;
+    writeFileSync(stub, `#!/bin/sh\ntouch ${mark}\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`);
+    await withEnv(stub, {}, async () => {
+      expect(reviewExtraLimitS(ctx)).toBe(330);
+      ctx.capS = 100; expect(reviewExtraLimitS(ctx)).toBeLessThan(100); expect(reviewExtraLimitS(ctx)).toBeGreaterThan(0);
+      ctx.capS = 60; expect(reviewExtraLimitS(ctx)).toBe(0);
+      const s = await sealStage.run(ctx, new AbortController().signal), rc = receiptOf(s) as unknown as { review?: Record<string, unknown> };
+      expect(existsSync(mark)).toBe(false);
+      expect(rc.review?.level).toBe("not_run");
+      expect(receiptOf(s).not_proven.join(" | ")).toContain("insufficient run time");
     });
   }, 60000);
   test("seal passes reviewRan through: a default review that ran credits one reviewer, an opt-out does not", async () => {

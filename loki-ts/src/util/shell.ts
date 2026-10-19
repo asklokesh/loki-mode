@@ -2,6 +2,7 @@
 // Foundation for every command port that needs to call out to system tools
 // (claude, codex, jq, git, docker, curl, etc.).
 import { $ } from "bun";
+import { killGroup } from "../runner/worker_proc.ts";
 
 export type ShellResult = {
   stdout: string;
@@ -13,6 +14,7 @@ export type ShellOpts = {
   timeoutMs?: number;
   env?: Record<string, string>;
   cwd?: string;
+  group?: boolean; // own process group: a timeout/abort kills the whole tree (wrapper scripts that do not exec), and strays are reaped on exit
   signal?: AbortSignal; // abort: SIGTERM, then SIGKILL after 2s (same as a timeout)
 };
 
@@ -95,6 +97,7 @@ export async function run(
     stderr: "pipe",
     env: opts.env ? { ...process.env, ...opts.env } : process.env,
     cwd: opts.cwd,
+    ...(opts.group ? { detached: true } : {}),
   });
 
   let timer: Timer | undefined;
@@ -102,13 +105,15 @@ export async function run(
   const stop = (): void => {
     // SIGTERM first; if the process ignores it, SIGKILL after 2s.
     try {
-      proc.kill("SIGTERM");
+      if (opts.group) killGroup(proc.pid, "SIGTERM");
+      else proc.kill("SIGTERM");
     } catch {
       /* already exited */
     }
     killTimer ??= setTimeout(() => {
       try {
-        proc.kill("SIGKILL");
+        if (opts.group) killGroup(proc.pid, "SIGKILL");
+        else proc.kill("SIGKILL");
       } catch {
         /* already exited */
       }
@@ -130,6 +135,7 @@ export async function run(
     if (timer) clearTimeout(timer);
     if (killTimer) clearTimeout(killTimer);
     opts.signal?.removeEventListener("abort", stop);
+    if (opts.group) killGroup(proc.pid, "SIGKILL");
   }
 }
 
