@@ -4,7 +4,8 @@
 // machine.ts/session.ts (E-02/E-07) and the repo map (E-04) only through the
 // RunContext/SessionRunner/RepoMap shapes, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
-import { rankRelevant as selectRelevantFilesWithReason } from "../../src/util/relevance.ts";
+import { MAX_RELEVANT_FILES } from "../../src/engine10/relevant_files.ts";
+import { rankRelevant } from "../../src/util/relevance.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,7 +113,7 @@ describe("engine10 plan: relevant-file selection", () => {
   });
 
   test("each pick carries the matched keywords as its reason (P12-42)", () => {
-    const picks = selectRelevantFilesWithReason("fix the date formatter", repoMap);
+    const picks = rankRelevant("fix the date formatter", repoMap, MAX_RELEVANT_FILES);
     expect(picks.map((p) => p.path)).toEqual(selectRelevantFiles("fix the date formatter", repoMap));
     expect(picks[0]!.reason).toContain("matched:");
     expect(picks[0]!.reason).toContain("date");
