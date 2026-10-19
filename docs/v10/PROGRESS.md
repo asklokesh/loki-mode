@@ -2599,3 +2599,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T03:20Z (CoS) v11.17.75
 - 11.17.75: FC-ZERO-ON-BASE. a849c264 commits 9a4267335..58bb86a73 cherry-picked as 2a52da847..13b0b64c6 plus unused-import drop. HIGH a6dc6f16: BLOCK x4 (workspace link, nested links, venv spellings, spelled-target exemption), APPROVE round 5: attack set 11/0, verify_prered+seal+verify+budget 209/0. On main after cherry-pick: same 4 suites 209 pass 0 fail, tsc no engine10/base_guard errors.
+
+## 2026-10-19T05:27Z (CoS) v11.17.76
+- 11.17.76: FC-FULLSUITE-ANSI-IDS. Diagnosed on FireLater#20 run e10-20261019T045437Z-7939 (base 156 fails, head 150, 0 new; failIds raw 0 vs stripped 296/307). Engineer b9767d997 red-then-green 5 tests; HIGH review APPROVE (190/0, mutation removing stripAnsi turns 2 tests red). Main after cherry-pick 9944bc030: 83/0 on 4 touched suites.
