@@ -26,7 +26,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { checkProvenance, checkResultLabel, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { checkProvenance, checkResultLabel, SKIPPED_BY_REPO, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -113,18 +113,18 @@ export function targetProofOf(v: Obj | undefined): boolean {
   return raw.some((c) => names.has(String(c.name)) && hasExecutedProof([c]));
 }
 
-function checksOf(v: unknown, pc: ProvenanceCtx, preRed: readonly string[] = []): ReceiptCheck[] { // TEN-GATES-02: each check carries who authored its evidence (additive key)
+function checksOf(v: unknown, pc: ProvenanceCtx, preRed: readonly string[] = [], repoSkipped: readonly string[] = []): ReceiptCheck[] { // TEN-GATES-02: each check carries who authored its evidence (additive key)
   if (!Array.isArray(v)) return [];
   return v.filter((c): c is Obj => !!c && typeof c === "object").map((c) => ({
     name: String(c.name ?? ""),
     cmd: String(c.cmd ?? ""),
     result: c.result === "pass" || c.result === "fail" ? c.result : "not_run",
-    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
+    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(typeof c.count === "string" ? { count: c.count } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), ...(c.result !== "pass" && c.result !== "fail" && repoSkipped.includes(String(c.name ?? "")) ? { repo_skipped: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
   }));
 }
 
 export function renderReceiptMd(r: Receipt): string {
-  const sig = r.verification.jwt ? `SIGNED (kid ${r.verification.kid})` : "UNSIGNED", ln = (c: ReceiptCheck): string => `- ${checkResultLabel(c.result, c.pre_red === true)}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`, sec = (h: string, cs: ReceiptCheck[]): string[] => [h, ...(cs.length ? cs.map(ln) : ["- none"])], indep = (c: ReceiptCheck): boolean => c.provenance === "exogenous" || c.provenance === "independent"; // TEN-GATES-02: a receipt without provenance keeps the single Checks section
+  const sig = r.verification.jwt ? `SIGNED (kid ${r.verification.kid})` : "UNSIGNED", ln = (c: ReceiptCheck): string => `- ${checkResultLabel(c.result, c.pre_red === true, c.repo_skipped === true)}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`, sec = (h: string, cs: ReceiptCheck[]): string[] => [h, ...(cs.length ? cs.map(ln) : ["- none"])], indep = (c: ReceiptCheck): boolean => c.provenance === "exogenous" || c.provenance === "independent"; // TEN-GATES-02: a receipt without provenance keeps the single Checks section
   // E-69: never $0.00 for an unpriced run; "partial" when some but not all sessions were priced.
   const usd = r.cost.usd !== null
     ? `$${r.cost.usd.toFixed(4)}`
@@ -174,15 +174,16 @@ export const sealStage: Stage = {
     const wallGreenOnBase = wallGreenOnBaseOf(o);
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
     const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
+    const wallRel = (Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]) : []).map((f) => String(f.path)), repoSkipped = strs(o.verify?.skipped_on_base).filter((n) => !wallRel.some((w) => w === n.slice(n.indexOf(":") + 1) || w.endsWith(`/${n.slice(n.indexOf(":") + 1)}`))); // FC-REPO-SKIPPED-TEST-DOWNGRADES: verify measured zero tests on base and head for an untouched file; a Wall file is never excused, even if listed
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
-    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks); // TEN-GATES-02: A = added in this run
+    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks, repoSkipped); // TEN-GATES-02: A = added in this run
     const weakTests: string[] = [];
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const rcNotes = diffOk ? [...runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal), ...addedSymlinkNotes(rawDiff, str(o.plan?.plan))] : []; // D86 FC-09: runner config or a file it loads changed
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const vraw = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : [], executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0 || rcNotes.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
+    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name)) && c.repo_skipped !== true), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0 || rcNotes.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -216,7 +217,7 @@ export const sealStage: Stage = {
       if (!mine || mine.length !== vl.length || mine.some((n) => !vl.includes(n))) for (const v of vl) dropped.add(v);
     }
     if (verdict !== "VERIFIED") for (const f of uncoveredAfterLimit) notProven.add(`changed, untested after limit: ${f}`);
-    for (const c of checks) if (c.result === "not_run" && !strs(o.verify?.skipped_on_base).includes(c.name)) notProven.add(`not run: ${c.name}`); for (const n of strs(o.verify?.skipped_on_base)) notProven.add(`skipped on base (excused): ${n}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: one informational line
+    for (const c of checks) if (c.result === "not_run" && c.repo_skipped !== true) notProven.add(`not run: ${c.name}`); for (const n of repoSkipped) notProven.add(`${SKIPPED_BY_REPO}: ${n}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: one informational line
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(n);
     for (const n of rcNotes) notProven.add(n);

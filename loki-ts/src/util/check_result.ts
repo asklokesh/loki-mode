@@ -662,7 +662,9 @@ export function firstError(out: string): string { // the line naming the failing
 /** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */
 export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
 /** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */
-export const checkResultLabel = (result: string, preRed: boolean): string => (result === "fail" && preRed ? `fail (${ALREADY_FAILING_ON_BASE})` : result);
+/** FC-REPO-SKIPPED-TEST-DOWNGRADES: the one wording for an unchanged test the repo itself skips (zero tests on base and head); the check stays not_run in the receipt, never counted against the verdict. */
+export const SKIPPED_BY_REPO = "skipped by the repo on base and head";
+export const checkResultLabel = (result: string, preRed: boolean, repoSkipped = false): string => (result === "fail" && preRed ? `fail (${ALREADY_FAILING_ON_BASE})` : result === "not_run" && repoSkipped ? `not_run (${SKIPPED_BY_REPO})` : result);
 
 type G = (args: string[]) => Promise<{ out: string; code: number }>;
 /** FC-VERIFIED-PR-WITHOUT-ITS-TEST: HEAD is this run's Wall child only when its trailer line names this run, it touches exactly paths of this run's wall.files, and each blob hashes to the sealed sha256. A forged trailer is not enough. */

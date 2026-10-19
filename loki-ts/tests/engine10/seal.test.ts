@@ -502,8 +502,48 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.not_proven).not.toContain("not run: node:skip.test.js");
-    expect(r.not_proven).toContain("not run: node:other.test.js"); expect(r.not_proven).toContain("skipped on base (excused): node:skip.test.js");
+    expect(r.not_proven).toContain("not run: node:other.test.js"); expect(r.not_proven).toContain("skipped by the repo on base and head: node:skip.test.js");
   }, 30000);
+
+  describe("FC-REPO-SKIPPED-TEST-DOWNGRADES", () => {
+    const pass = { name: "node:a.test.js", cmd: "node --test", result: "pass", n: 1, duration_s: 1 };
+    const skip = { name: "node:skip.test.js", cmd: "node --test", result: "not_run", reason: "no tests executed (ran 0 tests, empty or all skipped)", duration_s: 1 };
+    const run = async (name: string, verify: Record<string, unknown>, over: Record<string, unknown> = {}) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [pass, skip], flaky: [], wall_passed: true, ...verify }, ...over });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    test("control: a not_run check verify did not measure as skipped on base still makes the verdict PARTIAL", async () => {
+      expect((await run("rsk-control", {})).verdict).toBe("PARTIAL");
+    }, 30000);
+    test("a measured repo skip (listed in skipped_on_base) does not downgrade; it stays in the receipt as not_run + repo_skipped, with the non-blocking note", async () => {
+      const r = await run("rsk-ok", { skipped_on_base: [skip.name] });
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.checks.find((c: { name: string }) => c.name === skip.name)).toMatchObject({ result: "not_run", repo_skipped: true });
+      expect(r.checks.find((c: { name: string }) => c.name === pass.name)!.repo_skipped).toBeUndefined();
+      expect(r.not_proven).toContain("skipped by the repo on base and head: node:skip.test.js");
+      expect(r.not_proven).not.toContain("not run: node:skip.test.js");
+    }, 30000);
+    test("negative: another not_run that is not listed still downgrades", async () => {
+      const r = await run("rsk-other", { skipped_on_base: [skip.name], checks: [pass, skip, { ...skip, name: "node:other.test.js" }] });
+      expect(r.verdict).toBe("PARTIAL"); expect(r.not_proven).toContain("not run: node:other.test.js");
+    }, 30000);
+    test("negative: with the skip excused and no executed passing n>0 check (FC-16) the verdict is not VERIFIED", async () => {
+      const r = await run("rsk-noproof", { skipped_on_base: [skip.name], checks: [skip] });
+      expect(r.verdict).not.toBe("VERIFIED");
+    }, 30000);
+    test("negative: a Wall file named in skipped_on_base is never excused (an all-skipped Wall stays not proven)", async () => {
+      const r = await run("rsk-wall", { skipped_on_base: ["node:tests/skip.test.js"], checks: [pass, { ...skip, name: "node:tests/skip.test.js" }] }, { wall: { files: [{ path: "tests/skip.test.js", sha256: "cd".repeat(32) }] } });
+      expect(r.verdict).toBe("PARTIAL"); expect(r.not_proven).toContain("not run: node:tests/skip.test.js");
+      expect(r.checks.find((c: { name: string }) => c.name === "node:tests/skip.test.js")!.repo_skipped).toBeUndefined();
+    }, 30000);
+    test("negative: a failing check is never excused by skipped_on_base", async () => {
+      const r = await run("rsk-fail", { skipped_on_base: [skip.name], checks: [pass, { ...skip, result: "fail" }] });
+      expect(r.verdict).toBe("FAILED");
+    }, 30000);
+  });
 
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a
   // system-interpreter run. Red on pre-B1 code: verdictOf never looked at o.verify.not_proven,

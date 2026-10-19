@@ -38,7 +38,7 @@ export function clipWords(s: string, max: number): string {
   return `${(sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:]+$/, "")}...`;
 }
 /** FC-OUTCOME-FLOOD: per-item NOT PROVEN lists (pre-red tests, not run, flaky, ...) collapse to one count line past a cap on every display surface (terminal, PR body, receipt.md, handoff); receipt.json keeps the full list. Display only, idempotent. */
-const FLOOD_PREFIXES = ["not run: ", "flaky test: ", "skipped on base (excused): ", "changed, untested after limit: ", "reverted test edit: ", "wall test discarded: ", "Wall test not executed: ", "weakened test: "];
+const FLOOD_PREFIXES = ["not run: ", "flaky test: ", "skipped by the repo on base and head: ", "changed, untested after limit: ", "reverted test edit: ", "wall test discarded: ", "Wall test not executed: ", "weakened test: "];
 const FLOOD_CAP = 8, PRE_RED_CAP = 3, PRE_RED = "pre red: ", COLLAPSED_PRE_RED = /^pre red: \d+ tests already failing on base/;
 export function collapseNotProven(lines: readonly string[]): string[] {
   const tail = (s: string): string => { const i = s.lastIndexOf(" > "); return i < 0 ? s : s.slice(i + 3); };

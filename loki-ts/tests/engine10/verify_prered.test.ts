@@ -231,6 +231,48 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
   }, 60_000);
 });
 
+describe("engine10 verify: a relevant test the repo itself skips (FC-REPO-SKIPPED-TEST-DOWNGRADES)", () => {
+  const SKIPPED = "// deliberately skipped, needs a real DB\n";
+  type Z = Out & { skipped_on_base: string[] };
+  const TASK = "fix sum.js"; // names sum.js, so every impacted test is a relevant (task-named) test
+  const base = { "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "skip.test.js": SKIPPED };
+  test("a relevant, untouched, wholly skipped file is skipped_on_base even though the run edited source (red before: relevant and source-editing runs were never measured)", async () => {
+    const { ctx } = repoWith(base, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
+    expect(d.checks.find((c) => c.name === "node:sum.test.js")?.result).toBe("pass");
+    expect(d.skipped_on_base).toEqual(["node:skip.test.js"]);
+  }, 60_000);
+  test("negative: the skipped file is in the run's diff (edited) stays fail-closed", async () => {
+    const { ctx } = repoWith(base, { "sum.js": SUM_OK, "skip.test.js": SKIPPED + "// edited\n" }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: an all-skipped Wall file is never excused, with source edited and the task naming it", async () => {
+    const { ctx } = repoWith(base, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")], ["skip.test.js"], { task: TASK });
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: zero on head but tests ran on base (relevant, untouched) stays fail-closed", async () => {
+    const gated = T + "if (!require('./gate.js').off) t('runs on base',()=>{});\n";
+    const { ctx } = repoWith({ "gate.js": "exports.off=false;\n", "gated.test.js": gated }, { "gate.js": "exports.off=true;\n" }, [node("gated.test.js")], [], { task: "fix gate.js" });
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: a test configuration edit withholds the excusal", async () => {
+    const { ctx } = repoWith({ ...base, "jest.config.js": "module.exports={};\n" }, { "sum.js": SUM_OK, "jest.config.js": "module.exports={testTimeout:1};\n" }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: base not measured (base worktree cannot be created) keeps today's behavior", async () => {
+    const { ctx } = repoWith(base, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    const c = ctx as unknown as { baseSha: string; repoDir: string }; c.baseSha = git(c.repoDir, ["rev-parse", `${c.baseSha}^{tree}`]); // diffable, but `git worktree add` refuses a tree: the base cannot be materialised
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+});
+
 describe("depsSeeHead (FC-ZERO-ON-BASE)", () => {
   const mk = (name = "r"): string => { const d = mkdtempSync(join(tmpdir(), "e10-dsh-")); dirs.push(d); const r = join(d, name); mkdirSync(r, { recursive: true }); return r; };
   const site = (r: string): string => { const s = join(r, ".venv", "lib", "python3.12", "site-packages"); mkdirSync(s, { recursive: true }); return s; };
