@@ -243,4 +243,10 @@ describe("FC-LINT-PRE-RED: select does not penalise a pre-red lint failure", () 
     const g = fake({ checks: [real, excused] }); // control: no preRed wired, both count one lint fail, the index tie-break picks A
     expect((await runTwoAttempts(g.ops, S, WALL, new AbortController().signal, {})).winner).toBe(0);
   });
+  it("mirrored: attempt A holds the excused lint failure and B is lint-clean; A is not penalised", async () => {
+    const f = fake({ checks: [[...oneFail, lint("fail")], [...oneFail, lint("pass")]], preRed: [["lint:shellcheck"], []] });
+    expect((await runTwoAttempts(f.ops, S, WALL, new AbortController().signal, {})).winner).toBe(0); // tie at zero lint fails, index decides
+    const g = fake({ checks: [[...oneFail, lint("fail")], [...oneFail, lint("pass")]] });
+    expect((await runTwoAttempts(g.ops, S, WALL, new AbortController().signal, {})).winner).toBe(1); // control: unexcused, B's clean lint wins
+  });
 });

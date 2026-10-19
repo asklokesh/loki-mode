@@ -10,6 +10,7 @@ import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { conflictReasonOf } from "./events.ts";
 import { STAGE_BUDGETS } from "./types.ts";
+import { isBlockingFail } from "../util/failure_memory.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
@@ -64,7 +65,7 @@ export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null
   return capHit && !sealed ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : verdict === "PARTIAL" ? "PARTIAL" : "FAILED"; // FC-21 (d): the Outcome line names the receipt verdict; BUDGET_STOP/STALLED/BLOCKED stay the explicit stop reasons
 }
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
-  const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], pre = (v?.pre_red_checks ?? []) as string[], bad = checks.find((c) => c.result === "fail" && !pre.includes(c.name)); // FC-LINT-PRE-RED: a check excused as failing on base is never the reason
+  const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], pre = (v?.pre_red_checks ?? []) as string[], bad = checks.find((c) => isBlockingFail(c, pre)); // FC-LINT-PRE-RED: a check excused as failing on base is never the reason
   const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : outcome === "CANCELLED" ? "cancelled by signal; usage recorded so far is kept" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${conflictReasonOf(ev) ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : undefined) ?? ev.find((e) => e.type === "stage.failed")?.data.reason ?? (v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
   return clipWords(redactSecrets(String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim()), 200) || undefined;
 }
