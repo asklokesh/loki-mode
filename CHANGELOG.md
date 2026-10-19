@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.72 (2026-10-19)
+
+### Fixed
+- A fix round whose agent reports a spec conflict (`LOKI_SPEC_CONFLICT`) now ends the run BLOCKED with the agent's question, instead of STALLED. Previously only the implement stage honored the marker, so the fix loop left the tree unchanged and the anti-loop ended the run STALLED (FC-FIX-CONFLICT-STALLED). The conflict is believed only when the fix round left the tree unchanged after one correction resume, so a fix round cannot use it to skip a real failure. Every place that shows the reason (run output, writeback comment, `loki answer`, work-item blockers, Slack, control-plane answer and stop reason, the run page raw view, the dashboard and the MCP status) now reads it through one rule: the last fix-round reason, else implement's. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.71 (2026-10-19)
 
 ### Changed

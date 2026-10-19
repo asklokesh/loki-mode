@@ -2587,3 +2587,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T02:46Z (CoS) v11.17.71
 - 11.17.71: install hardening d4170dc68+1b52683ed (cherry-picked d42be9af1, f1fa80b95). HIGH BLOCK B1/B2 fixed; HIGH re-review APPROVE: fc22+budget+intake 142/0, real npm ci in workspace member rc=0. On main: fc22+intake+budget 143 pass 0 fail. Follow-ups: pnpm yaml inline/unindented lists, uv --locked/pipenv --deploy, D106 || wording.
+
+## 2026-10-19T02:54Z (CoS) v11.17.72
+- 11.17.72: FC-FIX-CONFLICT-STALLED (FireLater#20 rerun 11.17.67 ended STALLED). 60f95df4f+1c43b5130+e5321f613 cherry-picked as 82f536d85, 9aa74fab0, b0b7b2066. HIGH: BLOCK x2 (sibling readers), then APPROVE: control-plane 539/0, pytest 35 passed, red 2 fail each without reader changes. On main: blocked_answer+machine+fix+budget 112 pass 0 fail.
