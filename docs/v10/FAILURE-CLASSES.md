@@ -1399,3 +1399,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: runFullSuite legacy per-runner path (commands come from FULL_SUITE_CMD, always frameworks, unchanged); base_guard and wall use real runners (unchanged).
 - Mechanism: check_result.ts isExitCodedScript (every segment a plain interpreter-plus-script run, nothing naming a test framework or containing "test"; anything ambiguous is a framework) feeds classifyCheck exitCoded: pass on rc 0, fail on rc != 0, count "n/a (exit-coded check, not a test runner)", never an n, so it is never executed proof. A framework with no summary stays UNMEASURED. FC-16 on the target is unchanged.
 - Fixture: tests/util/check_result.test.ts and tests/engine10/monorepo_cwd.test.ts (red before: missing export), tests/engine10/seal.test.ts (Wall n>0 plus exit-coded full suite is VERIFIED with one reviewer credited by a real review).
+
+## FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE A changed file no package owns made every unrelated test-less package own the diff, so a proven run sealed PARTIAL
+- User-visible vs raw: user-visible. claude-code#81826 on 11.17.102 sealed PARTIAL with "full suite: package scripts defines no test command" although the diff touched only plugins/ralph-wiggum/{hooks/stop-hook.sh,scripts/setup-ralph-loop.sh} and the passing Wall (n=4) executed both scripts. Run e10-20261019T191337Z-08db.
+- Law: ownership is positive evidence, never absence of an owner; an unowned file is proven or named, never silently passed or silently blamed on an unrelated package.
+- Cause (measured): runPackageSuites `owns` returned true for any test-less package whenever any product file had no owning package.
+- Siblings swept: execProves (reused as the proof), the proofFiles credit, quoted and unresolved paths (quoted still owned by all, fail-safe), FC-WALL-FILE-OWNS-EVERY-PACKAGE.
+- Mechanism: a test-less package owns an unowned file only if it is the repo-root package. Unowned product files are proven by execProves (Wall red on base, green on head, whole product diff unowned); otherwise one NOT PROVEN note "changed file <f> belongs to no package and no passing check exercised it".
+- Fixture: loki-ts/tests/engine10/monorepo_cwd.test.ts tests FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE. Red on 00bc53d72 (5 fail), green after.

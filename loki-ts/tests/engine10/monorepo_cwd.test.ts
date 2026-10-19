@@ -187,7 +187,7 @@ describe("FC-01 verify in a multi-root monorepo", () => {
       await runFullSuite(ctxFor(dir, base, []), sig(), opts, [], notProven);
       return [...notProven];
     };
-    const note = "full suite: package frontend defines no test command";
+    const note = "full suite: package frontend defines no test command", unownedNote = (f: string): string => `changed file ${f} belongs to no package and no passing check exercised it`;
     test("changed files only in the tested package: N/A", async () => { expect(await suites({ changed: ["backend/src/a.ts"] })).toEqual([`n/a: ${note}`]); });
     test("changed files in the package without tests and no Wall proof: stays NOT PROVEN", async () => { expect(await suites({ changed: ["frontend/src/a.ts"] })).toEqual([note]); expect(await suites({ changed: ["frontend/src/a.ts"], proofFiles: [] })).toEqual([note]); });
     test("changed files in the package without tests but a passing Wall proof inside it: N/A", async () => { expect(await suites({ changed: ["frontend/src/a.ts"], proofFiles: ["frontend/tests/w.test.ts"] })).toEqual([`n/a: ${note}`]); });
@@ -199,11 +199,23 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     });
     test("FC-CHANGED-PATH-QUOTED: a changed path no package resolves, or a quoted one, is owned: stays NOT PROVEN", async () => {
       expect(await suites({ changed: ["\"frontend/src/caf\\303\\251.ts\""] })).toEqual([note]);
-      expect(await suites({ changed: ["backend/src/a.ts", "elsewhere/x.md"] })).toEqual([note]);
+      expect(await suites({ changed: ["backend/src/a.ts", "elsewhere/x.md"] })).toEqual([unownedNote("elsewhere/x.md"), `n/a: ${note}`]);
+    });
+    // FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE: an unowned file belongs to the repo-root package only; elsewhere the Wall exec must prove it or it is named NOT PROVEN.
+    test("FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE: unowned files proven by the Wall (#81826 shape) leave the unrelated package N/A and add no note", async () => {
+      expect(await suites({ changed: ["plugins/r/hooks/stop.sh", "tests/loki_wall_x.test.ts"], proofFiles: ["tests/loki_wall_x.test.ts"], wallBaseRed: true })).toEqual([`n/a: ${note}`]);
+    });
+    test("FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE: an unowned file no passing check exercised stays NOT PROVEN, named", async () => {
+      expect(await suites({ changed: ["plugins/r/hooks/stop.sh"] })).toEqual([unownedNote("plugins/r/hooks/stop.sh"), `n/a: ${note}`]);
+      expect(await suites({ changed: ["plugins/r/hooks/stop.sh", "tests/loki_wall_x.test.ts"], proofFiles: ["tests/loki_wall_x.test.ts"], wallBaseRed: false })).toContain(unownedNote("plugins/r/hooks/stop.sh"));
+    });
+    test("FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE: the repo-root test-less package still owns an unowned file", async () => {
+      expect(await suites({ changed: ["plugins/r/hooks/stop.sh"] }, true)).toContain("full suite: package root defines no test command");
     });
     test("unknown diff is fail-safe NOT PROVEN", async () => { expect(await suites({})).toEqual([note]); });
     // FC-WALL-PROOF-PACKAGE-BLIND: execution evidence (Wall red on base, green on head, diff confined to the package), never proof text.
     describe("FC-WALL-PROOF-PACKAGE-BLIND", () => {
+      const un = (f: string): string => `changed file ${f} belongs to no package and no passing check exercised it`;
       const wall = ["tests/loki_wall_x.test.ts"], ch = ["frontend/hooks/stop.sh", "tests/loki_wall_x.test.ts"];
       const red = (changed: string[] | undefined, proofFiles: string[] | undefined = wall, wallBaseRed: boolean | null = true): Promise<string[]> => suites({ ...(changed ? { changed } : {}), ...(proofFiles ? { proofFiles } : {}), ...(wallBaseRed === null ? {} : { wallBaseRed }) });
       test("base red, head green, diff confined to the package plus the Wall file: N/A", async () => { expect(await red(ch)).toEqual([`n/a: ${note}`]); });
@@ -214,11 +226,11 @@ describe("FC-01 verify in a multi-root monorepo", () => {
         expect(await red(wall)).toEqual([note]);
         expect(await red(['"frontend/src/caf\\303\\251.ts"', ...wall])).toEqual([note]);
       });
-      test("Wall failed on head (no proof files): no credit", async () => { expect(await red(ch, [])).toEqual([note]); });
+      test("Wall failed on head (no proof files): no credit", async () => { expect(await red(ch, [])).toEqual([un(wall[0]!), note]); });
       test("FC-WALL-FILE-OWNS-EVERY-PACKAGE: a passing root Wall file does not make an untouched test-less package own the diff", async () => {
         expect(await red(["backend/src/a.ts", ...wall])).toEqual([`n/a: ${note}`]);
-        expect(await red(["backend/src/a.ts", ...wall], [])).toEqual([note]);
-        expect(await red(["backend/src/a.ts", "elsewhere/x.md", ...wall])).toEqual([note]);
+        expect(await red(["backend/src/a.ts", ...wall], [])).toEqual([un(wall[0]!), `n/a: ${note}`]);
+        expect(await red(["backend/src/a.ts", "elsewhere/x.md", ...wall])).toEqual([un("elsewhere/x.md"), `n/a: ${note}`]);
       });
       test("wallRedOnBaseOf reads real failures only", () => {
         expect(wallRedOnBaseOf({ pass: 0, fail: 1, not_run: 0 })).toBe(true);

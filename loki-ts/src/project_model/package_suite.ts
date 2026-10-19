@@ -72,8 +72,12 @@ export async function runPackageSuites(
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.
   const ran = checks.some((c) => c.result === "pass" || c.result === "fail"), rel = (f: string): string => (isAbsolute(f) ? relative(repoDir, f) : f), wallOwn = new Set((opts.proofFiles ?? []).map(rel));
   const product = opts.changed?.filter((f) => !wallOwn.has(rel(f))); // FC-WALL-FILE-OWNS-EVERY-PACKAGE: this run's passing Wall files are proof, not product, so an unowned root Wall file never makes every test-less package own the diff; unknown or Wall-only diff stays owned (fail-safe)
-  for (const pkg of api.packages().filter((p) => !p.commands.test)) {
-    const note = `full suite: package ${pkg.name} defines no test command`, owns = !product || product.length === 0 || product.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
+  // FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE: a file with no owning package belongs to the repo-root package only; elsewhere the run's passing Wall exec must prove it or it is named NOT PROVEN.
+  const testless = api.packages().filter((p) => !p.commands.test), isRoot = (p: { root: string }): boolean => p.root === "." || p.root === "";
+  const unowned = (product ?? []).filter((f) => !f.startsWith('"') && !api.packageOf(f)), unprovenFiles = execProves(repoDir, opts, (f) => !api.packageOf(f)) ? [] : unowned; // exec proof only when the whole product diff is unowned
+  if (testless.length) for (const f of unprovenFiles) notProven.add(`changed file ${f} belongs to no package and no passing check exercised it`);
+  for (const pkg of testless) {
+    const note = `full suite: package ${pkg.name} defines no test command`, owns = !product || product.length === 0 || product.some((f) => { const o = api.packageOf(f); return f.startsWith('"') || (o ? o.root === pkg.root : isRoot(pkg)); });
     const proven = (opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root) || execProves(repoDir, opts, (c) => api.packageOf(c)?.root === pkg.root);
     notProven.add(ran && !(owns && !proven) ? NA_PREFIX + note : note);
   }
