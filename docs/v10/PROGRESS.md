@@ -2605,3 +2605,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T06:34Z (CoS) v11.17.77
 - 11.17.77: FC-WALL-OUT-OF-REPO-TARGET. Diagnosed on anthropics/claude-code#81826 run e10-20261019T061221Z-ec31 (11.17.76 PARTIAL: Wall targeted ~/.claude/plugins ralph-loop, implementer added bunfig.toml preload). Engineer 1a5c55790+a38987338; HIGH review BLOCK (sizing cap, prefix placement, 5 false positives) then APPROVE 199/0 across 13 files.
+
+## 2026-10-19T06:50Z (CoS) v11.17.78
+- 11.17.78: main CI guard fixes (L0 project_model names, never_below_raw AST matcher, M1 anchor, modernize producer scan). Engineer chain 21187a2c7..9e17b7f75; HIGH review BLOCK x4 then APPROVE (134/0, 23 parent shapes still caught + 7 new, shipped source zero violations).

@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.78 (2026-10-19)
+
+### Fixed
+- Main CI is green again: five repository guards that went red after 11.17.75 are fixed. The D106 install ecosystem table moved out of the project model into one shared module so the project model names no tool; the CommonJS convention brief no longer says "TypeScript"; the modernize event producer scan runs per file so a stray quote in one file cannot hide another file's producers; and the route-matrix M1 mutation anchor matches the current source. No user-visible behaviour changes.
+- The never-below-raw guard, which fails the build when any engine stage pins a session to a cheaper model without vetting, now reads the TypeScript syntax tree instead of matching lines. It catches pins it previously missed (a pin beside an unrelated conditional spread, a trailing pin after a vetted spread, multi-line session options, a shorthand pin bound to an unvetted local) while event payloads stay exempt. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.77 (2026-10-19)
 
 ### Fixed
