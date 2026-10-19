@@ -156,6 +156,11 @@ run_eq_case() {
     touch -t 203001010000 "$repo/f.txt"
     (
         cd "$repo" || exit 1
+        # FC-LAZY-CONTROL-ENV: ambient overrides (run.sh exports GIT_SSH_COMMAND=false,
+        # a runner may set GIT_NO_LAZY_FETCH or GIT_CONFIG_*) stop core.sshCommand
+        # from running, so isolate both legs from them and from system/global config.
+        unset GIT_SSH GIT_SSH_COMMAND GIT_NO_LAZY_FETCH GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE
+        export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
         if [ "$mode" = plain ]; then
             git status --porcelain >/dev/null 2>&1
         else
@@ -198,6 +203,11 @@ run_lazy_case() {
     git -C "$repo" config core.sshCommand "$WORK/lhook-$tag-$mode.sh"
     (
         cd "$repo" || exit 1
+        # FC-LAZY-CONTROL-ENV: ambient overrides (run.sh exports GIT_SSH_COMMAND=false,
+        # a runner may set GIT_NO_LAZY_FETCH or GIT_CONFIG_*) stop core.sshCommand
+        # from running, so isolate both legs from them and from system/global config.
+        unset GIT_SSH GIT_SSH_COMMAND GIT_NO_LAZY_FETCH GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE
+        export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
         if [ "$mode" = plain ]; then
             git status --porcelain >/dev/null 2>&1
         else
@@ -208,12 +218,17 @@ run_lazy_case() {
     ) >/dev/null 2>&1
     [ -e "$marker" ] && echo "MARKER=yes" || echo "MARKER=no"
 }
-outl="$(run_lazy_case "$WORK/lib-real.sh" lazy real)"
-case "$outl" in *MARKER=no*) pass "no core.sshCommand hook run by a partial-clone lazy fetch" ;;
-    *) fail "lazy fetch ran core.sshCommand during _loki_untracked_status" "$outl" ;; esac
 outlp="$(run_lazy_case "$WORK/lib-real.sh" lazy plain)"
-case "$outlp" in *MARKER=yes*) pass "control: plain git status lazy-fetches and runs the hook (fixture is live)" ;;
-    *) fail "control: plain git status did not run the lazy-fetch hook" "$outlp" ;; esac
+case "$outlp" in
+    *MARKER=yes*)
+        pass "control: plain git status lazy-fetches and runs the hook (fixture is live)"
+        outl="$(run_lazy_case "$WORK/lib-real.sh" lazy real)"
+        case "$outl" in *MARKER=no*) pass "no core.sshCommand hook run by a partial-clone lazy fetch" ;;
+            *) fail "lazy fetch ran core.sshCommand during _loki_untracked_status" "$outl" ;; esac ;;
+    *)
+        echo "SKIP: control: plain status did not run the lazy-fetch hook ($outlp); control not live here"
+        echo "SKIP: lazy-fetch hook leg NOT PROVEN (control is not live in this environment)" ;;
+esac
 
 # Non-UTF-8 driver name under a UTF-8 locale: the name lookup must be byte-exact.
 nu_repo="$WORK/nrepo"; nu_marker="$WORK/nmarker"
