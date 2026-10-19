@@ -2677,3 +2677,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T18:37Z (CoS) v11.17.101
 - 11.17.101: FC-TRUSTED-PUSH-PARTIAL-CLONE (opus HIGH APPROVE; trusted-push-agent-config 62/0, engine10-push-gitlab 25/0). claude-code#81826 on 11.17.100 sealed VERIFIED but the fork push failed rc=1 in a partial clone.
+
+## 2026-10-19T19:00Z (CoS) v11.17.102
+- 11.17.102: FC-VERIFIED-PR-WITHOUT-ITS-TEST (opus HIGH APPROVE after hook BLOCK; seal 121/0, pr_body_golden 17/0, log_seal 19/0) and FC-FULL-SUITE-EXIT-CODED-SCRIPT (opus HIGH APPROVE; check_result 31/0, monorepo_cwd 39/0). claude-code#81826 draft rerun on 11.17.101 sealed PARTIAL on an exit-coded checker script.

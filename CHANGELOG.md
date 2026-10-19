@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.102 (2026-10-19)
+
+### Fixed
+- Seal: a VERIFIED run now publishes the Wall acceptance tests that were sealed and passed as a follow-up commit on its branch, and the PR body gains an "Acceptance tests" section, so a Loki PR ships with its own tests. The receipt binds the product head; the Wall child commit runs with hooks and signing off, each committed blob must equal the sealed bytes, the child must touch exactly the published paths or it is rolled back, and seal_drift and re-seal accept the child only when its trailer, paths and sha256 all match the run's Wall. Opt out with `LOKI_COMMIT_WALL=0`.
+- Verify: a full-suite command that is a plain script (for example `python3 .github/scripts/check.py`) is now an exit-coded check: rc 0 passes and rc non-zero fails, recorded as "n/a (exit-coded check, not a test runner)". Previously it was ruled not_run because it prints no runner summary, which sealed proven runs PARTIAL. It never counts as target proof, and a real test framework with no parseable summary stays unmeasured.
+
 ## v11.17.101 (2026-10-19)
 
 ### Fixed
