@@ -29,6 +29,13 @@ test("failure: failed check and stage failure are listed, never as passed", () =
   expect(md).toContain("nothing demonstrated");
 });
 
+test("FC-LINT-PRE-RED: a failing check also failing on base is listed apart, not under Failures", () => {
+  const md = renderHandoff({ ...base, checks: [{ name: "lint:shellcheck", cmd: "shellcheck a.sh", result: "fail", pre_red: true }, { name: "t", cmd: "pytest -q", result: "fail" }] });
+  expect(md).toContain("## Already failing on base");
+  expect(md.split("## Failures")[1]).not.toContain("shellcheck");
+  expect(md.split("## Failures")[1]).toContain("pytest -q");
+});
+
 test("partial checks: skipped, not_run and flaky are NOT CHECKED, never passed; uncovered requirements surface", () => {
   const md = renderHandoff({ ...base, checks: [{ name: "a", cmd: "unit", result: "pass" }, { name: "b", cmd: "e2e", result: "not_run", reason: "no browser" }, { name: "c", cmd: "slow", result: "flaky" }], requirements: [{ id: "R1", text: "handles 429", status: "uncovered" }, { id: "R2", text: "ok", status: "covered" }], notProven: ["perf"] });
   expect(md).toContain("PASSED: unit");

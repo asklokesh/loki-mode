@@ -148,7 +148,7 @@ export function withRiskLine(out: string, line: string | null, maxLines = 7, ext
 // HANDOFF: one compact review handoff (.loki/review/HANDOFF.md + handoff.json) composed ONLY from recorded run state.
 // Nothing is recomputed: the outcome label is the supervisor's, checks come from the verify stage, spend from cost events.
 // Unknown stays unknown: unmeasured spend reads "not measured" (never $0.00), a skipped or not-run check is never "passed".
-export interface HandoffCheck { name: string; cmd: string; result: string; reason?: string }
+export interface HandoffCheck { name: string; cmd: string; result: string; reason?: string; pre_red?: boolean }
 export interface HandoffHunk { file: string; line: number; added: number; removed: number; summary: string }
 export interface HandoffInput {
   task: string; outcome: string; reason?: string | null; runId: string; branch?: string | null; prUrl?: string | null; draft?: boolean;
@@ -198,7 +198,7 @@ function checkLine(c: HandoffCheck): string {
 }
 /** Human view, about 30 lines. */
 export function renderHandoff(i: HandoffInput): string {
-  const ran = i.checks.filter((c) => c.result === "pass"), bad = i.checks.filter((c) => c.result === "fail");
+  const ran = i.checks.filter((c) => c.result === "pass"), bad = i.checks.filter((c) => c.result === "fail" && !c.pre_red), onBase = i.checks.filter((c) => c.result === "fail" && c.pre_red);
   const skipped = i.checks.filter((c) => c.result !== "pass" && c.result !== "fail");
   const unc = (i.requirements ?? []).filter((r) => r.status !== "covered").map((r) => clip(r.text ?? r.id ?? "requirement", 80));
   const d = decisionCommands(i), L: string[] = [];
@@ -212,6 +212,7 @@ export function renderHandoff(i: HandoffInput): string {
   for (const c of ran.slice(0, 6)) L.push(`- ${checkLine(c)}`);
   if (ran.length === 0) L.push("- nothing demonstrated: no check passed");
   if (ran.length > 6) L.push(`- +${ran.length - 6} more passed`);
+  if (onBase.length) L.push("", "## Already failing on base (not caused by this change, not blocking)", ...onBase.slice(0, 4).map((c) => `- ${checkLine(c)}`));
   if (bad.length || i.failures.length) { L.push("", "## Failures"); for (const c of bad.slice(0, 4)) L.push(`- ${checkLine(c)}`); for (const f of i.failures.slice(0, 3)) L.push(`- ${clip(f)}`); }
   const notChecked = [...skipped.map((c) => checkLine(c)), ...(i.deferred ?? []).map((n) => `NOT RUN (deferred by risk tier): ${clip(n, 60)}`), ...i.notProven.map((n) => `NOT PROVEN: ${clip(n, 80)}`), ...unc.map((u) => `UNCOVERED requirement: ${u}`)];
   L.push("", "## Not checked");
@@ -243,7 +244,8 @@ export interface HandoffFacts { requirements?: HandoffInput["requirements"]; sin
 export function composeHandoff(f: HandoffFacts): HandoffInput {
   const done = (s: string): Record<string, unknown> => (f.events.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data ?? {}) as Record<string, unknown>;
   const started = (f.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
-  const checks = (Array.isArray(done("verify").checks) ? done("verify").checks as HandoffCheck[] : []).filter((c) => c && typeof c.name === "string");
+  const preRedNames = Array.isArray(done("verify").pre_red_checks) ? done("verify").pre_red_checks as unknown[] : [];
+  const checks = (Array.isArray(done("verify").checks) ? done("verify").checks as HandoffCheck[] : []).filter((c) => c && typeof c.name === "string").map((c) => (c.result === "fail" && preRedNames.includes(c.name) ? { ...c, pre_red: true } : c));
   const rm = f.requirements === undefined ? readJson(join(f.repoDir, ".loki", "state", "requirements-map.json")) as { requirements?: HandoffInput["requirements"] } | null : { requirements: f.requirements }; // the in-memory map of THIS run wins; null means no requirements, never a disk fallback
   const rt = readRiskRecord(f.repoDir, f.sinceMs ?? 0); // same reader and freshness rule as the run summary risk line
   const risk = typeof rt?.tier === "string" ? rt.tier : undefined;

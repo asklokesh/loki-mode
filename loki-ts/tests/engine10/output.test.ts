@@ -315,6 +315,11 @@ describe("outcomeOf and the exit ladder (A-110)", () => {
 describe("reasonOf (A-130 round 4)", () => {
   const ev = (type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ v: 1, seq: 0, ts: "t", run: "r", type, stage, data }) as never;
   const vfy = (checks: unknown[]) => ev("stage.completed", "verify", { checks });
+  test("FC-LINT-PRE-RED: a check excused as failing on base is not the reason", () => {
+    const v = (pre: string[]) => ev("stage.completed", "verify", { checks: [{ name: "lint:shellcheck", result: "fail" }, { name: "bun:x", result: "fail", first_error: "boom" }], pre_red_checks: pre });
+    expect(reasonOf([v(["lint:shellcheck"])], false, null, "PARTIAL")).toBe("bun:x failed: boom");
+    expect(reasonOf([v([])], false, null, "PARTIAL")).toBe("lint:shellcheck failed");
+  });
   test("success has no reason", () => expect(reasonOf([], false, null, "VERIFIED")).toBeUndefined());
   test("tamper wins over everything", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "x" })], true, "stalled", "FAILED")).toBe("event log modified outside the engine"));
   test("fatal stops are named", () => {
