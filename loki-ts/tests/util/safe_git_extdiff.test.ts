@@ -237,4 +237,16 @@ describe("FC-REVIEWER-GIT-CONFIG-EXEC round 2", () => {
     expect(out).toContain("+c2");
     expect(fired()).toBe("");
   });
+  test("fail closed: a repo-local remote uploadpack (first value wins, env cannot beat it) makes the builder throw", () => {
+    const e = base();
+    g2(e, undefined, "config", "remote.origin.uploadpack", mark("uploadpack"));
+    try { expect(() => reviewerGitEnv(repo2, base())).toThrow(/uploadpack/); } finally { g2(e, undefined, "config", "--unset", "remote.origin.uploadpack"); }
+    expect(() => reviewerGitEnv(repo2, base())).not.toThrow();
+  });
+  test("fail closed: a partial clone on git older than 2.44 (GIT_NO_LAZY_FETCH ignored) makes the builder throw; 2.44 and newer is accepted", () => {
+    expect(() => reviewerGitEnv(repo2, base(), "git version 2.39.2")).toThrow(/2\.44/);
+    expect(() => reviewerGitEnv(repo2, base(), "git version 2.34.1")).toThrow(/2\.44/);
+    expect(() => reviewerGitEnv(repo2, base(), "git version 2.44.0")).not.toThrow();
+    expect(() => reviewerGitEnv(repo2, base(), "git version 2.55.0")).not.toThrow();
+  });
 });

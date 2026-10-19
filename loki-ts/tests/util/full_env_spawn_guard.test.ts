@@ -49,27 +49,41 @@ test("the detector flags a planted full-env spawn and accepts a token-free one",
 
 // FC-REVIEWER-GIT-CONFIG-EXEC: reviewerGitEnv returns its base plus git hardening, so a reviewer spawn that spreads it inherits whatever the
 // base held. A call with no base argument, or a reviewer spawn whose base is not token-free, would hide a full-env spawn from the guard above.
-export function reviewerEnvViolations(src: string): string[] {
+// Every call must carry tokenFreeEnv( (checked per call, not per file). A raw base is allowed only on an explicit file-and-line row below.
+const RAW_BASE_ALLOWED: Record<string, string[]> = {
+  // `loki internal reviewer-git-env` prints only the GIT_* vars that differ from process.env; it never spawns a child with this env
+  "loki-ts/src/cli.ts": ["const e = reviewerGitEnv(process.cwd(), process.env);"],
+};
+export function reviewerEnvViolations(src: string, allowedLines: string[] = []): string[] {
   const bad: string[] = [];
   for (const line of src.split("\n")) {
     if (isComment(line)) continue;
     const m = /reviewerGitEnv\(([^\n]*)/.exec(line);
     if (!m) continue;
     const args = m[1]!;
+    if (allowedLines.includes(line.trim())) continue;
     if (/^\s*\)/.test(args)) bad.push("no base argument");
-    else if (!/tokenFreeEnv\(/.test(args) && !/process\.env\s*\)/.test(args)) bad.push(`base not token-free: ${args.slice(0, 60)}`);
+    else if (!/tokenFreeEnv\(/.test(args)) bad.push(`base not token-free: ${args.slice(0, 60)}`);
   }
   return bad;
 }
-test("every reviewerGitEnv call passes a base; the spawning reviewers pass a token-free one", () => {
+test("every reviewerGitEnv call passes a tokenFreeEnv base, except the allowlisted file-and-line rows", () => {
   const all: string[] = [];
+  const used = new Set<string>();
   for (const f of walk(SRC)) {
     if (f.endsWith("util/safe_git.ts")) continue;
     const src = readFileSync(f, "utf8");
-    for (const v of reviewerEnvViolations(src)) all.push(`${rel(f)}: ${v}`);
-    if (/council\/voter_agents\.ts$|runner\/quality_gates\.ts$/.test(f) && /reviewerGitEnv\(/.test(src) && !/reviewerGitEnv\([^\n]*tokenFreeEnv\(/.test(src)) all.push(`${rel(f)}: reviewer spawn base is not tokenFreeEnv`);
+    const allowed = RAW_BASE_ALLOWED[rel(f)] ?? [];
+    for (const v of reviewerEnvViolations(src, allowed)) all.push(`${rel(f)}: ${v}`);
+    for (const a of allowed) if (src.split("\n").some((l) => l.trim() === a)) used.add(`${rel(f)}|${a}`);
   }
+  for (const [file, lines] of Object.entries(RAW_BASE_ALLOWED)) for (const a of lines) if (!used.has(`${file}|${a}`)) all.push(`${file}: stale allowlist row: ${a}`);
   expect(all).toEqual([]);
+});
+test("a full-env base is flagged on any call, even when another call in the file is token-free", () => {
+  expect(reviewerEnvViolations("env: { ...reviewerGitEnv(process.cwd(), process.env), X: 1 }").length).toBe(1);
+  expect(reviewerEnvViolations("a(reviewerGitEnv(c, tokenFreeEnv(process.env)));\nb({ ...reviewerGitEnv(c, process.env) });").length).toBe(1);
+  expect(reviewerEnvViolations("const e = reviewerGitEnv(process.cwd(), process.env);", ["const e = reviewerGitEnv(process.cwd(), process.env);"]).length).toBe(0);
 });
 test("the reviewerGitEnv detector flags a bare call and accepts a token-free one", () => {
   expect(reviewerEnvViolations("env: { ...reviewerGitEnv() }").length).toBe(1);

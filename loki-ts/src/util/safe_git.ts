@@ -86,6 +86,11 @@ const REVIEWER_GIT_STATIC: ReadonlyArray<readonly [string, string]> = [
 // Repo diff driver commands get the shim (a blank command dies); textconv gets cat (a blank one dies on log -p); other driver keys blank.
 // The shim ends its options with `--` so a tracked file named `-n` is a path, not a diff option.
 const REVIEWER_EXT_DIFF = 'f() { diff -u -L "a/$1" -L "b/$1" -- "$2" "$5"; [ $? -le 1 ]; }; f';
+function gitHonoursNoLazyFetch(v?: string): boolean {
+  const out = v ?? String(spawnSync("git", ["--version"], { encoding: "utf8", env: safeGitEnv() }).stdout ?? "");
+  const m = /(\d+)\.(\d+)/.exec(out);
+  return !!m && (Number(m[1]) > 2 || (Number(m[1]) === 2 && Number(m[2]) >= 44));
+}
 const REVIEWER_NET_SKIP = /sslverify$/i;
 
 /** Env for a model-driven reviewer child that may run read-only git in repoDir. base is required so a caller must choose it:
@@ -94,7 +99,7 @@ const REVIEWER_NET_SKIP = /sslverify$/i;
  *  gpg programs and network command keys (repo ones enumerated with NET_CMD_KEY_RE), every repo filter blanked by key, and GIT_EXTERNAL_DIFF
  *  replaced by a harmless unified-diff shim (it beats a repo diff.external). Existing GIT_CONFIG_COUNT entries are kept. Never mutates base.
  *  Fails closed (throws) when the repo config cannot be enumerated; a non-repo directory has no repo config to defend. */
-export function reviewerGitEnv(repoDir: string, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function reviewerGitEnv(repoDir: string, base: NodeJS.ProcessEnv, gitVersion?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base, GIT_CONFIG_NOSYSTEM: "1", GIT_EXTERNAL_DIFF: REVIEWER_EXT_DIFF, GIT_NO_LAZY_FETCH: "1", GIT_PAGER: "cat", SSH_AUTH_SOCK: "" };
   delete env.GIT_ATTR_SOURCE;
   const inRepo = spawnSync("git", [...SAFE_GIT_CONFIG, "rev-parse", "--git-dir"], { cwd: repoDir, env: safeGitEnv(), stdio: "ignore", timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
@@ -102,7 +107,12 @@ export function reviewerGitEnv(repoDir: string, base: NodeJS.ProcessEnv): NodeJS
   const pairs: Array<readonly [string, string]> = [...REVIEWER_GIT_STATIC];
   if (inRepo.status === 0) {
     for (const k of driverKeys(repoDir)) pairs.push([k, /^diff\..*\.command$/i.test(k) ? REVIEWER_EXT_DIFF : /^diff\..*\.textconv$/i.test(k) ? "cat" : ""]);
-    for (const k of repoKeysMatching(repoDir, NET_CMD_KEY_RE)) if (!REVIEWER_NET_SKIP.test(k)) pairs.push([k, ""]);
+    const netKeys = repoKeysMatching(repoDir, NET_CMD_KEY_RE);
+    // remote.<n>.uploadpack/receivepack are first-value-wins and a repo-local value beats a command-scope blank, so env cannot neutralise them
+    if (netKeys.some((k) => /^remote\..*\.(uploadpack|receivepack)$/i.test(k))) throw new Error("reviewerGitEnv: repo sets remote uploadpack/receivepack, which env config cannot override");
+    // GIT_NO_LAZY_FETCH is ignored by git before 2.44, so a partial clone there could lazy-fetch over a repo-set transport command
+    if (repoKeysMatching(repoDir, "^extensions\\.partialclone$").length > 0 && !gitHonoursNoLazyFetch(gitVersion)) throw new Error("reviewerGitEnv: partial clone with git older than 2.44 (GIT_NO_LAZY_FETCH unsupported)");
+    for (const k of netKeys) if (!REVIEWER_NET_SKIP.test(k)) pairs.push([k, ""]);
   }
   const n0 = Number(base.GIT_CONFIG_COUNT), start = Number.isInteger(n0) && n0 > 0 ? n0 : 0;
   pairs.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${start + i}`] = k; env[`GIT_CONFIG_VALUE_${start + i}`] = v; });
