@@ -2593,3 +2593,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T03:12Z (CoS) v11.17.73
 - 11.17.73: P0 fix-forward for D106 install masking (live in 71/72). af838b55 commits 2bb2f0194..279f1ac5d cherry-picked as 2599744de..20cf84915 plus D106 wording fix. HIGH a1168a6d: BLOCK x5 (||, quoted separators, later ; list, trap/function/alias, set -n), APPROVE round 6 at 279f1ac5d: fc22_install+intake+budget 145 pass 0 fail, real npm stale-lock probes all rc=1 on rewritten shapes.
+
+## 2026-10-19T03:16Z (CoS) v11.17.74
+- 11.17.74: D106 follow-up, NODE_OPTIONS/BASH_ENV/ENV refused like PATH. af838b55 4284ae1fb cherry-picked. HIGH a1168a6d round 7 APPROVE: 4 files 5+/5-, probes 8 refused, no over-match, fc22_install+intake+budget 145 pass 0 fail; red 56/1 with source reverted.
