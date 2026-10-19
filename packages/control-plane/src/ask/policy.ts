@@ -21,9 +21,16 @@ export function resolveToolsServer(startDir: string): string | null {
 export const ALLOWED_TOOLS = `mcp__${MCP_SERVER_NAME}__*`;
 
 // Deny wins over allow in claude. Includes the loki-ts review denylist tokens (mutation forms) and every built-in that can touch files, a shell, the web or sub-agents.
+// Mirror of REVIEW_GUARD_DENYLIST (loki-ts/src/providers/claude_flags.ts). The control-plane package ships alone (its Docker image has no loki-ts), so it cannot import it;
+// test/server/ask_policy.test.ts fails and names every missing token when the two drift (FC-CP-DENYLIST-DRIFT).
 export const DENIED_TOOLS = [
-  "Edit", "Write", "NotebookEdit",
-  "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git push:*)", "Bash(git checkout:*)", "Bash(git clean:*)", "Bash(git rm:*)", "Bash(git stash:*)", "Bash(git -C:*)", "Bash(git --git-dir:*)", "Bash(git -c:*)",
+  "Edit", "Write", "NotebookEdit", "Bash(git commit:*)", "Bash(git reset:*)", "Bash(git push:*)", "Bash(git checkout:*)", "Bash(git clean:*)", "Bash(git rm:*)", "Bash(git stash:*)", "Bash(git -C:*)",
+  "Bash(git --git-dir:*)", "Bash(git -c:*)", "Bash(git --exec-path:*)", "Bash(git diff --output:*)", "Bash(git diff --output=:*)", "Bash(git diff --ext-diff:*)", "Bash(git diff --no-index:*)",
+  "Bash(git log --output:*)", "Bash(git log --output=:*)", "Bash(git log --ext-diff:*)", "Bash(git show --output:*)", "Bash(git show --output=:*)", "Bash(git show --ext-diff:*)",
+  "Bash(git blame --output:*)", "Bash(git blame --output=:*)", "Bash(rg --pre:*)", "Bash(rg --pre=:*)", "Bash(rg --pre-glob:*)", "Bash(rg --pre-glob=:*)", "Bash(rg --hostname-bin:*)",
+  "Bash(rg --hostname-bin=:*)", "Bash(find -delete:*)", "Bash(find -exec:*)", "Bash(find -execdir:*)", "Bash(find -ok:*)", "Bash(find -fprint:*)", "Bash(find -fprintf:*)", "Bash(find -fls:*)",
+  "Bash(git * --output*)", "Bash(git * --ext-diff*)", "Bash(git * --no-index*)", "Bash(rg * --pre*)", "Bash(rg * --hostname-bin*)", "Bash(rg --pre*)", "Bash(rg --hostname-bin*)",
+  "Bash(find * -delete*)", "Bash(find * -exec*)", "Bash(find * -execdir*)", "Bash(find * -fprint*)", "Bash(find * -fls*)", "Bash(find * -ok*)",
   "Bash", "WebFetch", "WebSearch", "Task", "Read", "Grep", "Glob",
 ].join(",");
 

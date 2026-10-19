@@ -12,7 +12,8 @@ test("the deny list covers every token of the loki-ts REVIEW denylist, plus the 
   const m = /const REVIEW_GUARD_DENYLIST =\s*\n?\s*"([^"]+)"/.exec(src);
   expect(m).not.toBeNull();
   const deny = DENIED_TOOLS.split(",");
-  for (const tok of m![1]!.split(",")) expect(deny).toContain(tok);
+  const missing = m![1]!.split(",").filter((tok) => !deny.includes(tok));
+  expect(missing).toEqual([]);
   for (const tok of ["Write", "Edit", "NotebookEdit", "Bash", "WebFetch", "WebSearch", "Task", "Read", "Grep", "Glob"]) expect(deny).toContain(tok);
 });
 
