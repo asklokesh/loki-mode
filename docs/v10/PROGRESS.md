@@ -2674,3 +2674,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T17:09Z (CoS) v11.17.100
 - 11.17.100: FC-WALL-FILE-OWNS-EVERY-PACKAGE (opus HIGH review). claude-code#81826 on 11.17.99 sealed PARTIAL on untouched package `scripts` because the root Wall file read as owned by every test-less package. monorepo_cwd 38/0 (red on HEAD 2739c8e26: 1 fail), tsc clean.
+
+## 2026-10-19T18:37Z (CoS) v11.17.101
+- 11.17.101: FC-TRUSTED-PUSH-PARTIAL-CLONE (opus HIGH APPROVE; trusted-push-agent-config 62/0, engine10-push-gitlab 25/0). claude-code#81826 on 11.17.100 sealed VERIFIED but the fork push failed rc=1 in a partial clone.

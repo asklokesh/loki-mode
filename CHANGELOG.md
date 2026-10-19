@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.101 (2026-10-19)
+
+### Fixed
+- Push: a VERIFIED run whose agent repo is a partial clone (`--filter=blob:none`, or any promisor remote) now pushes its branch and opens the PR. Previously the trusted push copied the branch into a fresh repo that could not resolve the missing delta bases, so the push to the fork failed with rc=1 and no PR was opened. The temp repo is now seeded from the validated origin as a promisor remote and the agent-dir fetch runs credentialed through a scrubbed `env -i` upload-pack, so agent-controlled config (fsmonitor, hooks, packObjectsHook, credential helpers, sshCommand, ext:: promisors) is never executed. Same fix in the GitLab MR push child. Non-partial repos take the unchanged path.
+
 ## v11.17.100 (2026-10-19)
 
 ### Fixed
