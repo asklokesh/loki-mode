@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.96 (2026-10-19)
+
+### Fixed
+- The seal cross-reviewer now has real read-only tools (Read, Grep, Glob and a read-only shell: cat, ls, grep, rg, find, head, tail, wc) and is told truthfully what it can run, so it no longer reports "my tool output came back empty" and traces acceptance lines by hand.
+- The cross-reviewer is hardened against the code it reviews: it gets no git commands (a repository's git config could run drivers before the receipt is hashed), loads no user or project settings (a machine allow rule could otherwise widen its shell, and user instructions added about 4,300 tokens per review), runs in dontAsk mode, and is denied write and exec forms such as rg --pre and rg --hostname-bin. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.95 (2026-10-19)
 
 ### Fixed

@@ -2659,3 +2659,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T13:43Z (CoS) v11.17.95
 - 11.17.95: FC-WALL-LOCATION-BLIND c3fbc4f4c+10226edf6 (from ff9d5c9d3+9807b3401; field run e10-20261019T130749Z-f11c FireLater#20). HIGH APPROVE round 2: 7 repro cases, 5 mutations red, 838 pass 0 fail; merged-tree gate 789 pass 0 fail.
+
+## 2026-10-19T13:53Z (CoS) v11.17.96
+- 11.17.96: FC-XREVIEW-BLIND-TOOLS bf2b129d8..2a08304d5 (from 54ffc9f0c..74ac1f558; field run #81826 NOT PROVEN 'tool output came back empty'). HIGH APPROVE round 4: python3/curl denied, cat ok, empty-source tokens equal project baseline, 3 mutations red; merged-tree gate 856 pass 0 fail, tsc clean.
