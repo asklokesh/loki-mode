@@ -194,7 +194,7 @@ export function isExitCodedScript(cmd: string): boolean {
  *  so an extra identical line is new. Repo-relative paths, other absolute paths and every other digit stay, so any new or changed finding is a different id (introduced). Recorded identically at the intake baseline and in the head full suite. */
 export function exitCodedId(cmd: string, out: string, repoDir = ""): string | null {
   const roots = repoDir ? [`/private${repoDir}/`, `${repoDir}/`, `/private${repoDir}`, repoDir] : [];
-  const norm = (x: string): string => roots.reduce((t, r) => t.split(r).join(""), x).replace(/:\d+(?::\d+)?/g, "").replace(/\s+/g, " ").trim();
+  const norm = (x: string): string => roots.reduce((t, r) => t.split(r).join(""), x).replace(/(?<=\.[A-Za-z0-9]+):\d+(?::\d+)?/g, "").replace(/\s+/g, " ").trim();
   const lines = stripAnsi(out).split("\n").map(norm).filter(Boolean).sort();
   return lines.length ? `exit-coded:${cmd.trim()}:${createHash("sha256").update(lines.join("\n")).digest("hex")}` : null;
 }

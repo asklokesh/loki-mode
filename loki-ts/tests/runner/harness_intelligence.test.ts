@@ -821,6 +821,14 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(pj?.suites?.[0]?.attributable).toBe(true);
         expect(attributeFullSuite(d, base, headFor(jobs(1)), [], []).preExistingChecks).toEqual(["full suite: repo-root"]);
         expect(attributeFullSuite(d, base, headFor(jobs(2)), [], []).preExistingChecks).toEqual([]);
+        // E: line:col after a file extension is positional only (repo root forms differ too); F: "job:1" vs "job:2" is content
+        const e = (out: string) => attributeFullSuite(d, base, headFor(out), [], []).preExistingChecks;
+        baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { rerun: true, run: () => ({ code: 1, timedOut: false, out: `ERROR: job build is unhardened (/private${d}/a.yml:40:2)\nERROR: 2 problems\n` }) });
+        expect(e(`ERROR: job build is unhardened (${d}/a.yml:12)\nERROR: 2 problems\n`)).toEqual(["full suite: repo-root"]);
+        const pf = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { rerun: true, run: () => ({ code: 1, timedOut: false, out: "ERROR: job:1 lacks permissions\n" }) });
+        expect(pf?.suites?.[0]?.attributable).toBe(true);
+        expect(e("ERROR: job:1 lacks permissions\n")).toEqual(["full suite: repo-root"]);
+        expect(e("ERROR: job:2 lacks permissions\n")).toEqual([]);
         // C: a silent failure (empty output) on base and head is not attributable, so it stays introduced
         const pe = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { rerun: true, run: () => ({ code: 1, timedOut: false, out: "" }) });
         expect(pe?.suites?.[0]?.attributable).toBe(false);
