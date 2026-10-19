@@ -6071,6 +6071,7 @@ _loki_trusted_push() {
             return 2 ;;
     esac
     _repo="$(_loki_github_repo_from_url "$_url")"
+    local _origin_url="$_url"
     if [ -n "$_dest" ]; then
         if ! _loki_github_repo_from_url "https://github.com/${_dest}.git" >/dev/null; then
             log_warn "Not pushing branch '$_branch': fork destination '$_dest' is not a plain OWNER/REPO."
@@ -6088,10 +6089,29 @@ _loki_trusted_push() {
         return 2
     fi
     _tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push.XXXXXX")" || return 1
+    # FC-TRUSTED-PUSH-PARTIAL-CLONE: a partial agent clone (extensions.partialclone,
+    # or a remote.<n>.promisor=true on newer git; both read as data) holds
+    # objects it never downloaded, and upload-pack does not lazy-fetch them, so
+    # the branch fetch below dies. Seed the temp repo with the validated origin
+    # (_origin_url, captured before a fork _dest overwrites _url) as a promisor
+    # remote and fetch its refs first; the push runs under the same runner, so
+    # any lazy blob fetch has the same credentials. Non-partial repos skip this.
+    local _partial=""
+    if [ -n "$(git -C "$_dir" config --get extensions.partialclone 2>/dev/null)" ] \
+        || git -C "$_dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -qi ' true$'; then
+        _partial=1
+    fi
     # --update-shallow: a shallow agent repo's history ends in shallow roots,
     # which a plain fetch rejects while still exiting 0. The rev-parse makes a
     # silently empty fetch fail here instead of at the push.
     if git init -q --template= "$_tmp" >/dev/null 2>&1 \
+        && { [ -z "$_partial" ] || {
+            git -C "$_tmp" config core.repositoryformatversion 1 \
+            && git -C "$_tmp" config extensions.partialclone loki-base \
+            && git -C "$_tmp" config remote.loki-base.url "$_origin_url" \
+            && git -C "$_tmp" config remote.loki-base.promisor true \
+            && git -C "$_tmp" config remote.loki-base.partialclonefilter blob:none \
+            && "$_runner" git -C "$_tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
         && git -C "$_tmp" fetch -q --no-tags --update-shallow "$_dir" "+refs/heads/$_branch:refs/heads/$_branch" >/dev/null 2>&1 \
         && git -C "$_tmp" rev-parse -q --verify "refs/heads/$_branch" >/dev/null 2>&1; then
         _rc=0
