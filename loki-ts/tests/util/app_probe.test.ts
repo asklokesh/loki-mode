@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +56,9 @@ describe("appProbe", () => {
   it("a Docker project whose runtime is missing is not_run (a real gap), never n/a", async () => {
     const d = fixture();
     writeFileSync(join(d, "Dockerfile"), "FROM scratch\n");
-    const r = await appProbe(d, join(d, ".loki"), { env: { PATH: "/usr/bin:/bin" }, timeoutMs: 40_000 });
+    // A hosted runner ships a live docker at /usr/bin; shadow it with a daemon-down stub so the test models "runtime unavailable" on every host.
+    const stub = join(d, "stub-bin"); mkdirSync(stub); writeFileSync(join(stub, "docker"), "#!/bin/sh\nexit 1\n"); chmodSync(join(stub, "docker"), 0o755);
+    const r = await appProbe(d, join(d, ".loki"), { env: { PATH: `${stub}:/usr/bin:/bin` }, timeoutMs: 40_000 });
     expect(by(r, "app boot")?.result).toBe("not_run");
     expect(r.checks.some((c) => c.result === "n/a")).toBe(false);
   }, 60_000);
