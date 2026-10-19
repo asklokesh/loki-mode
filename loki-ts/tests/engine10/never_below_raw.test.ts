@@ -143,18 +143,35 @@ export function guardViolations(files: Record<string, string>): string[] {
     if (path.startsWith("dashboard/") || path === "types.ts" || path === "session.ts" || path === "cost.ts") continue;
     const lines = src.split("\n");
     lines.forEach((line, i) => {
-      const m = line.match(/(?:\.\.\.\(\w+ \? \{ )?\bmodel(?:: | \?)(.*)$/);
-      // A pin is a spread `...(x ? { model: ...} : {})`, a `...(model ? [...` flag, a sessions.run option or a line-start `model:` key; a bare `model: v` key in an event data object that merely contains an unrelated spread is data, not a pin.
-      if (!m || /ctx\.model|^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\((\w+ \? \{ )?model\b|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
-      const expr = line.trim().replace(/^\.\.\.\(/, "").replace(/^model: /, "");
+      if (/^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\((\w+ \? \{[^}]*)?\bmodel\b|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
       const ok = allowed[path];
-      if (path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}\)/.test(expr) && FIX_ROUTED_DEF.test(src)) return; // evidence-backed router pin, checked structurally below
-      if (ok && ok.test(expr)) return;
-      // A one-line options object holds several spread pins: each must be vetted on its own (a line with sessions.run is judged as a whole).
-      const spreads = [...line.matchAll(/\.\.\.\((\w+ \? \{ model: [^}]*\} : \{\})\)/g)].map((x) => x[1]!);
-      const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || (path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src));
-      if (!/sessions\.run/.test(line) && spreads.length > 0 && spreads.every(vetted)) return;
-      v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
+      const routedOk = (e: string): boolean => path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src);
+      const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || routedOk(e);
+      // A `model` key inside an event data object (`data: {`) describes the run; it is not a session pin. The brace stack makes the exemption
+      // hold only at positions actually inside such an object, never for a pin elsewhere on the same line or after the object closed.
+      const lineStart = lines.slice(0, i).reduce((n, l) => n + l.length + 1, 0);
+      const inData = (col: number): boolean => {
+        const st: boolean[] = [];
+        for (let k = 0; k < lineStart + col; k++) {
+          if (src[k] === "{") st.push(/\bdata: $/.test(src.slice(Math.max(0, k - 8), k)));
+          else if (src[k] === "}") st.pop();
+        }
+        return st.some(Boolean);
+      };
+      const bad: string[] = [];
+      // Every spread `...(x ? { ..model.. } : {})` anywhere on the line (model need not be the first key) must be a vetted pin.
+      const SPREAD = /\.\.\.\(\w+ \? \{[^}]*\bmodel\b[^}]*\} : \{\}\)/g;
+      for (const x of line.matchAll(SPREAD)) if (!inData(x.index!) && !vetted(x[0].slice(4, -1))) bad.push(x[0]);
+      // What remains once the spreads are blanked may not pin a model either (a trailing `model: x` key wins over the spread).
+      const rest = line.replace(SPREAD, (t) => " ".repeat(t.length));
+      if (!ok?.test(rest.trim())) {
+        for (const x of rest.matchAll(/\bmodel(?:: | \?)/g)) {
+          const tail = rest.slice(x.index! + (x[0].startsWith("model:") ? 7 : 0));
+          if (inData(x.index!) || (x[0].startsWith("model:") && (/^ctx\.model\b/.test(tail) || (ok !== undefined && ok.test(tail))))) continue;
+          bad.push(rest.trim());
+        }
+      }
+      if (bad.length > 0) v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
     });
   }
   // ROUTER-1: a model below the run model is allowed only when a router route record exists for that unit with its evidence (source plus reason).
@@ -233,6 +250,17 @@ describe("L1 static guard", () => {
     expect(guardViolations(g).some((x) => x.includes("unvetted session model pin"))).toBe(true);
     const h = { ...f, "stages/fix.ts": f["stages/fix.ts"]!.replace(line, line.replace("...(pinnedModel ? { model: pinnedModel } : {})", '...(pinnedModel ? { model: "claude-haiku-4-5" } : {})')) };
     expect(guardViolations(h).some((x) => x.includes("unvetted session model pin"))).toBe(true);
+  });
+
+  it("review misses F, G, E: a non-first model key, a trailing model key and a data-key outside an event object are pins", () => {
+    const f = loadFiles();
+    const fix = f["stages/fix.ts"]!;
+    const line = fix.split("\n").find((l) => l.includes("const sessionBase = {") && l.includes("...(pinnedModel ? { model: pinnedModel } : {})"))!;
+    const red = (mut: string): boolean => guardViolations({ ...f, "stages/fix.ts": mut }).some((x) => x.includes("unvetted session model pin"));
+    expect(red(fix.replace(line, line.replace("...(effort ? { effort } : {})", "...(effort ? { effort, model: lowModel } : {})")))).toBe(true); // F
+    expect(red(fix.replace(line, line.replace(/ \};$/, ", model: lowModel };")))).toBe(true); // G
+    expect(red(`${fix}\nconst o = { ...(pinnedModel ? { model: pinnedModel } : {}), stage: "fix", model: lowModel };\n`)).toBe(true); // E, outside a data object
+    expect(red(`${fix}\nctx.emit("x", "fix", { data: { round, model: actualModel } });\n`)).toBe(false); // inside a data object it stays exempt
   });
 
   it("mutation M5: pinning a non-test fix round to haiku without opt-in makes the guard fail", () => {
