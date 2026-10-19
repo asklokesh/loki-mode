@@ -189,8 +189,13 @@ export function isExitCodedScript(cmd: string): boolean {
   }
   return script;
 }
-/** Stable failing id of an exit-coded script: the whole command is the unit, so a baseline and a head run of the same failing script compare equal (pre-existing attribution). */
-export const exitCodedId = (cmd: string): string => `exit-coded:${cmd.trim()}`;
+/** Stable failing id of an exit-coded script: the command plus a hash of its normalized failing output (ANSI, repo root, absolute paths and digits stripped; lines
+ *  sorted and deduped), so a baseline and a head run with the same failures compare equal and any new output line is a different id (introduced). Records identically at the intake baseline and in the head full suite. */
+export function exitCodedId(cmd: string, out: string, repoDir = ""): string {
+  const strip = (x: string): string => (repoDir ? x.split(repoDir).join("") : x).replace(/(?<![\w.])\/[\w.@+-]+(?:\/[\w.@+-]*)*/g, "").replace(/\d+/g, "").replace(/\s+/g, " ").trim();
+  const lines = [...new Set(stripAnsi(out).split("\n").map(strip).filter(Boolean))].sort();
+  return `exit-coded:${cmd.trim()}:${createHash("sha256").update(lines.join("\n")).digest("hex")}`;
+}
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */

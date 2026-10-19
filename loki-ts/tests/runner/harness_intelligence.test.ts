@@ -795,19 +795,23 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
       });
-      test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing in the intake baseline and attributeFullSuite; a changed script or a new command is introduced", () => {
+      test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing only when its failing output is the same (paths and numbers aside); a new line, a changed script or a new command is introduced", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });
         writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false } }));
-        const line = "python3 .github/scripts/check_workflow_hardening.py";
-        const p = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { run: () => ({ code: 1, timedOut: false, out: "ERROR: unhardened job\n" }) });
+        const line = "python3 .github/scripts/check_workflow_hardening.py", baseOut = `ERROR: job build is unhardened (${d}/.github/workflows/a.yml:12)\n\u001b[31mERROR: 2 problems\u001b[0m\n`;
+        const p = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { run: () => ({ code: 1, timedOut: false, out: baseOut }) });
         expect(p?.suites?.[0]?.attributable).toBe(true);
-        const head = [{ name: "full suite: repo-root", cmd: line, result: "fail", ids: [exitCodedId(line)] }];
-        const a = attributeFullSuite(d, base, head, [], []);
-        expect(a.preExistingChecks).toEqual(["full suite: repo-root"]);
-        expect(a.introducedChecks).toEqual([]);
-        expect(attributeFullSuite(d, base, head, [], [".github/scripts/check_workflow_hardening.py"]).preExistingChecks).toEqual([]); // the run edited the script: introduced
-        expect(attributeFullSuite(d, base, [{ ...head[0]!, cmd: "python3 other.py", ids: [exitCodedId("python3 other.py")] }], [], []).preExistingChecks).toEqual([]);
+        const headFor = (out: string, cmd = line) => [{ name: "full suite: repo-root", cmd, result: "fail", ids: [exitCodedId(cmd, out, d)] }];
+        const same = attributeFullSuite(d, base, headFor(baseOut), [], []);
+        expect(same.preExistingChecks).toEqual(["full suite: repo-root"]);
+        expect(same.introducedChecks).toEqual([]);
+        const shifted = `ERROR: job build is unhardened (/private${d}/tmp/x/.github/workflows/a.yml:97)\nERROR: 5 problems\n`; // paths and numbers only
+        expect(attributeFullSuite(d, base, headFor(shifted), [], []).preExistingChecks).toEqual(["full suite: repo-root"]);
+        const added = attributeFullSuite(d, base, headFor(`${baseOut}ERROR: .github/workflows/new-unhardened.yml uses an unpinned action\n`), [], [".github/workflows/new-unhardened.yml"]);
+        expect(added.preExistingChecks).toEqual([]);
+        expect(added.introducedChecks).toEqual(["full suite: repo-root"]);
+        expect(attributeFullSuite(d, base, headFor(baseOut, "python3 other.py"), [], []).preExistingChecks).toEqual([]);
       });
       test("FC-FULLSUITE-ANSI-IDS: a colored head run excuses against a plain baseline superset; colored genuinely new ids still block; unparsed ids say so", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
