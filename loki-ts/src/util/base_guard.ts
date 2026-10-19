@@ -146,7 +146,9 @@ export function depsSeeHead(pkgDir: string, repoDir: string): boolean {
       if (++seen > WALK_BOUND) return true;
       const p = join(dir, e.name);
       if (e.isSymbolicLink()) {
-        const t = resolve(dir, readlinkSync(p)); if (insideAny(t, roots) && !insideAny(t, own)) return true; // a link inside its own dependency dir (npm .bin, pnpm store) is self-contained; its entries are scanned too
+        // self-contained only if the REAL target stays in its own dependency dir (npm .bin, pnpm store); the spelled path is used only when dangling
+        const t = resolve(dir, readlinkSync(p)); let rt = t; try { rt = realpathSync(t); } catch { /* dangling */ }
+        if (insideAny(t, roots) && !own.some((r) => rt === r || rt.startsWith(r + sep))) return true;
       } else if (e.isDirectory()) {
         if (walk(p, own)) return true;
       } else if (REPO_LINK_FILE.test(e.name)) {

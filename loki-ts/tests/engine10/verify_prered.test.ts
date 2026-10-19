@@ -206,6 +206,15 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
     expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
+  test("outside-repo hop (probe I): node_modules/shared -> .ext/shared, .ext -> outside, outside/shared -> repo/shared withholds end to end", async () => {
+    const gated = T + "if (!require('shared/helper.test.js').off) t('runs on base',()=>{});\n";
+    const { ctx, dir } = repoWith({ ".gitignore": "node_modules\n", "shared/helper.test.js": "exports.off=false;\n", "gated.test.js": gated }, { "shared/helper.test.js": "exports.off=true;\n" }, [node("gated.test.js")]);
+    const out = mkdtempSync(join(tmpdir(), "e10-hop-")); dirs.push(out); symlinkSync(join(dir, "shared"), join(out, "shared"));
+    mkdirSync(join(dir, "node_modules")); symlinkSync(out, join(dir, "node_modules", ".ext")); symlinkSync(".ext/shared", join(dir, "node_modules", "shared"));
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
   test("zero on head but tests ran on base (file untouched): stays fail-closed", async () => {
     // head breaks what the file loads into executing nothing: the helper is replaced so the (unchanged) test file registers no test
     const gated = T + "if (!require('./gate.js').off) t('runs on base',()=>{});\n";
