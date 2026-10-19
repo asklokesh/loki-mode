@@ -1147,6 +1147,13 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the fix loop condition stops when implement.exit is spec_conflict (verify still runs once, E-98b); FIXED_RULES and the stage prefix forbid docs, changelog or README text announcing behavior the code lacks and direct the agent to LOKI_SPEC_CONFLICT. The A-110/E-67 draft PR for a conflict with real implement work is kept.
 - Fixture: loki-ts/tests/engine10/machine.test.ts E-98b case (one verify, no fix round; red on the old loop), implement brief and spec-first goldens re-captured.
 
+## FC-FIX-CONFLICT-STALLED A spec conflict declared by a fix round was ignored and the run ended STALLED (FIX-CONFLICT-STALLED)
+- User-visible vs raw: user-visible. `loki start asklokesh/FireLater#20` (run e10-20261019T020704Z-103b): fix round 2 ended with LOKI_SPEC_CONFLICT and no tree change; the fix stage dropped the marker, the anti-loop fired (loop.repeat) and the run ended STALLED "same failure 3 times" instead of BLOCKED with the agent's question and the `loki answer` next step.
+- Law broken: an agent's explicit, evidenced report that the task conflicts with the repository ends the run as a spec conflict wherever it is made; a stall verdict never hides the question.
+- Siblings: implement (the only stage that consumed the marker), the fix stage (dropped it), seal verdictOf and the receipt reason (read implement only), reasonOf and the supervisor blocked comment (read the implement event only). plan, wall and deep sessions are not told the marker exists and never consume it; swept, no change. A claim from a fix round that changed the tree is not believed (the agent did work; verify decides), so a conflict cannot escape a real failure.
+- Mechanism: one rule shared with implement (util/conflict_resume.ts): a fix session that signals the conflict gets the same single correction resume (resumeAfterConflict) and, if it still signals it with the tree unchanged, the fix stage reports exit spec_conflict with the reason; the machine records it on the implement output so seal, output and the supervisor use their existing SPEC_CONFLICT path, and the fix loop stops before the anti-loop.
+- Fixture: loki-ts/tests/engine10/machine.test.ts (red: stopped "stalled" and verdict not SPEC_CONFLICT; green: BLOCKED path with reason; tree-changed claim is not believed).
+
 ## FC-LINT-OOM Tests shard 0 died with "runner has received a shutdown signal" (exit 143) during ShellCheck Linting (LINT-OOM)
 - User-visible vs raw: user-visible (red Tests on main for 11.17.61 and 11.17.63). Raw: no suite failed; the hosted runner was killed mid-lint.
 - Law broken: a gate must fit its machine; resource exhaustion read as a red verdict hides real results.

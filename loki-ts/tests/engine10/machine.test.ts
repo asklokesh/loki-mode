@@ -123,6 +123,21 @@ describe("engine10 machine", () => {
     expect(events.some((e) => e.type === "loop.repeat")).toBe(true);
   });
 
+  it("a fix round that reports a spec conflict ends as SPEC_CONFLICT on the implement output, never STALLED (FC-FIX-CONFLICT-STALLED)", async () => {
+    const { ctx, events } = fakeCtx();
+    let fixes = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      implement: stage("implement", async () => ({ status: "completed", data: { exit: "done" } })),
+      verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "same" }] } })),
+      fix: stage("fix", async () => { fixes++; return { status: "completed", data: { round: fixes, tree_before: "t0", tree_after: "t0", signatures: "same", ...(fixes === 2 ? { exit: "spec_conflict", spec_conflict_reason: "needs a hosted service" } : {}) } }; }),
+    })) });
+    expect(r.stopped).not.toBe("stalled");
+    expect(events.some((e) => e.type === "loop.repeat")).toBe(false);
+    expect(r.outputs.implement?.exit).toBe("spec_conflict");
+    expect(r.outputs.implement?.spec_conflict_reason).toBe("needs a hosted service");
+    expect(fixes).toBe(2);
+  });
+
   it("one no-op fix round still gets its verify: a flaky check may pass on the same tree", async () => {
     const { ctx, events } = fakeCtx();
     let verifies = 0, fixes = 0;

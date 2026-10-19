@@ -237,6 +237,24 @@ describe("fix brief sees the current diff (TEN-QUALITY-07)", () => {
     expect(out).toContain("[diff truncated");
   }));
 
+  // FC-FIX-CONFLICT-STALLED: the implement rule (one correction resume, then believed), plus evidence: the tree must be unchanged.
+  const conflictResult: SessionResult = { exit: 0, markers: { done: false, alreadyDone: null, specConflict: "needs a hosted service" }, durationS: 1, killed: false };
+  test("a confirmed spec conflict with an unchanged tree reports exit spec_conflict after one correction resume", () => withRepo(async (d, base) => {
+    const s = new FakeSessionRunner(conflictResult);
+    const r = await fixStage.run(ctxAt(d, base, s, { verify: { failures_grouped: groups } }), new AbortController().signal);
+    expect(s.calls).toHaveLength(2);
+    expect(r.data.exit).toBe("spec_conflict");
+    expect(r.data.spec_conflict_reason).toBe("needs a hosted service");
+  }));
+
+  test("a conflict claim from a round that edited the tree is not believed", () => withRepo(async (d, base) => {
+    const s = new FakeSessionRunner(conflictResult);
+    const run = s.run.bind(s);
+    s.run = async (o) => { writeFileSync(join(d, "edit.ts"), `export const n = ${s.calls.length};\n`); return run(o); };
+    const r = await fixStage.run(ctxAt(d, base, s, { verify: { failures_grouped: groups } }), new AbortController().signal);
+    expect(r.data.exit).toBeUndefined();
+  }));
+
   test("a non-repo directory returns null", () => {
     expect(currentDiff("/tmp/does-not-matter", "deadbeef")).toBeNull();
   });
