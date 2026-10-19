@@ -391,7 +391,9 @@ export const shellRunner: BaselineRunner = (cmd, cwd, timeoutMs) => {
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || (r.status === null && r.signal === "SIGKILL");
   return { code: r.status, timedOut, out: stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), missing: r.status === 127 };
 };
-const untracked = (repoDir: string): string[] => { try { return safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").map((l) => l.trim()).filter(Boolean); } catch { return []; } };
+export const untracked = (repoDir: string): string[] => { try { return safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").map((l) => l.trim()).filter(Boolean); } catch { return []; } };
+/** Removes every untracked file not in `before` (a run's own byproducts; the diff must stay the agent's). */
+export const rmNewUntracked = (repoDir: string, before: Set<string>): void => { for (const f of untracked(repoDir)) if (!before.has(f)) rmSync(join(repoDir, f), { force: true, recursive: true }); };
 
 export interface BuildOpts { run?: BaselineRunner; timeoutS?: number; now?: () => Date }
 /** Runs `cmd` once in `cwd` on the tree as it is and removes any untracked file the run itself created (the diff must stay the agent's). */
@@ -399,7 +401,7 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   const before = new Set(untracked(repoDir)), started = Date.now();
   const r = (opts.run ?? shellRunner)(cmd, cwd, tmo * 1000);
   const dur = Math.round((Date.now() - started) / 100) / 10;
-  for (const f of untracked(repoDir)) if (!before.has(f)) rmSync(join(repoDir, f), { force: true, recursive: true });
+  rmNewUntracked(repoDir, before);
   const ids = r.code !== 0 && !r.timedOut ? failIds(r.out) : [], missing = r.missing === true;
   const attributable = !r.timedOut && !missing && r.code !== null && (r.code === 0 || ids.length > 0);
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";

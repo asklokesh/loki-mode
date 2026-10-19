@@ -17,7 +17,7 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { isZeroRun, zeroOnBase } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { isZeroRun, zeroOnBase } from "../../util/base_guard.ts"; import { rmNewUntracked, untracked, attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -121,7 +121,7 @@ type Counts = { run: number; skipped: number };
 type BaseSubtraction = { ids: string[]; names: string[]; weak: string[]; zero: string[]; cnt: Record<string, { b: Counts; h: Counts }> };
 /** FC-REPO-SKIPPED-TEST-DOWNGRADES (after BYPASS3): the only evidence a zero check is the repo's own is a zero measured at INTAKE, on the base commit in an environment the agent had not touched (REPOMEM pattern). Intake runs each detected test file once (at most `cap` files and `budgetS` seconds) and records the measured names and the zero subset; verify excuses only a name in `zero`. Never throws. */
 export async function probeZeroChecks(repoDir: string, tests: TestRef[], signal: AbortSignal, budgetS = 120, cap = 300): Promise<{ measured: string[]; zero: string[] }> {
-  const measured: string[] = [], zero: string[] = [], deadline = Date.now() + budgetS * 1000;
+  const measured: string[] = [], zero: string[] = [], deadline = Date.now() + budgetS * 1000, before = new Set(untracked(repoDir));
   try {
     const api = loadProjectApi(repoDir);
     await mapPool(tests.slice(0, cap), verifyJobs(), async (t) => {
@@ -130,6 +130,7 @@ export async function probeZeroChecks(repoDir: string, tests: TestRef[], signal:
       if (!b.cut && !b.missing) { measured.push(testCheckName(t)); if (isZeroRun(tc, b)) zero.push(testCheckName(t)); }
     });
   } catch { /* no baseline is a valid state: nothing is excused */ }
+  rmNewUntracked(repoDir, before); // a probed test's cache or report must not look like an agent change
   return { measured: measured.sort(), zero: zero.sort() };
 }
 /** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base

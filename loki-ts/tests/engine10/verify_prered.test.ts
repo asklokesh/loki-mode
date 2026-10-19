@@ -1,7 +1,7 @@
 // A-112: baseline subtract (pre_red never blocks VERIFIED, but only on proof of progress) and A-111b (bare-filename test names).
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,7 +29,7 @@ function repoWith(base: Record<string, string>, work: Record<string, string>, im
   for (const [f, c] of Object.entries(base)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), c); }
   git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
   const baseSha = git(dir, ["rev-parse", "HEAD"]);
-  const zeroAtIntake = impacted.filter((t) => { const c = commandFor(t, dir, null), r = spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8" }); return isZeroRun(c, { ok: r.status === 0, cut: false, missing: false, out: `${r.stdout}${r.stderr}` }); }).map((t) => `node:${t.path}`); // the intake zero baseline: measured on the untouched tree before implement runs
+  const zeroAtIntake = impacted.filter((t) => t.runner === "node").filter((t) => { const c = commandFor(t, dir, null), r = spawnSync(c.cmd, c.args, { cwd: c.cwd, encoding: "utf8" }); return isZeroRun(c, { ok: r.status === 0, cut: false, missing: false, out: `${r.stdout}${r.stderr}` }); }).map((t) => `node:${t.path}`); // the intake zero baseline: measured on the untouched tree before implement runs
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
@@ -320,6 +320,17 @@ describe("engine10 verify: a relevant test the repo itself skips (FC-REPO-SKIPPE
     const { dir } = repoWith(base, {}, [node("sum.test.js"), node("skip.test.js")]);
     const r = await probeZeroChecks(dir, [node("sum.test.js"), node("skip.test.js")], new AbortController().signal);
     expect(r).toEqual({ measured: ["node:skip.test.js", "node:sum.test.js"], zero: ["node:skip.test.js"] });
+  }, 60_000);
+  test("a probed test's own untracked byproduct is removed after intake's probe and never reaches the agent diff; a file that pre-existed is kept", async () => {
+    const writer = T + "require('node:fs').writeFileSync('probe-cache.txt','x');t('writes a cache',()=>{});\n";
+    const { dir } = repoWith({ ...base, "writer.test.js": writer }, {}, [node("writer.test.js")]);
+    rmSync(join(dir, "probe-cache.txt"), { force: true }); // repoWith's own sync baseline run already wrote it; intake starts from a tree without it
+    writeFileSync(join(dir, "keep-me.txt"), "pre-existing untracked\n");
+    const r = await probeZeroChecks(dir, [node("writer.test.js")], new AbortController().signal);
+    expect(r.measured).toEqual(["node:writer.test.js"]);
+    expect(existsSync(join(dir, "probe-cache.txt"))).toBe(false);
+    expect(existsSync(join(dir, "keep-me.txt"))).toBe(true);
+    expect(git(dir, ["ls-files", "--others", "--exclude-standard"]).split("\n")).not.toContain("probe-cache.txt");
   }, 60_000);
   test("positive: an additions-only manifest edit (FireLater#20 shape, trailing comma moved) keeps the excusal", async () => {
     const { ctx } = repoWith({ ...base, "package.json": pkg({ optdep: "1.0.0" }) }, { "sum.js": SUM_OK, "package.json": pkg({ optdep: "1.0.0", ws: "8.0.0" }) }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
