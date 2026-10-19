@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.68 (2026-10-19)
+
+### Fixed
+- Verify: a full-suite check in a multi-package repo (for example a frontend workspace) is now compared against its own baseline command, so a failure that already exists on the base branch is attributed per package instead of failing the run (FC-BASELINE-PER-PACKAGE). Vitest `×` failure lines are parsed as test ids; the trailing duration is stripped only from those lines, never from FAIL lines.
+- Intake: dependencies are installed once at intake on a fresh clone, so checks no longer fail with `sh: 1: vitest: not found`. A failed install makes the run NOT PROVEN with the reason shown, never a code failure. Files the install creates (node_modules, .venv, lockfiles) are recorded with a content hash and kept out of verify, the fix brief and the PR until the agent actually changes them; nothing is written to the repo's git config or exclude file (FC-DEPS-NOT-INSTALLED). `LOKI_E10_INSTALL=0` disables the install.
+- Load errors: a "not found" error is harness-owned only when base and head miss the same tool or package. A head that newly misses a different tool (for example `sh: 1: mytool: not found` against a base missing vitest) is a code failure that gets fix rounds, and the NOT PROVEN reason names the error line instead of the npm banner.
+
 ## v11.17.67 (2026-10-19)
 
 ### Fixed
