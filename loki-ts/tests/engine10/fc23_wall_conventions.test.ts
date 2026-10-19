@@ -293,6 +293,17 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const ROOT = fileURLToPath(new URL('..', import.meta.url));\nconst f = join(ROOT, 'plugins', 'ralph-loop');", "a.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
     expect(phantomRepoPaths("const ROOT = fileURLToPath(new URL('..', import.meta.url));\nconst f = join(ROOT, 'plugins', 'ralph-wiggum');", "a.test.ts", td, repo, null)).toEqual([]);
   });
+  test("in-testdir phantom: a path under the test dir whose first segment only exists at the repo root is reported", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    mkdirSync(td, { recursive: true }); mkdirSync(join(td, "fixtures"), { recursive: true });
+    const inc = "const PLUGIN = resolve(import.meta.dir, 'plugins/ralph-loop');\nconst SETUP = join(PLUGIN, 'scripts/setup-ralph-loop.sh');\n";
+    expect(phantomRepoPaths(inc, "loki_wall_ralph_loop_max_iterations.test.ts", td, repo, null)[0]).toBe("tests/plugins/ralph-loop");
+    expect(phantomRepoPaths(inc, "a.test.ts", td, repo, "Create tests/plugins/ralph-loop")).toEqual([]);
+    expect(phantomRepoPaths("const P = resolve(import.meta.dir, 'plugins/ralph-wiggum');", "a.test.ts", td, repo, null)).toEqual(["tests/plugins/ralph-wiggum"]);
+    expect(phantomRepoPaths("const P = join(import.meta.dir, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const P = join(import.meta.dir, 'fixtures', 'a.json');\nconst Q = join(import.meta.dir, 'plugins', 'x');\nmkdirSync(Q);", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const P = fileURLToPath(import.meta.url);\nconst Q = join(P, 'plugins');", "a.test.ts", td, repo, null)).toEqual([]);
+  });
   test("same-name hint works for a missing directory", () => {
     const why = phantomReason(["plugins/ralph-loop"], ["some/other/ralph-loop/run.sh", "x/y.ts"]);
     expect(why).toContain("plugins/ralph-loop (a path named ralph-loop exists at some/other/ralph-loop)");
