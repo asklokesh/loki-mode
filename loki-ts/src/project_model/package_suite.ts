@@ -70,9 +70,10 @@ export async function runPackageSuites(
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.
-  const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
+  const ran = checks.some((c) => c.result === "pass" || c.result === "fail"), rel = (f: string): string => (isAbsolute(f) ? relative(repoDir, f) : f), wallOwn = new Set((opts.proofFiles ?? []).map(rel));
+  const product = opts.changed?.filter((f) => !wallOwn.has(rel(f))); // FC-WALL-FILE-OWNS-EVERY-PACKAGE: this run's passing Wall files are proof, not product, so an unowned root Wall file never makes every test-less package own the diff; unknown or Wall-only diff stays owned (fail-safe)
   for (const pkg of api.packages().filter((p) => !p.commands.test)) {
-    const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
+    const note = `full suite: package ${pkg.name} defines no test command`, owns = !product || product.length === 0 || product.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
     const proven = (opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root) || execProves(repoDir, opts, (c) => api.packageOf(c)?.root === pkg.root);
     notProven.add(ran && !(owns && !proven) ? NA_PREFIX + note : note);
   }

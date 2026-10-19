@@ -198,6 +198,11 @@ describe("FC-01 verify in a multi-root monorepo", () => {
         expect(await red(['"frontend/src/caf\\303\\251.ts"', ...wall])).toEqual([note]);
       });
       test("Wall failed on head (no proof files): no credit", async () => { expect(await red(ch, [])).toEqual([note]); });
+      test("FC-WALL-FILE-OWNS-EVERY-PACKAGE: a passing root Wall file does not make an untouched test-less package own the diff", async () => {
+        expect(await red(["backend/src/a.ts", ...wall])).toEqual([`n/a: ${note}`]);
+        expect(await red(["backend/src/a.ts", ...wall], [])).toEqual([note]);
+        expect(await red(["backend/src/a.ts", "elsewhere/x.md", ...wall])).toEqual([note]);
+      });
       test("wallRedOnBaseOf reads real failures only", () => {
         expect(wallRedOnBaseOf({ pass: 0, fail: 1, not_run: 0 })).toBe(true);
         for (const b of [undefined, null, {}, { pass: 2, fail: 0, not_run: 0 }, { pass: 0, fail: 0, not_run: 2 }, { fail: "1" }]) expect(wallRedOnBaseOf(b)).toBe(false);
