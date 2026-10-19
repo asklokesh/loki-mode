@@ -2584,3 +2584,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T02:44Z (CoS) v11.17.70
 - 11.17.70: CI fix 82c3edbc (intake.test.ts hermetic; slow-PATH red 32/22, green 54/0; CS reviewed test-only diff) + dup-note 7a04c3839 (TL APPROVE 55/0, red 54/1). Combined on main: intake+budget 88 pass 0 fail.
+
+## 2026-10-19T02:46Z (CoS) v11.17.71
+- 11.17.71: install hardening d4170dc68+1b52683ed (cherry-picked d42be9af1, f1fa80b95). HIGH BLOCK B1/B2 fixed; HIGH re-review APPROVE: fc22+budget+intake 142/0, real npm ci in workspace member rc=0. On main: fc22+intake+budget 143 pass 0 fail. Follow-ups: pnpm yaml inline/unindented lists, uv --locked/pipenv --deploy, D106 || wording.

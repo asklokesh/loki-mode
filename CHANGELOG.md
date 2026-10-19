@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.71 (2026-10-19)
+
+### Changed
+- Intake dependency install is now locked and fail-closed (D106, FC-DEPS-NOT-INSTALLED). When a lockfile governs the package, the discovered install command runs in its locked form: `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable` (Berry) or `--frozen-lockfile` (Classic), `bun install --frozen-lockfile`, `cargo` with `--locked`, the locked `uv` and `pipenv` forms, frozen `bundle`; `poetry install` and `composer install` already install from their lock and stay as written. A lockfile in a parent directory only counts when that directory declares the package as a workspace member (npm/yarn/bun `workspaces`, `pnpm-workspace.yaml`, cargo `[workspace]`, uv `tool.uv.workspace`), and `cd X &&` segments are resolved from `X`. A failed locked install is reported as not proven instead of retried with a mutating install. Opt out with `LOKI_E10_INSTALL=0` or `verify.install_deps: false` in loki.yaml. Start a run with `loki start owner/repo#N`.
+
 ## v11.17.70 (2026-10-19)
 
 ### Fixed
