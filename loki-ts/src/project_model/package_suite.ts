@@ -66,7 +66,7 @@ export async function runPackageSuites(
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), env: suiteEnv(opts.path) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
     const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(line), exitCoded: isExitCodedScript(line) }); // FC-FULL-SUITE-EXIT-CODED-SCRIPT
-    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { ids: cls.count ? [exitCodedId(line, out, repoDir)] : failIds(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
+    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.count ? { count: cls.count } : {}), ...(cls.result === "fail" ? { ids: cls.count ? [exitCodedId(line, out, repoDir) ?? []].flat() as string[] : failIds(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.

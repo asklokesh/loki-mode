@@ -802,16 +802,31 @@ describe("repo baseline profile (REPOMEM)", () => {
         const line = "python3 .github/scripts/check_workflow_hardening.py", baseOut = `ERROR: job build is unhardened (${d}/.github/workflows/a.yml:12)\n\u001b[31mERROR: 2 problems\u001b[0m\n`;
         const p = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { run: () => ({ code: 1, timedOut: false, out: baseOut }) });
         expect(p?.suites?.[0]?.attributable).toBe(true);
-        const headFor = (out: string, cmd = line) => [{ name: "full suite: repo-root", cmd, result: "fail", ids: [exitCodedId(cmd, out, d)] }];
+        const headFor = (out: string, cmd = line) => [{ name: "full suite: repo-root", cmd, result: "fail", ids: [exitCodedId(cmd, out, d) as string] }];
         const same = attributeFullSuite(d, base, headFor(baseOut), [], []);
         expect(same.preExistingChecks).toEqual(["full suite: repo-root"]);
         expect(same.introducedChecks).toEqual([]);
-        const shifted = `ERROR: job build is unhardened (/private${d}/tmp/x/.github/workflows/a.yml:97)\nERROR: 5 problems\n`; // paths and numbers only
+        const shifted = `ERROR: job build is unhardened (/private${d}/.github/workflows/a.yml:97:3)\nERROR: 2 problems\n`; // repo root prefix and line:col only
         expect(attributeFullSuite(d, base, headFor(shifted), [], []).preExistingChecks).toEqual(["full suite: repo-root"]);
         const added = attributeFullSuite(d, base, headFor(`${baseOut}ERROR: .github/workflows/new-unhardened.yml uses an unpinned action\n`), [], [".github/workflows/new-unhardened.yml"]);
         expect(added.preExistingChecks).toEqual([]);
         expect(added.introducedChecks).toEqual(["full suite: repo-root"]);
         expect(attributeFullSuite(d, base, headFor(baseOut, "python3 other.py"), [], []).preExistingChecks).toEqual([]);
+        // A: a different absolute path outside the repo is a different line, and a repeated identical line is a new occurrence
+        expect(attributeFullSuite(d, base, headFor(`${baseOut}ERROR: job build is unhardened (/etc/other/a.yml:12)\n`), [], []).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, headFor(`${baseOut}ERROR: 2 problems\n`), [], []).introducedChecks).toEqual(["full suite: repo-root"]);
+        // B: digits that are not line:col are content ("job 1" is not "job 2")
+        const jobs = (n: number) => `ERROR: job ${n} is unhardened\n`;
+        const pj = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { rerun: true, run: () => ({ code: 1, timedOut: false, out: jobs(1) }) });
+        expect(pj?.suites?.[0]?.attributable).toBe(true);
+        expect(attributeFullSuite(d, base, headFor(jobs(1)), [], []).preExistingChecks).toEqual(["full suite: repo-root"]);
+        expect(attributeFullSuite(d, base, headFor(jobs(2)), [], []).preExistingChecks).toEqual([]);
+        // C: a silent failure (empty output) on base and head is not attributable, so it stays introduced
+        const pe = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { rerun: true, run: () => ({ code: 1, timedOut: false, out: "" }) });
+        expect(pe?.suites?.[0]?.attributable).toBe(false);
+        const silent = attributeFullSuite(d, base, [{ name: "full suite: repo-root", cmd: line, result: "fail", ids: exitCodedId(line, "", d) ? [exitCodedId(line, "", d) as string] : [] }], [], []);
+        expect(silent.preExistingChecks).toEqual([]);
+        expect(silent.introducedChecks).toEqual(["full suite: repo-root"]);
       });
       test("FC-FULLSUITE-ANSI-IDS: a colored head run excuses against a plain baseline superset; colored genuinely new ids still block; unparsed ids say so", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
