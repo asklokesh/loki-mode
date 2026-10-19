@@ -1,6 +1,7 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
 import { safeGitSpawn } from "../util/safe_git.ts";
+import { loadProjectApi, siteFor } from "./resolve.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -94,14 +95,21 @@ export const outOfRepoReask = (lead: string, bad: { name: string; why: string }[
 /** TEN-QUALITY-44: the changed test-like files (repo-relative names) that fail outOfRepoTarget. */
 export const outOfRepoTests = (repoDir: string, changed: string[]): { name: string; why: string }[] => changed.filter((f) => /(^|[\/._-])(test|spec)s?[\/._-]|_test\./i.test(f) && existsSync(join(repoDir, f))).flatMap((name) => { const why = outOfRepoTarget(readFileSync(join(repoDir, name), "utf8")); return why ? [{ name, why }] : []; });
 
-const MANIFESTS = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"];
+/** A directory is a package root when the cached project model owns the file there, or it holds a manifest-shaped JSON file (a string "name" plus another key, by shape and never by file name, as readPackageConventions does). No manifest file name is hardcoded (L0). */
+function nearestPackageRoot(testDir: string, repoDir: string, fileName: string): string {
+  const site = siteFor(loadProjectApi(repoDir), repoDir, relative(repoDir, join(testDir, fileName)));
+  if (site) return site.cwd;
+  const shaped = (d: string): boolean => { try { return readdirSync(d).some((f) => { if (!f.endsWith(".json")) return false; const j = readJson(join(d, f)); return !!j && typeof j.name === "string" && Object.keys(j).length > 1; }); } catch { return false; } };
+  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
+  return pkg;
+}
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
 
 /** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. Returns repo-relative missing paths (max 3). */
 export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null): string[] {
   if (!/\.[cm]?[jt]sx?$/.test(fileName)) return [];
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/,\s*\n\s*/g, ", ").replace(/=\s*\n\s*/g, "= ");
-  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !MANIFESTS.some((m) => existsSync(join(pkg, m)))) pkg = dirname(pkg);
+  const pkg = nearestPackageRoot(testDir, repoDir, fileName);
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
   const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
   const scan = (cwd: string): { reports: Map<string, { out: string; rel: string }>; created: string[] } => {
@@ -136,7 +144,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   const runs = [...new Set([pkg, repoDir])].map(scan);
   const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
   const phantom = (r: { out: string; rel: string }, created: string[]): boolean => {
-    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(node_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
+    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\w*_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
     if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
     return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel], { timeout: 5000 }).status !== 0;
   };

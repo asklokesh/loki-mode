@@ -247,7 +247,7 @@ describe("FC-WALL-PHANTOM-PATH", () => {
   });
   test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
-    writeFileSync(join(repo, "packages/a/package.json"), "{}"); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");
+    writeFileSync(join(repo, "packages/a/package.json"), '{"name":"a","version":"1.0.0"}'); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");
     const td = join(repo, "packages/a/test"), code = "const f = join(process.cwd(), 'src', 'x.ts');";
     expect(phantomRepoPaths(code, "x.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(process.cwd(), 'plugins', 'ralph-wiggum');", "x.test.ts", td, repo, null)).toEqual([]); // exists under the repo root
@@ -276,7 +276,7 @@ describe("FC-WALL-PHANTOM-PATH", () => {
   });
   test("monorepo: a call that exists under the repo root does not shift the pairing of a later phantom", () => {
     const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "test/helpers"), { recursive: true });
-    writeFileSync(join(repo, "packages/a/package.json"), "{}");
+    writeFileSync(join(repo, "packages/a/package.json"), '{"name":"a","version":"1.0.0"}');
     const td = join(repo, "packages/a/test");
     expect(phantomRepoPaths("const h = join(process.cwd(), 'test', 'helpers');\nconst p = join(__dirname, '..', '..', '..', 'plugins', 'ralph-loop');", "x.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
   });
