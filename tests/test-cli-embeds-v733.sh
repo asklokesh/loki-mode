@@ -133,7 +133,9 @@ argv_has() { grep -qxF -e "$1" "$ARGV_LOG"; }
   case "$dl" in *"Bash(git -C:*)"*) echo "A5f_OK";; *) echo "A5f_BAD";; esac
   case "$dl" in *"Bash(git --git-dir:*)"*) echo "A5g_OK";; *) echo "A5g_BAD";; esac
   # Read-only git inspection must remain allowed.
-  case "$dl" in *"git diff"*|*"git log"*|*"git show"*|*"git status"*) echo "A6_BAD";; *) echo "A6_OK";; esac
+  # Only the bare read-only prefixes must stay allowed; the write-flag forms
+  # (git diff --output, git log --ext-diff, ...) are denied on purpose (FC-XREVIEW-BLIND-TOOLS).
+  case ",$dl," in *",Bash(git diff:*),"*|*",Bash(git log:*),"*|*",Bash(git show:*),"*|*",Bash(git status:*),"*) echo "A6_BAD";; *) echo "A6_OK";; esac
 ) > "$TMP/secA.out" 2>/dev/null
 
 check_tok() { # marker label

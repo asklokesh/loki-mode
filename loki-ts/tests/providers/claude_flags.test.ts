@@ -1089,6 +1089,11 @@ describe("claude_flags.reviewerModelForTier (S9)", () => {
 
 describe("claude_flags.leanReviewerFlags (S9)", () => {
   const all = () => true;
+  it("tools option emits one comma-joined --tools=LIST argument; default stays empty", () => {
+    const all = () => true;
+    expect(leanReviewerFlags({ env: {}, flagSupported: all, tools: "Read,Bash" })).toContain("--tools=Read,Bash");
+    expect(leanReviewerFlags({ env: {}, flagSupported: all })).toContain("--tools=");
+  });
   it("emits --tools= as ONE argument, never --tools plus empty", () => {
     const f = leanReviewerFlags({ env: {}, flagSupported: all });
     expect(f).toContain("--tools=");

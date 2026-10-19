@@ -214,11 +214,22 @@ describe("medium default review", () => {
     expect(at("--allowedTools")).toBe(REVIEW_ALLOWLIST_TOKEN); expect(at("--disallowedTools")).toBe(REVIEW_GUARD_DENYLIST);
     expect(at("--allowedTools")).toContain("Bash(cat:*)"); expect(at("--disallowedTools").split(",")).not.toContain("Bash");
   });
-  it("FC-XREVIEW-BLIND-TOOLS: reviewer prompt states the tool limits and forbids flagging missing tool output", async () => {
+  it("FC-XREVIEW-BLIND-TOOLS: argv never carries the empty --tools= (it disables every tool); an explicit tool list with Bash is present", () => {
+    const a = reviewArgv("claude", "p", {}, undefined, () => true);
+    expect(a).not.toContain("--tools=");
+    expect(a).toContain("--tools=Read,Grep,Glob,Bash");
+    expect(a.indexOf("--tools=Read,Grep,Glob,Bash")).toBeGreaterThan(a.indexOf("-p") + 1); // never ahead of the prompt
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: denylist closes the write escapes under the read-only allowlist", () => {
+    const d = REVIEW_GUARD_DENYLIST.split(",");
+    for (const g of ["rg --pre", "rg --pre=", "rg --pre-glob", "rg --pre-glob=", "git diff --output", "git diff --output=", "git log --output", "git log --output=", "git show --output", "git show --output=", "git diff --ext-diff", "git -c", "git --exec-path", "find -delete", "find -exec"]) expect(d).toContain(`Bash(${g}:*)`);
+    for (const g of ["git * --output*", "git * --ext-diff*", "rg * --pre*", "find * -delete*", "find * -exec*"]) expect(d).toContain(`Bash(${g})`);
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: reviewer prompt describes only real tools and never forbids reporting an inspection failure", async () => {
     const { ctx, stub } = mk("medium"), out = join(root, "blind-prompt.txt");
     writeFileSync(stub, `#!/bin/sh\nprintf '%s' "$2" > '${out}'\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`);
     await withEnv(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
     const p = readFileSync(out, "utf8");
-    expect(p).toContain("cannot run project code or tests"); expect(p).toContain("never report missing or empty tool output");
+    expect(p).toContain("cannot edit files or run project code or tests"); expect(p).toContain("say so plainly"); expect(p).not.toContain("never report");
   });
 });

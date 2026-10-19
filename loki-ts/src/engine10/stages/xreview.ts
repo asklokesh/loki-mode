@@ -58,11 +58,11 @@ export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.Proces
   const cli = reviewCli(p, env);
   return p === "codex"
     ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_TOKEN, "--disallowedTools", REVIEW_GUARD_DENYLIST, ...leanReviewerFlags({ env, flagSupported }), "--output-format", "json"];
+    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_TOKEN, "--disallowedTools", REVIEW_GUARD_DENYLIST, ...leanReviewerFlags({ env, flagSupported, tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
 }
 /** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
 /** FC-XREVIEW-BLIND-TOOLS: tell the reviewer its limits so a sandbox limit is never raised as a concern about the work. */
-export const REVIEW_TOOLS_NOTE = "You can read files and use read-only inspection commands, but you cannot run project code or tests. Trace behaviour by reading the code; never report missing or empty tool output, or an inability to execute something, as a concern about the diff.";
+export const REVIEW_TOOLS_NOTE = "Your tools are Read, Grep, Glob and a read-only shell (git diff/log/show/status/ls-files/blame, cat, ls, grep, rg, find, head, tail, wc). You cannot edit files or run project code or tests, so trace behaviour by reading the code. If a tool fails or you could not inspect something, say so plainly in your reasons.";
 export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string; provider: ReviewProvider | null } | null {
   const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };

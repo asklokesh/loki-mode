@@ -24,7 +24,7 @@ import { buildMcpConfigArgv } from "./mcp_config.ts";
 // module so engine10 stages and runner/quality_gates.ts share one value without
 // the stages importing the SDK invoker.
 export const REVIEW_GUARD_DENYLIST =
-  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*),Bash(git --exec-path:*),Bash(git diff --output:*),Bash(git diff --output=:*),Bash(git diff --ext-diff:*),Bash(git diff --no-index:*),Bash(git log --output:*),Bash(git log --output=:*),Bash(git log --ext-diff:*),Bash(git show --output:*),Bash(git show --output=:*),Bash(git show --ext-diff:*),Bash(git blame --output:*),Bash(git blame --output=:*),Bash(rg --pre:*),Bash(rg --pre=:*),Bash(rg --pre-glob:*),Bash(rg --pre-glob=:*),Bash(find -delete:*),Bash(find -exec:*),Bash(find -execdir:*),Bash(find -ok:*),Bash(find -fprint:*),Bash(find -fprintf:*),Bash(find -fls:*),Bash(git * --output*),Bash(git * --ext-diff*),Bash(git * --no-index*),Bash(rg * --pre*),Bash(find * -delete*),Bash(find * -exec*),Bash(find * -execdir*),Bash(find * -fprint*),Bash(find * -fls*),Bash(find * -ok*)";
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -336,7 +336,12 @@ export function reviewerModelForTier(opts: {
 
 // Lean child flags for a text-only reviewer. `--tools=` MUST stay one argument:
 // the option is variadic, so `--tools ""` swallows the trailing prompt.
+//
+// `tools` (default "" = no tools) names the built-in tools a reviewer keeps, as one
+// comma-separated `--tools=A,B` argument. FC-XREVIEW-BLIND-TOOLS: an empty list
+// disables every tool (init event shows "tools":[]), so an allowlist is moot.
 export function leanReviewerFlags(opts: {
+  tools?: string;
   env?: Record<string, string | undefined>;
   flagSupported?: (flag: string) => boolean;
 } = {}): string[] {
@@ -351,7 +356,7 @@ export function leanReviewerFlags(opts: {
     if (ok("--strict-mcp-config")) out.push("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}');
     if (ok("--disable-slash-commands")) out.push("--disable-slash-commands");
   }
-  if (ok("--tools")) out.push("--tools=");
+  if (ok("--tools")) out.push(`--tools=${opts.tools ?? ""}`);
   return out;
 }
 
