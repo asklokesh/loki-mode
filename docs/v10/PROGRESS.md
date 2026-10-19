@@ -2608,3 +2608,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T06:50Z (CoS) v11.17.78
 - 11.17.78: main CI guard fixes (L0 project_model names, never_below_raw AST matcher, M1 anchor, modernize producer scan). Engineer chain 21187a2c7..9e17b7f75; HIGH review BLOCK x4 then APPROVE (134/0, 23 parent shapes still caught + 7 new, shipped source zero violations).
+
+## 2026-10-19T07:19Z (CoS) v11.17.79
+- 11.17.79: FC-OUT-OF-REPO + FC-NO-PUSH-UNVERIFIED (#21527 bugs b/c; HIGH BLOCK x2 then APPROVE) and FC-LINT-PRE-RED (TL BLOCK x2 then APPROVE, mutation 16/1 -> 88/0). Budget fold f5a1685b5: 383 pass 0 fail.
