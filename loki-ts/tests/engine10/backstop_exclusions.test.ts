@@ -56,7 +56,7 @@ describe("D50-F4: backstop commit exclusions", () => {
     const f = fixture();
     const calls = await run(f, `require("node:fs").writeFileSync("a.txt", "run edit\\n");`);
     expect(filesIn(f)).toEqual(["a.txt"]);
-    expect(calls.length).toBe(1);
+    expect(calls.length).toBe(0); // FC-NO-PUSH-UNVERIFIED: a FAILED run keeps its backstop commit local and opens no PR
   }, 20_000);
 
   test("Wall files and a stray lockfile never enter the backstop commit", async () => {

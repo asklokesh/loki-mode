@@ -17,4 +17,6 @@ Write a plan of at most 10 short lines, no other prose, to this exact file path:
 
 Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: /r/plan-scope.json
 
+If the requested change has no target in this repository (for example the code lives in a hosted service or another repo), write {"files":[],"out_of_repo":"<one sentence why>"} to /r/plan-scope.json and do not guess files.
+
 Do not edit any other file. Do not run tests. Do not commit.
