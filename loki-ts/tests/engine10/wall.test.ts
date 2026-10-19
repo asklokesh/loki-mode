@@ -720,7 +720,7 @@ describe("engine10 wall manifest wiring, D77", () => {
       const r = await wall(flag);
       expect(r.listing).toEqual(["repomap.txt", "task.md"]);
       expect("manifest_sha256" in r.sealed).toBe(false);
-      expect(r.brief).toBe(buildWallBrief("extend search in search.ts", r.files["repomap.txt"]!, ["bun"]));
+      expect(r.brief).toBe(buildWallBrief("extend search in search.ts", r.files["repomap.txt"]!, ["bun"], false, "", [], "tests")); // FC-WALL-LOCATION-BLIND: the destination line is the only difference
     }
   });
 

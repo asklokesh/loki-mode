@@ -161,8 +161,11 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
 }
 
 /** FC-WALL-PHANTOM-PATH: the re-ask text (null when nothing is missing) for a phantom Wall file; the hint names real paths holding a segment with the same name, so a missing directory finds its real home too. */
-export function phantomReason(miss: string[], repoFiles: string[]): string | null {
+export function phantomReason(miss: string[], repoFiles: string[], testDir = "", pkgRoot = ""): string | null {
   if (miss.length === 0) return null;
+  const real = (r: string): boolean => !!r && repoFiles.some((f) => f === r || f.startsWith(`${r}/`)), roots = [...new Set(["", pkgRoot === "." ? "" : pkgRoot])], at = (m: string): string | null => { const r = testDir && m.startsWith(`${testDir}/`) ? m.slice(testDir.length + 1) : ""; return roots.some((p) => real(p ? `${p}/${r}` : r)) ? r : null; }; // FC-WALL-LOCATION-BLIND: the phantom is the test's own directory plus a path that exists at the repo or package root
+  const own = miss.map(at).filter((r): r is string => !!r);
+  if (own.length > 0) return `references repo path(s) built from the wrong directory: your test file is copied to ${testDir}/, so __dirname and import.meta.dir are that directory, not the repo root; ${own.map((r) => `${r} exists relative to the repo root`).join("; ")}. Compute the repo root from ${testDir}/ (go up ${testDir.split("/").length} level(s)) or use process.cwd() only if the runner starts at the root, and build every repo path from it`;
   const hint = (m: string): string => { const n = basename(m), near = [...new Set(repoFiles.flatMap((f) => { const s = f.split("/"), k = s.indexOf(n); return k >= 0 && s.slice(0, k + 1).join("/") !== m ? [s.slice(0, k + 1).join("/")] : []; }))].slice(0, 3); return near.length ? `${m} (a path named ${n} exists at ${near.join(", ")})` : m; };
   return `references repo path(s) that do not exist in the repository and that the plan does not create: ${miss.map(hint).join("; ")}. Locate the real code by searching the repository; do not copy a name from the task text as a path`;
 }

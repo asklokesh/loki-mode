@@ -12,7 +12,7 @@ import { testConfigChanged } from "../../features/runner_config.ts"; import { as
 import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { harnessRunners, isTestFile } from "../testmap.ts";
-import { failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
+import { withoutStaleWall, failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -221,7 +221,7 @@ export const verifyStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     let changed: string[];
     try {
-      changed = changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created));
+      changed = withoutStaleWall(changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)), ((ctx.outputs().wall?.files as { path: string }[] | undefined) ?? []).map((f) => f.path), ctx.repoDir); // FC-WALL-LOCATION-BLIND
     } catch (err) {
       return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` };
     }

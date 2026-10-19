@@ -434,3 +434,64 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(JSON.stringify(r.data.discarded)).toContain("do not exist");
   });
 });
+
+describe("FC-WALL-LOCATION-BLIND (run e10-20261019T130749Z-f11c, FireLater#20)", () => {
+  // Modelled on the run: the author thought its file sits at the repo root (root = __dirname); Loki installs it in backend/src/lib.
+  const BLIND = "import { describe, test, expect } from 'vitest';\nimport * as path from 'path';\n// Repository root: this file lives at the repo root, next to backend/ and frontend/.\nconst root = __dirname;\nconst B = path.join(root, 'backend', 'src');\nconst F = path.join(root, 'frontend', 'src');\ntest('a', () => { expect(B).toBeTruthy(); expect(F).toBeTruthy(); });\n";
+  const FIXED_LOC = "const root = require('path').join(__dirname, '..', '..', '..');";
+  const fl = (): string => cjsRepo({ "backend/package.json": '{"name":"backend","version":"1.0.0"}', "backend/src/lib/x.test.ts": "x\n", "backend/src/index.ts": "x\n", "frontend/package.json": '{"name":"frontend","version":"1.0.0"}', "frontend/src/app.ts": "x\n" });
+  const flCtx = (repoDir: string, onSession: (o: SessionRunOptions) => void): RunContext => {
+    const ctx = wallCtx(repoDir, onSession); const rm = join(ctx.runDir, "repomap.json");
+    writeFileSync(rm, JSON.stringify({ files: ["backend/src/lib/x.test.ts", "backend/src/index.ts", "frontend/src/app.ts"], entries: [], truncated: false }));
+    ctx.outputs = () => ({ intake: { task: "add x", testmap: { runners: ["vitest"], tests: [{ runner: "vitest", path: "backend/src/lib/x.test.ts" }] }, repomap_ref: rm } }) as Partial<Record<StageName, Record<string, unknown>>>;
+    return ctx;
+  };
+  test("(a) the brief states the destination directory and what __dirname resolves to", () => {
+    const b = buildWallBrief("t", "", [], false, "", [], "backend/src/lib");
+    expect(b).toContain("backend/src/lib/"); expect(b).toContain("__dirname"); expect(b).toContain("import.meta.dir");
+    expect(buildWallBrief("t", "", [], false, "", [], "")).toBe(buildWallBrief("t")); // no location: byte-identical
+  });
+  test("(a) the first author brief carries the destination derived from the placement logic", async () => {
+    const briefs: string[] = []; const repoDir = fl();
+    await runWall(flCtx(repoDir, (o) => { briefs.push(o.brief); }), new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs[0]).toContain("is copied to backend/src/lib/"); expect(briefs[0]).toContain("__dirname");
+  });
+  test("(b) phantomReason names the cause when the phantom is the test dir joined with a real root path", () => {
+    const files = ["backend/src/lib/x.test.ts", "backend/src/index.ts", "frontend/src/app.ts"];
+    const why = phantomReason(["backend/src/lib/backend/src", "backend/src/lib/frontend/src"], files, "backend/src/lib", "backend")!;
+    expect(why).toContain("backend/src/lib/"); expect(why).toContain("not the repo root"); expect(why).toContain("backend/src exists relative to the repo root"); expect(why).toContain("frontend/src exists relative to the repo root");
+    expect(phantomReason(["backend/src/lib/nope"], files, "backend/src/lib", "backend")).not.toContain("not the repo root"); // control: no real root path, generic text
+  });
+  test("(b) the re-ask for the run's file names the cause; the rewrite that fixes the location is kept", async () => {
+    const briefs: string[] = []; const repoDir = fl();
+    const ctx = flCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), briefs.length === 1 ? BLIND : BLIND.replace("const root = __dirname;", FIXED_LOC)); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("not the repo root"); expect(briefs[1]).toContain("backend/src exists relative to the repo root");
+    expect(r.data.discarded).toBeUndefined();
+  });
+  const baseRepo = (): string => {
+    const repoDir = cjsRepo({ "src/a.ts": "export const foo = 1;\n" });
+    writeFileSync(join(repoDir, ".gitignore"), "node_modules\n.loki\n");
+    git(repoDir, ["init", "-q"]); git(repoDir, ["add", "."]); git(repoDir, ["commit", "-qm", "base"]);
+    return repoDir;
+  };
+  test("(c) a stale loki_wall_* file left untracked by an earlier run is never verified or credited when this run's Wall discarded it", async () => {
+    const repoDir = baseRepo();
+    mkdirSync(join(repoDir, "src", "lib"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "lib", "loki_wall_old.test.ts"), "test('x', () => {});\n"); writeFileSync(join(repoDir, "src", "b.ts"), "export const b = 1;\n");
+    const ctx = wallCtx(repoDir, () => {}); ctx.baseSha = git(repoDir, ["rev-parse", "HEAD"]).trim();
+    ctx.outputs = () => ({ wall: { files: [], discarded: [{ file: "loki_wall_old.test.ts", reason: "x" }] } }) as Partial<Record<StageName, Record<string, unknown>>>;
+    const r = await verifyStage.run(ctx, new AbortController().signal);
+    expect(r.data.changed_files).toEqual(["src/b.ts"]);
+    expect(JSON.stringify(r.data.checks)).not.toContain("loki_wall_old");
+  }, 60_000);
+  test("(c) this run's own installed Wall file still counts as changed", async () => {
+    const repoDir = baseRepo();
+    writeFileSync(join(repoDir, "src", "loki_wall_new.test.ts"), "test('x', () => {});\n");
+    const ctx = wallCtx(repoDir, () => {}); ctx.baseSha = git(repoDir, ["rev-parse", "HEAD"]).trim();
+    ctx.outputs = () => ({ wall: { files: [{ path: join(repoDir, "src", "loki_wall_new.test.ts") }] } }) as Partial<Record<StageName, Record<string, unknown>>>;
+    const r = await verifyStage.run(ctx, new AbortController().signal);
+    expect(r.data.changed_files).toEqual(["src/loki_wall_new.test.ts"]);
+  }, 60_000);
+});
