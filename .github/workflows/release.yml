@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install PyYAML (the workflow scan prerequisite)
-        run: python3 -m pip install pyyaml
+        run: python3 -m pip install pyyaml pytest
       - name: P9 Rule of Two on the exact release SHA (never waived)
         # CTO N4: P9 must hold at the release SHA, independent of Tests. Fail closed: a missing script or
         # any nonzero rc fails the gate. About 13s.

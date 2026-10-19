@@ -1183,6 +1183,7 @@ case_injection() {
     for p in git python3 perl; do
         command -v "$p" >/dev/null 2>&1 || { nok "prerequisite missing: $p"; return; }
     done
+    python3 -c 'import pytest' >/dev/null 2>&1 || { nok "prerequisite missing: python3 pytest (the fixture's VERIFIED run executes a pytest test; pip install pytest)"; return; }
     detect_egress_block
     if [ -z "$EGRESS_MECH" ]; then
         nok "prerequisite missing: egress sandbox (the issue run must not reach the network)"
@@ -1915,7 +1916,7 @@ PY
             && nok "[unverified] Loki opened a PR for a PARTIAL run (gh log: $(tr '\n' ',' < "$T/unverified/gh.log"))"
     fi
     }
-    # --- run the six scenarios above with bounded parallelism (<=3) --------
+    # --- run the seven scenarios above with bounded parallelism (<=4 per wave) --------
     # Each is already an independent "fresh copy" (own $T/<label> work dir,
     # HOME and logs; see inj_run), so the only cross-scenario coupling is the
     # `nok` accumulator. A backgrounded subshell must clear the inherited

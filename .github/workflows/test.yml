@@ -256,7 +256,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyYAML (the workflow scan prerequisite)
-        run: python3 -m pip install pyyaml
+        run: python3 -m pip install pyyaml pytest
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
