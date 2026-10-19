@@ -245,10 +245,26 @@ function isYarnBerry(dir: string): boolean {
  *  governing lockfile, runs in a directory that cannot be resolved, is joined to a `||` fallback or matches no rule is kept as written and the result
  *  says it is not locked. A `cd X` segment moves the lookup to X. Never guesses a package manager. */
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
-  const flat = modelCmd.replace(/\\\r?\n/g, " ");
-  // No shell parser: a `||`, a quote or a paren anywhere leaves every install in the whole command as written.
-  const whole = flat.includes("||") ? "fallback masks install failure" : /['"()`]/.test(flat) ? "unparsed shell construct" : null;
+  const flat = modelCmd.replace(/\\\r?\n/g, " ").replace(/[\s;]+$/, "");
   const parts = flat.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
+  // No shell parser, so an allowlist: only plain words and the separators && ; newline are understood. A `||`, any other character, or
+  // a first install preceded by anything but cd/pushd/export/set/assignments leaves every install in the whole command as written.
+  const wordsOf = (seg: string): { w: string[]; e: number; tool: string; sub: string } => {
+    const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
+    const sub = e >= 0 && w[e + 1] !== undefined && !w[e + 1]!.startsWith("-") ? w[e + 1]! : "";
+    return { w, e, tool: e >= 0 ? w[e]! : "", sub };
+  };
+  const preludeOk = (): boolean => {
+    for (let k = 0; k < parts.length; k += 2) {
+      const { e, tool, sub } = wordsOf(parts[k]!);
+      if (e < 0) continue;
+      if (LOCK_RULES.some((r) => r.tool === tool && r.subs.includes(sub))) return true;
+      if (e > 0 || !["cd", "pushd", "export", "set"].includes(tool)) return false;
+    }
+    return true;
+  };
+  const whole = flat.includes("||") ? "fallback masks install failure"
+    : !/^[A-Za-z0-9 _./=:@+,%~\t\n;-]*$/.test(flat.replace(/&&/g, " ")) || !preludeOk() ? "unparsed shell construct" : null;
   // runDetached runs `bash -c` without -e: a `;` or newline command after an install masks its failure, so only an install joined to
   // everything after it by `&&` is rewritten.
   const lastSemi = parts.reduce((m, p, k) => (k % 2 === 1 && /[;\n]/.test(p) ? k : m), -1);
