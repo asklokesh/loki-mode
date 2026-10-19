@@ -394,3 +394,31 @@ describe("engine10 implement stage: S41-13 two attempts (LOKI_E10_ATTEMPTS)", ()
     });
   });
 });
+
+describe("engine10 implement stage: TEN-QUALITY-44 repro test out of repo", () => {
+  const git = (d: string, ...a: string[]): string => Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d }).stdout.toString().trim();
+  async function runWith(body: string, flag: string | undefined) {
+    const dir = mkdtempSync(join(tmpdir(), "loki-q44-"));
+    git(dir, "init", "-q"); writeFileSync(join(dir, "a.txt"), "x\n"); git(dir, "add", "a.txt"); git(dir, "commit", "-qm", "base");
+    const briefs: string[] = [];
+    const sessions = new FakeSessionRunner(doneResult, (o) => { briefs.push(o.brief); if (briefs.length === 1) writeFileSync(join(dir, "repro.test.ts"), body, "utf8"); else writeFileSync(join(dir, "repro.test.ts"), 'import { f } from "../src/f.ts";\n', "utf8"); });
+    const ctx = { ...fakeCtx(sessions, { intake: { task: "fix the bug" } }, join(dir, ".loki", "runs", "r1")), repoDir: dir, baseSha: git(dir, "rev-parse", "HEAD") };
+    const old = process.env.LOKI_E10_REPRO; if (flag === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = flag;
+    try { const r = await implementStage.run(ctx, new AbortController().signal); return { r, briefs, file: readFileSync(join(dir, "repro.test.ts"), "utf8") }; }
+    finally { if (old === undefined) delete process.env.LOKI_E10_REPRO; else process.env.LOKI_E10_REPRO = old; rmSync(dir, { recursive: true, force: true }); }
+  }
+  const BAD = 'import { f } from "/Users/someone/.claude/plugins/x/f.ts";\n';
+  test("repro test out of repo is re-asked once with the reason", async () => {
+    const { r, briefs, file } = await runWith(BAD, "1");
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("repro.test.ts");
+    expect(briefs[1]).toContain("outside the repo");
+    expect(file).toContain("../src/f.ts");
+    expect(r.status).toBe("completed");
+    expect((r.data.iteration_ids as string[]).length).toBe(2);
+  });
+  test("repro test out of repo: clean repro and flag-off runs are not re-asked", async () => {
+    expect((await runWith('import { f } from "../src/f.ts";\n', "1")).briefs.length).toBe(1);
+    expect((await runWith(BAD, undefined)).briefs.length).toBe(1);
+  });
+});
