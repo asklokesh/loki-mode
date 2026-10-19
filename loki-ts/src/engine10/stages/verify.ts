@@ -122,14 +122,10 @@ type BaseSubtraction = { ids: string[]; names: string[]; weak: string[]; zero: s
 /** FC-REPO-SKIPPED-TEST-DOWNGRADES (after BYPASS3): the only evidence a zero check is the repo's own is a zero measured at INTAKE, on the base commit in an environment the agent had not touched (REPOMEM pattern). Intake runs each detected test file once (at most `cap` files and `budgetS` seconds) and records the measured names and the zero subset; verify excuses only a name in `zero`. Never throws. */
 export async function probeZeroChecks(repoDir: string, tests: TestRef[], signal: AbortSignal, budgetS = 120, cap = 300): Promise<{ measured: string[]; zero: string[] }> {
   const measured: string[] = [], zero: string[] = [], deadline = Date.now() + budgetS * 1000, before = new Set(untracked(repoDir));
-  try {
-    const api = loadProjectApi(repoDir);
-    await mapPool(tests.slice(0, cap), verifyJobs(), async (t) => {
-      if (signal.aborted || Date.now() > deadline) return;
-      const tc = commandFor(t, repoDir, api), b = await runOnce(tc.cmd, tc.args, tc.cwd, signal, { timeoutMs: Math.max(1000, deadline - Date.now()) });
+  try { const api = loadProjectApi(repoDir); await mapPool(tests.slice(0, cap), verifyJobs(), async (t) => {
+      if (signal.aborted || Date.now() > deadline) return; const tc = commandFor(t, repoDir, api), b = await runOnce(tc.cmd, tc.args, tc.cwd, signal, { timeoutMs: Math.max(1000, deadline - Date.now()) });
       if (!b.cut && !b.missing) { measured.push(testCheckName(t)); if (isZeroRun(tc, b)) zero.push(testCheckName(t)); }
-    });
-  } catch { /* no baseline is a valid state: nothing is excused */ }
+  }); } catch { /* no baseline is a valid state: nothing is excused */ }
   rmNewUntracked(repoDir, before); // a probed test's cache or report must not look like an agent change
   return { measured: measured.sort(), zero: zero.sort() };
 }
