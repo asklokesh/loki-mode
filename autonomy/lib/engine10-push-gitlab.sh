@@ -78,7 +78,23 @@ def="$(_e10_glab api "projects/$enc" 2>/dev/null \
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push-gl.XXXXXX")" || die "mktemp failed" 1
 trap 'rm -rf "$tmp"' EXIT
+# FC-TRUSTED-PUSH-PARTIAL-CLONE: byte-equivalent to the seeding in run.sh
+# _loki_trusted_push (this child cannot source run.sh). A partial agent clone
+# cannot serve objects it never downloaded, so seed the temp repo with the
+# pinned origin as a promisor remote and fetch its refs first.
+partial=""
+if [ -n "$(git -C "$dir" config --get extensions.partialclone 2>/dev/null)" ] \
+    || git -C "$dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -qi ' true$'; then
+    partial=1
+fi
 git init -q --template= "$tmp" >/dev/null 2>&1 \
+    && { [ -z "$partial" ] || {
+        git -C "$tmp" config core.repositoryformatversion 1 \
+        && git -C "$tmp" config extensions.partialclone loki-base \
+        && git -C "$tmp" config remote.loki-base.url "$url" \
+        && git -C "$tmp" config remote.loki-base.promisor true \
+        && git -C "$tmp" config remote.loki-base.partialclonefilter blob:none \
+        && git -C "$tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
     && git -C "$tmp" fetch -q --no-tags --update-shallow "$dir" "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1 \
     && git -C "$tmp" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1 \
     || die "could not stage branch '$branch' in a fresh repo"

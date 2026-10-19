@@ -128,5 +128,29 @@ refused "unresolvable default branch fails closed" "could not resolve the defaul
     p4 push-mr "$A" loki/e10-fix t "$W/body.md"
 echo main > "$W/default"
 
+# FC-TRUSTED-PUSH-PARTIAL-CLONE: a blob:none agent clone. A blob only in
+# history (deleted at the tip) is never downloaded by the clone's checkout, so
+# serving it from the clone is what dies without the promisor seeding.
+git -C "$BARE" config uploadpack.allowFilter true
+PS="$W/pc-seed"
+git init -q "$PS"
+echo a > "$PS/a.txt"; git -C "$PS" add a.txt; git -C "$PS" commit -q -m base
+echo old > "$PS/old.txt"; git -C "$PS" add old.txt; git -C "$PS" commit -q -m old
+git -C "$PS" rm -q old.txt; git -C "$PS" commit -q -m "drop old"
+git -C "$PS" push -q "$BARE" HEAD:refs/heads/pc-base 2>/dev/null
+git clone -q --filter=blob:none -b pc-base "file://$BARE" "$W/agent-partial" 2>/dev/null
+git -C "$W/agent-partial" checkout -q -b loki/e10-partial
+echo agent > "$W/agent-partial/c.txt"
+git -C "$W/agent-partial" add c.txt
+git -C "$W/agent-partial" commit -q -m "agent work on a partial clone"
+git -C "$W/agent-partial" remote set-url origin "$URL"
+[ "$(git -C "$W/agent-partial" config --get remote.origin.promisor)" = true ] \
+    && ok "partial-clone fixture really is a partial clone" || bad "partial-clone fixture is not partial (test proves nothing)"
+: > "$W/remote.log"
+out="$(p4 push-mr "$W/agent-partial" loki/e10-partial "E10 title" "$W/body.md" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ -n "$(git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-partial)" ] \
+    && ok "a partial-clone agent repo's branch is pushed" \
+    || bad "a partial-clone agent repo's branch was not pushed (rc=$rc err=$(tr '\n' ' ' < "$W/err"))"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
