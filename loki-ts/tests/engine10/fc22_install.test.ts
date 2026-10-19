@@ -357,13 +357,21 @@ describe("lockedInstall (locked, reproducible install)", () => {
       expect([r.cmd, r.locked, r.rewritten]).toEqual([`npm install || ${fb}`, false, false]);
       expect(r.note).toContain("fallback masks install failure");
     }
-    const m = lockedInstall(repo, repo, "npm install && npm install || true");
-    expect([m.cmd, m.locked]).toEqual(["npm ci && npm install || true", false]);
+    for (const cmd of ["npm install && npm run build || true", "npm install && echo ok || exit 0", "npm ci && npm install || true"]) {
+      const r = lockedInstall(repo, repo, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
+      expect(r.note).toContain("fallback masks install failure");
+    }
+    // a different list (separated by ; or newline) is not masked
+    expect(lockedInstall(repo, repo, "npm install; npm run build || true").cmd).toBe("npm ci; npm run build || true");
+    expect(lockedInstall(repo, repo, "npm install\nnpm run build || true").cmd).toBe("npm ci\nnpm run build || true");
   });
   test("uv --frozen and pipenv sync are rewritten to forms that fail on a stale lock", () => {
     put(repo, "uv.lock", "Pipfile.lock");
     expect(lockedInstall(repo, repo, "uv sync --frozen").cmd).toBe("uv sync --locked");
     expect(lockedInstall(repo, repo, "uv sync --locked")).toMatchObject({ cmd: "uv sync --locked", rewritten: false });
+    expect(lockedInstall(repo, repo, "uv sync --locked --frozen").cmd).toBe("uv sync --locked");
+    for (const cmd of ["UV_FROZEN=1 uv sync", "UV_LOCKED=1 uv sync"]) expect(lockedInstall(repo, repo, cmd)).toMatchObject({ cmd, locked: true, rewritten: false });
     expect(lockedInstall(repo, repo, "pipenv sync").cmd).toBe("pipenv install --deploy");
     expect(lockedInstall(repo, repo, "pipenv install --deploy")).toMatchObject({ cmd: "pipenv install --deploy", rewritten: false });
   });

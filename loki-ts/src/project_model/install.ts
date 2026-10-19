@@ -212,7 +212,7 @@ const LOCK_RULES: LockRule[] = [
   { tool: "pnpm", subs: ["install", "i"], locks: ["pnpm-lock.yaml"], locked: (_s, r) => has(r, "--frozen-lockfile") && !has(r, "--no-frozen-lockfile"), build: (_s, r) => ["pnpm", "install", ...withFlag(r.filter((x) => x !== "--no-frozen-lockfile"), "--frozen-lockfile")], ws: pnpmWorkspaces },
   { tool: "yarn", subs: ["", "install"], locks: ["yarn.lock"], locked: (_s, r) => has(r, "--immutable", "--frozen-lockfile"), build: (_s, r, c) => ["yarn", "install", ...withFlag(r, c.berry ? "--immutable" : "--frozen-lockfile")], ws: pkgWorkspaces },
   { tool: "bun", subs: ["install", "i", "ci"], locks: ["bun.lock", "bun.lockb"], locked: (s, r) => s === "ci" || has(r, "--frozen-lockfile"), build: (_s, r) => ["bun", "install", ...withFlag(r, "--frozen-lockfile")], ws: pkgWorkspaces },
-  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r.filter((x) => x !== "--frozen"), "--locked")], ws: (d) => tomlWorkspace(d, "pyproject.toml", "tool.uv.workspace") },
+  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r, e) => has(r, "--locked") || e.some((x) => /^UV_(FROZEN|LOCKED)=(?!0$|false$|$)/i.test(x)), build: (_s, r) => ["uv", "sync", ...withFlag(r.filter((x) => x !== "--frozen"), "--locked")], ws: (d) => tomlWorkspace(d, "pyproject.toml", "tool.uv.workspace") },
   { tool: "poetry", subs: ["install"], locks: ["poetry.lock"], locked: () => true, build: (_s, r) => ["poetry", "install", ...r] },
   { tool: "pipenv", subs: ["install", "sync"], locks: ["Pipfile.lock"], locked: (_s, r) => has(r, "--deploy"), build: (_s, r) => ["pipenv", "install", ...withFlag(r, "--deploy")] },
   { tool: "cargo", subs: ["fetch", "build"], locks: ["Cargo.lock"], locked: (_s, r) => has(r, "--locked", "--frozen"), build: (s, r) => ["cargo", s, ...withFlag(r, "--locked")], ws: (d) => tomlWorkspace(d, "Cargo.toml", "workspace") },
@@ -245,7 +245,11 @@ function isYarnBerry(dir: string): boolean {
  *  governing lockfile, runs in a directory that cannot be resolved, is joined to a `||` fallback or matches no rule is kept as written and the result
  *  says it is not locked. A `cd X` segment moves the lookup to X. Never guesses a package manager. */
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
-  const parts = modelCmd.split(/(\s*(?:&&|\|\||;)\s*)/);
+  const parts = modelCmd.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
+  // Shell reads `a && b || c` as `(a && b) || c`: a `||` masks a failure anywhere earlier in its `;`/newline-separated list.
+  const listOf: number[] = []; let li = 0;
+  parts.forEach((p, k) => { listOf[k] = li; if (k % 2 === 1 && /[;\n]/.test(p)) li++; });
+  const masked = new Set(parts.flatMap((p, k) => (k % 2 === 1 && p.includes("||") ? [listOf[k]!] : [])));
   const notes: string[] = [];
   let hits = 0, locked = true, rewritten = false, cur: string | null = realpathSync(cwd);
   const out = parts.map((seg, k) => {
@@ -260,13 +264,16 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
     const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
     if (!rule) return seg;
     hits++;
-    if ((parts[k - 1] ?? "").includes("||") || (parts[k + 1] ?? "").includes("||")) { locked = false; notes.push("fallback masks install failure"); return seg; }
+    if (masked.has(listOf[k]!)) { locked = false; notes.push("fallback masks install failure"); return seg; }
     const rest = w.slice(e + (hasSub ? 2 : 1));
     if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
     if (cur === null) { locked = false; notes.push(`${tool} runs in a directory that cannot be resolved, kept as written`); return seg; }
     const dir = lockDir(repoDir, cur, rule);
     if (!dir) { locked = false; notes.push(`no ${rule.locks.join(" or ")} governs this package for ${tool}`); return seg; }
-    if (rule.locked(sub, rest, env)) return seg; // already a locked form: kept byte for byte
+    if (rule.locked(sub, rest, env)) {
+      if (tool !== "uv" || !has(rest, "--locked", "--frozen") || !rest.includes("--frozen") || !rest.includes("--locked")) return seg;
+      rewritten = true; return [...env, "uv", "sync", ...rest.filter((x) => x !== "--frozen")].join(" ");
+    } // already a locked form: kept byte for byte
     rewritten = true;
     const frozenEnv = rule.tool === "bundle" ? ["BUNDLE_FROZEN=true"] : [];
     return [...env, ...frozenEnv, ...rule.build(sub, rest, { berry: isYarnBerry(dir) })].join(" ");
