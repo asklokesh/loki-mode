@@ -71,3 +71,14 @@ export function conventionViolation(c: PackageConventions | null, fileName: stri
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/(["'`])(?:\\.|(?!\1)[^\\\n])*\1/g, '""');
   return /\bimport\.meta\b/.test(code) ? "import.meta is not allowed in a CommonJS package (TS1470)" : null;
 }
+
+/** FC-WALL-OUT-OF-REPO-TARGET: a test file that resolves the code under test outside the repo (home dir, $HOME, ~/, an absolute user path) checks an installed copy, not the change. Comments ignored; tmpdir fixtures and repo-relative paths are fine. null when clean. */
+export function outOfRepoTarget(content: string): string | null {
+  const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/(^|\s)#.*$/gm, "$1");
+  const hit = /\bhomedir\s*\(/.test(code) ? "homedir()"
+    : /\bPath\.home\s*\(|\bexpanduser\s*\(/.test(code) ? "the user home directory"
+    : /\bprocess\.env\.(HOME|USERPROFILE)\b|\benv\[\s*["'](HOME|USERPROFILE)["']|\$\{?HOME\b|\$\{?USERPROFILE\b/.test(code) ? "$HOME"
+    : /["'`]~\//.test(code) ? "a ~/ path"
+    : /["'`](?:file:\/\/)?\/(?:Users|home|root)\//.test(code) ? "an absolute user-home path" : null;
+  return hit ? `resolves the code under test outside the repo via ${hit}; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change` : null;
+}

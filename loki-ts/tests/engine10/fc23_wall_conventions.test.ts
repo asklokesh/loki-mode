@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, readPackageConventions } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import type { RunContext, SessionRunOptions, StageName } from "../../src/engine10/types.ts";
 
@@ -148,5 +148,48 @@ describe("COST-14 Wall brief output budget", () => {
     expect(b).toContain("one test file");
     expect(b).toContain("no closing summary");
     expect(b.indexOf(WALL_OUTPUT_BUDGET)).toBeLessThan(b.indexOf("add x"));
+  });
+});
+
+describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
+  const INSTALLED = "const t = process.env.PLUGIN_DIR ?? join(homedir(), '.claude/plugins/x/y');\ntest('a', () => { expect(t).toBeTruthy(); });\n";
+  test("detector: homedir, $HOME, ~/, absolute user paths rejected; repo-relative, tmpdir and comments pass", () => {
+    expect(outOfRepoTarget(INSTALLED)).toContain("homedir()");
+    expect(outOfRepoTarget("const p = process.env.HOME + '/x';")).toContain("$HOME");
+    expect(outOfRepoTarget("const p = '~/code/x';")).toContain("~/");
+    expect(outOfRepoTarget("const p = '/Users/someone/repo/x';")).toContain("absolute");
+    expect(outOfRepoTarget("p = Path.home() / 'x'")).not.toBeNull();
+    expect(outOfRepoTarget("const p = join(import.meta.dir, '..', 'plugins', 'a', 'b');")).toBeNull();
+    expect(outOfRepoTarget("const d = mkdtempSync(join(tmpdir(), 'fx-'));")).toBeNull();
+    expect(outOfRepoTarget("// was homedir() before\nconst p = './src/a';")).toBeNull();
+  });
+  test("brief tells the writer to use repo-relative paths", () => {
+    expect(buildWallBrief("t")).toContain("repo-relative paths only");
+  });
+  test("a Wall file targeting the home dir is re-asked once with the reason; the rewrite is kept", async () => {
+    const repoDir = cjsRepo(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => {
+      briefs.push(o.brief);
+      writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), briefs.length === 1 ? INSTALLED : "import { foo } from '../src/a';\ntest('x', () => { expect(foo()).toBe(1); });\n");
+    });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("loki_wall_a.test.ts");
+    expect(briefs[1]).toContain("outside the repo");
+    expect(r.data.discarded).toBeUndefined();
+  });
+  test("a file still out-of-repo after the rewrite is discarded, never installed", async () => {
+    const repoDir = cjsRepo(); let n = 0;
+    const ctx = wallCtx(repoDir, (o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), INSTALLED); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(existsSync(join(repoDir, "tests", "loki_wall_a.test.ts"))).toBe(false);
+    expect(JSON.stringify(r.data.discarded)).toContain("outside the repo");
+  });
+  test("a clean repo-relative file triggers no extra session", async () => {
+    const repoDir = cjsRepo(); let n = 0;
+    const ctx = wallCtx(repoDir, (o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), "const p = join(__dirname, '..', 'plugins', 'a');\ntest('x', () => { expect(p).toBeTruthy(); });\n"); });
+    await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(n).toBe(1);
   });
 });
