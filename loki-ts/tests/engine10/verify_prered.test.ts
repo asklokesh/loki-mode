@@ -126,6 +126,12 @@ describe("engine10 verify: baseline subtract (A-112)", () => {
     expect(failIds("\u2716 spec one (1.2ms)\n\u2716 failing tests:\n\u2139 fail 1")).toEqual(["spec one"]);
     expect(failIds(" FAIL  src/a.test.ts > s > c\n Tests  1 failed | 2 passed")).toEqual(["src/a.test.ts > s > c"]);
   });
+  test("FC-FULLSUITE-ANSI-IDS: failIds parses a colored vitest transcript exactly like the plain one", () => {
+    const plain = " FAIL  src/a.test.ts > s > c\n FAIL  src/b.test.ts > s > d\n Tests  2 failed | 3 passed (5)";
+    const colored = " \u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m \u001b[31msrc/a.test.ts > s > c\u001b[39m\n \u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m \u001b[31msrc/b.test.ts > s > d\u001b[39m\n \u001b[2m     Tests \u001b[22m \u001b[1m\u001b[31m2 failed\u001b[39m\u001b[22m | \u001b[32m3 passed\u001b[39m\u001b[90m (5)\u001b[39m";
+    expect(failIds(plain)).toEqual(["src/a.test.ts > s > c", "src/b.test.ts > s > d"]);
+    expect(failIds(colored)).toEqual(failIds(plain));
+  });
   test("FC-BASELINE-PER-PACKAGE: vitest's per-test cross line carries its duration; ids are the same on base and head whatever the timing", () => {
     const vt = (ms: string) => ` ❯ src/a.test.ts (3 tests | 1 failed) ${ms}\n   × s > c ${ms}\n     → expected 1 to be 2\n\n FAIL  src/a.test.ts > s > c\nAssertionError: expected 1 to be 2\n Test Files  1 failed (1)\n      Tests  1 failed | 2 passed (3)`;
     expect(failIds(vt("5ms"))).toEqual(["s > c", "src/a.test.ts > s > c"]);

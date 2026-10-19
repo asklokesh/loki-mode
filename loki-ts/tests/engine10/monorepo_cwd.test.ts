@@ -226,6 +226,24 @@ describe("FC-16 C1 per-package suites route through classifyCheck", () => {
     const r = await suite("?   \texample.com/a\t[no test files]\n");
     expect(r.checks[0]!.result).toBe("not_run");
   });
+  test("FC-FULLSUITE-ANSI-IDS: a colored failing vitest package run still yields its ids and a redacted excerpt", async () => {
+    const red = (s: string): string => `\u001b[31m${s}\u001b[39m`;
+    const out = ` \u001b[41m FAIL \u001b[49m ${red("src/a.test.ts > s > c")}\nAssertionError: expected 1 to be 2\n \u001b[2m Tests \u001b[22m ${red("1 failed")} | 2 passed (3)\n`;
+    const r = await suite(out, 1);
+    expect(r.checks[0]!.result).toBe("fail");
+    expect(r.checks[0]!.ids).toEqual(["src/a.test.ts > s > c"]);
+    expect(r.checks[0]!.excerpt).toContain("AssertionError");
+    expect(r.checks[0]!.excerpt).not.toContain("\u001b");
+  });
+  test("FC-FULLSUITE-ANSI-IDS: the package suite child runs under the plain env (FORCE_COLOR=0, NO_COLOR=1)", async () => {
+    const { dir, base } = monorepo(true);
+    const m = loadProjectApi(dir)!.model as ProjectModel;
+    m.packages[0]!.commands.test = cmd(`echo "$FORCE_COLOR $NO_COLOR" > "${join(stubDir, "env.out")}"; echo " Tests  1 passed (1)"`, "backend", "backend/package.json");
+    writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+    process.env["FORCE_COLOR"] = "3";
+    try { await runFullSuite(ctxFor(dir, base, []), sig(), {}, [], new Set<string>()); } finally { delete process.env["FORCE_COLOR"]; }
+    expect(readFileSync(join(stubDir, "env.out"), "utf8").trim()).toBe("0 1");
+  });
   test("a failing package stays fail", async () => {
     const r = await suite("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n", 1);
     expect(r.checks[0]!.result).toBe("fail");

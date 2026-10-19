@@ -475,9 +475,10 @@ export function attribute(repoDir: string, baseSha: string, failing: { name: str
 }
 /** Each failing check against its own baseline id set; `known` is the number of baseline failures the line reports. */
 function split(failing: { name: string; ids?: string[]; eligible: boolean; base: Set<string> }[], known: number): Attribution {
+  const unparsed = failing.filter((f) => !f.ids?.length && f.base.size > 0).length; // FC-FULLSUITE-ANSI-IDS: a failing check with no parsed ids against an attributable baseline
   const pre = failing.filter((f) => f.eligible && f.ids?.length && f.ids.every((i) => f.base.has(i)));
   const introduced = failing.filter((f) => !pre.includes(f)).map((f) => f.name);
-  if (pre.length === 0) return { preExistingChecks: [], preExistingIds: [], introducedChecks: introduced, line: `baseline: ${known} known failure(s) before this run; none of the failing checks match them, ${introduced.length} introduced (blocking)` };
+  if (pre.length === 0) return { preExistingChecks: [], preExistingIds: [], introducedChecks: introduced, line: `baseline: ${known} known failure(s) before this run; ${unparsed ? `head failure ids unparseable for ${unparsed} failing check(s), cannot compare` : "none of the failing checks match them"}, ${introduced.length} introduced (blocking)` };
   return { preExistingChecks: pre.map((f) => f.name), preExistingIds: pre.flatMap((f) => f.ids ?? []), introducedChecks: introduced,
     line: `baseline: ${pre.length} pre-existing failing check(s) (not blocking), ${introduced.length} introduced${introduced.length ? " (blocking)" : ""}` };
 }

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { failIds } from "../../src/engine10/failures.ts";
 import { attribute, attributeFullSuite, attributeStatic, baselineSuites, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
@@ -753,6 +754,8 @@ describe("repo baseline profile (REPOMEM)", () => {
         const out = await medium(d, [node("feat.test.js")], () => writeFileSync(join(d, "feat.js"), "exports.v=2;\n"));
         expect(out["pre_red_checks"]).not.toContain("full suite: npm");
         expect(fullFails(out).length).toBe(1);
+        const sample = (out["failures_grouped"] as { signature: string; sample: string }[]).find((f) => f.signature.startsWith("full suite"))!.sample; // FC-FULLSUITE-ANSI-IDS: the fix brief carries failure text, not just the command
+        expect(sample).toContain("AssertionError");
       }, 120_000);
       test("unparseable full-suite failure output excuses nothing", async () => {
         const d = repo({ ...NODE, ...FEAT });
@@ -790,6 +793,20 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(attributeFullSuite(d, base, f("npm test", [...ok, "new"]), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
+      });
+      test("FC-FULLSUITE-ANSI-IDS: a colored head run excuses against a plain baseline superset; colored genuinely new ids still block; unparsed ids say so", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const known = ["src/a.test.ts > s > c", "src/b.test.ts > s > d", "src/c.test.ts > s > e"];
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: known, attributable: true } }));
+        const color = (ids: string[]): string => `${ids.map((i) => ` \u001b[41m FAIL \u001b[49m \u001b[31m${i}\u001b[39m`).join("\n")}\n \u001b[2m Tests \u001b[22m \u001b[31m${ids.length} failed\u001b[39m | 3 passed (${ids.length + 3})`;
+        const chk = (out: string) => [{ name: "full suite: frontend", cmd: "npm test", result: "fail", ids: failIds(out) }];
+        expect(attributeFullSuite(d, base, chk(color(known.slice(0, 2))), [], []).preExistingChecks).toEqual(["full suite: frontend"]);
+        const fresh = attributeFullSuite(d, base, chk(color([known[0]!, "src/new.test.ts > s > n"])), [], []);
+        expect(fresh.preExistingChecks).toEqual([]); expect(fresh.introducedChecks).toEqual(["full suite: frontend"]);
+        const none = attributeFullSuite(d, base, [{ name: "full suite: frontend", cmd: "npm test", result: "fail", ids: [] }], [], []);
+        expect(none.introducedChecks).toEqual(["full suite: frontend"]);
+        expect(none.line).toContain("head failure ids unparseable");
       });
       // FC-BASELINE-PER-PACKAGE: verify runs one full-suite command per package; the baseline records the same commands, each in its own cwd.
       const profileAt = (d: string, base: string): void => {
