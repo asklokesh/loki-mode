@@ -2632,3 +2632,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T10:37Z (CoS) v11.17.86
 - 11.17.86: FC-WALL-PHANTOM-PATH in-testdir sibling (f2b930627 cherry-picked as 3f75ea650 onto 0a897c42c). HIGH opus APPROVE: revert red 32/1, gates 150 pass 0 fail, end-to-end runWall re-ask then discard verified on the #81826 shape, tsc 0 errors in engine10/project_model; route_matrix_mutation unverified (50 min suite). Non-blocking: helper-generated fixture with a root fixtures/ dir can cost one re-ask.
+
+## 2026-10-19T10:49Z (CoS) v11.17.87
+- 11.17.87: 11.17.85 review follow-ups (53549dba0, 29a44f936). HIGH opus BLOCK on 53549dba0 (extension/nameless-JSON fallback hid phantoms in 6 repros), fixed in 29a44f936, HIGH APPROVE: 6 repros + incident shapes report, revert red (fallback no false root, modules dir phantom), gate 186/0, dedup 13/0 incl M10, tsc clean for engine10/project_model. Follow-up: fixture for the model-known branch (stale multi-root M4).
