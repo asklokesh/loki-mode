@@ -1123,7 +1123,7 @@ describe("P12-11b flaky rerun producer and summary wiring", () => {
     const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
     const sv = readFileSync(new URL("../../src/engine10/supervisor.ts", import.meta.url), "utf8");
     expect(au).toMatch(/failedChecks: failedChecksSignal\(/);
-    expect(sv).toMatch(/"failed", failedCheckNames\(folded\.stages\["verify"\]/);
+    expect(sv).toMatch(/"failed", failedCheckNames\(folded\.stages\["verify"\]\?\.data\.checks, folded\.stages\["verify"\]\?\.data\.pre_red_checks/); // FC-LINT-PRE-RED: supervisor passes verify pre_red_checks
   });
   it("P12-11b-c: supervisor and autonomous derive the tree through cleanTreeId", () => {
     const au = readFileSync(new URL("../../src/runner/autonomous.ts", import.meta.url), "utf8");
