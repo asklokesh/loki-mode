@@ -111,8 +111,8 @@ export function acceptanceLines(plan: unknown): string[] {
 /** Reviewer prompt lines asking the diff be checked against the acceptance lines and each unmet one named; empty for no lines, so a prompt without a card is unchanged. */
 export const acceptancePromptBlock = (lines: string[]): string[] => lines.length ? ["", "The user asked for the following (intent card). Check the diff against each line:", ...lines, "For each line the diff leaves unmet, add a reason line starting `- UNMET: ` followed by that line. Do not use VERDICT: PASS while a line is unmet."] : [];
 
-// FC-PR-BODY-PUBLIC-HYGIENE: an issue template's checklist is form boilerplate, never what was asked. Dropped: checkbox items under a template-named heading (exact names only), and checkbox items worded as a first-person attestation. Nothing under an acceptance or criteria heading is ever dropped.
-const TEMPLATE_HEAD = /^#+\s*(pre-?flight(\s+checklist)?|checklist|prerequisites|before (you )?(submit(ting)?|open(ing)?|fil(e|ing)))\s*:?\s*$/i, ACCEPT_HEAD = /^#+\s.*(accept|criteria)/i, CHECK_ITEM = /^[-*+]\s+\[[ xX]\]/, ATTEST = /\bI (have (searched|read|checked|confirmed)|am using the latest|agree to)\b/i;
+// FC-PR-BODY-PUBLIC-HYGIENE: an issue template's checklist is form boilerplate, never what was asked. Dropped: checkbox items under a Preflight or before-submitting heading, anywhere, and checkbox items worded as a first-person attestation. Nothing under an acceptance or criteria heading is ever dropped.
+const TEMPLATE_HEAD = /^#+\s*(pre-?flight(\s+checklist)?|before (you )?(submit(ting)?|open(ing)?|fil(e|ing)))\s*:?\s*$/i, ACCEPT_HEAD = /^#+\s.*(accept|criteria)/i, CHECK_ITEM = /^[-*+]\s+\[[ xX]\]/, ATTEST = /\bI (have (searched|read|checked|confirmed)|am using the latest|agree to)\b/i;
 export function stripTemplate(lines: string[]): string[] {
   let tpl = false, acc = false;
   return lines.filter((l) => {

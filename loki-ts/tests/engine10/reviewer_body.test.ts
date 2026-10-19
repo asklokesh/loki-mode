@@ -122,6 +122,22 @@ describe("FC-PR-BODY-PUBLIC-HYGIENE", () => {
     const s = askedOf(["## Confirm dialog behaviour", "- [ ] Shows the dialog once", "- [ ] Esc cancels"].join("\n"));
     expect(s).toContain("Shows the dialog once"); expect(s).toContain("Esc cancels");
   });
+  it("(E) keeps every item under a user's own Checklist heading", () => {
+    const s = askedOf(["Add dark mode", "## Checklist", "- [ ] Support dark mode toggle", "- [ ] Persist the setting"].join("\n"));
+    expect(s).toContain("Support dark mode toggle"); expect(s).toContain("Persist the setting");
+  });
+  it("(I) keeps every item under a user's own Prerequisites heading", () => {
+    const s = askedOf(["Setup CI", "## Prerequisites", "- [ ] Node 20 installed in the image", "- [ ] Cache configured"].join("\n"));
+    expect(s).toContain("Node 20 installed in the image"); expect(s).toContain("Cache configured");
+  });
+  it("(M7) keeps a first-person looking item under an Acceptance heading", () => {
+    const s = askedOf(["## Acceptance criteria", "- [ ] I have read the docs", "- [ ] Sorted output"].join("\n"));
+    expect(s).toContain("I have read the docs");
+  });
+  it("(M8) keeps an item that only contains the words agree to", () => {
+    const s = askedOf(["Terms flow", "- [ ] User can agree to terms", "- [ ] Shows the terms"].join("\n"));
+    expect(s).toContain("User can agree to terms");
+  });
   it("(D) with an intent card present, the issue's own acceptance list is still shown", () => {
     const s = askedOf(["## Acceptance criteria", "- Sorted output", "- Stable ties"].join("\n"), card);
     expect(s).toContain("Sorted output"); expect(s).toContain("Stable ties");
