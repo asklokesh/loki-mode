@@ -35,8 +35,6 @@ import { atomicWriteText } from "../../util/atomic.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts";
 
-/** Deferred to deep verify, so always NOT PROVEN at seal time. */
-export const DEEP_NOT_PROVEN = ["full suite", "app boot", "council", "security scan"] as const;
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
 
 const EXCLUDE_LOKI = ":(exclude).loki";

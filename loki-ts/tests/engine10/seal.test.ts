@@ -27,7 +27,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -540,7 +540,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     }, 60000);
     test("no usable risk record keeps every deep item NOT PROVEN (fail-safe)", async () => {
       const { r } = await run("na-norisk", {});
-      for (const i of DEEP_NOT_PROVEN) expect(r.not_proven).toContain(i);
+      for (const i of ["full suite", "app boot", "council", "security scan"]) expect(r.not_proven).toContain(i);
       expect(r.not_applicable).toBeUndefined();
     }, 30000);
     test("a real unproven item still downgrades and stays under NOT PROVEN", async () => {

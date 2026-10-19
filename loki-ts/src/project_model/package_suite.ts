@@ -35,13 +35,13 @@ export function suiteEnv(path?: string): Record<string, string> { return path ? 
 export const NA_PREFIX = "n/a: ";
 export const naNote = (n: string): boolean => n.startsWith(NA_PREFIX) || n.startsWith("full suite (no test runner");
 export const naText = (n: string): string => (n.startsWith(NA_PREFIX) ? n.slice(NA_PREFIX.length) : n);
-/** True only when at least one Wall or holdout check ran and every one of them passed (fail-safe: none ran is false). */
-export const wallProofOf = (checks: { name: string; result: string }[], wallNames: string[]): boolean => { const w = checks.filter((c) => wallNames.includes(c.name) || c.name.startsWith("holdout")); return w.length > 0 && w.every((c) => c.result === "pass"); };
+/** Test files of the Wall and holdout checks, only when at least one ran and every one passed (fail-safe: none ran, or any not pass, is no proof). A package without tests is proven only by a file inside it. */
+export const wallProofOf = (checks: { name: string; result: string }[], wall: { name: string; path: string }[]): string[] => { const n = new Set(wall.map((w) => w.name)), w = checks.filter((c) => n.has(c.name) || c.name.startsWith("holdout")); return w.length > 0 && w.every((c) => c.result === "pass") ? wall.map((x) => x.path) : []; };
 
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; wallProof?: boolean | undefined },
+  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined },
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -64,7 +64,7 @@ export async function runPackageSuites(
   const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
   for (const pkg of api.packages().filter((p) => !p.commands.test)) {
     const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => api.packageOf(f)?.root === pkg.root);
-    notProven.add(ran && !(owns && opts.wallProof !== true) ? NA_PREFIX + note : note);
+    notProven.add(ran && !(owns && !(opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root)) ? NA_PREFIX + note : note);
   }
   return true;
 }
