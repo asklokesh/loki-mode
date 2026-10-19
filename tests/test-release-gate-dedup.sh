@@ -51,7 +51,7 @@ check_yml() {
     [ -n "$g" ] || { echo "gate job not found"; return; }
     grep -qE 'bun[[:space:]]+(run[[:space:]]+)?test' <<< "$g" && echo "gate runs bun test"
     # Installing pytest is allowed (P9 needs it); running the suite is not.
-    grep -vE 'pip[[:space:]]+install' <<< "$g" | grep -qE 'pytest' && echo "gate runs pytest"
+    sed -E 's/pip[[:space:]]+install[^&;|]*//g' <<< "$g" | grep -qE 'pytest' && echo "gate runs pytest"
     grep -qE 'bun[[:space:]]+run[[:space:]]+typecheck' <<< "$g" && echo "gate reruns typecheck"
     grep -qE 'verify-release-dist\.sh[[:space:]]+build' <<< "$g" || echo "gate lost the dist byte-identity build check"
     grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' <<< "$g" || echo "gate lost the packed tarball dist check"
@@ -114,6 +114,8 @@ mutate "M7 remove the P9 step" "gate lost the P9 step" \
   's = s.replace("bash scripts/ci/fast-gate.sh p9", "true", 1)'
 mutate "M8 move P9 above Setup Bun" "gate runs P9 before bun" \
   'a = s.index("      - name: P9 Rule of Two"); b = s.index("      - name: Verify the committed loki-ts dist"); blk = s[a:b]; s = s[:a] + s[b:]; c = s.index("      - name: Setup Bun\n"); s = s[:c] + blk + s[c:]'
+mutate "M10 pytest chained after the pip install" "gate runs pytest" \
+  's = s.replace("python3 -m pip install pyyaml", "python3 -m pip install pyyaml pytest && python3 -m pytest tests/", 1)'
 mutate "M9 drop the PyYAML install" "gate runs P9 before bun" \
   's = s.replace("python3 -m pip install pyyaml", "true", 1)'
 

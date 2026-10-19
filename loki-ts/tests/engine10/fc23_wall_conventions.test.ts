@@ -238,7 +238,7 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const p = join(process.cwd(), 'src', 'a.ts');", "a.test.ts", td, repo, null)).toEqual(["src/a.ts"]);
   });
   test("detector negatives: write/expect/tmp lines, the test's own dir, non-JS files and node_modules are ignored", () => {
-    const repo = repoWith(), td = join(repo, "tests");
+    const repo = repoWith(), td = join(repo, "tests"); execFileSync("git", ["init", "-q"], { cwd: repo }); writeFileSync(join(repo, ".gitignore"), "node_modules/\n");
     expect(phantomRepoPaths("writeFileSync(join(__dirname, '..', 'out', 'x.txt'), 'a');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("expect(existsSync(join(__dirname, '..', 'gone'))).toBe(false);", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
@@ -266,6 +266,34 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, '..', '.next', 'server', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'out', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'src', 'a.js');", "a.test.ts", td, repo, null)).toEqual(["src/a.js"]);
+  });
+  test("package root fallback: a manifest with no name, or a non-JSON ecosystem manifest, still yields the package cwd", () => {
+    const mk = (files: Record<string, string>, tests: string): { repo: string; td: string } => {
+      const repo = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo });
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); }
+      mkdirSync(join(repo, tests), { recursive: true }); return { repo, td: join(repo, tests) };
+    };
+    const code = (a: string, b: string): string => `const f = join(process.cwd(), '${a}', '${b}');`;
+    // C: private app manifest with no "name"
+    const c = mk({ "apps/web/package.json": '{"private":true,"scripts":{"test":"x"}}', "apps/web/src/x.ts": "x\n" }, "apps/web/test");
+    expect(phantomRepoPaths(code("src", "x.ts"), "x.test.ts", c.td, c.repo, null)).toEqual([]);
+    expect(phantomRepoPaths(code("src", "nope.ts"), "x.test.ts", c.td, c.repo, null)).toHaveLength(1);
+    // D: a JS test inside a package whose manifest is not JSON
+    const d = mk({ "services/api/pyproject.toml": "[project]\nname='api'\n", "services/api/fixtures/data.json": "[]" }, "services/api/web/tests");
+    expect(phantomRepoPaths(code("fixtures", "data.json"), "x.test.ts", d.td, d.repo, null)).toEqual([]);
+    // a fixture JSON inside the test dir is not a manifest
+    const e = mk({ "packages/a/package.json": '{"name":"a","version":"1"}', "packages/a/src/x.ts": "x\n", "packages/a/test/user.json": '{"name":"bob","age":3}' }, "packages/a/test");
+    expect(phantomRepoPaths(code("src", "x.ts"), "x.test.ts", e.td, e.repo, null)).toEqual([]);
+    // the incident still reports
+    const r = repoWith();
+    expect(phantomRepoPaths("const p = resolve(import.meta.dir, '..', 'plugins/ralph-loop');", "x.test.ts", join(r, "tests"), r, null)).toEqual(["plugins/ralph-loop"]);
+  });
+  test("modules dir phantom: an ignored vendor dir is exempt by the ignore check alone, a look-alike source dir is still reported", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    execFileSync("git", ["init", "-q"], { cwd: repo }); writeFileSync(join(repo, ".gitignore"), "web_modules/\nnode_modules/\n");
+    for (const s of ["my_modules", "feature_modules"]) expect(phantomRepoPaths(`const p = resolve(import.meta.dir, '..', 'src', '${s}', 'x');`, "x.test.ts", td, repo, null)).toEqual([`src/${s}/x`]);
+    expect(phantomRepoPaths("const p = resolve(import.meta.dir, '..', 'node_modules', 'x');", "x.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const p = resolve(import.meta.dir, '..', 'web_modules', 'x');", "x.test.ts", td, repo, null)).toEqual([]); // git-ignored
   });
   test("a plan clears a path only when it names the path with its parent, never a bare segment or basename", () => {
     const repo = repoWith(), td = join(repo, "tests"), code = "const f = join(__dirname, '..', 'src', 'newmod', 'index.ts');";

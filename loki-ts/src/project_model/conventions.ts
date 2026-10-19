@@ -99,8 +99,9 @@ export const outOfRepoTests = (repoDir: string, changed: string[]): { name: stri
 function nearestPackageRoot(testDir: string, repoDir: string, fileName: string): string {
   const site = siteFor(loadProjectApi(repoDir), repoDir, relative(repoDir, join(testDir, fileName)));
   if (site) return site.cwd;
-  const shaped = (d: string): boolean => { try { return readdirSync(d).some((f) => { if (!f.endsWith(".json")) return false; const j = readJson(join(d, f)); return !!j && typeof j.name === "string" && Object.keys(j).length > 1; }); } catch { return false; } };
-  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
+  // The test dir itself needs a manifest-shaped JSON (a fixture there is not a manifest); a directory above it may also hold any JSON object (a manifest with no name) or a non-JSON ecosystem file.
+  const shaped = (d: string, own: boolean): boolean => { try { return readdirSync(d).some((f) => { if (!own && /\.(toml|mod|xml|cfg)$/.test(f)) return true; if (!f.endsWith(".json")) return false; const j = readJson(join(d, f)); return !!j && (own ? typeof j.name === "string" && Object.keys(j).length > 1 : Object.keys(j).length > 0); }); } catch { return false; } };
+  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg, pkg === testDir)) pkg = dirname(pkg);
   return pkg;
 }
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
@@ -145,7 +146,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   const runs = [...new Set([pkg, repoDir])].map(scan);
   const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
   const phantom = (r: { out: string; rel: string }, created: string[]): boolean => {
-    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\w*_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
+    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
     if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
     return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel], { timeout: 5000 }).status !== 0;
   };
