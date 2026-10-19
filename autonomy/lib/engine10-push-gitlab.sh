@@ -78,14 +78,18 @@ def="$(_e10_glab api "projects/$enc" 2>/dev/null \
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push-gl.XXXXXX")" || die "mktemp failed" 1
 trap 'rm -rf "$tmp"' EXIT
-# FC-TRUSTED-PUSH-PARTIAL-CLONE: byte-equivalent to the seeding in run.sh
+# FC-TRUSTED-PUSH-PARTIAL-CLONE: logically equivalent to the seeding in run.sh
 # _loki_trusted_push (this child cannot source run.sh). A partial agent clone
 # cannot serve objects it never downloaded, so seed the temp repo with the
-# pinned origin as a promisor remote and fetch its refs first.
-partial=""
+# pinned origin as a promisor remote and fetch its refs first. The agent pack
+# is thin, so the client lazy-fetches delta bases from the origin during the
+# agent fetch; the agent-dir upload-pack (the process that reads agent config)
+# runs through env -i: no token, no helper config, no HOME, no lazy fetch.
+partial="" up=""
 if [ -n "$(git -C "$dir" config --get extensions.partialclone 2>/dev/null)" ] \
-    || git -C "$dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -qi ' true$'; then
+    || git -C "$dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -Eqi ' (true|yes|on|1)$'; then
     partial=1
+    up="/usr/bin/env -i PATH=/usr/bin:/bin GIT_NO_LAZY_FETCH=1 $(printf '%q' "$(command -v git)") upload-pack"
 fi
 git init -q --template= "$tmp" >/dev/null 2>&1 \
     && { [ -z "$partial" ] || {
@@ -94,8 +98,12 @@ git init -q --template= "$tmp" >/dev/null 2>&1 \
         && git -C "$tmp" config remote.loki-base.url "$url" \
         && git -C "$tmp" config remote.loki-base.promisor true \
         && git -C "$tmp" config remote.loki-base.partialclonefilter blob:none \
-        && git -C "$tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
-    && git -C "$tmp" fetch -q --no-tags --update-shallow "$dir" "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1 \
+        && GIT_TERMINAL_PROMPT=0 git -C "$tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
+    && { if [ -n "$partial" ]; then
+        GIT_TERMINAL_PROMPT=0 git -C "$tmp" fetch -q --no-tags --update-shallow --upload-pack "$up" "$dir" "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1
+    else
+        git -C "$tmp" fetch -q --no-tags --update-shallow "$dir" "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1
+    fi; } \
     && git -C "$tmp" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1 \
     || die "could not stage branch '$branch' in a fresh repo"
 git -C "$tmp" push -q "$url" "refs/heads/$branch:refs/heads/$branch" || die "push failed (rc=$?)"

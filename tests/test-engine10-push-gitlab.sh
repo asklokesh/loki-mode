@@ -152,5 +152,39 @@ out="$(p4 push-mr "$W/agent-partial" loki/e10-partial "E10 title" "$W/body.md" 2
     && ok "a partial-clone agent repo's branch is pushed" \
     || bad "a partial-clone agent repo's branch was not pushed (rc=$rc err=$(tr '\n' ' ' < "$W/err"))"
 
+# Private origin + thin pack: the agent edits one line of a large file (a
+# delta against a blob the temp repo only knows by id), and the origin refuses
+# token-less reads. The agent-dir upload-pack runs scrubbed (no token, no HOME).
+PD="$W/pd-seed"
+git init -q "$PD"
+seq 1 20000 > "$PD/big.txt"; git -C "$PD" add big.txt; git -C "$PD" commit -q -m big
+git -C "$PD" push -q "$BARE" HEAD:refs/heads/pd-base 2>/dev/null
+git clone -q --filter=blob:none -b pd-base "file://$BARE" "$W/agent-delta" 2>/dev/null
+git -C "$W/agent-delta" checkout -q -b loki/e10-delta
+sed 's/^10000$/changed/' "$W/agent-delta/big.txt" > "$W/big.new" && cp "$W/big.new" "$W/agent-delta/big.txt"
+git -C "$W/agent-delta" commit -q -am "agent edits one line of a large file"
+git -C "$W/agent-delta" remote set-url origin "$URL"
+printf '#!/bin/sh\ncase "$(pwd -P)" in "%s") [ "${GITLAB_TOKEN:-}" = "%s" ] || { echo "origin refuses token-less read" >&2; exit 1; } ;; esac\nexec "$@"\n' "$BARE" "$CANARY" > "$W/deny-hook.sh"
+chmod +x "$W/deny-hook.sh"
+git config --global uploadpack.packObjectsHook "$W/deny-hook.sh"
+git clone -q --no-checkout "file://$BARE" "$W/ctl-tokenless" >/dev/null 2>&1 \
+    && bad "control: the origin served a token-less read (hook not live)" || ok "control: the origin refuses a token-less read"
+REAL_GIT="$(command -v git)"
+mkdir -p "$W/shimbin"
+printf '#!/bin/sh\n[ "$1" = upload-pack ] && env > "%s"\nexec "%s" "$@"\n' "$W/up.env" "$REAL_GIT" > "$W/shimbin/git"
+chmod +x "$W/shimbin/git"
+rm -f "$W/up.env"
+out="$(PATH="$W/shimbin:$PATH" p4 push-mr "$W/agent-delta" loki/e10-delta "E10 title" "$W/body.md" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ -n "$(git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-delta)" ] \
+    && ok "a thin-pack branch from a partial clone reaches a private origin" \
+    || bad "a thin-pack branch from a partial clone did not reach a private origin (rc=$rc err=$(tr '\n' ' ' < "$W/err"))"
+if [ -s "$W/up.env" ] && ! grep -qE '^(GITLAB_TOKEN|GITLAB_HOST|SSH_AUTH_SOCK|HOME|GIT_CONFIG[A-Z_]*)=' "$W/up.env" \
+    && grep -qx 'GIT_NO_LAZY_FETCH=1' "$W/up.env"; then
+    ok "the agent-dir upload-pack ran with a scrubbed env (no token, host, socket, HOME or git config env; no lazy fetch)"
+else
+    bad "the agent-dir upload-pack env was not scrubbed or not observed ($(cat "$W/up.env" 2>/dev/null | tr '\n' ' '))"
+fi
+git config --global --unset uploadpack.packObjectsHook
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

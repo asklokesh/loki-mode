@@ -6090,16 +6090,23 @@ _loki_trusted_push() {
     fi
     _tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push.XXXXXX")" || return 1
     # FC-TRUSTED-PUSH-PARTIAL-CLONE: a partial agent clone (extensions.partialclone,
-    # or a remote.<n>.promisor=true on newer git; both read as data) holds
-    # objects it never downloaded, and upload-pack does not lazy-fetch them, so
-    # the branch fetch below dies. Seed the temp repo with the validated origin
-    # (_origin_url, captured before a fork _dest overwrites _url) as a promisor
-    # remote and fetch its refs first; the push runs under the same runner, so
-    # any lazy blob fetch has the same credentials. Non-partial repos skip this.
-    local _partial=""
+    # or a remote.<n>.promisor true/yes/on/1 on newer git; both read as data)
+    # holds objects it never downloaded, and upload-pack does not lazy-fetch
+    # them, so the branch fetch below dies. Seed the temp repo with the
+    # validated origin (_origin_url, captured before a fork _dest overwrites
+    # _url) as a promisor remote and fetch its refs first. The agent pack is
+    # thin (deltas against blobs the temp repo only knows by id), so the client
+    # lazy-fetches those delta bases from loki-base during the agent fetch: that
+    # fetch therefore runs under "$_runner" too. The credentials stay on the
+    # client side only: the agent-dir upload-pack, the one process that reads
+    # agent config, is started through `env -i` with no credentials, no helper
+    # config, no HOME and no lazy fetch. GIT_TERMINAL_PROMPT=0 so a refused
+    # token never waits on a username. Non-partial repos skip all of this.
+    local _partial="" _up=""
     if [ -n "$(git -C "$_dir" config --get extensions.partialclone 2>/dev/null)" ] \
-        || git -C "$_dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -qi ' true$'; then
+        || git -C "$_dir" config --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -Eqi ' (true|yes|on|1)$'; then
         _partial=1
+        _up="/usr/bin/env -i PATH=/usr/bin:/bin GIT_NO_LAZY_FETCH=1 $(printf '%q' "$(command -v git)") upload-pack"
     fi
     # --update-shallow: a shallow agent repo's history ends in shallow roots,
     # which a plain fetch rejects while still exiting 0. The rev-parse makes a
@@ -6111,8 +6118,12 @@ _loki_trusted_push() {
             && git -C "$_tmp" config remote.loki-base.url "$_origin_url" \
             && git -C "$_tmp" config remote.loki-base.promisor true \
             && git -C "$_tmp" config remote.loki-base.partialclonefilter blob:none \
-            && "$_runner" git -C "$_tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
-        && git -C "$_tmp" fetch -q --no-tags --update-shallow "$_dir" "+refs/heads/$_branch:refs/heads/$_branch" >/dev/null 2>&1 \
+            && GIT_TERMINAL_PROMPT=0 "$_runner" git -C "$_tmp" fetch -q --no-tags --filter=blob:none loki-base "+refs/heads/*:refs/remotes/loki-base/*" >/dev/null 2>&1; }; } \
+        && { if [ -n "$_partial" ]; then
+            GIT_TERMINAL_PROMPT=0 "$_runner" git -C "$_tmp" fetch -q --no-tags --update-shallow --upload-pack "$_up" "$_dir" "+refs/heads/$_branch:refs/heads/$_branch" >/dev/null 2>&1
+        else
+            git -C "$_tmp" fetch -q --no-tags --update-shallow "$_dir" "+refs/heads/$_branch:refs/heads/$_branch" >/dev/null 2>&1
+        fi; } \
         && git -C "$_tmp" rev-parse -q --verify "refs/heads/$_branch" >/dev/null 2>&1; then
         _rc=0
         # `-C "$_tmp"`: git starts repository discovery in the fresh repo, so
