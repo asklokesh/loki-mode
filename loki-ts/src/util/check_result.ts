@@ -189,6 +189,8 @@ export function isExitCodedScript(cmd: string): boolean {
   }
   return script;
 }
+/** Stable failing id of an exit-coded script: the whole command is the unit, so a baseline and a head run of the same failing script compare equal (pre-existing attribution). */
+export const exitCodedId = (cmd: string): string => `exit-coded:${cmd.trim()}`;
 export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
@@ -198,7 +200,6 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
   if (i.cut) return { result: "not_run", reason: "timed out or aborted" };
   if (i.kind === "static") return { result: i.ok ? "pass" : "fail" };
-  if (i.exitCoded) return { result: i.ok ? "pass" : "fail", count: EXIT_CODED_COUNT }; // never carries n: it is not executed-test proof (hasExecutedProof needs n>0)
   const text = stripAnsi(i.out);
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
@@ -210,6 +211,7 @@ export function classifyCheck(i: ClassifyInput): Classified {
     return FAIL_EVIDENCE.test(text) || GO_FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
   }
   const n = testCount(i.out, i.path, i.ok);
+  if (i.exitCoded && n === null) return { result: i.ok ? "pass" : "fail", count: EXIT_CODED_COUNT }; // only when no runner summary parses (a wrapper that prints a real summary keeps its count); never carries n: not executed-test proof
   if (!i.ok && FAIL_EVIDENCE.test(text)) return { result: "fail", ...(n !== null ? { n } : {}) }; // L2: a failure is never downgraded by a zero count
   if (n === 0) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };

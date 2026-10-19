@@ -187,6 +187,11 @@ describe("FC-FULL-SUITE-EXIT-CODED-SCRIPT", () => {
   test("npm test with no summary stays not_run", () => {
     expect(cls("npm test", true, okOut).result).toBe("not_run");
   });
+  test("a wrapper script that prints a real pytest summary keeps its count, exactly as without the flag", () => {
+    const out = "collecting\n============== 5 passed in 0.12s ==============\n";
+    expect(cls("bash ci.sh", true, out)).toEqual({ result: "pass", n: 5 });
+    expect(classifyCheck({ kind: "test", ok: true, out })).toEqual({ result: "pass", n: 5 });
+  });
   test("an exit-coded pass carries no n, so it is never executed proof", () => {
     expect(hasExecutedProof([cls(checker, true, okOut)])).toBe(false);
   });

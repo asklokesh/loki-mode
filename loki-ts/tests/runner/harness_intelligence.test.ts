@@ -15,6 +15,7 @@ import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { failIds } from "../../src/engine10/failures.ts";
+import { exitCodedId } from "../../src/util/check_result.ts";
 import { attribute, attributeFullSuite, attributeStatic, baselineSuites, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
@@ -793,6 +794,20 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(attributeFullSuite(d, base, f("npm test", [...ok, "new"]), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
+      });
+      test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing in the intake baseline and attributeFullSuite; a changed script or a new command is introduced", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: false, command: null, exit_code: null, duration_s: null, timed_out: false, failing_ids: [], attributable: false } }));
+        const line = "python3 .github/scripts/check_workflow_hardening.py";
+        const p = baselineSuites(d, [{ name: "full suite: repo-root", cmd: line, cwd: ".", run: line }], { run: () => ({ code: 1, timedOut: false, out: "ERROR: unhardened job\n" }) });
+        expect(p?.suites?.[0]?.attributable).toBe(true);
+        const head = [{ name: "full suite: repo-root", cmd: line, result: "fail", ids: [exitCodedId(line)] }];
+        const a = attributeFullSuite(d, base, head, [], []);
+        expect(a.preExistingChecks).toEqual(["full suite: repo-root"]);
+        expect(a.introducedChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, head, [], [".github/scripts/check_workflow_hardening.py"]).preExistingChecks).toEqual([]); // the run edited the script: introduced
+        expect(attributeFullSuite(d, base, [{ ...head[0]!, cmd: "python3 other.py", ids: [exitCodedId("python3 other.py")] }], [], []).preExistingChecks).toEqual([]);
       });
       test("FC-FULLSUITE-ANSI-IDS: a colored head run excuses against a plain baseline superset; colored genuinely new ids still block; unparsed ids say so", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);

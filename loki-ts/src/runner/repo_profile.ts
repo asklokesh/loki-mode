@@ -28,7 +28,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, isAbsolute } from "node:path";
 import { failIds } from "../engine10/failures.ts";
-import { plainTestEnv, stripAnsi } from "../util/check_result.ts";
+import { exitCodedId, isExitCodedScript, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
@@ -402,7 +402,7 @@ function runOnce(repoDir: string, cmd: string, cwd: string, tmo: number, opts: B
   const r = (opts.run ?? shellRunner)(cmd, cwd, tmo * 1000);
   const dur = Math.round((Date.now() - started) / 100) / 10;
   rmNewUntracked(repoDir, before);
-  const ids = r.code !== 0 && !r.timedOut ? failIds(r.out) : [], missing = r.missing === true;
+  const ids = r.code !== 0 && !r.timedOut ? (failIds(r.out).length ? failIds(r.out) : isExitCodedScript(cmd) && r.code !== null ? [exitCodedId(cmd)] : []) : [], missing = r.missing === true;
   const attributable = !r.timedOut && !missing && r.code !== null && (r.code === 0 || ids.length > 0);
   const reason = attributable ? undefined : r.timedOut ? "timed out" : missing ? "command not found" : "failing test ids not parseable, failures cannot be attributed";
   return { b: { ran: true, command: cmd, exit_code: r.code, duration_s: dur, timed_out: r.timedOut, failing_ids: ids, attributable, ...(reason ? { reason } : {}) }, missing };
