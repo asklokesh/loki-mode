@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.93 (2026-10-19)
+
+### Fixed
+- The Wall test check now catches a test that searches upward from the working directory or the test folder for a repo path that does not exist (for example a misnamed plugin folder). The Wall stage asks for one rewrite naming the missing path, instead of letting the run finish against a test that can never pass and seal SPEC_CONFLICT. Loops over real folder names and paths found anywhere on the way up are not flagged. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.92 (2026-10-19)
 
 ### Fixed

@@ -2650,3 +2650,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T12:12Z (CoS) v11.17.92
 - 11.17.92: medium default same-vendor review (FC-MEDIUM-REVIEWER-UNCREDITED sibling) d40a36677+378bfa1c6+7822aafeb as r3 2abb45519. HIGH APPROVE round 3 after two BLOCKs (seal 60s limit; group kill + backstop clamp). Case D replay: receipt not_run in 5227ms, no orphan. Gates 436/0 (11 files), never_below_raw+l0_guard 19/0, spawn env guards 7/0, tsc clean (control-plane filtered). Follow-ups: bounded pipe drain for setsid grandchild (P2), Number.isFinite guard on roomS.
+
+## 2026-10-19T12:36Z (CoS) v11.17.93
+- 11.17.93: FC-WALL-PHANTOM-PATH walk-up sibling, 4d7b7abf4 + 1de873678 (cherry-picks of 09fef8ead, 3e2b7b492). HIGH opus review round 1 BLOCK (FP-A..D2 reproduced), round 2 APPROVE: gate 210/0 + tests/util 461/0, tsc 0 non-control-plane, 3 mutations red. Field case run e10-20261019T121849Z-848d reports plugins/ralph-loop.
