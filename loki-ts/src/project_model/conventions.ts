@@ -72,13 +72,15 @@ export function conventionViolation(c: PackageConventions | null, fileName: stri
   return /\bimport\.meta\b/.test(code) ? "import.meta is not allowed in a CommonJS package (TS1470)" : null;
 }
 
-/** FC-WALL-OUT-OF-REPO-TARGET: a test file that resolves the code under test outside the repo (home dir, $HOME, ~/, an absolute user path) checks an installed copy, not the change. Comments ignored; tmpdir fixtures and repo-relative paths are fine. null when clean. */
+/** FC-WALL-OUT-OF-REPO-TARGET: a test that locates the code under test through the user home (an installed copy) instead of the repo. Flags a home-derived value (homedir, Path.home, expanduser, $HOME, ~/, absolute user path) that is joined into an import/require/source/spawn/exec target or a dot-directory path, outside expect/assert lines. A file that assigns HOME has sandboxed it and is never flagged. Comments ignored; null when clean. */
 export function outOfRepoTarget(content: string): string | null {
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/(^|\s)#.*$/gm, "$1");
-  const hit = /\bhomedir\s*\(/.test(code) ? "homedir()"
-    : /\bPath\.home\s*\(|\bexpanduser\s*\(/.test(code) ? "the user home directory"
-    : /\bprocess\.env\.(HOME|USERPROFILE)\b|\benv\[\s*["'](HOME|USERPROFILE)["']|\$\{?HOME\b|\$\{?USERPROFILE\b/.test(code) ? "$HOME"
-    : /["'`]~\//.test(code) ? "a ~/ path"
-    : /["'`](?:file:\/\/)?\/(?:Users|home|root)\//.test(code) ? "an absolute user-home path" : null;
-  return hit ? `resolves the code under test outside the repo via ${hit}; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change` : null;
+  if (/\bprocess\.env\.(HOME|USERPROFILE)\s*=(?!=)|\benv\[\s*["'](HOME|USERPROFILE)["']\s*\]\s*=(?!=)|^\s*(export\s+)?(HOME|USERPROFILE)=|\bexport\s+(HOME|USERPROFILE)\b|\bsetenv\(\s*["'](HOME|USERPROFILE)["']|\benv\s*:\s*\{[^}]*\b(HOME|USERPROFILE)\s*:|\bpatch\.dict\([^)]*["'](HOME|USERPROFILE)["']/m.test(code)) return null;
+  const home = /\bhomedir\s*\(|\bPath\.home\s*\(|\bexpanduser\s*\(|\$\{?HOME\b|\$\{?USERPROFILE\b|\bprocess\.env\.(HOME|USERPROFILE)\b|["'`]~\/|["'`](?:file:\/\/)?\/(?:Users|home|root)\//;
+  const locates = /["'`\/]\.[A-Za-z][\w-]*(?:[\/"'`]|$)|\b(?:import|require|source|spawn\w*|exec\w*|pathToFileURL|readFile\w*)\b/;
+  for (const line of code.split("\n")) {
+    if (/^\s*(?:await\s+)?(?:expect|assert\w*)\b/.test(line)) continue;
+    if (home.test(line) && locates.test(line)) return "resolves the code under test outside the repo via a home-directory path; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change";
+  }
+  return null;
 }

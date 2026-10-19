@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET } from "../../src/engine10/stages/wall.ts";
+import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import { conventionViolation, conventionsBrief, outOfRepoTarget, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
@@ -153,18 +153,26 @@ describe("COST-14 Wall brief output budget", () => {
 
 describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
   const INSTALLED = "const t = process.env.PLUGIN_DIR ?? join(homedir(), '.claude/plugins/x/y');\ntest('a', () => { expect(t).toBeTruthy(); });\n";
-  test("detector: homedir, $HOME, ~/, absolute user paths rejected; repo-relative, tmpdir and comments pass", () => {
-    expect(outOfRepoTarget(INSTALLED)).toContain("homedir()");
-    expect(outOfRepoTarget("const p = process.env.HOME + '/x';")).toContain("$HOME");
-    expect(outOfRepoTarget("const p = '~/code/x';")).toContain("~/");
-    expect(outOfRepoTarget("const p = '/Users/someone/repo/x';")).toContain("absolute");
-    expect(outOfRepoTarget("p = Path.home() / 'x'")).not.toBeNull();
+  test("detector: home-derived values that locate code are rejected; repo-relative and tmpdir pass", () => {
+    expect(outOfRepoTarget(INSTALLED)).not.toBeNull();
+    expect(outOfRepoTarget("const p = join(process.env.HOME!, '.claude', 'x');")).not.toBeNull();
+    expect(outOfRepoTarget("const m = await import(join(homedir(), 'x', 'y.ts'));")).not.toBeNull();
+    expect(outOfRepoTarget("p = Path.home() / '.config' / 'x'")).not.toBeNull();
     expect(outOfRepoTarget("const p = join(import.meta.dir, '..', 'plugins', 'a', 'b');")).toBeNull();
     expect(outOfRepoTarget("const d = mkdtempSync(join(tmpdir(), 'fx-'));")).toBeNull();
     expect(outOfRepoTarget("// was homedir() before\nconst p = './src/a';")).toBeNull();
   });
+  test("detector negatives: sandboxed HOME, expect/assert comparisons, shell and pytest home checks pass", () => {
+    expect(outOfRepoTarget("process.env.HOME = d;\nexpect(configPath()).toBe(join(d, '.app'));")).toBeNull(); // A
+    expect(outOfRepoTarget("expect(expandPath('~/foo')).toBe(join(d, 'foo'));")).toBeNull(); // C
+    expect(outOfRepoTarget("expect(normalize('/home/user/x')).toBe('/home/user/x');")).toBeNull(); // D
+    expect(outOfRepoTarget("def test_x(monkeypatch):\n    monkeypatch.setenv('HOME', str(tmp_path))\n    assert os.path.expanduser('~') == str(tmp_path)\n    p = os.path.join(os.path.expanduser('~'), '.config')\n")).toBeNull(); // E
+    expect(outOfRepoTarget('HOME="$(mktemp -d)"; export HOME\n./bin/loki init\n[ -f "$HOME/.loki/config" ]\n')).toBeNull(); // F
+  });
   test("brief tells the writer to use repo-relative paths", () => {
-    expect(buildWallBrief("t")).toContain("repo-relative paths only");
+    const b = buildWallBrief("t"), at = b.indexOf(WALL_REPO_PATHS);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(b.indexOf("t\n") === -1 ? b.length : b.indexOf("Repository paths") === -1 ? b.length : b.indexOf("Repository paths")); // static prefix, before run-specific text
   });
   test("a Wall file targeting the home dir is re-asked once with the reason; the rewrite is kept", async () => {
     const repoDir = cjsRepo(); const briefs: string[] = [];
