@@ -2668,3 +2668,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T14:48Z (CoS) v11.17.98
 - 11.17.98: FC-CP-DENYLIST-DRIFT 6d8767316 (main CI red since 11.17.96: control-plane ask_policy parity + CP-04). TL APPROVE; control-plane package 539 pass 0 fail, tests/test-control-plane.sh 33 passed 0 failed.
+
+## 2026-10-19T16:47Z (CoS) v11.17.99
+- 11.17.99: one batched release per founder directive. FC-WALL-PROOF-PACKAGE-BLIND (opus APPROVE r2), FC-REVIEWER-GIT-CONFIG-EXEC (opus APPROVE r3), engine10 budget fix, plus CI pruned to release.yml (1fc608f34). Targeted suites 203 pass 0 fail; tests/util 476/0; tsc clean. Full bun suite hung past 1700s (no verdict).

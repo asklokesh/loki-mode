@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.99 (2026-10-19)
+
+### Fixed
+- Seal: a package with no test command is now credited when the acceptance Wall failed on the base, passed on the head, and every changed file (other than the run's own Wall files) belongs to that package. Previously a root-level Wall left such a package NOT PROVEN, so fixes to test-less plugin packages sealed PARTIAL instead of VERIFIED.
+- Reviewer git hardening: git in reviewer children can no longer run repo-configured programs through gpg signature checks, lazy-fetch ssh or upload-pack commands, diff-shim option injection, textconv filters or the pager. It fails closed on a repo-set upload-pack or receive-pack and on partial clones with git older than 2.44. Voter and quality-gate reviewer spawns use a token-free base environment, and a guard checks every call.
+- The engine10 core is back under its 5,000-line budget (no behaviour change).
+
+### Changed
+- CI is reduced to a single release workflow that runs on a VERSION push and publishes npm (latest and next), the tag and GitHub release, Homebrew, the SDKs and signed Docker images with no test gate in front. The Tests, nightly, security audit, SBOM, Docker build check, post-release smoke, integrity audit, model-catalog probe, code review and CLA workflows are removed.
+
 ## v11.17.98 (2026-10-19)
 
 ### Fixed
