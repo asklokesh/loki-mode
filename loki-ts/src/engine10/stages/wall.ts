@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
@@ -17,7 +17,7 @@ import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, s
 import { commandFor } from "./verify.ts"; import { harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -158,11 +158,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: { iteration_ids: [iterationId], model }, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const planText = typeof prior.plan?.plan === "string" ? prior.plan.plan : null, repoFiles = repoMap?.files ?? [];
-  const phantomWhy = (name: string, text: string): string | null => { // FC-WALL-PHANTOM-PATH: a repo path the base tree lacks and the plan does not create
-    const miss = phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText); if (miss.length === 0) return null;
-    return `references repo path(s) that do not exist in the repository and that the plan does not create: ${miss.map((m) => { const near = repoFiles.filter((f) => basename(f) === basename(m) && f !== m).slice(0, 3); return near.length ? `${m} (a file named ${basename(m)} exists at ${near.join(", ")})` : m; }).join("; ")}. Locate the real code by searching the repository; do not copy a name from the task text as a path`;
-  };
-  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? phantomWhy(name, text); return why ? [{ name, why }] : []; });
+  const oor = (): { name: string; why: string }[] => readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)).flatMap((name) => { const text = readFileSync(join(cwd, name), "utf8"), why = outOfRepoTarget(text) ?? phantomReason(phantomRepoPaths(text, name, targetDir, ctx.repoDir, planText), repoFiles); return why ? [{ name, why }] : []; });
   const bad1 = oor(); // FC-WALL-OUT-OF-REPO-TARGET: re-ask once in the same directory with the precise reason
   if (bad1.length > 0 && !signal.aborted) await ctx.sessions.run({ stage: "wall", brief: withStagePrefix([`Rewrite these Wall files in place, keeping the same names and acceptance coverage. Each was rejected:\n${bad1.map((b) => `- ${b.name}: ${b.why}`).join("\n")}`, `Point every reference at the repository code with repo-relative paths (for example join(import.meta.dir, "..", "<repo path>") or the equivalent for this runner). Do not read the home directory, $HOME or an environment variable that falls back to one. Write nothing else.`].join("\n\n")), tier: "development", model, iterationId: `${iterationId}-oor`, limitS: wallLimitS(sz.size), signal, cwd });
   const oorBad = new Map(oor().map((b) => [b.name, b.why])), all = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX)), held = stashHoldout({ runId: ctx.runId, repoDir: ctx.repoDir, srcDir: cwd, targetDir, names: all.filter((n) => !oorBad.has(n) && !conventionViolation(conv, n, readFileSync(join(cwd, n), "utf8"))), runnerOf: (n) => guessRunner(n, runners) }), generated = all.filter((n) => !held?.names.has(n)); // P12-05: the held-out subset never reaches the repo, runDir or the implementer

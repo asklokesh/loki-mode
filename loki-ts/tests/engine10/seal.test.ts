@@ -27,7 +27,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes, commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -733,6 +733,16 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(addedSymlinkNotes([meta, "l"], null)).toHaveLength(1);
     expect(addedSymlinkNotes([meta, "l"], "Add a symlink l for compatibility")).toEqual([]);
     expect(addedSymlinkNotes([":120000 000000 " + "1".repeat(40) + " " + "0".repeat(40) + " D", "l"], null)).toEqual([]);
+    const z = "0".repeat(40), o1 = "1".repeat(40);
+    expect(addedSymlinkNotes([":120000 120000 " + o1 + " " + z + " M", "l"], null)).toEqual([]); // a retargeted link is not an added one
+    expect(addedSymlinkNotes([":100644 120000 " + o1 + " " + z + " T", "l"], null)).toHaveLength(1); // a regular file became a link
+    expect(addedSymlinkNotes([":120000 100644 " + o1 + " " + z + " T", "l"], null)).toEqual([]);
+    for (const neg of ["do not add a symlink", "No symlink here", "Do it without a symlink"]) expect(addedSymlinkNotes([meta, "l"], neg)).toHaveLength(1);
+    expect(addedSymlinkNotes([meta, "l"], "Create an alias for the old name")).toHaveLength(1); // alias is not an escape
+    expect(addedSymlinkNotes([meta, "l"], "Do not use a symlink. Later, add a symlink at l.")).toEqual([]);
+    const sub = ":000000 160000 " + z + " " + o1 + " A";
+    expect(addedSymlinkNotes([sub, "vendor/x"], null)).toHaveLength(1);
+    expect(addedSymlinkNotes([sub, "vendor/x"], "Add the x submodule")).toEqual([]);
   }, 30000);
 
   test("D50-F2-S2: a literal value swap is labelled beside weakened test and a deleted assert stays weakened test only; both seal PARTIAL", async () => {

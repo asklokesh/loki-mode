@@ -181,3 +181,15 @@ export async function zeroOnBase(
   }
   return zero;
 }
+
+/** FC-WALL-PHANTOM-PATH: a symlink ADDED by the change (status A, or T where a regular file became a link; a retargeted link, M, is not) or an added submodule pointer (mode 160000) makes a missing path appear without implementing anything. NOT PROVEN by name unless the plan asks for one: only the words symlink(s) / submodule(s), and not negated ("no symlink", "do not add a symlink", "without a submodule"). Input is the raw diff-tree -z list (meta, path pairs). */
+export function addedSymlinkNotes(rawDiff: string[], planText: string | null): string[] {
+  const asks = (w: string): boolean => [...(planText ?? "").matchAll(new RegExp(`\\b${w}s?\\b`, "gi"))].some((m) => !/\b(?:no|not|never|without|avoid|don'?t|cannot|can'?t)\b[^.\n]{0,40}$/i.test(planText!.slice(Math.max(0, m.index! - 45), m.index!)));
+  const out: string[] = [];
+  for (let i = 0; i + 1 < rawDiff.length; i += 2) {
+    const f = rawDiff[i]!.trim().split(" "), oldMode = f[0]!.replace(/^:/, ""), st = f[f.length - 1]!, p = rawDiff[i + 1]!;
+    if (f[1] === "120000" && (st === "A" || (st === "T" && oldMode !== "120000")) && !asks("symlink")) out.push(`symlink added by the change (a link can stand in for missing work; the plan did not ask for one): ${p}`);
+    else if (f[1] === "160000" && (st === "A" || st === "T") && !asks("submodule")) out.push(`submodule pointer added by the change (it can stand in for missing work; the plan did not ask for one): ${p}`);
+  }
+  return out;
+}

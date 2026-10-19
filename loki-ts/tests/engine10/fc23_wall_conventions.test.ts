@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomRepoPaths, readPackageConventions } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import type { RunContext, SessionRunOptions, StageName } from "../../src/engine10/types.ts";
 
@@ -220,6 +220,46 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'node_modules', 'x');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths(PHANTOM, "a.py", td, repo, null)).toEqual([]);
+  });
+  test("monorepo: process.cwd() paths resolve against the nearest package root of the test file and the repo root", () => {
+    const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "packages/a/src"), { recursive: true });
+    writeFileSync(join(repo, "packages/a/package.json"), "{}"); writeFileSync(join(repo, "packages/a/src/x.ts"), "x\n");
+    const td = join(repo, "packages/a/test"), code = "const f = join(process.cwd(), 'src', 'x.ts');";
+    expect(phantomRepoPaths(code, "x.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const f = join(process.cwd(), 'plugins', 'ralph-wiggum');", "x.test.ts", td, repo, null)).toEqual([]); // exists under the repo root
+    expect(phantomRepoPaths("const f = join(process.cwd(), 'src', 'nope.ts');", "x.test.ts", td, repo, null)).toHaveLength(1);
+  });
+  test("a const-bound path the test later creates is not phantom", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    expect(phantomRepoPaths("const OUT = join(__dirname, '..', 'build-out');\nmkdirSync(OUT, { recursive: true });\nwriteFileSync(join(OUT, 'a.txt'), 'x');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const OUT = join(__dirname, '..', 'gen');\nawait fs.mkdir(OUT);", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const OUT = join(__dirname, '..', 'gen');\nconst DST = join(__dirname, '..', 'copy');\ncpSync(OUT, DST);", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const OUT = join(__dirname, '..', 'gen');\nexpect(OUT).toBeTruthy();", "a.test.ts", td, repo, null)).toEqual(["gen"]);
+  });
+  test("a path the repo git-ignores is not phantom", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    execFileSync("git", ["init", "-q"], { cwd: repo }); writeFileSync(join(repo, ".gitignore"), ".next/\nout/\n");
+    expect(phantomRepoPaths("const f = join(__dirname, '..', '.next', 'server', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const f = join(__dirname, '..', 'out', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const f = join(__dirname, '..', 'src', 'a.js');", "a.test.ts", td, repo, null)).toEqual(["src/a.js"]);
+  });
+  test("a plan that names any missing path segment marks the path planned", () => {
+    const repo = repoWith(), td = join(repo, "tests"), code = "const f = join(__dirname, '..', 'src', 'newmod', 'index.ts');";
+    expect(phantomRepoPaths(code, "a.test.ts", td, repo, null)).toEqual(["src/newmod/index.ts"]);
+    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Introduce a newmod module with an entry point")).toEqual([]);
+    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Refactor the other module")).toEqual(["src/newmod/index.ts"]);
+  });
+  test("a Prettier-split join() call is caught; fileURLToPath(new URL('..', import.meta.url)) anchors like __dirname", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    expect(phantomRepoPaths("const f = join(\n  __dirname,\n  '..',\n  'plugins',\n  'ralph-loop',\n);", "a.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
+    expect(phantomRepoPaths("const f =\n  join(__dirname, '..', 'plugins', 'ralph-loop');", "a.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
+    expect(phantomRepoPaths("const ROOT = fileURLToPath(new URL('..', import.meta.url));\nconst f = join(ROOT, 'plugins', 'ralph-loop');", "a.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
+    expect(phantomRepoPaths("const ROOT = fileURLToPath(new URL('..', import.meta.url));\nconst f = join(ROOT, 'plugins', 'ralph-wiggum');", "a.test.ts", td, repo, null)).toEqual([]);
+  });
+  test("same-name hint works for a missing directory", () => {
+    const why = phantomReason(["plugins/ralph-loop"], ["some/other/ralph-loop/run.sh", "x/y.ts"]);
+    expect(why).toContain("plugins/ralph-loop (a path named ralph-loop exists at some/other/ralph-loop)");
+    expect(phantomReason([], [])).toBeNull();
   });
   test("a phantom path is re-asked once with the reason and the nearest real file; the rewrite is kept", async () => {
     const repoDir = repoWith(); const briefs: string[] = [];

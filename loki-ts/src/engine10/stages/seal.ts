@@ -33,7 +33,7 @@ import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_gu
 import { hooks } from "../hooks.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
-import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts";
+import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes } from "../../util/base_guard.ts";
 
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)", AGENT_ONLY_REASON = "only agent-authored tests executed (no agent-independent proof)", WALL_GREEN_ON_BASE_REASON = "Wall green on base: no Wall test discriminates the change"; // TEN-GATES-02
 
@@ -106,13 +106,6 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
 }
 
 /** FC-21b: verify's target_checks (Wall and task-named relevant tests) names a test that ran n>0 and passed; read from verify's raw checks, never from prose. */
-/** FC-WALL-PHANTOM-PATH: a symlink or alias ADDED by the change (git mode 120000 on the head side) makes a missing path appear without implementing anything. NOT PROVEN by name unless the plan asks for a link. Input is the raw diff-tree -z list (meta, path pairs). */
-export function addedSymlinkNotes(rawDiff: string[], planText: string | null): string[] {
-  if (planText && /\b(symlink|symbolic link|alias)\b/i.test(planText)) return [];
-  const out: string[] = [];
-  for (let i = 0; i + 1 < rawDiff.length; i += 2) { const f = rawDiff[i]!.trim().split(" "); if (f[1] === "120000" && f[f.length - 1] !== "D") out.push(`symlink added by the change (a link can stand in for missing work; the plan did not ask for one): ${rawDiff[i + 1]}`); }
-  return out;
-}
 export function targetProofOf(v: Obj | undefined): boolean {
   const names = new Set(strs(v?.target_checks)), raw = Array.isArray(v?.checks) ? (v.checks as Obj[]) : [];
   return raw.some((c) => names.has(String(c.name)) && hasExecutedProof([c]));
@@ -181,12 +174,11 @@ export const sealStage: Stage = {
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx); // TEN-GATES-02: A = added in this run
     const weakTests: string[] = [];
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
-    const rcNotes = diffOk ? runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal) : []; // D86 FC-09: runner config or a file it loads changed
-    const linkNotes = diffOk ? addedSymlinkNotes(rawDiff, str(o.plan?.plan)) : []; // FC-WALL-PHANTOM-PATH
+    const rcNotes = diffOk ? [...runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal), ...addedSymlinkNotes(rawDiff, str(o.plan?.plan))] : []; // D86 FC-09: runner config or a file it loads changed
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const vraw = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : [], executed = hasExecutedProof(vraw), proof = process.env["LOKI_EXOGENOUS_PROOF"] === "0" ? executed : hasExogenousProof(vraw, pctx); // FC-16: executed n>0 pass from verify's raw checks (a Wall green on base proves only a claim, inside verdictOf); TEN-GATES-02 (D104): that pass must be agent-independent (LOKI_EXOGENOUS_PROOF=0 opts out)
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
-    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0 || rcNotes.length > 0 || linkNotes.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
+    const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0 || rcNotes.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
@@ -222,7 +214,6 @@ export const sealStage: Stage = {
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(n);
     for (const n of rcNotes) notProven.add(n);
-    for (const n of linkNotes) notProven.add(n);
     for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes)]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades

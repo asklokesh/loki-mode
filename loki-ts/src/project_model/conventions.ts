@@ -1,5 +1,6 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
+import { safeGitSpawn } from "../util/safe_git.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -85,33 +86,58 @@ export function outOfRepoTarget(content: string): string | null {
   return null;
 }
 
-/** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed) that do not exist in the base tree. A path the plan names is a file to create and passes; write/expect/tmp lines are ignored. Returns repo-relative missing paths (max 3). */
+const MANIFESTS = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"];
+const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
+
+/** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed, calls split across lines joined) that do not exist in the base tree. process.cwd() is tried as the nearest package root of the test dir (verify runs a package's tests there) and as the repo root; a path existing under either passes. A path the plan names, creates (mkdir/write/cp/rename target), or that git ignores passes; write/expect/tmp lines are ignored. Returns repo-relative missing paths (max 3). */
 export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null): string[] {
   if (!/\.[cm]?[jt]sx?$/.test(fileName)) return [];
-  const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const vars = new Map<string, string>(), seen = new Set<string>(), missing: string[] = [];
+  const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/,\s*\n\s*/g, ", ").replace(/=\s*\n\s*/g, "= ");
+  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !MANIFESTS.some((m) => existsSync(join(pkg, m)))) pkg = dirname(pkg);
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
-  const named = (rel: string): boolean => !!planText && (planText.includes(rel) || (/\.\w+$/.test(rel) && planText.includes(basename(rel))));
-  const ev = (raw: string, report: boolean): string | null => {
-    const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
-    if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
-    if (e === "process.cwd()") return repoDir;
-    if (e === "fileURLToPath(import.meta.url)" || e === "__filename") return join(testDir, "__self__");
-    const lit = /^(["'`])((?:\\.|(?!\1)[^\\])*)\1$/.exec(e); if (lit) return lit[2]!.includes("${") ? null : lit[2]!;
-    if (/^[A-Za-z_$][\w$]*$/.test(e)) return vars.get(e) ?? null;
-    const call = /^(?:path\.)?(join|resolve|dirname)\(([\s\S]*)\)$/.exec(e); if (!call) return null;
-    const parts = split(call[2]!), args = parts.map((a) => ev(a, report)); if (args.some((a) => a === null)) return null;
-    if (call[1] === "dirname") return dirname(args[0]!);
-    const out = resolve(...(args as string[]));
-    if (report && relative(testDir, out).startsWith("..") && parts.some((a) => /^\s*["'`]/.test(a)) && !seen.has(out)) { seen.add(out); const rel = relative(repoDir, out); if (rel && !rel.startsWith("..") && !isAbsolute(rel) && !/(^|\/)(node_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) && !existsSync(out) && !named(rel)) missing.push(rel); }
-    return out;
+  const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
+  const scan = (cwd: string): { reports: { out: string; rel: string }[]; created: string[] } => {
+    const vars = new Map<string, string>(), reports: { out: string; rel: string }[] = [], created: string[] = [];
+    const ev = (raw: string, report: boolean): string | null => {
+      const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
+      if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
+      if (e === "process.cwd()") return cwd;
+      if (e === "fileURLToPath(import.meta.url)" || e === "__filename") return join(testDir, "__self__");
+      const url = /^fileURLToPath\(new URL\((["'])([^"']*)\1\s*,\s*import\.meta\.url\)\)$/.exec(e); if (url) return resolve(testDir, url[2]!);
+      const lit = /^(["'`])((?:\\.|(?!\1)[^\\])*)\1$/.exec(e); if (lit) return lit[2]!.includes("${") ? null : lit[2]!;
+      if (/^[A-Za-z_$][\w$]*$/.test(e)) return vars.get(e) ?? null;
+      const call = /^(?:path\.)?(join|resolve|dirname)\(([\s\S]*)\)$/.exec(e); if (!call) return null;
+      const parts = split(call[2]!), args = parts.map((a) => ev(a, report)); if (args.some((a) => a === null)) return null;
+      if (call[1] === "dirname") return dirname(args[0]!);
+      const out = resolve(...(args as string[]));
+      if (report && relative(testDir, out).startsWith("..") && parts.some((a) => /^\s*["'`]/.test(a))) reports.push({ out, rel: relative(repoDir, out) });
+      return out;
+    };
+    for (const line of code.split("\n")) {
+      for (const m of line.matchAll(CREATORS)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) for (const a of split(line.slice(m.index! + m[0].length, j))) { const v = ev(a, false); if (v) created.push(v); } }
+      const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
+      const asg = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.+?);?\s*$/.exec(line);
+      if (asg) { const v = ev(asg[2]!, !skip); if (v !== null) vars.set(asg[1]!, v); continue; }
+      if (skip) continue;
+      for (const m of line.matchAll(/(?:path\.)?(?:join|resolve)\(/g)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) ev(line.slice(m.index!, j + 1), true); }
+    }
+    return { reports, created };
   };
-  for (const line of code.split("\n")) {
-    const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
-    const asg = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.+?);?\s*$/.exec(line);
-    if (asg) { const v = ev(asg[2]!, !skip); if (v !== null) vars.set(asg[1]!, v); continue; }
-    if (skip) continue;
-    for (const m of line.matchAll(/(?:path\.)?(?:join|resolve)\(/g)) { let d = 0, j = m.index! + m[0].length - 1; for (; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) break; } if (d === 0) ev(line.slice(m.index!, j + 1), true); }
-  }
+  const runs = [...new Set([pkg, repoDir])].map(scan), words = (planText ?? "").toLowerCase();
+  const planned = (rel: string): boolean => !!planText && (planText.includes(rel) || (/\.\w+$/.test(rel) && planText.includes(basename(rel))) || rel.split("/").some((seg, i, a) => { const b = seg.replace(/\.\w+$/, ""); return b.length > 1 && !existsSync(join(repoDir, ...a.slice(0, i + 1))) && new RegExp(`(^|[^\\w-])${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\w-])`).test(words); }));
+  const phantom = (r: { out: string; rel: string }, created: string[]): boolean => {
+    const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(node_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
+    if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
+    return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel]).status !== 0;
+  };
+  const missing: string[] = [];
+  runs[0]!.reports.forEach((r, i) => { if (runs.every((x) => x.reports[i] && phantom(x.reports[i]!, x.created)) && !missing.includes(r.rel)) missing.push(r.rel); });
   return missing.slice(0, 3);
+}
+
+/** FC-WALL-PHANTOM-PATH: the re-ask text (null when nothing is missing) for a phantom Wall file; the hint names real paths holding a segment with the same name, so a missing directory finds its real home too. */
+export function phantomReason(miss: string[], repoFiles: string[]): string | null {
+  if (miss.length === 0) return null;
+  const hint = (m: string): string => { const n = basename(m), near = [...new Set(repoFiles.flatMap((f) => { const s = f.split("/"), k = s.indexOf(n); return k >= 0 && s.slice(0, k + 1).join("/") !== m ? [s.slice(0, k + 1).join("/")] : []; }))].slice(0, 3); return near.length ? `${m} (a path named ${n} exists at ${near.join(", ")})` : m; };
+  return `references repo path(s) that do not exist in the repository and that the plan does not create: ${miss.map(hint).join("; ")}. Locate the real code by searching the repository; do not copy a name from the task text as a path`;
 }
