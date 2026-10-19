@@ -2671,3 +2671,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T16:47Z (CoS) v11.17.99
 - 11.17.99: one batched release per founder directive. FC-WALL-PROOF-PACKAGE-BLIND (opus APPROVE r2), FC-REVIEWER-GIT-CONFIG-EXEC (opus APPROVE r3), engine10 budget fix, plus CI pruned to release.yml (1fc608f34). Targeted suites 203 pass 0 fail; tests/util 476/0; tsc clean. Full bun suite hung past 1700s (no verdict).
+
+## 2026-10-19T17:09Z (CoS) v11.17.100
+- 11.17.100: FC-WALL-FILE-OWNS-EVERY-PACKAGE (opus HIGH review). claude-code#81826 on 11.17.99 sealed PARTIAL on untouched package `scripts` because the root Wall file read as owned by every test-less package. monorepo_cwd 38/0 (red on HEAD 2739c8e26: 1 fail), tsc clean.

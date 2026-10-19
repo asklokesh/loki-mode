@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.100 (2026-10-19)
+
+### Fixed
+- Seal: the run's own passing acceptance Wall file at the repo root no longer makes every package without a test command count as changed. Previously, in a repo with two or more such packages, an untouched one stayed NOT PROVEN, so a fix confined to one test-less package sealed PARTIAL instead of VERIFIED. An unknown diff, a Wall-only diff, a failed Wall, or any product file with no owning package still stays NOT PROVEN.
+
 ## v11.17.99 (2026-10-19)
 
 ### Fixed
