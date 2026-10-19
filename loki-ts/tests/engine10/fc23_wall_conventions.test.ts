@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, readPackageConventions } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import type { RunContext, SessionRunOptions, StageName } from "../../src/engine10/types.ts";
 
@@ -60,6 +60,12 @@ describe("FC-23 conventions reader (parser, not a guess)", () => {
 });
 
 describe("FC-23 Wall author matches the package", () => {
+  test("CommonJS brief does not instruct require() in TypeScript (the package lint forbids it)", () => {
+    const b = conventionsBrief(readPackageConventions(cjsRepo()));
+    expect(b).toContain("CommonJS");
+    expect(b).toContain("write import statements");
+    expect(b).not.toContain("require() for paths and modules");
+  });
   test("a CommonJS package: the brief carries the convention, and a Wall test with import.meta is discarded, not placed in the tree", async () => {
     const repoDir = cjsRepo();
     let brief = "";
