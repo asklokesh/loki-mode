@@ -245,7 +245,10 @@ function isYarnBerry(dir: string): boolean {
  *  governing lockfile, runs in a directory that cannot be resolved, is joined to a `||` fallback or matches no rule is kept as written and the result
  *  says it is not locked. A `cd X` segment moves the lookup to X. Never guesses a package manager. */
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
-  const parts = modelCmd.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
+  const flat = modelCmd.replace(/\\\r?\n/g, " ");
+  // No shell parser: a `||`, a quote or a paren anywhere leaves every install in the whole command as written.
+  const whole = flat.includes("||") ? "fallback masks install failure" : /['"()`]/.test(flat) ? "unparsed shell construct" : null;
+  const parts = flat.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
   // Shell reads `a && b || c` as `(a && b) || c`: a `||` masks a failure anywhere earlier in its `;`/newline-separated list.
   const listOf: number[] = []; let li = 0;
   parts.forEach((p, k) => { listOf[k] = li; if (k % 2 === 1 && /[;\n]/.test(p)) li++; });
@@ -264,7 +267,7 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
     const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
     if (!rule) return seg;
     hits++;
-    if (masked.has(listOf[k]!)) { locked = false; notes.push("fallback masks install failure"); return seg; }
+    if (whole || masked.has(listOf[k]!)) { locked = false; notes.push(whole ?? "fallback masks install failure"); return seg; }
     const rest = w.slice(e + (hasSub ? 2 : 1));
     if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
     if (cur === null) { locked = false; notes.push(`${tool} runs in a directory that cannot be resolved, kept as written`); return seg; }

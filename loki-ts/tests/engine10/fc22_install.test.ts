@@ -362,9 +362,21 @@ describe("lockedInstall (locked, reproducible install)", () => {
       expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
       expect(r.note).toContain("fallback masks install failure");
     }
-    // a different list (separated by ; or newline) is not masked
-    expect(lockedInstall(repo, repo, "npm install; npm run build || true").cmd).toBe("npm ci; npm run build || true");
-    expect(lockedInstall(repo, repo, "npm install\nnpm run build || true").cmd).toBe("npm ci\nnpm run build || true");
+    // quotes, continuations and parens defeat plain-text list splitting: the whole command is left as written
+    for (const [cmd, note] of [
+      ['npm install && echo "x;y" || true', "fallback masks install failure"],
+      ["npm install && echo 'x\ny' || true", "fallback masks install failure"],
+      ["npm install && \\\n echo ok || true", "fallback masks install failure"],
+      ['npm install && echo "x"', "unparsed shell construct"],
+      ["npm install && (echo ok)", "unparsed shell construct"],
+    ] as const) {
+      const r = lockedInstall(repo, repo, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
+      expect(r.note).toContain(note);
+    }
+    // without ||, quotes or parens, ; and newline lists are still split and rewritten
+    expect(lockedInstall(repo, repo, "npm install; npm run build").cmd).toBe("npm ci; npm run build");
+    expect(lockedInstall(repo, repo, "npm install\nnpm run build").cmd).toBe("npm ci\nnpm run build");
   });
   test("uv --frozen and pipenv sync are rewritten to forms that fail on a stale lock", () => {
     put(repo, "uv.lock", "Pipfile.lock");
