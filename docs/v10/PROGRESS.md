@@ -2626,3 +2626,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T09:07Z (CoS) v11.17.84
 - 11.17.84: TEN-QUALITY-41/42 (21aa567a8, TL APPROVE, 2 mutations red), TEN-QUALITY-44 (e6d010590 219cf7a7d, TL APPROVE, mutation red), TEN-QUALITY-45 merge-interaction fix (b9db7ad92, TL APPROVE, mutation red 2 tests). Main targeted 612 pass 0 fail, tsc rc=0.
+
+## 2026-10-19T10:34Z (CoS) v11.17.85
+- 11.17.85: main Tests fix-forward (red on c5358b462..6a710258f): 65259575d WF-GATE-DEDUP drift, 74862da13 app_probe docker stub, 0a897c42c L0 guard breach (MANIFESTS literal) in conventions.ts. HIGH opus APPROVE: mutations caught (gate pytest, app_probe text, L0 literal), engine10 split 761+1828 pass 0 fail, util 459/0, tsc rc=0; route_matrix_mutation unverified (timeout). Follow-ups filed: nameless-manifest fallback false phantom, \w*_modules too broad, chained pip+pytest bypass.

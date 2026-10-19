@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.85 (2026-10-19)
+
+### Fixed
+- The Wall check that catches a test pointing at a path that does not exist in the repository now finds a package's root from the project model and the package's own manifest, instead of a fixed list of manifest file names, so it works the same way for any language or package layout.
+- Two internal tests no longer depend on the CI machine (one assumed Docker was absent, one rejected installing pytest in the release gate). No user-visible change. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.84 (2026-10-19)
 
 ### Fixed
