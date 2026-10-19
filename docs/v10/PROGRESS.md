@@ -2578,3 +2578,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T00:19Z (CoS) v11.17.68
 - FireLater#20 (FC-BASELINE-PER-PACKAGE, FC-DEPS-NOT-INSTALLED): 4 HIGH rounds. R1 BLOCK c3ea3ec1e (B1 untyped not-found keys, B2 install leak, B3 FAIL-line duration strip). R2 BLOCK f1db1bb88 (info/exclude dropped agent lockfile, persisted, shared across worktrees). R3 BLOCK 37bff6049 (load_owner changedSince unfiltered: Cannot find package zod -> code failure). R4 APPROVE b8418f695: real runCheck repro fail -> not_run/harness; positive control stays fail; 650 pass 0 fail across 19 files; tsc clean outside control-plane. Rebased onto 0d153a7e9 as 52bb0fb78, loki-ts src/tests diff vs reviewed = empty. drift 4/0, sigpipe rc 0, select-tests 119/0.
+
+## 2026-10-19T02:38Z (CoS) v11.17.69
+- FC-23 Wall CJS brief (FireLater#20 rerun on 11.17.67: Wall failed lint:eslint:backend no-require-imports). Engineer 2cfe35140, TL APPROVE: fc23_wall_conventions 10/0, red with parent conventions.ts 9/1. Cherry-picked as edef17cd5.
