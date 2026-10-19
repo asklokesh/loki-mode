@@ -169,6 +169,15 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
     expect(outOfRepoTarget("def test_x(monkeypatch):\n    monkeypatch.setenv('HOME', str(tmp_path))\n    assert os.path.expanduser('~') == str(tmp_path)\n    p = os.path.join(os.path.expanduser('~'), '.config')\n")).toBeNull(); // E
     expect(outOfRepoTarget('HOME="$(mktemp -d)"; export HOME\n./bin/loki init\n[ -f "$HOME/.loki/config" ]\n')).toBeNull(); // F
   });
+  test("literal path not flagged: an absolute literal with no home-derived value passes; homedir joins still flag", () => {
+    expect(outOfRepoTarget("const p = join('/home/user/project', '.git');")).toBeNull();
+    expect(outOfRepoTarget("const g = '/Users/dev/app/.git';\nexec(g);")).toBeNull();
+    expect(outOfRepoTarget("const p = join(homedir(), '.git');")).not.toBeNull();
+  });
+  test("home exemption scoped: homedir() joined before a HOME assignment still flags; after it passes", () => {
+    expect(outOfRepoTarget("const p = join(homedir(), '.claude', 'x');\nprocess.env.HOME = d;")).not.toBeNull();
+    expect(outOfRepoTarget("process.env.HOME = d;\nconst p = join(homedir(), '.claude', 'x');")).toBeNull();
+  });
   test("brief tells the writer to use repo-relative paths", () => {
     const b = buildWallBrief("t"), at = b.indexOf(WALL_REPO_PATHS);
     expect(at).toBeGreaterThan(-1);
