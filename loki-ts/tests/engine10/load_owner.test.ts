@@ -41,6 +41,15 @@ describe("B2: base load error must match head's", () => {
     const o = "FAIL a.test.js\n  Test suite failed to run\n\n    Cannot find module 'dep' from 'src/fmt.js'\n";
     expect(await run(dir, sha, o, o)).toBe(true);
   });
+  test("FC-DEPS-NOT-INSTALLED: an untracked install-created node_modules/x/package.json is not the code's change (skip), so the load error stays harness-owned", async () => {
+    const { dir, sha } = repo();
+    mkdirSync(join(dir, "node_modules/x"), { recursive: true }); writeFileSync(join(dir, "node_modules/x/package.json"), "{}\n");
+    const o = "Error: Cannot find package 'zod' imported from lib/other.js\n";
+    const script = `printf '%s\\n' "$OUT"; exit 1`;
+    const input = { repoDir: dir, baseSha: sha, out: o, cmd: "bash", args: ["-c", script], signal: new AbortController().signal, env: { OUT: o } };
+    expect(await loadErrorIsHarnessOwned(input)).toBe(false); // without the filter the stem "package" matches the installed file (the bug)
+    expect(await loadErrorIsHarnessOwned({ ...input, skip: (f: string) => f.startsWith("node_modules/") })).toBe(true);
+  });
   test("positive control: same signature without a name, paths normalized across checkouts", async () => {
     const { dir, sha } = repo();
     const o = `ImportError while importing test module '${dir}/tests/test_a.py'.\n`;

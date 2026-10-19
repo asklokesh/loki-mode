@@ -51,12 +51,12 @@ export function buildFixResumeBrief(groups: { signature: string; count: number; 
 
 /** TEN-QUALITY-07: the live diff against the run base, computed fresh each fix round (no stage records one). Stat always; bounded hunks
  *  when `hunks`; untracked files by name (ls-files, no index change). .loki/ excluded. Null when git cannot answer. */
-export function currentDiff(repoDir: string, baseSha: string, maxBytes = 6000, hunks = false): string | null {
+export function currentDiff(repoDir: string, baseSha: string, maxBytes = 6000, hunks = false, skip?: (f: string) => boolean): string | null {
   const ex = [":(exclude).loki", ":(exclude).loki/**"];
   try {
     const parts = [safeGit(repoDir, ["diff", "--stat", baseSha, "--", ".", ...ex]).trimEnd()];
     if (hunks) parts.push(safeGit(repoDir, ["diff", "-U2", baseSha, "--", ".", ...ex]).trimEnd());
-    const fresh = safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter((f) => f && f !== ".loki" && !f.startsWith(".loki/"));
+    const fresh = safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter((f) => f && f !== ".loki" && !f.startsWith(".loki/") && !skip?.(f));
     if (fresh.length) parts.push(`New untracked files:\n${fresh.join("\n")}`);
     const text = parts.filter(Boolean).join("\n\n") || "(no changes since the run base)";
     if (Buffer.byteLength(text) <= maxBytes) return text;

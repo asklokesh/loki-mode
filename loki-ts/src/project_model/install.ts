@@ -227,7 +227,7 @@ export async function intakeDeps(ctx: Pick<RunContext, "repoDir" | "runId" | "em
 }
 
 // --no-filters: never run a clean filter from the agent-writable .git/config
-const hashOf = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string => safeGit(repoDir, ["hash-object", "-w", "--no-filters", "--", path], { env }).trim();
+const hashOf = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string => safeGit(repoDir, ["hash-object", "--no-filters", "--", path], { env }).trim();
 /** FC-DEPS-NOT-INSTALLED: untracked entries (a wholly untracked directory collapsed to "dir/") the dependency install created. Files carry a
  *  content hash, directories are dependency trees. Nothing is written into the repo's git config or exclude files. */
 export interface InstallCreated { files: Record<string, string>; dirs: string[] }

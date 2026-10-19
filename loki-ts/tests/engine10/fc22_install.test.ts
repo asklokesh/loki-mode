@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
 import { changedFiles } from "../../src/util/check_result.ts";
 import { dropSet, parseStaged } from "../../src/e10ext/commit_filter.ts";
+import { currentDiff } from "../../src/runner/session_resume.ts";
 import { installOwned } from "../../src/project_model/install.ts";
 import { absentDepRoots, intakeDeps, prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
@@ -257,6 +258,12 @@ describe("absentDepRoots and intakeDeps (FC-DEPS-NOT-INSTALLED)", () => {
       expect((await runDeps(wt))["install_created"]).toBeTruthy();
       expect(exclude(wt)).toBe(before); expect(exclude(repo)).toBe(before);
     } finally { rmSync(wt, { recursive: true, force: true }); }
+  });
+  test("currentDiff lists the agent's new file but not install-created paths", async () => {
+    git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");
+    prep(repo, INSTALL); const ic = (await runDeps(repo))["install_created"]; writeFileSync(join(repo, "mine.txt"), "x\n");
+    const d = currentDiff(repo, baseOf(repo), 6000, false, installOwned(repo, ic)) ?? "";
+    expect(d).toContain("mine.txt"); expect(d).not.toContain("node_modules"); expect(d).not.toContain("bun.lock");
   });
   test("a failed install records nothing that hides files", async () => {
     git("rm", "-q", ".gitignore"); git("commit", "-qm", "no gitignore");

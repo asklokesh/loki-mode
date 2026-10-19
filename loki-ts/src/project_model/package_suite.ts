@@ -31,7 +31,7 @@ export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpe
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string },
+  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean },
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -44,7 +44,7 @@ export async function runPackageSuites(
     if (signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`not run: ${name} (aborted)`); continue; }
     // FC-16 C1 / FC-02: the same parser and load-error ownership as the legacy per-runner path, per package.
     const out = `${r.stdout}\n${r.stderr}`;
-    const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), ...(opts.path ? { env: { PATH: opts.path } } : {}) });
+    const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, ...(opts.skip ? { skip: opts.skip } : {}), out, cmd: "bash", args: ["-c", line], signal, cwd: join(repoDir, cwd), ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
     const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(line) });
     checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.result === "fail" ? { ids: failIds(out) } : {}) });

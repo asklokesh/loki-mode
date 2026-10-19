@@ -23,6 +23,7 @@ export interface LoadOwnerInput {
   cwd?: string; // directory the check ran in (a package dir); defaults to repoDir, mapped into the base worktree
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
+  skip?: (f: string) => boolean; // install-created paths (FC-DEPS-NOT-INSTALLED): not the code's change
 }
 
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -95,14 +96,14 @@ export async function runOnBase(i: LoadOwnerInput, dir: string): Promise<string 
 }
 
 /** Tracked changes against baseSha plus untracked files (same set as verify.ts changedFiles); unknown diff throws. */
-function changedSince(repoDir: string, baseSha: string): string[] {
+function changedSince(repoDir: string, baseSha: string, skip?: (f: string) => boolean): string[] {
   const g = (a: string[]): string[] => safeGit(repoDir, a).split("\n").map((l) => l.trim()).filter(Boolean);
-  return [...new Set([...g(["diff", "--name-only", baseSha]), ...g(["ls-files", "--others", "--exclude-standard"])])].filter((f) => !f.startsWith(".loki/"));
+  return [...new Set([...g(["diff", "--name-only", baseSha]), ...g(["ls-files", "--others", "--exclude-standard"])])].filter((f) => !f.startsWith(".loki/") && !skip?.(f));
 }
 
 export async function loadErrorIsHarnessOwned(i: LoadOwnerInput): Promise<boolean> {
   if (i.protect || !i.baseSha || i.signal.aborted) return false;
-  let changed: string[]; try { changed = changedSince(i.repoDir, i.baseSha); } catch { return false; } // unknown diff: fail-safe
+  let changed: string[]; try { changed = changedSince(i.repoDir, i.baseSha, i.skip); } catch { return false; } // unknown diff: fail-safe
   if (changedFilesNamed(i.out, i.repoDir, changed).length > 0) return false;
   if (i.args.some((a) => changed.includes(a.replace(/^\.\//, "")))) return false; // the target test file is the agent's own
   const dir = mkdtempSync(join(tmpdir(), "e10-loadown-"));
