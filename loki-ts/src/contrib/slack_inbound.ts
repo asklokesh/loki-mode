@@ -9,7 +9,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { redactSecrets } from "../util/redact.ts";
-import { readEvents } from "../engine10/events.ts";
+import { conflictReasonOf, readEvents } from "../engine10/events.ts";
 
 export const MAX_SKEW_S = 300;
 
@@ -147,7 +147,7 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
 
 function blockedQuestion(repoDir: string, runId: string): string | undefined {
   try {
-    const why = readEvents(join(repoDir, ".loki", "runs", runId, "events.jsonl")).find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
+    const why = conflictReasonOf(readEvents(join(repoDir, ".loki", "runs", runId, "events.jsonl")));
     return typeof why === "string" ? why.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500) : undefined;
   } catch { return undefined; }
 }

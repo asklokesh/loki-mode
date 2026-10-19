@@ -8,6 +8,7 @@ import { clipWords, formatClock, formatDuration, formatTokens } from "../util/te
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
+import { conflictReasonOf } from "./events.ts";
 import { STAGE_BUDGETS } from "./types.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
@@ -64,7 +65,7 @@ export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null
 }
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
   const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], bad = checks.find((c) => c.result === "fail");
-  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : outcome === "CANCELLED" ? "cancelled by signal; usage recorded so far is kept" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("fix")?.spec_conflict_reason ?? done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : undefined) ?? ev.find((e) => e.type === "stage.failed")?.data.reason ?? (v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
+  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : outcome === "CANCELLED" ? "cancelled by signal; usage recorded so far is kept" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${conflictReasonOf(ev) ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : undefined) ?? ev.find((e) => e.type === "stage.failed")?.data.reason ?? (v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
   return clipWords(redactSecrets(String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim()), 200) || undefined;
 }
 export interface PreModelTiming { span_s: number; stages: Record<string, number> } // D61-1: startMs to first session.started, self-time per stage ("setup" = none open); sums to span_s

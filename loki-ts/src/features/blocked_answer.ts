@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readEvents } from "../engine10/events.ts";
+import { conflictReasonOf, readEvents } from "../engine10/events.ts";
 import { eventsPath, latestRunId, listRunIds, runsRoot } from "../commands/run_status.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
@@ -36,7 +36,7 @@ export function readBlocked(repoDir: string, runId: string): BlockedRun | string
   const verdict = evs.findLast((e) => e.type === "run.completed")?.data.verdict;
   if (verdict !== "SPEC_CONFLICT") return `run ${runId} is not BLOCKED (verdict ${typeof verdict === "string" ? verdict : "none yet"})`;
   const task = evs.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.task;
-  const why = evs.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
+  const why = conflictReasonOf(evs);
   if (typeof task !== "string" || !task) return `run ${runId} has no recorded task`;
   return { runId, task, question: clean(typeof why === "string" && why ? why : "the run is blocked on a spec conflict").slice(0, 500) };
 }

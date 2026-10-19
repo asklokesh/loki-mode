@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { runIntent } from "../../src/util/run_outputs.ts";
+import { runIntent, workItemBlockers } from "../../src/util/run_outputs.ts";
 import { answerEnv, readAnswerFile, readBlocked, runAnswer, type AnswerDeps } from "../../src/features/blocked_answer.ts";
 
 const FIX = join(import.meta.dir, "../../../packages/control-plane/test/fixtures/runs");
@@ -29,6 +29,19 @@ function deps(repo: string, answerDir: string) {
   };
   return { d, calls, out, err };
 }
+
+describe("fix-round spec conflict reason (FC-FIX-CONFLICT-STALLED)", () => {
+  test("readBlocked and workItemBlockers show the fix round's reason, not implement's or unspecified", () => {
+    const id = "e10-20261001T155511Z-fix1", repo = mkdtempSync(join(root, "repo-"));
+    const ev = (seq: number, type: string, stage: string | null, data: Record<string, unknown>) => ({ v: 1, seq, ts: "2026-10-01T15:55:11.000Z", run: id, type, stage, data });
+    const evs = [ev(0, "run.started", null, {}), ev(1, "stage.completed", "intake", { task: "do the thing" }), ev(2, "stage.completed", "implement", { exit: "done" }),
+      ev(3, "stage.completed", "fix", { exit: "spec_conflict", spec_conflict_reason: "test demands X but spec says Y" }), ev(4, "run.completed", null, { verdict: "SPEC_CONFLICT" })];
+    mkdirSync(join(repo, ".loki", "runs", id), { recursive: true });
+    writeFileSync(join(repo, ".loki", "runs", id, "events.jsonl"), evs.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    expect(workItemBlockers(evs as never)).toEqual(["spec_conflict: test demands X but spec says Y"]);
+    expect(readBlocked(repo, id)).toMatchObject({ question: "test demands X but spec says Y" });
+  });
+});
 
 describe("loki answer", () => {
   test("answer file plus fixture BLOCKED run gives argv with task, question and answer", async () => {
