@@ -2,8 +2,10 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
+import { basename, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { classifyCheck, goRunner } from "./check_result.ts";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
 
@@ -112,16 +114,68 @@ export function noteOf(intake: Record<string, unknown> | undefined): string | nu
   return typeof m === "string" && m !== "" ? m : null;
 }
 
-/** FC-ZERO-ON-BASE: true when dependency dirs under `pkgDir` can resolve into `repoDir` (a workspace symlink in node_modules or @scope/*, a .venv .pth, *.egg-link or direct_url.json naming the repo), so a base rerun that links them would run head sources. Anything unreadable counts as true (fail closed). */
+// FC-ZERO-ON-BASE. A zero-executed test is excused only if a base rerun cannot observe head code. Linking the head checkout's dependency
+// dirs into the base worktree is only safe when nothing in them resolves back into the repo, so the dirs are scanned first.
+const WALK_BOUND = 50000;
+const REPO_LINK_FILE = /\.pth$|\.egg-link$|^direct_url\.json$|^__editable___.*_finder\.py$/;
+
+/** True when `p` (as spelled, or resolved when it exists) lies inside one of `roots`. */
+function insideAny(p: string, roots: string[]): boolean {
+  const under = (q: string): boolean => roots.some((r) => q === r || q.startsWith(r + sep));
+  if (under(resolve(p))) return true;
+  try { return under(realpathSync(p)); } catch { return false; }
+}
+
+/** Paths a .pth, .egg-link, direct_url.json or editable finder names: every line and, for a file:// URL, its decoded path. */
+function namedPaths(file: string, text: string): string[] {
+  const out = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  if (basename(file) !== "direct_url.json") return out;
+  const url = (JSON.parse(text) as { url?: unknown }).url;
+  return typeof url === "string" && url.startsWith("file:") ? [...out, fileURLToPath(url)] : out;
+}
+
+/** True when dependency dirs under `pkgDir` (node_modules, .venv) can resolve into `repoDir`: any symlink anywhere in them whose target is inside the
+ *  repo (nested workspace links included; symlinks are inspected, never followed), or an editable-install file naming the repo. The repo is compared
+ *  as given and as realpath. Exceeding the entry bound, or any read error other than a missing dir, withholds (fail closed). */
 export function depsSeeHead(pkgDir: string, repoDir: string): boolean {
-  const root = realpathSync(repoDir), inside = (p: string): boolean => { try { const r = realpathSync(p); return r === root || r.startsWith(root + "/"); } catch { return true; } };
-  const link = (p: string): boolean => lstatSync(p).isSymbolicLink() && inside(p);
+  let roots: string[];
+  try { roots = [...new Set([resolve(repoDir), realpathSync(repoDir)])]; } catch { return true; }
+  let seen = 0;
+  const walk = (dir: string, own: string[]): boolean => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (++seen > WALK_BOUND) return true;
+      const p = join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        const t = resolve(dir, readlinkSync(p)); if (insideAny(t, roots) && !insideAny(t, own)) return true; // a link inside its own dependency dir (npm .bin, pnpm store) is self-contained; its entries are scanned too
+      } else if (e.isDirectory()) {
+        if (walk(p, own)) return true;
+      } else if (REPO_LINK_FILE.test(e.name)) {
+        const text = readFileSync(p, "utf8");
+        if (roots.some((r) => text.includes(r)) || namedPaths(p, text).some((n) => insideAny(n, roots))) return true;
+      }
+    }
+    return false;
+  };
   try {
-    const nm = join(pkgDir, "node_modules");
-    for (const e of readdirSync(nm).map((n) => join(nm, n))) if (link(e) || (!lstatSync(e).isSymbolicLink() && lstatSync(e).isDirectory() && readdirSync(e).some((s) => link(join(e, s))))) return true;
-  } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") return true; }
-  try {
-    const walk = (d: string, depth: number): boolean => readdirSync(d, { withFileTypes: true }).some((x) => (x.isDirectory() && depth < 4 && walk(join(d, x.name), depth + 1)) || (/\.pth$|\.egg-link$|^direct_url\.json$/.test(x.name) && readFileSync(join(d, x.name), "utf8").includes(root)));
-    return walk(join(pkgDir, ".venv"), 0);
-  } catch (e) { return (e as NodeJS.ErrnoException).code !== "ENOENT"; }
+    return ["node_modules", ".venv"].some((d) => { try { const top = join(pkgDir, d); return walk(top, [...new Set([resolve(top), realpathSync(top)])]); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return false; throw e; } });
+  } catch { return true; }
+}
+
+/** FC-ZERO-ON-BASE: for each zero-executed candidate run its command once in the base worktree `baseDir` (deps linked from the head checkout, never
+ *  copied) and return the names that also execute zero tests there. A candidate whose deps can see head sources, or whose base run is cut, missing
+ *  or not a zero, is left out (stays NOT PROVEN). `note` is called per excused name. */
+export async function zeroOnBase(
+  cands: { name: string; cmd: string; args: string[]; cwd: string }[], baseDir: string, repoDir: string,
+  run: (c: { cmd: string; args: string[]; cwd: string }) => Promise<{ ok: boolean; cut: boolean; missing: boolean; out: string }>, note: (name: string) => void,
+): Promise<string[]> {
+  const zero: string[] = [];
+  for (const c of cands) {
+    const src = join(repoDir, relative(baseDir, c.cwd));
+    if (depsSeeHead(src, repoDir)) continue;
+    for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(c.cwd, d))) symlinkSync(join(src, d), join(c.cwd, d)); } catch { /* no deps on base: not zero, stays fail-closed */ } }
+    const b = await run(c), last = c.args[c.args.length - 1] ?? "";
+    const k = classifyCheck({ kind: "test", ok: b.ok, cut: b.cut, missing: b.missing, out: b.out, ...goRunner(c.cmd, c.args), path: /\.[cm]?[jt]s$/.test(last) ? last : undefined });
+    if (k.result === "not_run" && k.n === 0 && !b.cut && !b.missing) { zero.push(c.name); note(c.name); }
+  }
+  return zero;
 }

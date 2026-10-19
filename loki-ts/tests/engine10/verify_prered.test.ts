@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { depsSeeHead } from "../../src/util/base_guard.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
 import { runCheck, verifyStage } from "../../src/engine10/stages/verify.ts";
 import { failIds } from "../../src/engine10/failures.ts";
@@ -196,6 +198,14 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
     const rel = (await run(mk("./shared/helper.test.js"))).data as unknown as Z;
     expect(rel.skipped_on_base).toEqual([]); // head's off=true also hides the test via the relative path, and base has off=false: tests ran on base, so not zero there either
   }, 60_000);
+  test("nested workspace link (reviewer repro 3): node_modules/foo/node_modules/shared -> ../../../shared withholds the excusal end to end", async () => {
+    const gated = T + "if (!require('foo/node_modules/shared/helper.test.js').off) t('runs on base',()=>{});\n";
+    const { ctx, dir } = repoWith({ ".gitignore": "node_modules\n", "shared/helper.test.js": "exports.off=false;\n", "gated.test.js": gated }, { "shared/helper.test.js": "exports.off=true;\n" }, [node("gated.test.js")]);
+    mkdirSync(join(dir, "node_modules", "foo", "node_modules"), { recursive: true }); symlinkSync("../../../shared", join(dir, "node_modules", "foo", "node_modules", "shared"));
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
   test("zero on head but tests ran on base (file untouched): stays fail-closed", async () => {
     // head breaks what the file loads into executing nothing: the helper is replaced so the (unchanged) test file registers no test
     const gated = T + "if (!require('./gate.js').off) t('runs on base',()=>{});\n";
@@ -204,4 +214,53 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
     expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
+});
+
+describe("depsSeeHead (FC-ZERO-ON-BASE)", () => {
+  const mk = (name = "r"): string => { const d = mkdtempSync(join(tmpdir(), "e10-dsh-")); dirs.push(d); const r = join(d, name); mkdirSync(r, { recursive: true }); return r; };
+  const site = (r: string): string => { const s = join(r, ".venv", "lib", "python3.12", "site-packages"); mkdirSync(s, { recursive: true }); return s; };
+  test("a nested link anywhere under node_modules that resolves into the repo is seen", () => {
+    const r = mk(); mkdirSync(join(r, "shared")); mkdirSync(join(r, "node_modules", "foo", "node_modules"), { recursive: true });
+    symlinkSync("../../../shared", join(r, "node_modules", "foo", "node_modules", "shared"));
+    expect(depsSeeHead(r, r)).toBe(true);
+  });
+  test("a scoped link is seen; links and files that stay outside the repo are not", () => {
+    const r = mk(), o = mk("outside"); mkdirSync(join(r, "node_modules", "@s"), { recursive: true }); mkdirSync(join(r, "node_modules", "plain"));
+    writeFileSync(join(r, "node_modules", "plain", "index.js"), "x\n"); symlinkSync(o, join(r, "node_modules", "ext"));
+    expect(depsSeeHead(r, r)).toBe(false);
+    mkdirSync(join(r, "pkg")); symlinkSync("../../pkg", join(r, "node_modules", "@s", "pkg"));
+    expect(depsSeeHead(r, r)).toBe(true);
+  });
+  test("a link that stays inside its own node_modules (.bin style) is self-contained", () => {
+    const r = mk(); mkdirSync(join(r, "node_modules", "tool", "bin"), { recursive: true }); mkdirSync(join(r, "node_modules", ".bin"));
+    writeFileSync(join(r, "node_modules", "tool", "bin", "t.js"), "x\n"); symlinkSync("../tool/bin/t.js", join(r, "node_modules", ".bin", "t"));
+    expect(depsSeeHead(r, r)).toBe(false);
+  });
+  test("no dependency dirs: nothing to see", () => { expect(depsSeeHead(mk(), mk("other"))).toBe(false); });
+  test("direct_url.json file:// URL with a space (%20) is decoded", () => {
+    const r = mk("my repo"), s = site(r); mkdirSync(join(s, "x-1.dist-info"));
+    writeFileSync(join(s, "x-1.dist-info", "direct_url.json"), JSON.stringify({ url: pathToFileURL(r).href, dir_info: { editable: true } }));
+    expect(pathToFileURL(r).href).toContain("%20");
+    expect(depsSeeHead(r, r)).toBe(true);
+  });
+  test("a remote direct_url.json does not see head", () => {
+    const r = mk(), s = site(r); mkdirSync(join(s, "x-1.dist-info"));
+    writeFileSync(join(s, "x-1.dist-info", "direct_url.json"), JSON.stringify({ url: "https://example.invalid/x.tar.gz" }));
+    expect(depsSeeHead(r, r)).toBe(false);
+  });
+  test("path spelling: a symlinked repo dir is compared as given and as realpath", () => {
+    const r = mk(), l = join(r, "..", "linked"); symlinkSync(r, l); mkdirSync(join(r, "shared"));
+    const s = site(r); writeFileSync(join(s, "x.pth"), join(l, "shared") + "\n"); // spelled through the link, repoDir given as the real path
+    expect(depsSeeHead(r, r)).toBe(true);
+    rmSync(join(s, "x.pth")); writeFileSync(join(s, "y.egg-link"), join(r, "shared") + "\n\n"); // spelled real, repoDir given through the link
+    expect(depsSeeHead(r, l)).toBe(true);
+  });
+  test("an editable finder module naming the repo is seen", () => {
+    const r = mk(), s = site(r); writeFileSync(join(s, "__editable___x_1_0_finder.py"), `MAPPING = {'x': '${join(r, "src", "x")}'}\n`);
+    expect(depsSeeHead(r, r)).toBe(true);
+  });
+  test("an unrelated .pth outside the repo does not see head", () => {
+    const r = mk(), o = mk("elsewhere"), s = site(r); writeFileSync(join(s, "x.pth"), o + "\n");
+    expect(depsSeeHead(r, r)).toBe(false);
+  });
 });
