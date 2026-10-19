@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.95 (2026-10-19)
+
+### Fixed
+- The Wall author is now told the directory its acceptance test will run from (and that it is copied to the repository root when it is), so a test no longer builds paths against the wrong base and fails as a phantom path. When the Wall re-ask fires, its reason names the location cause and the package root, and still lists any real typo alongside it.
+- A stale `loki_wall_*` test left in the repository by an earlier run is no longer selected through the test map or risk scan, and no longer credited as an independent pass. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.94 (2026-10-19)
 
 ### Fixed
