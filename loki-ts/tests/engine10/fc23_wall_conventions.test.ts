@@ -302,6 +302,17 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'out', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'src', 'a.js');", "a.test.ts", td, repo, null)).toEqual(["src/a.js"]);
   });
+  test("walk-up phantom: a join on a loop base seeded from cwd or the test dir is checked against the repo (run e10-20261019T121849Z-848d)", () => {
+    const WALK = (leaf: string): string => "import { existsSync, mkdtempSync } from 'node:fs';\nimport { tmpdir } from 'node:os';\nimport { dirname, join, resolve } from 'node:path';\nfunction pluginDir(): string {\n  for (const start of [process.cwd(), import.meta.dir]) {\n    let dir = resolve(start);\n    while (true) {\n      const candidate = join(dir, 'plugins', '" + leaf + "');\n      if (existsSync(join(candidate, 'scripts', 'setup-ralph-loop.sh'))) return candidate;\n      const parent = dirname(dir);\n      if (parent === dir) break;\n      dir = parent;\n    }\n  }\n  throw new Error('plugins/ralph-loop not found at or above cwd');\n}\n";
+    const repo = repoWith(), td = join(repo, "tests");
+    expect(phantomRepoPaths(WALK("ralph-loop"), "w.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
+    expect(phantomRepoPaths(WALK("ralph-loop"), "w.test.ts", repo, repo, null)).toEqual(["plugins/ralph-loop"]);
+    expect(phantomRepoPaths(WALK("ralph-loop"), "w.test.ts", td, repo, "Create plugins/ralph-loop")).toEqual([]);
+    expect(phantomRepoPaths(WALK("ralph-wiggum"), "w.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths(WALK("ralph-loop").replace("'plugins'", "'nowhere'"), "w.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const d = mkdtempSync(join(tmpdir(), 'x-'));\nconst f = join(d, 'plugins', 'ralph-loop');", "w.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const base = join(tmpdir(), 'x');\nfor (const s of [base]) { let dir = resolve(s); const c = join(dir, 'plugins', 'ralph-loop'); }", "w.test.ts", td, repo, null)).toEqual([]);
+  });
   test("package root fallback: a named manifest above the test dir is the cwd; a fixture json in the test dir is not; the incident still reports", () => {
     const repo0 = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo0 });
     for (const [p, c] of Object.entries({ "packages/a/package.json": '{"name":"a","version":"1"}', "packages/a/src/x.ts": "x\n", "packages/a/test/user.json": '{"name":"bob","age":3}' })) { mkdirSync(join(repo0, p, ".."), { recursive: true }); writeFileSync(join(repo0, p), c); }

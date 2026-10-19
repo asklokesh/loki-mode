@@ -109,12 +109,13 @@ const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSyn
 export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null): string[] {
   if (!/\.[cm]?[jt]sx?$/.test(fileName)) return [];
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/,\s*\n\s*/g, ", ").replace(/=\s*\n\s*/g, "= ");
+  const walkCode = /\bfor\s*\(\s*(?:const|let|var)\s+\w+\s+of\s*\[/.test(code) ? code.replace(/([;{])[ \t]*(?=(?:const|let|var)\s)/g, "$1\n") : code; // a walk-up loop: statements sharing a line are split so each binding is followed
   const pkg = nearestPackageRoot(testDir, repoDir, fileName);
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
   const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
   const strayInTestDir = (out: string): boolean => { const first = relative(testDir, out).split("/")[0]!; return !!first && first !== "__self__" && !existsSync(join(testDir, first)) && [pkg, repoDir].some((d) => d !== testDir && existsSync(join(d, first))); }; // inside the test dir but the first segment only exists at a repo root: the author meant a repo path
   const scan = (cwd: string): { reports: Map<string, { out: string; rel: string }>; created: string[] } => {
-    const vars = new Map<string, string>(), reports = new Map<string, { out: string; rel: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
+    const vars = new Map<string, string>(), walk = new Set<string>(), taint = new Set<string>(), reports = new Map<string, { out: string; rel: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
     const ev = (raw: string, report: boolean): string | null => {
       const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
       if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
@@ -128,14 +129,18 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
       const parts = split(call[2]!), args = parts.map((a) => ev(a, report)); if (args.some((a) => a === null)) return null;
       if (call[1] === "dirname") return dirname(args[0]!);
       const out = resolve(...(args as string[]));
-      if (report && (relative(testDir, out).startsWith("..") || strayInTestDir(out)) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out) });
+      const first = parts.slice(1).map((a) => /^\s*["'`]([^"'`]*)["'`]\s*$/.exec(a)?.[1]).find((x) => x), viaWalk = !!first && walk.has(parts[0]!.trim()) && [pkg, repoDir].some((d) => existsSync(join(d, first.split("/").filter(Boolean)[0] ?? "\0"))); // a walk-up base reaches the repo root: the first literal segment is checked there (absent everywhere keeps the old silence)
+      if (report && (viaWalk || (!parts.some((a) => walk.has(a.trim()) || taint.has(a.trim())) && (relative(testDir, out).startsWith("..") || strayInTestDir(out)))) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out) });
       return out;
     };
-    for (const line of code.split("\n")) {
+    for (const line of walkCode.split("\n")) {
       ln++;
+      for (const m of line.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s*\[([^\]]*)\]/g)) { const seeds = split(m[2]!).map((x) => ev(x, false)); if (seeds.length && seeds.every((x) => x !== null)) { vars.set(m[1]!, cwd); walk.add(m[1]!); } } // loop variable seeded from cwd or the test dir: a walk-up start
+      const wasg = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:path\.)?(?:resolve|join)\(\s*([A-Za-z_$][\w$]*)\s*\)\s*;?\s*$/.exec(line); if (wasg && walk.has(wasg[2]!)) walk.add(wasg[1]!); // dir = resolve(start) keeps the walk base
       for (const m of line.matchAll(CREATORS)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) for (const a of split(line.slice(m.index! + m[0].length, j))) { const v = ev(a, false); if (v) created.push(v); } }
       const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
       const asg = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.+?);?\s*$/.exec(line);
+      if (asg && /[A-Za-z_$][\w$]*/.test(asg[2]!) && [...asg[2]!.matchAll(/[A-Za-z_$][\w$]*/g)].some((w) => walk.has(w[0]) || taint.has(w[0]))) taint.add(asg[1]!); // built on a walk-up base: only the walk rule reports it
       if (asg) { const v = ev(asg[2]!, !skip); if (v !== null) vars.set(asg[1]!, v); continue; }
       if (skip) continue;
       for (const m of line.matchAll(/(?:path\.)?(?:join|resolve)\(/g)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) ev(line.slice(m.index!, j + 1), true); }
@@ -151,7 +156,7 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   };
   const missing: string[] = [];
   for (const [k, r] of runs[0]!.reports) if (runs.every((x) => x.reports.has(k) && phantom(x.reports.get(k)!, x.created)) && !missing.includes(r.rel)) missing.push(r.rel);
-  return missing.slice(0, 3);
+  return missing.filter((m) => !missing.some((o) => o !== m && m.startsWith(o + "/"))).slice(0, 3);
 }
 
 /** FC-WALL-PHANTOM-PATH: the re-ask text (null when nothing is missing) for a phantom Wall file; the hint names real paths holding a segment with the same name, so a missing directory finds its real home too. */
