@@ -73,15 +73,17 @@ export function conventionViolation(c: PackageConventions | null, fileName: stri
   return /\bimport\.meta\b/.test(code) ? "import.meta is not allowed in a CommonJS package (TS1470)" : null;
 }
 
-/** FC-WALL-OUT-OF-REPO-TARGET: a test that locates the code under test through the user home (an installed copy) instead of the repo. Flags a home-derived value (homedir, Path.home, expanduser, $HOME, ~/, literal absolute paths are not home-derived) that is joined into an import/require/source/spawn/exec target or a dot-directory path, outside expect/assert lines. Lines from the first HOME assignment on are sandboxed and not flagged. Comments ignored; null when clean. */
+/** FC-WALL-OUT-OF-REPO-TARGET: a test that locates the code under test through the user home (an installed copy) instead of the repo. Flags a home-derived value (homedir, Path.home, expanduser, $HOME, ~/) that is joined into an import/require/source/spawn/exec target or a dot-directory path, outside expect/assert lines. A quoted absolute home literal (/Users, /home, /root, C:\\Users) that is itself the target of a from/import/require/source line is also flagged; plain string literals are not. Lines from the first HOME assignment on are sandboxed and not flagged. Comments ignored; null when clean. */
 export function outOfRepoTarget(content: string): string | null {
   const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/(^|\s)#.*$/gm, "$1");
   const lines = code.split("\n"), at = lines.findIndex((l) => /\bprocess\.env\.(HOME|USERPROFILE)\s*=(?!=)|\benv\[\s*["'](HOME|USERPROFILE)["']\s*\]\s*=(?!=)|^\s*(export\s+)?(HOME|USERPROFILE)=|\bexport\s+(HOME|USERPROFILE)\b|\bsetenv\(\s*["'](HOME|USERPROFILE)["']|\benv\s*:\s*\{[^}]*\b(HOME|USERPROFILE)\s*:|\bpatch\.dict\([^)]*["'](HOME|USERPROFILE)["']/.test(l)); // the exemption starts at the HOME assignment
   const home = /\bhomedir\s*\(|\bPath\.home\s*\(|\bexpanduser\s*\(|\$\{?HOME\b|\$\{?USERPROFILE\b|\bprocess\.env\.(HOME|USERPROFILE)\b|["'`]~\//;
+  const HOMELIT = String.raw`(?:file:\/\/)?(?:\/(?:Users|home|root)\/|[A-Za-z]:\\+Users\\)`;
+  const literalTarget = new RegExp(String.raw`\b(?:from|import|require)\s*\(?\s*["'`+"`"+String.raw`]${HOMELIT}|^\s*(?:source|\.)\s+["']?${HOMELIT}`);
   const locates = /["'`\/]\.[A-Za-z][\w-]*(?:[\/"'`]|$)|\b(?:import|require|source|spawn\w*|exec\w*|pathToFileURL|readFile\w*)\b/;
   for (const line of lines.slice(0, at < 0 ? lines.length : at)) {
     if (/^\s*(?:await\s+)?(?:expect|assert\w*)\b/.test(line)) continue;
-    if (home.test(line) && locates.test(line)) return "resolves the code under test outside the repo via a home-directory path; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change";
+    if ((home.test(line) && locates.test(line)) || literalTarget.test(line)) return "resolves the code under test outside the repo via a home-directory path; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change";
   }
   return null;
 }

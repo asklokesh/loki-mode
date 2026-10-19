@@ -169,6 +169,19 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
     expect(outOfRepoTarget("def test_x(monkeypatch):\n    monkeypatch.setenv('HOME', str(tmp_path))\n    assert os.path.expanduser('~') == str(tmp_path)\n    p = os.path.join(os.path.expanduser('~'), '.config')\n")).toBeNull(); // E
     expect(outOfRepoTarget('HOME="$(mktemp -d)"; export HOME\n./bin/loki init\n[ -f "$HOME/.loki/config" ]\n')).toBeNull(); // F
   });
+  test("literal import target flagged: a quoted absolute home path that is the direct import/require/source target", () => {
+    expect(outOfRepoTarget('import { f } from "/Users/someone/.claude/plugins/x/f.ts";')).not.toBeNull();
+    expect(outOfRepoTarget('import "/home/dev/app/setup.ts";')).not.toBeNull();
+    expect(outOfRepoTarget("const m = await import('/home/dev/app/f.ts');")).not.toBeNull();
+    expect(outOfRepoTarget("const m = require('/root/app/f.js');")).not.toBeNull();
+    expect(outOfRepoTarget('source /home/dev/app/lib.sh')).not.toBeNull();
+    expect(outOfRepoTarget('. "/home/dev/app/lib.sh"')).not.toBeNull();
+    expect(outOfRepoTarget('import { f } from "C:\\Users\\dev\\f.ts";')).not.toBeNull();
+    expect(outOfRepoTarget('const p = "/home/user/project/.git";')).toBeNull();
+    expect(outOfRepoTarget('const d = "/Users/dev/app";\nrun(d);')).toBeNull();
+    expect(outOfRepoTarget('process.env.HOME = d;\nimport { f } from "/Users/x/f.ts";')).toBeNull();
+    expect(outOfRepoTarget('expect(x).toBe(require("/home/a/b"));')).toBeNull();
+  });
   test("literal path not flagged: an absolute literal with no home-derived value passes; homedir joins still flag", () => {
     expect(outOfRepoTarget("const p = join('/home/user/project', '.git');")).toBeNull();
     expect(outOfRepoTarget("const g = '/Users/dev/app/.git';\nexec(g);")).toBeNull();
