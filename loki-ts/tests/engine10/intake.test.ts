@@ -23,8 +23,18 @@ const FIX = join(import.meta.dir, "fixtures", "intake");
 // The tree cache lives under ~/.loki/cache/v10; keep every run in this file off the real home.
 const realHome = process.env.HOME;
 const fakeHome = mkdtempSync(join(tmpdir(), "e10-intake-home-"));
-beforeAll(() => { process.env.HOME = fakeHome; });
-afterAll(() => { if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome; rmSync(fakeHome, { recursive: true, force: true }); });
+// Intake records full-suite baselines (intakeDeps -> baselineSuites) through `sh -c`. Keep that hermetic: the real runners
+// (python, npx, npm, go, cargo) are shadowed by instant stubs on PATH, and dependency installs are off, so no test runner or network tool is spawned.
+const realPath = process.env.PATH, realInstall = process.env["LOKI_E10_INSTALL"];
+const stubBin = mkdtempSync(join(tmpdir(), "e10-intake-bin-"));
+for (const name of ["python", "npx", "npm", "go", "cargo"]) writeFileSync(join(stubBin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+beforeAll(() => { process.env.HOME = fakeHome; process.env.PATH = `${stubBin}:${realPath ?? ""}`; process.env["LOKI_E10_INSTALL"] = "0"; });
+afterAll(() => {
+  if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;
+  if (realPath === undefined) delete process.env.PATH; else process.env.PATH = realPath;
+  if (realInstall === undefined) delete process.env["LOKI_E10_INSTALL"]; else process.env["LOKI_E10_INSTALL"] = realInstall;
+  rmSync(fakeHome, { recursive: true, force: true }); rmSync(stubBin, { recursive: true, force: true });
+});
 
 function gitOut(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
