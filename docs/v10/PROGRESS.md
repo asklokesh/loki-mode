@@ -2617,3 +2617,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T08:15Z (CoS) v11.17.81
 - 11.17.81: P9 fixture 990270f12 + 466d55a4e (HIGH APPROVE; fast-gate.sh p9 rc=0, 5 PASS; no-pytest wrapper gives the prerequisite message, gate rc=1). Fixes Release gate P9 red on c6db3c019/c5358b462.
+
+## 2026-10-19T08:43Z (CoS) v11.17.82
+- 11.17.82: FC-SEAL-NA-AS-UNPROVEN + FC-CHANGED-PATH-QUOTED (96d0c22db..9eb4bddd8; HIGH APPROVE after 3 BLOCK rounds; reviewer edge probes for renames, copies, T type change, tab/newline/quote names, status-letter names all pass; main targeted 622 pass 0 fail incl budget). Full engine10 gate timed out at 560s under load; ship_hook alone 2 pass 0 fail in 5s.

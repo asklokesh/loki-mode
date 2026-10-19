@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.82 (2026-10-19)
+
+### Fixed
+- In a monorepo, a package with no test command, an app with nothing to probe, or a deep check that does not apply is now reported as not applicable instead of NOT PROVEN, so such a run can seal VERIFIED. A package without tests counts as proven only when a passing Wall or holdout test lies inside that package.
+- Changed-file detection reads git paths unquoted and without rename pairing, so a non-ASCII file name, a file name with quotes or tabs, or a file moved out of a package can no longer hide that package's change. A changed path that no package owns stays NOT PROVEN.
+
 ## v11.17.81 (2026-10-19)
 
 ### Fixed
