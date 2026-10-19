@@ -641,6 +641,20 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
       expect(line).toContain(`base: origin/main (skipped 1 unaccepted Loki commit(s) on ${OLD}`);
       rmSync(root, { recursive: true, force: true });
     });
+    test("success path writes no raw engine10: base: stderr line (start line and event data carry the note)", async () => {
+      const { root, clone } = originAndClone();
+      process.env.LOKI_E10_NO_FETCH = "1";
+      const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+      ctx.sessions = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } }).runner;
+      const orig = process.stderr.write.bind(process.stderr); let err = "";
+      (process.stderr as { write: unknown }).write = (c: unknown): boolean => { err += String(c); return true; };
+      let r;
+      try { r = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" }); } finally { (process.stderr as { write: unknown }).write = orig; }
+      expect(r.status).toBe("completed");
+      expect((r.data.stacked_loki_skip as { message: string }).message).toContain("merge them first");
+      expect(err).not.toContain("engine10: base:");
+      rmSync(root, { recursive: true, force: true });
+    });
     test("B1: a stacked slice (LOKI_PR_BASE set, loki/epic-* branch) keeps its parent's work in the base", async () => {
       const { root, clone } = originAndClone();
       process.env.LOKI_E10_NO_FETCH = "1"; process.env.LOKI_PR_BASE = "loki/e10-parent";
