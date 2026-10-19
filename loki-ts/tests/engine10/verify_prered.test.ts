@@ -183,6 +183,19 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
     expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
+  test("workspace link to a changed TEST file (reviewer repro 2): deps reach head sources, no excusal; relative require control is excused", async () => {
+    const mk = (spec: string) => {
+      const gated = T + `if (!require('${spec}').off) t('runs on base',()=>{});\n`;
+      const r = repoWith({ ".gitignore": "node_modules\n", "shared/helper.test.js": "exports.off=false;\n", "gated.test.js": gated }, { "shared/helper.test.js": "exports.off=true;\n" }, [node("gated.test.js")]);
+      mkdirSync(join(r.dir, "node_modules")); symlinkSync("../shared", join(r.dir, "node_modules", "shared"));
+      return r.ctx;
+    };
+    const viaLink = (await run(mk("shared/helper.test.js"))).data as unknown as Z;
+    expect(viaLink.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(viaLink.skipped_on_base).toEqual([]);
+    const rel = (await run(mk("./shared/helper.test.js"))).data as unknown as Z;
+    expect(rel.skipped_on_base).toEqual([]); // head's off=true also hides the test via the relative path, and base has off=false: tests ran on base, so not zero there either
+  }, 60_000);
   test("zero on head but tests ran on base (file untouched): stays fail-closed", async () => {
     // head breaks what the file loads into executing nothing: the helper is replaced so the (unchanged) test file registers no test
     const gated = T + "if (!require('./gate.js').off) t('runs on base',()=>{});\n";

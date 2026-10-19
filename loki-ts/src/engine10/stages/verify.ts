@@ -17,7 +17,7 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { depsSeeHead } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -152,12 +152,7 @@ async function subtractBase(
       const red = !b.ok && !b.cut ? failIds(b.out) : [];
       base.set(c, { red, n: ran(b.out) ?? summaryPassFailCount(b.out), sk: skipped(b.out) });
     }
-    for (const { c, t } of zc) { // FC-ZERO-ON-BASE: same detached base worktree, the cwd's installed dependency dirs linked in (never copied, never written)
-      const bc = commandFor(t, dir, api), src = join(ctx.repoDir, relative(dir, bc.cwd));
-      for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(bc.cwd, d))) symlinkSync(join(src, d), join(bc.cwd, d)); } catch { /* run without it: not zero, stays fail-closed */ } }
-      const b = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
-      const k = classifyCheck({ kind: "test", ok: b.ok, cut: b.cut, missing: b.missing, out: b.out, ...goRunner(bc.cmd, bc.args), path: /\.[cm]?[jt]s$/.test(bc.args[bc.args.length - 1] ?? "") ? bc.args[bc.args.length - 1] : undefined }); if (k.result === "not_run" && k.n === 0 && !b.cut && !b.missing) { out.zero.push(c.name); ctx.emit("test.skipped_on_base", "verify", { note: `skipped on base: ${c.name}`, check: c.name }); } // informational, not NOT PROVEN
-    }
+    for (const { c, t } of zc) { const bc = commandFor(t, dir, api), src = join(ctx.repoDir, relative(dir, bc.cwd)); if (depsSeeHead(src, ctx.repoDir)) continue; for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(bc.cwd, d))) symlinkSync(join(src, d), join(bc.cwd, d)); } catch { /* run without it: not zero, stays fail-closed */ } } const b = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {}); const k = classifyCheck({ kind: "test", ok: b.ok, cut: b.cut, missing: b.missing, out: b.out, ...goRunner(bc.cmd, bc.args), path: /\.[cm]?[jt]s$/.test(bc.args[bc.args.length - 1] ?? "") ? bc.args[bc.args.length - 1] : undefined }); if (k.result === "not_run" && k.n === 0 && !b.cut && !b.missing) { out.zero.push(c.name); ctx.emit("test.skipped_on_base", "verify", { note: `skipped on base: ${c.name}`, check: c.name }); } } // FC-ZERO-ON-BASE: base worktree, the cwd deps linked in (never copied); deps that reach head sources keep it fail-closed
     out.weak = sus
       .filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n)
       .map(({ c }) => c.name);

@@ -2,7 +2,7 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
@@ -110,4 +110,18 @@ export function baseLine(repoDir: string): string {
 export function noteOf(intake: Record<string, unknown> | undefined): string | null {
   const m = (intake?.["unmerged_loki_work"] as { message?: unknown } | undefined)?.message ?? (intake?.["stacked_loki_skip"] as { message?: unknown } | undefined)?.message;
   return typeof m === "string" && m !== "" ? m : null;
+}
+
+/** FC-ZERO-ON-BASE: true when dependency dirs under `pkgDir` can resolve into `repoDir` (a workspace symlink in node_modules or @scope/*, a .venv .pth, *.egg-link or direct_url.json naming the repo), so a base rerun that links them would run head sources. Anything unreadable counts as true (fail closed). */
+export function depsSeeHead(pkgDir: string, repoDir: string): boolean {
+  const root = realpathSync(repoDir), inside = (p: string): boolean => { try { const r = realpathSync(p); return r === root || r.startsWith(root + "/"); } catch { return true; } };
+  const link = (p: string): boolean => lstatSync(p).isSymbolicLink() && inside(p);
+  try {
+    const nm = join(pkgDir, "node_modules");
+    for (const e of readdirSync(nm).map((n) => join(nm, n))) if (link(e) || (!lstatSync(e).isSymbolicLink() && lstatSync(e).isDirectory() && readdirSync(e).some((s) => link(join(e, s))))) return true;
+  } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") return true; }
+  try {
+    const walk = (d: string, depth: number): boolean => readdirSync(d, { withFileTypes: true }).some((x) => (x.isDirectory() && depth < 4 && walk(join(d, x.name), depth + 1)) || (/\.pth$|\.egg-link$|^direct_url\.json$/.test(x.name) && readFileSync(join(d, x.name), "utf8").includes(root)));
+    return walk(join(pkgDir, ".venv"), 0);
+  } catch (e) { return (e as NodeJS.ErrnoException).code !== "ENOENT"; }
 }
