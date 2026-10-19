@@ -2620,3 +2620,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T08:43Z (CoS) v11.17.82
 - 11.17.82: FC-SEAL-NA-AS-UNPROVEN + FC-CHANGED-PATH-QUOTED (96d0c22db..9eb4bddd8; HIGH APPROVE after 3 BLOCK rounds; reviewer edge probes for renames, copies, T type change, tab/newline/quote names, status-letter names all pass; main targeted 622 pass 0 fail incl budget). Full engine10 gate timed out at 560s under load; ship_hook alone 2 pass 0 fail in 5s.
+
+## 2026-10-19T08:48Z (CoS) v11.17.83
+- 11.17.83: FC-WALL-PHANTOM-PATH r1-r3 (298fddf96..82233dad0; HIGH APPROVE after 2 BLOCK rounds; full real #81826 Wall file against base ef7bfdc reports plugins/ralph-loop; 3 round-3 mutations each red). Main targeted 662 pass 0 fail incl budget.

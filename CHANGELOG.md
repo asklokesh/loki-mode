@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.83 (2026-10-19)
+
+### Fixed
+- A Wall test that points at a repository path that does not exist (for example a plugin directory named after the issue rather than the real one) is now caught before the change is built. The author is asked once to fix it, shown where same-named files really live, and the test is discarded if it still points nowhere. Roots read from an environment override with a fallback, prettier-split path joins and monorepo package roots are all followed.
+- A change that adds a symlink, turns a file into a link, or adds a submodule is now NOT PROVEN unless the plan asks for one, so a run can no longer pass a check by aliasing a missing path to an existing one. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.82 (2026-10-19)
 
 ### Fixed
