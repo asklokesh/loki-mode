@@ -8,7 +8,7 @@ import { join } from "node:path";
 const { cleanup, render, screen, fireEvent, waitFor } = await import("@testing-library/react");
 const { createApp } = await import("../../src/server/app.ts");
 const { RunThread } = await import("../../ui/src/pages/run");
-const { receiptFacts, evidenceFacts, summaryLine } = await import("../../ui/src/pages/run/facts");
+const { receiptFacts, evidenceFacts, summaryLine, rawWhy } = await import("../../ui/src/pages/run/facts");
 const realFetch = globalThis.fetch;
 const fx = (p: string) => readFileSync(join(import.meta.dir, "../fixtures/compat", p), "utf8");
 const events = (p: string) => fx(p).trim().split("\n").map((l) => JSON.parse(l));
@@ -106,6 +106,14 @@ test("a spec conflict that is not an own-rules block keeps the reply box and a c
   expect(screen.queryByTestId("run-why-raw")).toBeNull();
   fireEvent.click(screen.getByTestId("run-why-raw-toggle"));
   expect(screen.getByTestId("run-why-raw").textContent).toContain("\u001b[31m");
+});
+
+test("a fix-round spec conflict reason is the raw Why, not implement's (FC-FIX-CONFLICT-STALLED)", async () => {
+  const base = events("10.9.1-fea1/events.jsonl").filter((e: any) => e.type !== "log.sealed" && e.type !== "receipt.sealed");
+  const i = base.findIndex((e: any) => e.type === "stage.completed" && e.stage === "implement");
+  base[i].data.spec_conflict_reason = "implement said this";
+  base.splice(i + 1, 0, { ...base[i], stage: "fix", data: { exit: "spec_conflict", spec_conflict_reason: "fix round said that" } });
+  expect(rawWhy(base.map((e: any, k: number) => ({ ...e, seq: k })))).toContain("fix round said that");
 });
 
 test("receipt adapter: aliases and a checks map from an old receipt; a readable receipt lacking a field is unmeasured, an unreachable one is not", () => {

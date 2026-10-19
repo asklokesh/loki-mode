@@ -88,8 +88,9 @@ export function whyForRun(d: RunDetail): string | null {
 
 /** The unprocessed output behind "Show raw": the model's full conflict text and the verify failure line, exactly as recorded. */
 export function rawWhy(events: EventLike[]): string | null {
-  const conflict = events.find((e) => e.type === "stage.completed" && e.stage === "implement");
-  const c = text(obj(conflict?.data)["spec_conflict_reason"]);
+  // Mirror of conflictReasonOf in loki-ts/src/engine10/events.ts (source of truth): last fix reason, else implement's.
+  const reasonOf = (s: string) => [...events].reverse().map((e) => (e.type === "stage.completed" && e.stage === s ? text(obj(e.data)["spec_conflict_reason"]) : null)).find((x) => !!x) ?? null;
+  const c = reasonOf("fix") ?? reasonOf("implement");
   const verify = whyLine(events.map((e) => ({ type: e.type, stage: e.stage, data: e.data })));
   const parts = [c, verify].filter((x): x is string => !!x);
   return parts.length ? parts.join("\n\n") : null;

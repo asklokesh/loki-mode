@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
-import { fold, partialCost } from "../../../../loki-ts/src/engine10/events.ts";
+import { conflictReasonOf, fold, partialCost } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
@@ -151,7 +151,7 @@ const OWN_RULES = /\bstage rules\b|\bstage-rules\b/i;
 /** The terminal stop reason as one ANSI-free sentence, from the run's own end (never from verify output); null when the run did not stop short. */
 export function stopReason(evs: EventEnvelope[], verdict: string | null): { reason: string | null; ownRules: boolean } {
   if (verdict === "SPEC_CONFLICT") {
-    const why = evs.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
+    const why = conflictReasonOf(evs);
     const text = typeof why === "string" ? oneLine(why, 4000) : "";
     const first = text.split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? "";
     const reason = `The run stopped on a spec conflict: ${first ? first.slice(0, 240) : "the task and the repository disagree"}`;

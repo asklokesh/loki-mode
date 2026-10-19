@@ -245,7 +245,7 @@ def _read_outcome(workdir: str, rc: int) -> dict:
             d = e.get("data") or {}
             if e.get("type") == "pr.opened" and d.get("url"):
                 pr_url = d["url"] if str(d["url"]).startswith("https://") else None
-            if e.get("type") == "stage.completed" and e.get("stage") == "implement" and d.get("spec_conflict_reason"):
+            if e.get("type") == "stage.completed" and e.get("stage") in ("implement", "fix") and d.get("spec_conflict_reason"):  # mirror of conflictReasonOf (loki-ts/src/engine10/events.ts): a later fix reason overwrites implement's
                 question = str(d["spec_conflict_reason"])
     if rc == 0:
         return {"status": "pr_open", "pr_url": pr_url} if pr_url else {"status": "done", "detail": outcome or "no change needed"}

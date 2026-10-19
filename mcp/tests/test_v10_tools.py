@@ -153,6 +153,18 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(r["verdict"], "BLOCKED")
         self.assertEqual(r["blocked_question"], "spec says A but tests say B")
 
+    def test_blocked_returns_fix_round_question(self):
+        ev = [
+            {"seq": 0, "type": "stage.completed", "stage": "implement", "data": {"exit": "done"}},
+            {"seq": 1, "type": "stage.completed", "stage": "fix",
+             "data": {"exit": "spec_conflict", "spec_conflict_reason": "test demands X but spec says Y"}},
+            {"seq": 2, "type": "run.completed", "stage": None, "data": {"verdict": "BLOCKED"}},
+        ]
+        with tempfile.TemporaryDirectory() as repo:
+            _write_events(repo, "e10-blk2", ev)
+            r = v10_tools.v10_status("e10-blk2", repo, _ok)
+        self.assertEqual(r["blocked_question"], "test demands X but spec says Y")
+
     def test_verified_has_no_blocked_question(self):
         ev = [{"seq": 0, "type": "run.completed", "stage": None, "data": {"verdict": "VERIFIED"}}]
         with tempfile.TemporaryDirectory() as repo:

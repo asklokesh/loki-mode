@@ -190,6 +190,9 @@ def test_read_outcome_parses_events_and_json(tmp_path, monkeypatch):
     assert out["status"] == "pr_open" and out["pr_url"].endswith("/pull/5")
     out = api_start._read_outcome(str(wt), 4)
     assert out["status"] == "blocked" and out["question"] == "ambiguous"
+    ev.write_text(ev.read_text() + json.dumps({"type": "stage.completed", "stage": "fix",
+                  "data": {"exit": "spec_conflict", "spec_conflict_reason": "fix says X vs Y"}}) + "\n")
+    assert api_start._read_outcome(str(wt), 4)["question"] == "fix says X vs Y"
     assert api_start._read_outcome(str(wt), 1)["status"] == "failed"
 
 

@@ -140,7 +140,7 @@ def v10_status(run_id: str, repo_path: str, validate: Callable[[str], str]) -> d
                 open_stages[stage] = True
             elif t in _TERMINAL:
                 open_stages.pop(stage, None)
-        if t == "stage.completed" and stage == "implement" and isinstance(data.get("spec_conflict_reason"), str):
+        if t == "stage.completed" and stage in ("implement", "fix") and isinstance(data.get("spec_conflict_reason"), str) and data["spec_conflict_reason"]:  # mirror of conflictReasonOf (loki-ts/src/engine10/events.ts): a later fix reason overwrites implement's
             question = re.sub(r"[\x00-\x1f\x7f]+", " ", data["spec_conflict_reason"])[:500]
         if t == "run.completed":
             done = True

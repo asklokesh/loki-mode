@@ -3,6 +3,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { conflictReasonOf } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 
 export const MAX_ANSWER = 4000;
@@ -14,7 +15,7 @@ export const defaultAnswerDir = (env: NodeJS.ProcessEnv = process.env): string =
 /** The question a BLOCKED (spec conflict) run is waiting on, or null when it is not blocked. */
 export function blockedQuestion(evs: EventEnvelope[], verdict: string | null): string | null {
   if (verdict !== "SPEC_CONFLICT") return null;
-  const why = evs.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
+  const why = conflictReasonOf(evs);
   return (typeof why === "string" && why ? why : "the run is blocked on a spec conflict").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500);
 }
 

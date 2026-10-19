@@ -25,6 +25,15 @@ test("a FAILED run with no verify event says where it failed, never that verific
   expect(d.own_rules_block).toBe(false);
 });
 
+test("a spec conflict confirmed by a fix round shows the fix reason in stop_reason and blocked_question (FC-FIX-CONFLICT-STALLED)", async () => {
+  const evs = load("../fixtures/compat/10.9.1-fea1/events.jsonl").filter((e: any) => e.type !== "log.sealed" && e.type !== "receipt.sealed");
+  const i = evs.findIndex((e: any) => e.type === "stage.completed" && e.stage === "implement");
+  evs.splice(i + 1, 0, { ...evs[i], stage: "fix", data: { exit: "spec_conflict", spec_conflict_reason: "Fix round says: the test demands X but the spec says Y." } });
+  const d = await detail(evs.map((e: any, k: number) => ({ ...e, seq: k })));
+  expect(d.stop_reason).toContain("Fix round says: the test demands X but the spec says Y.");
+  expect(d.blocked_question).toBe("Fix round says: the test demands X but the spec says Y.");
+});
+
 test("a verified run has no stop reason", async () => {
   const d = await detail(load("../fixtures/runs/verified/events.jsonl"));
   expect(d.stop_reason).toBeNull();
