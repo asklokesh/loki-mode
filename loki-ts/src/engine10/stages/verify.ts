@@ -219,9 +219,9 @@ export const verifyStage: Stage = {
   targetS: STAGE_BUDGETS.verify.targetS,
   limitS: STAGE_BUDGETS.verify.limitS,
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
-    let changed: string[];
+    let changed: string[]; const ownWall = ((ctx.outputs().wall?.files as { path: string }[] | undefined) ?? []).map((f) => f.path), live = <T extends string | { path: string }>(l: T[]): T[] => withoutStaleWall(l, ownWall, ctx.repoDir); // FC-WALL-LOCATION-BLIND: a loki_wall_* file this run's Wall did not install is invisible to changed, risk and the test map
     try {
-      changed = withoutStaleWall(changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)), ((ctx.outputs().wall?.files as { path: string }[] | undefined) ?? []).map((f) => f.path), ctx.repoDir); // FC-WALL-LOCATION-BLIND
+      changed = live(changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)));
     } catch (err) {
       return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` };
     }
@@ -232,10 +232,10 @@ export const verifyStage: Stage = {
       }
       return { status: "failed", data: { changed_files: [] }, reason: "empty diff without an already_done marker" };
     }
-    let risk = (() => { try { const r = classifyRisk(diffFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); recordRisk(ctx.repoDir, r); return r; } catch { return null; } })(); // RISKTIER: artifact-based tier, recorded; deferred checks are never a pass
+    let risk = (() => { try { const r = classifyRisk(live(diffFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)))); recordRisk(ctx.repoDir, r); return r; } catch { return null; } })(); // RISKTIER: artifact-based tier, recorded; deferred checks are never a pass
     const checks: VerifyCheck[] = [];
     const api = loadProjectApi(ctx.repoDir); // FC-01: null (repo-root behavior) unless the model has a package below the root
-    const map = await ctx.tests.detect(ctx.repoDir);
+    const map0 = await ctx.tests.detect(ctx.repoDir), map = { ...map0, tests: live(map0.tests) };
     const impacted = ctx.tests.impacted(map, changed);
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
     const wall = (ctx.outputs().wall as WallOutput | undefined) ?? {};

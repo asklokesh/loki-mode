@@ -61,7 +61,7 @@ export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one asser
 /** FC-WALL-OUT-OF-REPO-TARGET: static, cache-stable, sits beside the output budget before any run-specific text. */
 export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/.";
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location = ""): string {
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
     WALL_OUTPUT_BUDGET,
@@ -73,7 +73,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded. Negative case: for each acceptance line include one assertion that rejects bad input or would fail before the fix.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     ...(conventions ? [conventions] : []),
-    ...(location ? [`Each file you write is copied to ${location}/ (relative to the repository root) before it runs, so __dirname and import.meta.dir resolve to that directory, not this one and not the repo root. Build repo paths from it (join(__dirname, ${[...location.split("/").filter(Boolean)].map(() => '".."').join(", ") || '"."'}, "<repo path>")) or from process.cwd() only when you know the runner starts at the root.`] : []),
+    ...(location === "" ? ["Each file you write is copied to the repository root before it runs, so __dirname and import.meta.dir resolve to the repository root, not this directory."] : location ? [`Each file you write is copied to ${location}/ (relative to the repository root) before it runs, so __dirname and import.meta.dir resolve to that directory, not this one and not the repo root. Build repo paths from it (join(__dirname, ${[...location.split("/").filter(Boolean)].map(() => '".."').join(", ") || '"."'}, "<repo path>")) or from process.cwd() only when you know the runner starts at the root.`] : []),
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
   ].join("\n\n"));
 }

@@ -411,7 +411,7 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 }
 
 /** FC-WALL-LOCATION-BLIND: a loki_wall_* file in the tree that this run's Wall did not install (an earlier run left it untracked, or this run discarded it) is not a change of this run: verifying it would credit an exogenous pass for a test the receipt lists as discarded. `own` holds the paths this run installed (absolute or repo-relative). */
-export const withoutStaleWall = (changed: string[], own: string[], repoDir: string): string[] => { const mine = new Set(own.map((p) => (p.startsWith("/") ? p.slice(repoDir.length + 1) : p))); return changed.filter((f) => !/(^|\/)loki_wall_[^/]*$/.test(f) || mine.has(f)); };
+export const withoutStaleWall = <T extends string | { path: string }>(items: T[], own: string[], repoDir: string): T[] => { const mine = new Set(own.map((p) => (isAbsolute(p) ? relative(repoDir, p) : p))); return items.filter((it) => { const f = typeof it === "string" ? it : it.path; return !/(^|\/)loki_wall_[^/]*$/.test(f) || mine.has(f); }); };
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
  *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
  *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
