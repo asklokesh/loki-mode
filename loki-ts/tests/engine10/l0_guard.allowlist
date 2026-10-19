@@ -111,3 +111,7 @@ src/util/python_build_check.ts	pytest
 src/util/check_result.ts	go.mod
 src/util/check_result.ts	package.json
 src/util/check_result.ts	pyproject.toml
+src/util/lock_ecosystems.ts	Cargo.toml
+src/util/lock_ecosystems.ts	Gemfile
+src/util/lock_ecosystems.ts	package.json
+src/util/lock_ecosystems.ts	pyproject.toml

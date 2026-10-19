@@ -99,8 +99,8 @@ describe("event producers (FC-M25W, FC-M25W-b)", () => {
   it("every event name in types.ts has an append( producer in loki-ts/src (empty allowlist)", () => {
     const src = join(import.meta.dir, "..", "..", "..", "src");
     const typesFile = join(src, "engine10", "modernize", "types.ts");
-    const text = walk(src).filter((f) => f !== typesFile).map((f) => readFileSync(f, "utf8")).join("\n");
-    expect(MODERNIZE_EVENT_TYPES.filter((t) => !hasProducer(text, t))).toEqual([]);
+    const texts = walk(src).filter((f) => f !== typesFile).sort().map((f) => readFileSync(f, "utf8")); // per file, never joined: the scanner is not a JS lexer, so a stray quote or backtick in one file (for example inside a regex) must not swallow the next file, and the result must not depend on directory order
+    expect(MODERNIZE_EVENT_TYPES.filter((t) => !texts.some((x) => hasProducer(x, t)))).toEqual([]);
   });
   it("the review mutations are not producers; a real append is", () => {
     const real = 'log.append("unit.resliced", { unit: u });';

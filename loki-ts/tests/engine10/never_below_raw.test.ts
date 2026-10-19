@@ -144,11 +144,17 @@ export function guardViolations(files: Record<string, string>): string[] {
     const lines = src.split("\n");
     lines.forEach((line, i) => {
       const m = line.match(/(?:\.\.\.\(\w+ \? \{ )?\bmodel(?:: | \?)(.*)$/);
-      if (!m || /ctx\.model|^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\(|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
-      const expr = line.slice(line.indexOf("model") === -1 ? 0 : 0).trim().replace(/^\.\.\.\(/, "").replace(/^model: /, "");
+      // A pin is a spread `...(x ? { model: ...} : {})`, a `...(model ? [...` flag, a sessions.run option or a line-start `model:` key; a bare `model: v` key in an event data object that merely contains an unrelated spread is data, not a pin.
+      if (!m || /ctx\.model|^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\((\w+ \? \{ )?model\b|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
+      const expr = line.trim().replace(/^\.\.\.\(/, "").replace(/^model: /, "");
       const ok = allowed[path];
       if (path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}\)/.test(expr) && FIX_ROUTED_DEF.test(src)) return; // evidence-backed router pin, checked structurally below
-      if (!ok || !ok.test(expr)) v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
+      if (ok && ok.test(expr)) return;
+      // A one-line options object holds several spread pins: each must be vetted on its own (a line with sessions.run is judged as a whole).
+      const spreads = [...line.matchAll(/\.\.\.\((\w+ \? \{ model: [^}]*\} : \{\})\)/g)].map((x) => x[1]!);
+      const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || (path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src));
+      if (!/sessions\.run/.test(line) && spreads.length > 0 && spreads.every(vetted)) return;
+      v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
     });
   }
   // ROUTER-1: a model below the run model is allowed only when a router route record exists for that unit with its evidence (source plus reason).
@@ -216,6 +222,17 @@ describe("L1 static guard", () => {
     const f = loadFiles();
     f["sizing.ts"] = f["sizing.ts"]!.replace('knob(env.LOKI_E10_CASCADE, ["1", "on", "true"])', '!knob(env.LOKI_E10_CASCADE, ["0", "off", "false"])');
     expect(guardViolations(f).length).toBeGreaterThan(0);
+  });
+
+  it("one-line options object: every spread pin is vetted on its own, and a data-key model is not a pin", () => {
+    const f = loadFiles();
+    const line = f["stages/fix.ts"]!.split("\n").find((l) => l.includes("const sessionBase = {") && l.includes("...(pinnedModel ? { model: pinnedModel } : {})"))!;
+    expect(line).toBeDefined();
+    expect(guardViolations(f).filter((x) => x.includes("unvetted session model pin"))).toEqual([]);
+    const g = { ...f, "stages/fix.ts": f["stages/fix.ts"]!.replace(line, line.replace("...(routedPin ? { model: routedPin } : {})", '...(effort ? { model: "claude-haiku-4-5" } : {})')) };
+    expect(guardViolations(g).some((x) => x.includes("unvetted session model pin"))).toBe(true);
+    const h = { ...f, "stages/fix.ts": f["stages/fix.ts"]!.replace(line, line.replace("...(pinnedModel ? { model: pinnedModel } : {})", '...(pinnedModel ? { model: "claude-haiku-4-5" } : {})')) };
+    expect(guardViolations(h).some((x) => x.includes("unvetted session model pin"))).toBe(true);
   });
 
   it("mutation M5: pinning a non-test fix round to haiku without opt-in makes the guard fail", () => {

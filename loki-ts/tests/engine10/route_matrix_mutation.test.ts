@@ -39,7 +39,7 @@ const MUTATIONS: { name: string; edits: Edit[] }[] = [
   { name: "B8b unit_model routedFix pin returns haiku", edits: [[UM, "return { pin: climbed?.to ?? (cur !== runModel ? cur : undefined), climbed };", `return { pin: ${HAIKU}, climbed };`]] },
   { name: "B9 const actualModel = haiku in fix.ts (flows into prior.fix.model)", edits: [[FIX, "const actualModel = routedPin ?? pinnedModel ?? ctx.model;", `const actualModel = ${HAIKU};`]] },
   { name: "B10 fake route record beside a haiku assignment", edits: [[IR, "first.model = rr.model;", `first.model = ${HAIKU}; ctx.emit("route", "implement", { source: "x", reason: "y" });`]] },
-  { name: "M1 fix.ts pins haiku on the router branch", edits: [[FIX, "...(routedPin ? { model: routedPin } : {}) },", `...(routedPin ? { model: ${HAIKU} } : {}) },`]] },
+  { name: "M1 fix.ts pins haiku on the router branch", edits: [[FIX, "...(routedPin ? { model: routedPin } : {}) };", `...(routedPin ? { model: ${HAIKU} } : {}) };`]] },
   { name: "M2 carried below-run model no longer floored", edits: [[UM, "const cur = !rec.valid && modelRank(carried) < modelRank(floor) ? floor : carried;", "const cur = carried;"]] },
   { name: "M3 route_not_proven ignored", edits: [[UM, "(Array.isArray(np) && np.length > 0)", "false"]] },
   { name: "M4 empty reason accepted", edits: [[UM, 'typeof r["reason"] !== "string" || r["reason"].trim() === "" || ', ""]] },
