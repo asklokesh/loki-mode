@@ -168,3 +168,43 @@ describe("TEN-QUALITY-13 acceptance lines in the reviewer prompt", () => {
     expect((await stubRun({ plan: {} })).argv).not.toContain("intent card");
   });
 });
+
+describe("medium default review", () => {
+  const mk = (tier: string, provider = "claude", verdictText = "VERDICT: PASS") => {
+    const d = mkdtempSync(join(root, "mdr-")), bd = mkdtempSync(join(root, "mdrbin-"));
+    const git = (...a: string[]) => Bun.spawnSync(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+    git("init", "-q"); writeFileSync(join(d, "a"), "1"); git("add", "a"); git("commit", "-qm", "c");
+    mkdirSync(join(d, ".loki", "state"), { recursive: true }); writeFileSync(join(d, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier }));
+    const stub = join(bd, provider); writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' '{"type":"result","result":"${verdictText}"}'\n`); chmodSync(stub, 0o755);
+    return { ctx: { repoDir: d, provider, baseSha: "HEAD", runDir: d } as never, stub };
+  };
+  const withEnv = async (stub: string, extra: Record<string, string>, f: () => Promise<void>) => {
+    const keys = ["LOKI_REVIEW_PROVIDER", "LOKI_XVENDOR_DEFAULT", "LOKI_CLAUDE_CLI", "LOKI_CODEX_CLI"]; const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    process.env["LOKI_CLAUDE_CLI"] = stub; process.env["LOKI_CODEX_CLI"] = stub; Object.assign(process.env, extra);
+    try { await f(); } finally { keys.forEach((k, i) => { const v = saved[i]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }); }
+  };
+  it("medium default review: medium with nothing configured runs the run's own CLI and is marked same-vendor", async () => {
+    const { ctx, stub } = mk("medium");
+    await withEnv(stub, {}, async () => {
+      const r = await crossReview(ctx, "VERIFIED", "HEAD");
+      expect(r?.level).toBe("pass"); expect(r?.provider).toBe("claude"); expect(r?.same_vendor_default).toBe(true);
+      expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true });
+    });
+  });
+  it("medium default review: a BLOCK caps the verdict at PARTIAL", async () => {
+    const { ctx, stub } = mk("medium", "claude", "VERDICT: BLOCK\\n- bad");
+    await withEnv(stub, {}, async () => { expect(minVerdict("VERIFIED", await crossReview(ctx, "VERIFIED", "HEAD"))).toBe("PARTIAL"); });
+  });
+  it("medium default review: LOKI_REVIEW_PROVIDER=none and off opt out", async () => {
+    const { ctx, stub } = mk("medium");
+    for (const v of ["none", "off"]) await withEnv(stub, { LOKI_REVIEW_PROVIDER: v }, async () => { expect(await crossReview(ctx, "VERIFIED", "HEAD")).toBeNull(); });
+  });
+  it("medium default review: low and high tiers do not default", async () => {
+    for (const t of ["low", "high"]) { const { ctx, stub } = mk(t); await withEnv(stub, {}, async () => { expect(await crossReview(ctx, "VERIFIED", "HEAD")).toBeNull(); }); }
+  });
+  it("medium default review: a configured reviewer keeps precedence and is not marked defaulted", async () => {
+    const { ctx, stub } = mk("medium");
+    await withEnv(stub, { LOKI_REVIEW_PROVIDER: "codex" }, async () => { const r = await crossReview(ctx, "VERIFIED", "HEAD"); expect(r?.provider).toBe("codex"); expect(r?.same_vendor_default).toBeUndefined(); });
+  });
+});

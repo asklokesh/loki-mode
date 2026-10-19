@@ -1,6 +1,6 @@
 // B4: opt-in cross-lab review between verify and seal. A second provider reads the committed diff
 // read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL).
-// Off unless loki.yaml `review: codex|claude` or LOKI_REVIEW_PROVIDER is set.
+// Off unless loki.yaml `review:`, LOKI_REVIEW_PROVIDER or LOKI_XVENDOR_DEFAULT is set; a medium-tier run with none of these reviews with its own CLI (LOKI_REVIEW_PROVIDER=off|none opts out).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadReviewStageAgent } from "../../council/role_agents.ts";
@@ -13,7 +13,7 @@ import type { RunContext, Verdict } from "../types.ts";
 
 export type ReviewProvider = "codex" | "claude";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; }
 
 const RANK: Record<Verdict, number> = { FAILED: 0, SPEC_CONFLICT: 0, PARTIAL: 1, ALREADY_SATISFIED: 2, VERIFIED: 2 };
 const TIMEOUT_MS = 300_000, MAX_DIFF = 60_000, MAX_NOTES = 5;
@@ -56,7 +56,8 @@ export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process
 }
 
 /** Receipt review block plus the NOT PROVEN line, only when the flag is on. vendor_differs compares the judge to the builder. */
-export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean }; notProven: string[] } {
+export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean; same_vendor?: boolean; defaulted?: boolean }; notProven: string[] } {
+  if (xr?.same_vendor_default && !xvendorDefault(env)) return { review: { provider: xr.provider, vendor_differs: false, same_vendor: true, defaulted: true }, notProven: [] }; // medium default review: same-vendor, disclosed on the receipt
   if (!xvendorDefault(env)) return { notProven: [] };
   const differs = !!xr && xr.level !== "not_run" && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
   return { review: { provider: xr?.provider ?? null, vendor_differs: differs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
@@ -91,20 +92,21 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string): Promise<CrossReview | null> {
-  const agent = configuredReviewer(ctx.repoDir);
-  const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (!p) return null; // a configured reviewer/council agent turns the default review on
+  const agent = configuredReviewer(ctx.repoDir); let p =reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null, dflt = false;
+  if (!p && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) && (ctx.provider === "claude" || ctx.provider === "codex") && readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "medium") { p = ctx.provider; dflt = true; } // FC-MEDIUM-REVIEWER-UNCREDITED: medium promises "one reviewer", so with nothing configured run the run's own CLI (same vendor); LOKI_REVIEW_PROVIDER=off|none opts out
+  if (!p) return null; const tag = <T extends CrossReview>(r: T): T => (dflt ? { ...r, same_vendor_default: true } : r); // a configured reviewer/council agent turns the default review on
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
-  if (readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "low") return { provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }; // COST-4: low risk records the skip, never a pass
+  if (readRiskRecord(ctx.repoDir, ctx.startedAtMs ?? 0)?.tier === "low") return tag({ provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }); // COST-4: low risk records the skip, never a pass
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
-  if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
+  if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model : undefined), { cwd: ctx.repoDir, timeoutMs: TIMEOUT_MS });
-    if (r.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] };
-    return parseReview(p, r.stdout);
+    if (r.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] });
+    return tag(parseReview(p, r.stdout));
   } catch {
-    return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] };
+    return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] });
   }
 }
