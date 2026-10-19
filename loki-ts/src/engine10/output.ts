@@ -8,9 +8,8 @@ import { clipWords, formatClock, formatDuration, formatTokens } from "../util/te
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
-import { conflictReasonOf } from "./events.ts";
+import { conflictReasonOf } from "./events.ts"; import { isBlockingFail } from "../util/failure_memory.ts";
 import { STAGE_BUDGETS } from "./types.ts";
-import { isBlockingFail } from "../util/failure_memory.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 const STATUS_WIDTH = 8; // E-44: "skipped" plus one separating space (7 ran it into the duration)
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space

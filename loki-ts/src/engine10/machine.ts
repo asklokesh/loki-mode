@@ -254,8 +254,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (fatal) { stopped = fatal; jumped = true; continue; }
       if (outputs.plan?.out_of_repo === true && !jumped) { // FC-OUT-OF-REPO: seal reads implement.exit, so BLOCKED reuses the spec-conflict path
         outputs.implement = { exit: "spec_conflict", spec_conflict_reason: outputs.plan.spec_conflict_reason ?? "out-of-repo", changed_files: [] };
-        jumped = true;
-        continue;
+        jumped = true; continue;
       }
       if (outputs.plan?.intent_declined === true) return { outputs, capHit, stopped: "intent declined" }; // T3: user answered n at the intent card
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
