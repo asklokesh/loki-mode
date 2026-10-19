@@ -415,7 +415,7 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
   const run = (args: string[]): string[] =>
     safeGit(repoDir, args)
       .split("\0").filter(Boolean); // FC-CHANGED-PATH-QUOTED: -z plus quotePath=false, so a non-ASCII path is its real name, never a quoted escape
-  const tracked = run(["-c", "core.quotePath=false", "diff", "--name-only", "-z", baseSha]);
+  const tracked = run(["-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", "-z", baseSha]);
   const untracked = run(["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "-z"]);
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
@@ -423,12 +423,14 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
 export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): DiffFile[] {
   const paths = changedFiles(repoDir, baseSha, skip), stat = new Map<string, DiffFile>();
-  for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--numstat", baseSha]).split("\n")) {
+  // -z with --no-renames: NUL-terminated simple records, so a name with a quote, backslash, tab or newline is never escaped (FC-CHANGED-PATH-QUOTED)
+  for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--no-renames", "--numstat", "-z", baseSha]).split("\0")) {
     const [a, d, ...p] = l.split("\t"), path = p.join("\t");
     if (path) stat.set(path, { path, added: Number(a) || 0, deleted: Number(d) || 0 });
   }
-  for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--name-status", baseSha]).split("\n")) {
-    const [s, ...p] = l.split("\t"), f = stat.get(p[p.length - 1] ?? "");
+  const ns = safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--no-renames", "--name-status", "-z", baseSha]).split("\0");
+  for (let i = 0; i + 1 < ns.length; i += 2) {
+    const f = stat.get(ns[i + 1] ?? ""), s = ns[i];
     if (f) f.status = s?.startsWith("A") ? "added" : s?.startsWith("D") ? "deleted" : "modified";
   }
   const out = paths.map((path) => {

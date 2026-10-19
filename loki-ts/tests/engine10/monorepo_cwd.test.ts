@@ -7,7 +7,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
-import { changedFiles } from "../../src/util/check_result.ts";
+import { changedFiles, diffFiles } from "../../src/util/check_result.ts";
 import { commandFor, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { runFullSuite, type DeepCheck } from "../../src/engine10/stages/deep.ts";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
@@ -228,6 +228,22 @@ describe("FC-SEAL-NA-AS-UNPROVEN verify wiring", () => {
     expect(changedFiles(dir, base)).toContain("frontend/src/caf\u00e9.ts"); // not a quoted octal escape
     const ctx = { ...ctxFor(dir, base, [{ runner: "vitest", path: TEST_FILE }]), outputs: () => ({ wall: { files: [{ path: TEST_FILE }] } }) } as RunContext;
     expect((await verifyStage.run(ctx, sig())).data.not_proven as string[]).toContain(fe);
+  });
+  test("FC-CHANGED-PATH-QUOTED: git mv of a frontend file into backend still lists the frontend path: its note stays NOT PROVEN", async () => {
+    const { dir, base } = monorepo(true);
+    delete process.env["LOKI_RISK_TIER"]; delete process.env["LOKI_RISK_OVERRIDE_REASON"];
+    git(dir, ["mv", "frontend/src/main.ts", "backend/src/main.ts"]);
+    expect(changedFiles(dir, base)).toEqual(expect.arrayContaining(["frontend/src/main.ts", "backend/src/main.ts"]));
+    const ctx = { ...ctxFor(dir, base, [{ runner: "vitest", path: TEST_FILE }]), outputs: () => ({ wall: { files: [{ path: TEST_FILE }] } }) } as RunContext;
+    expect((await verifyStage.run(ctx, sig())).data.not_proven as string[]).toContain(fe);
+  });
+  test("diffFiles reads a tracked edit to a name with a double quote: status modified, +N correct", () => {
+    const { dir } = monorepo(true);
+    const name = 'frontend/src/q"uote.ts';
+    writeFileSync(join(dir, name), "a\n"); git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "q"]);
+    const base2 = git(dir, ["rev-parse", "HEAD"]);
+    writeFileSync(join(dir, name), "a\nb\nc\n");
+    expect(diffFiles(dir, base2).find((f) => f.path === name)).toMatchObject({ added: 2, deleted: 0, status: "modified" });
   });
   test("a failing Wall file is no proof", async () => { expect(await run(WALL_FE, "fail")).toContain(fe); });
 });
