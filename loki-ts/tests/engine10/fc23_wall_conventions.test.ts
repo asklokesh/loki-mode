@@ -253,6 +253,31 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(process.cwd(), 'plugins', 'ralph-wiggum');", "x.test.ts", td, repo, null)).toEqual([]); // exists under the repo root
     expect(phantomRepoPaths("const f = join(process.cwd(), 'src', 'nope.ts');", "x.test.ts", td, repo, null)).toHaveLength(1);
   });
+  describe("model-known root", () => {
+    const cmd = (cwd: string) => ({ cmd: "npx vitest run", cwd, cite: [`${cwd}/package.json`] });
+    const mpkg = (name: string) => ({ name, root: name, runner: "vitest", cite: [`${name}/package.json`], commands: { test: cmd(name), lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [`${name}/package.json`] } });
+    const savedModel = process.env["LOKI_E10_PROJECT_MODEL"];
+    afterEach(() => { if (savedModel === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = savedModel; });
+    // packages a and b exist on disk with a manifest; the cached model lists only `listed`
+    const modelRepo = (listed: string[]): string => {
+      process.env["LOKI_E10_PROJECT_MODEL"] = "1";
+      const repo = mk();
+      for (const n of ["a", "b", "c"]) { mkdirSync(join(repo, n, "test"), { recursive: true }); writeFileSync(join(repo, n, "package.json"), `{"name":"${n}","version":"1.0.0"}`); }
+      mkdirSync(join(repo, "b/src"), { recursive: true }); writeFileSync(join(repo, "b/src/y.ts"), "y\n");
+      mkdirSync(join(repo, "a/src"), { recursive: true }); writeFileSync(join(repo, "a/src/x.ts"), "x\n");
+      const model = { schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "multi-root", workspaceCite: ["a/package.json"], packages: listed.map(mpkg), fingerprintFiles: ["a/package.json"] };
+      mkdirSync(join(repo, ".loki"), { recursive: true }); writeFileSync(join(repo, ".loki", "project.json"), JSON.stringify(model));
+      return repo;
+    };
+    test("stale multi-root model omitting the test's package: verify runs at the repo root, so a path existing only under the package is reported", () => {
+      const repo = modelRepo(["a", "c"]);
+      expect(phantomRepoPaths("const f = join(process.cwd(), 'src', 'y.ts');", "y.test.ts", join(repo, "b/test"), repo, null)).toEqual(["src/y.ts"]);
+    });
+    test("multi-root model listing the test's package: the path under that package cwd is not reported", () => {
+      const repo = modelRepo(["a", "b"]);
+      expect(phantomRepoPaths("const f = join(process.cwd(), 'src', 'y.ts');", "y.test.ts", join(repo, "b/test"), repo, null)).toEqual([]);
+    });
+  });
   test("a const-bound path the test later creates is not phantom", () => {
     const repo = repoWith(), td = join(repo, "tests");
     expect(phantomRepoPaths("const OUT = join(__dirname, '..', 'build-out');\nmkdirSync(OUT, { recursive: true });\nwriteFileSync(join(OUT, 'a.txt'), 'x');", "a.test.ts", td, repo, null)).toEqual([]);
