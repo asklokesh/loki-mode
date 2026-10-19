@@ -202,6 +202,8 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
   });
 });
 
+// Header and helpers of the Wall file loki 11.17.77 wrote for anthropics/claude-code#81826 (run e10-20261019T064138Z-a7ca; base tree ef7bfdc has no plugins/ralph-loop).
+const REAL_81826 = 'import { test, expect } from \'bun:test\';\\nimport { spawnSync } from \'node:child_process\';\\nimport { mkdtempSync, existsSync, readFileSync, writeFileSync } from \'node:fs\';\\nimport { tmpdir } from \'node:os\';\\nimport { join } from \'node:path\';\\n\\nconst ROOT = process.env.REPO_ROOT ?? process.cwd();\\nconst PLUGIN = join(ROOT, \'plugins\', \'ralph-loop\');\\nconst SETUP = join(PLUGIN, \'scripts\', \'setup-ralph-loop.sh\');\\nconst HOOK = join(PLUGIN, \'hooks\', \'stop-hook.sh\');\\nconst STATE = join(\'.claude\', \'ralph-loop.local.md\');\\n\\nconst env: Record<string, string> = { ...(process.env as Record<string, string>) };\\ndelete env.CLAUDE_CODE_SESSION_ID;\\n\\nfunction freshDir(): string {\\n  const dir = mkdtempSync(join(tmpdir(), \'loki-wall-ralph-\'));\\n  writeFileSync(join(dir, \'t.jsonl\'),\\n    \'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"still working"}]}}\\\n\');\\n  return dir;\\n}\\n\\nfunction setup(dir: string, value: string) {\\n  return spawnSync(\'bash\', [SETUP, \'do\', \'the\', \'task\', \'--max-iterations\', value],\\n    { cwd: dir, env, encoding: \'utf8\' });\\n}\\n\\nfunction hook(dir: string) {\\n  return spawnSync(\'bash\', [HOOK], {\\n    cwd: dir,\\n    env,\\n    encoding: \'utf8\',\\n    input: JSON.stringify({ session_id: \'s1\', transcript_path: join(dir, \'t.jsonl\') }),\\n  });\\n}\\n\\nfunction stateExists(dir: string): boolean {\\n  return existsSync(join(dir, STATE));\\n}\\n\\nfunction rounds(dir: string, n: number): void {\\n  for (let i = 0; i < n; i++) {\\n    if (!stateExists(dir)) break;\\n    hook(dir);\\n  }';
 describe("FC-WALL-PHANTOM-PATH", () => {
   const PHANTOM = "const ROOT = join(__dirname, '..');\nconst PLUGIN = join(ROOT, 'plugins', 'ralph-loop');\nconst SH = join(PLUGIN, 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";
   const FIXED = "const SH = join(__dirname, '..', 'plugins', 'ralph-wiggum', 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";
@@ -243,11 +245,24 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'out', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'src', 'a.js');", "a.test.ts", td, repo, null)).toEqual(["src/a.js"]);
   });
-  test("a plan that names any missing path segment marks the path planned", () => {
+  test("a plan clears a path only when it names the path with its parent, never a bare segment or basename", () => {
     const repo = repoWith(), td = join(repo, "tests"), code = "const f = join(__dirname, '..', 'src', 'newmod', 'index.ts');";
     expect(phantomRepoPaths(code, "a.test.ts", td, repo, null)).toEqual(["src/newmod/index.ts"]);
-    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Introduce a newmod module with an entry point")).toEqual([]);
-    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Refactor the other module")).toEqual(["src/newmod/index.ts"]);
+    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Introduce src/newmod with an entry point")).toEqual([]);
+    expect(phantomRepoPaths(code, "a.test.ts", td, repo, "Introduce a newmod module with an entry point")).toEqual(["src/newmod/index.ts"]);
+    for (const plan of ["Fix the ralph-loop plugin's setup script", "ralph-loop: --max-iterations 08 must be decimal", "Edit setup-ralph-loop.sh under plugins/ralph-wiggum/"]) expect(phantomRepoPaths(PHANTOM, "a.test.ts", td, repo, plan)).toContain("plugins/ralph-loop");
+  });
+  test("monorepo: a call that exists under the repo root does not shift the pairing of a later phantom", () => {
+    const repo = repoWith(); mkdirSync(join(repo, "packages/a/test"), { recursive: true }); mkdirSync(join(repo, "test/helpers"), { recursive: true });
+    writeFileSync(join(repo, "packages/a/package.json"), "{}");
+    const td = join(repo, "packages/a/test");
+    expect(phantomRepoPaths("const h = join(process.cwd(), 'test', 'helpers');\nconst p = join(__dirname, '..', '..', '..', 'plugins', 'ralph-loop');", "x.test.ts", td, repo, null)).toEqual(["plugins/ralph-loop"]);
+  });
+  test("the real #81826 Wall file (env override of the cwd) reports plugins/ralph-loop", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    const real = REAL_81826.replace(/\\n/g, "\n");
+    expect(phantomRepoPaths(real, "loki_wall_ralph_max_iterations.test.ts", td, repo, null)[0]).toBe("plugins/ralph-loop");
+    expect(phantomRepoPaths("const R = process.env.X || process.cwd();\nconst P = join(R, 'plugins', 'ralph-wiggum');", "a.test.ts", td, repo, null)).toEqual([]);
   });
   test("a Prettier-split join() call is caught; fileURLToPath(new URL('..', import.meta.url)) anchors like __dirname", () => {
     const repo = repoWith(), td = join(repo, "tests");

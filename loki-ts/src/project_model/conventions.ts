@@ -96,12 +96,13 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !MANIFESTS.some((m) => existsSync(join(pkg, m)))) pkg = dirname(pkg);
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
   const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
-  const scan = (cwd: string): { reports: { out: string; rel: string }[]; created: string[] } => {
-    const vars = new Map<string, string>(), reports: { out: string; rel: string }[] = [], created: string[] = [];
+  const scan = (cwd: string): { reports: Map<string, { out: string; rel: string }>; created: string[] } => {
+    const vars = new Map<string, string>(), reports = new Map<string, { out: string; rel: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
     const ev = (raw: string, report: boolean): string | null => {
       const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
       if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
       if (e === "process.cwd()") return cwd;
+      const env = /^process\.env(?:\.[\w$]+|\[[^\]]+\])\s*(?:\?\?|\|\|)\s*([\s\S]+)$/.exec(e); if (env) return ev(env[1]!, report); // an env override is unset in the run: the fallback is the value
       if (e === "fileURLToPath(import.meta.url)" || e === "__filename") return join(testDir, "__self__");
       const url = /^fileURLToPath\(new URL\((["'])([^"']*)\1\s*,\s*import\.meta\.url\)\)$/.exec(e); if (url) return resolve(testDir, url[2]!);
       const lit = /^(["'`])((?:\\.|(?!\1)[^\\])*)\1$/.exec(e); if (lit) return lit[2]!.includes("${") ? null : lit[2]!;
@@ -110,10 +111,11 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
       const parts = split(call[2]!), args = parts.map((a) => ev(a, report)); if (args.some((a) => a === null)) return null;
       if (call[1] === "dirname") return dirname(args[0]!);
       const out = resolve(...(args as string[]));
-      if (report && relative(testDir, out).startsWith("..") && parts.some((a) => /^\s*["'`]/.test(a))) reports.push({ out, rel: relative(repoDir, out) });
+      if (report && relative(testDir, out).startsWith("..") && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out) });
       return out;
     };
     for (const line of code.split("\n")) {
+      ln++;
       for (const m of line.matchAll(CREATORS)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) for (const a of split(line.slice(m.index! + m[0].length, j))) { const v = ev(a, false); if (v) created.push(v); } }
       const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
       const asg = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.+?);?\s*$/.exec(line);
@@ -123,15 +125,15 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
     }
     return { reports, created };
   };
-  const runs = [...new Set([pkg, repoDir])].map(scan), words = (planText ?? "").toLowerCase();
-  const planned = (rel: string): boolean => !!planText && (planText.includes(rel) || (/\.\w+$/.test(rel) && planText.includes(basename(rel))) || rel.split("/").some((seg, i, a) => { const b = seg.replace(/\.\w+$/, ""); return b.length > 1 && !existsSync(join(repoDir, ...a.slice(0, i + 1))) && new RegExp(`(^|[^\\w-])${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\w-])`).test(words); }));
+  const runs = [...new Set([pkg, repoDir])].map(scan);
+  const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
   const phantom = (r: { out: string; rel: string }, created: string[]): boolean => {
     const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(node_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
     if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
-    return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel]).status !== 0;
+    return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel], { timeout: 5000 }).status !== 0;
   };
   const missing: string[] = [];
-  runs[0]!.reports.forEach((r, i) => { if (runs.every((x) => x.reports[i] && phantom(x.reports[i]!, x.created)) && !missing.includes(r.rel)) missing.push(r.rel); });
+  for (const [k, r] of runs[0]!.reports) if (runs.every((x) => x.reports.has(k) && phantom(x.reports.get(k)!, x.created)) && !missing.includes(r.rel)) missing.push(r.rel);
   return missing.slice(0, 3);
 }
 
