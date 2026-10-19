@@ -310,3 +310,34 @@ describe("engine10 plan stage", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("FC-OUT-OF-REPO: the plan names no in-repo target", () => {
+  const run = async (scope: string | null) => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-oor-"));
+    const prev = process.env.LOKI_E10_PLAN; process.env.LOKI_E10_PLAN = "always";
+    try {
+      const sessions = new FakeSessionRunner(doneResult, () => { if (scope !== null) writeFileSync(join(dir, "plan-scope.json"), scope, "utf8"); });
+      return (await planStage.run(fakeCtx(dir, sessions, { intake: { task: "add a Slack command" } }), new AbortController().signal)).data;
+    } finally { if (prev === undefined) delete process.env.LOKI_E10_PLAN; else process.env.LOKI_E10_PLAN = prev; rmSync(dir, { recursive: true, force: true }); }
+  };
+  test("brief asks the planner to declare an out-of-repo change", () => {
+    expect(buildPlanBrief("t", [], "/r/plan-output.txt")).toContain("out_of_repo");
+  });
+  test("empty files with a stated reason flags out_of_repo and carries the reason", async () => {
+    const d = await run('{"files":[],"out_of_repo":"the code lives in a hosted service"}');
+    expect(d.out_of_repo).toBe(true);
+    expect(d.spec_conflict_reason).toBe("out-of-repo: the code lives in a hosted service");
+  });
+  test("empty files without a reason still flags it with a default reason", async () => {
+    expect((await run('{"files":[]}')).spec_conflict_reason).toBe("out-of-repo: the plan named no in-repo target files");
+  });
+  test("a plan that names real files never fires, even if it also sets out_of_repo", async () => {
+    const d = await run('{"files":["src/a.ts"],"out_of_repo":"x"}');
+    expect(d.out_of_repo).toBeUndefined(); expect(d.spec_conflict_reason).toBeUndefined();
+  });
+  test("a missing or malformed scope is unknown, never out-of-repo", async () => {
+    expect((await run(null)).out_of_repo).toBeUndefined();
+    expect((await run("not json")).out_of_repo).toBeUndefined();
+    expect((await run('{"nofiles":1}')).out_of_repo).toBeUndefined();
+  });
+});

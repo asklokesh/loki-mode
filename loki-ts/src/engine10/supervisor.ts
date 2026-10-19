@@ -4,7 +4,7 @@
 import { routeStartLine } from "../runner/router/route_block.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
-import { redactEventData } from "../util/redact.ts"; import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
+import { redactEventData } from "../util/redact.ts"; import { localBranchNote, resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
@@ -193,8 +193,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     if (base === null && verdict !== "FAILED") hasDiff = true; else try { // no recorded base: nothing to compare, keep the pre-P1 behaviour; otherwise // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
       safeGit(opts.repoDir, ["diff", "--quiet", String(base), "HEAD", "--", ".", ":(exclude).loki"], { env: workerEnv, stdio: "ignore" });
     } catch { hasDiff = base !== null; }
-  }
-  if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && hasDiff) {
+  } if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
+  if (opts.pr && !cancelled && intact && origin && verdict === "VERIFIED" && hasDiff) { // FC-NO-PUSH-UNVERIFIED: only a verified success leaves the machine; ALREADY_SATISFIED opens no PR (E-66)
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven });
     notProven.push(...(out?.notProven ?? []));

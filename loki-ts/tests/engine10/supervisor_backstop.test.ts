@@ -4,7 +4,7 @@
 // and a remote, or an issue-comment call naming the exact reason on an issue run.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT } from "../../src/engine10/output.ts";
@@ -96,7 +96,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
 
-  test("hung worker with a diff and a remote: still ends as a draft PR call", async () => {
+  test("hung worker with a diff and a remote: backstop commit lands locally, nothing is pushed (FC-NO-PUSH-UNVERIFIED)", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${intakeLine(baseSha)}
@@ -108,12 +108,11 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await runSupervisor({ runId: "e10-bs2", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: pr.step });
     expect(Date.now() - t0).toBeLessThan(2500);
     expect(r.verdict).toBe("FAILED");
-    expect(pr.calls.length).toBe(1);
-    expect(pr.calls[0]!.verdict).toBe("FAILED");
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
   }, 10_000);
 
-  test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, still opens the PR (never vanishes)", async () => {
+  test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, does not push (FC-NO-PUSH-UNVERIFIED)", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${intakeLine(baseSha)}
@@ -125,8 +124,8 @@ describe("E-67 rework: supervisor backstop", () => {
     const pr = prSpy();
     const r = await runSupervisor({ runId: "e10-fc19", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step, started: { task_source: "issue", issue_ref: "acme/widget#42" }, comment: commentSpy().step });
     expect(r.verdict).toBe("PARTIAL");
-    expect(pr.calls.length).toBe(1);
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
   }, 15_000);
 
   test("P1: a sealed SPEC_CONFLICT or PARTIAL with no net diff never calls pr (no empty branch), and the blocked run still comments", async () => {
@@ -147,19 +146,20 @@ describe("E-67 rework: supervisor backstop", () => {
     }
   }, 20_000);
 
-  test("P1: a sealed SPEC_CONFLICT with a real diff still opens its draft PR (A-110)", async () => {
-    const { dir, baseSha } = repoWithCommit();
-    const code = `
-      ${intakeLine(baseSha)}
-      ${COMMIT_A_CHANGE}
-      console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "SPEC_CONFLICT", not_proven: [] } }));
-      process.exit(0);
-    `;
-    const pr = prSpy();
-    const r = await runSupervisor({ runId: "e10-p1-diff", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
-    expect(pr.calls.length).toBe(1);
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
-  }, 10_000);
+  test("FC-NO-PUSH-UNVERIFIED: a sealed SPEC_CONFLICT, PARTIAL or FAILED with a real diff never calls pr (branch stays local); VERIFIED still does", async () => {
+    for (const verdict of ["SPEC_CONFLICT", "PARTIAL", "FAILED", "VERIFIED"]) {
+      const { dir, baseSha } = repoWithCommit();
+      const code = `
+        ${intakeLine(baseSha)}
+        ${COMMIT_A_CHANGE}
+        console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: ${JSON.stringify(verdict)}, not_proven: [] } }));
+        process.exit(0);
+      `;
+      const pr = prSpy();
+      await runSupervisor({ runId: `e10-nopush-${verdict.toLowerCase()}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+      expect(pr.calls.length).toBe(verdict === "VERIFIED" ? 1 : 0);
+    }
+  }, 40_000);
 
   test("P1: a comment step reporting skipped lands skipped:true on the issue.commented event", async () => {
     const { dir } = repoWithCommit();
@@ -194,7 +194,7 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(src).toContain("writeFileSync(bodyFile, `<!-- loki-backstop -->\\nLoki 10 run ${runId}");
   });
 
-  test("worker exits non-zero (not a hang) with a diff and a remote: still gets a draft PR, not silently dropped", async () => {
+  test("worker exits non-zero (not a hang) with a diff and a remote: pushes nothing (FC-NO-PUSH-UNVERIFIED)", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${COMMIT_A_CHANGE}
@@ -205,8 +205,8 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await runSupervisor({ runId: "e10-bs4", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
     expect(r.verdict).toBe("FAILED");
     expect(r.workerExit).toBe(1);
-    expect(pr.calls.length).toBe(1);
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
   }, 10_000);
 
   test("worker exits non-zero with no diff, no issue: prints a reason instead of vanishing", async () => {
@@ -233,7 +233,7 @@ describe("E-67 rework: supervisor backstop", () => {
   // true, so the PR DID open -- but `git diff base HEAD` on the pushed branch came back empty
   // (`[""]` instead of the two changed files): nothing was ever committed, so the PR carried no
   // diff at all. Green once the backstop makes its own commit before the diff check.
-  test("hung worker leaves an untracked file and a modified-but-uncommitted tracked file: both reach the PR, with the reason in the body", async () => {
+  test("hung worker leaves an untracked file and a modified-but-uncommitted tracked file: both land in the local backstop commit, nothing is pushed", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${intakeLine(baseSha)}
@@ -249,17 +249,18 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await runSupervisor({ runId: "e10-bs6", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: realPr(pushScriptPath, runDir) });
     expect(Date.now() - t0).toBeLessThan(2500);
     expect(r.verdict).toBe("FAILED");
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/9");
+    expect(r.prUrl).toBeNull();
+    expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["a.txt", "untracked.txt"]);
-    expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).toContain(BACKSTOP_NOT_PROVEN);
+    expect(existsSync(join(workDir, "push-calls.log"))).toBe(false);
   }, 10_000);
 
   // Finding 2 in isolation (no tracked change at all): on the pre-fix merge, hasPushableDiff's
   // `git diff` sees nothing, so opts.pr is never even called (0 calls) -- the run just prints and
   // vanishes, exactly the bug E-67 exists to close. Proves untracked-only work is not just
   // undercounted in the diff but drops the PR entirely without the backstop commit.
-  test("hung worker leaves only an untracked file (no tracked change): it still reaches the PR", async () => {
+  test("hung worker leaves only an untracked file (no tracked change): kept in the local backstop commit, not pushed", async () => {
     const { dir, baseSha } = repoWithCommit();
     const code = `
       ${intakeLine(baseSha)}
@@ -272,7 +273,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const pushScriptPath = writePushStub(workDir, join(workDir, "push-calls.log"));
     const r = await runSupervisor({ runId: "e10-bs7", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: realPr(pushScriptPath, runDir) });
     expect(r.verdict).toBe("FAILED");
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/9");
+    expect(r.prUrl).toBeNull();
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["untracked.txt"]);
   }, 10_000);
@@ -409,7 +410,7 @@ describe("A-110 exit ladder", () => {
       { started: { task_source: "issue", issue_ref: "acme/widget#7" }, pr: prSpy().step, comment: comment.step, status });
     expect(r.outcome).toBe("BLOCKED");
     expect(comment.calls).toEqual([]);
-    expect(seen).toEqual([{ prUrl: "https://github.com/acme/widget/pull/1" }, { prUrl: "https://github.com/acme/widget/pull/1", outcome: "BLOCKED", reason: "spec conflict: A or B?" }]);
+    expect(seen).toEqual([{ prUrl: null, outcome: "BLOCKED", reason: "spec conflict: A or B?" }]); // no PR step ran, so only the final outcome projects
   });
   test("the worker's escalated stop reason drives the outcome: stalled exits 5, fatal keeps its string, none stays FAILED", async () => {
     const stalled = await ladder(() => `${ev("escalated", null, { stop: "stalled" })}${sealedAs("PARTIAL")}`);
@@ -420,12 +421,13 @@ describe("A-110 exit ladder", () => {
     expect(fatal.exit).toBe(1);
     expect((await ladder(() => sealedAs("PARTIAL"))).r.stop).toBeNull();
   });
-  test("a BLOCKED run that opened a draft PR names the PR in the comment instead of claiming none", async () => {
-    const comment = commentSpy();
+  test("a BLOCKED run with a diff opens no PR (FC-NO-PUSH-UNVERIFIED) and the comment claims none", async () => {
+    const comment = commentSpy(), pr = prSpy();
     const { r } = await ladder(() => `${COMMIT_A_CHANGE}${ev("stage.completed", "implement", { spec_conflict_reason: "A or B?" })}${sealedAs("SPEC_CONFLICT")}`,
-      { started: { task_source: "issue", issue_ref: "acme/widget#7" }, pr: prSpy().step, comment: comment.step });
-    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
-    expect(comment.calls[0]!.prUrl).toBe(r.prUrl);
+      { started: { task_source: "issue", issue_ref: "acme/widget#7" }, pr: pr.step, comment: comment.step });
+    expect(r.prUrl).toBeNull();
+    expect(pr.calls.length).toBe(0);
+    expect(comment.calls[0]!.prUrl).toBeUndefined();
   });
 
   // A-104c: a run whose commit stage FAILED must not have backstopCommit sweep up what the commit

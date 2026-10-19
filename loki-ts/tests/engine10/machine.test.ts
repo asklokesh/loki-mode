@@ -658,3 +658,22 @@ describe("concurrent wall distrusts a green base run when implement changed file
     expect(w.already_satisfied).toBe(true); expect(w.base_run.unproven).toBeUndefined();
   });
 });
+
+describe("FC-OUT-OF-REPO machine", () => {
+  const ran = (events: Ev[]) => of(events, "stage.completed");
+  it("an out-of-repo plan skips implement, verify and fix, runs the tail, and seals via spec_conflict", async () => {
+    const { ctx, events } = fakeCtx();
+    const plan = stage("plan", async () => ({ status: "completed", data: { out_of_repo: true, spec_conflict_reason: "out-of-repo: hosted service" } }));
+    let sealSaw: Record<string, unknown> | undefined;
+    const seal = stage("seal", async (c) => { sealSaw = c.outputs().implement; return { status: "completed", data: {} }; });
+    const r = await runMachine(ctx, { load: loaderOf(all({ plan, seal })) });
+    expect(ran(events)).toEqual(["intake", "plan", "wall", "commit", "seal", "pr"]);
+    expect(sealSaw?.exit).toBe("spec_conflict"); expect(sealSaw?.spec_conflict_reason).toBe("out-of-repo: hosted service");
+    expect(r.outputs.implement?.exit).toBe("spec_conflict");
+  });
+  it("positive control: a normal plan still runs implement and verify", async () => {
+    const { ctx, events } = fakeCtx();
+    await runMachine(ctx, { load: loaderOf(all()) });
+    expect(ran(events)).toContain("implement"); expect(ran(events)).toContain("verify");
+  });
+});

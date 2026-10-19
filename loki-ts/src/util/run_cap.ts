@@ -67,3 +67,18 @@ export function resolveRunCapS(repoDir: string, subscription: boolean, env: Node
 }
 /** The line appended to the implement brief (after the cache-stable prefix) so the model can checkpoint. */
 export const timeBudgetNote = (limitS: number): string => `Time budget: about ${Math.max(1, Math.round(limitS / 60))} minutes left for this session. Work in small steps, keep the test suite passing at every checkpoint, and leave the tree in a working state when time runs out.`;
+/** FC-OUT-OF-REPO: the plan session's own statement that the change has no in-repo target. Fires only when plan-scope.json parsed and names zero files; a missing or malformed scope is unknown, never out-of-repo. */
+export function planOutOfRepo(runDir: string): { reason: string } | null {
+  const r = readScopeText(runDir);
+  if (r.status !== "ok") return null;
+  try {
+    const j = JSON.parse(r.text) as { files?: unknown; out_of_repo?: unknown };
+    if (!Array.isArray(j.files) || j.files.some((f) => typeof f === "string" && f.trim() !== "")) return null;
+    const why = typeof j.out_of_repo === "string" ? j.out_of_repo.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 300) : "";
+    return { reason: why || "the plan named no in-repo target files" };
+  } catch { return null; }
+}
+/** FC-OUT-OF-REPO: the plan brief line that lets the planner declare it. */
+export const outOfRepoInstruction = (scopePath: string): string => `If the requested change has no target in this repository (for example the code lives in a hosted service or another repo), write {"files":[],"out_of_repo":"<one sentence why>"} to ${scopePath} and do not guess files.`;
+/** FC-NO-PUSH-UNVERIFIED: the one line printed when an unverified run keeps its branch local. */
+export const localBranchNote = (runId: string, verdict: string, repoDir: string): string => `engine10: run ${runId} sealed ${verdict}, not verified: branch loki/${runId} stays local (not pushed); inspect it in ${repoDir}\n`;

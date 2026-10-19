@@ -8,7 +8,7 @@ import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smal
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
-import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
+import { PLAN_SCOPE_FILE, outOfRepoInstruction, planOutOfRepo } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
@@ -42,7 +42,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     ...(intentCard ? [INTENT_CARD_INSTRUCTION] : []),
     ...(behaviorChange ? [behaviorChangeInstruction(scopePath)] : []), // T2: strict only
     ...(riskDecl ? [`In the same JSON object (${scopePath}) also add "risky_hunks": up to 3 objects {"path":"<repo-relative path>","risk":<1 to 3, 3 highest>,"why":"<one short sentence>"} naming where a reviewer should look first.`] : []), // REVIEWER-BRIEF-V2
-    "Do not edit any other file. Do not run tests. Do not commit.",
+    outOfRepoInstruction(scopePath), "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
 
@@ -109,7 +109,7 @@ export const planStage: Stage = {
     // T3: empty plan or LOKI_INTENT_CARD=0 is silent and changes nothing.
     const ic = await applyIntent(rawPlan, cardOn, ctx.runDir, (d) => ctx.emit("variant", "plan", d));
     const plan = truncatePlan(ic.rest);
-    const route_record = pr.record({ planModel, planModelNote });
+    const route_record = pr.record({ planModel, planModelNote }), oor = planOutOfRepo(ctx.runDir); // FC-OUT-OF-REPO: ends the run as BLOCKED before implement/fix spend anything
     return {
       status: "completed",
       data: {
@@ -118,7 +118,7 @@ export const planStage: Stage = {
         iteration_ids: [iterationId],
         duration_s: session.durationS,
         ...ic.data,
-        ...pr.units(),
+        ...pr.units(), ...(oor ? { out_of_repo: true, spec_conflict_reason: `out-of-repo: ${oor.reason}` } : {}),
         ...(route_record ? { route_record } : {}),
         ...readBehaviorChange(ctx.runDir), // T2: model-declared, strict only
       },
