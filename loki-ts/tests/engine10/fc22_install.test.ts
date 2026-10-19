@@ -9,7 +9,7 @@ import { changedFiles } from "../../src/util/check_result.ts";
 import { dropSet, parseStaged } from "../../src/e10ext/commit_filter.ts";
 import { currentDiff } from "../../src/runner/session_resume.ts";
 import { installOwned } from "../../src/project_model/install.ts";
-import { absentDepRoots, intakeDeps, prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
+import { absentDepRoots, intakeDeps, lockedInstall, prepareDeps, resetInstallMemo } from "../../src/project_model/install.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
 
 const FIX = resolve(import.meta.dir, "../fixtures/install-fc22");
@@ -286,5 +286,101 @@ describe("absentDepRoots and intakeDeps (FC-DEPS-NOT-INSTALLED)", () => {
       expect((out.deps_not_proven as string[]).join("\n")).toContain("install exited 3: boom (install:b; harness-owned)");
       expect(await intakeDeps(ctx as never, new AbortController().signal, [])).toEqual({}); // a is installed now, b ran once this run
     } finally { if (saved === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = saved; }
+  });
+});
+
+// Founder 2026-10-19: the up-front install is the ecosystem's lockfile-frozen form; a failed locked install never falls back to a mutating one.
+describe("lockedInstall (locked, reproducible install)", () => {
+  const put = (dir: string, ...files: string[]): void => { for (const f of files) writeFileSync(join(dir, f), f === "package.json" ? "{}" : "x\n"); };
+  // [lockfile, model command, expected command run]
+  const TABLE: Array<[string, string, string]> = [
+    ["package-lock.json", "npm install", "npm ci"],
+    ["npm-shrinkwrap.json", "npm i --legacy-peer-deps", "npm ci --legacy-peer-deps"],
+    ["pnpm-lock.yaml", "pnpm install", "pnpm install --frozen-lockfile"],
+    ["yarn.lock", "yarn", "yarn install --frozen-lockfile"],
+    ["yarn.lock", "yarn install", "yarn install --frozen-lockfile"],
+    ["bun.lock", "bun install", "bun install --frozen-lockfile"],
+    ["bun.lockb", "bun i", "bun install --frozen-lockfile"],
+    ["uv.lock", "uv sync", "uv sync --frozen"],
+    ["poetry.lock", "poetry install", "poetry install --no-root"],
+    ["Pipfile.lock", "pipenv install --dev", "pipenv sync --dev"],
+    ["Cargo.lock", "cargo fetch", "cargo fetch --locked"],
+    ["Gemfile.lock", "bundle install", "BUNDLE_FROZEN=true bundle install"],
+    ["Gemfile.lock", "bundle", "BUNDLE_FROZEN=true bundle install"],
+    ["composer.lock", "composer update", "composer install"],
+  ];
+  for (const [lock, cmd, want] of TABLE) {
+    test(`${lock}: ${cmd} -> ${want}`, () => {
+      put(repo, lock);
+      const r = lockedInstall(repo, repo, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([want, true, true]);
+    });
+  }
+  test("yarn Berry (.yarnrc.yml or packageManager yarn@>=2) uses --immutable", () => {
+    put(repo, "yarn.lock", ".yarnrc.yml");
+    expect(lockedInstall(repo, repo, "yarn install").cmd).toBe("yarn install --immutable");
+    rmSync(join(repo, ".yarnrc.yml"));
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ packageManager: "yarn@4.1.0" }));
+    expect(lockedInstall(repo, repo, "yarn").cmd).toBe("yarn install --immutable");
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ packageManager: "yarn@1.22.0" }));
+    expect(lockedInstall(repo, repo, "yarn").cmd).toBe("yarn install --frozen-lockfile");
+  });
+  test("an already-locked command is kept byte for byte", () => {
+    put(repo, "package-lock.json", "pnpm-lock.yaml", "uv.lock", "composer.lock", "Gemfile.lock", "Cargo.lock");
+    for (const cmd of ["npm ci", "pnpm install --frozen-lockfile", "uv sync --locked", "composer install --no-dev", "BUNDLE_FROZEN=true bundle install", "cargo fetch --locked"]) {
+      const r = lockedInstall(repo, repo, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, true, false]);
+    }
+  });
+  test("no lockfile: the model command is kept and the check says it is not locked", () => {
+    const r = lockedInstall(repo, repo, "npm install");
+    expect([r.cmd, r.locked, r.rewritten]).toEqual(["npm install", false, false]);
+    expect(r.note).toContain("no package-lock.json or npm-shrinkwrap.json found");
+  });
+  test("no rule matches, or the command names packages: kept and visibly not locked", () => {
+    put(repo, "package-lock.json");
+    expect(lockedInstall(repo, repo, "make deps")).toMatchObject({ cmd: "make deps", locked: false });
+    const r = lockedInstall(repo, repo, "npm install left-pad");
+    expect([r.cmd, r.locked]).toEqual(["npm install left-pad", false]);
+  });
+  test("compound commands rewrite each install segment, and a fallback after || is locked too", () => {
+    put(repo, "package-lock.json");
+    expect(lockedInstall(repo, repo, "cd web && npm install || npm install").cmd).toBe("cd web && npm ci || npm ci");
+  });
+  test("a workspace package finds the lockfile at the repo root", () => {
+    put(repo, "pnpm-lock.yaml");
+    mkdirSync(join(repo, "pkg"));
+    expect(lockedInstall(repo, join(repo, "pkg"), "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
+  });
+
+  // Fake package manager on PATH, no network: npm ci fails when the lockfile is out of sync, npm install would "fix" it.
+  const fakeNpm = (body: string): string => {
+    const bin = mkdtempSync(join(tmpdir(), "loki-fc22-bin-"));
+    writeFileSync(join(bin, "npm"), `#!/bin/sh\n${body}`, { mode: 0o755 });
+    return bin;
+  };
+  test("fail closed: an out-of-sync lockfile is NOT PROVEN with the real reason and never falls back to a mutating install", async () => {
+    const bin = fakeNpm(`echo "$@" >> "$0.calls"\nif [ "$1" = ci ]; then echo "npm error package.json and package-lock.json are not in sync" >&2; exit 1; fi\n: > mutated\nexit 0\n`);
+    try {
+      const r = await prepareDeps({ ...base(), env: { PATH: `${bin}:${process.env["PATH"]}` }, model: model({ a: "npm install" }), failed: failed("a") });
+      expect(r.checks).toHaveLength(1);
+      expect(r.checks[0]).toMatchObject({ cmd: "npm ci", model_cmd: "npm install", locked: true, result: "not_run", owner: "harness" });
+      expect(r.checks[0]!.reason).toContain("install exited 1: npm error package.json and package-lock.json are not in sync");
+      expect(r.notProven.join("\n")).toContain("(install:a; harness-owned)");
+      expect(readFileSync(join(bin, "npm.calls"), "utf8")).toBe("ci\n");
+      expect(existsSync(join(repo, "a/mutated"))).toBe(false);
+    } finally { rmSync(bin, { recursive: true, force: true }); }
+  });
+  test("a passing locked install records the command run and that it was locked", async () => {
+    const bin = fakeNpm("mkdir -p node_modules\nexit 0\n");
+    try {
+      const r = await prepareDeps({ ...base(), env: { PATH: `${bin}:${process.env["PATH"]}` }, model: model({ a: "npm install" }), failed: failed("a") });
+      expect(r.checks[0]).toMatchObject({ cmd: "npm ci", locked: true, result: "pass", lock_note: "install rewritten to its lockfile-frozen form" });
+    } finally { rmSync(bin, { recursive: true, force: true }); }
+  });
+  test("an unlocked install (no rule) still runs and is recorded locked: false", async () => {
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/ok.sh` }), failed: failed("a") });
+    expect(r.checks[0]).toMatchObject({ result: "pass", locked: false });
+    expect(r.checks[0]!.lock_note).toContain("not lockfile-locked");
   });
 });

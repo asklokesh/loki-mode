@@ -4,6 +4,8 @@
 // Once per package per run (memo), timeout min(300s, cap left), recorded as check `install:<root>`. A failed install is
 // not_run owned by the harness, never fail. No install command: nothing runs, NOT PROVEN names the package (never guess).
 // Opt-out: LOKI_E10_INSTALL=0 or loki.yaml `verify.install_deps: false`.
+// Locked install (founder 2026-10-19): lockedInstall maps (package root contents, model command) to the ecosystem's frozen form, which
+// never rewrites the lockfile. If that install fails the run is NOT PROVEN (harness-owned); it never falls back to a mutating install.
 // L2 classification (docs/v10/ENGINE-LAWS.md L2): TRUST path, registered in tests/engine10/l2_destructive_registry.test.ts.
 // guardTree is the only destructive call: it restores a tracked file (literal pathspec) only when the file was clean before the
 // install and the install changed it, and counts it restored only if a re-snapshot shows it clean. A file that was already dirty
@@ -12,7 +14,7 @@ import { spawn } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { baselineSuites } from "../runner/repo_profile.ts";
 import type { RunContext, RunnerName } from "../engine10/types.ts";
@@ -29,6 +31,9 @@ export interface InstallCheck {
   cmd: string;
   cwd: string; // repo-relative
   result: "pass" | "not_run";
+  locked: boolean; // true: the command run is the ecosystem's lockfile-frozen form
+  lock_note?: string; // why it is not locked, or that it was rewritten (model_cmd carries the model's original)
+  model_cmd?: string; // the model's command, only when it was rewritten into its locked form
   duration_s: number;
   reason?: string;
   owner?: "harness";
@@ -150,6 +155,72 @@ function runDetached(cmd: string, cwd: string, env: Record<string, string>, sign
   });
 }
 
+interface LockRule {
+  tool: string; subs: string[]; locks: string[];
+  locked: (sub: string, rest: string[], env: string[]) => boolean; // the command is already a lock-honoring form
+  build: (sub: string, rest: string[], ctx: { berry: boolean }) => string[]; // words of the locked form, the model's flags kept
+}
+const has = (rest: string[], ...f: string[]): boolean => rest.some((x) => f.includes(x));
+const withFlag = (rest: string[], flag: string): string[] => (rest.includes(flag) ? rest : [...rest, flag]);
+/** The ecosystem table: one row per package manager, its official frozen form. poetry install already honors poetry.lock; `--sync` is not
+ *  added because it deletes environment packages the lock lacks, which a fresh-clone install never needs. `--no-root` installs the
+ *  locked dependencies without building the project itself. */
+const LOCK_RULES: LockRule[] = [
+  { tool: "npm", subs: ["install", "i", "ci"], locks: ["package-lock.json", "npm-shrinkwrap.json"], locked: (s) => s === "ci", build: (_s, r) => ["npm", "ci", ...r] },
+  { tool: "pnpm", subs: ["install", "i"], locks: ["pnpm-lock.yaml"], locked: (_s, r) => has(r, "--frozen-lockfile"), build: (_s, r) => ["pnpm", "install", ...withFlag(r, "--frozen-lockfile")] },
+  { tool: "yarn", subs: ["", "install"], locks: ["yarn.lock"], locked: (_s, r) => has(r, "--immutable", "--frozen-lockfile"), build: (_s, r, c) => ["yarn", "install", ...withFlag(r, c.berry ? "--immutable" : "--frozen-lockfile")] },
+  { tool: "bun", subs: ["install", "i", "ci"], locks: ["bun.lock", "bun.lockb"], locked: (s, r) => s === "ci" || has(r, "--frozen-lockfile"), build: (_s, r) => ["bun", "install", ...withFlag(r, "--frozen-lockfile")] },
+  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--frozen", "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r, "--frozen")] },
+  { tool: "poetry", subs: ["install"], locks: ["poetry.lock"], locked: (_s, r) => has(r, "--no-root", "--only-root"), build: (_s, r) => ["poetry", "install", ...withFlag(r, "--no-root")] },
+  { tool: "pipenv", subs: ["install", "sync"], locks: ["Pipfile.lock"], locked: (s) => s === "sync", build: (_s, r) => ["pipenv", "sync", ...r] },
+  { tool: "cargo", subs: ["fetch", "build"], locks: ["Cargo.lock"], locked: (_s, r) => has(r, "--locked", "--frozen"), build: (s, r) => ["cargo", s, ...withFlag(r, "--locked")] },
+  { tool: "bundle", subs: ["", "install"], locks: ["Gemfile.lock"], locked: (_s, r, e) => e.includes("BUNDLE_FROZEN=true") || has(r, "--frozen", "--deployment"), build: (_s, r) => ["bundle", "install", ...r] },
+  { tool: "composer", subs: ["install", "update"], locks: ["composer.lock"], locked: (s) => s === "install", build: (_s, r) => ["composer", "install", ...r] },
+];
+export interface LockedInstall { cmd: string; locked: boolean; note?: string; rewritten: boolean }
+
+/** First directory from `cwd` up to `repoDir` (inclusive) holding one of `names`; workspaces keep their lockfile at the workspace root. */
+function lockDir(repoDir: string, cwd: string, names: string[]): string | null {
+  const top = realpathSync(repoDir);
+  for (let d = realpathSync(cwd); ; d = dirname(d)) {
+    if (names.some((n) => existsSync(join(d, n)))) return d;
+    if (d === top || relative(top, d).startsWith("..") || d === dirname(d)) return null;
+  }
+}
+/** Yarn Berry (2+): .yarnrc.yml beside the lockfile or package.json packageManager yarn@>=2; anything else is Classic. */
+function isYarnBerry(dir: string): boolean {
+  if (existsSync(join(dir, ".yarnrc.yml"))) return true;
+  try { return /^yarn@([2-9]|\d{2,})/.test(String((JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { packageManager?: unknown }).packageManager ?? "")); } catch { return false; }
+}
+
+/** Maps (package root contents, model install command) to the command actually run: each install segment whose tool has a lockfile in
+ *  the package root (or above it, up to the repo) becomes the ecosystem's frozen form; an already-locked form is kept; a segment that names
+ *  packages, has no lockfile or matches no rule is kept as written and the result says it is not locked. Never guesses a package manager. */
+export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
+  const parts = modelCmd.split(/(\s*(?:&&|\|\||;)\s*)/);
+  const notes: string[] = [];
+  let hits = 0, locked = true, rewritten = false;
+  const out = parts.map((seg, k) => {
+    if (k % 2 === 1) return seg;
+    const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
+    if (e < 0) return seg;
+    const env = w.slice(0, e), tool = w[e]!, hasSub = w[e + 1] !== undefined && !w[e + 1]!.startsWith("-"), sub = hasSub ? w[e + 1]! : "";
+    const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
+    if (!rule) return seg;
+    hits++;
+    const rest = w.slice(e + (hasSub ? 2 : 1));
+    if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
+    const dir = lockDir(repoDir, cwd, rule.locks);
+    if (!dir) { locked = false; notes.push(`no ${rule.locks.join(" or ")} found for ${tool}`); return seg; }
+    if (rule.locked(sub, rest, env)) return seg; // already a locked form: kept byte for byte
+    rewritten = true;
+    const frozenEnv = rule.tool === "bundle" ? ["BUNDLE_FROZEN=true"] : [];
+    return [...env, ...frozenEnv, ...rule.build(sub, rest, { berry: isYarnBerry(dir) })].join(" ");
+  });
+  if (hits === 0) return { cmd: modelCmd, locked: false, note: "install not lockfile-locked: no lockfile rule matches this command", rewritten: false };
+  return { cmd: rewritten ? out.join("") : modelCmd, locked, rewritten, ...(!locked ? { note: `install not lockfile-locked: ${notes.join("; ")}` } : rewritten ? { note: "install rewritten to its lockfile-frozen form" } : {}) };
+}
+
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */
 const excerpt = (tail: string): string => {
   const l = tail.split("\n").map((x) => x.trim()).filter(Boolean).pop() ?? "";
@@ -172,7 +243,8 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
     const mc = input.model?.installFor(root) ?? null;
     if (!mc) { res.notProven.push(`NOT PROVEN: package ${root} has no known install command, its dependencies were not installed`); continue; }
     const name = `install:${root}`;
-    const mk = (result: InstallCheck["result"], duration_s: number, reason?: string): InstallCheck => ({ name, cmd: mc.cmd, cwd: mc.cwd, result, duration_s, ...(reason ? { reason } : {}), ...(result === "not_run" ? { owner: "harness" as const } : {}) });
+    let li: LockedInstall = { cmd: mc.cmd, locked: false, rewritten: false };
+    const mk = (result: InstallCheck["result"], duration_s: number, reason?: string): InstallCheck => ({ name, cmd: li.cmd, cwd: mc.cwd, result, locked: li.locked, ...(li.note ? { lock_note: li.note } : {}), ...(li.rewritten ? { model_cmd: mc.cmd } : {}), duration_s, ...(reason ? { reason } : {}), ...(result === "not_run" ? { owner: "harness" as const } : {}) });
     const notRun = (reason: string): void => { res.checks.push(mk("not_run", 0, reason)); res.notProven.push(`${name} not run: ${reason}`); };
     const budget = Math.min(INSTALL_CAP_MS, left);
     if (budget <= 0 || input.signal.aborted) { notRun(input.signal.aborted ? "aborted" : "no budget left for install"); continue; }
@@ -182,9 +254,10 @@ export async function prepareDeps(input: PrepareInput): Promise<PrepareResult> {
       const rel = relative(realpathSync(input.repoDir), cwd);
       if (isAbsolute(mc.cwd) || rel.startsWith("..") || isAbsolute(rel)) { notRun(`install cwd ${mc.cwd} resolves outside the repo`); continue; }
     } catch { notRun(`install cwd ${mc.cwd} does not exist`); continue; }
+    li = lockedInstall(input.repoDir, cwd, mc.cmd);
     const before = snapshot(input.repoDir, env);
     const t0 = Date.now();
-    const r = await runDetached(mc.cmd, cwd, env, input.signal, budget);
+    const r = await runDetached(li.cmd, cwd, env, input.signal, budget);
     const dt = (Date.now() - t0) / 1000;
     left -= Date.now() - t0;
     if (!guardTree(input.repoDir, env, before, res)) res.notProven.push(`${name} tree guard not run (git status failed)`);
