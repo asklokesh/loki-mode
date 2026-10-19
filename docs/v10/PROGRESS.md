@@ -2680,3 +2680,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T19:00Z (CoS) v11.17.102
 - 11.17.102: FC-VERIFIED-PR-WITHOUT-ITS-TEST (opus HIGH APPROVE after hook BLOCK; seal 121/0, pr_body_golden 17/0, log_seal 19/0) and FC-FULL-SUITE-EXIT-CODED-SCRIPT (opus HIGH APPROVE; check_result 31/0, monorepo_cwd 39/0). claude-code#81826 draft rerun on 11.17.101 sealed PARTIAL on an exit-coded checker script.
+
+## 2026-10-19T19:33Z (CoS) v11.17.103
+- 11.17.103: FC-REPO-SKIPPED-TEST-DOWNGRADES (opus HIGH APPROVE x4), FC-FULL-SUITE-EXIT-CODED-SCRIPT attribution (opus HIGH APPROVE; harness_intelligence 108/0) and FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE (opus HIGH APPROVE; monorepo_cwd 42/0, red 37/5). claude-code#81826 on 11.17.102 sealed PARTIAL on an unowned plugin file; FireLater#20 on 11.17.100 sealed PARTIAL on a repo-skipped suite.

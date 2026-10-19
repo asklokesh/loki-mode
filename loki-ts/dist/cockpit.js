@@ -16,4 +16,4 @@ var BJ=Object.defineProperty;var HJ=(J)=>J;function FJ(J,Q){this[J]=HJ.bind(null
 `),3}let K=WJ()-2,V=await zJ(G,{protocol:Q,forceText:Z,cols:K});if($)try{let{writeFileSync:q}=await import("fs");q($,V.svg)}catch{}if(V.kind==="image"&&V.data)return process.stdout.write(V.data),0;return process.stderr.write(`FALLBACK	${V.reason||"image unavailable"}
 `),3}if(import.meta.main)eJ().then((J)=>process.exit(J));export{eJ as main};
 
-//# debugId=70625FF4EA7AB3FE465CBC2695CA8629
+//# debugId=3D7AE784FC80270648681F4B5422E5D0

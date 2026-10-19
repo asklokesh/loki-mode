@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.103 (2026-10-19)
+
+### Fixed
+- Seal: a zero-test check that the repository itself skips (for example a `describe.skip` integration suite the run never touched) no longer downgrades a proven run to PARTIAL. The excusal applies only when intake measured the same check as zero on the untouched base, the dependency environment fingerprint is unchanged, and the run did not remove or re-version a dependency; the receipt records it as `repo_skipped`. Untracked files the zero-baseline probe creates are removed so they never reach the agent diff.
+- Verify: a failing exit-coded script is now attributed by a multiset of lightly normalized output lines, so a failure already present on base reads as pre-existing while a new or changed failure reads as introduced. Only the repo root prefix and a `:line` or `:line:col` suffix directly after a file extension are stripped; empty output is not attributable and blocks.
+- Verify: a changed file that belongs to no package (for example a plugin shell script) no longer makes every package without a test command own the diff. Such a file is credited only when the whole product diff is unowned and the Wall test was red on base and green on head; otherwise the run records "changed file <f> belongs to no package and no passing check exercised it" and stays NOT PROVEN. Run `loki start owner/repo#N` as before; no flag is needed.
+
 ## v11.17.102 (2026-10-19)
 
 ### Fixed
