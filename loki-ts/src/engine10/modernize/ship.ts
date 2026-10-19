@@ -1,7 +1,7 @@
 // loki-ts/src/engine10/modernize/ship.ts -- M-21: wave ship (docs/v10/MODERNIZE.md sections 3.6 and 9).
 // One PR per wave through runPushPr (stages/pr.ts), the shared credentialed
-// push-script helper, supervisor side only. The PR is a draft unless the wave verified (M-20) and every unit is
-// PROVEN; a missing verdict or an empty wave is a draft too (fail-safe). The body lists every unit with
+// push-script helper, supervisor side only. A wave that did not verify (M-20), or has any unit not PROVEN, is never pushed
+// (FC-NO-PUSH-UNVERIFIED); a missing verdict or an empty wave counts as unverified (fail-safe). The body lists every unit with
 // its verdict, receipt path and sha256. The push (runPushPr) is injectable so tests need no network.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,16 +66,15 @@ export function shipWave(o: ShipWaveOpts): ShipResult {
   const fail = (reason: string, url: string | null = null, existing: boolean | null = null): ShipResult => ({ shipped: false, url, draft, existing, reason });
   const pinnedOrigin = o.pinnedOrigin.trim();
   if (!pinnedOrigin) return fail("no pinned origin: refusing to push (Rule of Two)");
+  if (draft) return fail("wave not verified: branch stays local, not pushed"); // FC-NO-PUSH-UNVERIFIED: same VERIFIED-only gate as the supervisor pr step
   const dir = join(o.repoDir, ".loki", "modernize", o.mid);
   mkdirSync(dir, { recursive: true });
   const bodyFile = join(dir, `wave-${o.wave}-pr-body.md`);
   writeFileSync(bodyFile, renderWaveBody(o.wave, o.verdict, o.units), "utf8");
-  const r = (o.push ?? runPushPr)({ repoDir: o.repoDir, branch: o.branch, title: `Loki modernize: wave ${o.wave}${draft ? " (draft)" : ""}`, bodyFile, draft, pinnedOrigin });
+  const r = (o.push ?? runPushPr)({ repoDir: o.repoDir, branch: o.branch, title: `Loki modernize: wave ${o.wave}`, bodyFile, draft, pinnedOrigin });
   if (!r.ok) return fail(r.reason);
-  // engine10-push.sh ignores --draft and the new body when it reuses an open PR. A wanted draft cannot be applied (honest failure);
-  // a ready wave replaces the old body and marks the PR ready through the script (pr-ready), else it stays a stale draft.
-  if (draft && r.existing !== false) return fail("existing PR reused; draft state not applied", r.url, r.existing);
-  if (!draft && r.existing !== false) {
+  // engine10-push.sh ignores the new body when it reuses an open PR: a verified wave replaces it and marks the PR ready (pr-ready), else the PR stays a stale draft.
+  if (r.existing !== false) {
     const rr = (o.ready ?? runPrReady)({ repoDir: o.repoDir, branch: o.branch, bodyFile, url: r.url, pinnedOrigin });
     if (!rr.ok) return fail("existing PR reused; draft state not applied", r.url, r.existing);
   }

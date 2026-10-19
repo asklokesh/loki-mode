@@ -45,16 +45,19 @@ describe("shipWave", () => {
     const ev = readModernizeEvents(s.dir, MID).find((e) => e.type === "wave.shipped")!;
     expect(ev.data).toMatchObject({ url: URL, draft: false, wave: 2, existing: false });
   }));
-  it("is a draft when one unit is not proven or NOT_EQUAL", () => withSetup(created, (s) => {
-    expect(s.ship([u("a"), u("b", "NOT_PROVEN", ["no oracle"])], good).draft).toBe(true);
-    expect(s.calls[0]!.draft).toBe(true);
-    expect(s.ship([u("a", "NOT_EQUAL")], good).draft).toBe(true);
+  it("FC-NO-PUSH-UNVERIFIED: never pushes when a unit is not proven or NOT_EQUAL", () => withSetup(created, (s) => {
+    const r = s.ship([u("a"), u("b", "NOT_PROVEN", ["no oracle"])], good);
+    expect(r).toMatchObject({ shipped: false, reason: "wave not verified: branch stays local, not pushed" });
+    expect(s.ship([u("a", "NOT_EQUAL")], good).shipped).toBe(false);
+    expect(s.calls.length).toBe(0);
   }));
-  it("is a draft when wave verify failed, is missing, or the wave is empty", () => withSetup(created, (s) => {
-    expect(s.ship([u("a")], bad).draft).toBe(true);
-    expect(s.ship([u("a")], null).draft).toBe(true);
-    expect(s.ship([], good).draft).toBe(true);
-    expect(s.ship([u("a")], { ...good, verified: 1 as unknown as boolean }).draft).toBe(true);
+  it("FC-NO-PUSH-UNVERIFIED: never pushes when wave verify failed, is missing, or the wave is empty", () => withSetup(created, (s) => {
+    expect(s.ship([u("a")], bad).shipped).toBe(false);
+    expect(s.ship([u("a")], null).shipped).toBe(false);
+    expect(s.ship([], good).shipped).toBe(false);
+    expect(s.ship([u("a")], { ...good, verified: 1 as unknown as boolean }).shipped).toBe(false);
+    expect(s.calls.length).toBe(0);
+    expect(readModernizeEvents(s.dir, MID).some((e) => e.type === "wave.shipped")).toBe(false);
   }));
   it("refuses to push without a pinned origin (whitespace included) and trims a real one", () => withSetup(created, (s) => {
     expect(s.ship([u("a")], good, "  ").shipped).toBe(false);
@@ -62,25 +65,12 @@ describe("shipWave", () => {
     s.ship([u("a")], good, " /o ");
     expect(s.calls[0]!.pinnedOrigin).toBe("/o");
   }));
-  it("never claims a draft when an existing PR was reused (push ignores --draft)", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
-    const r = s.ship([u("a")], bad);
-    expect(r.shipped).toBe(false);
-    expect(r.reason).toBe("existing PR reused; draft state not applied");
-    expect(readModernizeEvents(s.dir, MID).some((e) => e.type === "wave.shipped")).toBe(false);
-    const ok = s.ship([u("a")], good);
-    expect(ok).toMatchObject({ shipped: true, draft: false, existing: true });
-  }));
   it("reused PR with every unit PROVEN is marked ready with the new body through pr-ready", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
     const r = s.ship([u("a"), u("b")], good);
     expect(r).toEqual({ shipped: true, url: URL, draft: false, existing: true, reason: null });
     expect(s.readyCalls.length).toBe(1);
     expect(s.readyCalls[0]!.a).toMatchObject({ branch: "loki/wave-2", pinnedOrigin: "/o", url: URL });
     expect(s.readyCalls[0]!.body).toContain(".loki/receipts/b.json");
-  }));
-  it("reused draft with a NOT PROVEN unit stays a draft and never calls pr-ready", () => withSetup(() => ({ ok: true, url: URL, existing: true, localOk: false }), (s) => {
-    const r = s.ship([u("a"), u("b", "NOT_PROVEN", ["x"])], good);
-    expect(r).toMatchObject({ shipped: false, draft: true, reason: "existing PR reused; draft state not applied" });
-    expect(s.readyCalls.length).toBe(0);
   }));
   it("a freshly created PR needs no pr-ready", () => withSetup(created, (s) => {
     s.ship([u("a")], good);
@@ -97,11 +87,6 @@ describe("shipWave", () => {
     expect(body).not.toContain("u".repeat(98));
     expect(body).toContain("| short |");
   });
-  it("treats an unknown reuse state (existing null) as not applied when a draft is wanted", () => withSetup(() => ({ ok: true, url: URL, existing: null, localOk: false }), (s) => {
-    const r = s.ship([u("a")], bad);
-    expect(r.shipped).toBe(false);
-    expect(r.reason).toBe("existing PR reused; draft state not applied");
-  }));
   it("unknown reuse state (existing null) with every unit PROVEN still goes through pr-ready with the push URL", () => withSetup(() => ({ ok: true, url: URL, existing: null, localOk: false }), (s) => {
     const r = s.ship([u("a"), u("b")], good);
     expect(r).toMatchObject({ shipped: true, existing: null });

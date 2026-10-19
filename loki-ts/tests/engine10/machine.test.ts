@@ -671,6 +671,13 @@ describe("FC-OUT-OF-REPO machine", () => {
     expect(sealSaw?.exit).toBe("spec_conflict"); expect(sealSaw?.spec_conflict_reason).toBe("out-of-repo: hosted service");
     expect(r.outputs.implement?.exit).toBe("spec_conflict");
   });
+  it("an intent_declined plan stops the run before implement", async () => {
+    const { ctx, events } = fakeCtx();
+    const plan = stage("plan", async () => ({ status: "completed", data: { intent_declined: true } }));
+    const r = await runMachine(ctx, { load: loaderOf(all({ plan })) });
+    expect(r.stopped).toBe("intent declined");
+    expect(ran(events)).not.toContain("implement");
+  });
   it("positive control: a normal plan still runs implement and verify", async () => {
     const { ctx, events } = fakeCtx();
     await runMachine(ctx, { load: loaderOf(all()) });

@@ -4,7 +4,7 @@
 // machine.ts/session.ts (E-02/E-07) and the repo map (E-04) only through the
 // RunContext/SessionRunner/RepoMap shapes, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
-import { selectRelevantFilesWithReason } from "../../src/engine10/relevant_files.ts";
+import { rankRelevant as selectRelevantFilesWithReason } from "../../src/util/relevance.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

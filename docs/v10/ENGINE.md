@@ -171,7 +171,7 @@ After the session:
 - any modified or deleted pre-existing test file is restored from base and listed in `tests_reverted`;
 - any Wall file whose sha256 no longer matches is restored from `<runDir>/wall/` and listed.
 
-A spec conflict leads to Seal with verdict SPEC_CONFLICT: a DRAFT PR if the diff is non-empty, otherwise no PR.
+A spec conflict leads to Seal with verdict SPEC_CONFLICT: no PR and no push: the branch stays local and its location is printed.
 
 **Fast verify:**
 - Changed files: impacted tests from the test map, plus changed test files, plus Wall tests, plus lint/typecheck of the changed files only (eslint/tsc for TS/JS, ruff or flake8 for Python, `bash -n`/shellcheck for shell).
@@ -199,7 +199,7 @@ A spec conflict leads to Seal with verdict SPEC_CONFLICT: a DRAFT PR if the diff
 It then appends a PR comment and a signed receipt addendum, and sets `loki/deep-verify` to success or failure. A refused or unavailable check is NOT PROVEN, never red.
 
 **Hard cap:**
-- At 14:00 elapsed, the machine aborts the running stage (process-group kill), commits whatever diff exists, seals with verdict PARTIAL and the missing checks as NOT PROVEN, and opens a DRAFT PR.
+- At 14:00 elapsed, the machine aborts the running stage (process-group kill), commits whatever diff exists, seals with verdict PARTIAL and the missing checks as NOT PROVEN, and keeps the branch local (only VERIFIED pushes).
 - The cap is 900s by default. `LOKI_E10_CAP_S` exists for tests only.
 - `--deep` or auto-escalation raises it to 45 minutes and logs an `escalated` event (section 13).
 

@@ -93,15 +93,13 @@ export const planStage: Stage = {
       session = await runPlan(true);
     }
 
-    // E-61: a non-killed error exit fails this stage too (never silently read as an
-    // empty-but-successful plan). mustJump (machine.ts) still lets the flow continue
-    // past a failed plan: implement falls back to planning the change itself.
+    // E-61: a non-killed error exit fails this stage (never read as an empty plan); mustJump (machine.ts)
+    // still lets the flow continue: implement falls back to planning the change itself.
     if (!session.killed && session.exit !== 0) {
       pr.record({ planModel, planModelNote, skipReason: `plan session failed (exit ${session.exit})` });
-      const stderrTail = session.stderrTail ?? "";
       mkdirSync(ctx.runDir, { recursive: true });
       const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
-      writeFileSync(stderrPath, stderrTail, "utf8");
+      writeFileSync(stderrPath, session.stderrTail ?? "", "utf8");
       return { status: "failed", reason: classifyExitCause(session.exit, false), data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath } };
     }
 

@@ -169,10 +169,6 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
   return out;
 }
 
-export function readResultCost(lokiRoot: string, iteration: string): CostResult {
-  return sumResultCosts(lokiRoot, [iteration]);
-}
-
 // E-06b efficiency record writers live in providers/provider_cost.ts (engine10 core line budget); re-exported for existing callers.
 export { type EfficiencySessionInfo, liveArchivedCosts, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 import { type EfficiencySessionInfo, writeEfficiencyRecord } from "../providers/provider_cost.ts";

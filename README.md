@@ -56,7 +56,7 @@ loki chat                                    # interactive alternative: Plan and
 
 Every run starts from a delivery contract derived from your task, writes checks from the task alone before touching code, implements, verifies, and ends in exactly one outcome: VERIFIED, ALREADY_SATISFIED, FAILED, BUDGET_STOP, BLOCKED or STALLED ([exit codes](docs/exit-codes.md)). If the contract cannot be satisfied as written, the run stops and asks one question instead of guessing.
 
-- **A pull request** written for a quick review: what the issue asked, what changed, how it was tested, and what was NOT PROVEN. A run that did not verify opens a draft.
+- **A pull request** written for a quick review: what the issue asked, what changed, how it was tested, and what was NOT PROVEN. Only a VERIFIED run pushes its branch and opens a PR; any other outcome keeps the branch local and prints where it is.
 - **A signed receipt** at `.loki/runs/<run-id>/receipt.json`, signed with a local Ed25519 key created on first run.
 - **A specialist review** when the review council runs: it selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`) by matching the changed files and diff against each reviewer's keywords.
 

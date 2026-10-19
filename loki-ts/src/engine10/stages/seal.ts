@@ -8,7 +8,6 @@ import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
 import { RealBaseTestRunner } from "./wall.ts";
@@ -18,7 +17,6 @@ import { dropSet, formatChanged, parseStaged } from "../../e10ext/commit_filter.
 import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
-import { run } from "../../util/shell.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict, reviewReceipt } from "./xreview.ts";

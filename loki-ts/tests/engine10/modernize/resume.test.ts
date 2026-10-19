@@ -393,7 +393,7 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
     } finally { f.done(); f2.done(); }
   });
 
-  it("a verified wave invokes shipWave (non-draft PR) and records wave.shipped; a failed verify ships a draft and blocks the next wave", async () => {
+  it("a verified wave invokes shipWave (non-draft PR) and records wave.shipped; a failed verify pushes nothing and blocks the next wave", async () => {
     const f = fx();
     try {
       const pushes: Array<{ draft: boolean }> = [];
@@ -410,7 +410,7 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
         const r2 = await runWaves(planOf([[u("a")], [u("b")]]), mk(f2, { stepRunner: bad, push: ((a: { draft: boolean }) => { p2.push(a); return { ok: true, url: "u", existing: false }; }) as never }));
         expect(r2.ok).toBe(false);
         expect(r2.blocked).toContain("wave 1 blocked: build");
-        expect(p2.map((p) => p.draft)).toEqual([true]);
+        expect(p2).toEqual([]);
         expect(r2.waves.length).toBe(1);
       } finally { f2.done(); }
     } finally { f.done(); }
@@ -461,8 +461,7 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
       expect(r.blocked).toContain("unit a NOT_PROVEN");
       expect(ran).not.toContain("b");
       expect(r.waves.length).toBe(1);
-      expect(pushes.map((p) => p.draft)).toEqual([true]);
-      expect(JSON.stringify(pushes)).not.toContain("| a | PROVEN |");
+      expect(pushes).toEqual([]);
     } finally { f.done(); }
   });
 

@@ -10,7 +10,6 @@ import { join } from "node:path";
 import {
   costTotalsOf,
   nextEfficiencyIteration,
-  readResultCost,
   recordSessionCost,
   sumResultCosts,
   writeEfficiencyRecord,
@@ -293,7 +292,7 @@ describe("RECEIPT-TRUTH cache keys through the real reader and the worker mappin
 
 describe("engine10 cost", () => {
   test("reads one result-cost file", () => {
-    const c = readResultCost(join(FIX, "two"), "e10-r1-plan");
+    const c = sumResultCosts(join(FIX, "two"), ["e10-r1-plan"]);
     expect(c.usd).toBe(0.125);
     expect(c.input_tokens).toBe(1000);
     expect(c.output_tokens).toBe(200);
@@ -312,7 +311,7 @@ describe("engine10 cost", () => {
   });
 
   test("a missing file gives usd null, never 0", () => {
-    const c = readResultCost(join(FIX, "two"), "e10-r1-nope");
+    const c = sumResultCosts(join(FIX, "two"), ["e10-r1-nope"]);
     expect(c.usd).toBeNull();
     expect(c.usd).not.toBe(0);
     expect(c.missing).toEqual(["e10-r1-nope"]);
@@ -331,15 +330,15 @@ describe("engine10 cost", () => {
   });
 
   test("a file without total_cost_usd or truncated JSON is unknown", () => {
-    expect(readResultCost(join(FIX, "bad"), "e10-r1-nousd").usd).toBeNull();
-    expect(readResultCost(join(FIX, "bad"), "e10-r1-trunc").usd).toBeNull();
+    expect(sumResultCosts(join(FIX, "bad"), ["e10-r1-nousd"]).usd).toBeNull();
+    expect(sumResultCosts(join(FIX, "bad"), ["e10-r1-trunc"]).usd).toBeNull();
   });
 
   // E-69 (EV-8 failure mode: "Cost: $0.00 (claude, 0 tokens)"): a result-cost file
   // reporting total_cost_usd 0 with zero usage on every token field is a session
   // that never really ran; it must read as unmeasured, never a real $0.00.
   test("total_cost_usd 0 with zero tokens on every field is unmeasured (EV-8)", () => {
-    const c = readResultCost(join(FIX, "zero"), "e10-r1-zero");
+    const c = sumResultCosts(join(FIX, "zero"), ["e10-r1-zero"]);
     expect(c.usd).toBeNull();
     expect(c.missing).toEqual(["e10-r1-zero"]);
     expect(c.measuredCount).toBe(0);
@@ -352,7 +351,7 @@ describe("engine10 cost", () => {
     // usage on both token fields, so it must NOT be swept into "unmeasured" by the zero-usage
     // guard above. A `noUsage = c === 0` mutation (treating any exactly-zero cost as unmeasured,
     // the exact regression that guard exists to prevent) turns this red: usd becomes null.
-    const c = readResultCost(join(FIX, "free"), "e10-r1-free");
+    const c = sumResultCosts(join(FIX, "free"), ["e10-r1-free"]);
     expect(c.usd).toBe(0);
     expect(c.missing).toEqual([]);
     expect(c.measuredCount).toBe(1);
@@ -377,7 +376,7 @@ describe("engine10 efficiency writer (E-06b)", () => {
     try {
       expect(nextEfficiencyIteration(lokiRoot)).toBe(1); // no dir yet
 
-      const priced = readResultCost(join(FIX, "two"), "e10-r1-plan");
+      const priced = sumResultCosts(join(FIX, "two"), ["e10-r1-plan"]);
       const n1 = writeEfficiencyRecord(lokiRoot, { status: "completed", durationMs: 12000, model: "claude-x" }, priced);
       expect(n1).toBe(1);
       const rec1 = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
@@ -388,7 +387,7 @@ describe("engine10 efficiency writer (E-06b)", () => {
       expect(rec1.cost_source).toBe("provider");
 
       // second session: no dollars reported -> cost_usd must be ABSENT, never 0.
-      const unpriced = readResultCost(join(FIX, "bad"), "e10-r1-nousd");
+      const unpriced = sumResultCosts(join(FIX, "bad"), ["e10-r1-nousd"]);
       const n2 = writeEfficiencyRecord(lokiRoot, { status: "completed", durationMs: 500, model: "codex-x" }, unpriced);
       expect(n2).toBe(2);
       const rec2 = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-2.json"), "utf8"));
@@ -440,7 +439,7 @@ describe("engine10 cost-summary.py integration (E-06b green criterion)", () => {
       // session itself still counts as observed.
       recordSessionCost(lokiRoot, "e10-r1-nousd", { status: "completed", durationMs: 800, model: "codex-x" });
       // Session 2: killed before it reported anything at all (no
-      // result-cost file was ever written for it) -- readResultCost's own
+      // result-cost file was ever written for it) -- sumResultCosts own
       // "missing" path gives all-zero tokens and null cost, which
       // record_is_measured correctly reads as UNmeasured, not free.
       recordSessionCost(lokiRoot, "e10-r1-never-ran", { status: "killed", durationMs: 50, model: "codex-x" });
