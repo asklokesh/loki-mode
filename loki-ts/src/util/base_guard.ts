@@ -193,3 +193,25 @@ export function addedSymlinkNotes(rawDiff: string[], planText: string | null): s
   }
   return out;
 }
+
+const MANIFEST = /(?:^|\/)(?:package\.json|requirements[^/]*\.txt|pyproject\.toml|Pipfile|setup\.py|setup\.cfg|go\.mod|Cargo\.toml|Gemfile|composer\.json|pom\.xml|build\.gradle(?:\.kts)?|[^/]+\.csproj|mix\.exs|pubspec\.yaml|deno\.jsonc?|pnpm-workspace\.yaml)$/i;
+const LOCKFILE = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Pipfile\.lock|uv\.lock|go\.sum|Cargo\.lock|Gemfile\.lock|composer\.lock|mix\.lock|pubspec\.lock)$/i;
+const lineSet = (t: string): Set<string> => new Set(t.split(/\r?\n/).map((l) => l.trim().replace(/,$/, "").trim()).filter(Boolean));
+/**
+ * FC-REPO-SKIPPED-TEST-DOWNGRADES review fix: the base rerun links HEAD's installed dependency dirs, so a run that REMOVED or
+ * re-versioned a dependency makes an untouched test look skipped on a base where it really runs. Returns the changed manifests that
+ * removed or altered a dependency line (an added-only manifest returns nothing; a trailing-comma move is not a change) and every
+ * lockfile changed with no changed manifest in its folder or an ancestor or descendant folder (fail closed). Line sets, not a parser, so it holds for every ecosystem.
+ */
+export function depsChangedBeyondAdditions(repoDir: string, baseSha: string, changed: string[]): string[] {
+  const out: string[] = [], dir = (f: string): string => f.slice(0, f.lastIndexOf("/") + 1), manifests = changed.filter((f) => MANIFEST.test(f));
+  for (const f of manifests) {
+    let base = "", head = "";
+    try { base = safeGit(repoDir, ["show", `${baseSha}:./${f}`], { timeout: 20000, maxBuffer: 64 << 20 }); } catch { /* a new manifest has no base text */ }
+    try { head = readFileSync(join(repoDir, f), "utf8"); } catch { /* a deleted manifest has no head text */ }
+    const h = lineSet(head);
+    if ([...lineSet(base)].some((l) => !h.has(l))) out.push(f);
+  }
+  for (const f of changed) if (LOCKFILE.test(f) && !manifests.some((m) => dir(f).startsWith(dir(m)) || dir(m).startsWith(dir(f)))) out.push(f);
+  return out;
+}

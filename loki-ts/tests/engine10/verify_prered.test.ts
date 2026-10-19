@@ -271,6 +271,29 @@ describe("engine10 verify: a relevant test the repo itself skips (FC-REPO-SKIPPE
     expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
+  const pkg = (deps: Record<string, string>): string => JSON.stringify({ name: "r", dependencies: deps }, null, 2) + "\n";
+  const GATED = T + "let has=true;try{require.resolve('optdep')}catch{has=false}\nif(has) t('runs with optdep',()=>{assert.ok(require('optdep').ok)});\n";
+  const dbase = { ".gitignore": "node_modules\n", "package.json": pkg({ optdep: "1.0.0" }), "node_modules/optdep/index.js": "exports.ok=true;\n", "node_modules/optdep/package.json": "{\"name\":\"optdep\",\"main\":\"index.js\"}\n", "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "gated.test.js": GATED };
+  const impacted = [node("sum.test.js"), node("gated.test.js")];
+  test("negative (review repro): the run REMOVED the dependency an untouched test needs, so the test is zero on head but runs on the true base: never excused", async () => {
+    const { ctx, dir } = repoWith(dbase, { "sum.js": SUM_OK, "package.json": pkg({}) }, impacted, [], { task: TASK });
+    rmSync(join(dir, "node_modules", "optdep"), { recursive: true, force: true });
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: a dependency version or spec change withholds the excusal", async () => {
+    const { ctx } = repoWith({ ...base, "package.json": pkg({ optdep: "1.0.0" }) }, { "sum.js": SUM_OK, "package.json": pkg({ optdep: "2.0.0" }) }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: a lockfile changed without its manifest fails closed", async () => {
+    const { ctx } = repoWith({ ...base, "package-lock.json": "{\"v\":1}\n" }, { "sum.js": SUM_OK, "package-lock.json": "{\"v\":2}\n" }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("positive: an additions-only manifest edit (FireLater#20 shape, trailing comma moved) keeps the excusal", async () => {
+    const { ctx } = repoWith({ ...base, "package.json": pkg({ optdep: "1.0.0" }) }, { "sum.js": SUM_OK, "package.json": pkg({ optdep: "1.0.0", ws: "8.0.0" }) }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual(["node:skip.test.js"]);
+  }, 60_000);
 });
 
 describe("depsSeeHead (FC-ZERO-ON-BASE)", () => {
