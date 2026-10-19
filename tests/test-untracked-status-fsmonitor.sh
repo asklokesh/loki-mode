@@ -194,6 +194,9 @@ run_lazy_case() {
     blob="$(git -C "$repo" rev-parse HEAD:.gitattributes)"
     git -C "$repo" update-index --skip-worktree .gitattributes
     rm -f "$repo/.gitattributes" "$repo/.git/objects/${blob:0:2}/${blob:2}"
+    # Force a stat mismatch so status always re-hashes f.txt and must lazy-fetch the
+    # attributes blob; without it the fetch only happens when the index is racily clean.
+    touch -t 203001010000 "$repo/f.txt"
     printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$marker" > "$WORK/lhook-$tag-$mode.sh"
     chmod +x "$WORK/lhook-$tag-$mode.sh"
     git -C "$repo" config core.repositoryformatversion 1
@@ -226,8 +229,8 @@ case "$outlp" in
         case "$outl" in *MARKER=no*) pass "no core.sshCommand hook run by a partial-clone lazy fetch" ;;
             *) fail "lazy fetch ran core.sshCommand during _loki_untracked_status" "$outl" ;; esac ;;
     *)
-        echo "SKIP: control: plain status did not run the lazy-fetch hook ($outlp); control not live here"
-        echo "SKIP: lazy-fetch hook leg NOT PROVEN (control is not live in this environment)" ;;
+        # The fixture isolates its env, so a dead control is a real fixture break: fail, never skip.
+        fail "control: plain git status did not run the lazy-fetch hook (lazy-fetch leg NOT PROVEN)" "$outlp" ;;
 esac
 
 # Non-UTF-8 driver name under a UTF-8 locale: the name lookup must be byte-exact.
