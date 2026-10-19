@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { cascadeDowngrade, cascadeEnabled, escalationModel, haikuFirstDowngrade, modelRank } from "../../src/engine10/sizing.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
@@ -141,44 +142,53 @@ export function guardViolations(files: Record<string, string>): string[] {
   };
   for (const [path, src] of Object.entries(files)) {
     if (path.startsWith("dashboard/") || path === "types.ts" || path === "session.ts" || path === "cost.ts") continue;
-    const lines = src.split("\n");
-    lines.forEach((line, i) => {
-      if (/^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\(|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
-      const ok = allowed[path];
-      const routedOk = (e: string): boolean => path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src);
-      const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || routedOk(e);
-      // A `model` key inside an event data object (`data: {`) describes the run; it is not a session pin. The brace stack makes the exemption
-      // hold only at positions actually inside such an object, never for a pin elsewhere on the same line or after the object closed.
-      const lineStart = lines.slice(0, i).reduce((n, l) => n + l.length + 1, 0);
-      const inData = (col: number): boolean => {
-        const st: boolean[] = [];
-        let q = "";
-        for (let k = 0; k < lineStart + col; k++) {
-          const c = src[k]!;
-          if (q && c === "\n" && q !== "`") q = ""; // a quote or apostrophe that never closes on its line (a regex literal) is not a string
-          if (q) { if (c === "\\") k++; else if (c === q) q = ""; continue; } // braces inside string literals do not count
-          if (c === "/" && src[k + 1] === "/") { while (k < lineStart + col && src[k] !== "\n") k++; continue; } // line comment: quotes in prose are not strings
-          if (c === '"' || c === "'" || c === "`") q = c;
-          else if (c === "{") st.push(/(\bdata: |\b(?:const|let) data(?::[^=\n]*)? = )$/.test(src.slice(Math.max(0, k - 60), k)));
-          else if (c === "}") st.pop();
-        }
-        return st.some(Boolean);
-      };
-      const bad: string[] = [];
-      // Every spread `...(x ? { ..model.. } : {})` anywhere on the line (model need not be the first key) must be a vetted pin.
-      const SPREAD = /\.\.\.\(\w+ \? \{[^}]*\bmodel\b[^}]*\} : \{\}\)/g;
-      for (const x of line.matchAll(SPREAD)) if (!inData(x.index!) && !vetted(x[0].slice(4, -1))) bad.push(x[0]);
-      // What remains once the spreads are blanked may not pin a model either (a trailing `model: x` key wins over the spread).
-      const rest = line.replace(SPREAD, (t) => " ".repeat(t.length));
-      if (!ok?.test(rest.trim())) {
-        for (const x of rest.matchAll(/\bmodel(?:: | \?)/g)) {
-          const tail = rest.slice(x.index! + (x[0].startsWith("model:") ? 7 : 0));
-          if (inData(x.index!) || (x[0].startsWith("model:") && (/^ctx\.model\b/.test(tail) || (ok !== undefined && ok.test(tail))))) continue;
-          bad.push(rest.trim());
+    const ok = allowed[path];
+    const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const routedOk = (e: string): boolean => path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src);
+    const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || routedOk(e);
+    const skipParens = (n: ts.Node): ts.Node => (ts.isParenthesizedExpression(n) ? skipParens(n.expression) : n);
+    const nameOf = (q: ts.ObjectLiteralElementLike): string | undefined => (q.name && (ts.isIdentifier(q.name) || ts.isStringLiteral(q.name)) ? q.name.text : undefined);
+    // An object literal that is `...(cond ? { ..model.. } : {})` is judged through the spread; return that spread, if any.
+    const spreadOf = (obj: ts.ObjectLiteralExpression): ts.SpreadAssignment | undefined => {
+      let n: ts.Node = obj.parent;
+      while (n && !ts.isSpreadAssignment(n) && (ts.isConditionalExpression(n) || ts.isParenthesizedExpression(n))) n = n.parent;
+      return n && ts.isSpreadAssignment(n) ? n : undefined;
+    };
+    // A `model` key inside an event data object (`data: { ... }` or `const data = { ... }`) describes the run; it is not a session pin.
+    // Only the nearest enclosing object counts, so a pin elsewhere in the same statement or after the data object closed is still judged.
+    const isData = (obj: ts.ObjectLiteralExpression): boolean => {
+      const sp = spreadOf(obj);
+      const par = (sp ? sp.parent : obj).parent;
+      return !!par && ((ts.isPropertyAssignment(par) && nameOf(par) === "data") || (ts.isVariableDeclaration(par) && ts.isIdentifier(par.name) && par.name.text === "data"));
+    };
+    const inScope = (obj: ts.ObjectLiteralExpression, init: string): boolean =>
+      spreadOf(obj) !== undefined ||
+      obj.properties.some((q) => {
+        if (!ts.isSpreadAssignment(q)) return false;
+        const c = skipParens(q.expression);
+        // Options-shaped: a conditional spread that sets effort or model (event payloads spread unrelated keys and are not session options).
+        return ts.isConditionalExpression(c) && [c.whenTrue, c.whenFalse].some((b) => ts.isObjectLiteralExpression(b) && b.properties.some((x) => ["effort", "model"].includes(nameOf(x) ?? "")));
+      }) ||
+      (ts.isCallExpression(obj.parent) && /sessions\.run$/.test(obj.parent.expression.getText(sf))) ||
+      /^(wallModel|downgrade|pinned)/.test(init);
+    const visit = (node: ts.Node): void => {
+      if (ts.isObjectLiteralExpression(node)) {
+        for (const prop of node.properties) {
+          if (!(ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) || nameOf(prop) !== "model") continue;
+          const init = ts.isPropertyAssignment(prop) ? prop.initializer.getText(sf) : "model";
+          if (!inScope(node, init) || isData(node)) continue;
+          const sp = spreadOf(node);
+          // wall.ts COST-11: the wall session's own pin is the local `model`, defined once from the retry model or wallFirstModel.
+          const wallShorthand = path === "stages/wall.ts" && init === "model" && src.includes("const model = retry?.model ?? wallFirstModel(sz.size)");
+          const good = sp
+            ? vetted(skipParens(sp.expression).getText(sf))
+            : init === "ctx.model" || (ok !== undefined && ok.test(`${init},`)) || wallShorthand;
+          if (!good) v.push(`${path}:${sf.getLineAndCharacterOfPosition(prop.getStart(sf)).line + 1}: unvetted session model pin: ${node.getText(sf).split("\n")[0]!.trim()}`);
         }
       }
-      if (bad.length > 0) v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
-    });
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
   }
   // ROUTER-1: a model below the run model is allowed only when a router route record exists for that unit with its evidence (source plus reason).
   for (const path of ["stages/implement.ts", "stages/fix.ts"]) {
@@ -270,6 +280,7 @@ describe("L1 static guard", () => {
     expect(red(`${fix}\nctx.emit("x", "fix", { data: { round } }); const o = { ...(effort ? { effort } : {}), model: lowModel };\n`)).toBe(true); // pin after a data object already closed
     expect(red(`${fix}\nconst data: Record<string, unknown> = {\n  ...(effort ? { effort } : {}), model: actualModel,\n};\n`)).toBe(false); // a data-named binding is an event object
     expect(red(`${fix}\n// it's fine\nconst d = { ...(effort ? { effort } : {}), model: "}" }; const data = {\n ...(effort ? { effort } : {}), model: actualModel };\n`)).toBe(true); // braces in strings and apostrophes in comments do not hide the first pin
+    for (const re of ["/'/", '/"/', "/`/", "/\\/\\//"]) expect(red(`${fix}\nconst data = { re: ${re} }; const o = { ...(effort ? { effort } : {}), model: lowModel };\n`)).toBe(true); // a quote or // inside a regex literal is not a string or comment
     expect(red(`${fix}\nctx.emit("x", "fix", { data: { round, model: actualModel } });\n`)).toBe(false); // inside a data object it stays exempt
   });
 
