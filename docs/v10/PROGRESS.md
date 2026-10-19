@@ -2614,3 +2614,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T08:06Z (CoS) v11.17.80
 - 11.17.80: fix-forward for Tests run 39215298360 on c6db3c019 (D50-F4 backstop expectation, plan brief golden; 32 pass 0 fail) plus supervisor pre_red_checks wiring 411fdaf63 (red 106/1 -> green 107/0; 172 pass 0 fail incl. budget). P9 moat fixture ccccfc82f under HIGH review, ships next.
+
+## 2026-10-19T08:15Z (CoS) v11.17.81
+- 11.17.81: P9 fixture 990270f12 + 466d55a4e (HIGH APPROVE; fast-gate.sh p9 rc=0, 5 PASS; no-pytest wrapper gives the prerequisite message, gate rc=1). Fixes Release gate P9 red on c6db3c019/c5358b462.

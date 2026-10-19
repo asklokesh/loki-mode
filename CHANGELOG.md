@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.81 (2026-10-19)
+
+### Fixed
+- The P9 security moat check (an injected issue cannot reach the push token) runs its fixture to a VERIFIED result again, so Loki's own push and PR path is exercised, and a new leg proves an unverified run stays local. CI and the release gate install pytest for it, and a missing pytest now reports `prerequisite missing: python3 pytest` instead of misleading token failures. No user-visible change.
+
 ## v11.17.80 (2026-10-19)
 
 ### Fixed
