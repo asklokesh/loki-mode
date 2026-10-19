@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.88 (2026-10-19)
+
+### Fixed
+- A medium-tier run no longer gets credit for "one reviewer" in its Seal unless a code review actually ran. Previously the Seal could count the reviewer requirement as met even when no reviewer was configured or the review was skipped, which overstated how well the change had been checked. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.87 (2026-10-19)
 
 ### Fixed

@@ -2635,3 +2635,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T10:49Z (CoS) v11.17.87
 - 11.17.87: 11.17.85 review follow-ups (53549dba0, 29a44f936). HIGH opus BLOCK on 53549dba0 (extension/nameless-JSON fallback hid phantoms in 6 repros), fixed in 29a44f936, HIGH APPROVE: 6 repros + incident shapes report, revert red (fallback no false root, modules dir phantom), gate 186/0, dedup 13/0 incl M10, tsc clean for engine10/project_model. Follow-up: fixture for the model-known branch (stale multi-root M4).
+
+## 2026-10-19T10:52Z (CoS) v11.17.88
+- 11.17.88: FC-MEDIUM-REVIEWER-UNCREDITED b28cd44c6 (cherry-pick 8977befb8, HIGH APPROVE). deepGaps credits one reviewer only when the cross-review level is not not_run or a deep council check executed. Gate 158 pass 0 fail (check_result, seal, budget), tsc rc=0. Default same-vendor medium review 261db067d HIGH BLOCKED (seal 60s limit), in rework.
