@@ -117,3 +117,12 @@ describe("L7 guard: no producer prints 'not recorded' for a present source key",
     expect(hits.filter((h) => !REGISTERED.has(h))).toEqual([]);
   });
 });
+
+it("FC-VERIFIED-PR-WITHOUT-ITS-TEST: the body lists the published acceptance tests and the command that ran them", () => {
+  const input = { verdict: "VERIFIED", draftReason: null, notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r1" };
+  const body = renderReviewerBody({ ...input, outputs: { seal: { wall_published: { files: ["tests/loki_wall_x.test.ts"], cmds: ["bun test tests/loki_wall_x.test.ts"] } } } });
+  expect(body).toContain("## Acceptance tests");
+  expect(body).toContain("- tests/loki_wall_x.test.ts");
+  expect(body).toContain("`bun test tests/loki_wall_x.test.ts`");
+  expect(renderReviewerBody({ ...input, outputs: {} })).not.toContain("## Acceptance tests");
+});

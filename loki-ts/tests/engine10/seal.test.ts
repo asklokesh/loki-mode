@@ -17,6 +17,7 @@ import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, 
 import { spawnSync } from "node:child_process"; import { chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { backstopCommit } from "../../src/e10ext/commit_filter.ts";
 import { reviewExtraLimitS } from "../../src/engine10/stages/xreview.ts";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
@@ -1810,4 +1811,77 @@ describe("medium default review at seal", () => {
     expect(await notProven(a, {})).not.toContain("one reviewer");
     expect(await notProven(b, { LOKI_REVIEW_PROVIDER: "none" })).toContain("one reviewer");
   }, 60000);
+});
+
+describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wall that passed", () => {
+  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = "// sealed wall\n", AGENT = "// agent edited it\n";
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
+  /** Repo with a product change (a.txt), the Wall file in the tree (agent bytes), its sealed copy under runDir/wall, and verify outputs for it. */
+  async function run(name: string, o: { sealedSha?: string; result?: string; target?: string[]; verifyNotProven?: string[]; env?: Record<string, string>; productEdit?: boolean } = {}) {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    if (o.productEdit === false) git(repo, "checkout", "--", "a.txt");
+    mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), AGENT);
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: join(repo, REL), sha256: o.sealedSha ?? sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: o.result ?? "pass", n: 2, duration_s: 1 }], target_checks: o.target ?? [NAME], flaky: [], wall_passed: (o.result ?? "pass") === "pass", duration_s: 1, ...(o.verifyNotProven ? { not_proven: o.verifyNotProven } : {}) },
+    });
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED);
+    const prev = Object.fromEntries(Object.keys(o.env ?? {}).map((k) => [k, process.env[k]])); Object.assign(process.env, o.env ?? {});
+    try {
+      await commitStage.run(ctx, new AbortController().signal);
+      const productHead = git(repo, "rev-parse", "HEAD").trim(), s = await sealStage.run(ctx, new AbortController().signal);
+      return { repo, base, ctx, s, r: receiptOf(s), productHead, head: git(repo, "rev-parse", "HEAD").trim() };
+    } finally { for (const [k, v] of Object.entries(prev)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  const names = (repo: string, a: string, b: string) => git(repo, "diff", "--name-only", a, b).trim().split("\n").filter(Boolean);
+
+  test("VERIFIED: the sealed Wall file is committed in a child commit, the receipt still binds the product head and diff", async () => {
+    const x = await run("fcv-ok");
+    expect(x.s.data.verdict).toBe("VERIFIED");
+    expect(x.head).not.toBe(x.productHead);
+    expect(git(x.repo, "rev-parse", "HEAD^").trim()).toBe(x.productHead);
+    expect(names(x.repo, x.productHead, x.head)).toEqual([REL]);
+    expect(git(x.repo, "show", `HEAD:${REL}`)).toBe(SEALED); // the sealed bytes, never the agent's copy
+    expect(readFileSync(join(x.repo, REL), "utf8")).toBe(SEALED);
+    expect(x.r.head_sha).toBe(x.productHead);
+    expect(names(x.repo, x.base, x.r.head_sha)).toEqual(["a.txt"]); // the sealed product diff holds no Wall file
+    expect(x.s.data.wall_published).toEqual({ files: [REL], cmds: [`bun test ${REL}`] });
+    expect(git(x.repo, "log", "-1", "--format=%B")).toContain("Loki-Wall-Publish: r1");
+    expect(x.r.diff_sha256).toBe(sha(git(x.repo, "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", x.base, x.productHead, "--", ".", ":(exclude).loki")));
+  }, 30000);
+  test("the receipt is identical in tree and diff to the opt-out run (Wall is never product)", async () => {
+    const on = await run("fcv-on"), off = await run("fcv-off", { env: { LOKI_COMMIT_WALL: "0" } });
+    expect(on.r.diff_sha256).toBe(off.r.diff_sha256); expect(on.r.tree).toBe(off.r.tree);
+    expect(off.head).toBe(off.productHead); expect(off.s.data.wall_published).toBeUndefined(); // LOKI_COMMIT_WALL=0 restores the old behavior
+    expect(git(off.repo, "ls-files", REL).trim()).toBe("");
+  }, 60000);
+  test("a sealed copy that does not hash to the sealed sha256 is not published and is NOT PROVEN", async () => {
+    const x = await run("fcv-mismatch", { sealedSha: "ab".repeat(32) });
+    expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
+    expect(x.r.not_proven.some((n) => n.includes("Wall test not published") && n.includes(REL))).toBe(true);
+  }, 30000);
+  test("a Wall file that failed, or is not in verify's passing target checks, stays dropped", async () => {
+    const f = await run("fcv-failed", { result: "fail" }), n = await run("fcv-notarget", { target: [] });
+    for (const x of [f, n]) { expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined(); expect(git(x.repo, "ls-files", REL).trim()).toBe(""); }
+  }, 60000);
+  test("PARTIAL keeps today's behavior: nothing published", async () => {
+    const x = await run("fcv-partial", { verifyNotProven: ["some gap"] });
+    expect(x.s.data.verdict).toBe("PARTIAL"); expect(x.head).toBe(x.productHead); expect(x.s.data.wall_published).toBeUndefined();
+  }, 30000);
+  test("a Wall-only change (no product diff) is FAILED and publishes nothing", async () => {
+    const x = await run("fcv-wallonly", { productEdit: false });
+    expect(x.s.data.verdict).toBe("FAILED"); expect(x.head).toBe(x.base); expect(x.s.data.wall_published).toBeUndefined();
+  }, 30000);
+  test("re-sealing after the publish commit keeps the receipt on the product head (idempotent)", async () => {
+    const x = await run("fcv-reseal"), again = await sealStage.run(x.ctx, new AbortController().signal);
+    expect(receiptOf(again).head_sha).toBe(x.productHead); expect(receiptOf(again).diff_sha256).toBe(x.r.diff_sha256);
+    expect(git(x.repo, "rev-list", "--count", `${x.base}..HEAD`).trim()).toBe("2"); // product + one Wall commit, not two
+  }, 30000);
+  test("backstopCommit (killed or crashed worker) still drops Wall files", () => {
+    const { repo, base } = makeRepo("fcv-backstop"); mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), SEALED);
+    backstopCommit(repo, process.env, "r1", base, undefined);
+    expect(names(repo, base, "HEAD")).toEqual(["a.txt"]); expect(git(repo, "ls-files", REL).trim()).toBe("");
+  }, 30000);
 });
