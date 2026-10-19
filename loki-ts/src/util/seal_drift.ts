@@ -4,7 +4,7 @@
 import { safeGit } from "./safe_git.ts";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import type { EventEnvelope } from "../engine10/types.ts";
 
 const EMPTY_SHA = createHash("sha256").digest("hex");
@@ -60,6 +60,33 @@ function overlap(repo: string, base: unknown, sealedHead: string, head: string):
   } catch { return null; }
 }
 
+/** FC-VERIFIED-PR-WITHOUT-ITS-TEST: true only when EVERY commit after the sealed head is this run's Wall publish commit: a trailer line naming the receipt's run_id, only paths of the receipt's wall.files, each blob sha256 equal to the sealed one.
+ *  Anything else (a hook-added file, a rewritten Wall file, a forged trailer, a non-linear history) is not benign. */
+function onlyWallPublish(repo: string, r: Obj, sealedHead: string, head: string): boolean {
+  const run = r["run_id"], wall = ((r["wall"] ?? {}) as { files?: { path?: unknown; sha256?: unknown }[] }).files;
+  if (typeof run !== "string" || run === "" || !Array.isArray(wall) || !/^[0-9a-f]{40,64}$/.test(sealedHead)) return false;
+  try {
+    const real = (x: string): string => { try { return realpathSync(x); } catch { return x; } }, rr = real(repo), want = new Map(wall.map((w) => [relative(rr, join(real(dirname(String(w.path))), basename(String(w.path)))), String(w.sha256)] as const));
+    const commits = safeGit(repo, ["rev-list", "--reverse", "--topo-order", `${sealedHead}..${head}`]).split("\n").filter(Boolean);
+    if (commits.length === 0 || safeGit(repo, ["rev-list", "--merges", "--count", `${sealedHead}..${head}`]).trim() !== "0") return false;
+    let parent = sealedHead;
+    for (const c of commits) {
+      if (safeGit(repo, ["rev-parse", `${c}^`]).trim() !== parent) return false;
+      if (!safeGit(repo, ["log", "-1", "--format=%B", c]).split("\n").includes(`Loki-Wall-Publish: ${run}`)) return false;
+      const names = safeGit(repo, ["diff", "--name-only", "--no-renames", "-z", parent, c]).split("\0").filter(Boolean);
+      if (names.length === 0) return false;
+      for (const n of names) { const h = want.get(n); if (h === undefined || sha(safeGit(repo, ["cat-file", "blob", `${c}:${n}`])) !== h) return false; }
+      parent = c;
+    }
+    return true;
+  } catch { return false; }
+}
+
+/** Any commit after the sealed head that carries this run's Wall trailer. Such a commit must pass onlyWallPublish; other later commits keep the TEN-GATES-16 sealed-path overlap rule. */
+function claimsWallPublish(repo: string, r: Obj, sealedHead: string, head: string): boolean {
+  try { return typeof r["run_id"] === "string" && safeGit(repo, ["log", "--format=%B", `${sealedHead}..${head}`]).split("\n").includes(`Loki-Wall-Publish: ${r["run_id"]}`); } catch { return false; }
+}
+
 export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
   let receiptPath = given;
   try { receiptPath = join(realpathSync(dirname(given)), basename(given)); } catch { /* keep the given path */ } // resolve the DIRECTORY only (as verifyReceipt/checkEventLog read the log from dirname(given)); a receipt.json symlink must not move the log and layout lookup
@@ -72,7 +99,8 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
   if (repo && env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"] !== "1" && typeof r["head_sha"] === "string") {
     let head = "";
     try { head = safeGit(repo, ["rev-parse", "HEAD"]).trim(); } catch { return null; }
-    if (head !== "" && head !== r["head_sha"]) {
+    if (head !== "" && head !== r["head_sha"] && !onlyWallPublish(repo, r, r["head_sha"], head)) {
+      if (claimsWallPublish(repo, r, r["head_sha"], head)) return { verdict: "UNCHECKED", reason: `head drift: HEAD ${head} carries a Loki-Wall-Publish commit for this run that is not exactly its sealed Wall files (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` }; // a trailer is a claim; a forged or hook-widened child is never benign
       const hit = overlap(repo, r["base_sha"], r["head_sha"], head);
       if (hit === null) return { verdict: "UNCHECKED", reason: `head drift: receipt head_sha ${r["head_sha"]} is not the current HEAD ${head} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
       if (hit.length) return { verdict: "UNCHECKED", reason: `head drift: HEAD ${head} changed sealed path(s) after the seal: ${hit.join(", ")} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };

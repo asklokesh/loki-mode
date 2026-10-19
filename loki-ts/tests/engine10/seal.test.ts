@@ -17,7 +17,7 @@ import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, 
 import { spawnSync } from "node:child_process"; import { chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { backstopCommit } from "../../src/e10ext/commit_filter.ts";
+import { backstopCommit } from "../../src/e10ext/commit_filter.ts"; import { sealDrift } from "../../src/util/seal_drift.ts";
 import { reviewExtraLimitS } from "../../src/engine10/stages/xreview.ts";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
@@ -1884,4 +1884,56 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wa
     backstopCommit(repo, process.env, "r1", base, undefined);
     expect(names(repo, base, "HEAD")).toEqual(["a.txt"]); expect(git(repo, "ls-files", REL).trim()).toBe("");
   }, 30000);
+});
+
+describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST review block: hooks, sealed bytes, forged trailer, drift", () => {
+  const REL = "tests/loki_wall_x.test.ts", NAME = `bun:${REL}`, SEALED = "// sealed wall\n";
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+  const git = (repo: string, ...a: string[]): string => sh(["git", ...a], repo);
+  const hook = (repo: string, body: string): void => { const h = join(repo, ".git/hooks/pre-commit"); mkdirSync(dirname(h), { recursive: true }); writeFileSync(h, `#!/bin/sh\n${body}\n`); chmodSync(h, 0o755); };
+  async function run(name: string, pre?: (repo: string) => void) {
+    noKey();
+    const { repo, base } = makeRepo(name);
+    mkdirSync(join(repo, "tests"), { recursive: true }); writeFileSync(join(repo, REL), "// agent\n");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: join(repo, REL), sha256: sha(SEALED) }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+      verify: { checks: [{ name: NAME, cmd: `bun test ${REL}`, result: "pass", n: 2, duration_s: 1 }], target_checks: [NAME], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true }); writeFileSync(join(ctx.runDir, "wall/loki_wall_x.test.ts"), SEALED);
+    await commitStage.run(ctx, new AbortController().signal);
+    pre?.(repo);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    return { repo, ctx, s, r: receiptOf(s) };
+  }
+  const tree = (repo: string): string[] => git(repo, "ls-tree", "-r", "--name-only", "HEAD").trim().split("\n");
+
+  test("a pre-commit hook that adds evil.js and rewrites the Wall file never runs: the child holds exactly the sealed bytes", async () => {
+    const { repo } = await run("fc-hook-evil", (r) => hook(r, `echo evil > evil.js; git add evil.js; echo '// extra' >> ${REL}; git add ${REL}`));
+    expect(tree(repo)).not.toContain("evil.js");
+    expect(git(repo, "show", `HEAD:${REL}`)).toBe(SEALED);
+    expect(git(repo, "diff", "--name-only", "HEAD^", "HEAD").trim()).toBe(REL);
+  });
+
+  test("a formatter-style hook that only reformats the Wall file leaves the sealed bytes committed", async () => {
+    const { repo } = await run("fc-hook-fmt", (r) => hook(r, `printf '// reformatted\\n' > ${REL}; git add ${REL}`));
+    expect(git(repo, "show", `HEAD:${REL}`)).toBe(SEALED);
+  });
+
+  test("a forged Loki-Wall-Publish trailer on a commit that adds another file is not a re-seal child: the receipt binds that HEAD", async () => {
+    const { repo, ctx, r } = await run("fc-forged");
+    expect(r["head_sha"]).toBe(git(repo, "rev-parse", "HEAD^").trim());
+    writeFileSync(join(repo, "evil.js"), "x"); git(repo, "add", "evil.js");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "forged", "-m", `Loki-Wall-Publish: ${ctx.runId}`);
+    const forged = git(repo, "rev-parse", "HEAD").trim(), s2 = await sealStage.run(ctx, new AbortController().signal);
+    expect(receiptOf(s2)["head_sha"]).toBe(forged);
+  });
+
+  test("seal_drift: the genuine Wall child is benign; a trailer-bearing commit with a non-Wall file is drift", async () => {
+    const { repo, ctx, s, r } = await run("fc-drift");
+    const rp = String(s.data["receipt_path"]);
+    expect(sealDrift(rp, r as unknown as Record<string, unknown>)).toBeNull();
+    writeFileSync(join(repo, "evil.js"), "x"); git(repo, "add", "evil.js");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "child", "-m", `Loki-Wall-Publish: ${ctx.runId}`);
+    expect(sealDrift(rp, r as unknown as Record<string, unknown>)?.verdict).toBe("UNCHECKED");
+  });
 });

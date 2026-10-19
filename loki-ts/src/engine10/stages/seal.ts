@@ -7,13 +7,13 @@
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
 import { RealBaseTestRunner } from "./wall.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
-import { dropSet, formatChanged, parseStaged, WALL_FILE } from "../../e10ext/commit_filter.ts";
+import { dropSet, formatChanged, parseStaged } from "../../e10ext/commit_filter.ts";
 import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
@@ -26,7 +26,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { checkProvenance, checkResultLabel, publishableWall, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { checkProvenance, checkResultLabel, publishableWall, publishWall, wallChild, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -54,6 +54,7 @@ export { canonicalJson, kidOf, loadSigningKey, signReceipt }; // moved to util/r
 // Worker side (token withheld, the agent already has exec): the seal add keeps the repo's content drivers, and the seal commit
 // also keeps the user's hooks and commit signing, so pre-commit scanners and "require signed commits" still apply. safeGitRun
 // strips the token from the env either way.
+const g = (ctx: RunContext) => (a: string[]): Promise<{ out: string; code: number }> => git(ctx, a);
 async function git(ctx: RunContext, args: string[], keep: SafeGitKeep = {}): Promise<{ out: string; code: number }> {
   const r = await safeGitRun(ctx.repoDir, args, { timeoutMs: 20000, ...keep });
   return { out: r.stdout, code: r.exitCode };
@@ -85,17 +86,6 @@ export const commitStage: Stage = {
     return { status: "completed", data: { committed: true, head_sha: (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), scope_notes: notes } };
   },
 };
-
-/** FC-VERIFIED-PR-WITHOUT-ITS-TEST: one child commit of the SEALED Wall bytes (raw add, no filters) on top of the product head; each committed blob must equal the sealed bytes. A re-seal (done) commits nothing. */
-async function publishWall(ctx: RunContext, files: { rel: string; bytes: Buffer }[], done: boolean): Promise<boolean> {
-  const rels = files.map((f) => f.rel);
-  if (!done) {
-    for (const f of files) { const abs = join(ctx.repoDir, f.rel); rmSync(abs, { force: true }); mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, f.bytes); } // rmSync first: an agent-planted symlink is replaced, never written through
-    if ((await git(ctx, ["--literal-pathspecs", "add", "--", ...rels])).code !== 0 || (await git(ctx, ["--literal-pathspecs", "commit", "-q", "-m", "test: loki acceptance checks (Wall)", "-m", `Loki-Wall-Publish: ${ctx.runId}\nLoki-Run: ${ctx.runId}`, "--", ...rels], { userHooks: true })).code !== 0) return false;
-  }
-  for (const r of rels) if ((await git(ctx, ["rev-parse", `HEAD:${r}`])).out.trim() !== (await git(ctx, ["hash-object", "--no-filters", "--", r])).out.trim()) return false;
-  return true;
-}
 
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
@@ -169,7 +159,7 @@ export const sealStage: Stage = {
   extraLimitS: (c) => reviewExtraLimitS(c), // lazy: xreview and seal import each other transitively
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
     const o = ctx.outputs(), stale = staleAtSeal(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: staleReason(stale) };
-    const top = (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), wallDone = (await git(ctx, ["log", "-1", "--format=%B", "HEAD"])).out.includes(`Loki-Wall-Publish: ${ctx.runId}`) && (await git(ctx, ["diff", "--name-only", "HEAD^", "HEAD"])).out.split("\n").filter(Boolean).every((f) => WALL_FILE.test(f)); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: a re-seal after the Wall child commit binds the product head again
+    const top = (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), wallDone = await wallChild(g(ctx), ctx.runId, ctx.repoDir, o.wall?.files); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: a re-seal after the Wall child commit binds the product head again
     const head = wallDone ? (await git(ctx, ["rev-parse", "HEAD^"])).out.trim() : top;
     const tree = (await git(ctx, ["rev-parse", `${head}^{tree}`])).out.trim();
     // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
@@ -203,7 +193,7 @@ export const sealStage: Stage = {
     const verdict: Verdict = (mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2; // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], !!xr && xr.level !== "not_run"), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
     const wp = verdict === "VERIFIED" ? publishableWall(ctx.repoDir, ctx.runDir, o) : { files: [], notes: [] }; for (const n of wp.notes) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
-    const wallPub = wp.files.length > 0 ? await publishWall(ctx, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
+    const wallPub = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
     if (wallGreenOnBase && verdict === "PARTIAL" && o.intake?.already_satisfied !== true && o.implement?.exit !== "already_done") notProven.add(WALL_GREEN_ON_BASE_REASON);
     if (!proof && !(wallGreenOnBase && verdict === "ALREADY_SATISFIED") && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = vraw; notProven.add(executed ? AGENT_ONLY_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);

@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
@@ -644,3 +644,34 @@ export function firstError(out: string): string { // the line naming the failing
 export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
 /** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */
 export const checkResultLabel = (result: string, preRed: boolean): string => (result === "fail" && preRed ? `fail (${ALREADY_FAILING_ON_BASE})` : result);
+
+type G = (args: string[]) => Promise<{ out: string; code: number }>;
+/** FC-VERIFIED-PR-WITHOUT-ITS-TEST: HEAD is this run's Wall child only when its trailer line names this run, it touches exactly paths of this run's wall.files, and each blob hashes to the sealed sha256. A forged trailer is not enough. */
+export async function wallChild(git: G, runId: string, repoDir: string, wallFiles: unknown): Promise<boolean> {
+  if (!(await git(["log", "-1", "--format=%B", "HEAD"])).out.split("\n").includes(`Loki-Wall-Publish: ${runId}`)) return false;
+  const want = new Map((Array.isArray(wallFiles) ? (wallFiles as { path: string; sha256: string }[]) : []).map((w) => [relative(repoDir, w.path), w.sha256] as const));
+  const names = (await git(["diff", "--name-only", "--no-renames", "-z", "HEAD^", "HEAD"])).out.split("\0").filter(Boolean);
+  if (names.length === 0) return false;
+  for (const n of names) { const h = want.get(n); if (h === undefined || createHash("sha256").update((await git(["cat-file", "blob", `HEAD:${n}`])).out).digest("hex") !== h) return false; }
+  return true;
+}
+
+/** FC-VERIFIED-PR-WITHOUT-ITS-TEST: one child commit of the SEALED Wall bytes on top of the product head, run with NO hooks and NO signing (git() default), so nothing but the named paths can enter it.
+ *  Every committed blob must equal the sealed bytes and the commit must touch exactly the published paths; otherwise the child is rolled back (update-ref + read-tree, index and HEAD only) and nothing is published. A re-seal (done) commits nothing. */
+const blobSha = (b: Buffer, hex: number): string => createHash(hex === 64 ? "sha256" : "sha1").update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest("hex");
+export async function publishWall(git: G, runId: string, repoDir: string, files: { rel: string; bytes: Buffer }[], done: boolean): Promise<boolean> {
+  const rels = files.map((f) => f.rel), pre = (await git(["rev-parse", "HEAD"])).out.trim();
+  const sound = async (): Promise<boolean> => {
+    const names = (await git(["diff", "--name-only", "--no-renames", "-z", "HEAD^", "HEAD"])).out.split("\0").filter(Boolean).sort();
+    if (names.join("\0") !== [...rels].sort().join("\0")) return false;
+    for (const f of files) { const got = (await git(["rev-parse", `HEAD:${f.rel}`])).out.trim(); if (got === "" || got !== blobSha(f.bytes, got.length)) return false; } // the SEALED bytes, never the worktree file
+    return true;
+  };
+  if (done) return sound();
+  for (const f of files) { const abs = join(repoDir, f.rel); try { if (!realpathSync(dirname(abs)).startsWith(realpathSync(repoDir))) return false; } catch { /* dir not created yet */ } rmSync(abs, { force: true }); mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, f.bytes); } // rmSync first: an agent-planted symlink is replaced, never written through
+  if ((await git(["--literal-pathspecs", "add", "--", ...rels])).code !== 0 || (await git(["--literal-pathspecs", "commit", "-q", "-m", "test: loki acceptance checks (Wall)", "-m", `Loki-Wall-Publish: ${runId}\nLoki-Run: ${runId}`, "--", ...rels])).code !== 0) return false;
+  if (await sound()) return true;
+  await git(["update-ref", "HEAD", pre]); await git(["read-tree", "HEAD"]); // drop the bad child; the product head and index are as sealed
+  return false;
+}
+
