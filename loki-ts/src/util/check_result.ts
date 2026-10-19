@@ -414,20 +414,20 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
 export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): string[] {
   const run = (args: string[]): string[] =>
     safeGit(repoDir, args)
-      .split("\n").map((l) => l.trim()).filter(Boolean);
-  const tracked = run(["diff", "--name-only", baseSha]);
-  const untracked = run(["ls-files", "--others", "--exclude-standard"]);
+      .split("\0").filter(Boolean); // FC-CHANGED-PATH-QUOTED: -z plus quotePath=false, so a non-ASCII path is its real name, never a quoted escape
+  const tracked = run(["-c", "core.quotePath=false", "diff", "--name-only", "-z", baseSha]);
+  const untracked = run(["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "-z"]);
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/") && !skip?.(f)); // skip: install-owned paths (FC-DEPS-NOT-INSTALLED)
 }
 
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
 export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): DiffFile[] {
   const paths = changedFiles(repoDir, baseSha, skip), stat = new Map<string, DiffFile>();
-  for (const l of safeGit(repoDir, ["diff", "--numstat", baseSha]).split("\n")) {
+  for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--numstat", baseSha]).split("\n")) {
     const [a, d, ...p] = l.split("\t"), path = p.join("\t");
     if (path) stat.set(path, { path, added: Number(a) || 0, deleted: Number(d) || 0 });
   }
-  for (const l of safeGit(repoDir, ["diff", "--name-status", baseSha]).split("\n")) {
+  for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--name-status", baseSha]).split("\n")) {
     const [s, ...p] = l.split("\t"), f = stat.get(p[p.length - 1] ?? "");
     if (f) f.status = s?.startsWith("A") ? "added" : s?.startsWith("D") ? "deleted" : "modified";
   }

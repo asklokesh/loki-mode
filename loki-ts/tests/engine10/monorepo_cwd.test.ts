@@ -7,6 +7,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
+import { changedFiles } from "../../src/util/check_result.ts";
 import { commandFor, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { runFullSuite, type DeepCheck } from "../../src/engine10/stages/deep.ts";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
@@ -178,6 +179,10 @@ describe("FC-01 verify in a multi-root monorepo", () => {
       expect(await suites({ changed: ["plugins/x/a.ts"], proofFiles: ["tests/loki_wall_a.test.ts"] }, true)).toEqual([`n/a: ${rootNote}`]);
       expect(await suites({ changed: ["plugins/x/a.ts"], proofFiles: ["backend/tests/w.test.ts"] }, true)).toEqual([rootNote]);
     });
+    test("FC-CHANGED-PATH-QUOTED: a changed path no package resolves, or a quoted one, is owned: stays NOT PROVEN", async () => {
+      expect(await suites({ changed: ["\"frontend/src/caf\\303\\251.ts\""] })).toEqual([note]);
+      expect(await suites({ changed: ["backend/src/a.ts", "elsewhere/x.md"] })).toEqual([note]);
+    });
     test("unknown diff is fail-safe NOT PROVEN", async () => { expect(await suites({})).toEqual([note]); });
   });
   test("the Wall base run executes a package file from its package directory", () => {
@@ -216,6 +221,14 @@ describe("FC-SEAL-NA-AS-UNPROVEN verify wiring", () => {
     expect(np.some((n) => n.startsWith("n/a"))).toBe(false);
   });
   test("a passing Wall file in another package does not prove the package without tests", async () => { expect(await run(TEST_FILE)).toContain(fe); });
+  test("FC-CHANGED-PATH-QUOTED: a non-ASCII frontend path is still owned by frontend: its note stays NOT PROVEN beside a backend Wall", async () => {
+    const { dir, base } = monorepo(true);
+    delete process.env["LOKI_RISK_TIER"]; delete process.env["LOKI_RISK_OVERRIDE_REASON"];
+    writeFileSync(join(dir, "frontend", "src", "caf\u00e9.ts"), "export const a = 1;\n");
+    expect(changedFiles(dir, base)).toContain("frontend/src/caf\u00e9.ts"); // not a quoted octal escape
+    const ctx = { ...ctxFor(dir, base, [{ runner: "vitest", path: TEST_FILE }]), outputs: () => ({ wall: { files: [{ path: TEST_FILE }] } }) } as RunContext;
+    expect((await verifyStage.run(ctx, sig())).data.not_proven as string[]).toContain(fe);
+  });
   test("a failing Wall file is no proof", async () => { expect(await run(WALL_FE, "fail")).toContain(fe); });
 });
 

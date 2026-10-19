@@ -63,7 +63,7 @@ export async function runPackageSuites(
   // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.
   const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
   for (const pkg of api.packages().filter((p) => !p.commands.test)) {
-    const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => api.packageOf(f)?.root === pkg.root);
+    const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
     notProven.add(ran && !(owns && !(opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root)) ? NA_PREFIX + note : note);
   }
   return true;
