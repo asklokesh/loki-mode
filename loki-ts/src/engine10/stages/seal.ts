@@ -19,7 +19,7 @@ import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } f
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
-import { crossReview, minVerdict, reviewReceipt } from "./xreview.ts";
+import { crossReview, minVerdict, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
@@ -154,6 +154,7 @@ export function renderReceiptMd(r: Receipt): string {
 export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
+  extraLimitS: (c) => reviewExtraLimitS(c), // lazy: xreview and seal import each other transitively
   async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
     const o = ctx.outputs(), stale = staleAtSeal(ctx.repoDir, ctx); if (stale.length) return { status: "failed", data: { stale_wall_revisions: stale.map((r) => r.rev) }, reason: staleReason(stale) };
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
@@ -183,7 +184,7 @@ export const sealStage: Stage = {
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
     const verdict1: Verdict = supplyVerdict(verdict0, supply);
-    const xr = await crossReview(ctx, verdict1, head), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
+    const xr = await crossReview(ctx, verdict1, head, signal), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
     const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
     const verdict: Verdict = (mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2; // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)

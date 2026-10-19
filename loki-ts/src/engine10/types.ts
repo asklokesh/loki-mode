@@ -70,6 +70,7 @@ export interface Stage {
   name: StageName;
   targetS: number | null;
   limitS: number;
+  extraLimitS?(ctx: RunContext): number; // time the machine adds to limitS for this run (seal: the planned review box)
   run(ctx: RunContext, signal: AbortSignal): Promise<StageResult>;
 }
 export interface SessionMarkers {

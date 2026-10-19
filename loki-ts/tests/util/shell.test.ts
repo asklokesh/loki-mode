@@ -68,3 +68,13 @@ describe("shell.commandVersion", () => {
     expect(v).toBeNull();
   });
 });
+
+describe("shell.run abort signal", () => {
+  it("an aborted signal terminates the child instead of orphaning it", async () => {
+    const ctl = new AbortController(), t0 = Date.now();
+    setTimeout(() => ctl.abort(), 100);
+    const r = await run(["sleep", "30"], { signal: ctl.signal });
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(r.exitCode).not.toBe(0);
+  });
+});

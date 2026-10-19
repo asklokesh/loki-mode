@@ -14,7 +14,7 @@ import { intentRevisionsBlock } from "../../src/util/run_outputs.ts";
 import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, linkSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process"; import { chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -1712,4 +1712,51 @@ describe("seal records routing history under the model that ran (P12-32b-c)", ()
     const rows = await sealRows("hist-esc", { implement: impl({ model: "claude-haiku-4-5", route_model: "claude-haiku-4-5" }), fix: { round: 1, model: "claude-sonnet-4-6" } });
     expect(rows.map((r) => r.executor)).toEqual(["sonnet"]);
   }, 30000);
+});
+
+describe("medium default review at seal", () => {
+  const risk = { tier: "medium", checks_selected: ["targeted tests", "lint of changed files", "full test command", "one reviewer"], checks_deferred: ["one reviewer"] };
+  const setup = (name: string, sleepS: number, text = "VERDICT: PASS") => {
+    const { repo, base } = makeRepo(name);
+    writeFileSync(join(repo, "src.js"), "x\n"); sh(["git", "add", "src.js"], repo); sh(["git", "commit", "-q", "-m", "agent wip"], repo);
+    mkdirSync(join(repo, ".loki", "state"), { recursive: true }); writeFileSync(join(repo, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier: "medium" }));
+    const stub = join(repo, "..", `${name}-claude`); writeFileSync(stub, `#!/bin/sh\nsleep ${sleepS}\nprintf '%s\\n' '{"type":"result","result":"${text}"}'\n`); chmodSync(stub, 0o755);
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 2, risk } });
+    return { ctx, stub };
+  };
+  const withEnv = async (stub: string, extra: Record<string, string>, f: () => Promise<void>) => {
+    const keys = ["LOKI_REVIEW_PROVIDER", "LOKI_XVENDOR_DEFAULT", "LOKI_CLAUDE_CLI", "LOKI_E10_REVIEW_BOX_S"], saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    process.env["LOKI_CLAUDE_CLI"] = stub; Object.assign(process.env, extra); noKey();
+    try { await f(); } finally { keys.forEach((k, i) => { const v = saved[i]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }); }
+  };
+  const sealed = async (ctx: RunContext, limitS: number) => {
+    const o = ctx.outputs(), stages: Record<string, typeof sealStage> = { seal: { ...sealStage, limitS } };
+    for (const n of ["intake", "wall", "implement", "verify"] as const) stages[n] = { name: n, targetS: 1, limitS: 5, run: async () => ({ status: "completed" as const, data: o[n] ?? {} }) };
+    return runMachine(ctx as never, { flow: ["intake", "wall", "implement", "verify", "seal"], load: async (n: StageName) => stages[n] ?? null });
+  };
+  test("slow reviewer keeps receipt: a review longer than seal's own limit still seals, and the receipt names it", async () => {
+    const { ctx, stub } = setup("slowrev", 3);
+    await withEnv(stub, { LOKI_E10_REVIEW_BOX_S: "30" }, async () => {
+      const r = await sealed(ctx, 1);
+      expect(r.outputs.seal).toBeDefined();
+      const rc = receiptOf({ data: r.outputs.seal as Record<string, unknown> }) as unknown as { review?: Record<string, unknown> };
+      expect(rc.review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass" });
+    });
+  }, 60000);
+  test("slow reviewer keeps receipt: a review past its box is not_run, seal still writes the receipt", async () => {
+    const { ctx, stub } = setup("slowrev-box", 5);
+    await withEnv(stub, { LOKI_E10_REVIEW_BOX_S: "1" }, async () => {
+      const r = await sealed(ctx, 1);
+      expect(r.outputs.seal).toBeDefined();
+      const rc = receiptOf({ data: r.outputs.seal as Record<string, unknown> }) as unknown as { review?: Record<string, unknown> };
+      expect(rc.review?.level).toBe("not_run");
+    });
+  }, 60000);
+  test("seal passes reviewRan through: a default review that ran credits one reviewer, an opt-out does not", async () => {
+    const a = setup("rr-on", 0), b = setup("rr-off", 0);
+    const notProven = async (c: typeof a, env: Record<string, string>) => { let np: string[] = []; await withEnv(c.stub, env, async () => { const s = await sealStage.run(c.ctx, new AbortController().signal); np = receiptOf(s).not_proven; }); return np.join(" | "); };
+    expect(await notProven(a, {})).not.toContain("one reviewer");
+    expect(await notProven(b, { LOKI_REVIEW_PROVIDER: "none" })).toContain("one reviewer");
+  }, 60000);
 });

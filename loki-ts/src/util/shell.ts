@@ -13,6 +13,7 @@ export type ShellOpts = {
   timeoutMs?: number;
   env?: Record<string, string>;
   cwd?: string;
+  signal?: AbortSignal; // abort: SIGTERM, then SIGKILL after 2s (same as a timeout)
 };
 
 // v7.77.0 (W77-D LOW): cap how many bytes we slurp from a child's stdout.
@@ -98,23 +99,23 @@ export async function run(
 
   let timer: Timer | undefined;
   let killTimer: Timer | undefined;
-  if (opts.timeoutMs && opts.timeoutMs > 0) {
-    timer = setTimeout(() => {
-      // SIGTERM first; if the process ignores it, SIGKILL after 2s.
+  const stop = (): void => {
+    // SIGTERM first; if the process ignores it, SIGKILL after 2s.
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      /* already exited */
+    }
+    killTimer ??= setTimeout(() => {
       try {
-        proc.kill("SIGTERM");
+        proc.kill("SIGKILL");
       } catch {
         /* already exited */
       }
-      killTimer = setTimeout(() => {
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-          /* already exited */
-        }
-      }, 2000);
-    }, opts.timeoutMs);
-  }
+    }, 2000);
+  };
+  if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(stop, opts.timeoutMs);
+  if (opts.signal) { if (opts.signal.aborted) stop(); else opts.signal.addEventListener("abort", stop, { once: true }); }
 
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -128,6 +129,7 @@ export async function run(
   } finally {
     if (timer) clearTimeout(timer);
     if (killTimer) clearTimeout(killTimer);
+    opts.signal?.removeEventListener("abort", stop);
   }
 }
 

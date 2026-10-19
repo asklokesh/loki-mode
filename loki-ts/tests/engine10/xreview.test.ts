@@ -189,7 +189,7 @@ describe("medium default review", () => {
     await withEnv(stub, {}, async () => {
       const r = await crossReview(ctx, "VERIFIED", "HEAD");
       expect(r?.level).toBe("pass"); expect(r?.provider).toBe("claude"); expect(r?.same_vendor_default).toBe(true);
-      expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true });
+      expect(reviewReceipt("claude", r).review).toEqual({ provider: "claude", vendor_differs: false, same_vendor: true, defaulted: true, level: "pass" });
     });
   });
   it("medium default review: a BLOCK caps the verdict at PARTIAL", async () => {

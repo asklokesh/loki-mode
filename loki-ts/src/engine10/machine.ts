@@ -115,7 +115,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS; if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS + (st.extraLimitS?.(sctx) ?? 0); if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
