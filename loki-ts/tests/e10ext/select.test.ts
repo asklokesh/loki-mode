@@ -266,6 +266,14 @@ describe("selectAttempt: rank key adjacency (a swapped key order must flip the w
     expect(selectAttempt([a, b], localS, []).index).toBe(0);
   });
 
+  it("FC-LINT-PRE-RED: a lint fail named in preRedChecks (also fails on base) is not counted at key 5", () => {
+    const localS: TestRef[] = [{ runner: "pytest", path: "tests/test_a.py" }];
+    const a = attempt(0, [check("pytest:tests/test_a.py", "not_run"), check("lint:ruff", "fail")], { diff: "diff --git a/x b/x\n+1\n+2\n+3\n", preRedChecks: ["lint:ruff"] });
+    const b = attempt(1, [check("pytest:tests/test_a.py", "not_run"), check("lint:ruff", "fail")], { diff: "diff --git a/x b/x\n+1\n" });
+    expect(selectAttempt([a, b], localS, []).index).toBe(0); // a's lint fail is excused (0 vs 1) despite the larger diff
+    expect(selectAttempt([{ ...a, preRedChecks: [] }, b], localS, []).index).toBe(1); // control: unexcused, both count 1 and the smaller diff wins
+  });
+
   it("5-6: keys 5 and 6 are not interchangeable -- fewer lint fails wins even with a larger diff", () => {
     // a: 0 lint fails, a 3-line diff. b: 1 lint fail, a 1-line diff. Every check-based key ties
     // (both have one not_run S check, no wall). Key 5 (lint) is primary over key 6 (diff size),

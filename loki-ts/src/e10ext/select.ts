@@ -3,6 +3,7 @@
 // touches stages/ at runtime (D42 (1); the import-graph guard lives in tests/engine10/budget.test.ts next to the modernize cap). Core re-runs verify and Seal on whichever tree this picks.
 import type { TestRef } from "../engine10/types.ts";
 // D42 (1): seal.ts/verify.ts/wall.ts/verify_cmd.ts may be referenced only as `import type`.
+import { isBlockingFail } from "../util/failure_memory.ts";
 import type { VerifyCheck } from "../engine10/stages/verify.ts";
 
 /** verify.ts's VerifyCheck plus S41-08's exit_code, which isn't recorded on main yet;
@@ -26,6 +27,8 @@ export interface AttemptCandidate {
    *  checks. A check whose name is outside S and outside `wall` is ignored (an attempt-authored
    *  test never counts, section 4 note under the Deterministic failure definition). */
   checks: AttemptCheck[];
+  /** FC-LINT-PRE-RED: verify's pre_red_checks for this attempt; a lint check named here also fails on base and is not counted in lintFails. */
+  preRedChecks?: string[];
 }
 
 export interface SelectResult {
@@ -85,7 +88,7 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
   let flakyInS = 0;
   let lintFails = 0;
   for (const c of a.checks) {
-    if (c.name.startsWith("lint:") && c.result === "fail") lintFails++;
+    if (c.name.startsWith("lint:") && isBlockingFail(c, a.preRedChecks)) lintFails++;
     // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
     // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall must never win because the caller happened to build S without it (R1, reproduced: with the
     // Wall test outside S, a Wall failure used to be invisible everywhere).

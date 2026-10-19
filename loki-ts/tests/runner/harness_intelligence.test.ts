@@ -1116,6 +1116,7 @@ describe("P12-11b flaky rerun producer and summary wiring", () => {
     expect(failedChecksSignal(dir2, "tree1")).toBeUndefined();
     expect(failedChecksSignal(dir, "")).toBeUndefined();
     expect(failedCheckNames("junk")).toEqual([]);
+    expect(failedCheckNames([{ name: "lint:shellcheck", result: "fail" }, { name: "bun:b.test.ts", result: "fail" }], ["lint:shellcheck"])).toEqual(["bun:b.test.ts"]); // FC-LINT-PRE-RED
     expect(decideRecovery({ output: "x", buildExitCode: 1, rerun: flakyRerunSignal(dir2, "tree1"), failedChecks: failedChecksSignal(dir2, "tree1") }, { env: E, history: [] })).toMatchObject({ action: "retry", reason: "flaky" });
   });
   it("Q17-03: the real call sites pass failedChecks and record failed checks", () => {

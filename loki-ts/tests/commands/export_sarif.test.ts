@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { main, scanDiff } from "../../src/commands/export_sarif.ts";
+import { main, preRedFromEvents, receiptFindings, scanDiff } from "../../src/commands/export_sarif.ts";
 
 const TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
 const SHA = (c: string) => c.repeat(40);
@@ -166,5 +166,27 @@ describe("export --sarif more token shapes", () => {
     for (const clean of ["pypi-AgEIshort", "pypi-install", "dckr_pat_x", "dop_v1_abc", "ya29.short", "shpat_abc", "PMAK-short-tok", "xya29.aB3dE5gH7jK9mN1pQ3sT5vW7"]) {
       expect(scanDiff(mk(clean))).toEqual([]);
     }
+  });
+});
+
+describe("export --sarif FC-LINT-PRE-RED", () => {
+  const checks = [{ name: "lint:shellcheck", result: "fail" }, { name: "unit", result: "fail" }];
+  test("receiptFindings skips checks excused as failing on base", () => {
+    expect(receiptFindings({ checks }, ["lint:shellcheck"]).map((f) => f.key)).toEqual(["unit"]);
+    expect(receiptFindings({ checks }).map((f) => f.key)).toEqual(["lint:shellcheck", "unit"]);
+  });
+  test("main reads pre_red_checks from the run's events and omits the excused finding", async () => {
+    const { root, runs } = fixture();
+    try {
+      const d = join(runs, "e10-1-aaaa");
+      writeFileSync(join(d, "receipt.json"), JSON.stringify({ checks }));
+      writeFileSync(join(d, "events.jsonl"), JSON.stringify({ type: "stage.completed", stage: "verify", data: { pre_red_checks: ["lint:shellcheck"] } }) + "\n");
+      expect(preRedFromEvents(d)).toEqual(["lint:shellcheck"]);
+      expect(preRedFromEvents(join(d, "nope"))).toEqual([]);
+      await run(["--sarif", "e10-1-aaaa"], { runsRoot: runs, diff: async () => null });
+      const msgs = (JSON.parse(readFileSync(join(d, "findings.sarif"), "utf8")).runs[0].results as { message: { text: string } }[]).map((r) => r.message.text).join("|");
+      expect(msgs).toContain("check failed: unit");
+      expect(msgs).not.toContain("shellcheck");
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

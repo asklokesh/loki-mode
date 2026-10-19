@@ -6,6 +6,7 @@ import { toSarif, type Finding } from "../contrib/sarif.ts";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { latestRunId } from "./run_status.ts";
 import { safeGitRun } from "../util/safe_git.ts";
+import { isBlockingFail } from "../util/failure_memory.ts";
 
 // Tier 1 formats from autonomy/lib/secret-scan.sh. Only the label is ever reported, never the matched text.
 const SECRET_PATTERNS: [string, RegExp][] = [
@@ -55,10 +56,23 @@ export function scanDiff(diff: string): Finding[] {
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
-export function receiptFindings(receipt: Record<string, unknown>): Finding[] {
+/** FC-LINT-PRE-RED: the last verify stage's pre_red_checks from the run's event log (the receipt records those checks as plain fail); [] when absent or unreadable. */
+export function preRedFromEvents(runDir: string): string[] {
+  try {
+    let pre: string[] = [];
+    for (const l of readFileSync(join(runDir, "events.jsonl"), "utf8").split("\n")) {
+      if (!l.includes('"stage.completed"')) continue;
+      const e = JSON.parse(l) as { type?: string; stage?: string; data?: { pre_red_checks?: unknown } };
+      if (e.type === "stage.completed" && e.stage === "verify") pre = strs(e.data?.pre_red_checks);
+    }
+    return pre;
+  } catch { return []; }
+}
+
+export function receiptFindings(receipt: Record<string, unknown>, preRed: readonly string[] = []): Finding[] {
   const out: Finding[] = strs(receipt["not_proven"]).map((m) => ({ kind: "not-proven", message: m }));
   const checks = Array.isArray(receipt["checks"]) ? (receipt["checks"] as Record<string, unknown>[]) : [];
-  for (const c of checks) if (c["result"] === "fail") out.push({ kind: "verify", message: `check failed: ${String(c["name"] ?? "unnamed")}`, key: String(c["name"] ?? "") });
+  for (const c of checks) if (isBlockingFail(c, preRed)) out.push({ kind: "verify", message: `check failed: ${String(c["name"] ?? "unnamed")}`, key: String(c["name"] ?? "") });
   return out;
 }
 
@@ -86,7 +100,7 @@ export async function main(args: readonly string[], deps: ExportSarifDeps = {}):
     if (diff === null) findings.push({ kind: "not-proven", message: "secret scan skipped: run diff could not be computed" });
     else findings.push(...scanDiff(diff));
   }
-  findings.push(...receiptFindings(receipt));
+  findings.push(...receiptFindings(receipt, preRedFromEvents(runDir)));
   let version = "0.0.0";
   try { version = readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim() || version; } catch { /* keep default */ }
   const out = join(runDir, "findings.sarif");

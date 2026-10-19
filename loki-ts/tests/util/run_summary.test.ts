@@ -211,3 +211,14 @@ test("useColor: NO_COLOR empty keeps color, non-empty or TERM=dumb disables", ()
   expect(useColor({}, false)).toBe(false);
   for (const e of [{ NO_COLOR: "" }, { NO_COLOR: "1" }, { TERM: "dumb" }, { TERM: "xterm" }, {}]) expect(useColor(e, true)).toBe(!colorDisabled(e));
 });
+
+test("FC-LINT-PRE-RED: composeHandoff tags a verify check named in pre_red_checks and the handoff lists it as already failing on base", () => {
+  const verify = ev("stage.completed", "verify", { checks: [{ name: "lint:shellcheck", cmd: "shellcheck a.sh", result: "fail" }, { name: "bun:t", cmd: "bun test t", result: "fail" }], pre_red_checks: ["lint:shellcheck"] });
+  const h = composeHandoff({ repoDir: ".", runId: "r", events: [verify], outcome: "PARTIAL", usd: 1, elapsedS: 5, notProven: [], task: "t", requirements: null });
+  expect(h.checks.find((c) => c.name === "lint:shellcheck")?.pre_red).toBe(true);
+  expect(h.checks.find((c) => c.name === "bun:t")?.pre_red).toBeUndefined();
+  const md = renderHandoff(h);
+  expect(md.split("## Already failing on base")[1]!.split("##")[0]).toContain("shellcheck a.sh");
+  expect(md.split("## Failures")[1]).not.toContain("shellcheck");
+  expect(md.split("## Failures")[1]).toContain("bun test t");
+});

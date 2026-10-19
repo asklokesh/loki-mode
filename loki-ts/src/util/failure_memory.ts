@@ -133,10 +133,12 @@ export function flakyRerunSignal(dir: string, tree: string): { test: string; fai
   const row = readFingerprints(dir).findLast((r) => r.cls === "flaky" && r.tree === tree);
   return row ? { test: row.name, failTree: tree, passTree: tree } : undefined;
 }
-/** Q17-03: names of verify checks whose result is "fail" (flaky and not_run excluded). Junk input gives []. */
-export function failedCheckNames(checks: unknown): string[] {
+/** FC-LINT-PRE-RED: the one definition of a blocking failure: result "fail" and not excused by verify's pre_red_checks (the check also fails on base). */
+export const isBlockingFail = (c: unknown, preRed: readonly string[] = []): boolean => !!c && typeof c === "object" && (c as { result?: unknown }).result === "fail" && !preRed.includes(String((c as { name?: unknown }).name));
+/** Q17-03: names of verify checks whose result is "fail" (flaky and not_run excluded; FC-LINT-PRE-RED: checks in preRed excluded). Junk input gives []. */
+export function failedCheckNames(checks: unknown, preRed: readonly string[] = []): string[] {
   if (!Array.isArray(checks)) return [];
-  return checks.flatMap((c) => (c && typeof c === "object" && (c as { result?: unknown }).result === "fail" && typeof (c as { name?: unknown }).name === "string" ? [(c as { name: string }).name] : []));
+  return checks.flatMap((c) => (isBlockingFail(c, preRed) && typeof (c as { name?: unknown }).name === "string" ? [(c as { name: string }).name] : []));
 }
 /** Q17-03: failed-check rows recorded on THIS known tree, for decideRecovery's failedChecks. undefined (no evidence) on an unknown tree or no rows, which keeps today's behavior. */
 export function failedChecksSignal(dir: string, tree: string): string[] | undefined {
