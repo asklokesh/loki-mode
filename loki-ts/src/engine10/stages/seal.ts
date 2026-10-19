@@ -32,6 +32,7 @@ import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import { hooks } from "../hooks.ts";
 import { atomicWriteText } from "../../util/atomic.ts";
+import { collapseNotProven } from "../../util/term_width.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts"; import { addedSymlinkNotes } from "../../util/base_guard.ts";
 
@@ -146,7 +147,7 @@ export function renderReceiptMd(r: Receipt): string {
     "",
     ...(r.evidence.length ? ["### Evidence (already-satisfied)", ...r.evidence.map((e) => `- ${e}`), ""] : []),
     "### NOT PROVEN",
-    ...r.not_proven.map((n) => `- ${sanitizeReason(n)}`), ...(r.not_applicable?.length ? ["", "### N/A (not applicable, or not selected by risk tier)", ...r.not_applicable.map((n) => `- ${sanitizeReason(n)}`)] : []),
+    ...collapseNotProven(r.not_proven).map((n) => `- ${sanitizeReason(n)}`), ...(r.not_applicable?.length ? ["", "### N/A (not applicable, or not selected by risk tier)", ...r.not_applicable.map((n) => `- ${sanitizeReason(n)}`)] : []),
     "",
   ].join("\n");
 }

@@ -34,6 +34,7 @@ import { formatDuration, type Outcome } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
 import { firstIncompleteStage } from "./run_outputs.ts";
 import { colorDisabled } from "./colors.ts";
+import { collapseNotProven } from "./term_width.ts";
 
 export type RunResult = "verified" | "done-unverified" | "failed" | "stopped";
 
@@ -214,7 +215,7 @@ export function renderHandoff(i: HandoffInput): string {
   if (ran.length > 6) L.push(`- +${ran.length - 6} more passed`);
   if (onBase.length) L.push("", "## Already failing on base (not caused by this change, not blocking)", ...onBase.slice(0, 4).map((c) => `- ${checkLine(c)}`));
   if (bad.length || i.failures.length) { L.push("", "## Failures"); for (const c of bad.slice(0, 4)) L.push(`- ${checkLine(c)}`); for (const f of i.failures.slice(0, 3)) L.push(`- ${clip(f)}`); }
-  const notChecked = [...skipped.map((c) => checkLine(c)), ...(i.deferred ?? []).map((n) => `NOT RUN (deferred by risk tier): ${clip(n, 60)}`), ...i.notProven.map((n) => `NOT PROVEN: ${clip(n, 80)}`), ...unc.map((u) => `UNCOVERED requirement: ${u}`)];
+  const notChecked = [...skipped.map((c) => checkLine(c)), ...(i.deferred ?? []).map((n) => `NOT RUN (deferred by risk tier): ${clip(n, 60)}`), ...collapseNotProven(i.notProven).map((n) => `NOT PROVEN: ${clip(n, 80)}`), ...unc.map((u) => `UNCOVERED requirement: ${u}`)];
   L.push("", "## Not checked");
   for (const n of notChecked.slice(0, 8)) L.push(`- ${n}`);
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");

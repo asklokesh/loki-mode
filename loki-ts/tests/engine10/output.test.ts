@@ -370,3 +370,32 @@ describe("reasonOf (A-130 round 4)", () => {
     expect(r.length).toBe(200);
   });
 });
+
+// FC-OUTCOME-FLOOD: per-item lists collapse on every display surface; receipt.json keeps the full list.
+import { collapseNotProven } from "../../src/util/term_width.ts";
+const floodFixture = (n = 150): string[] => Array.from({ length: n }, (_, i) => `has gray background ${i}`).flatMap((t, i) => [`pre red: ${t}`, `pre red: src/app/p${i % 7}/__tests__/page.test.tsx > Page > Styling > ${t}`]);
+describe("collapseNotProven (FC-OUTCOME-FLOOD)", () => {
+  test("150 short plus full-name pre-red entries become one line with the deduplicated count", () => {
+    const out = collapseNotProven(["diff not computed", ...floodFixture(), "baseline: 150 pre-existing failing check(s) (not blocking), 0 introduced"]);
+    expect(out).toEqual(["diff not computed", "pre red: 150 tests already failing on base (listed in receipt.json)", "baseline: 150 pre-existing failing check(s) (not blocking), 0 introduced"]);
+  });
+  test("a short-name-only list counts once per test; a few stay listed", () => {
+    expect(collapseNotProven(floodFixture(40).filter((l) => !l.includes(" > ")))).toEqual(["pre red: 40 tests already failing on base (listed in receipt.json)"]);
+    expect(collapseNotProven(["pre red: a", "pre red: x.test.ts > S > a", "pre red: b"])).toEqual(["pre red: x.test.ts > S > a", "pre red: b"]);
+  });
+  test("other per-item lists collapse past a cap and the pass is idempotent", () => {
+    const many = Array.from({ length: 30 }, (_, i) => `not run: check ${i}`), flaky = Array.from({ length: 30 }, (_, i) => `flaky test: t${i}`);
+    const once = collapseNotProven([...many, ...flaky, ...floodFixture(20)]);
+    expect(once).toEqual(["not run: 30 entries (listed in receipt.json)", "flaky test: 30 entries (listed in receipt.json)", "pre red: 20 tests already failing on base (listed in receipt.json)"]);
+    expect(collapseNotProven(once)).toEqual(once);
+    expect(collapseNotProven(["not run: a", "not run: b"])).toEqual(["not run: a", "not run: b"]);
+  });
+  test("terminal NOT PROVEN line is one short line, not 300 entries", () => {
+    const base = { pr: null, verdict: "PARTIAL", flaky: [], wallS: 60, stages: [], cost: { usd: 1, provider: "claude", tokens: 1000 } };
+    const out = formatSummary({ ...base, notProven: floodFixture() } as never);
+    expect(out).toContain("pre red: 150 tests already failing on base (listed in receipt.json)");
+    expect(out).not.toContain("has gray background");
+    expect(out.length).toBeLessThan(1500);
+    expect(formatSummary({ ...base, notProven: [], flaky: Array.from({ length: 40 }, (_, i) => `f${i}`) } as never)).toContain("flaky 40 tests (listed in receipt.json)");
+  });
+});

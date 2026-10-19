@@ -222,3 +222,10 @@ test("FC-LINT-PRE-RED: composeHandoff tags a verify check named in pre_red_check
   expect(md.split("## Failures")[1]).not.toContain("shellcheck");
   expect(md.split("## Failures")[1]).toContain("bun test t");
 });
+
+test("FC-OUTCOME-FLOOD: a pre-red flood does not consume the Not checked lines", () => {
+    const nb = Array.from({ length: 150 }, (_, i) => [`pre red: t${i}`, `pre red: a.test.ts > S > t${i}`]).flat();
+    const md = renderHandoff({ ...base, notProven: [...nb, "perf"] });
+    expect(md).toContain("pre red: 150 tests already failing on base");
+    expect(md).toContain("NOT PROVEN: perf");
+});

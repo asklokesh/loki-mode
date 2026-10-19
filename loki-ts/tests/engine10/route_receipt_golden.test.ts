@@ -85,3 +85,15 @@ describe("byte stability when the router is off", () => {
     expect(routeReceiptLines(b).join("\n")).toContain("Route requests over 100K: not recorded");
   });
 });
+
+describe("FC-OUTCOME-FLOOD receipt.md", () => {
+  test("pre-red flood collapses in the markdown only", () => {
+    const np = Array.from({ length: 150 }, (_, i) => [`pre red: t${i}`, `pre red: a.test.ts > S > t${i}`]).flat();
+    const r = { run_id: "r", base_sha: "a", head_sha: "b", receipt_sha256: "h", verification: { jwt: "", kid: "" }, provider: "claude", model: "m", verdict: "VERIFIED",
+      cost: { usd: 1, partial_usd: 1, measured_sessions: 1, total_sessions: 1 }, time: { wall_s: 3 }, checks: [], evidence: [], not_proven: np } as unknown as Receipt;
+    const md = renderReceiptMd(r);
+    expect(md).toContain("- pre red: 150 tests already failing on base (listed in receipt.json)");
+    expect(md).not.toContain("pre red: t7");
+    expect(r.not_proven.length).toBe(300);
+  });
+});

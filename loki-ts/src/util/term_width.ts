@@ -37,6 +37,28 @@ export function clipWords(s: string, max: number): string {
   const cut = s.slice(0, max - 3), sp = cut.lastIndexOf(" ");
   return `${(sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:]+$/, "")}...`;
 }
+/** FC-OUTCOME-FLOOD: per-item NOT PROVEN lists (pre-red tests, not run, flaky, ...) collapse to one count line past a cap on every display surface (terminal, PR body, receipt.md, handoff); receipt.json keeps the full list. Display only, idempotent. */
+const FLOOD_PREFIXES = ["not run: ", "flaky test: ", "skipped on base (excused): ", "changed, untested after limit: ", "reverted test edit: ", "wall test discarded: ", "Wall test not executed: ", "weakened test: "];
+const FLOOD_CAP = 8, PRE_RED_CAP = 3, PRE_RED = "pre red: ", COLLAPSED_PRE_RED = /^pre red: \d+ tests already failing on base/;
+export function collapseNotProven(lines: readonly string[]): string[] {
+  const tail = (s: string): string => { const i = s.lastIndexOf(" > "); return i < 0 ? s : s.slice(i + 3); };
+  const isRaw = (l: string): boolean => l.startsWith(PRE_RED) && !COLLAPSED_PRE_RED.test(l);
+  const preRed = lines.filter(isRaw).map((l) => l.slice(PRE_RED.length));
+  const full = preRed.filter((n) => n.includes(" > ")), fullTails = new Set(full.map(tail));
+  const uniq = new Set([...full, ...preRed.filter((n) => !n.includes(" > ") && !fullTails.has(n))]); // a short name is the tail of its full-path twin: count the test once
+  const counts = new Map<string, number>(); for (const p of FLOOD_PREFIXES) counts.set(p, lines.filter((l) => l.startsWith(p)).length);
+  const out: string[] = [], done = new Set<string>();
+  for (const l of lines) {
+    if (isRaw(l)) {
+      if (uniq.size <= PRE_RED_CAP) { if (!l.includes(" > ") && fullTails.has(l.slice(PRE_RED.length))) continue; out.push(l); } else if (!done.has(PRE_RED)) { done.add(PRE_RED); out.push(`pre red: ${uniq.size} tests already failing on base (listed in receipt.json)`); }
+      continue;
+    }
+    const p = FLOOD_PREFIXES.find((x) => l.startsWith(x));
+    if (p && (counts.get(p) ?? 0) > FLOOD_CAP) { if (!done.has(p)) { done.add(p); out.push(`${p}${counts.get(p)} entries (listed in receipt.json)`); } continue; }
+    out.push(l);
+  }
+  return out;
+}
 /** One summary line from a push child's stderr: the fork-only notice as is, else the script's own die line, plus gh/git's "Permission to X denied" when present. Raw multi-line stderr never reaches NOT PROVEN. */
 export function pushErrLine(stderr: string): string {
   const lines = stderr.split("\n").map((l) => l.replace(/[\x00-\x1f\x7f]+/g, " ").trim()).filter(Boolean);

@@ -15,7 +15,7 @@ import { withSealRoute } from "../../runner/router/route_block.ts"; import { aiM
 import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { pushErrLine } from "../../util/term_width.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
 import { stackBase, stackSection } from "../../util/run_outputs.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
@@ -107,7 +107,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   if (!pinnedOrigin) return { status: "failed", data: {}, reason: "no pinned origin: refusing to push (Rule of Two)" };
   const seal = (ctx.outputs().seal ?? {}) as { verdict?: Verdict; not_proven?: string[]; receipt_path?: string; receipt_sha256?: string; signed?: boolean; route_line?: string; mutation_line?: string };
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
-  const notProven = [...(seal.not_proven ?? [])];
+  const notProven = collapseNotProven(seal.not_proven ?? []); // FC-OUTCOME-FLOOD: display only; receipt.json keeps the full list
   const capHit = ctx.capHit?.() ?? false;
   const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   const base = stackBase(process.env);

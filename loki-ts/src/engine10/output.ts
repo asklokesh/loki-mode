@@ -4,7 +4,7 @@
 // missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M
 // sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
 import type { EventEnvelope, Verdict } from "./types.ts";
-import { clipWords, formatClock, formatDuration, formatTokens } from "../util/term_width.ts";
+import { clipWords, collapseNotProven, formatClock, formatDuration, formatTokens } from "../util/term_width.ts";
 export { formatClock, formatDuration, formatTokens }; // one owner: util/term_width.ts
 import { registryLoader } from "./registry.ts";
 import { redactSecrets } from "../util/redact.ts";
@@ -114,8 +114,8 @@ export function formatSummary(input: SummaryInput): string {
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
   const r = input.receipt;
   const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
-  let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "")}`;
-  if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
+  let notProvenLine = `${labelCol("NOT PROVEN")}${collapseNotProven(input.notProven).map((n) => n.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/ {2,}/g, " ").trim()).join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "")}`;
+  if (input.flaky.length > 0) notProvenLine += input.flaky.length > 8 ? `; flaky ${input.flaky.length} tests (listed in receipt.json)` : `; flaky ${input.flaky.join(", ")}`; // FC-OUTCOME-FLOOD
   const costLine =
     input.cost.usd != null
       ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"}${input.cost.note ? `; ${input.cost.note}` : ""}${input.cost.capUsd ? `; ${Math.round((input.cost.usd / input.cost.capUsd) * 100)}% of cap $${input.cost.capUsd.toFixed(2)}` : ""})`
