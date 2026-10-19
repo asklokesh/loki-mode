@@ -118,6 +118,31 @@ describe("TEN-COST-06 lean claude judge", () => {
     expect(parseReview("claude", "VERDICT: PASS").level).toBe("not_run");
     expect(parseReview("claude", "{not json").level).toBe("not_run");
   });
+  it("FC-PR-BODY-PUBLIC-HYGIENE: parseReview keeps flags whole, merges headers, drops empty headers", () => {
+    const long = `Missing tests: ${"the diff adds no tests for the new behaviour. ".repeat(8)}Done.`; // about 380 chars, past the old 300 cut
+    const out = [
+      "VERDICT: FLAG",
+      `- ${long}`,
+      "- Dead code in  stop-hook.sh : the check can never fire.",
+      "- Acceptance lines, traced by hand because the shell output was not visible:",
+      "  - 08 stops at round 8",
+      "  - 010 stops at round 10",
+      "- Unverified context: the state write is outside the diff. My tool output came back empty so I could not confirm it.",
+      "- Trailing header with nothing under it:",
+    ].join("\n");
+    const notes = parseReview("claude", JSON.stringify({ result: out })).notes;
+    expect(notes[0]).toBe(`cross-review flag (claude): ${long}`);
+    expect(notes.some((n) => n.endsWith("not visible:"))).toBe(false);
+    expect(notes.some((n) => n.includes("not visible: 08 stops at round 8; 010 stops at round 10") || (n.includes("08 stops at round 8") && n.includes("010 stops at round 10")))).toBe(true);
+    expect(notes.some((n) => n.endsWith("could not confirm it."))).toBe(true);
+    expect(notes.some((n) => n.includes("Trailing header"))).toBe(false);
+    expect(notes).toHaveLength(4);
+  });
+  it("FC-PR-BODY-PUBLIC-HYGIENE: an over-cap flag ends with an ellipsis, never mid-sentence", () => {
+    const n = parseReview("claude", JSON.stringify({ result: `VERDICT: FLAG\n- ${"word ".repeat(300)}` })).notes[0]!;
+    expect(n.endsWith("...")).toBe(true);
+    expect(n.length).toBeLessThan(700);
+  });
   it("a stubbed claude run writes one xreview ledger line", async () => {
     const d = mkdtempSync(join(root, "led-")), bd = mkdtempSync(join(root, "bin-"));
     const git = (...a: string[]) => Bun.spawnSync(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);

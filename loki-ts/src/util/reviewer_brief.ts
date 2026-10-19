@@ -7,6 +7,7 @@ import { dirname, join, normalize } from "node:path";
 import { listRepoFiles } from "../engine10/repomap.ts";
 import { buildTestMap, impactedRefs } from "../engine10/testmap.ts";
 import { safeGit } from "./safe_git.ts";
+import { ALREADY_FAILING_ON_BASE } from "./check_result.ts";
 
 export const reviewerBriefEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_REVIEWER_BRIEF"] !== "0";
 
@@ -30,7 +31,7 @@ export interface BriefFacts {
   verdict?: string;
   receiptSha256?: string | null;
   /** Parsed receipt.json subset; undefined when the receipt could not be read. */
-  receipt?: { checks?: { name?: string; result?: string }[]; mutation_proof?: string; not_proven?: string[] };
+  receipt?: { checks?: { name?: string; result?: string; pre_red?: boolean }[]; mutation_proof?: string; not_proven?: string[] };
   /** The plan's intent card lines; null/undefined when none was recorded. */
   intentCard?: string[] | null;
   /** Files the plan declared (plan-scope.json "files"); null/undefined when none was recorded. */
@@ -40,6 +41,19 @@ export interface BriefFacts {
 
 const NR = "NOT RECORDED";
 const oneLine = (t: string, n = 100): string => t.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, n);
+/** A whole line up to n characters; a longer one is cut on a word boundary and ends with an ellipsis (FC-PR-BODY-PUBLIC-HYGIENE). */
+export const capWhole = (t: string, n: number): string => { const s = t.replace(/\s+/g, " ").trim(); if (s.length <= n) return s; const cut = s.slice(0, n - 3), sp = cut.lastIndexOf(" "); return `${(sp > n / 2 ? cut.slice(0, sp) : cut).trimEnd()}...`; };
+const wholeLine = (t: string, n = 240): string => capWhole(t.replace(/[\x00-\x1f\x7f]+/g, " "), n);
+/** FC-PR-BODY-PUBLIC-HYGIENE: one flag per top-level reviewer line; a header ending in ":" absorbs the more-indented lines under it, and a header with nothing under it is dropped (a dangling header is not a flag). */
+export function reviewFlagLines(text: string): string[] {
+  const out: { t: string; indent: number; subs: string[] }[] = [];
+  for (const raw of text.split("\n")) {
+    if (raw.trim() === "") continue;
+    const indent = raw.length - raw.trimStart().length, t = raw.replace(/^\s*[-*]\s*/, ""), last = out[out.length - 1];
+    if (last && last.t.trimEnd().endsWith(":") && indent > last.indent) last.subs.push(t.trim()); else out.push({ t, indent, subs: [] });
+  }
+  return out.filter((e) => e.subs.length > 0 || !e.t.trimEnd().endsWith(":")).map((e) => (e.subs.length > 0 ? `${e.t.trim()} ${e.subs.join("; ")}` : e.t));
+}
 
 /** Parses the model-declared risks from plan-scope.json content; null when none are well-formed. */
 export function parseRiskDecls(j: unknown): RiskDecl[] | null {
@@ -78,7 +92,8 @@ export function leadBlock(repoDir: string, baseSha: string, f: BriefFacts): stri
   if (!Array.isArray(checks)) out.push(`- checks run: ${NR}`);
   else {
     const n = (k: string): number => checks.filter((c) => c.result === k).length;
-    out.push(checks.length === 0 ? "- checks run: 0" : `- checks run: ${checks.length} (${n("pass")} pass, ${n("fail")} fail, ${n("not_run")} not_run)`);
+    const red = checks.filter((c) => c.result === "fail" && c.pre_red === true).length;
+    out.push(checks.length === 0 ? "- checks run: 0" : `- checks run: ${checks.length} (${n("pass")} pass, ${n("fail")} fail, ${n("not_run")} not_run${red > 0 ? `; ${red} fail ${ALREADY_FAILING_ON_BASE}` : ""})`);
   }
   out.push(`- mutation proof: ${rc?.mutation_proof ? oneLine(rc.mutation_proof) : NR}`);
   const card = f.intentCard;
@@ -88,7 +103,7 @@ export function leadBlock(repoDir: string, baseSha: string, f: BriefFacts): stri
   const np = rc?.not_proven;
   if (!Array.isArray(np)) out.push(`NOT PROVEN: ${NR}`);
   else if (np.length === 0) out.push("NOT PROVEN: none recorded");
-  else { out.push("NOT PROVEN:", ...np.slice(0, 3).map((l) => `- ${oneLine(l)}`)); if (np.length > 3) out.push(`- +${np.length - 3} more in the receipt`); }
+  else { out.push("NOT PROVEN:", ...np.slice(0, 3).map((l) => `- ${wholeLine(l)}`)); if (np.length > 3) out.push(`- +${np.length - 3} more in the receipt`); }
 
   if (!Array.isArray(f.declaredFiles)) out.push(`Outside the declared scope: ${NR} (no declared scope)`);
   else if (!lines) out.push(`Outside the declared scope: ${NR} (diff unavailable)`);

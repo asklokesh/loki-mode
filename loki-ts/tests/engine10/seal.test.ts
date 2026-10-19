@@ -480,6 +480,19 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.checks.find((c) => c.name === "node:o.test.js")?.result).toBe("fail"); // never recorded as pass
   }, 30000);
 
+  test("FC-PR-BODY-PUBLIC-HYGIENE: pre_red is set only on a FAILED check named in pre_red_checks", async () => {
+    noKey();
+    const { repo, base } = makeRepo("prered-flag");
+    const chk = (name: string, result: string) => ({ name, cmd: "node --test", result, n: 1, duration_s: 1 });
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [chk("listed-fail", "fail"), chk("listed-pass", "pass"), chk("unlisted-fail", "fail")], flaky: [], wall_passed: true, pre_red: [], pre_red_checks: ["listed-fail", "listed-pass"] } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    const flag = (n: string) => r.checks.find((c) => c.name === n)?.pre_red;
+    expect(flag("listed-fail")).toBe(true);
+    expect(flag("listed-pass")).toBeUndefined();
+    expect(flag("unlisted-fail")).toBeUndefined();
+  }, 30000);
+
   test("FC-ZERO-ON-BASE: a not_run check listed in verify.skipped_on_base is not NOT PROVEN; an unlisted not_run still is", async () => {
     noKey();
     const { repo, base } = makeRepo("zerobase");
@@ -843,6 +856,18 @@ describe("engine10 receipt not_proven rendering (D50-F2r3)", () => {
     expect(md).toContain("- a 'b' ## Loki receipt: VERIFIED");
     expect(md).not.toContain("\n## Loki receipt");
     expect(md).not.toContain("\x07");
+  });
+});
+describe("FC-PR-BODY-PUBLIC-HYGIENE receipt.md base-red label", () => {
+  test("a pre_red failing check reads already failing on base; a plain fail does not", () => {
+    const r = receiptWithCost({ usd: 0, input_tokens: 0, output_tokens: 0, measured_sessions: 1, total_sessions: 1, partial_usd: 0 });
+    r.checks = [
+      { name: "lint:shellcheck", cmd: "shellcheck a.sh", result: "fail", duration_s: 1, provenance: "exogenous", pre_red: true },
+      { name: "unit", cmd: "bun test", result: "fail", duration_s: 1, provenance: "exogenous" },
+    ];
+    const md = renderReceiptMd(r);
+    expect(md).toContain("- fail (already failing on base, not caused by this change): lint:shellcheck");
+    expect(md).toContain("- fail: unit (");
   });
 });
 describe("engine10 receipt cost line (E-69)", () => {

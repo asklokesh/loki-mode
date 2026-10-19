@@ -72,3 +72,80 @@ describe("renderReviewerBody", () => {
     expect(body).not.toMatch(/[\u2013\u2014]/);
   });
 });
+
+// FC-PR-BODY-PUBLIC-HYGIENE: shape of the real #81826 run (template body, excluded Wall file, base-red check, absolute receipt path).
+const TEMPLATE_TASK = [
+  "[BUG] ralph-loop: --max-iterations 08 silently discards the cap",
+  "### Preflight Checklist",
+  "- [x] I have searched [existing issues](https://github.com/o/r/issues) and this hasn't been reported yet",
+  "- [x] This is a single bug report (please file separate reports for different bugs)",
+  "- [x] I am using the latest version of Claude Code (2.1.220)",
+  "### Summary",
+  "`--max-iterations 08` silently turns a bounded loop into an unbounded one.",
+].join("\n");
+const real = {
+  intake: { task: TEMPLATE_TASK, title: "[BUG] ralph-loop: --max-iterations 08" },
+  wall: { files: [{ path: "/private/tmp/x/cc/tests/loki_wall_ralph.test.ts", sha256: "x" }], base_run: { pass: 0, fail: 1, not_run: 0 } },
+  verify: {
+    changed_files: ["plugins/a/stop-hook.sh", "tests/loki_wall_ralph.test.ts"],
+    pre_red_checks: ["lint:shellcheck"],
+    checks: [
+      { name: "bun:tests/loki_wall_ralph.test.ts", cmd: "bun test tests/loki_wall_ralph.test.ts", result: "pass", n: 8 },
+      { name: "lint:shellcheck", cmd: "shellcheck plugins/a/stop-hook.sh", result: "fail" },
+    ],
+  },
+};
+const realIn = { ...base, verdict: "VERIFIED", draftReason: null, receiptPath: "/private/tmp/claude-501/x/scratch/.loki/runs/run-1/receipt.json", outputs: real };
+describe("FC-PR-BODY-PUBLIC-HYGIENE", () => {
+  const body = renderReviewerBody(realIn);
+  const asked = body.slice(body.indexOf("## What the issue asked"), body.indexOf("## What changed"));
+  it("strips issue-template checklist lines from what the issue asked", () => {
+    expect(asked).not.toMatch(/searched|single bug report|latest version/i);
+    expect(asked).toContain("--max-iterations 08");
+  });
+  const card = { intent_card: ["What I think you want: Make leading-zero values enforce the cap.", "Acceptance: a"] };
+  const askedOf = (task: string, plan?: object) => { const b = renderReviewerBody({ ...realIn, outputs: { ...real, intake: { task }, ...(plan ? { plan } : {}) } }); return b.slice(0, b.indexOf("## What changed")); };
+  it("uses the intent card line only when nothing but template text remains", () => {
+    const s = askedOf(["### Preflight Checklist", "- [x] I have searched existing issues", "- [x] I am using the latest version of Claude Code"].join("\n"), card);
+    expect(s).toContain("- Make leading-zero values enforce the cap.");
+    expect(s).not.toMatch(/searched|latest version/i);
+  });
+  it("(A) keeps real criteria that mention duplicate or latest version under an acceptance heading", () => {
+    const s = askedOf(["## Acceptance criteria", "- [ ] Remove duplicate entries from the list", "- [ ] Works on the latest version of Node", "- [ ] Sorted output"].join("\n"));
+    for (const c of ["Remove duplicate entries from the list", "Works on the latest version of Node", "Sorted output"]) expect(s).toContain(c);
+  });
+  it("(B) keeps items under an Acceptance checklist heading", () => {
+    const s = askedOf(["## Acceptance checklist", "- [ ] Handles empty input", "- [ ] Rejects bad tokens"].join("\n"));
+    expect(s).toContain("Handles empty input"); expect(s).toContain("Rejects bad tokens");
+  });
+  it("(C) keeps items under a heading that merely contains the word confirm", () => {
+    const s = askedOf(["## Confirm dialog behaviour", "- [ ] Shows the dialog once", "- [ ] Esc cancels"].join("\n"));
+    expect(s).toContain("Shows the dialog once"); expect(s).toContain("Esc cancels");
+  });
+  it("(D) with an intent card present, the issue's own acceptance list is still shown", () => {
+    const s = askedOf(["## Acceptance criteria", "- Sorted output", "- Stable ties"].join("\n"), card);
+    expect(s).toContain("Sorted output"); expect(s).toContain("Stable ties");
+    expect(s).not.toContain("Make leading-zero values");
+  });
+  it("keeps a real unchecked criterion that is not template boilerplate", () => {
+    expect(renderReviewerBody(base)).toContain("rejects bad tokens");
+  });
+  it("lists only files in the commit, never the Wall file", () => {
+    expect(body).toContain("- plugins/a/stop-hook.sh");
+    expect(body).not.toContain("- tests/loki_wall_ralph.test.ts");
+  });
+  it("prints the receipt path repo-relative, never an absolute local path", () => {
+    expect(body).toContain("- File: .loki/runs/run-1/receipt.json");
+    expect(body).not.toContain("/private/tmp");
+    expect(renderReviewerBody({ ...realIn, receiptPath: "/somewhere/else/r.json" })).not.toContain("/somewhere");
+  });
+  it("labels a base-failing check in How it was tested and the Checks line", () => {
+    expect(body).toContain("`shellcheck plugins/a/stop-hook.sh` -> fail (already failing on base, not caused by this change)");
+    expect(body).toContain("1 passed, 0 failed, 0 not run, 0 flaky (8 individual tests counted); 1 already failing on base");
+  });
+  it("still reports a real failure as a plain fail", () => {
+    const b = renderReviewerBody({ ...realIn, outputs: { ...real, verify: { ...real.verify, pre_red_checks: [] } } });
+    expect(b).toContain("-> fail\n");
+    expect(b).toContain("1 failed");
+  });
+});

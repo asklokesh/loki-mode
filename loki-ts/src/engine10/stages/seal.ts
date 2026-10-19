@@ -26,7 +26,7 @@ import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { ranModel, receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
-import { checkProvenance, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
+import { checkProvenance, checkResultLabel, deepGaps, hasExecutedProof, hasExogenousProof, NO_TESTS_REASON, type ProvenanceCtx, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
@@ -112,18 +112,18 @@ export function targetProofOf(v: Obj | undefined): boolean {
   return raw.some((c) => names.has(String(c.name)) && hasExecutedProof([c]));
 }
 
-function checksOf(v: unknown, pc: ProvenanceCtx): ReceiptCheck[] { // TEN-GATES-02: each check carries who authored its evidence (additive key)
+function checksOf(v: unknown, pc: ProvenanceCtx, preRed: readonly string[] = []): ReceiptCheck[] { // TEN-GATES-02: each check carries who authored its evidence (additive key)
   if (!Array.isArray(v)) return [];
   return v.filter((c): c is Obj => !!c && typeof c === "object").map((c) => ({
     name: String(c.name ?? ""),
     cmd: String(c.cmd ?? ""),
     result: c.result === "pass" || c.result === "fail" ? c.result : "not_run",
-    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), // n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
+    duration_s: typeof c.duration_s === "number" ? c.duration_s : 0, provenance: checkProvenance(String(c.name ?? ""), pc), ...(typeof c.n === "number" ? { n: c.n } : {}), ...(c.result === "fail" && preRed.includes(String(c.name ?? "")) ? { pre_red: true as const } : {}), // pre_red (FC-PR-BODY-PUBLIC-HYGIENE); n: TEN-GATES-03-F1 verify --require-exogenous counts only executed proof (n > 0); additive like provenance
   }));
 }
 
 export function renderReceiptMd(r: Receipt): string {
-  const sig = r.verification.jwt ? `SIGNED (kid ${r.verification.kid})` : "UNSIGNED", ln = (c: ReceiptCheck): string => `- ${c.result}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`, sec = (h: string, cs: ReceiptCheck[]): string[] => [h, ...(cs.length ? cs.map(ln) : ["- none"])], indep = (c: ReceiptCheck): boolean => c.provenance === "exogenous" || c.provenance === "independent"; // TEN-GATES-02: a receipt without provenance keeps the single Checks section
+  const sig = r.verification.jwt ? `SIGNED (kid ${r.verification.kid})` : "UNSIGNED", ln = (c: ReceiptCheck): string => `- ${checkResultLabel(c.result, c.pre_red === true)}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`, sec = (h: string, cs: ReceiptCheck[]): string[] => [h, ...(cs.length ? cs.map(ln) : ["- none"])], indep = (c: ReceiptCheck): boolean => c.provenance === "exogenous" || c.provenance === "independent"; // TEN-GATES-02: a receipt without provenance keeps the single Checks section
   // E-69: never $0.00 for an unpriced run; "partial" when some but not all sessions were priced.
   const usd = r.cost.usd !== null
     ? `$${r.cost.usd.toFixed(4)}`
@@ -173,7 +173,7 @@ export const sealStage: Stage = {
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
     const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
-    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx); // TEN-GATES-02: A = added in this run
+    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [], pctx: ProvenanceCtx = { addedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() === "A" && rawDiff[i + 1] ? [rawDiff[i + 1]!] : [])), wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as Obj[]).map((f) => String(f.path)) : [], modifiedFiles: rawDiff.flatMap((m, i) => (i % 2 === 0 && m.trim().split(" ").pop() !== "A" && rawDiff[i + 1] && isTestFile(rawDiff[i + 1]!) ? [rawDiff[i + 1]!] : [])) }, checks = checksOf(o.verify?.checks, pctx, preRedChecks); // TEN-GATES-02: A = added in this run
     const weakTests: string[] = [];
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const rcNotes = diffOk ? [...runnerConfigNotes(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), signal), ...addedSymlinkNotes(rawDiff, str(o.plan?.plan))] : []; // D86 FC-09: runner config or a file it loads changed

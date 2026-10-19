@@ -131,6 +131,17 @@ describe("reviewer brief v2", () => {
       ].join("\n"));
     });
 
+    test("FC-PR-BODY-PUBLIC-HYGIENE: a base-red check is labeled and a long flag ends with an ellipsis", () => {
+      const flag = `cross-review flag (claude): ${"a complete sentence about missing tests. ".repeat(10)}`.trim();
+      const f: BriefFacts = { ...verified, receipt: { checks: [{ name: "t1", result: "pass" }, { name: "lint", result: "fail", pre_red: true }], not_proven: [flag] } };
+      const out = leadBlock(dir, base, f);
+      expect(out).toContain("- checks run: 2 (1 pass, 1 fail, 0 not_run; 1 fail already failing on base, not caused by this change)");
+      const line = out.split("\n").find((l) => l.startsWith("- cross-review flag"))!;
+      expect(line.endsWith("...")).toBe(true);
+      const short = leadBlock(dir, base, { ...f, receipt: { ...f.receipt, not_proven: ["short whole flag."] } });
+      expect(short).toContain("- short whole flag.\n");
+    });
+
     test("golden PARTIAL", () => {
       const f: BriefFacts = { ...verified, verdict: "PARTIAL", receipt: { checks: [{ name: "t1", result: "pass" }, { name: "t2", result: "not_run" }], not_proven: ["not run: t2", "no tests executed"] }, declaredFiles: ["src/a.ts"] };
       expect(leadBlock(dir, base, f)).toBe([

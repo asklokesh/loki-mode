@@ -8,7 +8,7 @@ import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
-import { readRiskRecord } from "../../util/run_summary.ts";
+import { readRiskRecord } from "../../util/run_summary.ts"; import { capWhole, reviewFlagLines } from "../../util/reviewer_brief.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewProvider = "codex" | "claude";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
@@ -67,14 +67,14 @@ export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = pro
   const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };
 }
-const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300);
+const clean = (s: string): string => capWhole(s.replace(/[\x00-\x1f\x7f`]+/g, " "), 600); // FC-PR-BODY-PUBLIC-HYGIENE: whole up to 600 characters, then a word-boundary cut and an ellipsis
 /** First line `VERDICT: PASS|FLAG|BLOCK`, then `- reason` lines. Anything else is not_run (never PASS). */
 export function parseReview(p: ReviewProvider, out: string): CrossReview {
   if (p === "claude") { try { const j = JSON.parse(out) as { result?: unknown }; out = typeof j?.result === "string" ? j.result : ""; } catch { out = ""; } } // claude runs with --output-format json: the verdict is the result text; anything else is not_run
   const m = /^\s*VERDICT:\s*(PASS|FLAG|BLOCK)\b/im.exec(out);
   if (!m) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} returned no VERDICT line`] };
   const level = m[1]!.toLowerCase() as ReviewLevel;
-  const reasons = out.slice(m.index + m[0].length).split("\n").map((l) => l.replace(/^\s*[-*]\s*/, "")).filter((l) => l.trim() !== "").map(clean).filter(Boolean).slice(0, MAX_NOTES);
+  const reasons = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean).slice(0, MAX_NOTES);
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
   return { provider: p, level, notes };
 }

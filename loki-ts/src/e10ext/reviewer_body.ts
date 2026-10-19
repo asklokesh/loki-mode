@@ -2,6 +2,7 @@
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
 import { noteOf } from "../util/base_guard.ts";
 import { getVersion } from "../version.ts";
+import { ALREADY_FAILING_ON_BASE, checkResultLabel } from "../util/check_result.ts"; import { intentLine, stripTemplate } from "../util/intent_card.ts"; import { WALL_FILE } from "./commit_filter.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
   receiptPath: string | null; receiptSha256: string | null; signed: boolean | null; runId: string;
@@ -18,7 +19,8 @@ function acceptance(all: string[]): string[] {
   return at >= 0 && sect.some(isItem) ? sect : all; // the issue's own acceptance section is the contract when it has items
 }
 function criteria(task: string): string[] {
-  const lines = acceptance(task.split("\n").map((l) => l.trim()).filter(Boolean));
+  const kept = stripTemplate(task.split("\n").map((l) => l.trim()).filter(Boolean)), lines = acceptance(kept);
+  if (kept.every((l) => /^#+\s/.test(l))) return []; // nothing but template text was left
   const items = lines.filter((l) => /^([-*+]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, ""));
   return more((items.length > 0 ? items : lines.slice(0, 1)).map(clip), MAX_CRITERIA);
 }
@@ -27,8 +29,8 @@ function tested(o: ReviewerBodyInput["outputs"]): string[] {
   const checks = arr<{ name: string; cmd: string; result: string; n?: number }>(o.verify["checks"]);
   const by = (r: string): number => checks.filter((c) => c.result === r).length;
   const ran = checks.reduce((n, c) => n + (typeof c.n === "number" ? c.n : 0), 0);
-  const out = [`- Checks: ${by("pass")} passed, ${by("fail")} failed, ${by("not_run")} not run, ${by("flaky")} flaky${ran > 0 ? ` (${ran} individual tests counted)` : ""}`];
-  out.push(...more(checks.map((c) => `- Command: \`${clip(c.cmd)}\` -> ${c.result}`), MAX_CMDS));
+  const preRed = new Set(arr<string>(o.verify["pre_red_checks"])), red = (c: { name: string; result: string }): boolean => c.result === "fail" && preRed.has(c.name), onBase = checks.filter(red).length, out = [`- Checks: ${by("pass")} passed, ${by("fail") - onBase} failed, ${by("not_run")} not run, ${by("flaky")} flaky${ran > 0 ? ` (${ran} individual tests counted)` : ""}${onBase > 0 ? `; ${onBase} ${ALREADY_FAILING_ON_BASE.split(",")[0]}` : ""}`];
+  out.push(...more(checks.map((c) => `- Command: \`${clip(c.cmd)}\` -> ${checkResultLabel(c.result, red(c))}`), MAX_CMDS));
   const base = o.wall?.["base_run"] as { fail?: number; pass?: number } | undefined;
   const wfiles = arr<{ path: string }>(o.wall?.["files"]).map((f) => f.path.split("/").pop() ?? f.path);
   if (wfiles.length > 0) {
@@ -39,18 +41,18 @@ function tested(o: ReviewerBodyInput["outputs"]): string[] {
   return out;
 }
 export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv = process.env, version: string = getVersion()): string {
-  const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "";
-  const title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
-  const changed = arr<string>(i.outputs.verify?.["changed_files"]), planned = arr<string>(i.outputs.plan?.["relevant_files"]);
+  const task = typeof i.outputs.intake?.["task"] === "string" ? (i.outputs.intake["task"] as string) : "", title = typeof i.outputs.intake?.["title"] === "string" ? (i.outputs.intake["title"] as string) : "";
+  const changed = arr<string>(i.outputs.verify?.["changed_files"]).filter((f) => !WALL_FILE.test(f)), /* the commit stage drops Wall files, so they are not in the diff */ planned = arr<string>(i.outputs.plan?.["relevant_files"]);
   const files = changed.length > 0 ? changed.map((f) => `- ${f}`) : planned.length > 0 ? [`- Files in scope (planned, no diff recorded): ${planned.slice(0, MAX_FILES).join(", ")}${planned.length > MAX_FILES ? ` (+${planned.length - MAX_FILES} more)` : ""}`] : [], planText = i.outputs.plan?.["plan"];
   const why = title || (task.split("\n")[0] ?? "") || (typeof planText === "string" ? (planText.split("\n").find((l) => l.trim()) ?? "") : "");
-  const L = ["## What the issue asked", ...(task ? criteria(task).map((c) => `- ${c}`) : ["- not recorded"]), ""];
+  const il = intentLine(i.outputs.plan?.["intent_card"]), cr = task ? criteria(task).map((c) => `- ${c}`) : [], asked = cr.length > 0 ? cr : il ? [`- ${clip(il)}`] : []; // the intent line stands in only when the issue left nothing but template text
+  const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), ""];
   L.push("## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`);
   L.push(...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), "");
   L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point
   L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
-  if (i.receiptPath) L.push(`- File: ${i.receiptPath}`);
+  const rel = /(?:^|\/)(\.loki\/runs\/[^/]+\/receipt\.json)$/.exec(i.receiptPath ?? "")?.[1]; if (rel) L.push(`- File: ${rel}`); // repo-relative only: an absolute local path never goes into a public PR
   L.push(`- Verify: \`loki verify ${i.runId}\``);
   L.push(`- On another machine: the author runs \`loki proof bundle ${i.runId}\`; the reviewer runs \`npx loki-mode verify --pubkey pubkey.jwk receipt.json\`${/^\d+\.\d+\.\d+/.test(version) ? " or adds this step to a workflow:" : " or adds the receipt-check action"}`);
   if (/^\d+\.\d+\.\d+/.test(version)) L.push(`- \`uses: asklokesh/loki-mode/.github/actions/receipt-check@v${version}\``);

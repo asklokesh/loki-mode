@@ -626,3 +626,8 @@ export function firstError(out: string): string { // the line naming the failing
   const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
   return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
+
+/** FC-PR-BODY-PUBLIC-HYGIENE: the one wording for a check that also fails on the base tree (verify's pre_red_checks). */
+export const ALREADY_FAILING_ON_BASE = "already failing on base, not caused by this change";
+/** "fail" stays "fail" unless the check is base-red, then it carries the one shared label; every other result is unchanged. */
+export const checkResultLabel = (result: string, preRed: boolean): string => (result === "fail" && preRed ? `fail (${ALREADY_FAILING_ON_BASE})` : result);
