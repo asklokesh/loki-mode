@@ -248,7 +248,7 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   const flat = modelCmd.replace(/\\\r?\n/g, " ").replace(/[\s;]+$/, "");
   const parts = flat.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
   // No shell parser, so an allowlist: only plain words and the separators && ; newline are understood. A `||`, any other character, any
-  // PATH assignment, or a first install preceded by anything but `cd X`, `export VAR=value` or pure VAR=value assignments leaves every
+  // assignment to PATH, NODE_OPTIONS, BASH_ENV or ENV, or a first install preceded by anything but `cd X`, `export VAR=value` or pure VAR=value assignments leaves every
   // install in the whole command as written.
   const wordsOf = (seg: string): { w: string[]; e: number; tool: string; hasSub: boolean; sub: string } => {
     const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
@@ -258,7 +258,7 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   const preludeOk = (): boolean => {
     for (let k = 0; k < parts.length; k += 2) {
       const { w, e, tool, sub } = wordsOf(parts[k]!);
-      if (w.some((x) => /^PATH=/.test(x))) return false;
+      if (w.some((x) => /^(PATH|NODE_OPTIONS|BASH_ENV|ENV)=/.test(x))) return false;
       if (e < 0) continue;
       if (LOCK_RULES.some((r) => r.tool === tool && r.subs.includes(sub))) return true;
       if (e > 0 || !(tool === "cd" || (tool === "export" && w.length > 1 && w.slice(1).every((x) => /^[A-Za-z_]\w*=/.test(x))))) return false;

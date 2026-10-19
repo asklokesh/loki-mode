@@ -383,7 +383,7 @@ describe("lockedInstall (locked, reproducible install)", () => {
     expect(lockedInstall(repo, repo, "npm install && true").cmd).toBe("npm ci && true");
     expect(lockedInstall(repo, repo, "cd .; npm install").cmd).toBe("cd .; npm ci");
     // allowlist: only plain words and && ; newline; only cd/pushd/export/set/assignments may precede the first install
-    for (const cmd of ["trap exit\\ 0 EXIT && npm install", "function npm { true; }; npm install", "shopt -s expand_aliases\nalias npm=true\nnpm install", "eval x; npm install", "set +e; npm install", "set -n; npm install", "set -o noexec\nnpm install", "pushd sub && npm install", "export PATH=bin:/usr/bin && npm install", "PATH=bin npm install", "source f && npm install", "npm install && echo $HOME", "npm install > /dev/null", "npm install &"]) {
+    for (const cmd of ["trap exit\\ 0 EXIT && npm install", "function npm { true; }; npm install", "shopt -s expand_aliases\nalias npm=true\nnpm install", "eval x; npm install", "set +e; npm install", "set -n; npm install", "set -o noexec\nnpm install", "pushd sub && npm install", "export PATH=bin:/usr/bin && npm install", "PATH=bin npm install", "NODE_OPTIONS=--require=./x.js npm install", "export BASH_ENV=x.sh; npm install", "ENV=x npm install", "source f && npm install", "npm install && echo $HOME", "npm install > /dev/null", "npm install &"]) {
       const r = lockedInstall(repo, repo, cmd);
       expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
       expect(r.note).toContain("unparsed shell construct");
