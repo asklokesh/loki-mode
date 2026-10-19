@@ -36,7 +36,7 @@ export interface VerifyCheck {
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
-  reason?: string; n?: number; sk?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
+  reason?: string; n?: number; count?: string; sk?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
   owner?: "harness"; // FC-02: the runner could not load or collect; not_run, never a code failure
 }
@@ -279,7 +279,7 @@ export const verifyStage: Stage = {
       const { runFullSuite } = await import("./deep.ts"); // lazy: deep.ts imports this module
       const full: Parameters<typeof runFullSuite>[3] = [];
       await runFullSuite(ctx, signal, { changed, wallBaseRed: wallRedOnBaseOf(ctx.outputs().wall?.base_run), proofFiles: wallProofOf(checks, [...wallTests.map((t) => ({ name: testCheckName(t), path: t.path })), ...(hold?.tests ?? []).map((h, i) => ({ name: `holdout:${i + 1}`, path: (h as TestRef).path }))]) }, full, fullNotProven);
-      for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
+      for (const c of full) { const k: VerifyCheck = { name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { count: c.count } : {}) }; checks.push(k); ctx.emit("test.result", "verify", { ...k }); if (c.excerpt) excerpts.set(k, c.excerpt); } // P12-01: full-suite checks leave the same test.result evidence per-file checks do
       const fa = attributeFullSuite(ctx.repoDir, ctx.baseSha, full, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).flatMap((c) => c.ids ?? []), changed); preRed.names.push(...fa.preExistingChecks); preRed.ids.push(...fa.preExistingIds); attr.introducedChecks.push(...fa.introducedChecks); attr.line = [attr.line, fa.line].filter(Boolean).join("; ") || null; // REPOMEM: same attribution for the full suite
       if (full.some((c) => c.result === "pass" || c.result === "fail")) { risk = markExecuted(risk, ["full test command", "full suite"]); recordRisk(ctx.repoDir, risk); }
     }

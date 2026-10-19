@@ -1811,6 +1811,29 @@ describe("medium default review at seal", () => {
     expect(await notProven(a, {})).not.toContain("one reviewer");
     expect(await notProven(b, { LOKI_REVIEW_PROVIDER: "none" })).toContain("one reviewer");
   }, 60000);
+  // FC-FULL-SUITE-EXIT-CODED-SCRIPT: claude-code#81826 sealed PARTIAL on a proven change because the full suite was a CI checker script
+  const seal2 = async (name: string, full: Record<string, unknown>) => {
+    const { repo, base } = makeRepo(name);
+    writeFileSync(join(repo, "src.js"), "x\n"); sh(["git", "add", "src.js"], repo); sh(["git", "commit", "-q", "-m", "agent wip"], repo);
+    mkdirSync(join(repo, ".loki", "state"), { recursive: true }); writeFileSync(join(repo, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier: "medium" }));
+    const stub = join(repo, "..", `${name}-claude`); writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`); chmodSync(stub, 0o755);
+    const checks = [{ name: "node:tests/wall.test.ts", cmd: "node --test tests/wall.test.ts", result: "pass", n: 7, duration_s: 1 }, { cmd: "x", duration_s: 1, ...full }];
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks, flaky: [], wall_passed: true, duration_s: 2, risk } });
+    let out: { verdict: unknown; np: string[] } = { verdict: null, np: [] };
+    await withEnv(stub, {}, async () => { const s = await sealStage.run(ctx, new AbortController().signal); out = { verdict: s.data.verdict, np: receiptOf(s).not_proven }; });
+    return out;
+  };
+  test("a Wall pass with n>0 plus an exit-coded full suite seals VERIFIED and the review credits one reviewer", async () => {
+    const r = await seal2("fc-exit-coded", { name: "full suite: repo-root", cmd: "python3 .github/scripts/check_workflow_hardening.py", result: "pass", count: "n/a (exit-coded check, not a test runner)" });
+    expect(r.np.join(" | ")).not.toContain("full suite");
+    expect(r.np.join(" | ")).not.toContain("one reviewer");
+    expect(r.verdict).toBe("VERIFIED");
+  }, 60000);
+  test("control: the same run with an UNMEASURED framework full suite stays PARTIAL and the reviewer is not credited", async () => {
+    const r = await seal2("fc-unmeasured", { name: "full suite: repo-root", cmd: "python3 -m pytest", result: "not_run", reason: "executed count unmeasured (Loki could not parse the runner summary, harness-owned)" });
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.np.join(" | ")).toContain("one reviewer");
+  }, 60000);
 });
 
 describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST a VERIFIED run publishes the sealed Wall that passed", () => {

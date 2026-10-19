@@ -155,7 +155,7 @@ export interface ReceiptCheck {
   name: string;
   cmd: string;
   result: "pass" | "fail" | "not_run";
-  duration_s: number; provenance?: import("../util/check_result.ts").CheckProvenance; n?: number; pre_red?: true; // FC-PR-BODY-PUBLIC-HYGIENE pre_red: a fail that also fails on base, additive; TEN-GATES-02 provenance, TEN-GATES-03-F1 n (executed test count): additive; absent on older receipts, which still verify byte-stable
+  duration_s: number; provenance?: import("../util/check_result.ts").CheckProvenance; n?: number; count?: string /* FC-FULL-SUITE-EXIT-CODED-SCRIPT */; pre_red?: true; // FC-PR-BODY-PUBLIC-HYGIENE pre_red: a fail that also fails on base, additive; TEN-GATES-02 provenance, TEN-GATES-03-F1 n (executed test count): additive; absent on older receipts, which still verify byte-stable
 }
 /** .loki/runs/<id>/receipt.json. receipt_sha256 = sha256 of canonical JSON without `verification`. */
 export interface Receipt {

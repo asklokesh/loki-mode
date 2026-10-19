@@ -146,6 +146,23 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     expect(checks.map((c) => c.name)).toEqual(["lint:tsc:backend"]); // frontend has no tsconfig
     expect(calls()).toEqual([`${join(dir, "backend")}|tsc --noEmit -p .`]);
   });
+  test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: a package whose test command is a CI checker script passes on exit 0 (count n/a) and fails on exit 1; a framework without a summary stays not_run", async () => {
+    const { dir, base } = monorepo(true);
+    const api = loadProjectApi(dir)!;
+    const m = api.model as ProjectModel;
+    const runWith = async (line: string) => {
+      m.packages[0]!.commands.test = cmd(line, "backend", "backend/package.json");
+      writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+      const checks: Array<DeepCheck & { count?: string }> = []; await runFullSuite(ctxFor(dir, base, []), sig(), {}, checks, new Set<string>());
+      return checks[0]!;
+    };
+    writeFileSync(join(dir, "backend", "check_hardening.py"), "print('OK: checked 3 job(s) that call Claude and found no problems.')\n");
+    writeFileSync(join(dir, "backend", "check_bad.py"), "import sys\nprint('bad')\nsys.exit(1)\n");
+    const ok = await runWith("python3 check_hardening.py");
+    expect([ok.result, ok.count, ok.n]).toEqual(["pass", "n/a (exit-coded check, not a test runner)", undefined]);
+    expect((await runWith("python3 check_bad.py")).result).toBe("fail");
+    expect((await runWith("python3 -m pytest --version")).result).toBe("not_run");
+  });
   test("the deep full suite runs each package's own test command in its own directory", async () => {
     const { dir, base } = monorepo(true);
     const api = loadProjectApi(dir)!;

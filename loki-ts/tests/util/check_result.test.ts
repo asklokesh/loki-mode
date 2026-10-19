@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { deepGaps, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
+import { deepGaps, classifyCheck, isExitCodedScript, EXIT_CODED_COUNT, UNMEASURED_REASON, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -169,5 +169,29 @@ describe("FC-SEAL-NA-AS-UNPROVEN deepGaps", () => {
   test("an executed deep check is dropped", () => {
     const g = deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council", "security scan"]), [], [{ name: "security scan", result: "pass" }]);
     expect(g.notProven).toEqual(["council"]);
+  });
+});
+
+describe("FC-FULL-SUITE-EXIT-CODED-SCRIPT", () => {
+  const checker = "python3 .github/scripts/check_workflow_hardening.py", okOut = "OK: checked 3 job(s) that call Claude and found no problems.";
+  const cls = (cmd: string, ok: boolean, out: string) => classifyCheck({ kind: "test", ok, out, exitCoded: isExitCodedScript(cmd) });
+  test("a python checker script exiting 0 with no summary is an exit-coded pass", () => {
+    expect(cls(checker, true, okOut)).toEqual({ result: "pass", count: EXIT_CODED_COUNT });
+  });
+  test("the same script exiting 1 is a fail", () => {
+    expect(cls(checker, false, "ERROR: job x is unhardened").result).toBe("fail");
+  });
+  test("python3 -m pytest with no summary stays not_run UNMEASURED", () => {
+    expect(cls("python3 -m pytest", true, okOut)).toEqual({ result: "not_run", reason: UNMEASURED_REASON });
+  });
+  test("npm test with no summary stays not_run", () => {
+    expect(cls("npm test", true, okOut).result).toBe("not_run");
+  });
+  test("an exit-coded pass carries no n, so it is never executed proof", () => {
+    expect(hasExecutedProof([cls(checker, true, okOut)])).toBe(false);
+  });
+  test("framework and ambiguous commands are never exit-coded", () => {
+    for (const c of ["pytest -q", "python -m unittest", "npx jest", "yarn test", "bun test", "node --test", "go test ./...", "cargo test", "make check", "./run.sh", "bash scripts/run_tests.sh", "(cd pkg && pnpm run test)", "dotnet test", "mvn test", "tox", "nox -s lint", "python3 -c 'print(1)'"]) expect(isExitCodedScript(c)).toBe(false);
+    expect(isExitCodedScript(`(cd tools && ${checker})`)).toBe(true);
   });
 });

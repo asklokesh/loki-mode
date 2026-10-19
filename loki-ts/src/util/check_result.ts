@@ -171,8 +171,26 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
   return null;
 }
 
-export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go" }
-export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string }
+/** FC-FULL-SUITE-EXIT-CODED-SCRIPT: the receipt count text of a full-suite command that is a plain script (a CI checker), not a test runner. */
+export const EXIT_CODED_COUNT = "n/a (exit-coded check, not a test runner)";
+/** Any recognized test framework or test-script wrapper anywhere in the command. Conservative: a match means "framework". */
+const FRAMEWORK_RE = /\b(?:pytest|py\.test|unittest|nose2?|tox|nox|jest|vitest|mocha|jasmine|ava|tap|playwright|cypress|karma|rspec|minitest|phpunit|pest|codeception|ctest|busted|prove)\b|\b(?:bun|deno|node|go|cargo|dotnet|swift|mix|dart|flutter|zig)\s+(?:[\w:.=-]+\s+)*test\b|\b(?:npm|pnpm|yarn|bun|npx)\b.*\btest|\b(?:mvn|mvnw|gradle|gradlew|ant|sbt|make|cmake|bazel|rake|composer|lein)\b|test/i;
+const SCRIPT_RE = /^(?:python[\d.]*|node|bash|sh|ruby|perl)\s+(?:--?[\w-]+\s+)*([^\s-][^\s]*\.(?:py|js|mjs|cjs|sh|rb|pl))(?:\s|$)/;
+/** True only when EVERY segment of the command is a plain interpreter-plus-script run (or a cd) and nothing in it names a test framework.
+ *  Anything ambiguous (make, ./script, -m, -c, a path or word containing "test") is a framework, so it stays UNMEASURED when no summary parses. */
+export function isExitCodedScript(cmd: string): boolean {
+  const segs = cmd.replace(/[()]/g, " ").split(/&&|\|\||[;|\n]/).map((x) => x.trim()).filter(Boolean);
+  let script = false;
+  for (const raw of segs) {
+    const seg = raw.replace(/^(?:(?:env|command|exec|time|nohup)\s+|[A-Za-z_]\w*=\S*\s+)+/, "").replace(/["']/g, "");
+    if (/^cd\s+\S+$/.test(seg)) continue;
+    if (FRAMEWORK_RE.test(seg) || !SCRIPT_RE.test(seg)) return false;
+    script = true;
+  }
+  return script;
+}
+export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; exitCoded?: boolean /* FC-FULL-SUITE-EXIT-CODED-SCRIPT: the command is a plain script (isExitCodedScript), decided by exit code like a static check */ }
+export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string; count?: string }
 /** classifyCheck result plus the rerun-only "flaky" verdict (TEN-QUALITY-17); kept separate so existing classifyCheck callers keep the narrow type. */
 export interface ClassifiedRerun extends Omit<Classified, "result"> { result: Classified["result"] | "flaky"; rerun?: { first: "fail"; second: "pass"; n?: number } }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
@@ -180,6 +198,7 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
   if (i.cut) return { result: "not_run", reason: "timed out or aborted" };
   if (i.kind === "static") return { result: i.ok ? "pass" : "fail" };
+  if (i.exitCoded) return { result: i.ok ? "pass" : "fail", count: EXIT_CODED_COUNT }; // never carries n: it is not executed-test proof (hasExecutedProof needs n>0)
   const text = stripAnsi(i.out);
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
