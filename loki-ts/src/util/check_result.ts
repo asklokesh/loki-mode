@@ -295,9 +295,10 @@ const FILES_MEDIUM = 4, FILES_HIGH = 15, LINES_MEDIUM = 100, LINES_HIGH = 500;
 
 // Fast verify always runs targeted tests and lint of changed files; anything else in `selected` is required depth.
 const RAN_ALWAYS = ["targeted tests", "lint of changed files"];
+export const REVIEWER_ITEM = "one reviewer";
 const PLAN: Record<RiskTier, { selected: string[] }> = {
   low: { selected: [...RAN_ALWAYS] },
-  medium: { selected: [...RAN_ALWAYS, "full test command", "one reviewer"] },
+  medium: { selected: [...RAN_ALWAYS, "full test command", REVIEWER_ITEM] },
   high: { selected: [...RAN_ALWAYS, "full test command", "full suite", "council", "security scan"] },
 };
 const LOW_SKIPPED = ["full test command", "reviewer", "council", "security scan"]; // low skips these by design; they are listed so the record never implies they ran
@@ -312,7 +313,7 @@ function summaryOf(a: Pick<RiskAssessment, "tier" | "computed" | "reasons" | "ov
 export const DEEP_ITEMS = ["full suite", "app boot", "council", "security scan"] as const;
 export const NOT_SELECTED = "not selected by risk tier: ";
 /** FC-SEAL-NA-AS-UNPROVEN: the deep checks a receipt lists as NOT PROVEN (the tier wanted them and they did not run) versus "not selected by risk tier" (the tier never asked). No usable risk record keeps every item NOT PROVEN (fail-safe); a full suite that verify executed is dropped. */
-export function deepGaps(risk: unknown, verifyChecks: { name?: unknown; result?: unknown }[], deepChecks: { name?: unknown; result?: unknown }[] = []): { notProven: string[]; notSelected: string[] } {
+export function deepGaps(risk: unknown, verifyChecks: { name?: unknown; result?: unknown }[], deepChecks: { name?: unknown; result?: unknown }[] = [], reviewRan = false): { notProven: string[]; notSelected: string[] } {
   const r = risk as { tier?: unknown; checks_selected?: unknown; checks_deferred?: unknown } | null | undefined, arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
   const ok = !!r && (r.tier === "low" || r.tier === "medium" || r.tier === "high") && Array.isArray(r.checks_selected) && Array.isArray(r.checks_deferred);
   const executed = (cs: { name?: unknown; result?: unknown }[], i: string): boolean => cs.some((c) => String(c.name).startsWith(i) && (c.result === "pass" || c.result === "fail"));
@@ -321,7 +322,8 @@ export function deepGaps(risk: unknown, verifyChecks: { name?: unknown; result?:
   if (!ok) return { notProven: [...items], notSelected: [] };
   const low = r?.tier === "low", gap = (i: string): boolean => !low && (i === "full suite" ? sel.includes("full test command") || sel.includes("full suite") : sel.includes(i));
   const notProven = items.filter(gap), notSelected = items.filter((i) => !gap(i)).map((i) => NOT_SELECTED + i);
-  for (const d of arr(r?.checks_deferred).filter((x) => !(DEEP_ITEMS as readonly string[]).includes(x))) (low ? notSelected : notProven).push(low ? NOT_SELECTED + d : d);
+  const reviewed = reviewRan || executed(deepChecks, "council"); // FC-MEDIUM-REVIEWER-UNCREDITED: "one reviewer" is credited only by a review that really ran (seal's cross-review verdict, or the deep reviewer session); never by tier alone
+  for (const d of arr(r?.checks_deferred).filter((x) => !(DEEP_ITEMS as readonly string[]).includes(x) && !(x === REVIEWER_ITEM && reviewed))) (low ? notSelected : notProven).push(low ? NOT_SELECTED + d : d);
   return { notProven, notSelected };
 }
 

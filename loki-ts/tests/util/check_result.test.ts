@@ -156,6 +156,16 @@ describe("FC-SEAL-NA-AS-UNPROVEN deepGaps", () => {
     const ran = deepGaps(r("medium", sel, ["one reviewer"]), []);
     expect(ran.notProven).toEqual(["one reviewer"]); expect(ran.notSelected).toContain("not selected by risk tier: council");
   });
+  test("medium reviewer: credited only by a review that really ran", () => {
+    const sel = [...base, "full test command", "one reviewer"], rec = r("medium", sel, ["one reviewer"]);
+    expect(deepGaps(rec, []).notProven).toContain("one reviewer"); // tier alone never credits it
+    expect(deepGaps(rec, [], [], false).notProven).toContain("one reviewer"); // a cross-review that did not run stays NOT PROVEN
+    expect(deepGaps(rec, [], [], true).notProven).not.toContain("one reviewer"); // seal's cross-review returned a verdict
+    expect(deepGaps(rec, [], [{ name: "council", result: "pass" }]).notProven).not.toContain("one reviewer"); // deep reviewer session ran
+    expect(deepGaps(rec, [], [{ name: "council", result: "not_run" }]).notProven).toContain("one reviewer");
+    expect(deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council"]), [], [], true).notProven).toContain("council"); // a cross-review does not credit high's council
+    expect(deepGaps(r("low", base, ["full test command", "reviewer", "council", "security scan"]), [], [], true).notProven).toEqual([]);
+  });
   test("an executed deep check is dropped", () => {
     const g = deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council", "security scan"]), [], [{ name: "security scan", result: "pass" }]);
     expect(g.notProven).toEqual(["council"]);
