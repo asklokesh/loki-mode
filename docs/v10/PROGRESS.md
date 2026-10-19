@@ -2623,3 +2623,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T08:48Z (CoS) v11.17.83
 - 11.17.83: FC-WALL-PHANTOM-PATH r1-r3 (298fddf96..82233dad0; HIGH APPROVE after 2 BLOCK rounds; full real #81826 Wall file against base ef7bfdc reports plugins/ralph-loop; 3 round-3 mutations each red). Main targeted 662 pass 0 fail incl budget.
+
+## 2026-10-19T09:07Z (CoS) v11.17.84
+- 11.17.84: TEN-QUALITY-41/42 (21aa567a8, TL APPROVE, 2 mutations red), TEN-QUALITY-44 (e6d010590 219cf7a7d, TL APPROVE, mutation red), TEN-QUALITY-45 merge-interaction fix (b9db7ad92, TL APPROVE, mutation red 2 tests). Main targeted 612 pass 0 fail, tsc rc=0.

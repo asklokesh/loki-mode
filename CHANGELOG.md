@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.84 (2026-10-19)
+
+### Fixed
+- A test that reaches the code under test through an installed copy in the user home (for example an import from a plugin directory under the home folder) is now caught in the bug-reproduction test as well as in Wall tests, and the author is asked once to point it at the repository code instead.
+- The out-of-repo check no longer flags a plain absolute path string that is only test data, such as a fixture path, and a HOME override now exempts only the lines after it instead of the whole file. A quoted home path used directly as an import, require or source target is still flagged. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.83 (2026-10-19)
 
 ### Fixed
