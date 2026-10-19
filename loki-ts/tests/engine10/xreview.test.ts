@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { acceptanceLines, acceptancePromptBlock } from "../../src/util/intent_card.ts";
+import { REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import { crossReview, minVerdict, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
@@ -206,5 +207,18 @@ describe("medium default review", () => {
   it("medium default review: a configured reviewer keeps precedence and is not marked defaulted", async () => {
     const { ctx, stub } = mk("medium");
     await withEnv(stub, { LOKI_REVIEW_PROVIDER: "codex" }, async () => { const r = await crossReview(ctx, "VERIFIED", "HEAD"); expect(r?.provider).toBe("codex"); expect(r?.same_vendor_default).toBeUndefined(); });
+  });
+  // FC-XREVIEW-BLIND-TOOLS: the claude reviewer had a blanket Bash deny and a prompt inviting it to run things, so it flagged "my tool output came back empty".
+  it("FC-XREVIEW-BLIND-TOOLS: claude reviewer gets the shared read-only shell allowlist and mutation denylist, not a blanket Bash deny", () => {
+    const a = reviewArgv("claude", "p", {}, undefined, () => true), at = (f: string) => a[a.indexOf(f) + 1] ?? "";
+    expect(at("--allowedTools")).toBe(REVIEW_ALLOWLIST_TOKEN); expect(at("--disallowedTools")).toBe(REVIEW_GUARD_DENYLIST);
+    expect(at("--allowedTools")).toContain("Bash(cat:*)"); expect(at("--disallowedTools").split(",")).not.toContain("Bash");
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: reviewer prompt states the tool limits and forbids flagging missing tool output", async () => {
+    const { ctx, stub } = mk("medium"), out = join(root, "blind-prompt.txt");
+    writeFileSync(stub, `#!/bin/sh\nprintf '%s' "$2" > '${out}'\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`);
+    await withEnv(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
+    const p = readFileSync(out, "utf8");
+    expect(p).toContain("cannot run project code or tests"); expect(p).toContain("never report missing or empty tool output");
   });
 });

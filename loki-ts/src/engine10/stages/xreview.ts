@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { loadReviewStageAgent } from "../../council/role_agents.ts";
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
-import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags } from "../../providers/claude_flags.ts";
+import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
@@ -53,14 +53,16 @@ export function reviewReceipt(builder: string, xr: CrossReview | null, env: Node
   const differs = !!xr && xr.level !== "not_run" && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
   return { review: { provider: xr?.provider ?? null, vendor_differs: differs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
 }
-/** Read-only argv: codex runs in its read-only sandbox; claude gets read tools only with writers and shell denied. */
+/** Read-only argv: codex runs in its read-only sandbox; claude gets the shared read-only inspect allowlist and mutation denylist (FC-XREVIEW-BLIND-TOOLS: a blanket Bash deny left it reviewing blind). */
 export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env, model?: string, flagSupported: (f: string) => boolean = (f) => claudeFlagSupported(f)): string[] {
   const cli = reviewCli(p, env);
   return p === "codex"
     ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash", ...leanReviewerFlags({ env, flagSupported }), "--output-format", "json"];
+    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_TOKEN, "--disallowedTools", REVIEW_GUARD_DENYLIST, ...leanReviewerFlags({ env, flagSupported }), "--output-format", "json"];
 }
 /** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
+/** FC-XREVIEW-BLIND-TOOLS: tell the reviewer its limits so a sandbox limit is never raised as a concern about the work. */
+export const REVIEW_TOOLS_NOTE = "You can read files and use read-only inspection commands, but you cannot run project code or tests. Trace behaviour by reading the code; never report missing or empty tool output, or an inability to execute something, as a concern about the diff.";
 export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string; provider: ReviewProvider | null } | null {
   const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };
@@ -95,6 +97,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
+    REVIEW_TOOLS_NOTE,
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(acceptanceLines((ctx.outputs?.() ?? {}).plan)), "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
