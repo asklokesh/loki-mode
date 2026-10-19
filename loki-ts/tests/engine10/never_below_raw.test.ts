@@ -161,25 +161,31 @@ export function guardViolations(files: Record<string, string>): string[] {
       const par = (sp ? sp.parent : obj).parent;
       return !!par && ((ts.isPropertyAssignment(par) && nameOf(par) === "data") || (ts.isVariableDeclaration(par) && ts.isIdentifier(par.name) && par.name.text === "data"));
     };
-    const inScope = (obj: ts.ObjectLiteralExpression, init: string): boolean =>
-      spreadOf(obj) !== undefined ||
-      obj.properties.some((q) => {
-        if (!ts.isSpreadAssignment(q)) return false;
-        const c = skipParens(q.expression);
-        // Options-shaped: a conditional spread that sets effort or model (event payloads spread unrelated keys and are not session options).
-        return ts.isConditionalExpression(c) && [c.whenTrue, c.whenFalse].some((b) => ts.isObjectLiteralExpression(b) && b.properties.some((x) => ["effort", "model"].includes(nameOf(x) ?? "")));
-      }) ||
-      (ts.isCallExpression(obj.parent) && /sessions\.run$/.test(obj.parent.expression.getText(sf))) ||
-      /^(wallModel|downgrade|pinned)/.test(init);
+    const condSpreads = (obj: ts.ObjectLiteralExpression): ts.ConditionalExpression[] =>
+      obj.properties.flatMap((q) => { const c = ts.isSpreadAssignment(q) ? skipParens(q.expression) : undefined; return c && ts.isConditionalExpression(c) ? [c] : []; });
+    const calleeOf = (obj: ts.ObjectLiteralExpression): string => (ts.isCallExpression(obj.parent) ? obj.parent.expression.getText(sf) : "");
+    // An explicit `model:` key is in scope when the object has ANY conditional spread (the shape of a session options object);
+    // a shorthand `model` only when a conditional spread sets effort or model, because event payloads spread unrelated keys.
+    const inScope = (obj: ts.ObjectLiteralExpression, prop: ts.ObjectLiteralElementLike, init: string): boolean => {
+      if (/\.(emit|append)$/.test(calleeOf(obj))) return false; // event payloads describe the run; they never configure a session
+      if (spreadOf(obj) !== undefined || /sessions\.run$/.test(calleeOf(obj))) return true;
+      const cs = condSpreads(obj);
+      if (ts.isPropertyAssignment(prop)) return cs.length > 0 || /^(wallModel|downgrade|pinned)/.test(init);
+      return cs.some((c) => [c.whenTrue, c.whenFalse].some((b) => ts.isObjectLiteralExpression(b) && b.properties.some((x) => ["effort", "model"].includes(nameOf(x) ?? ""))));
+    };
+    // wall.ts COST-11: the wall session's own pin is the local `model` of wallAuthor, defined once from the retry model or wallFirstModel.
+    const inWallAuthor = (n: ts.Node): boolean => {
+      for (let a: ts.Node | undefined = n; a; a = a.parent) if (ts.isFunctionDeclaration(a)) return a.name?.text === "wallAuthor" && a.getText(sf).includes("const model = retry?.model ?? wallFirstModel(sz.size)");
+      return false;
+    };
     const visit = (node: ts.Node): void => {
       if (ts.isObjectLiteralExpression(node)) {
         for (const prop of node.properties) {
           if (!(ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) || nameOf(prop) !== "model") continue;
           const init = ts.isPropertyAssignment(prop) ? prop.initializer.getText(sf) : "model";
-          if (!inScope(node, init) || isData(node)) continue;
+          if (!inScope(node, prop, init) || isData(node)) continue;
           const sp = spreadOf(node);
-          // wall.ts COST-11: the wall session's own pin is the local `model`, defined once from the retry model or wallFirstModel.
-          const wallShorthand = path === "stages/wall.ts" && init === "model" && src.includes("const model = retry?.model ?? wallFirstModel(sz.size)");
+          const wallShorthand = path === "stages/wall.ts" && init === "model" && inWallAuthor(prop);
           const good = sp
             ? vetted(skipParens(sp.expression).getText(sf))
             : init === "ctx.model" || (ok !== undefined && ok.test(`${init},`)) || wallShorthand;
@@ -281,6 +287,12 @@ describe("L1 static guard", () => {
     expect(red(`${fix}\nconst data: Record<string, unknown> = {\n  ...(effort ? { effort } : {}), model: actualModel,\n};\n`)).toBe(false); // a data-named binding is an event object
     expect(red(`${fix}\n// it's fine\nconst d = { ...(effort ? { effort } : {}), model: "}" }; const data = {\n ...(effort ? { effort } : {}), model: actualModel };\n`)).toBe(true); // braces in strings and apostrophes in comments do not hide the first pin
     for (const re of ["/'/", '/"/', "/`/", "/\\/\\//"]) expect(red(`${fix}\nconst data = { re: ${re} }; const o = { ...(effort ? { effort } : {}), model: lowModel };\n`)).toBe(true); // a quote or // inside a regex literal is not a string or comment
+    expect(red(`${fix}\nconst o = { ...(signal ? { signal } : {}), model: lowModel };\n`)).toBe(true); // any conditional spread puts an explicit model key in scope
+    expect(red(`${fix}\nconst o = { ...(signal ? { signal } : {}), model: lowModel }; ctx.sessions.run(o);\n`)).toBe(true);
+    expect(red(`${fix}\nctx.emit("x", "fix", { ...(signal ? { signal } : {}), model: actualModel });\n`)).toBe(false); // an emit payload is not a session
+    const wall = f["stages/wall.ts"]!;
+    const sibling = `\nexport async function wallLow(ctx: RunContext) {\n  const model = "claude-haiku-4-5";\n  return ctx.sessions.run({ stage: "wall", model });\n}\n`;
+    expect(guardViolations({ ...f, "stages/wall.ts": wall + sibling }).some((x) => x.includes("unvetted session model pin"))).toBe(true); // the wallAuthor shorthand vetting is per function, not per file
     expect(red(`${fix}\nctx.emit("x", "fix", { data: { round, model: actualModel } });\n`)).toBe(false); // inside a data object it stays exempt
   });
 
