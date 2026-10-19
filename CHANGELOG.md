@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.73 (2026-10-19)
+
+### Fixed
+- Locked installs (D106) no longer report a pass when the install failed. In 11.17.71 and 11.17.72 an install followed by `|| true`, a later `;` or newline command, or a shell construct could be rewritten to its locked form (`npm ci`) while the rest of the command hid its failure, so the run recorded `locked: true` with nothing installed. An install is now rewritten only when the command uses plain characters, every step before it is `cd <path>`, `export VAR=value` or a VAR=value assignment (never PATH), and every step after it is joined by `&&`; anything else is run exactly as written and recorded `locked: false` with the reason. Trailing separators are trimmed, so YAML `run: |` installs still lock. uv uses `--locked`, pipenv uses `install --deploy`, pnpm workspace lists in inline and unindented form are read, and `UV_FROZEN`/`UV_LOCKED` count as already locked. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.72 (2026-10-19)
 
 ### Fixed

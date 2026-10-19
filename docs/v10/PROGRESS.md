@@ -2590,3 +2590,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T02:54Z (CoS) v11.17.72
 - 11.17.72: FC-FIX-CONFLICT-STALLED (FireLater#20 rerun 11.17.67 ended STALLED). 60f95df4f+1c43b5130+e5321f613 cherry-picked as 82f536d85, 9aa74fab0, b0b7b2066. HIGH: BLOCK x2 (sibling readers), then APPROVE: control-plane 539/0, pytest 35 passed, red 2 fail each without reader changes. On main: blocked_answer+machine+fix+budget 112 pass 0 fail.
+
+## 2026-10-19T03:12Z (CoS) v11.17.73
+- 11.17.73: P0 fix-forward for D106 install masking (live in 71/72). af838b55 commits 2bb2f0194..279f1ac5d cherry-picked as 2599744de..20cf84915 plus D106 wording fix. HIGH a1168a6d: BLOCK x5 (||, quoted separators, later ; list, trap/function/alias, set -n), APPROVE round 6 at 279f1ac5d: fc22_install+intake+budget 145 pass 0 fail, real npm stale-lock probes all rc=1 on rewritten shapes.
