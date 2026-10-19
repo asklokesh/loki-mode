@@ -267,26 +267,32 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'out', 'a.js');", "a.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const f = join(__dirname, '..', 'src', 'a.js');", "a.test.ts", td, repo, null)).toEqual(["src/a.js"]);
   });
-  test("package root fallback: a manifest with no name, or a non-JSON ecosystem manifest, still yields the package cwd", () => {
-    const mk = (files: Record<string, string>, tests: string): { repo: string; td: string } => {
-      const repo = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo });
-      for (const [p, c] of Object.entries(files)) { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); }
-      mkdirSync(join(repo, tests), { recursive: true }); return { repo, td: join(repo, tests) };
-    };
-    const code = (a: string, b: string): string => `const f = join(process.cwd(), '${a}', '${b}');`;
-    // C: private app manifest with no "name"
-    const c = mk({ "apps/web/package.json": '{"private":true,"scripts":{"test":"x"}}', "apps/web/src/x.ts": "x\n" }, "apps/web/test");
-    expect(phantomRepoPaths(code("src", "x.ts"), "x.test.ts", c.td, c.repo, null)).toEqual([]);
-    expect(phantomRepoPaths(code("src", "nope.ts"), "x.test.ts", c.td, c.repo, null)).toHaveLength(1);
-    // D: a JS test inside a package whose manifest is not JSON
-    const d = mk({ "services/api/pyproject.toml": "[project]\nname='api'\n", "services/api/fixtures/data.json": "[]" }, "services/api/web/tests");
-    expect(phantomRepoPaths(code("fixtures", "data.json"), "x.test.ts", d.td, d.repo, null)).toEqual([]);
-    // a fixture JSON inside the test dir is not a manifest
-    const e = mk({ "packages/a/package.json": '{"name":"a","version":"1"}', "packages/a/src/x.ts": "x\n", "packages/a/test/user.json": '{"name":"bob","age":3}' }, "packages/a/test");
-    expect(phantomRepoPaths(code("src", "x.ts"), "x.test.ts", e.td, e.repo, null)).toEqual([]);
-    // the incident still reports
+  test("package root fallback: a named manifest above the test dir is the cwd; a fixture json in the test dir is not; the incident still reports", () => {
+    const repo0 = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo0 });
+    for (const [p, c] of Object.entries({ "packages/a/package.json": '{"name":"a","version":"1"}', "packages/a/src/x.ts": "x\n", "packages/a/test/user.json": '{"name":"bob","age":3}' })) { mkdirSync(join(repo0, p, ".."), { recursive: true }); writeFileSync(join(repo0, p), c); }
+    expect(phantomRepoPaths("const f = join(process.cwd(), 'src', 'x.ts');", "x.test.ts", join(repo0, "packages/a/test"), repo0, null)).toEqual([]);
     const r = repoWith();
     expect(phantomRepoPaths("const p = resolve(import.meta.dir, '..', 'plugins/ralph-loop');", "x.test.ts", join(r, "tests"), r, null)).toEqual(["plugins/ralph-loop"]);
+  });
+  test("fallback no false root: an unrelated config file near the test never hides a real phantom", () => {
+    const code = "const f = join(process.cwd(), 'fixtures/a.json');";
+    const cases: Record<string, Record<string, string>> = {
+      "tests/tsconfig.json": { "tests/tsconfig.json": '{"compilerOptions":{}}' },
+      "tests/.eslintrc.json": { "tests/.eslintrc.json": '{"extends":"x","rules":{}}' },
+      "tests/phpunit.xml": { "tests/phpunit.xml": "<phpunit/>" },
+      "tests/setup.cfg": { "tests/setup.cfg": "[tool:pytest]\n" },
+      "root toml + web/tsconfig.json": { "pyproject.toml": "[project]\n", "tests/web/tsconfig.json": '{"compilerOptions":{}}' },
+    };
+    for (const [name, files] of Object.entries(cases)) {
+      const repo = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo });
+      for (const [p, c] of Object.entries({ ...files, "tests/fixtures/a.json": "[]" })) { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); }
+      mkdirSync(join(repo, "tests/unit"), { recursive: true });
+      expect([name, phantomRepoPaths(code, "x.test.ts", join(repo, "tests/unit"), repo, null)]).toEqual([name, ["fixtures/a.json"]]);
+    }
+    const repo = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo });
+    for (const [p, c] of Object.entries({ "src/tsconfig.json": '{"compilerOptions":{}}', "src/plugins/ralph-loop/a.sh": "x\n" })) { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), c); }
+    mkdirSync(join(repo, "src/t"), { recursive: true });
+    expect(phantomRepoPaths("const p = join(process.cwd(), 'plugins/ralph-loop');", "x.test.ts", join(repo, "src/t"), repo, null)).toEqual(["plugins/ralph-loop"]);
   });
   test("modules dir phantom: an ignored vendor dir is exempt by the ignore check alone, a look-alike source dir is still reported", () => {
     const repo = repoWith(), td = join(repo, "tests");

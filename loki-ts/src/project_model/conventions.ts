@@ -95,13 +95,12 @@ export const outOfRepoReask = (lead: string, bad: { name: string; why: string }[
 /** TEN-QUALITY-44: the changed test-like files (repo-relative names) that fail outOfRepoTarget. */
 export const outOfRepoTests = (repoDir: string, changed: string[]): { name: string; why: string }[] => changed.filter((f) => /(^|[\/._-])(test|spec)s?[\/._-]|_test\./i.test(f) && existsSync(join(repoDir, f))).flatMap((name) => { const why = outOfRepoTarget(readFileSync(join(repoDir, name), "utf8")); return why ? [{ name, why }] : []; });
 
-/** A directory is a package root when the cached project model owns the file there, or it holds a manifest-shaped JSON file (a string "name" plus another key, by shape and never by file name, as readPackageConventions does). No manifest file name is hardcoded (L0). */
+/** The package root verify runs a test file in. A known project model is trusted fully (its package cwd, else the repo root). Without one, the nearest directory at or above the test dir holding a manifest-shaped JSON file (a string "name" plus another key, by shape and never by file name, as readPackageConventions does); config files (compiler, linter, test-runner) are never roots, so they cannot hide a real phantom. No manifest file name is hardcoded (L0). */
 function nearestPackageRoot(testDir: string, repoDir: string, fileName: string): string {
-  const site = siteFor(loadProjectApi(repoDir), repoDir, relative(repoDir, join(testDir, fileName)));
-  if (site) return site.cwd;
-  // The test dir itself needs a manifest-shaped JSON (a fixture there is not a manifest); a directory above it may also hold any JSON object (a manifest with no name) or a non-JSON ecosystem file.
-  const shaped = (d: string, own: boolean): boolean => { try { return readdirSync(d).some((f) => { if (!own && /\.(toml|mod|xml|cfg)$/.test(f)) return true; if (!f.endsWith(".json")) return false; const j = readJson(join(d, f)); return !!j && (own ? typeof j.name === "string" && Object.keys(j).length > 1 : Object.keys(j).length > 0); }); } catch { return false; } };
-  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg, pkg === testDir)) pkg = dirname(pkg);
+  const api = loadProjectApi(repoDir);
+  if (api) return siteFor(api, repoDir, relative(repoDir, join(testDir, fileName)))?.cwd ?? repoDir;
+  const shaped = (d: string): boolean => { try { return readdirSync(d).some((f) => { if (!f.endsWith(".json")) return false; const j = readJson(join(d, f)); return !!j && typeof j.name === "string" && Object.keys(j).length > 1; }); } catch { return false; } };
+  let pkg = testDir; while (pkg !== repoDir && pkg !== dirname(pkg) && !shaped(pkg)) pkg = dirname(pkg);
   return pkg;
 }
 const CREATORS = /\b(?:mkdirSync|writeFileSync|appendFileSync|cpSync|copyFileSync|renameSync|symlinkSync|mkdir|writeFile|appendFile|cp|copyFile|rename|outputFile|ensureDir|mkdirp)\(/g;
