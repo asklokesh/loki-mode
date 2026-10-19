@@ -16575,6 +16575,26 @@ _dispatch_reviewer() {
                     _cr_provider_env+=("-u" "$_cr_secret_name")
                 done
             fi
+            # FC-REVIEWER-GIT-CONFIG-EXEC: the shared review allowlist grants git
+            # status/diff/show/log, and git runs programs named in the target repo's
+            # own config (core.fsmonitor, diff drivers, textconv, diff.external). The
+            # TS reviewerGitEnv (util/safe_git.ts) is the one mechanism; this adds its
+            # GIT_* env to the provider env. Fail-closed: no env, no allowlisted review.
+            if type loki_review_allowlist_enabled >/dev/null 2>&1 && loki_review_allowlist_enabled; then
+                local _rv_git_kv
+                local _rv_git_env_file
+                _rv_git_env_file="$(mktemp 2>/dev/null)" || _rv_git_env_file=""
+                if [ -z "$_rv_git_env_file" ] || [ ! -x "${_cr_root}/bin/loki" ] \
+                   || ! "${_cr_root}/bin/loki" internal reviewer-git-env > "$_rv_git_env_file" 2>/dev/null; then
+                    log_warn "reviewer git hardening unavailable; reviewer not dispatched (fail-closed)"
+                    [ -z "$_rv_git_env_file" ] || rm -f "$_rv_git_env_file"
+                    return 125
+                fi
+                while IFS= read -r -d '' _rv_git_kv; do
+                    _cr_provider_env+=("$_rv_git_kv")
+                done < "$_rv_git_env_file"
+                rm -f "$_rv_git_env_file"
+            fi
             # v8 RAW-SDK REVIEWER PATH (opt-in LOKI_SDK_CODE_REVIEW=1). Run the
             # reviewer via the pure-HTTPS @anthropic-ai/sdk bridge (no claude
             # binary) and re-materialize the SAME legacy VERDICT/FINDINGS text
@@ -16770,7 +16790,7 @@ _dispatch_reviewer() {
                 _cr_text_cap=$(_loki_review_deadline_remaining "$_review_deadline_ms") || return 124
             fi
             _loki_with_deadline_stdin_text "$_cr_text_cap" "$prompt_text" \
-                env CAVEMAN_DEFAULT_MODE=off claude "${_rv_argv[@]}" -p \
+                "${_cr_provider_env[@]}" CAVEMAN_DEFAULT_MODE=off claude "${_rv_argv[@]}" -p \
                 --output-format text > "$review_output"
             ;;
         codex)

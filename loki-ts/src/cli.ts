@@ -323,6 +323,19 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         const { runInternalSdkText } = await import("./commands/internal_sdk_judge.ts");
         return runInternalSdkText(rest.slice(1));
       }
+      if (subcmd === "reviewer-git-env") {
+        // FC-REVIEWER-GIT-CONFIG-EXEC: the bash reviewer dispatch (run.sh) spawns claude with the shared git allowlist; this prints the
+        // GIT_* env reviewerGitEnv() adds, NUL-separated KEY=VALUE, for `env`. Fail-closed: non-zero + no stdout.
+        try {
+          const { reviewerGitEnv } = await import("./util/safe_git.ts");
+          const e = reviewerGitEnv(process.cwd());
+          for (const [k, v] of Object.entries(e)) if (k.startsWith("GIT_") && v !== undefined && v !== process.env[k]) process.stdout.write(`${k}=${v}\0`);
+          return 0;
+        } catch (err) {
+          process.stderr.write(`reviewer-git-env: ${(err as Error).message}\n`);
+          return 1;
+        }
+      }
       if (subcmd === "exec-manifest") {
         const { runInternalExecManifest } = await import("./commands/internal_exec_manifest.ts");
         return runInternalExecManifest(rest.slice(1));

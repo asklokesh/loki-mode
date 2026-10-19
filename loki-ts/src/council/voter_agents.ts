@@ -40,6 +40,7 @@ import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
+import { reviewerGitEnv } from "../util/safe_git.ts";
 import { parseMultiResponse } from "./finding_schema.ts";
 import {
   claudeFlagSupported,
@@ -264,7 +265,7 @@ async function defaultClaudeRunner(argv: string[]): Promise<{ stdout: string; ex
     stdout: "pipe",
     stderr: "ignore",
     signal: AbortSignal.timeout(councilTimeoutMs()),
-    env: { ...process.env, CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() },
+    env: { ...reviewerGitEnv(), CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() }, // FC-REVIEWER-GIT-CONFIG-EXEC: the voter may run git status/diff
   });
   // v7.77.0 (W77-D LOW): bounded read so a runaway claude child cannot OOM the
   // parent. The AbortSignal.timeout above still bounds wall-clock; this only

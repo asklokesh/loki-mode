@@ -59,7 +59,7 @@ import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { stripAnsi } from "../util/check_result.ts";
-import { safeGitRun } from "../util/safe_git.ts";
+import { safeGitRun, reviewerGitEnv } from "../util/safe_git.ts";
 import { hasPythonTests, ranZeroTests, runPythonTests } from "../util/python_build_check.ts";
 import { runSkillChecks } from "../util/skill_checks.ts";
 import { runSecureScan } from "../util/secure_scan.ts";
@@ -1707,7 +1707,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
     if (claudeFlagSupported("--json-schema")) {
       const schemaContent = readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8");
       const sArgv = [...argv, "-p", prompt, "--json-schema", schemaContent, "--output-format", "json"];
-      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000 }); // COST-WALL: result JSON carries total_cost_usd
+      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { ...(reviewerGitEnv() as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000 }); // FC-REVIEWER-GIT-CONFIG-EXEC // COST-WALL: result JSON carries total_cost_usd
       if (rs.exitCode === 0 && rs.stdout.trim().length > 0) {
         const legacy = rematerializeCodeReview(rs.stdout);
         if (legacy !== null) return legacy;
@@ -1722,7 +1722,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
   // Mirror the bash subcall: cwd-agnostic (the prompt carries the diff), caveman
   // hard-suppressed, generous timeout for a single review turn.
   const r = await withChildLedger(run, lokiDir(), "reviewer")(argv, { // COST-WALL: text output carries no cost, so this line is unmeasured (a lower bound, never zero)
-    env: { CAVEMAN_DEFAULT_MODE: "off" },
+    env: { ...(reviewerGitEnv() as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, // FC-REVIEWER-GIT-CONFIG-EXEC
     timeoutMs: 600_000,
   });
   if (r.exitCode !== 0) {
