@@ -508,6 +508,47 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.verdict).not.toBe("VERIFIED");
   }, 30000);
 
+  // FC-SEAL-NA-AS-UNPROVEN: N/A and "not selected by risk tier" are visible but are not gaps; a real gap still downgrades.
+  describe("FC-SEAL-NA-AS-UNPROVEN", () => {
+    const pass = { name: "pytest:tests/test_x.py", cmd: "pytest -q tests/test_x.py", result: "pass", n: 1, duration_s: 1 };
+    const run = async (name: string, verify: Record<string, unknown>) => {
+      noKey();
+      const { repo, base } = makeRepo(name);
+      const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [pass], flaky: [], wall_passed: true, ...verify } });
+      await commitStage.run(ctx, new AbortController().signal);
+      const s = await sealStage.run(ctx, new AbortController().signal);
+      return { r: receiptOf(s), md: readFileSync(join(ctx.runDir, "receipt.md"), "utf8") };
+    };
+    const risk = (tier: string, selected: string[], deferred: string[]) => ({ tier, checks_selected: selected, checks_deferred: deferred });
+    test("verify's not_applicable lands under N/A, not NOT PROVEN, and does not downgrade", async () => {
+      const { r, md } = await run("na-visible", { not_applicable: ["full suite: package claude-code-repo defines no test command"], risk: risk("low", ["targeted tests", "lint of changed files"], ["full test command", "reviewer", "council", "security scan"]) });
+      expect(r.not_applicable).toContain("full suite: package claude-code-repo defines no test command");
+      expect(r.not_proven.join("|")).not.toContain("defines no test command");
+      expect(md).toContain("### N/A");
+      expect(md.split("### NOT PROVEN")[1]!.split("### N/A")[0]).not.toContain("defines no test command");
+    }, 30000);
+    test("low tier: deep items are 'not selected by risk tier', not NOT PROVEN", async () => {
+      const { r } = await run("na-low", { risk: risk("low", ["targeted tests", "lint of changed files"], ["full test command", "reviewer", "council", "security scan"]) });
+      for (const i of ["full suite", "app boot", "council", "security scan"]) { expect(r.not_proven).not.toContain(i); expect(r.not_applicable).toContain(`not selected by risk tier: ${i}`); }
+    }, 30000);
+    test("high tier: a selected check that did not run stays NOT PROVEN; an executed full suite is dropped", async () => {
+      const sel = ["targeted tests", "lint of changed files", "full test command", "full suite", "council", "security scan"];
+      const a = await run("na-high", { risk: risk("high", sel, ["council", "security scan", "full test command", "full suite"]) });
+      for (const i of ["full suite", "council", "security scan"]) expect(a.r.not_proven).toContain(i);
+      const b = await run("na-high-full", { risk: risk("high", sel, ["council", "security scan"]), checks: [pass, { name: "full suite: pytest", cmd: "pytest", result: "pass", n: 3, duration_s: 1 }] });
+      expect(b.r.not_proven).not.toContain("full suite"); expect(b.r.not_proven).toContain("council");
+    }, 60000);
+    test("no usable risk record keeps every deep item NOT PROVEN (fail-safe)", async () => {
+      const { r } = await run("na-norisk", {});
+      for (const i of DEEP_NOT_PROVEN) expect(r.not_proven).toContain(i);
+      expect(r.not_applicable).toBeUndefined();
+    }, 30000);
+    test("a real unproven item still downgrades and stays under NOT PROVEN", async () => {
+      const { r } = await run("na-real", { not_proven: ["tests ran on the system interpreter"], not_applicable: ["full suite: package p defines no test command"] });
+      expect(r.verdict).not.toBe("VERIFIED"); expect(r.not_proven).toContain("tests ran on the system interpreter");
+    }, 30000);
+  });
+
   // E-116: real-seal SPEC_CONFLICT coverage, driven through sealStage.run (not a copy of
   // verdictOf's logic like machine.test.ts's fake seal stage at seal.ts:110). Each case is
   // built so the diff is non-empty and every other verdictOf branch (already-satisfied,

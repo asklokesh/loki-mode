@@ -9,24 +9,27 @@ import { plainTestEnv } from "./check_result.ts";
 import { findPython3 } from "./python.ts";
 import { REPO_ROOT } from "./paths.ts";
 
-export interface AppProbeCheck extends ReceiptCheck { reason?: string }
+/** "n/a": the repo has no app to boot (FC-SEAL-NA-AS-UNPROVEN); never a gap, never a pass. */
+export interface AppProbeCheck extends Omit<ReceiptCheck, "result"> { result: ReceiptCheck["result"] | "n/a"; reason?: string }
 export interface AppProbeOptions { specText?: string; timeoutMs?: number; env?: Record<string, string>; runnerPath?: string; verifyPath?: string; skipStop?: boolean }
 export interface AppProbeResult { checks: AppProbeCheck[]; pid: number | null; url: string | null }
 
 const PRELUDE = `set +e
-log_info() { :; }; log_warn() { :; }; log_error() { :; }; log_step() { :; }; register_pid() { :; }
+log_info() { :; }; log_warn() { _W="$_W|$*"; }; log_error() { :; }; log_step() { :; }; register_pid() { :; }
 export APP_RUNNER_ENABLED=true
 export TARGET_DIR="$1"
 source "$2" >/dev/null 2>&1 || exit 90
 `;
 const BOOT = `${PRELUDE}
+_W=""
 app_runner_init >/dev/null 2>&1; ir=$?
 sr=-1; hr=-1
 if [ "$ir" -eq 0 ] && [ -s "$TARGET_DIR/.loki/app-runner/detection.json" ]; then
   app_runner_start >/dev/null 2>&1; sr=$?
   [ "$sr" -eq 0 ] && { app_runner_health_check >/dev/null 2>&1; hr=$?; }
 fi
-printf '__APP_PROBE__ %s %s %s\\n' "$ir" "$sr" "$hr"
+case "$_W" in *"not running"*) na=0 ;; *"no application detected"*) na=1 ;; *) na=0 ;; esac
+printf '__APP_PROBE__ %s %s %s %s\\n' "$ir" "$sr" "$hr" "$na"
 `;
 const STOP = `${PRELUDE}
 _app_runner_dir
@@ -48,7 +51,7 @@ export async function appProbe(repoDir: string, lokiDir: string, opts: AppProbeO
   const timeoutMs = opts.timeoutMs ?? 60_000, runner = opts.runnerPath ?? join(REPO_ROOT, "autonomy", "app-runner.sh");
   const dir = join(repoDir, ".loki", "app-runner"), checks: AppProbeCheck[] = [];
   const t0 = Date.now();
-  const mk = (name: string, result: ReceiptCheck["result"], reason: string): AppProbeCheck => ({ name, cmd: "autonomy/app-runner.sh", result, duration_s: (Date.now() - t0) / 1000, reason });
+  const mk = (name: string, result: AppProbeCheck["result"], reason: string): AppProbeCheck => ({ name, cmd: "autonomy/app-runner.sh", result, duration_s: (Date.now() - t0) / 1000, reason });
   const sh = (script: string): { out: string; status: number | null } => {
     const r = spawnSync("bash", ["-c", script, "app-probe", repoDir, runner], { cwd: repoDir, env: { ...plainTestEnv(), ...(opts.env ?? {}) }, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
     return { out: r.stdout ?? "", status: r.error ? null : r.status };
@@ -57,18 +60,18 @@ export async function appProbe(repoDir: string, lokiDir: string, opts: AppProbeO
   if (!existsSync(runner)) return { checks: [mk("app boot", "not_run", "app-runner.sh not found"), mk("http probe", "not_run", "app not booted")], pid, url };
   try {
     const b = sh(BOOT);
-    const m = b.out.match(/__APP_PROBE__ (-?\d+) (-?\d+) (-?\d+)/);
+    const m = b.out.match(/__APP_PROBE__ (-?\d+) (-?\d+) (-?\d+) (\d)/);
     if (!m) {
       checks.push(mk("app boot", "not_run", b.status === null ? "bash unavailable or boot timed out" : "app-runner did not report"), mk("http probe", "not_run", "app not booted"));
       return { checks, pid, url };
     }
-    const ir = Number(m[1]), sr = Number(m[2]), hr = Number(m[3]);
+    const ir = Number(m[1]), sr = Number(m[2]), hr = Number(m[3]), noApp = m[4] === "1"; // noApp: app-runner itself said "no application detected" (a Docker project whose daemon is down is not that)
     const pidTxt = existsSync(join(dir, "app.pid")) ? readFileSync(join(dir, "app.pid"), "utf8").trim() : "";
     pid = /^\d+$/.test(pidTxt) && sr >= 0 ? Number(pidTxt) : null;
     const st = readJson(join(dir, "state.json"));
     url = typeof st?.["url"] === "string" ? st["url"] : null;
     if (sr < 0) {
-      checks.push(mk("app boot", "not_run", ir === 0 ? "app-runner detected no app" : "no runnable app detected or runtime missing"), mk("http probe", "not_run", "app not booted"));
+      checks.push(noApp ? mk("app boot", "n/a", "app-runner detected no app") : mk("app boot", "not_run", ir === 0 ? "app-runner detected no app" : "no runnable app detected or runtime missing"), mk("http probe", noApp ? "n/a" : "not_run", "app not booted"));
       return { checks, pid, url };
     }
     if (sr !== 0) {

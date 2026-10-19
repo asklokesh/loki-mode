@@ -156,6 +156,23 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     expect(checks.map((c) => [c.name, c.result])).toEqual([["full suite: backend", "pass"]]);
     expect([...notProven]).toEqual(["full suite: package frontend defines no test command"]);
   });
+  // FC-SEAL-NA-AS-UNPROVEN: frontend has no test command. N/A beside a suite that ran, unless the diff is in frontend with no Wall proof.
+  describe("FC-SEAL-NA-AS-UNPROVEN package without a test command", () => {
+    const suites = async (opts: { changed?: string[]; wallProof?: boolean }): Promise<string[]> => {
+      const { dir, base } = monorepo(true);
+      const api = loadProjectApi(dir)!; const m = api.model as ProjectModel;
+      m.packages[0]!.commands.test = cmd('echo " Test Files  1 passed (1)"; echo "      Tests  1 passed (1)"', "backend", "backend/package.json");
+      writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+      const notProven = new Set<string>();
+      await runFullSuite(ctxFor(dir, base, []), sig(), opts, [], notProven);
+      return [...notProven];
+    };
+    const note = "full suite: package frontend defines no test command";
+    test("changed files only in the tested package: N/A", async () => { expect(await suites({ changed: ["backend/src/a.ts"] })).toEqual([`n/a: ${note}`]); });
+    test("changed files in the package without tests and no Wall proof: stays NOT PROVEN", async () => { expect(await suites({ changed: ["frontend/src/a.ts"] })).toEqual([note]); expect(await suites({ changed: ["frontend/src/a.ts"], wallProof: false })).toEqual([note]); });
+    test("changed files in the package without tests but a passing Wall proof: N/A", async () => { expect(await suites({ changed: ["frontend/src/a.ts"], wallProof: true })).toEqual([`n/a: ${note}`]); });
+    test("unknown diff is fail-safe NOT PROVEN", async () => { expect(await suites({})).toEqual([note]); });
+  });
   test("the Wall base run executes a package file from its package directory", () => {
     const { dir } = monorepo(true);
     const res = new RealBaseTestRunner().run(dir, [{ runner: "vitest", path: TEST_FILE }]);

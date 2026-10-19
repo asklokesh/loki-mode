@@ -15,7 +15,7 @@ import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
-import { runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
+import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
 import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
@@ -66,7 +66,7 @@ export interface DeepOptions {
   secretScanShPath?: string;
   appProbe?: (repoDir: string, lokiDir: string) => Promise<AppProbeResult>; // TEN-GATES-06: defaults to util/app_probe.ts appProbe (boots via app-runner.sh, always stops)
   secureScanPath?: string; // secure-scan.py override, tests only
-  council?: CouncilRunner;
+  council?: CouncilRunner; changed?: string[]; wallProof?: boolean; // FC-SEAL-NA-AS-UNPROVEN: the diff and the Wall verdict decide whether a package without tests is N/A
   maxCouncilDiffBytes?: number;
   fullSuiteTimeoutMs?: number;
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
@@ -83,7 +83,7 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 /** One check per detected runner, run to completion (no retry: flaky-rerun
  *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created) }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, wallProof: opts.wallProof }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");
@@ -122,7 +122,7 @@ async function runAppBoot(ctx: RunContext, opts: DeepOptions, checks: DeepCheck[
   let r: AppProbeResult;
   try { r = await (opts.appProbe ?? appProbe)(ctx.repoDir, join(ctx.repoDir, ".loki")); } catch (err) { r = { checks: [{ name: "app boot", cmd: "autonomy/app-runner.sh", result: "not_run", duration_s: 0, reason: `app probe threw: ${(err as Error).message}` }], pid: null, url: null }; }
   if (!r.checks.some((c) => c.name === "app boot")) notProven.add("not run: app boot (app probe reported no result)");
-  for (const c of r.checks) { checks.push(c); if (c.result === "not_run") notProven.add(`not run: ${c.name} (${c.reason ?? "no reason given"})`); }
+  for (const c of r.checks) { if (c.result === "n/a") { notProven.add(`${NA_PREFIX}${c.name} (${c.reason ?? "not applicable"})`); continue; } checks.push(c as DeepCheck); if (c.result === "not_run") notProven.add(`not run: ${c.name} (${c.reason ?? "no reason given"})`); }
 }
 async function runCouncilCheck(
   ctx: RunContext, changed: string[], baseSha: string, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>,
@@ -230,19 +230,19 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   }
   const checks: DeepCheck[] = [];
   const notProven = new Set<string>();
-  await runFullSuite(ctx, signal, opts, checks, notProven);
+  await runFullSuite(ctx, signal, { ...opts, changed }, checks, notProven);
   await runAppBoot(ctx, opts, checks, notProven);
   await runCouncilCheck(ctx, changed, ctx.baseSha, signal, opts, checks, notProven);
   await runSecretScan(ctx, changed, opts, checks, notProven);
   const statusState: "success" | "failure" = checks.some((c) => c.result === "fail") ? "failure" : "success";
-  const notProvenList = [...notProven];
+  const notProvenList = [...notProven].filter((n) => !naNote(n)), notApplicable = [...notProven].filter(naNote).map(naText);
   const seal = ctx.outputs().seal as { receipt_sha256?: string } | undefined;
   const addendumBody = {
     schema: "loki.v10.receipt-addendum/1" as const,
     run_id: ctx.runId,
     base_receipt_sha256: seal?.receipt_sha256 ?? null,
     checks,
-    not_proven: notProvenList,
+    not_proven: notProvenList, ...(notApplicable.length ? { not_applicable: notApplicable } : {}),
     status_state: statusState,
   };
   const addendumSha256 = sha256(canonicalJson(addendumBody));
@@ -253,7 +253,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const pushNotProven = await postResults(ctx, opts, checks, notProvenList, statusState);
   const allNotProven = [...notProvenList, ...pushNotProven];
   ctx.emit("deep.completed", "deep", { checks, status_state: statusState, addendum_sha256: addendumSha256 });
-  return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven } };
+  return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven, ...(notApplicable.length ? { not_applicable: notApplicable } : {}) } };
 }
 export const deepStage: Stage = {
   name: "deep",

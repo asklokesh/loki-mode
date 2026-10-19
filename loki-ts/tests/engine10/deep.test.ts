@@ -277,6 +277,19 @@ describe("engine10 deep: app boot via util/app_probe.ts (TEN-GATES-06)", () => {
     expect(skipped.data.status_state).toBe("success");
   });
 
+  test("FC-SEAL-NA-AS-UNPROVEN: an n/a boot (no app to run) is not a check and not NOT PROVEN; it is listed as not_applicable", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
+    const r = await runDeep(ctx, sig(), baseOpts({ appProbe: async () => ({ checks: [
+      { name: "app boot", cmd: "x", result: "n/a", duration_s: 0, reason: "app-runner detected no app" },
+      { name: "http probe", cmd: "x", result: "n/a", duration_s: 0, reason: "app not booted" },
+    ], pid: null, url: null }) }));
+    expect((r.data.checks as Chk[]).some((c) => c.name === "app boot")).toBe(false);
+    expect((r.data.not_proven as string[]).some((n) => n.includes("app boot"))).toBe(false);
+    expect(r.data.not_applicable as string[]).toContain("app boot (app-runner detected no app)");
+  });
+
   test("a throwing or empty probe is NOT PROVEN, never a pass", async () => {
     const { dir, base } = mkRepo();
     commitChange(dir, "a.txt", "hi\n");
@@ -349,12 +362,13 @@ describe("engine10 deep: full suite", () => {
     expect((result.data.not_proven as string[]).some((n) => n.includes("full suite: pytest"))).toBe(true);
   });
 
-  test("no detected runner is NOT PROVEN", async () => {
+  test("no detected runner is N/A (FC-SEAL-NA-AS-UNPROVEN), listed not hidden", async () => {
     const { dir, base } = mkRepo();
     commitChange(dir, "a.txt", "hi\n");
     const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
     const result = await runDeep(ctx, sig(), baseOpts());
-    expect((result.data.not_proven as string[])).toContain("full suite (no test runner detected)");
+    expect((result.data.not_proven as string[])).not.toContain("full suite (no test runner detected)"); // FC-SEAL-NA-AS-UNPROVEN: no runner at all is N/A, listed
+    expect((result.data.not_applicable as string[])).toContain("full suite (no test runner detected)");
   });
 });
 
@@ -438,10 +452,9 @@ describe("engine10 deep: stage export", () => {
     const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null });
     const result = await (mod["stage"] as typeof deepStage).run(ctx, sig());
     const checks = result.data.checks as Chk[];
-    const boot = checks.find((c) => c.name === "app boot");
-    expect(boot?.cmd).toBe("autonomy/app-runner.sh"); // util/app_probe.ts, not the old hard-coded discoverProjectGraph stub
-    expect(boot?.result).toBe("not_run"); // a rules file is no runnable app
-    expect((result.data.not_proven as string[]).some((n) => n.startsWith("not run: app boot ("))).toBe(true);
+    expect(checks.some((c) => c.name === "app boot")).toBe(false); // FC-SEAL-NA-AS-UNPROVEN: a rules file is no runnable app: N/A, from the real util/app_probe.ts (not the old discoverProjectGraph stub)
+    expect((result.data.not_applicable as string[]).some((n) => n.startsWith("app boot ("))).toBe(true);
+    expect((result.data.not_proven as string[]).some((n) => n.includes("app boot"))).toBe(false);
     expect(checks.find((c) => c.name === "security scan")?.reason).toMatch(/world-open-datastore: database\.rules\.json:3/);
   });
 });

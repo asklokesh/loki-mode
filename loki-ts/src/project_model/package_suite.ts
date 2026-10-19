@@ -31,10 +31,17 @@ export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpe
 /** FC-FULLSUITE-ANSI-IDS: the plain child env (FC-69) for a full-suite run, with the caller's PATH override when present. */
 export function suiteEnv(path?: string): Record<string, string> { return path ? { ...plainTestEnv(), PATH: path } : plainTestEnv(); }
 
+/** FC-SEAL-NA-AS-UNPROVEN: a note that is informational, not a gap, travels in the same Set with this prefix; consumers split it with naNote/naText. */
+export const NA_PREFIX = "n/a: ";
+export const naNote = (n: string): boolean => n.startsWith(NA_PREFIX) || n.startsWith("full suite (no test runner");
+export const naText = (n: string): string => (n.startsWith(NA_PREFIX) ? n.slice(NA_PREFIX.length) : n);
+/** True only when at least one Wall or holdout check ran and every one of them passed (fail-safe: none ran is false). */
+export const wallProofOf = (checks: { name: string; result: string }[], wallNames: string[]): boolean => { const w = checks.filter((c) => wallNames.includes(c.name) || c.name.startsWith("holdout")); return w.length > 0 && w.every((c) => c.result === "pass"); };
+
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean },
+  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; wallProof?: boolean | undefined },
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -53,6 +60,11 @@ export async function runPackageSuites(
     checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.result === "fail" ? { ids: failIds(out), excerpt: failureExcerpt(out, repoDir) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
-  for (const pkg of api.packages().filter((p) => !p.commands.test)) notProven.add(`full suite: package ${pkg.name} defines no test command`);
+  // FC-SEAL-NA-AS-UNPROVEN: a package with no test command is N/A only beside a suite that really ran; changed files it owns with no Wall proof (or an unknown diff) stay NOT PROVEN.
+  const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
+  for (const pkg of api.packages().filter((p) => !p.commands.test)) {
+    const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => api.packageOf(f)?.root === pkg.root);
+    notProven.add(ran && !(owns && opts.wallProof !== true) ? NA_PREFIX + note : note);
+  }
   return true;
 }

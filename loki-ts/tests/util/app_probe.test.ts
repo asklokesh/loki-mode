@@ -45,12 +45,20 @@ describe("appProbe", () => {
     expect(by(r, "http probe")?.result).toBe("not_run");
   }, 60_000);
 
-  it("empty repo: not_run, never fail", async () => {
+  it("empty repo (FC-SEAL-NA-AS-UNPROVEN): n/a, never fail, never not_run", async () => {
     const d = fixture();
     const r = await appProbe(d, join(d, ".loki"), { timeoutMs: 40_000 });
-    expect(by(r, "app boot")?.result).toBe("not_run");
-    expect(by(r, "http probe")?.result).toBe("not_run");
+    expect(by(r, "app boot")?.result).toBe("n/a");
+    expect(by(r, "http probe")?.result).toBe("n/a");
     expect(r.checks.some((c) => c.result === "fail")).toBe(false);
+  }, 60_000);
+
+  it("a Docker project whose runtime is missing is not_run (a real gap), never n/a", async () => {
+    const d = fixture();
+    writeFileSync(join(d, "Dockerfile"), "FROM scratch\n");
+    const r = await appProbe(d, join(d, ".loki"), { env: { PATH: "/usr/bin:/bin" }, timeoutMs: 40_000 });
+    expect(by(r, "app boot")?.result).toBe("not_run");
+    expect(r.checks.some((c) => c.result === "n/a")).toBe(false);
   }, 60_000);
 
   it("mutation: skipStop leaves the PID alive (proves the leftover-PID assertion bites)", async () => {
