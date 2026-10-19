@@ -2,7 +2,8 @@
 // Each package that declares a test command runs it in its own directory. Returns false when the model is
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
-import { join } from "node:path";
+import { closeSync, openSync, readSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run } from "../util/shell.ts";
@@ -64,7 +65,27 @@ export async function runPackageSuites(
   const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
   for (const pkg of api.packages().filter((p) => !p.commands.test)) {
     const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
-    notProven.add(ran && !(owns && !(opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root)) ? NA_PREFIX + note : note);
+    const proven = (opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root) || namesPackageFile(repoDir, opts.proofFiles ?? [], opts.changed, (c) => { const o = api.packageOf(c); return !!o && !c.startsWith('"') && o.root === pkg.root; }, pkg.root);
+    notProven.add(ran && !(owns && !proven) ? NA_PREFIX + note : note);
   }
   return true;
+}
+
+const PROOF_READ_CAP = 1 << 20;
+const readCapped = (abs: string): string | null => { let fd = -1; try { fd = openSync(abs, "r"); const b = Buffer.alloc(PROOF_READ_CAP), n = readSync(fd, b, 0, PROOF_READ_CAP, 0); return b.toString("utf8", 0, n); } catch { return null; } finally { if (fd >= 0) try { closeSync(fd); } catch { /* ignore */ } } };
+
+/** FC-WALL-PROOF-PACKAGE-BLIND: a passing proof file anywhere in the repo credits a package when its text names a changed file that package owns (repo-relative, package-relative or proof-directory-relative). Unknown diff or unreadable proof: no credit. */
+function namesPackageFile(repoDir: string, proofs: string[], changed: string[] | undefined, owned: (f: string) => boolean, pkgRoot: string): boolean {
+  const mine = (changed ?? []).filter(owned);
+  if (!mine.length) return false;
+  for (const pf of proofs) {
+    const abs = isAbsolute(pf) ? pf : join(repoDir, pf), text = readCapped(abs);
+    if (text === null) continue;
+    const pdir = dirname(abs);
+    for (const c of mine) {
+      const cands = [c, pkgRoot === "." ? "" : relative(pkgRoot, c), relative(pdir, join(repoDir, c))].filter((x) => x.length > 0);
+      if (cands.some((x) => text.includes(x))) return true;
+    }
+  }
+  return false;
 }
