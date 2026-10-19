@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.70 (2026-10-19)
+
+### Fixed
+- Intake: when a run starts from the PR target because HEAD is an earlier unaccepted Loki run, the base note is shown once on the start line instead of also being printed as raw stderr during intake (it appeared up to three times). If that checkout fails, the warning now clears the live progress line first on a terminal. Rerun with `loki start owner/repo#N`.
+- Tests: the engine10 intake tests are hermetic again. Intake now records full-suite baselines, which ran real `npx`/`python` runners in the test and timed out on CI; the test shadows them with instant stubs and turns dependency installs off.
+
 ## v11.17.69 (2026-10-19)
 
 ### Fixed

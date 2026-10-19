@@ -2581,3 +2581,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T02:38Z (CoS) v11.17.69
 - FC-23 Wall CJS brief (FireLater#20 rerun on 11.17.67: Wall failed lint:eslint:backend no-require-imports). Engineer 2cfe35140, TL APPROVE: fc23_wall_conventions 10/0, red with parent conventions.ts 9/1. Cherry-picked as edef17cd5.
+
+## 2026-10-19T02:44Z (CoS) v11.17.70
+- 11.17.70: CI fix 82c3edbc (intake.test.ts hermetic; slow-PATH red 32/22, green 54/0; CS reviewed test-only diff) + dup-note 7a04c3839 (TL APPROVE 55/0, red 54/1). Combined on main: intake+budget 88 pass 0 fail.
