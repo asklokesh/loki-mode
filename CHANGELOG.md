@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.91 (2026-10-19)
+
+### Fixed
+- Restored an internal variable name in the Wall stage that 11.17.90 had renamed; the rename tripped the engine's own check that every model choice is vetted, failing the main test run. No behaviour change. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.90 (2026-10-19)
 
 ### Fixed

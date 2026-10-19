@@ -2644,3 +2644,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T10:57Z (CoS) v11.17.90
 - 11.17.90: TEN-COST-63 d7d600ca4 (Wall -oor re-ask gated on ctx.overCap, red 0/1 -> green 1/0) and TEN-QUALITY-43 07f0f0594 (authorModel rename). TL APPROVE: 5 suites 192 pass 0 fail, tsc no engine10 errors.
+
+## 2026-10-19T12:02Z (CoS) v11.17.91
+- 11.17.91: fix-forward for Tests run 39241305385 on 2f69291d4 (never_below_raw L1 static guard 3 fail: authorModel flagged as unvetted pin). Reverted 405ea194b (TEN-QUALITY-43 rename); never_below_raw+wall+fc23 120 pass 0 fail. TEN-QUALITY-43 reopened: the guard vets the model shorthand, so a rename needs a guard update.
