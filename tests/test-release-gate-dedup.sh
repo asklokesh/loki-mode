@@ -50,7 +50,8 @@ check_yml() {
     g="$(gate_block "$yml" | code_only)"
     [ -n "$g" ] || { echo "gate job not found"; return; }
     grep -qE 'bun[[:space:]]+(run[[:space:]]+)?test' <<< "$g" && echo "gate runs bun test"
-    grep -qE 'pytest' <<< "$g" && echo "gate runs pytest"
+    # Installing pytest is allowed (P9 needs it); running the suite is not.
+    grep -vE 'pip[[:space:]]+install' <<< "$g" | grep -qE 'pytest' && echo "gate runs pytest"
     grep -qE 'bun[[:space:]]+run[[:space:]]+typecheck' <<< "$g" && echo "gate reruns typecheck"
     grep -qE 'verify-release-dist\.sh[[:space:]]+build' <<< "$g" || echo "gate lost the dist byte-identity build check"
     grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' <<< "$g" || echo "gate lost the packed tarball dist check"
