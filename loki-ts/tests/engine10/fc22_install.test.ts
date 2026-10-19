@@ -301,8 +301,8 @@ describe("lockedInstall (locked, reproducible install)", () => {
     ["yarn.lock", "yarn install", "yarn install --frozen-lockfile"],
     ["bun.lock", "bun install", "bun install --frozen-lockfile"],
     ["bun.lockb", "bun i", "bun install --frozen-lockfile"],
-    ["uv.lock", "uv sync", "uv sync --frozen"],
-    ["Pipfile.lock", "pipenv install --dev", "pipenv sync --dev"],
+    ["uv.lock", "uv sync", "uv sync --locked"],
+    ["Pipfile.lock", "pipenv install --dev", "pipenv install --dev --deploy"],
     ["Cargo.lock", "cargo fetch", "cargo fetch --locked"],
     ["Gemfile.lock", "bundle install", "BUNDLE_FROZEN=true bundle install"],
     ["Gemfile.lock", "bundle", "BUNDLE_FROZEN=true bundle install"],
@@ -350,12 +350,31 @@ describe("lockedInstall (locked, reproducible install)", () => {
     put(repo, "pnpm-lock.yaml");
     expect(lockedInstall(repo, repo, "pnpm install --no-frozen-lockfile --ignore-scripts").cmd).toBe("pnpm install --ignore-scripts --frozen-lockfile");
   });
-  test("a || fallback after an install is kept and recorded as able to mask failure", () => {
+  test("a segment with a || fallback is left as written and recorded unlocked", () => {
     put(repo, "package-lock.json");
     for (const fb of ["true", "npm install"]) {
       const r = lockedInstall(repo, repo, `npm install || ${fb}`);
-      expect([r.cmd, r.locked]).toEqual([`npm ci || ${fb}`, false]);
-      expect(r.note).toContain("fallback");
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([`npm install || ${fb}`, false, false]);
+      expect(r.note).toContain("fallback masks install failure");
+    }
+    const m = lockedInstall(repo, repo, "npm install && npm install || true");
+    expect([m.cmd, m.locked]).toEqual(["npm ci && npm install || true", false]);
+  });
+  test("uv --frozen and pipenv sync are rewritten to forms that fail on a stale lock", () => {
+    put(repo, "uv.lock", "Pipfile.lock");
+    expect(lockedInstall(repo, repo, "uv sync --frozen").cmd).toBe("uv sync --locked");
+    expect(lockedInstall(repo, repo, "uv sync --locked")).toMatchObject({ cmd: "uv sync --locked", rewritten: false });
+    expect(lockedInstall(repo, repo, "pipenv sync").cmd).toBe("pipenv install --deploy");
+    expect(lockedInstall(repo, repo, "pipenv install --deploy")).toMatchObject({ cmd: "pipenv install --deploy", rewritten: false });
+  });
+  test("pnpm-workspace.yaml inline lists, unindented items and exclusions", () => {
+    put(repo, "pnpm-lock.yaml");
+    const ws = (y: string): void => writeFileSync(join(repo, "pnpm-workspace.yaml"), y);
+    for (const y of ["packages: [\"apps/*\", 'libs/*', '!apps/skip']\n", "packages:\n- apps/*\n- libs/*\n- '!apps/skip'\n", "packages: # c\n  - apps/*\n  - libs/*\n  - '!apps/skip'\nother: 1\n"]) {
+      ws(y);
+      expect(lockedInstall(repo, sub("apps/a"), "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
+      expect(lockedInstall(repo, sub("libs/b"), "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
+      expect(lockedInstall(repo, sub("apps/skip"), "pnpm install")).toMatchObject({ locked: false });
     }
   });
   test("cd X moves the lookup to X; an unresolvable directory leaves the segment unlocked", () => {
@@ -390,7 +409,7 @@ describe("lockedInstall (locked, reproducible install)", () => {
     expect(lockedInstall(repo, pk, "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
     expect(lockedInstall(repo, pk, "yarn install").cmd).toBe("yarn install --frozen-lockfile");
     expect(lockedInstall(repo, cr, "cargo fetch").cmd).toBe("cargo fetch --locked");
-    expect(lockedInstall(repo, lb, "uv sync").cmd).toBe("uv sync --frozen");
+    expect(lockedInstall(repo, lb, "uv sync").cmd).toBe("uv sync --locked");
     expect(lockedInstall(repo, skip, "pnpm install")).toMatchObject({ locked: false });
   });
 

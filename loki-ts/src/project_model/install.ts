@@ -174,12 +174,18 @@ const pkgWorkspaces = (dir: string): string[] => {
     return Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : [];
   } catch { return []; }
 };
-/** pnpm-workspace.yaml `packages:` list (a leading ! excludes). */
+/** pnpm-workspace.yaml `packages:` list (a leading ! excludes): block (indented or not) and inline lists. */
 const pnpmWorkspaces = (dir: string): string[] => {
   const out: string[] = []; let inBlock = false;
   for (const l of (text(dir, "pnpm-workspace.yaml") ?? "").split("\n")) {
-    if (/^packages\s*:/.test(l)) { inBlock = true; continue; }
-    if (inBlock && /^\S/.test(l)) inBlock = false;
+    const top = /^packages\s*:\s*(.*)$/.exec(l);
+    if (top) {
+      const v = top[1]!.replace(/\s+#.*$/, "").trim();
+      inBlock = v === "" || v.startsWith("#");
+      if (v.startsWith("[")) out.push(...v.slice(1, v.includes("]") ? v.indexOf("]") : undefined).split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean));
+      continue;
+    }
+    if (inBlock && /^[^\s#-]/.test(l)) inBlock = false;
     const m = inBlock ? /^\s*-\s*["']?([^"'#]+?)["']?\s*(#.*)?$/.exec(l) : null;
     if (m) out.push(m[1]!);
   }
@@ -206,9 +212,9 @@ const LOCK_RULES: LockRule[] = [
   { tool: "pnpm", subs: ["install", "i"], locks: ["pnpm-lock.yaml"], locked: (_s, r) => has(r, "--frozen-lockfile") && !has(r, "--no-frozen-lockfile"), build: (_s, r) => ["pnpm", "install", ...withFlag(r.filter((x) => x !== "--no-frozen-lockfile"), "--frozen-lockfile")], ws: pnpmWorkspaces },
   { tool: "yarn", subs: ["", "install"], locks: ["yarn.lock"], locked: (_s, r) => has(r, "--immutable", "--frozen-lockfile"), build: (_s, r, c) => ["yarn", "install", ...withFlag(r, c.berry ? "--immutable" : "--frozen-lockfile")], ws: pkgWorkspaces },
   { tool: "bun", subs: ["install", "i", "ci"], locks: ["bun.lock", "bun.lockb"], locked: (s, r) => s === "ci" || has(r, "--frozen-lockfile"), build: (_s, r) => ["bun", "install", ...withFlag(r, "--frozen-lockfile")], ws: pkgWorkspaces },
-  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--frozen", "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r, "--frozen")], ws: (d) => tomlWorkspace(d, "pyproject.toml", "tool.uv.workspace") },
+  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r.filter((x) => x !== "--frozen"), "--locked")], ws: (d) => tomlWorkspace(d, "pyproject.toml", "tool.uv.workspace") },
   { tool: "poetry", subs: ["install"], locks: ["poetry.lock"], locked: () => true, build: (_s, r) => ["poetry", "install", ...r] },
-  { tool: "pipenv", subs: ["install", "sync"], locks: ["Pipfile.lock"], locked: (s) => s === "sync", build: (_s, r) => ["pipenv", "sync", ...r] },
+  { tool: "pipenv", subs: ["install", "sync"], locks: ["Pipfile.lock"], locked: (_s, r) => has(r, "--deploy"), build: (_s, r) => ["pipenv", "install", ...withFlag(r, "--deploy")] },
   { tool: "cargo", subs: ["fetch", "build"], locks: ["Cargo.lock"], locked: (_s, r) => has(r, "--locked", "--frozen"), build: (s, r) => ["cargo", s, ...withFlag(r, "--locked")], ws: (d) => tomlWorkspace(d, "Cargo.toml", "workspace") },
   { tool: "bundle", subs: ["", "install"], locks: ["Gemfile.lock"], locked: (_s, r, e) => e.includes("BUNDLE_FROZEN=true") || has(r, "--frozen", "--deployment"), build: (_s, r) => ["bundle", "install", ...r] },
   { tool: "composer", subs: ["install", "update"], locks: ["composer.lock"], locked: (s) => s === "install", build: (_s, r) => ["composer", "install", ...r] },
@@ -236,7 +242,7 @@ function isYarnBerry(dir: string): boolean {
 
 /** Maps (package root contents, model install command) to the command actually run: each install segment whose tool has a governing
  *  lockfile (see lockDir) becomes the ecosystem's frozen form; an already-locked form is kept; a segment that names packages, has no
- *  governing lockfile, runs in a directory that cannot be resolved, follows a `||` or matches no rule is kept as written and the result
+ *  governing lockfile, runs in a directory that cannot be resolved, is joined to a `||` fallback or matches no rule is kept as written and the result
  *  says it is not locked. A `cd X` segment moves the lookup to X. Never guesses a package manager. */
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
   const parts = modelCmd.split(/(\s*(?:&&|\|\||;)\s*)/);
@@ -251,10 +257,10 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
       try { cur = cur !== null && w.length === e + 2 && !/[$~`*]/.test(w[e + 1]!) && !w[e + 1]!.startsWith("-") ? realpathSync(join(cur, w[e + 1]!)) : null; } catch { cur = null; }
       return seg;
     }
-    if (hits > 0 && (parts[k - 1] ?? "").includes("||")) { locked = false; notes.push("a || fallback after an install can mask its failure, kept as written"); return seg; }
     const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
     if (!rule) return seg;
     hits++;
+    if ((parts[k - 1] ?? "").includes("||") || (parts[k + 1] ?? "").includes("||")) { locked = false; notes.push("fallback masks install failure"); return seg; }
     const rest = w.slice(e + (hasSub ? 2 : 1));
     if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
     if (cur === null) { locked = false; notes.push(`${tool} runs in a directory that cannot be resolved, kept as written`); return seg; }
