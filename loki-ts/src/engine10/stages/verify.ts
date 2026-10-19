@@ -17,7 +17,7 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { depsChangedBeyondAdditions, zeroOnBase } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { depsChangedBeyondAdditions, depsEnvKept, zeroOnBase } from "../../util/base_guard.ts"; import { attribute, attributeFullSuite, staticPreExisting, type StaticTool } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -257,7 +257,7 @@ export const verifyStage: Stage = {
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
     const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const cfgChanged = testConfigChanged(ctx.repoDir, ctx.baseSha, changed); // FC-21b: also feeds uncovered_changed
-    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0 && depsChangedBeyondAdditions(ctx.repoDir, ctx.baseSha, changed).length === 0);
+    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0 && depsChangedBeyondAdditions(ctx.repoDir, ctx.baseSha, changed).length === 0 && depsEnvKept(ctx.repoDir, (ctx.outputs().intake as { deps_fingerprint?: unknown } | undefined)?.deps_fingerprint));
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);

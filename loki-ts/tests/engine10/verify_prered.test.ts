@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { depsSeeHead } from "../../src/util/base_guard.ts";
+import { depsFingerprint, depsSeeHead } from "../../src/util/base_guard.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
 import { runCheck, verifyStage } from "../../src/engine10/stages/verify.ts";
 import { failIds } from "../../src/engine10/failures.ts";
@@ -22,20 +22,20 @@ const git = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d,
 const node = (path: string): TestRef => ({ runner: "node", path }) as TestRef;
 
 /** A repo committed with `base`, then `work` written on top (the implement stage's edit); `impacted` are the selected test files. */
-function repoWith(base: Record<string, string>, work: Record<string, string>, impacted: TestRef[], wall: string[] = [], o: { task?: string; sel?: (files: string[]) => TestRef[] } = {}): { ctx: RunContext; dir: string } {
+function repoWith(base: Record<string, string>, work: Record<string, string>, impacted: TestRef[], wall: string[] = [], o: { task?: string; sel?: (files: string[]) => TestRef[]; noFp?: boolean } = {}): { ctx: RunContext; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "e10-prered-"));
   dirs.push(dir);
   git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
   for (const [f, c] of Object.entries(base)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), c); }
   git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
-  const baseSha = git(dir, ["rev-parse", "HEAD"]);
+  const baseSha = git(dir, ["rev-parse", "HEAD"]), fp = depsFingerprint(dir); // the intake fingerprint: the environment before implement runs
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
   const ctx = {
     repoDir: dir, runDir: join(dir, ".loki"), baseSha, emit: () => {},
     tests: { detect: async () => ({ runners: [], tests: impacted }), impacted: (_m: unknown, files: string[]) => (o.sel ?? ((f: string[]) => (f.length ? impacted.filter((t) => !wall.includes(t.path)) : [])))(files) },
-    outputs: () => ({ intake: { task: o.task ?? "", repomap_ref: join(dir, ".loki", "repomap.json") }, wall: { files: wall.map((path) => ({ path })) } }),
+    outputs: () => ({ intake: { task: o.task ?? "", repomap_ref: join(dir, ".loki", "repomap.json"), ...(o.noFp ? {} : { deps_fingerprint: fp }) }, wall: { files: wall.map((path) => ({ path })) } }),
   } as unknown as RunContext;
   return { ctx, dir };
 }
@@ -281,6 +281,34 @@ describe("engine10 verify: a relevant test the repo itself skips (FC-REPO-SKIPPE
     const d = (await run(ctx)).data as unknown as Z;
     expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative (BYPASS1): the run only deletes node_modules/optdep, no manifest or lockfile change: the environment fingerprint withholds", async () => {
+    const { ctx, dir } = repoWith(dbase, { "sum.js": SUM_OK }, impacted, [], { task: TASK });
+    rmSync(join(dir, "node_modules", "optdep"), { recursive: true, force: true });
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative (BYPASS2): the dependency moves from dependencies to peerDependencies (no removed line) and is uninstalled", async () => {
+    const shape = (a: string, b: string): string => `{\n  "name": "r",\n  "dependencies": {\n${a}  },\n  "peerDependencies": {\n${b}  }\n}\n`, line = "    \"optdep\": \"1.0.0\"\n"; // every line of the base manifest is still present in head: only the block changes
+    const { ctx, dir } = repoWith({ ...dbase, "package.json": shape(line, "") }, { "sum.js": SUM_OK, "package.json": shape("", line) }, impacted, [], { task: TASK });
+    rmSync(join(dir, "node_modules", "optdep"), { recursive: true, force: true });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("negative: no intake fingerprint recorded fails closed", async () => {
+    const { ctx } = repoWith(base, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK, noFp: true });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("positive: a run whose install only ADDS packages (pure superset fingerprint) keeps the excusal", async () => {
+    const { ctx, dir } = repoWith({ ...base, ".gitignore": "node_modules\n" }, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    mkdirSync(join(dir, "node_modules", "@fastify", "websocket"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", "@fastify", "websocket", "package.json"), "{\"name\":\"@fastify/websocket\",\"version\":\"1.0.0\"}\n");
+    expect(depsFingerprint(dir)).toContain("node_modules::@fastify/websocket@1.0.0");
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual(["node:skip.test.js"]);
+  }, 60_000);
+  test("negative: a lockfile change is excused only by a manifest in the SAME directory (a root manifest does not cover a nested lockfile)", async () => {
+    const { ctx } = repoWith({ ...base, "package.json": pkg({ a: "1" }), "sub/package-lock.json": "{\"v\":1}\n" }, { "sum.js": SUM_OK, "package.json": pkg({ a: "1", b: "1" }), "sub/package-lock.json": "{\"v\":2}\n" }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });
+    expect(((await run(ctx)).data as unknown as Z).skipped_on_base).toEqual([]);
   }, 60_000);
   test("negative: a dependency version or spec change withholds the excusal", async () => {
     const { ctx } = repoWith({ ...base, "package.json": pkg({ optdep: "1.0.0" }) }, { "sum.js": SUM_OK, "package.json": pkg({ optdep: "2.0.0" }) }, [node("sum.test.js"), node("skip.test.js")], [], { task: TASK });

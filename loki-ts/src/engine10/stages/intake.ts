@@ -12,7 +12,7 @@ import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
-import { stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
+import { depsFingerprint, stackedOnLokiRun, unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { INSTALL_CAP_MS, intakeDeps } from "../../project_model/install.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
@@ -122,7 +122,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ...alreadyData(already) } };
   if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
-  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), ...(await intakeDeps(ctx, signal, testmap.runners)), repomap_ref: repomapRef, testmap, already_satisfied: false };
+  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), ...(await intakeDeps(ctx, signal, testmap.runners)), deps_fingerprint: depsFingerprint(ctx.repoDir), repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
