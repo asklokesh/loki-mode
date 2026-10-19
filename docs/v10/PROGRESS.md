@@ -2611,3 +2611,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T07:19Z (CoS) v11.17.79
 - 11.17.79: FC-OUT-OF-REPO + FC-NO-PUSH-UNVERIFIED (#21527 bugs b/c; HIGH BLOCK x2 then APPROVE) and FC-LINT-PRE-RED (TL BLOCK x2 then APPROVE, mutation 16/1 -> 88/0). Budget fold f5a1685b5: 383 pass 0 fail.
+
+## 2026-10-19T08:06Z (CoS) v11.17.80
+- 11.17.80: fix-forward for Tests run 39215298360 on c6db3c019 (D50-F4 backstop expectation, plan brief golden; 32 pass 0 fail) plus supervisor pre_red_checks wiring 411fdaf63 (red 106/1 -> green 107/0; 172 pass 0 fail incl. budget). P9 moat fixture ccccfc82f under HIGH review, ships next.

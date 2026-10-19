@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.80 (2026-10-19)
+
+### Fixed
+- Failure memory no longer records a lint check that also fails on the base commit as one of the run's failures, so recovery advice after a run is not steered by lint problems the run did not cause.
+- Two engine tests now match the 11.17.79 behaviour (a failed run keeps its branch local and opens no PR; the plan brief explains how to report an out-of-repo request). No user-visible change. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.79 (2026-10-19)
 
 ### Fixed
