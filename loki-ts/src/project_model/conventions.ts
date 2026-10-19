@@ -1,7 +1,7 @@
 // FC-23 (L0): a package's module system, read with a parser from the JSON its own directory declares (JSONC comments and trailing commas,
 // relative "extends"), by key and never by file name. null when the package declares nothing.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface PackageConventions {
   moduleSystem: "commonjs" | "esm";
@@ -83,4 +83,35 @@ export function outOfRepoTarget(content: string): string | null {
     if (home.test(line) && locates.test(line)) return "resolves the code under test outside the repo via a home-directory path; target repo-relative paths (relative to this test file or the repo root) so the check exercises the change";
   }
   return null;
+}
+
+/** FC-WALL-PHANTOM-PATH: repo paths a JS/TS test builds with join/resolve from the test dir, the cwd or a const derived from them (const assignments followed) that do not exist in the base tree. A path the plan names is a file to create and passes; write/expect/tmp lines are ignored. Returns repo-relative missing paths (max 3). */
+export function phantomRepoPaths(content: string, fileName: string, testDir: string, repoDir: string, planText: string | null): string[] {
+  if (!/\.[cm]?[jt]sx?$/.test(fileName)) return [];
+  const code = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const vars = new Map<string, string>(), seen = new Set<string>(), missing: string[] = [];
+  const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
+  const named = (rel: string): boolean => !!planText && (planText.includes(rel) || (/\.\w+$/.test(rel) && planText.includes(basename(rel))));
+  const ev = (raw: string, report: boolean): string | null => {
+    const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
+    if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
+    if (e === "process.cwd()") return repoDir;
+    if (e === "fileURLToPath(import.meta.url)" || e === "__filename") return join(testDir, "__self__");
+    const lit = /^(["'`])((?:\\.|(?!\1)[^\\])*)\1$/.exec(e); if (lit) return lit[2]!.includes("${") ? null : lit[2]!;
+    if (/^[A-Za-z_$][\w$]*$/.test(e)) return vars.get(e) ?? null;
+    const call = /^(?:path\.)?(join|resolve|dirname)\(([\s\S]*)\)$/.exec(e); if (!call) return null;
+    const parts = split(call[2]!), args = parts.map((a) => ev(a, report)); if (args.some((a) => a === null)) return null;
+    if (call[1] === "dirname") return dirname(args[0]!);
+    const out = resolve(...(args as string[]));
+    if (report && relative(testDir, out).startsWith("..") && parts.some((a) => /^\s*["'`]/.test(a)) && !seen.has(out)) { seen.add(out); const rel = relative(repoDir, out); if (rel && !rel.startsWith("..") && !isAbsolute(rel) && !/(^|\/)(node_modules|\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) && !existsSync(out) && !named(rel)) missing.push(rel); }
+    return out;
+  };
+  for (const line of code.split("\n")) {
+    const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
+    const asg = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(.+?);?\s*$/.exec(line);
+    if (asg) { const v = ev(asg[2]!, !skip); if (v !== null) vars.set(asg[1]!, v); continue; }
+    if (skip) continue;
+    for (const m of line.matchAll(/(?:path\.)?(?:join|resolve)\(/g)) { let d = 0, j = m.index! + m[0].length - 1; for (; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) break; } if (d === 0) ev(line.slice(m.index!, j + 1), true); }
+  }
+  return missing.slice(0, 3);
 }

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWall, buildWallBrief, WALL_OUTPUT_BUDGET, WALL_REPO_PATHS } from "../../src/engine10/stages/wall.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
-import { conventionViolation, conventionsBrief, outOfRepoTarget, readPackageConventions } from "../../src/project_model/conventions.ts";
+import { conventionViolation, conventionsBrief, outOfRepoTarget, phantomRepoPaths, readPackageConventions } from "../../src/project_model/conventions.ts";
 import { wallOwnedFailure } from "../../src/util/wall_owned.ts";
 import type { RunContext, SessionRunOptions, StageName } from "../../src/engine10/types.ts";
 
@@ -195,9 +195,54 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
     expect(JSON.stringify(r.data.discarded)).toContain("outside the repo");
   });
   test("a clean repo-relative file triggers no extra session", async () => {
-    const repoDir = cjsRepo(); let n = 0;
+    const repoDir = cjsRepo({ "plugins/a/x.sh": "echo\n" }); let n = 0;
     const ctx = wallCtx(repoDir, (o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), "const p = join(__dirname, '..', 'plugins', 'a');\ntest('x', () => { expect(p).toBeTruthy(); });\n"); });
     await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
     expect(n).toBe(1);
+  });
+});
+
+describe("FC-WALL-PHANTOM-PATH", () => {
+  const PHANTOM = "const ROOT = join(__dirname, '..');\nconst PLUGIN = join(ROOT, 'plugins', 'ralph-loop');\nconst SH = join(PLUGIN, 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";
+  const FIXED = "const SH = join(__dirname, '..', 'plugins', 'ralph-wiggum', 'scripts', 'setup-ralph-loop.sh');\ntest('a', () => { expect(spawnSync('bash', [SH]).status).toBe(0); });\n";
+  const repoWith = (): string => cjsRepo({ "plugins/ralph-wiggum/scripts/setup-ralph-loop.sh": "echo\n" });
+  test("detector: a missing repo path is reported, an existing one passes, a path the plan creates passes", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    expect(phantomRepoPaths(PHANTOM, "a.test.ts", td, repo, null)).toContain("plugins/ralph-loop");
+    expect(phantomRepoPaths(FIXED, "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths(PHANTOM, "a.test.ts", td, repo, "Create plugins/ralph-loop/scripts/setup-ralph-loop.sh and plugins/ralph-loop")).toEqual([]);
+    expect(phantomRepoPaths("const p = join(process.cwd(), 'src', 'a.ts');", "a.test.ts", td, repo, null)).toEqual(["src/a.ts"]);
+  });
+  test("detector negatives: write/expect/tmp lines, the test's own dir, non-JS files and node_modules are ignored", () => {
+    const repo = repoWith(), td = join(repo, "tests");
+    expect(phantomRepoPaths("writeFileSync(join(__dirname, '..', 'out', 'x.txt'), 'a');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("expect(existsSync(join(__dirname, '..', 'gone'))).toBe(false);", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const f = join(__dirname, 'fixtures', 'a.json');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths("const f = join(__dirname, '..', 'node_modules', 'x');", "a.test.ts", td, repo, null)).toEqual([]);
+    expect(phantomRepoPaths(PHANTOM, "a.py", td, repo, null)).toEqual([]);
+  });
+  test("a phantom path is re-asked once with the reason and the nearest real file; the rewrite is kept", async () => {
+    const repoDir = repoWith(); const briefs: string[] = [];
+    const ctx = wallCtx(repoDir, (o) => { briefs.push(o.brief); writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), briefs.length === 1 ? PHANTOM : FIXED); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(briefs.length).toBe(2);
+    expect(briefs[1]).toContain("plugins/ralph-loop");
+    expect(briefs[1]).toContain("do not exist in the repository");
+    expect(r.data.discarded).toBeUndefined();
+  });
+  test("a path the plan creates is not re-asked", async () => {
+    const repoDir = repoWith(); let n = 0;
+    const ctx = wallCtx(repoDir, (o) => { n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), PHANTOM); });
+    const base = ctx.outputs;
+    ctx.outputs = () => ({ ...base(), plan: { plan: "Add plugins/ralph-loop and plugins/ralph-loop/scripts/setup-ralph-loop.sh" } }) as ReturnType<typeof base>;
+    await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(n).toBe(1);
+  });
+  test("still phantom after the rewrite: discarded, never installed", async () => {
+    const repoDir = repoWith();
+    const ctx = wallCtx(repoDir, (o) => { writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), PHANTOM); });
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+    expect(existsSync(join(repoDir, "tests", "loki_wall_a.test.ts"))).toBe(false);
+    expect(JSON.stringify(r.data.discarded)).toContain("do not exist");
   });
 });

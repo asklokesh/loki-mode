@@ -27,7 +27,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes, commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -716,6 +716,23 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("t_new.test.ts"))).toBe(false);
     // Editing a.txt, a non-test file, never lands on NOT PROVEN by this check.
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
+  }, 30000);
+
+  test("FC-WALL-PHANTOM-PATH: a symlink added by the change lands on NOT PROVEN by name; a regular new file and a plan-requested link do not", async () => {
+    noKey();
+    const { repo, base } = makeRepo("symadd");
+    symlinkSync("a.txt", join(repo, "alias_dir"));
+    writeFileSync(join(repo, "plain.txt"), "x\n");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven.some((n) => n.startsWith("symlink added by the change") && n.endsWith("alias_dir"))).toBe(true);
+    expect(r.not_proven.some((n) => n.includes("plain.txt"))).toBe(false);
+    expect(r.verdict).not.toBe("VERIFIED");
+    const meta = ":000000 120000 " + "0".repeat(40) + " " + "1".repeat(40) + " A";
+    expect(addedSymlinkNotes([meta, "l"], null)).toHaveLength(1);
+    expect(addedSymlinkNotes([meta, "l"], "Add a symlink l for compatibility")).toEqual([]);
+    expect(addedSymlinkNotes([":120000 000000 " + "1".repeat(40) + " " + "0".repeat(40) + " D", "l"], null)).toEqual([]);
   }, 30000);
 
   test("D50-F2-S2: a literal value swap is labelled beside weakened test and a deleted assert stays weakened test only; both seal PARTIAL", async () => {
