@@ -302,7 +302,6 @@ describe("lockedInstall (locked, reproducible install)", () => {
     ["bun.lock", "bun install", "bun install --frozen-lockfile"],
     ["bun.lockb", "bun i", "bun install --frozen-lockfile"],
     ["uv.lock", "uv sync", "uv sync --frozen"],
-    ["poetry.lock", "poetry install", "poetry install --no-root"],
     ["Pipfile.lock", "pipenv install --dev", "pipenv sync --dev"],
     ["Cargo.lock", "cargo fetch", "cargo fetch --locked"],
     ["Gemfile.lock", "bundle install", "BUNDLE_FROZEN=true bundle install"],
@@ -335,7 +334,7 @@ describe("lockedInstall (locked, reproducible install)", () => {
   test("no lockfile: the model command is kept and the check says it is not locked", () => {
     const r = lockedInstall(repo, repo, "npm install");
     expect([r.cmd, r.locked, r.rewritten]).toEqual(["npm install", false, false]);
-    expect(r.note).toContain("no package-lock.json or npm-shrinkwrap.json found");
+    expect(r.note).toContain("no package-lock.json or npm-shrinkwrap.json governs");
   });
   test("no rule matches, or the command names packages: kept and visibly not locked", () => {
     put(repo, "package-lock.json");
@@ -343,14 +342,56 @@ describe("lockedInstall (locked, reproducible install)", () => {
     const r = lockedInstall(repo, repo, "npm install left-pad");
     expect([r.cmd, r.locked]).toEqual(["npm install left-pad", false]);
   });
-  test("compound commands rewrite each install segment, and a fallback after || is locked too", () => {
-    put(repo, "package-lock.json");
-    expect(lockedInstall(repo, repo, "cd web && npm install || npm install").cmd).toBe("cd web && npm ci || npm ci");
+  test("poetry install already honors poetry.lock: kept unchanged and reported locked", () => {
+    put(repo, "poetry.lock");
+    expect(lockedInstall(repo, repo, "poetry install")).toMatchObject({ cmd: "poetry install", locked: true, rewritten: false });
   });
-  test("a workspace package finds the lockfile at the repo root", () => {
+  test("pnpm --no-frozen-lockfile is dropped when --frozen-lockfile is added", () => {
     put(repo, "pnpm-lock.yaml");
-    mkdirSync(join(repo, "pkg"));
-    expect(lockedInstall(repo, join(repo, "pkg"), "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
+    expect(lockedInstall(repo, repo, "pnpm install --no-frozen-lockfile --ignore-scripts").cmd).toBe("pnpm install --ignore-scripts --frozen-lockfile");
+  });
+  test("a || fallback after an install is kept and recorded as able to mask failure", () => {
+    put(repo, "package-lock.json");
+    for (const fb of ["true", "npm install"]) {
+      const r = lockedInstall(repo, repo, `npm install || ${fb}`);
+      expect([r.cmd, r.locked]).toEqual([`npm ci || ${fb}`, false]);
+      expect(r.note).toContain("fallback");
+    }
+  });
+  test("cd X moves the lookup to X; an unresolvable directory leaves the segment unlocked", () => {
+    mkdirSync(join(repo, "web")); put(join(repo, "web"), "package-lock.json");
+    expect(lockedInstall(repo, repo, "cd web && npm install").cmd).toBe("cd web && npm ci");
+    const r = lockedInstall(repo, repo, "cd nowhere && npm install");
+    expect([r.cmd, r.locked]).toEqual(["cd nowhere && npm install", false]);
+    expect(r.note).toContain("cannot be resolved");
+  });
+  // An ancestor lockfile governs a package only when that ancestor declares a workspace containing it.
+  const sub = (dir: string): string => { mkdirSync(join(repo, dir), { recursive: true }); return join(repo, dir); };
+  test("non-member subpackage beside a root lockfile stays unlocked for npm, pnpm, cargo and uv", () => {
+    const web = sub("web");
+    put(repo, "package-lock.json", "pnpm-lock.yaml", "Cargo.lock", "uv.lock");
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "root" }));
+    writeFileSync(join(repo, "Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n");
+    writeFileSync(join(repo, "pyproject.toml"), "[tool.uv.workspace]\nmembers = [\"libs/*\"]\n");
+    for (const cmd of ["npm install", "pnpm install", "cargo fetch", "uv sync"]) {
+      const r = lockedInstall(repo, web, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
+      expect(r.note).toContain("governs");
+    }
+  });
+  test("a real workspace member gets the locked form from the root lockfile", () => {
+    put(repo, "package-lock.json", "pnpm-lock.yaml", "Cargo.lock", "uv.lock", "yarn.lock");
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ workspaces: ["packages/*"] }));
+    writeFileSync(join(repo, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n  - '!packages/skip'\n");
+    writeFileSync(join(repo, "Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n");
+    writeFileSync(join(repo, "pyproject.toml"), "[tool.uv.workspace]\nmembers = [\"libs/*\"]\n");
+    const pk = sub("packages/a"), cr = sub("crates/x"), lb = sub("libs/y"), skip = sub("packages/skip");
+    expect(lockedInstall(repo, pk, "npm install").cmd).toBe("npm ci");
+    expect(lockedInstall(repo, pk, "pnpm install").cmd).toBe("pnpm install --frozen-lockfile");
+    expect(lockedInstall(repo, pk, "yarn install").cmd).toBe("yarn install --frozen-lockfile");
+    expect(lockedInstall(repo, cr, "cargo fetch").cmd).toBe("cargo fetch --locked");
+    expect(lockedInstall(repo, lb, "uv sync").cmd).toBe("uv sync --frozen");
+    expect(lockedInstall(repo, skip, "pnpm install")).toMatchObject({ locked: false });
   });
 
   // Fake package manager on PATH, no network: npm ci fails when the lockfile is out of sync, npm install would "fix" it.

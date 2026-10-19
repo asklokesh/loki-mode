@@ -159,33 +159,74 @@ interface LockRule {
   tool: string; subs: string[]; locks: string[];
   locked: (sub: string, rest: string[], env: string[]) => boolean; // the command is already a lock-honoring form
   build: (sub: string, rest: string[], ctx: { berry: boolean }) => string[]; // words of the locked form, the model's flags kept
+  /** Glob patterns of the workspace an ancestor directory declares; absent: the ecosystem has no workspace lockfile sharing. */
+  ws?: (ancestor: string) => string[];
 }
 const has = (rest: string[], ...f: string[]): boolean => rest.some((x) => f.includes(x));
 const withFlag = (rest: string[], flag: string): string[] => (rest.includes(flag) ? rest : [...rest, flag]);
-/** The ecosystem table: one row per package manager, its official frozen form. poetry install already honors poetry.lock; `--sync` is not
- *  added because it deletes environment packages the lock lacks, which a fresh-clone install never needs. `--no-root` installs the
- *  locked dependencies without building the project itself. */
+const text = (dir: string, file: string): string | null => { try { return readFileSync(join(dir, file), "utf8"); } catch { return null; } };
+const quoted = (s: string): string[] => [...s.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]!);
+/** package.json `workspaces` (array, or {packages: []}): npm, yarn and bun. */
+const pkgWorkspaces = (dir: string): string[] => {
+  try {
+    const w = (JSON.parse(text(dir, "package.json") ?? "{}") as { workspaces?: unknown }).workspaces;
+    const l = Array.isArray(w) ? w : (w as { packages?: unknown } | undefined)?.packages;
+    return Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : [];
+  } catch { return []; }
+};
+/** pnpm-workspace.yaml `packages:` list (a leading ! excludes). */
+const pnpmWorkspaces = (dir: string): string[] => {
+  const out: string[] = []; let inBlock = false;
+  for (const l of (text(dir, "pnpm-workspace.yaml") ?? "").split("\n")) {
+    if (/^packages\s*:/.test(l)) { inBlock = true; continue; }
+    if (inBlock && /^\S/.test(l)) inBlock = false;
+    const m = inBlock ? /^\s*-\s*["']?([^"'#]+?)["']?\s*(#.*)?$/.exec(l) : null;
+    if (m) out.push(m[1]!);
+  }
+  return out;
+};
+/** `members` (and `exclude`, as ! patterns) of one TOML table such as [workspace] or [tool.uv.workspace]. */
+const tomlWorkspace = (dir: string, file: string, header: string): string[] => {
+  const t = text(dir, file); if (!t) return [];
+  const at = t.indexOf(`[${header}]`); if (at < 0) return [];
+  const body = t.slice(at + header.length + 2).split(/^\[/m)[0]!;
+  const list = (k: string): string[] => quoted(new RegExp(`^\\s*${k}\\s*=\\s*\\[([^\\]]*)\\]`, "m").exec(body)?.[1] ?? "");
+  return [...list("members"), ...list("exclude").map((x) => `!${x}`)];
+};
+const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/^\.\//, "").replace(/\/+$/, "").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*").replace(/\?/g, "[^/]")}$`);
+/** True when `pats` (a workspace declaration; ! excludes) includes the package at `rel` (posix, relative to the ancestor). */
+const inWorkspace = (pats: string[], rel: string): boolean =>
+  pats.some((g) => !g.startsWith("!") && globRe(g).test(rel)) && !pats.some((g) => g.startsWith("!") && globRe(g.slice(1)).test(rel));
+
+/** The ecosystem table: one row per package manager, its official frozen form. `poetry install` already honors poetry.lock, so it is kept
+ *  as written (`--no-root` would skip installing the project itself and break src-layout imports; `--sync` would delete environment
+ *  packages the lock lacks). */
 const LOCK_RULES: LockRule[] = [
-  { tool: "npm", subs: ["install", "i", "ci"], locks: ["package-lock.json", "npm-shrinkwrap.json"], locked: (s) => s === "ci", build: (_s, r) => ["npm", "ci", ...r] },
-  { tool: "pnpm", subs: ["install", "i"], locks: ["pnpm-lock.yaml"], locked: (_s, r) => has(r, "--frozen-lockfile"), build: (_s, r) => ["pnpm", "install", ...withFlag(r, "--frozen-lockfile")] },
-  { tool: "yarn", subs: ["", "install"], locks: ["yarn.lock"], locked: (_s, r) => has(r, "--immutable", "--frozen-lockfile"), build: (_s, r, c) => ["yarn", "install", ...withFlag(r, c.berry ? "--immutable" : "--frozen-lockfile")] },
-  { tool: "bun", subs: ["install", "i", "ci"], locks: ["bun.lock", "bun.lockb"], locked: (s, r) => s === "ci" || has(r, "--frozen-lockfile"), build: (_s, r) => ["bun", "install", ...withFlag(r, "--frozen-lockfile")] },
-  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--frozen", "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r, "--frozen")] },
-  { tool: "poetry", subs: ["install"], locks: ["poetry.lock"], locked: (_s, r) => has(r, "--no-root", "--only-root"), build: (_s, r) => ["poetry", "install", ...withFlag(r, "--no-root")] },
+  { tool: "npm", subs: ["install", "i", "ci"], locks: ["package-lock.json", "npm-shrinkwrap.json"], locked: (s) => s === "ci", build: (_s, r) => ["npm", "ci", ...r], ws: pkgWorkspaces },
+  { tool: "pnpm", subs: ["install", "i"], locks: ["pnpm-lock.yaml"], locked: (_s, r) => has(r, "--frozen-lockfile") && !has(r, "--no-frozen-lockfile"), build: (_s, r) => ["pnpm", "install", ...withFlag(r.filter((x) => x !== "--no-frozen-lockfile"), "--frozen-lockfile")], ws: pnpmWorkspaces },
+  { tool: "yarn", subs: ["", "install"], locks: ["yarn.lock"], locked: (_s, r) => has(r, "--immutable", "--frozen-lockfile"), build: (_s, r, c) => ["yarn", "install", ...withFlag(r, c.berry ? "--immutable" : "--frozen-lockfile")], ws: pkgWorkspaces },
+  { tool: "bun", subs: ["install", "i", "ci"], locks: ["bun.lock", "bun.lockb"], locked: (s, r) => s === "ci" || has(r, "--frozen-lockfile"), build: (_s, r) => ["bun", "install", ...withFlag(r, "--frozen-lockfile")], ws: pkgWorkspaces },
+  { tool: "uv", subs: ["sync"], locks: ["uv.lock"], locked: (_s, r) => has(r, "--frozen", "--locked"), build: (_s, r) => ["uv", "sync", ...withFlag(r, "--frozen")], ws: (d) => tomlWorkspace(d, "pyproject.toml", "tool.uv.workspace") },
+  { tool: "poetry", subs: ["install"], locks: ["poetry.lock"], locked: () => true, build: (_s, r) => ["poetry", "install", ...r] },
   { tool: "pipenv", subs: ["install", "sync"], locks: ["Pipfile.lock"], locked: (s) => s === "sync", build: (_s, r) => ["pipenv", "sync", ...r] },
-  { tool: "cargo", subs: ["fetch", "build"], locks: ["Cargo.lock"], locked: (_s, r) => has(r, "--locked", "--frozen"), build: (s, r) => ["cargo", s, ...withFlag(r, "--locked")] },
+  { tool: "cargo", subs: ["fetch", "build"], locks: ["Cargo.lock"], locked: (_s, r) => has(r, "--locked", "--frozen"), build: (s, r) => ["cargo", s, ...withFlag(r, "--locked")], ws: (d) => tomlWorkspace(d, "Cargo.toml", "workspace") },
   { tool: "bundle", subs: ["", "install"], locks: ["Gemfile.lock"], locked: (_s, r, e) => e.includes("BUNDLE_FROZEN=true") || has(r, "--frozen", "--deployment"), build: (_s, r) => ["bundle", "install", ...r] },
   { tool: "composer", subs: ["install", "update"], locks: ["composer.lock"], locked: (s) => s === "install", build: (_s, r) => ["composer", "install", ...r] },
 ];
 export interface LockedInstall { cmd: string; locked: boolean; note?: string; rewritten: boolean }
 
-/** First directory from `cwd` up to `repoDir` (inclusive) holding one of `names`; workspaces keep their lockfile at the workspace root. */
-function lockDir(repoDir: string, cwd: string, names: string[]): string | null {
-  const top = realpathSync(repoDir);
-  for (let d = realpathSync(cwd); ; d = dirname(d)) {
-    if (names.some((n) => existsSync(join(d, n)))) return d;
-    if (d === top || relative(top, d).startsWith("..") || d === dirname(d)) return null;
+/** The directory whose lockfile governs the package at `cwd`: the package directory itself if it holds one of the rule's lockfiles, else
+ *  the nearest ancestor (up to `repoDir`) that holds one AND declares a workspace containing the package. An ancestor lockfile alone
+ *  proves nothing: a standalone sub-project beside a root lockfile has no lock of its own, and a frozen install there would fail. */
+function lockDir(repoDir: string, cwd: string, rule: LockRule): string | null {
+  const top = realpathSync(repoDir), start = realpathSync(cwd);
+  if (rule.locks.some((n) => existsSync(join(start, n)))) return start;
+  if (!rule.ws) return null;
+  for (let d = dirname(start); !relative(top, d).startsWith(".."); d = dirname(d)) {
+    if (rule.locks.some((n) => existsSync(join(d, n))) && inWorkspace(rule.ws(d), relative(d, start).split("\\").join("/"))) return d;
+    if (d === top || d === dirname(d)) break;
   }
+  return null;
 }
 /** Yarn Berry (2+): .yarnrc.yml beside the lockfile or package.json packageManager yarn@>=2; anything else is Classic. */
 function isYarnBerry(dir: string): boolean {
@@ -193,25 +234,32 @@ function isYarnBerry(dir: string): boolean {
   try { return /^yarn@([2-9]|\d{2,})/.test(String((JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { packageManager?: unknown }).packageManager ?? "")); } catch { return false; }
 }
 
-/** Maps (package root contents, model install command) to the command actually run: each install segment whose tool has a lockfile in
- *  the package root (or above it, up to the repo) becomes the ecosystem's frozen form; an already-locked form is kept; a segment that names
- *  packages, has no lockfile or matches no rule is kept as written and the result says it is not locked. Never guesses a package manager. */
+/** Maps (package root contents, model install command) to the command actually run: each install segment whose tool has a governing
+ *  lockfile (see lockDir) becomes the ecosystem's frozen form; an already-locked form is kept; a segment that names packages, has no
+ *  governing lockfile, runs in a directory that cannot be resolved, follows a `||` or matches no rule is kept as written and the result
+ *  says it is not locked. A `cd X` segment moves the lookup to X. Never guesses a package manager. */
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
   const parts = modelCmd.split(/(\s*(?:&&|\|\||;)\s*)/);
   const notes: string[] = [];
-  let hits = 0, locked = true, rewritten = false;
+  let hits = 0, locked = true, rewritten = false, cur: string | null = realpathSync(cwd);
   const out = parts.map((seg, k) => {
     if (k % 2 === 1) return seg;
     const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
     if (e < 0) return seg;
     const env = w.slice(0, e), tool = w[e]!, hasSub = w[e + 1] !== undefined && !w[e + 1]!.startsWith("-"), sub = hasSub ? w[e + 1]! : "";
+    if (tool === "cd") {
+      try { cur = cur !== null && w.length === e + 2 && !/[$~`*]/.test(w[e + 1]!) && !w[e + 1]!.startsWith("-") ? realpathSync(join(cur, w[e + 1]!)) : null; } catch { cur = null; }
+      return seg;
+    }
+    if (hits > 0 && (parts[k - 1] ?? "").includes("||")) { locked = false; notes.push("a || fallback after an install can mask its failure, kept as written"); return seg; }
     const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
     if (!rule) return seg;
     hits++;
     const rest = w.slice(e + (hasSub ? 2 : 1));
     if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
-    const dir = lockDir(repoDir, cwd, rule.locks);
-    if (!dir) { locked = false; notes.push(`no ${rule.locks.join(" or ")} found for ${tool}`); return seg; }
+    if (cur === null) { locked = false; notes.push(`${tool} runs in a directory that cannot be resolved, kept as written`); return seg; }
+    const dir = lockDir(repoDir, cur, rule);
+    if (!dir) { locked = false; notes.push(`no ${rule.locks.join(" or ")} governs this package for ${tool}`); return seg; }
     if (rule.locked(sub, rest, env)) return seg; // already a locked form: kept byte for byte
     rewritten = true;
     const frozenEnv = rule.tool === "bundle" ? ["BUNDLE_FROZEN=true"] : [];
