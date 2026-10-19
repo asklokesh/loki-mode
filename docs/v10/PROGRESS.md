@@ -2602,3 +2602,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T05:27Z (CoS) v11.17.76
 - 11.17.76: FC-FULLSUITE-ANSI-IDS. Diagnosed on FireLater#20 run e10-20261019T045437Z-7939 (base 156 fails, head 150, 0 new; failIds raw 0 vs stripped 296/307). Engineer b9767d997 red-then-green 5 tests; HIGH review APPROVE (190/0, mutation removing stripAnsi turns 2 tests red). Main after cherry-pick 9944bc030: 83/0 on 4 touched suites.
+
+## 2026-10-19T06:34Z (CoS) v11.17.77
+- 11.17.77: FC-WALL-OUT-OF-REPO-TARGET. Diagnosed on anthropics/claude-code#81826 run e10-20261019T061221Z-ec31 (11.17.76 PARTIAL: Wall targeted ~/.claude/plugins ralph-loop, implementer added bunfig.toml preload). Engineer 1a5c55790+a38987338; HIGH review BLOCK (sizing cap, prefix placement, 5 false positives) then APPROVE 199/0 across 13 files.

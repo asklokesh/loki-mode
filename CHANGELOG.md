@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.77 (2026-10-19)
+
+### Fixed
+- The acceptance checks Loki writes before coding (the Wall) can no longer target an installed copy of the code outside the repository (FC-WALL-OUT-OF-REPO-TARGET). A Wall check that located the code under test through the home directory (for example `process.env.X ?? join(homedir(), '.claude/plugins/...')`) pushed the implementer into adding test-runner config to redirect it, which Loki then rightly flagged as runner tampering and ended PARTIAL. The Wall writer is now told to reach repo code by repo-relative paths, and a written check whose home-derived path locates code (import, require, source, spawn, exec, readFile target, or a dot-directory) is re-asked once with the exact reason and discarded if still out of repo. Checks that sandbox HOME or assert `~` expansion behaviour are not affected. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.76 (2026-10-19)
 
 ### Fixed
