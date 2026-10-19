@@ -13,7 +13,7 @@ const allPass = [check("tests/test_a.py", "pass"), check("tests/test_b.py", "pas
 const oneFail = [check("tests/test_a.py", "pass"), check("tests/test_b.py", "fail")];
 
 interface Fake { ops: AttemptOps; log: string[]; settled: boolean[]; }
-function fake(o: { checks: [AttemptCheck[], AttemptCheck[]]; sessions?: [SessionResult, SessionResult]; delayB?: number }): Fake {
+function fake(o: { checks: [AttemptCheck[], AttemptCheck[]]; sessions?: [SessionResult, SessionResult]; delayB?: number; preRed?: [string[], string[]] }): Fake {
   const log: string[] = []; const settled = [false, false]; let held: 0 | 1 = 0;
   const sess = o.sessions ?? [ok(), ok()];
   const ops: AttemptOps = {
@@ -25,6 +25,7 @@ function fake(o: { checks: [AttemptCheck[], AttemptCheck[]]; sessions?: [Session
     },
     enter(i) { log.push(`enter${i}`); held = i; },
     inspect() { return { diff: "+x\n@@ -1 +1 @@\n+line\n", weakensTest: false }; },
+    preRed: o.preRed ? (i) => o.preRed![i] : undefined,
     async score(i) { log.push(`score${i}@${held}`); if (held !== i) throw new Error("scored the wrong tree"); return o.checks[i]; },
   };
   return { ops, log, settled };
@@ -230,4 +231,16 @@ describe("killed attempt cost accounting (card Wall check)", () => {
       expect(sum).toBeGreaterThan(0.5);
     } finally { rmSync(r.root, { recursive: true, force: true }); }
   }, 20_000);
+});
+
+describe("FC-LINT-PRE-RED: select does not penalise a pre-red lint failure", () => {
+  const lint = (result: AttemptCheck["result"]): AttemptCheck => ({ name: "lint:shellcheck", cmd: "shellcheck", result, duration_s: 1, interpreter: "project" });
+  it("the attempt whose only lint failure also fails on base beats an otherwise identical attempt with a real lint failure", async () => {
+    const real = [...oneFail, lint("fail")], excused = [...oneFail, lint("fail")]; // oneFail: no early accept
+    const f = fake({ checks: [real, excused], preRed: [[], ["lint:shellcheck"]] });
+    const r = await runTwoAttempts(f.ops, S, WALL, new AbortController().signal, {});
+    expect(r.winner).toBe(1);
+    const g = fake({ checks: [real, excused] }); // control: no preRed wired, both count one lint fail, the index tie-break picks A
+    expect((await runTwoAttempts(g.ops, S, WALL, new AbortController().signal, {})).winner).toBe(0);
+  });
 });

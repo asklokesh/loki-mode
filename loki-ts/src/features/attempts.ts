@@ -27,6 +27,8 @@ export interface AttemptOps {
   inspect(i: Idx): { diff: string; weakensTest: boolean };
   /** Run S in the primary; the caller has entered the attempt's tree. */
   score(i: Idx): Promise<AttemptCheck[]>;
+  /** FC-LINT-PRE-RED: names in attempt i's verify pre_red_checks (checks that also fail on base); absent means none. Valid right after score(i). */
+  preRed?(i: Idx): string[];
 }
 export interface TwoAttemptResult { winner: Idx; reason: string; early: boolean; sessions: [SessionResult, SessionResult]; }
 const ERRORED: SessionResult = { exit: 1, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: false };
@@ -43,14 +45,14 @@ export async function runTwoAttempts(ops: AttemptOps, S: TestRef[], wall: TestRe
   try {
     const a = await pA;
     const cA = candidate(0, a);
-    if (scorable(cA)) cA.checks = await ops.score(0);
+    if (scorable(cA)) { cA.checks = await ops.score(0); cA.preRedChecks = ops.preRed?.(0) ?? []; }
     if (scorable(cA) && isEarlyAccept(cA, S, wall)) { // the other session is killed, then awaited so its partial usage is priced before we return
       ctl[1]!.abort();
       return { winner: 0, reason: "early accept", early: true, sessions: [a, await pB] };
     }
     const b = await pB;
     const cB = candidate(1, b);
-    if (scorable(cB)) { ops.enter(1); held = 1; cB.checks = await ops.score(1); }
+    if (scorable(cB)) { ops.enter(1); held = 1; cB.checks = await ops.score(1); cB.preRedChecks = ops.preRed?.(1) ?? []; }
     const pick = selectAttempt([cA, cB], S, wall);
     if (held !== pick.index) ops.enter(pick.index as Idx);
     return { winner: pick.index as Idx, reason: pick.reason, early: false, sessions: [a, b] };
