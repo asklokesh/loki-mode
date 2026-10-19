@@ -328,7 +328,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         // GIT_* env reviewerGitEnv() adds, NUL-separated KEY=VALUE, for `env`. Fail-closed: non-zero + no stdout.
         try {
           const { reviewerGitEnv } = await import("./util/safe_git.ts");
-          const e = reviewerGitEnv(process.cwd());
+          const e = reviewerGitEnv(process.cwd(), process.env);
           for (const [k, v] of Object.entries(e)) if (k.startsWith("GIT_") && v !== undefined && v !== process.env[k]) process.stdout.write(`${k}=${v}\0`);
           return 0;
         } catch (err) {

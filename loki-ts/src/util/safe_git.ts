@@ -60,8 +60,9 @@ export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = f
  *  include.path reports local). Global and system keys are the user's own (e.g. `git lfs install`) and stay live: blanking them breaks LFS
  *  (the global-scope residual is FC-25c). Enumeration runs hardened and token-free. Fails closed: an unreadable config throws. */
 const configEnumTimeoutMs = (): number => { const n = Number(process.env.LOKI_SAFE_GIT_CONFIG_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? n : 30_000; };
-export function driverKeys(repoDir: string): string[] {
-  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", DRIVER_KEY_RE], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
+export const driverKeys = (repoDir: string): string[] => repoKeysMatching(repoDir, DRIVER_KEY_RE);
+export function repoKeysMatching(repoDir: string, keyRe: string): string[] {
+  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", keyRe], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
   if (r.error) throw r.error; // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed // a timeout surfaces as ETIMEDOUT here, so a hung git config fails closed
   if (r.status === 1) return []; // no match
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git config drivers (status ${r.status})`);
@@ -75,20 +76,34 @@ export function driverKeys(repoDir: string): string[] {
 // It builds its own git argv, so the argv-side hardening above cannot reach it; env-side config (GIT_CONFIG_COUNT is command scope and
 // beats the repo's .git/config) does. A blank diff.external makes `git diff` die, so GIT_EXTERNAL_DIFF (which git consults when no
 // attribute driver is set) points at a plain `diff -u` shim instead; repo diff/filter drivers are blanked by key as in driverKeys.
-const REVIEWER_GIT_STATIC: ReadonlyArray<readonly [string, string]> = [["core.fsmonitor", ""], ["core.hooksPath", "/dev/null"], ["core.attributesFile", "/dev/null"], ["core.pager", "cat"], ["protocol.ext.allow", "never"]];
-const REVIEWER_EXT_DIFF = 'f() { diff -u -L "a/$1" -L "b/$1" "$2" "$5"; [ $? -le 1 ]; }; f';
+const REVIEWER_GIT_STATIC: ReadonlyArray<readonly [string, string]> = [
+  ["core.fsmonitor", ""], ["core.hooksPath", "/dev/null"], ["core.attributesFile", "/dev/null"], ["core.pager", "cat"], ["protocol.ext.allow", "never"],
+  // gpg programs run on `git log --show-signature`, `git show <signed>` and log.showSignature, for openpgp, ssh and x509 formats
+  ["log.showSignature", "false"], ["gpg.program", "false"], ["gpg.openpgp.program", "false"], ["gpg.ssh.program", "false"], ["gpg.x509.program", "false"],
+  // a partial-clone lazy fetch (GIT_NO_LAZY_FETCH below) would run core.sshCommand / proxy / askpass on any read of a missing object
+  ["core.sshCommand", ""], ["core.gitProxy", ""], ["core.askpass", ""],
+];
+// Repo diff driver commands get the shim (a blank command dies); textconv gets cat (a blank one dies on log -p); other driver keys blank.
+// The shim ends its options with `--` so a tracked file named `-n` is a path, not a diff option.
+const REVIEWER_EXT_DIFF = 'f() { diff -u -L "a/$1" -L "b/$1" -- "$2" "$5"; [ $? -le 1 ]; }; f';
+const REVIEWER_NET_SKIP = /sslverify$/i;
 
-/** Env for a model-driven reviewer child that may run read-only git in repoDir (default cwd): the base env plus GIT_CONFIG_NOSYSTEM, command-scope
- *  config that disables fsmonitor, hooks, attributes file, pager, every repo filter/textconv/diff-driver command blanked by key, and
- *  GIT_EXTERNAL_DIFF replaced by a harmless unified-diff shim (it beats a repo diff.external). Existing GIT_CONFIG_COUNT entries are kept.
- *  Never mutates base. Fails closed (throws) when the repo config cannot be enumerated; a non-repo directory has no repo config to defend. */
-export function reviewerGitEnv(repoDir: string = process.cwd(), base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base, GIT_CONFIG_NOSYSTEM: "1", GIT_EXTERNAL_DIFF: REVIEWER_EXT_DIFF };
+/** Env for a model-driven reviewer child that may run read-only git in repoDir. base is required so a caller must choose it:
+ *  pass tokenFreeEnv(process.env) for a child that must not hold the GitHub credential (SSH_AUTH_SOCK is emptied here regardless).
+ *  Adds GIT_CONFIG_NOSYSTEM, GIT_NO_LAZY_FETCH, GIT_PAGER=cat, command-scope config that disables fsmonitor, hooks, attributes file, pager,
+ *  gpg programs and network command keys (repo ones enumerated with NET_CMD_KEY_RE), every repo filter blanked by key, and GIT_EXTERNAL_DIFF
+ *  replaced by a harmless unified-diff shim (it beats a repo diff.external). Existing GIT_CONFIG_COUNT entries are kept. Never mutates base.
+ *  Fails closed (throws) when the repo config cannot be enumerated; a non-repo directory has no repo config to defend. */
+export function reviewerGitEnv(repoDir: string, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, GIT_CONFIG_NOSYSTEM: "1", GIT_EXTERNAL_DIFF: REVIEWER_EXT_DIFF, GIT_NO_LAZY_FETCH: "1", GIT_PAGER: "cat", SSH_AUTH_SOCK: "" };
   delete env.GIT_ATTR_SOURCE;
   const inRepo = spawnSync("git", [...SAFE_GIT_CONFIG, "rev-parse", "--git-dir"], { cwd: repoDir, env: safeGitEnv(), stdio: "ignore", timeout: configEnumTimeoutMs(), killSignal: "SIGKILL" });
   if (inRepo.error) throw inRepo.error;
   const pairs: Array<readonly [string, string]> = [...REVIEWER_GIT_STATIC];
-  if (inRepo.status === 0) for (const k of driverKeys(repoDir)) pairs.push([k, /^diff\..*\.command$/i.test(k) ? REVIEWER_EXT_DIFF : ""]); // a blank diff driver command dies like a blank diff.external
+  if (inRepo.status === 0) {
+    for (const k of driverKeys(repoDir)) pairs.push([k, /^diff\..*\.command$/i.test(k) ? REVIEWER_EXT_DIFF : /^diff\..*\.textconv$/i.test(k) ? "cat" : ""]);
+    for (const k of repoKeysMatching(repoDir, NET_CMD_KEY_RE)) if (!REVIEWER_NET_SKIP.test(k)) pairs.push([k, ""]);
+  }
   const n0 = Number(base.GIT_CONFIG_COUNT), start = Number.isInteger(n0) && n0 > 0 ? n0 : 0;
   pairs.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${start + i}`] = k; env[`GIT_CONFIG_VALUE_${start + i}`] = v; });
   env.GIT_CONFIG_COUNT = String(start + pairs.length);

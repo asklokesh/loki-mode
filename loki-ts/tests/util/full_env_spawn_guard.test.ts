@@ -46,3 +46,33 @@ test("the detector flags a planted full-env spawn and accepts a token-free one",
   expect(violatingCalls('Bun.spawn({ cmd: ["x"], env: process.env });').length).toBe(1);
   expect(violatingCalls('spawnSync("x", [], { env: { ...process.env, A: "1" } });').length).toBe(1);
 });
+
+// FC-REVIEWER-GIT-CONFIG-EXEC: reviewerGitEnv returns its base plus git hardening, so a reviewer spawn that spreads it inherits whatever the
+// base held. A call with no base argument, or a reviewer spawn whose base is not token-free, would hide a full-env spawn from the guard above.
+export function reviewerEnvViolations(src: string): string[] {
+  const bad: string[] = [];
+  for (const line of src.split("\n")) {
+    if (isComment(line)) continue;
+    const m = /reviewerGitEnv\(([^\n]*)/.exec(line);
+    if (!m) continue;
+    const args = m[1]!;
+    if (/^\s*\)/.test(args)) bad.push("no base argument");
+    else if (!/tokenFreeEnv\(/.test(args) && !/process\.env\s*\)/.test(args)) bad.push(`base not token-free: ${args.slice(0, 60)}`);
+  }
+  return bad;
+}
+test("every reviewerGitEnv call passes a base; the spawning reviewers pass a token-free one", () => {
+  const all: string[] = [];
+  for (const f of walk(SRC)) {
+    if (f.endsWith("util/safe_git.ts")) continue;
+    const src = readFileSync(f, "utf8");
+    for (const v of reviewerEnvViolations(src)) all.push(`${rel(f)}: ${v}`);
+    if (/council\/voter_agents\.ts$|runner\/quality_gates\.ts$/.test(f) && /reviewerGitEnv\(/.test(src) && !/reviewerGitEnv\([^\n]*tokenFreeEnv\(/.test(src)) all.push(`${rel(f)}: reviewer spawn base is not tokenFreeEnv`);
+  }
+  expect(all).toEqual([]);
+});
+test("the reviewerGitEnv detector flags a bare call and accepts a token-free one", () => {
+  expect(reviewerEnvViolations("env: { ...reviewerGitEnv() }").length).toBe(1);
+  expect(reviewerEnvViolations("reviewerGitEnv(cwd, tokenFreeEnv(process.env))").length).toBe(0);
+  expect(reviewerEnvViolations("reviewerGitEnv(cwd, { ...process.env, X: 1 })").length).toBe(1);
+});
