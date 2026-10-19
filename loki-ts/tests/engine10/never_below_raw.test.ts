@@ -143,7 +143,7 @@ export function guardViolations(files: Record<string, string>): string[] {
     if (path.startsWith("dashboard/") || path === "types.ts" || path === "session.ts" || path === "cost.ts") continue;
     const lines = src.split("\n");
     lines.forEach((line, i) => {
-      if (/^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\((\w+ \? \{[^}]*)?\bmodel\b|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
+      if (/^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\(|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
       const ok = allowed[path];
       const routedOk = (e: string): boolean => path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}$/.test(e) && FIX_ROUTED_DEF.test(src);
       const vetted = (e: string): boolean => (ok !== undefined && ok.test(e)) || routedOk(e);
@@ -152,9 +152,15 @@ export function guardViolations(files: Record<string, string>): string[] {
       const lineStart = lines.slice(0, i).reduce((n, l) => n + l.length + 1, 0);
       const inData = (col: number): boolean => {
         const st: boolean[] = [];
+        let q = "";
         for (let k = 0; k < lineStart + col; k++) {
-          if (src[k] === "{") st.push(/\bdata: $/.test(src.slice(Math.max(0, k - 8), k)));
-          else if (src[k] === "}") st.pop();
+          const c = src[k]!;
+          if (q && c === "\n" && q !== "`") q = ""; // a quote or apostrophe that never closes on its line (a regex literal) is not a string
+          if (q) { if (c === "\\") k++; else if (c === q) q = ""; continue; } // braces inside string literals do not count
+          if (c === "/" && src[k + 1] === "/") { while (k < lineStart + col && src[k] !== "\n") k++; continue; } // line comment: quotes in prose are not strings
+          if (c === '"' || c === "'" || c === "`") q = c;
+          else if (c === "{") st.push(/(\bdata: |\b(?:const|let) data(?::[^=\n]*)? = )$/.test(src.slice(Math.max(0, k - 60), k)));
+          else if (c === "}") st.pop();
         }
         return st.some(Boolean);
       };
@@ -260,6 +266,10 @@ describe("L1 static guard", () => {
     expect(red(fix.replace(line, line.replace("...(effort ? { effort } : {})", "...(effort ? { effort, model: lowModel } : {})")))).toBe(true); // F
     expect(red(fix.replace(line, line.replace(/ \};$/, ", model: lowModel };")))).toBe(true); // G
     expect(red(`${fix}\nconst o = { ...(pinnedModel ? { model: pinnedModel } : {}), stage: "fix", model: lowModel };\n`)).toBe(true); // E, outside a data object
+    expect(red(`${fix}\nconst o = { ...(effort ? { effort } : {}), model: lowModel };\n`)).toBe(true); // E, plain shape: the only spread is unrelated
+    expect(red(`${fix}\nctx.emit("x", "fix", { data: { round } }); const o = { ...(effort ? { effort } : {}), model: lowModel };\n`)).toBe(true); // pin after a data object already closed
+    expect(red(`${fix}\nconst data: Record<string, unknown> = {\n  ...(effort ? { effort } : {}), model: actualModel,\n};\n`)).toBe(false); // a data-named binding is an event object
+    expect(red(`${fix}\n// it's fine\nconst d = { ...(effort ? { effort } : {}), model: "}" }; const data = {\n ...(effort ? { effort } : {}), model: actualModel };\n`)).toBe(true); // braces in strings and apostrophes in comments do not hide the first pin
     expect(red(`${fix}\nctx.emit("x", "fix", { data: { round, model: actualModel } });\n`)).toBe(false); // inside a data object it stays exempt
   });
 
