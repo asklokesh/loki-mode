@@ -114,8 +114,8 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   const split = (s: string): string[] => { const out: string[] = []; let d = 0, q = "", cur = ""; for (let i = 0; i < s.length; i++) { const c = s[i]!; if (q) { cur += c; if (c === "\\") cur += s[++i] ?? ""; else if (c === q) q = ""; } else if (c === '"' || c === "'" || c === "`") { q = c; cur += c; } else if ("([{".includes(c)) { d++; cur += c; } else if (")]}".includes(c)) { d--; cur += c; } else if (c === "," && d === 0) { out.push(cur); cur = ""; } else cur += c; } if (cur.trim()) out.push(cur); return out; };
   const close = (line: string, at: number): number => { let d = 0; for (let j = at; j < line.length; j++) { if (line[j] === "(") d++; else if (line[j] === ")" && --d === 0) return j; } return -1; };
   const strayInTestDir = (out: string): boolean => { const first = relative(testDir, out).split("/")[0]!; return !!first && first !== "__self__" && !existsSync(join(testDir, first)) && [pkg, repoDir].some((d) => d !== testDir && existsSync(join(d, first))); }; // inside the test dir but the first segment only exists at a repo root: the author meant a repo path
-  const scan = (cwd: string): { reports: Map<string, { out: string; rel: string }>; created: string[] } => {
-    const vars = new Map<string, string>(), walk = new Set<string>(), taint = new Set<string>(), reports = new Map<string, { out: string; rel: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
+  const scan = (cwd: string): { reports: Map<string, { out: string; rel: string; tail?: string }>; created: string[] } => {
+    const vars = new Map<string, string>(), walk = new Set<string>(), taint = new Set<string>(), reports = new Map<string, { out: string; rel: string; tail?: string }>(), created: string[] = []; let ln = 0; // reports are keyed by source line and call text so two cwd runs pair the same call
     const ev = (raw: string, report: boolean): string | null => {
       const e = raw.trim().replace(/^await\s+/, "").replace(/\s+as\s+\w+$/, "").replace(/!$/, "");
       if (/^import\.meta\.(dir|dirname)$|^__dirname$/.test(e)) return testDir;
@@ -130,12 +130,12 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
       if (call[1] === "dirname") return dirname(args[0]!);
       const out = resolve(...(args as string[]));
       const first = parts.slice(1).map((a) => /^\s*["'`]([^"'`]*)["'`]\s*$/.exec(a)?.[1]).find((x) => x), viaWalk = !!first && walk.has(parts[0]!.trim()) && [pkg, repoDir].some((d) => existsSync(join(d, first.split("/").filter(Boolean)[0] ?? "\0"))); // a walk-up base reaches the repo root: the first literal segment is checked there (absent everywhere keeps the old silence)
-      if (report && (viaWalk || (!parts.some((a) => walk.has(a.trim()) || taint.has(a.trim())) && (relative(testDir, out).startsWith("..") || strayInTestDir(out)))) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out) });
+      if (report && (viaWalk || (!parts.some((a) => walk.has(a.trim()) || taint.has(a.trim())) && (relative(testDir, out).startsWith("..") || strayInTestDir(out)))) && parts.some((a) => /^\s*["'`]/.test(a))) reports.set(`${ln}|${e}`, { out, rel: relative(repoDir, out), tail: viaWalk ? join(...(args.slice(1) as string[])) : undefined });
       return out;
     };
     for (const line of walkCode.split("\n")) {
       ln++;
-      for (const m of line.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s*\[([^\]]*)\]/g)) { const seeds = split(m[2]!).map((x) => ev(x, false)); if (seeds.length && seeds.every((x) => x !== null)) { vars.set(m[1]!, cwd); walk.add(m[1]!); } } // loop variable seeded from cwd or the test dir: a walk-up start
+      for (const m of line.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s*\[([^\]]*)\]/g)) { const seeds = split(m[2]!).map((x) => ev(x, false)); if (seeds.length && seeds.every((x) => x === cwd || x === testDir)) { vars.set(m[1]!, cwd); walk.add(m[1]!); } } // loop variable whose every item is the cwd or the test dir: a walk-up start (repo-relative strings and joins stay unresolved)
       const wasg = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:path\.)?(?:resolve|join)\(\s*([A-Za-z_$][\w$]*)\s*\)\s*;?\s*$/.exec(line); if (wasg && walk.has(wasg[2]!)) walk.add(wasg[1]!); // dir = resolve(start) keeps the walk base
       for (const m of line.matchAll(CREATORS)) { const j = close(line, m.index! + m[0].length - 1); if (j > 0) for (const a of split(line.slice(m.index! + m[0].length, j))) { const v = ev(a, false); if (v) created.push(v); } }
       const skip = /^\s*(?:await\s+)?(?:expect|assert\w*)\b|\b(?:write\w*|mkdir\w*|rm\w*|cp\w*|copy\w*|rename\w*|symlink\w*|mkdtemp\w*|tmpdir|outputFile|touch)\b/.test(line);
@@ -149,8 +149,9 @@ export function phantomRepoPaths(content: string, fileName: string, testDir: str
   };
   const runs = [...new Set([pkg, repoDir])].map(scan);
   const planned = (rel: string): boolean => !!planText && rel.split("/").some((_, i, a) => { const pre = a.slice(0, i + 1).join("/"); return (i > 0 || a.length === 1) && !existsSync(join(repoDir, pre)) && new RegExp(`(?<![\\w-])${pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(planText); }); // only a path named with its parent (plugins/ralph-loop) is planned, never a bare segment or basename
-  const phantom = (r: { out: string; rel: string }, created: string[]): boolean => {
+  const phantom = (r: { out: string; rel: string; tail?: string }, created: string[]): boolean => {
     const rel = r.rel; if (!rel || rel.startsWith("..") || isAbsolute(rel) || /(^|\/)(\.git|\.loki|dist|build|coverage|tmp)(\/|$)/.test(rel) || existsSync(r.out) || planned(rel)) return false;
+    if (r.tail) { const seen = (from: string): boolean => { let d = from; for (let i = 0; i < 64; i++) { if (existsSync(join(d, r.tail!))) return true; if (d === repoDir || d === dirname(d)) return false; d = dirname(d); } return false; }; if ([testDir, pkg, repoDir].some(seen)) return false; } // a walk-up path found at any directory the walk passes (test dir or package root, up to the repo root) is real
     if (created.some((c) => c === r.out || c.startsWith(r.out + "/") || r.out.startsWith(c + "/"))) return false;
     return safeGitSpawn(repoDir, ["check-ignore", "-q", "--", rel], { timeout: 5000 }).status !== 0;
   };

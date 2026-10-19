@@ -313,6 +313,26 @@ describe("FC-WALL-PHANTOM-PATH", () => {
     expect(phantomRepoPaths("const d = mkdtempSync(join(tmpdir(), 'x-'));\nconst f = join(d, 'plugins', 'ralph-loop');", "w.test.ts", td, repo, null)).toEqual([]);
     expect(phantomRepoPaths("const base = join(tmpdir(), 'x');\nfor (const s of [base]) { let dir = resolve(s); const c = join(dir, 'plugins', 'ralph-loop'); }", "w.test.ts", td, repo, null)).toEqual([]);
   });
+  test("walk-up phantom: a loop over a repo-relative string is not a walk-up (FP-A)", () => {
+    const repo = repoWith(), td = join(repo, "tests"); mkdirSync(join(repo, "scripts"), { recursive: true });
+    const SETUP = " {\n  const setup = join(plugin, 'scripts', 'setup-ralph-loop.sh');\n}";
+    expect(phantomRepoPaths("for (const plugin of ['plugins/ralph-wiggum'])" + SETUP, "w.test.ts", td, repo, null)).toEqual([]); // FP-A
+  });
+  test("walk-up phantom: a loop over a join on cwd is not a walk-up (FP-B)", () => {
+    const repo = repoWith(), td = join(repo, "tests"); mkdirSync(join(repo, "scripts"), { recursive: true });
+    const SETUP = " {\n  const setup = join(plugin, 'scripts', 'setup-ralph-loop.sh');\n}";
+    expect(phantomRepoPaths("for (const plugin of [join(process.cwd(), 'plugins', 'ralph-wiggum')])" + SETUP, "w.test.ts", td, repo, null)).toEqual([]); // FP-B
+  });
+  test("walk-up phantom: a loop over several joins on an unresolved root is not a walk-up (FP-C)", () => {
+    const repo = repoWith(), td = join(repo, "tests"); mkdirSync(join(repo, "scripts"), { recursive: true }); mkdirSync(join(repo, "plugins/hookify"), { recursive: true });
+    const SETUP = " {\n  const setup = join(plugin, 'scripts', 'setup-ralph-loop.sh');\n}";
+    expect(phantomRepoPaths("const ROOT = process.cwd();\nfor (const plugin of [join(ROOT, 'plugins', 'ralph-wiggum'), join(ROOT, 'plugins', 'hookify')])" + SETUP, "w.test.ts", td, repo, null)).toEqual([]); // FP-C
+  });
+  test("walk-up phantom: a walk-up whose file exists at a directory on the way up is not reported (FP-D2)", () => {
+    const repo = repoWith(), td = join(repo, "tests"); mkdirSync(join(repo, "scripts"), { recursive: true });
+    const walk = "for (const start of [process.cwd(), import.meta.dir]) {\n  let dir = resolve(start);\n  while (true) {\n    const s = join(dir, 'scripts', 'setup-ralph-loop.sh');\n    dir = dirname(dir);\n  }\n}\n";
+    expect(phantomRepoPaths(walk, "w.test.ts", join(repo, "plugins/ralph-wiggum/tests"), repo, null)).toEqual([]); // FP-D2
+  });
   test("package root fallback: a named manifest above the test dir is the cwd; a fixture json in the test dir is not; the incident still reports", () => {
     const repo0 = repoWith(); execFileSync("git", ["init", "-q"], { cwd: repo0 });
     for (const [p, c] of Object.entries({ "packages/a/package.json": '{"name":"a","version":"1"}', "packages/a/src/x.ts": "x\n", "packages/a/test/user.json": '{"name":"bob","age":3}' })) { mkdirSync(join(repo0, p, ".."), { recursive: true }); writeFileSync(join(repo0, p), c); }
