@@ -2641,3 +2641,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T10:53Z (CoS) v11.17.89
 - 11.17.89: model-known root fixtures ce55854f8 (test-only, TL APPROVE): -t model-known root 2/0 green, mutation `if (site) return site.cwd;` red 1/1, fc23+l0_guard 41/0.
+
+## 2026-10-19T10:57Z (CoS) v11.17.90
+- 11.17.90: TEN-COST-63 d7d600ca4 (Wall -oor re-ask gated on ctx.overCap, red 0/1 -> green 1/0) and TEN-QUALITY-43 07f0f0594 (authorModel rename). TL APPROVE: 5 suites 192 pass 0 fail, tsc no engine10 errors.
