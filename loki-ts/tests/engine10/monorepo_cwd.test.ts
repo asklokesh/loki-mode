@@ -13,6 +13,7 @@ import { runFullSuite, type DeepCheck } from "../../src/engine10/stages/deep.ts"
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import { projectApi } from "../../src/project_model/api.ts";
 import { PROJECT_FILE } from "../../src/project_model/discover.ts";
+import { wallRedOnBaseOf } from "../../src/project_model/package_suite.ts";
 import { loadProjectApi, siteFor } from "../../src/project_model/resolve.ts";
 import { PROJECT_MODEL_SCHEMA, type ModelCommand, type ProjectModel } from "../../src/project_model/schema.ts";
 
@@ -159,9 +160,8 @@ describe("FC-01 verify in a multi-root monorepo", () => {
   });
   // FC-SEAL-NA-AS-UNPROVEN: frontend has no test command. N/A beside a suite that ran, unless the diff is in frontend with no Wall proof.
   describe("FC-SEAL-NA-AS-UNPROVEN package without a test command", () => {
-    const suites = async (opts: { changed?: string[]; proofFiles?: string[] }, rootPkg = false, files: Record<string, string> = {}): Promise<string[]> => {
+    const suites = async (opts: { changed?: string[]; proofFiles?: string[]; wallBaseRed?: boolean }, rootPkg = false): Promise<string[]> => {
       const { dir, base } = monorepo(true);
-      for (const [f, body] of Object.entries(files)) { mkdirSync(join(dir, f, ".."), { recursive: true }); writeFileSync(join(dir, f), body); }
       const api = loadProjectApi(dir)!; const m = api.model as ProjectModel;
       m.packages[0]!.commands.test = cmd('echo " Test Files  1 passed (1)"; echo "      Tests  1 passed (1)"', "backend", "backend/package.json");
       if (rootPkg) m.packages[1] = { ...m.packages[1]!, name: "root", root: "." };
@@ -185,25 +185,23 @@ describe("FC-01 verify in a multi-root monorepo", () => {
       expect(await suites({ changed: ["backend/src/a.ts", "elsewhere/x.md"] })).toEqual([note]);
     });
     test("unknown diff is fail-safe NOT PROVEN", async () => { expect(await suites({})).toEqual([note]); });
-    // FC-WALL-PROOF-PACKAGE-BLIND: a repo-root Wall that drives the package's changed files by path proves it.
+    // FC-WALL-PROOF-PACKAGE-BLIND: execution evidence (Wall red on base, green on head, diff confined to the package), never proof text.
     describe("FC-WALL-PROOF-PACKAGE-BLIND", () => {
-      const ch = ["frontend/hooks/stop.sh"], proof = ["tests/wall.test.ts"];
-      test("root proof naming the changed file by repo path: N/A", async () => { expect(await suites({ changed: ch, proofFiles: proof }, false, { "tests/wall.test.ts": "run('frontend/hooks/stop.sh')" })).toEqual([`n/a: ${note}`]); });
-      test("root proof naming it relative to the package root or its own directory: N/A", async () => {
-        expect(await suites({ changed: ch, proofFiles: proof }, false, { "tests/wall.test.ts": "run('hooks/stop.sh')" })).toEqual([`n/a: ${note}`]);
-        expect(await suites({ changed: ch, proofFiles: proof }, false, { "tests/wall.test.ts": "run('../frontend/hooks/stop.sh')" })).toEqual([`n/a: ${note}`]);
+      const wall = ["tests/loki_wall_x.test.ts"], ch = ["frontend/hooks/stop.sh", "tests/loki_wall_x.test.ts"];
+      const red = (changed: string[] | undefined, proofFiles: string[] | undefined = wall, wallBaseRed: boolean | null = true): Promise<string[]> => suites({ ...(changed ? { changed } : {}), ...(proofFiles ? { proofFiles } : {}), ...(wallBaseRed === null ? {} : { wallBaseRed }) });
+      test("base red, head green, diff confined to the package plus the Wall file: N/A", async () => { expect(await red(ch)).toEqual([`n/a: ${note}`]); });
+      test("Wall green on base (or base_run missing or all not_run) never credits", async () => { expect(await red(ch, wall, false)).toEqual([note]); expect(await red(ch, wall, null)).toEqual([note]); });
+      test("diff spanning two packages gets no credit", async () => { expect(await red(["frontend/a.sh", "backend/src/a.ts", ...wall])).toEqual([note]); });
+      test("unknown diff, empty diff and quoted path stay NOT PROVEN", async () => {
+        expect(await red(undefined)).toEqual([note]);
+        expect(await red(wall)).toEqual([note]);
+        expect(await red(['"frontend/src/caf\\303\\251.ts"', ...wall])).toEqual([note]);
       });
-      test("absolute proof path is read too", async () => {
-        const { dir, base } = monorepo(true);
-        const m = loadProjectApi(dir)!.model as ProjectModel; m.packages[0]!.commands.test = cmd('echo " Test Files  1 passed (1)"; echo "      Tests  1 passed (1)"', "backend", "backend/package.json");
-        writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m)); mkdirSync(join(dir, "tests"), { recursive: true }); writeFileSync(join(dir, "tests/wall.test.ts"), "frontend/hooks/stop.sh");
-        const np = new Set<string>(); await runFullSuite(ctxFor(dir, base, []), sig(), { changed: ch, proofFiles: [join(dir, "tests/wall.test.ts")] }, [], np);
-        expect([...np]).toEqual([`n/a: ${note}`]);
+      test("Wall failed on head (no proof files): no credit", async () => { expect(await red(ch, [])).toEqual([note]); });
+      test("wallRedOnBaseOf reads real failures only", () => {
+        expect(wallRedOnBaseOf({ pass: 0, fail: 1, not_run: 0 })).toBe(true);
+        for (const b of [undefined, null, {}, { pass: 2, fail: 0, not_run: 0 }, { pass: 0, fail: 0, not_run: 2 }, { fail: "1" }]) expect(wallRedOnBaseOf(b)).toBe(false);
       });
-      test("root proof naming nothing in the package does not credit it", async () => { expect(await suites({ changed: ch, proofFiles: proof }, false, { "tests/wall.test.ts": "run('backend/src/a.ts')" })).toEqual([note]); });
-      test("unreadable proof gives no credit", async () => { expect(await suites({ changed: ch, proofFiles: ["tests/missing.test.ts"] })).toEqual([note]); });
-      test("unknown diff stays NOT PROVEN even when the proof names the file", async () => { expect(await suites({ proofFiles: proof }, false, { "tests/wall.test.ts": "frontend/hooks/stop.sh" })).toEqual([note]); });
-      test("quoted changed path stays NOT PROVEN", async () => { expect(await suites({ changed: ['"frontend/src/caf\\303\\251.ts"'], proofFiles: proof }, false, { "tests/wall.test.ts": "frontend/src/caf" })).toEqual([note]); });
     });
   });
   test("the Wall base run executes a package file from its package directory", () => {

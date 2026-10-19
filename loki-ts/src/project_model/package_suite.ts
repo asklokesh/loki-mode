@@ -2,8 +2,7 @@
 // Each package that declares a test command runs it in its own directory. Returns false when the model is
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
-import { closeSync, openSync, readSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run } from "../util/shell.ts";
@@ -36,13 +35,22 @@ export function suiteEnv(path?: string): Record<string, string> { return path ? 
 export const NA_PREFIX = "n/a: ";
 export const naNote = (n: string): boolean => n.startsWith(NA_PREFIX) || n.startsWith("full suite (no test runner");
 export const naText = (n: string): string => (n.startsWith(NA_PREFIX) ? n.slice(NA_PREFIX.length) : n);
+/** FC-WALL-PROOF-PACKAGE-BLIND: the Wall was red on base (a real failure, never missing or all not_run). */
+export const wallRedOnBaseOf = (baseRun: unknown): boolean => { const f = (baseRun as { fail?: unknown } | null | undefined)?.fail; return typeof f === "number" && f > 0; };
+/** Execution evidence, not text: a Wall red on base and green on head (proofFiles non-empty) proves a diff confined to one package (own Wall files excluded; unknown, empty or quoted diff never counts). */
+function execProves(repoDir: string, o: { changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined }, owned: (f: string) => boolean): boolean {
+  const proofs = o.proofFiles ?? [], rel = (f: string): string => (isAbsolute(f) ? relative(repoDir, f) : f);
+  if (!o.wallBaseRed || !proofs.length || !o.changed) return false;
+  const wall = new Set(proofs.map(rel)), rest = o.changed.filter((f) => !wall.has(rel(f)));
+  return rest.length > 0 && !o.changed.some((f) => f.startsWith('"')) && rest.every(owned);
+}
 /** Test files of the Wall and holdout checks, only when at least one ran and every one passed (fail-safe: none ran, or any not pass, is no proof). A package without tests is proven only by a file inside it. */
 export const wallProofOf = (checks: { name: string; result: string }[], wall: { name: string; path: string }[]): string[] => { const n = new Set(wall.map((w) => w.name)), w = checks.filter((c) => n.has(c.name) || c.name.startsWith("holdout")); return w.length > 0 && w.every((c) => c.result === "pass") ? wall.map((x) => x.path) : []; };
 
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined },
+  opts: { path?: string | undefined; timeoutMs: number; baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined },
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -65,27 +73,8 @@ export async function runPackageSuites(
   const ran = checks.some((c) => c.result === "pass" || c.result === "fail");
   for (const pkg of api.packages().filter((p) => !p.commands.test)) {
     const note = `full suite: package ${pkg.name} defines no test command`, owns = !opts.changed || opts.changed.some((f) => { const o = api.packageOf(f); return !o || f.startsWith('"') || o.root === pkg.root; });
-    const proven = (opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root) || namesPackageFile(repoDir, opts.proofFiles ?? [], opts.changed, (c) => { const o = api.packageOf(c); return !!o && !c.startsWith('"') && o.root === pkg.root; }, pkg.root);
+    const proven = (opts.proofFiles ?? []).some((f) => api.packageOf(f)?.root === pkg.root) || execProves(repoDir, opts, (c) => api.packageOf(c)?.root === pkg.root);
     notProven.add(ran && !(owns && !proven) ? NA_PREFIX + note : note);
   }
   return true;
-}
-
-const PROOF_READ_CAP = 1 << 20;
-const readCapped = (abs: string): string | null => { let fd = -1; try { fd = openSync(abs, "r"); const b = Buffer.alloc(PROOF_READ_CAP), n = readSync(fd, b, 0, PROOF_READ_CAP, 0); return b.toString("utf8", 0, n); } catch { return null; } finally { if (fd >= 0) try { closeSync(fd); } catch { /* ignore */ } } };
-
-/** FC-WALL-PROOF-PACKAGE-BLIND: a passing proof file anywhere in the repo credits a package when its text names a changed file that package owns (repo-relative, package-relative or proof-directory-relative). Unknown diff or unreadable proof: no credit. */
-function namesPackageFile(repoDir: string, proofs: string[], changed: string[] | undefined, owned: (f: string) => boolean, pkgRoot: string): boolean {
-  const mine = (changed ?? []).filter(owned);
-  if (!mine.length) return false;
-  for (const pf of proofs) {
-    const abs = isAbsolute(pf) ? pf : join(repoDir, pf), text = readCapped(abs);
-    if (text === null) continue;
-    const pdir = dirname(abs);
-    for (const c of mine) {
-      const cands = [c, pkgRoot === "." ? "" : relative(pkgRoot, c), relative(pdir, join(repoDir, c))].filter((x) => x.length > 0);
-      if (cands.some((x) => text.includes(x))) return true;
-    }
-  }
-  return false;
 }
