@@ -175,11 +175,16 @@ export async function zeroOnBase(
     const src = join(repoDir, relative(baseDir, c.cwd));
     if (depsSeeHead(src, repoDir)) continue;
     for (const d of ["node_modules", ".venv"]) { try { if (existsSync(join(src, d)) && !existsSync(join(c.cwd, d))) symlinkSync(join(src, d), join(c.cwd, d)); } catch { /* no deps on base: not zero, stays fail-closed */ } }
-    const b = await run(c), last = c.args[c.args.length - 1] ?? "";
-    const k = classifyCheck({ kind: "test", ok: b.ok, cut: b.cut, missing: b.missing, out: b.out, ...goRunner(c.cmd, c.args), path: /\.[cm]?[jt]s$/.test(last) ? last : undefined });
-    if (k.result === "not_run" && k.n === 0 && !b.cut && !b.missing) { zero.push(c.name); note(c.name); }
+    if (isZeroRun(c, await run(c))) { zero.push(c.name); note(c.name); }
   }
   return zero;
+}
+
+/** True when one finished run of a test command executed zero tests (the shared mapping of 0 tests to not_run; a cut or missing run never counts). */
+export function isZeroRun(c: { cmd: string; args: string[] }, b: { ok: boolean; cut: boolean; missing: boolean; out: string }): boolean {
+  const last = c.args[c.args.length - 1] ?? "";
+  const k = classifyCheck({ kind: "test", ok: b.ok, cut: b.cut, missing: b.missing, out: b.out, ...goRunner(c.cmd, c.args), path: /\.[cm]?[jt]s$/.test(last) ? last : undefined });
+  return k.result === "not_run" && k.n === 0 && !b.cut && !b.missing;
 }
 
 /** FC-WALL-PHANTOM-PATH: a symlink ADDED by the change (status A, or T where a regular file became a link; a retargeted link, M, is not) or an added submodule pointer (mode 160000) makes a missing path appear without implementing anything. NOT PROVEN by name unless the plan asks for one: only the words symlink(s) / submodule(s), and not negated ("no symlink", "do not add a symlink", "without a submodule"). Input is the raw diff-tree -z list (meta, path pairs). */
@@ -192,66 +197,4 @@ export function addedSymlinkNotes(rawDiff: string[], planText: string | null): s
     else if (f[1] === "160000" && (st === "A" || st === "T") && !asks("submodule")) out.push(`submodule pointer added by the change (it can stand in for missing work; the plan did not ask for one): ${p}`);
   }
   return out;
-}
-
-const MANIFEST = /(?:^|\/)(?:package\.json|(?:[^/]*requirements[^/]*|constraints[^/]*)\.(?:txt|in)|requirements\/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|Pipfile|setup\.py|setup\.cfg|go\.mod|Cargo\.toml|Gemfile|composer\.json|pom\.xml|build\.gradle(?:\.kts)?|[^/]+\.csproj|mix\.exs|pubspec\.yaml|deno\.jsonc?|pnpm-workspace\.yaml)$/i;
-const LOCKFILE = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Pipfile\.lock|uv\.lock|go\.sum|Cargo\.lock|Gemfile\.lock|composer\.lock|mix\.lock|pubspec\.lock)$/i;
-const lineSet = (t: string): Set<string> => new Set(t.split(/\r?\n/).map((l) => l.trim().replace(/,$/, "").trim()).filter(Boolean));
-/**
- * FC-REPO-SKIPPED-TEST-DOWNGRADES review fix: the base rerun links HEAD's installed dependency dirs, so a run that REMOVED or
- * re-versioned a dependency makes an untouched test look skipped on a base where it really runs. Returns the changed manifests that
- * removed or altered a dependency line (an added-only manifest returns nothing; a trailing-comma move is not a change) and every
- * lockfile changed with no changed manifest in the SAME folder (fail closed). Line sets, not a parser, so it holds for every ecosystem.
- */
-export function depsChangedBeyondAdditions(repoDir: string, baseSha: string, changed: string[]): string[] {
-  const out: string[] = [], dir = (f: string): string => f.slice(0, f.lastIndexOf("/") + 1), manifests = changed.filter((f) => MANIFEST.test(f));
-  for (const f of manifests) {
-    let base = "", head = "";
-    try { base = safeGit(repoDir, ["show", `${baseSha}:./${f}`], { timeout: 20000, maxBuffer: 64 << 20 }); } catch { /* a new manifest has no base text */ }
-    try { head = readFileSync(join(repoDir, f), "utf8"); } catch { /* a deleted manifest has no head text */ }
-    const h = lineSet(head);
-    if ([...lineSet(base)].some((l) => !h.has(l))) out.push(f);
-  }
-  for (const f of changed) if (LOCKFILE.test(f) && !manifests.some((m) => dir(m) === dir(f))) out.push(f);
-  return out;
-}
-
-/**
- * FC-REPO-SKIPPED-TEST-DOWNGRADES second review fix: manifest text cannot see untracked environment edits (rm node_modules/x, pip uninstall),
- * and zeroOnBase links exactly node_modules and .venv from the head checkout. This fingerprints those dirs (every node_modules / .venv up to
- * 3 levels below `repoDir`, never inside a node_modules): node_modules as name@version read from each package.json (scoped included),
- * .venv as the *.dist-info and *.egg-info names under site-packages. Entries are "<dir>::<item>"; intake stores them, verify recomputes.
- */
-export function depsFingerprint(repoDir: string): string[] {
-  const out: string[] = [];
-  const names = (d: string): string[] => { try { return readdirSync(d); } catch { return []; } };
-  const nm = (rel: string, d: string): void => {
-    for (const n of names(d)) {
-      if (n.startsWith(".")) continue;
-      for (const q of n.startsWith("@") ? names(join(d, n)).map((x) => `${n}/${x}`) : [n]) {
-        let v = "?"; try { v = (JSON.parse(readFileSync(join(d, q, "package.json"), "utf8")) as { version?: string }).version ?? "?"; } catch { /* not a package dir */ }
-        out.push(`${rel}::${q}@${v}`);
-      }
-    }
-  };
-  const venv = (rel: string, d: string): void => {
-    for (const lib of ["Lib", ...names(join(d, "lib")).map((x) => `lib/${x}`)]) for (const n of names(join(d, lib, "site-packages"))) if (/\.(?:dist|egg)-info$/.test(n)) out.push(`${rel}::${n}`);
-  };
-  const walk = (rel: string, depth: number): void => {
-    for (const e of readdirSync(join(repoDir, rel), { withFileTypes: true })) {
-      if (!e.isDirectory() && !e.isSymbolicLink()) continue;
-      const r = rel ? `${rel}/${e.name}` : e.name;
-      if (e.name === "node_modules") nm(r, join(repoDir, r));
-      else if (e.name === ".venv") venv(r, join(repoDir, r));
-      else if (e.isDirectory() && depth < 3 && e.name !== ".git" && e.name !== ".loki") walk(r, depth + 1);
-    }
-  };
-  try { walk("", 0); } catch { /* unreadable: an empty list still differs from a populated intake */ }
-  return out.sort();
-}
-/** True only when `intake` is a recorded fingerprint and every entry in it is still present (a pure superset: installs that only ADD packages keep the excusal; a removal, re-version or a missing fingerprint withholds). */
-export function depsEnvKept(repoDir: string, intake: unknown): boolean {
-  if (!Array.isArray(intake) || !intake.every((x) => typeof x === "string")) return false;
-  const now = new Set(depsFingerprint(repoDir));
-  return (intake as string[]).every((x) => now.has(x));
 }
