@@ -104,7 +104,7 @@ describe("FC-PR-BODY-PUBLIC-HYGIENE", () => {
     expect(asked).toContain("--max-iterations 08");
   });
   const card = { intent_card: ["What I think you want: Make leading-zero values enforce the cap.", "Acceptance: a"] };
-  const askedOf = (task: string, plan?: object) => { const b = renderReviewerBody({ ...realIn, outputs: { ...real, intake: { task }, ...(plan ? { plan } : {}) } }); return b.slice(0, b.indexOf("## What changed")); };
+  const askedOf = (task: string, plan?: Record<string, unknown>) => { const b = renderReviewerBody({ ...realIn, outputs: { ...real, intake: { task }, ...(plan ? { plan } : {}) } }); return b.slice(0, b.indexOf("## What changed")); };
   it("uses the intent card line only when nothing but template text remains", () => {
     const s = askedOf(["### Preflight Checklist", "- [x] I have searched existing issues", "- [x] I am using the latest version of Claude Code"].join("\n"), card);
     expect(s).toContain("- Make leading-zero values enforce the cap.");

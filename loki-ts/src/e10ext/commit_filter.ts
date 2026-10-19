@@ -6,8 +6,7 @@ import { installOwned } from "../project_model/install.ts";
 import { runFormatters } from "../runner/repo_profile.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 
-/** A Wall test file: the commit stage never publishes it. */
-export const WALL_FILE = /(^|\/)loki_wall_[^/]*$/;
+export const WALL_FILE = /(^|\/)loki_wall_[^/]*$/; // a Wall test file: the commit stage never publishes it
 export type Staged = { st: string; f: string };
 
 /** Parses `git diff --cached --name-status --no-renames -z` output. */

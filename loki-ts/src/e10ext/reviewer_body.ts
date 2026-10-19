@@ -19,8 +19,7 @@ function acceptance(all: string[]): string[] {
   return at >= 0 && sect.some(isItem) ? sect : all; // the issue's own acceptance section is the contract when it has items
 }
 function criteria(task: string): string[] {
-  const kept = stripTemplate(task.split("\n").map((l) => l.trim()).filter(Boolean)), lines = acceptance(kept);
-  if (kept.every((l) => /^#+\s/.test(l))) return []; // nothing but template text was left
+  const kept = stripTemplate(task.split("\n").map((l) => l.trim()).filter(Boolean)), lines = acceptance(kept); if (kept.every((l) => /^#+\s/.test(l))) return []; // nothing but template text was left
   const items = lines.filter((l) => /^([-*+]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, ""));
   return more((items.length > 0 ? items : lines.slice(0, 1)).map(clip), MAX_CRITERIA);
 }
@@ -46,9 +45,7 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   const files = changed.length > 0 ? changed.map((f) => `- ${f}`) : planned.length > 0 ? [`- Files in scope (planned, no diff recorded): ${planned.slice(0, MAX_FILES).join(", ")}${planned.length > MAX_FILES ? ` (+${planned.length - MAX_FILES} more)` : ""}`] : [], planText = i.outputs.plan?.["plan"];
   const why = title || (task.split("\n")[0] ?? "") || (typeof planText === "string" ? (planText.split("\n").find((l) => l.trim()) ?? "") : "");
   const il = intentLine(i.outputs.plan?.["intent_card"]), cr = task ? criteria(task).map((c) => `- ${c}`) : [], asked = cr.length > 0 ? cr : il ? [`- ${clip(il)}`] : []; // the intent line stands in only when the issue left nothing but template text
-  const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), ""];
-  L.push("## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`);
-  L.push(...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), "");
+  const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), "", "## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`, ...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), ""];
   L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point
   L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
