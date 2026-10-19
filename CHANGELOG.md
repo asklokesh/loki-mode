@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.89 (2026-10-19)
+
+### Fixed
+- Added regression coverage for how the Wall finds a test's package root when a project model is known, so a stale model that omits a package keeps reporting paths that do not exist instead of silently accepting them. No behaviour change. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.88 (2026-10-19)
 
 ### Fixed
