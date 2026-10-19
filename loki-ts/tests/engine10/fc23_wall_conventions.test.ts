@@ -222,6 +222,16 @@ describe("FC-WALL-OUT-OF-REPO-TARGET", () => {
     await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
     expect(n).toBe(1);
   });
+  test("re-ask respects budget: no rewrite session at the cap (file discarded); still re-asked while budget remains", async () => {
+    for (const over of [true, false]) {
+      const repoDir = cjsRepo(); let n = 0;
+      const ctx = wallCtx(repoDir, (o) => { if (o.iterationId?.endsWith("-oor")) n++; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), INSTALLED); });
+      ctx.overCap = () => over;
+      const r = await runWall(ctx, new AbortController().signal, { baseRunner: { run: () => ({ pass: 0, fail: 1 }) } });
+      expect(n > 0).toBe(!over); // counts only the -oor rewrite sessions
+      expect(JSON.stringify(r.data.discarded)).toContain("outside the repo");
+    }
+  });
 });
 
 // Header and helpers of the Wall file loki 11.17.77 wrote for anthropics/claude-code#81826 (run e10-20261019T064138Z-a7ca; base tree ef7bfdc has no plugins/ralph-loop).
