@@ -2653,3 +2653,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T12:36Z (CoS) v11.17.93
 - 11.17.93: FC-WALL-PHANTOM-PATH walk-up sibling, 4d7b7abf4 + 1de873678 (cherry-picks of 09fef8ead, 3e2b7b492). HIGH opus review round 1 BLOCK (FP-A..D2 reproduced), round 2 APPROVE: gate 210/0 + tests/util 461/0, tsc 0 non-control-plane, 3 mutations red. Field case run e10-20261019T121849Z-848d reports plugins/ralph-loop.
+
+## 2026-10-19T13:25Z (CoS) v11.17.94
+- 11.17.94: FC-OUTCOME-FLOOD 6e48cea46 (from 29cf26410; field run e10-20261019T130749Z-f11c FireLater#20 printed ~300 pre-red entries). TL APPROVE: digest input untouched, dedupe mutation 5 red, gate 872 pass 0 fail, tsc clean.
