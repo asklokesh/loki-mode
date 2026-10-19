@@ -249,10 +249,10 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   // No shell parser: a `||`, a quote or a paren anywhere leaves every install in the whole command as written.
   const whole = flat.includes("||") ? "fallback masks install failure" : /['"()`]/.test(flat) ? "unparsed shell construct" : null;
   const parts = flat.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
-  // Shell reads `a && b || c` as `(a && b) || c`: a `||` masks a failure anywhere earlier in its `;`/newline-separated list.
-  const listOf: number[] = []; let li = 0;
-  parts.forEach((p, k) => { listOf[k] = li; if (k % 2 === 1 && /[;\n]/.test(p)) li++; });
-  const masked = new Set(parts.flatMap((p, k) => (k % 2 === 1 && p.includes("||") ? [listOf[k]!] : [])));
+  // runDetached runs `bash -c` without -e: a `;` or newline command after an install masks its failure, so only an install joined to
+  // everything after it by `&&` is rewritten.
+  const lastSemi = parts.reduce((m, p, k) => (k % 2 === 1 && /[;\n]/.test(p) ? k : m), -1);
+  let later = false;
   const notes: string[] = [];
   let hits = 0, locked = true, rewritten = false, cur: string | null = realpathSync(cwd);
   const out = parts.map((seg, k) => {
@@ -267,7 +267,8 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
     const rule = LOCK_RULES.find((r) => r.tool === tool && r.subs.includes(sub));
     if (!rule) return seg;
     hits++;
-    if (whole || masked.has(listOf[k]!)) { locked = false; notes.push(whole ?? "fallback masks install failure"); return seg; }
+    if (whole) { locked = false; notes.push(whole); return seg; }
+    if (k < lastSemi) { later = true; locked = false; notes.push("later command masks install failure"); return seg; }
     const rest = w.slice(e + (hasSub ? 2 : 1));
     if (rest.some((x) => !x.startsWith("-"))) { locked = false; notes.push(`${tool} ${sub} names packages or targets, kept as written`); return seg; }
     if (cur === null) { locked = false; notes.push(`${tool} runs in a directory that cannot be resolved, kept as written`); return seg; }
@@ -282,7 +283,7 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
     return [...env, ...frozenEnv, ...rule.build(sub, rest, { berry: isYarnBerry(dir) })].join(" ");
   });
   if (hits === 0) return { cmd: modelCmd, locked: false, note: "install not lockfile-locked: no lockfile rule matches this command", rewritten: false };
-  return { cmd: rewritten ? out.join("") : modelCmd, locked, rewritten, ...(!locked ? { note: `install not lockfile-locked: ${notes.join("; ")}` } : rewritten ? { note: "install rewritten to its lockfile-frozen form" } : {}) };
+  return { cmd: rewritten && !later ? out.join("") : modelCmd, locked, rewritten: rewritten && !later, ...(!locked ? { note: `install not lockfile-locked: ${notes.join("; ")}` } : rewritten ? { note: "install rewritten to its lockfile-frozen form" } : {}) };
 }
 
 /** One short honest line from the install output (L3): the last non-empty line, whitespace collapsed. */

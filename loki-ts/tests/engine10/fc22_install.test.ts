@@ -374,9 +374,17 @@ describe("lockedInstall (locked, reproducible install)", () => {
       expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
       expect(r.note).toContain(note);
     }
-    // without ||, quotes or parens, ; and newline lists are still split and rewritten
-    expect(lockedInstall(repo, repo, "npm install; npm run build").cmd).toBe("npm ci; npm run build");
-    expect(lockedInstall(repo, repo, "npm install\nnpm run build").cmd).toBe("npm ci\nnpm run build");
+    // runDetached runs bash -c without -e: a later ; or newline command masks an install failure
+    for (const cmd of ["npm install; echo done", "npm install\necho done", "npm install; true", "npm install && echo ok; true", "npm install;exit 0", "set +e; npm install; exit 0"]) {
+      const r = lockedInstall(repo, repo, cmd);
+      expect([r.cmd, r.locked, r.rewritten]).toEqual([cmd, false, false]);
+      expect(r.note).toContain("later command masks install failure");
+    }
+    expect(lockedInstall(repo, repo, "npm install && true").cmd).toBe("npm ci && true");
+    expect(lockedInstall(repo, repo, "cd .; npm install").cmd).toBe("cd .; npm ci");
+    // separators before the install are fine
+    expect(lockedInstall(repo, repo, "npm install; npm run build").cmd).toBe("npm install; npm run build");
+    expect(lockedInstall(repo, repo, "npm install\nnpm run build").cmd).toBe("npm install\nnpm run build");
   });
   test("uv --frozen and pipenv sync are rewritten to forms that fail on a stale lock", () => {
     put(repo, "uv.lock", "Pipfile.lock");
