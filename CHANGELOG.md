@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.75 (2026-10-19)
+
+### Fixed
+- An untouched impacted test that runs zero tests on the base commit as well as on head (for example a `describe.skip` suite) is now reported as informational ("skipped on base (excused): <check>") instead of NOT PROVEN, because the change did not cause the skip (FC-ZERO-ON-BASE). The excusal is deliberately narrow so it can never hide a real regression: it applies only when the run changed test files alone and no test config, and it is withheld whenever installed dependencies could load the changed code on base (any `node_modules` link at any depth that really resolves inside the repo, or a `.venv` editable install, `.pth`, `direct_url.json` or editable finder naming the repo, with percent-encoded and symlinked spellings matched). pnpm workspace repos are therefore never excused, and a run that edits source code keeps NOT PROVEN by design. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.74 (2026-10-19)
 
 ### Fixed

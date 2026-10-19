@@ -2596,3 +2596,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T03:16Z (CoS) v11.17.74
 - 11.17.74: D106 follow-up, NODE_OPTIONS/BASH_ENV/ENV refused like PATH. af838b55 4284ae1fb cherry-picked. HIGH a1168a6d round 7 APPROVE: 4 files 5+/5-, probes 8 refused, no over-match, fc22_install+intake+budget 145 pass 0 fail; red 56/1 with source reverted.
+
+## 2026-10-19T03:20Z (CoS) v11.17.75
+- 11.17.75: FC-ZERO-ON-BASE. a849c264 commits 9a4267335..58bb86a73 cherry-picked as 2a52da847..13b0b64c6 plus unused-import drop. HIGH a6dc6f16: BLOCK x4 (workspace link, nested links, venv spellings, spelled-target exemption), APPROVE round 5: attack set 11/0, verify_prered+seal+verify+budget 209/0. On main after cherry-pick: same 4 suites 209 pass 0 fail, tsc no engine10/base_guard errors.
