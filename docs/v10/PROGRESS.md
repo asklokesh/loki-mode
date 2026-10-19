@@ -2629,3 +2629,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T10:34Z (CoS) v11.17.85
 - 11.17.85: main Tests fix-forward (red on c5358b462..6a710258f): 65259575d WF-GATE-DEDUP drift, 74862da13 app_probe docker stub, 0a897c42c L0 guard breach (MANIFESTS literal) in conventions.ts. HIGH opus APPROVE: mutations caught (gate pytest, app_probe text, L0 literal), engine10 split 761+1828 pass 0 fail, util 459/0, tsc rc=0; route_matrix_mutation unverified (timeout). Follow-ups filed: nameless-manifest fallback false phantom, \w*_modules too broad, chained pip+pytest bypass.
+
+## 2026-10-19T10:37Z (CoS) v11.17.86
+- 11.17.86: FC-WALL-PHANTOM-PATH in-testdir sibling (f2b930627 cherry-picked as 3f75ea650 onto 0a897c42c). HIGH opus APPROVE: revert red 32/1, gates 150 pass 0 fail, end-to-end runWall re-ask then discard verified on the #81826 shape, tsc 0 errors in engine10/project_model; route_matrix_mutation unverified (50 min suite). Non-blocking: helper-generated fixture with a root fixtures/ dir can cost one re-ask.

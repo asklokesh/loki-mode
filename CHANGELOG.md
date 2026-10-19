@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.86 (2026-10-19)
+
+### Fixed
+- A Wall test that points at a directory inside the test folder which does not exist there, but whose name exists at the repository root (for example `tests/plugins/ralph-loop` when the real code lives under `plugins/`), is now caught. The author is asked once to point it at the real code, instead of the run adding a symlink or a stub to make the path exist. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.85 (2026-10-19)
 
 ### Fixed
