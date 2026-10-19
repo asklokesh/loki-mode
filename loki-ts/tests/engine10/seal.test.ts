@@ -479,6 +479,17 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.checks.find((c) => c.name === "node:o.test.js")?.result).toBe("fail"); // never recorded as pass
   }, 30000);
 
+  test("FC-ZERO-ON-BASE: a not_run check listed in verify.skipped_on_base is not NOT PROVEN; an unlisted not_run still is", async () => {
+    noKey();
+    const { repo, base } = makeRepo("zerobase");
+    const mk = (skipped: string[]) => ({ verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", n: 1, duration_s: 1 }, { name: "node:skip.test.js", cmd: "node --test", result: "not_run", duration_s: 1 }, { name: "node:other.test.js", cmd: "node --test", result: "not_run", duration_s: 1 }], flaky: [], wall_passed: true, skipped_on_base: skipped } });
+    const { ctx } = ctxFor(repo, base, "claude", mk(["node:skip.test.js"]));
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).not.toContain("not run: node:skip.test.js");
+    expect(r.not_proven).toContain("not run: node:other.test.js");
+  }, 30000);
+
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a
   // system-interpreter run. Red on pre-B1 code: verdictOf never looked at o.verify.not_proven,
   // so this sealed VERIFIED with no "tests ran on the system interpreter" line in the receipt.

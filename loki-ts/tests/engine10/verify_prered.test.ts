@@ -153,3 +153,34 @@ describe("engine10 verify: bare-filename test name (A-111b)", () => {
     expect(r.result).toBe("not_run");
   }, 30_000);
 });
+
+describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
+  const SKIPPED = "// deliberately skipped, needs a real DB\n";
+  type Z = Out & { skipped_on_base: string[] };
+  test("an untouched impacted file that runs zero tests on base too is listed as skipped_on_base, with an event", async () => {
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "skip.test.js": SKIPPED }, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")]);
+    const ev: string[] = []; (ctx as unknown as { emit: (t: string) => void }).emit = (t) => { ev.push(t); };
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual(["node:skip.test.js"]);
+    expect(ev).toContain("test.skipped_on_base");
+  }, 60_000);
+  test("a file the run edited that executes zero tests stays fail-closed (not exempt)", async () => {
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "skip.test.js": SKIPPED }, { "skip.test.js": SKIPPED + "// edited\n" }, [node("skip.test.js")]);
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("a Wall test that executes zero tests is never exempt", async () => {
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "skip.test.js": SKIPPED }, { "sum.js": SUM_OK }, [node("skip.test.js")], ["skip.test.js"]);
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("zero on head but tests ran on base (file untouched): stays fail-closed", async () => {
+    // head breaks what the file loads into executing nothing: the helper is replaced so the (unchanged) test file registers no test
+    const gated = T + "if (!require('./gate.js').off) t('runs on base',()=>{});\n";
+    const { ctx } = repoWith({ "gate.js": "exports.off=false;\n", "gated.test.js": gated }, { "gate.js": "exports.off=true;\n" }, [node("gated.test.js")]);
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+});
