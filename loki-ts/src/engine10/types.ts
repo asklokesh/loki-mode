@@ -2,9 +2,7 @@
 // are injected through RunContext so each module can be unit-tested with fakes.
 import type { SessionTier } from "../runner/types.ts";
 export type Obj = Record<string, unknown>;
-export type StageName =
-  | "intake" | "plan" | "wall" | "implement" | "verify" | "fix"
-  | "commit" | "seal" | "pr" | "deep";
+export type StageName = "intake" | "plan" | "wall" | "implement" | "verify" | "fix" | "commit" | "seal" | "pr" | "deep";
 export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null; limitS: number }>> = {
   intake: { targetS: 15, limitS: 60 },
   plan: { targetS: 45, limitS: 90 },
@@ -23,17 +21,14 @@ const warnedCap = new Set<string>();
 /** Warn once per source+value on stderr that a set cap is unusable and the default applies. Never loosens the cap. */
 export function warnBadCap(source: string, raw: string): void {
   const key = `${source}=${raw}`;
-  if (warnedCap.has(key)) return;
-  warnedCap.add(key);
+  if (warnedCap.has(key)) return; warnedCap.add(key);
   process.stderr.write(`loki: ignoring invalid ${source}="${raw}" (need a number > 0); using the default cap of ${DEFAULT_CAP_S}s\n`);
 }
 /** LOKI_E10_CAP_S as a usable cap: finite and positive, else null ("Infinity", NaN, 0, negatives are rejected). A set but unusable value warns once on stderr; unset or blank is silent. */
 export function envCapS(raw: string | undefined): number | null {
   if (raw === undefined || raw.trim() === "") return null;
-  const n = Number(raw);
-  if (Number.isFinite(n) && n > 0) return n;
-  warnBadCap("LOKI_E10_CAP_S", raw);
-  return null;
+  const n = Number(raw); if (Number.isFinite(n) && n > 0) return n;
+  warnBadCap("LOKI_E10_CAP_S", raw); return null;
 }
 export const BACKSTOP_GRACE_S = 30;
 export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); } // supervisor.ts's backstop; machine.ts's soft cap stays under it
@@ -49,10 +44,7 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
 export interface EventEnvelope<D extends Record<string, unknown> = Record<string, unknown>> {
-  v: 1;
-  seq: number;
-  ts: string;
-  run: string;
+  v: 1; seq: number; ts: string; run: string;
   type: EventType | (string & {});
   stage: StageName | (string & {}) | null;
   data: D;
@@ -63,13 +55,11 @@ export interface StageResult {
   status: "completed" | "failed" | "skipped";
   /** Becomes stage.completed.data (or stage.failed / stage.skipped data). */
   data: Record<string, unknown>;
-  reason?: string;
-  killed?: boolean;
+  reason?: string; killed?: boolean;
 }
 export interface Stage {
   name: StageName;
-  targetS: number | null;
-  limitS: number;
+  targetS: number | null; limitS: number;
   extraLimitS?(ctx: RunContext): number; // time the machine adds to limitS for this run (seal: the planned review box)
   run(ctx: RunContext, signal: AbortSignal): Promise<StageResult>;
 }
@@ -89,8 +79,7 @@ export interface SessionRunOptions {
   iterationId: string; // unique LOKI_ITERATION, e.g. e10-<run-id>-impl
   limitS: number;
   signal: AbortSignal;
-  cwd?: string;
-  disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
+  cwd?: string; disallowedTools?: string; // Q18-04: comma list passed as --disallowedTools (read-only reviewer)
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
   resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
@@ -99,22 +88,16 @@ export interface SessionRunOptions {
 export interface SessionResult {
   exit: number | null; // null when killed before exiting
   markers: SessionMarkers;
-  durationS: number;
-  killed: boolean;
+  durationS: number; killed: boolean;
   /** Optional tail of the agent's own final message (its diagnosis), fed to an escalated fix round. */
   summary?: string;
   /** Tail of the provider's stderr; set by the real runner, read on error exits. */
   stderrTail?: string;
 }
-export interface SessionRunner { // implemented by session.ts (E-07)
-  run(opts: SessionRunOptions): Promise<SessionResult>;
-}
+export interface SessionRunner { run(opts: SessionRunOptions): Promise<SessionResult> } // implemented by session.ts (E-07)
 export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo";
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
-export interface TestRef {
-  runner: RunnerName;
-  path: string; // relative to repoDir
-}
+export interface TestRef { runner: RunnerName; path: string /* relative to repoDir */ }
 export interface TestMap {
   runners: RunnerName[];
   tests: TestRef[];
