@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { loadReviewStageAgent } from "../../council/role_agents.ts";
 import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
-import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
+import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts"; import { acceptanceLines, acceptancePromptBlock } from "../../util/intent_card.ts";
 import { readRiskRecord } from "../../util/run_summary.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
@@ -58,11 +58,11 @@ export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.Proces
   const cli = reviewCli(p, env);
   return p === "codex"
     ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_TOKEN, "--disallowedTools", REVIEW_GUARD_DENYLIST, ...leanReviewerFlags({ env, flagSupported, tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
+    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_NO_GIT, "--disallowedTools", REVIEW_GUARD_DENYLIST, "--permission-mode", "dontAsk", ...leanReviewerFlags({ env, flagSupported, settingSources: "user", tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
 }
 /** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
 /** FC-XREVIEW-BLIND-TOOLS: tell the reviewer its limits so a sandbox limit is never raised as a concern about the work. */
-export const REVIEW_TOOLS_NOTE = "Your tools are Read, Grep, Glob and a read-only shell (git diff/log/show/status/ls-files/blame, cat, ls, grep, rg, find, head, tail, wc). You cannot edit files or run project code or tests, so trace behaviour by reading the code. If a tool fails or you could not inspect something, say so plainly in your reasons.";
+export const REVIEW_TOOLS_NOTE = "Your tools are Read, Grep, Glob and a read-only shell (cat, ls, grep, rg, find, head, tail, wc). No git commands are available; the diff is in this prompt. You cannot edit files or run project code or tests, so trace behaviour by reading the code. If a tool fails or you could not inspect something, say so plainly in your reasons.";
 export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string; provider: ReviewProvider | null } | null {
   const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };

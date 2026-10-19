@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { acceptanceLines, acceptancePromptBlock } from "../../src/util/intent_card.ts";
-import { REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
+import { REVIEW_ALLOWLIST_NO_GIT, REVIEW_ALLOWLIST_TOKEN, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import { crossReview, minVerdict, parseReview, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
@@ -105,7 +105,7 @@ describe("TEN-COST-06 lean claude judge", () => {
   const sup = () => true;
   it("claude argv carries lean flags and json output", () => {
     const a = reviewArgv("claude", "p", {}, undefined, sup).join(" ");
-    expect(a).toContain("--setting-sources project"); expect(a).toContain("--output-format json");
+    expect(a).toContain("--setting-sources user"); expect(a).toContain("--output-format json");
   });
   it("claude argv uses --bare with an API key", () => {
     expect(reviewArgv("claude", "p", { ANTHROPIC_API_KEY: "k" }, undefined, sup)).toContain("--bare");
@@ -211,7 +211,7 @@ describe("medium default review", () => {
   // FC-XREVIEW-BLIND-TOOLS: the claude reviewer had a blanket Bash deny and a prompt inviting it to run things, so it flagged "my tool output came back empty".
   it("FC-XREVIEW-BLIND-TOOLS: claude reviewer gets the shared read-only shell allowlist and mutation denylist, not a blanket Bash deny", () => {
     const a = reviewArgv("claude", "p", {}, undefined, () => true), at = (f: string) => a[a.indexOf(f) + 1] ?? "";
-    expect(at("--allowedTools")).toBe(REVIEW_ALLOWLIST_TOKEN); expect(at("--disallowedTools")).toBe(REVIEW_GUARD_DENYLIST);
+    expect(at("--allowedTools")).toBe(REVIEW_ALLOWLIST_NO_GIT); expect(at("--disallowedTools")).toBe(REVIEW_GUARD_DENYLIST);
     expect(at("--allowedTools")).toContain("Bash(cat:*)"); expect(at("--disallowedTools").split(",")).not.toContain("Bash");
   });
   it("FC-XREVIEW-BLIND-TOOLS: argv never carries the empty --tools= (it disables every tool); an explicit tool list with Bash is present", () => {
@@ -219,6 +219,22 @@ describe("medium default review", () => {
     expect(a).not.toContain("--tools=");
     expect(a).toContain("--tools=Read,Grep,Glob,Bash");
     expect(a.indexOf("--tools=Read,Grep,Glob,Bash")).toBeGreaterThan(a.indexOf("-p") + 1); // never ahead of the prompt
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: xreview allowlist has no git entry (repo .git/config drivers run programs), shared allowlist keeps git for council", () => {
+    const repo = mkdtempSync(join(tmpdir(), "loki-run-fsmon-")), marker = join(repo, "fsmon-ran");
+    try {
+      mkdirSync(join(repo, ".git"), { recursive: true });
+      writeFileSync(join(repo, ".git", "fsmon.sh"), `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(join(repo, ".git", "fsmon.sh"), 0o755);
+      writeFileSync(join(repo, ".git", "config"), `[core]\n\tfsmonitor = ${join(repo, ".git", "fsmon.sh")}\n`);
+      const a = reviewArgv("claude", "p", {}, undefined, () => true), allow = a[a.indexOf("--allowedTools") + 1]!.split(",");
+      expect(allow.some((t) => t.startsWith("Bash(git"))).toBe(false); expect(allow).toContain("Bash(cat:*)"); expect(allow).toEqual(REVIEW_ALLOWLIST_NO_GIT.split(","));
+      expect(existsSync(marker)).toBe(false); // nothing in the reviewer argv can trigger the configured fsmonitor
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git status:*)"); expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git diff:*)");
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: repo settings cannot widen the reviewer shell (user-only setting sources, dontAsk mode)", () => {
+    const a = reviewArgv("claude", "p", {}, undefined, () => true);
+    expect(a[a.indexOf("--setting-sources") + 1]).toBe("user"); expect(a[a.indexOf("--permission-mode") + 1]).toBe("dontAsk");
   });
   it("FC-XREVIEW-BLIND-TOOLS: denylist closes the write escapes under the read-only allowlist", () => {
     const d = REVIEW_GUARD_DENYLIST.split(",");
@@ -230,6 +246,6 @@ describe("medium default review", () => {
     writeFileSync(stub, `#!/bin/sh\nprintf '%s' "$2" > '${out}'\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`);
     await withEnv(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
     const p = readFileSync(out, "utf8");
-    expect(p).toContain("cannot edit files or run project code or tests"); expect(p).toContain("say so plainly"); expect(p).not.toContain("never report");
+    expect(p).toContain("cannot edit files or run project code or tests"); expect(p).toContain("say so plainly"); expect(p).toContain("No git commands are available"); expect(p).not.toContain("never report");
   });
 });

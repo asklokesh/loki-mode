@@ -342,6 +342,7 @@ export function reviewerModelForTier(opts: {
 // disables every tool (init event shows "tools":[]), so an allowlist is moot.
 export function leanReviewerFlags(opts: {
   tools?: string;
+  settingSources?: string;
   env?: Record<string, string | undefined>;
   flagSupported?: (flag: string) => boolean;
 } = {}): string[] {
@@ -352,7 +353,7 @@ export function leanReviewerFlags(opts: {
   if (env["LOKI_BARE_SUBCALLS"] !== "0" && (env["ANTHROPIC_API_KEY"] ?? "").trim() !== "" && ok("--bare")) {
     out.push("--bare");
   } else {
-    if (ok("--setting-sources")) out.push("--setting-sources", "project");
+    if (ok("--setting-sources")) out.push("--setting-sources", opts.settingSources ?? "project");
     if (ok("--strict-mcp-config")) out.push("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}');
     if (ok("--disable-slash-commands")) out.push("--disable-slash-commands");
   }
@@ -549,6 +550,11 @@ export function sessionStampArgv(runId?: string, iteration?: number): string[] {
 // ---------------------------------------------------------------------------
 export const REVIEW_ALLOWLIST_TOKEN =
   "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git blame:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(wc:*)";
+
+// The shared allowlist minus every git entry: git status/diff/show/log run programs named by
+// the repo's own .git/config and attributes (core.fsmonitor, diff drivers, textconv), so a
+// reviewer that must not mutate the worktree gets no git at all (FC-XREVIEW-BLIND-TOOLS).
+export const REVIEW_ALLOWLIST_NO_GIT = REVIEW_ALLOWLIST_TOKEN.split(",").filter((t) => !t.startsWith("Bash(git ")).join(",");
 
 // Emit the --allowedTools least-privilege grant on reviewer/voter subcalls?
 // DEFAULT ON; opt OUT with LOKI_REVIEW_ALLOWLIST=0; gated on CLI support.
