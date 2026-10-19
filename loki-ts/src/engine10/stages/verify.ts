@@ -127,7 +127,7 @@ type BaseSubtraction = { ids: string[]; names: string[]; weak: string[]; zero: s
  *  A-115: a relevant check that passes with more skipped or deselected tests than base is `weak`: no progress, and the caller lists it in
  *  NOT PROVEN (a skipped target is not a fixed target). Weak also means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):
  *  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.
- *  FC-ZERO-ON-BASE: an untouched, non-Wall, non-relevant check that ran zero tests and also runs zero on base (no test config edit, `zeroOk`) is out.zero, not NOT PROVEN.
+ *  FC-ZERO-ON-BASE: an untouched, non-Wall, non-relevant check that ran zero tests and also runs zero on base (`zeroOk`: no test config edit and the run changed only test files, so the base rerun cannot see head code through workspace or editable links) is out.zero.
  *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
 async function subtractBase(
   ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[],
@@ -262,7 +262,7 @@ export const verifyStage: Stage = {
     if (hold?.missing.length) { for (const m of hold.missing) recordHoldoutTriage(ctx.runDir, { check: "holdout:store", result: "not_run", reason: m }); const k: VerifyCheck = { name: "holdout:store", cmd: "holdout", result: "not_run", duration_s: 0, reason: "holdout store unavailable", owner: "harness" }; checks.push(k); ctx.emit("test.result", "verify", { ...pubHold(k) }); } // C-C4b-c: a store failure is a harness/infrastructure failure (not_run, no fix round), never a test failure the fixer sees; the missing-file text stays out of the log
     const targetNames = new Set([...[...wallTests, ...relevant].map(testCheckName), ...checks.filter(isHold).map((c) => c.name)]); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const cfgChanged = testConfigChanged(ctx.repoDir, ctx.baseSha, changed); // FC-21b: also feeds uncovered_changed
-    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0);
+    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map(testCheckName)), new Set(relevant.map(testCheckName)), signal, cfgChanged.length === 0 && changed.every(isTestFile));
     // REPOMEM: a failing, untouched, non-target test whose every id was already red in the intake baseline (same base commit) is pre-existing: never blocks. Anything else that fails is introduced and always blocks.
     const attr = attribute(ctx.repoDir, ctx.baseSha, checks.filter((c) => c.result === "fail" && !preRed.names.includes(c.name)).map((c) => ({ name: c.name, ids: c.ids, eligible: !targetNames.has(c.name) && !changed.includes(c.name.slice(c.name.indexOf(":") + 1)) })));
     attr.introducedChecks = [...new Set(attr.introducedChecks.map((n) => (isHoldoutCheck(n) ? "holdout" : n)))]; preRed.names.push(...attr.preExistingChecks); preRed.ids.push(...attr.preExistingIds);

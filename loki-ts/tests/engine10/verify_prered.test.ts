@@ -1,9 +1,9 @@
 // A-112: baseline subtract (pre_red never blocks VERIFIED, but only on proof of progress) and A-111b (bare-filename test names).
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
 import { runCheck, verifyStage } from "../../src/engine10/stages/verify.ts";
 import { failIds } from "../../src/engine10/failures.ts";
@@ -24,7 +24,7 @@ function repoWith(base: Record<string, string>, work: Record<string, string>, im
   const dir = mkdtempSync(join(tmpdir(), "e10-prered-"));
   dirs.push(dir);
   git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
-  for (const [f, c] of Object.entries(base)) writeFileSync(join(dir, f), c);
+  for (const [f, c] of Object.entries(base)) { mkdirSync(dirname(join(dir, f)), { recursive: true }); writeFileSync(join(dir, f), c); }
   git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
   const baseSha = git(dir, ["rev-parse", "HEAD"]);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
@@ -158,7 +158,7 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
   const SKIPPED = "// deliberately skipped, needs a real DB\n";
   type Z = Out & { skipped_on_base: string[] };
   test("an untouched impacted file that runs zero tests on base too is listed as skipped_on_base, with an event", async () => {
-    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "skip.test.js": SKIPPED }, { "sum.js": SUM_OK }, [node("sum.test.js"), node("skip.test.js")]);
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "skip.test.js": SKIPPED }, { "sum.test.js": SUM_TEST + "// c\n" }, [node("sum.test.js"), node("skip.test.js")]);
     const ev: string[] = []; (ctx as unknown as { emit: (t: string) => void }).emit = (t) => { ev.push(t); };
     const d = (await run(ctx)).data as unknown as Z;
     expect(d.checks.find((c) => c.name === "node:skip.test.js")?.result).toBe("not_run");
@@ -171,8 +171,16 @@ describe("engine10 verify: zero executed on base too (FC-ZERO-ON-BASE)", () => {
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
   test("a Wall test that executes zero tests is never exempt", async () => {
-    const { ctx } = repoWith({ "sum.js": SUM_BUG, "skip.test.js": SKIPPED }, { "sum.js": SUM_OK }, [node("skip.test.js")], ["skip.test.js"]);
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "skip.test.js": SKIPPED }, { "wall2.test.js": SUM_TEST }, [node("skip.test.js")], ["skip.test.js"]);
     const d = (await run(ctx)).data as unknown as Z;
+    expect(d.skipped_on_base).toEqual([]);
+  }, 60_000);
+  test("workspace link: a source edit the base rerun would observe through node_modules/shared must not excuse a zero (reviewer repro)", async () => {
+    const gated = T + "if (!require('shared').off) t('runs on base',()=>{});\n";
+    const { ctx, dir } = repoWith({ ".gitignore": "node_modules\n", "shared/index.js": "exports.off=false;\n", "gated.test.js": gated }, { "shared/index.js": "exports.off=true;\n" }, [node("gated.test.js")]);
+    mkdirSync(join(dir, "node_modules")); symlinkSync("../shared", join(dir, "node_modules", "shared"));
+    const d = (await run(ctx)).data as unknown as Z;
+    expect(d.checks.find((c) => c.name === "node:gated.test.js")?.result).toBe("not_run");
     expect(d.skipped_on_base).toEqual([]);
   }, 60_000);
   test("zero on head but tests ran on base (file untouched): stays fail-closed", async () => {

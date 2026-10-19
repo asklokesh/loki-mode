@@ -487,7 +487,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.not_proven).not.toContain("not run: node:skip.test.js");
-    expect(r.not_proven).toContain("not run: node:other.test.js");
+    expect(r.not_proven).toContain("not run: node:other.test.js"); expect(r.not_proven).toContain("skipped on base (excused): node:skip.test.js");
   }, 30000);
 
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a

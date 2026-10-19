@@ -214,7 +214,7 @@ export const sealStage: Stage = {
       if (!mine || mine.length !== vl.length || mine.some((n) => !vl.includes(n))) for (const v of vl) dropped.add(v);
     }
     if (verdict !== "VERIFIED") for (const f of uncoveredAfterLimit) notProven.add(`changed, untested after limit: ${f}`);
-    for (const c of checks) if (c.result === "not_run" && !strs(o.verify?.skipped_on_base).includes(c.name)) notProven.add(`not run: ${c.name}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: informational only
+    for (const c of checks) if (c.result === "not_run" && !strs(o.verify?.skipped_on_base).includes(c.name)) notProven.add(`not run: ${c.name}`); for (const n of strs(o.verify?.skipped_on_base)) notProven.add(`skipped on base (excused): ${n}`); // FC-ZERO-ON-BASE: zero on the pristine base too, file untouched: one informational line
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(n);
     for (const n of rcNotes) notProven.add(n);
