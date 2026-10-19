@@ -24,7 +24,7 @@ import { buildMcpConfigArgv } from "./mcp_config.ts";
 // module so engine10 stages and runner/quality_gates.ts share one value without
 // the stages importing the SDK invoker.
 export const REVIEW_GUARD_DENYLIST =
-  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*),Bash(git --exec-path:*),Bash(git diff --output:*),Bash(git diff --output=:*),Bash(git diff --ext-diff:*),Bash(git diff --no-index:*),Bash(git log --output:*),Bash(git log --output=:*),Bash(git log --ext-diff:*),Bash(git show --output:*),Bash(git show --output=:*),Bash(git show --ext-diff:*),Bash(git blame --output:*),Bash(git blame --output=:*),Bash(rg --pre:*),Bash(rg --pre=:*),Bash(rg --pre-glob:*),Bash(rg --pre-glob=:*),Bash(find -delete:*),Bash(find -exec:*),Bash(find -execdir:*),Bash(find -ok:*),Bash(find -fprint:*),Bash(find -fprintf:*),Bash(find -fls:*),Bash(git * --output*),Bash(git * --ext-diff*),Bash(git * --no-index*),Bash(rg * --pre*),Bash(find * -delete*),Bash(find * -exec*),Bash(find * -execdir*),Bash(find * -fprint*),Bash(find * -fls*),Bash(find * -ok*)";
+  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*),Bash(git --exec-path:*),Bash(git diff --output:*),Bash(git diff --output=:*),Bash(git diff --ext-diff:*),Bash(git diff --no-index:*),Bash(git log --output:*),Bash(git log --output=:*),Bash(git log --ext-diff:*),Bash(git show --output:*),Bash(git show --output=:*),Bash(git show --ext-diff:*),Bash(git blame --output:*),Bash(git blame --output=:*),Bash(rg --pre:*),Bash(rg --pre=:*),Bash(rg --pre-glob:*),Bash(rg --pre-glob=:*),Bash(rg --hostname-bin:*),Bash(rg --hostname-bin=:*),Bash(find -delete:*),Bash(find -exec:*),Bash(find -execdir:*),Bash(find -ok:*),Bash(find -fprint:*),Bash(find -fprintf:*),Bash(find -fls:*),Bash(git * --output*),Bash(git * --ext-diff*),Bash(git * --no-index*),Bash(rg * --pre*),Bash(rg * --hostname-bin*),Bash(rg --pre*),Bash(rg --hostname-bin*),Bash(find * -delete*),Bash(find * -exec*),Bash(find * -execdir*),Bash(find * -fprint*),Bash(find * -fls*),Bash(find * -ok*)";
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -342,7 +342,7 @@ export function reviewerModelForTier(opts: {
 // disables every tool (init event shows "tools":[]), so an allowlist is moot.
 export function leanReviewerFlags(opts: {
   tools?: string;
-  settingSources?: string;
+  settingSources?: string; // "" loads no source (not repo, not user: permissions.allow, hooks, CLAUDE.md)
   env?: Record<string, string | undefined>;
   flagSupported?: (flag: string) => boolean;
 } = {}): string[] {

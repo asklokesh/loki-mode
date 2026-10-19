@@ -58,7 +58,7 @@ export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.Proces
   const cli = reviewCli(p, env);
   return p === "codex"
     ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_NO_GIT, "--disallowedTools", REVIEW_GUARD_DENYLIST, "--permission-mode", "dontAsk", ...leanReviewerFlags({ env, flagSupported, settingSources: "user", tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
+    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", REVIEW_ALLOWLIST_NO_GIT, "--disallowedTools", REVIEW_GUARD_DENYLIST, "--permission-mode", "dontAsk", ...leanReviewerFlags({ env, flagSupported, settingSources: "", tools: "Read,Grep,Glob,Bash" }), "--output-format", "json"];
 }
 /** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
 /** FC-XREVIEW-BLIND-TOOLS: tell the reviewer its limits so a sandbox limit is never raised as a concern about the work. */

@@ -105,7 +105,7 @@ describe("TEN-COST-06 lean claude judge", () => {
   const sup = () => true;
   it("claude argv carries lean flags and json output", () => {
     const a = reviewArgv("claude", "p", {}, undefined, sup).join(" ");
-    expect(a).toContain("--setting-sources user"); expect(a).toContain("--output-format json");
+    expect(a).toContain("--setting-sources  "); expect(a).toContain("--output-format json");
   });
   it("claude argv uses --bare with an API key", () => {
     expect(reviewArgv("claude", "p", { ANTHROPIC_API_KEY: "k" }, undefined, sup)).toContain("--bare");
@@ -232,14 +232,25 @@ describe("medium default review", () => {
     } finally { rmSync(repo, { recursive: true, force: true }); }
     expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git status:*)"); expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git diff:*)");
   });
-  it("FC-XREVIEW-BLIND-TOOLS: repo settings cannot widen the reviewer shell (user-only setting sources, dontAsk mode)", () => {
+  it("FC-XREVIEW-BLIND-TOOLS: the argv the reviewer CLI really receives has no git allowlist entry, and a configured fsmonitor never runs", async () => {
+    const { ctx, stub } = mk("medium"), out = join(root, "real-argv.txt"), repo = (ctx as { repoDir: string }).repoDir, marker = join(repo, "fsmon-ran");
+    writeFileSync(join(repo, ".git", "fsmon.sh"), `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(join(repo, ".git", "fsmon.sh"), 0o755);
+    Bun.spawnSync(["git", "-C", repo, "config", "core.fsmonitor", join(repo, ".git", "fsmon.sh")]);
+    writeFileSync(stub, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > '${out}'\nprintf '%s\\n' '{"type":"result","result":"VERDICT: PASS"}'\n`); chmodSync(stub, 0o755);
+    await withEnv(stub, {}, async () => { await crossReview(ctx, "VERIFIED", "HEAD"); });
+    const argv = readFileSync(out, "utf8").split("\n"), allow = argv[argv.indexOf("--allowedTools") + 1] ?? "";
+    expect(allow).toContain("Bash(cat:*)"); expect(allow).not.toContain("Bash(git"); expect(argv).toContain("--permission-mode");
+    const i = argv.indexOf("--setting-sources"); if (i >= 0) expect(argv[i + 1]).toBe("");
+    expect(existsSync(marker)).toBe(false);
+  });
+  it("FC-XREVIEW-BLIND-TOOLS: repo settings cannot widen the reviewer shell (no setting sources, dontAsk mode)", () => {
     const a = reviewArgv("claude", "p", {}, undefined, () => true);
-    expect(a[a.indexOf("--setting-sources") + 1]).toBe("user"); expect(a[a.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(a[a.indexOf("--setting-sources") + 1]).toBe(""); // no source: neither repo nor user settings (permissions.allow, hooks, CLAUDE.md) load expect(a[a.indexOf("--permission-mode") + 1]).toBe("dontAsk");
   });
   it("FC-XREVIEW-BLIND-TOOLS: denylist closes the write escapes under the read-only allowlist", () => {
     const d = REVIEW_GUARD_DENYLIST.split(",");
-    for (const g of ["rg --pre", "rg --pre=", "rg --pre-glob", "rg --pre-glob=", "git diff --output", "git diff --output=", "git log --output", "git log --output=", "git show --output", "git show --output=", "git diff --ext-diff", "git -c", "git --exec-path", "find -delete", "find -exec"]) expect(d).toContain(`Bash(${g}:*)`);
-    for (const g of ["git * --output*", "git * --ext-diff*", "rg * --pre*", "find * -delete*", "find * -exec*"]) expect(d).toContain(`Bash(${g})`);
+    for (const g of ["rg --pre", "rg --pre=", "rg --pre-glob", "rg --pre-glob=", "rg --hostname-bin", "git diff --output", "git diff --output=", "git log --output", "git log --output=", "git show --output", "git show --output=", "git diff --ext-diff", "git -c", "git --exec-path", "find -delete", "find -exec"]) expect(d).toContain(`Bash(${g}:*)`);
+    for (const g of ["git * --output*", "git * --ext-diff*", "rg * --pre*", "rg * --hostname-bin*", "rg --pre*", "rg --hostname-bin*", "find * -delete*", "find * -exec*"]) expect(d).toContain(`Bash(${g})`);
   });
   it("FC-XREVIEW-BLIND-TOOLS: reviewer prompt describes only real tools and never forbids reporting an inspection failure", async () => {
     const { ctx, stub } = mk("medium"), out = join(root, "blind-prompt.txt");
