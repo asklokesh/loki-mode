@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Image provenance: signing and SBOM must run in the job that PUBLISHES the
-# image, and the docs must not overclaim.
+# Image provenance: signing must run in the job that PUBLISHES the image
+# manifest, and the docs must not overclaim (the image SBOM was dropped after
+# v11.17.98 when release.yml was cut to the minimal publish set).
 #
 # WHY THIS TEST EXISTS. provenance.yml carried a header comment stating it
 # "signs npm tarball + Docker image digests". That comment was true of the YAML
@@ -26,31 +27,31 @@ FAIL=0
 ok()   { printf 'PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 bad()  { printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
-# Extract the publish-docker job body: from its declaration to the next
+# Extract the docker job body: from its declaration to the next
 # top-level job (two-space indent + name + colon). Signing that lives anywhere
 # else in the file is exactly the bug this test exists to prevent, so every
 # assertion below runs against THIS slice, never the whole file.
 JOB="$(mktemp)"
 trap 'rm -f "$JOB"' EXIT
 awk '
-    /^  publish-docker:/ { injob = 1 }
-    injob && /^  [a-zA-Z_-]+:[[:space:]]*$/ && !/^  publish-docker:/ { exit }
+    /^  docker:/ { injob = 1 }
+    injob && /^  [a-zA-Z_-]+:[[:space:]]*$/ && !/^  docker:/ { exit }
     injob { print }
 ' "$REL" > "$JOB"
 
 if [ ! -s "$JOB" ]; then
-    bad "could not locate the publish-docker job in release.yml"
+    bad "could not locate the docker job in release.yml"
     printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
     exit 1
 fi
-ok "located the publish-docker job"
+ok "located the docker job"
 
 # 1. Signing must be in the publishing job. This is the whole fix: if the image
 #    published, the signature ran, with no trigger in between to not fire.
 if grep -q 'cosign sign --yes' "$JOB"; then
-    ok "image signing runs inside publish-docker"
+    ok "image signing runs inside docker job"
 else
-    bad "no 'cosign sign --yes' in publish-docker -- signing has moved back out of the publishing job"
+    bad "no 'cosign sign --yes' in docker job -- signing has moved back out of the publishing job"
 fi
 
 # 2. Keyless signing needs an OIDC token. Without id-token: write, cosign fails
@@ -60,15 +61,15 @@ fi
 # permission cannot satisfy this check. An unanchored grep here passed a
 # mutation that deleted the actual permission line and left the comment.
 if grep -qE '^[[:space:]]+id-token: write' "$JOB"; then
-    ok "publish-docker requests id-token: write (keyless signing needs it)"
+    ok "docker job requests id-token: write (keyless signing needs it)"
 else
-    bad "publish-docker lacks 'id-token: write' -- keyless cosign will fail at runtime"
+    bad "docker job lacks 'id-token: write' -- keyless cosign will fail at runtime"
 fi
 
 # 3. Sign the DIGEST, never a tag. A signature over a mutable tag attests to
 #    whatever that tag means today, which is not a guarantee at all.
 if grep -qE 'loki-mode@\$\{DIGEST\}|loki-mode@\$\{\{ steps\.build\.outputs\.digest \}\}' "$JOB"; then
-    ok "signing and attestation target the image digest, not a tag"
+    ok "signing targets the image digest, not a tag"
 else
     bad "signing does not reference an image digest -- a tag-bound signature is not a content guarantee"
 fi
@@ -82,24 +83,7 @@ else
     bad "build step has no 'id: build' -- steps.build.outputs.digest cannot resolve"
 fi
 
-# 5. The SBOM must describe the IMAGE. The pre-existing SBOM workflow describes
-#    the npm tarball, which omits the OS layer, Python runtime and system
-#    packages that an image-based deployment actually runs.
-if grep -q 'cosign attest --yes' "$JOB" && grep -q 'cyclonedx' "$JOB"; then
-    ok "a CycloneDX SBOM is attested to the image"
-else
-    bad "no CycloneDX SBOM attestation in publish-docker"
-fi
-
-# 6. Fail loudly on an empty SBOM rather than attesting nothing. An attestation
-#    over an empty predicate verifies fine and tells an auditor nothing.
-if grep -q 'test -s image-sbom.cdx.json' "$JOB"; then
-    ok "an empty SBOM fails the job instead of being attested"
-else
-    bad "no guard against attesting an empty SBOM"
-fi
-
-# 7. Docs must exist and must not overclaim. Verification instructions nobody
+# 5. Docs must exist and must not overclaim. Verification instructions nobody
 #    can find are the same failure as verification that never ran -- this is
 #    the pattern where signing was built, gated, and undiscoverable.
 if [ -f "$DOC" ]; then
@@ -123,15 +107,12 @@ if [ -f "$DOC" ]; then
         bad "doc does not disclose that earlier images are unsigned"
     fi
 
-    # The signature covers the multi-arch manifest list; the SBOM is generated
-    # from one resolved platform. Implying the SBOM covers both architectures
-    # would be the same overclaim this whole item exists to correct.
-    # Matched against the whitespace-collapsed file: the phrase wraps across a
-    # line break in the prose, and a line-oriented grep silently missed it.
-    if tr '\n' ' ' < "$DOC" | tr -s ' ' | grep -q 'single resolved platform'; then
-        ok "doc discloses that the SBOM covers one architecture, not both"
+    # The SBOM was dropped from the release workflow. The doc must say so, or
+    # an auditor chases an attestation that newer images do not carry.
+    if tr '\n' ' ' < "$DOC" | tr -s ' ' | grep -q 'ship no SBOM'; then
+        ok "doc discloses that releases after v11.17.98 ship no SBOM"
     else
-        bad "doc implies the SBOM covers every architecture in the manifest list"
+        bad "doc implies newer images still carry an SBOM attestation"
     fi
 else
     bad "docs/image-provenance.md missing -- verification nobody can find is not verification"

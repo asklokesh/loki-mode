@@ -158,19 +158,5 @@ expect_fail "Q17-04 real-run --check-receipt with SC_EXPECT_CHECKS rejects a dro
 rc=0; REAL_RUN_SCENARIO_DIR="$T/sc" bash "$ROOT/scripts/real-run.sh" --check-receipt "$T/rr-full.json" trivial-sum > "$T/w4.log" 2>&1 || rc=$?
 check "Q17-04 real-run --check-receipt with SC_EXPECT_CHECKS accepts a complete receipt" "$rc" "$(cat "$T/w4.log")"
 
-# Post-Release Smoke must run the guard as a blocking step (no continue-on-error, no || true).
-WF="$ROOT/.github/workflows/post-release-smoke.yml"
-python3 -I - "$WF" <<'PY'
-import sys, yaml
-wf = yaml.safe_load(open(sys.argv[1]))
-steps = wf["jobs"]["npm-smoke"]["steps"]
-hit = [s for s in steps if "test-wall-executed-guard" in str(s.get("run", ""))]
-assert hit, "no npm-smoke step runs test-wall-executed-guard"
-for s in hit:
-    assert not s.get("continue-on-error"), "guard step is masked"
-    assert "|| true" not in s["run"], "guard step is masked with || true"
-print("ok", [s["name"] for s in hit])
-PY
-check "Post-Release Smoke npm-smoke has a blocking Wall guard step" "$?" "see above"
 
 [ "$FAILS" -eq 0 ]

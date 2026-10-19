@@ -407,19 +407,6 @@ declare -a _FAST_KEEP=(
   #    about being slow-only. Times measured by name on this Mac (2026-07-30);
   #    a suite whose cost was NOT measured is deliberately left deferred rather
   #    than guessed into the fast tier.
-  # Guards the CI security scanners (pip-audit / gitleaks / CodeQL) in
-  # security-audit.yml, which reports at the release SHA (informational for npm, D102).
-  # Same class as the packaged-artifact checks above: it asserts a SHIPPED
-  # release gate is still wired and still fail-closed, and no GitHub CI job
-  # inspects that wiring. Deferring it would mean a scanner could be deleted or
-  # quietly turned into a no-op and nothing would say so before the push.
-  # Measured 1098ms (static YAML parse only; no network, no scanner run).
-  "tests/test-security-scan-coverage.sh"
-  # The reachability guard for the line above. A registration gate that is
-  # itself unregistered (or deferred) is self-refuting: it would stop enforcing
-  # the moment it stopped running, and nothing would say so. Measured 1.2-1.5s
-  # (it executes the coverage suite once to prove that suite is not vacuous).
-  "tests/test-security-scan-registered.sh"
   "tests/test-bench-honest-degrade.sh"        # 100ms
   "tests/test-build-home-isolation.sh"        # 107ms
   "tests/test-codex-model-trusted.sh"         # 134ms
@@ -460,7 +447,6 @@ declare -a _FAST_KEEP=(
   # barrel nothing imported. Deleted code is invisible to every other gate, so
   # nothing else in CI can see this class. Measured 0.1s (one node graph walk).
   "tests/test-web-app-no-orphan-components.sh"
-  "tests/test-release-sbom-attached.sh"       # 0.2s
   "tests/test-nightly-flake-tracker.sh"       # FC-53, offline fixtures
   "tests/test-workflow-no-masked-failures.sh" # FC-57, static workflow check
   "tests/test-sigpipe-guard.sh"               # FC-64, pipe-to-grep-q ratchet
@@ -1370,18 +1356,6 @@ run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sent
 # the `loki secure` waiver CLI shape. Fast, no network, throwaway temp fixtures.
 run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-secure-scan.sh 2>&1 | tail -3"
 
-# CI security scanners (issue #189): pip-audit over every Python dependency
-# manifest, gitleaks over all reachable history, CodeQL over the supported
-# source surfaces. This suite existed and passed but was wired into NO runner,
-# so it never executed -- the same orphan class that let a hardcoded Codex
-# model ship. security-audit.yml reports on every release, so an unguarded edit
-# there can silently weaken a release gate.
-run_check "tests/test-security-scan-coverage.sh (CI security scanners wired, fail-closed)" "bash tests/test-security-scan-coverage.sh 2>&1 | tail -3"
-
-# The reachability half: the guard above must actually RUN (registered, not
-# deferred by the fast-tier allowlist) and must not report success from its
-# pyyaml-missing skip path, which exits 0 having asserted nothing.
-run_check "tests/test-security-scan-registered.sh (that guard runs and is not vacuous)" "bash tests/test-security-scan-registered.sh 2>&1 | tail -3"
 run_check "tests/test-build-home-isolation.sh (in-build app exec sandbox)" "bash tests/test-build-home-isolation.sh 2>&1 | tail -3"
 run_check "tests/test-proven-pr-receipt.sh (PR-body honesty + no false green)" "bash tests/test-proven-pr-receipt.sh 2>&1 | tail -3"
 # tail -40, not -4: this suite went red once in the fast tier and the 4-line
@@ -1738,15 +1712,6 @@ run_check "tests/test-readme-lists-required-tools.sh (README Required block cove
 run_check "tests/test-web-app-no-orphan-components.sh (no unreachable web-app modules)" \
   "bash tests/test-web-app-no-orphan-components.sh 2>&1 | tail -3"
 
-
-# Same rule, a different shipped artifact: the SBOM exists ONLY as a release
-# asset, attached at `gh release create` time. Nothing else checks that the
-# workflow still attaches it, and the failure it guards against is invisible by
-# construction -- a dead `release:` trigger produces an EMPTY run list, never a
-# red one, so the release shipped zero SBOM assets for months under a green
-# badge. Static check of the workflow definition; measured 0.2s.
-run_check "tests/test-release-sbom-attached.sh (npm SBOM ships as a release asset)" \
-  "bash tests/test-release-sbom-attached.sh 2>&1 | tail -3"
 
 run_check "tests/test-release-dist-guard.sh (release.sh refuses absolute or escaping dist map sources, E-133)" \
   "bash tests/test-release-dist-guard.sh 2>&1 | tail -3"

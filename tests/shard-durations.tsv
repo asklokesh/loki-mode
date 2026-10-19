@@ -426,7 +426,7 @@ worker grace period honours mid-build shutdown	3
 k8s sizing says what was measured and what was not	0
 air-gapped k8s install is honest about scope	3
 enterprise smoke script contract (offline)	0
-image provenance: signing and SBOM in the publish job	0
+image provenance: signing in the docker publish job	0
 doctor is CI-gateable (nonzero on missing required dep)	3
 completion coverage (every real command in both shells)	30
 dry-run paths work and are discoverable from start --help	0
@@ -448,7 +448,6 @@ runtime python libs ship in the npm package	7
 npm artifacts have portable permissions	11
 packaged MCP server exposes the exact tool surface	5
 MCP contract guard rejects rename/deletion/missing prereqs	23
-npm SBOM is attached to the GitHub Release	1
 nightly flake tracker flags same-SHA pass/fail flips (FC-53)	1
 release.sh version-bump preserves file mode (BACKLOG 22)	1
 loki why maps each error class to an action	2
@@ -589,8 +588,6 @@ Browser-open guard (tests never open a browser, S-103)	1
 ShellCheck Linting	140
 ShellCheck heavy files lint alone, never in parallel (FC-LINT-OOM)	3
 shard-durations.tsv drift detector (S-134)	2
-version-bump-only push skips heavy Tests jobs (S-132)	3
-release gate does not repeat Tests work and keeps dist checks (WF-GATE-DEDUP)	3
 council gate readers use the resolved -I -S interpreter (S-141)	3
 Metrics JSON Unmeasured	1
 web-app workspace panels surface fetch failures (node --test)	1
@@ -650,12 +647,9 @@ Usage governor calibration and dedup (G-01)	2
 Usage governor measured /usage cap and fallback label (GOV-MEASURE)	1
 Usage governor statusLine logger (G-01)	1
 cloud-dispatch dry-run refuses on overlap, governor max, not-ready (G-04)	3
-security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)	1
-CI security scanners wired, fail-closed (E-123)	1
 Worktree install cache keyed on lockfile hash (E-130)	1
 WhatsNew CURRENT_VERSION matches VERSION (E-129)	1
 Heredoc dollar-digit footgun checker (D44)	2
-CI cache scope (D44)	2
 Engine10 push GitLab (D44)	5
 gh withhold nested (D44)	2
 SettingsPage has no Gemini (D44)	2
@@ -683,7 +677,6 @@ Provider stdin closed under verbose (A-134c)	10
 D51 Phase B workspaces (B01)	1
 json schemas validate real why and status output (D48 r5)	60
 train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)	30
-train verdict reuse on main push (E-160, D55)	10
 real-repo acceptance gate logic (D58-GATE)	6
 Loki control plane wiring: serve, backfill, UI (CP-04)	60
 Dashboard leak2: fail-closed reuse and bound-port URL	5
@@ -757,7 +750,6 @@ select-tests --run never a silent no-op (FC-47)	5
 workflows never mask a failed test leg (FC-57)	1
 pipe-to-grep-q under pipefail breaks on large output (FC-64)	3
 wall-executed guard, 11.3.1 vs 11.3.2 receipts (FC-68)	3
-main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)	8
 help drift (CHANGELOG loki invocations in help and completion)	3
 worktree reaper saves, removes and floors slice worktrees (AUTO-REAP, FC-99)	12
 quickstart --explain-match shows top 3 scores and confidence	2

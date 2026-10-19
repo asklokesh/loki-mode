@@ -1,5 +1,20 @@
 name: Release
 
+# MINIMAL RELEASE PIPELINE (founder directive 2026-10-19). This is the ONLY
+# workflow in the repo. A push to main that changes VERSION publishes every
+# channel the product ships to, in parallel, with nothing in front of npm:
+#   pack-npm -> publish-npm      npm loki-mode under latest AND next
+#   release                      git tag vX.Y.Z + GitHub Release (CHANGELOG notes, skill zips, brew tarball)
+#   update-homebrew              asklokesh/homebrew-tap formula (needs the release asset)
+#   notify-slack                 release announcement
+#   publish-ts-sdk               npm loki-mode-sdk under latest AND next
+#   publish-python-sdk           PyPI loki-mode-sdk
+#   docker-build -> docker       Docker Hub asklokesh/loki-mode multi-arch, cosign keyless signature
+#   sanity                       seconds-long syntax/version check; nothing depends on it
+# Tests, nightly, security audit, SBOM and smoke workflows were deleted: run
+# them locally (bash scripts/local-ci.sh). Every publish job is idempotent on
+# rerun; npm is never unpublished (npm deprecate is allowed).
+
 on:
   push:
     paths:
@@ -9,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       force_republish:
-        description: 'Re-run publish jobs even if the GitHub release already exists (for fixing failed Docker/brew jobs)'
+        description: 'Re-run the Homebrew and Slack jobs even if the GitHub release already exists'
         required: false
         default: 'false'
         type: choice
@@ -18,97 +33,28 @@ on:
           - 'true'
 
 jobs:
-  # TEN-RELEASE-INSTANT (D102): npm publish does NOT wait on this job, on
-  # Tests, or on any other workflow. publish-npm needs only pack-npm. This
-  # job is the cheap post-hoc integrity check for the downstream jobs (tag,
-  # GitHub Release, docker, SDKs): bash -n, P9, dist freshness, version-file
-  # consistency. Tests run in parallel on the same SHA; red means fix forward
-  # (npm deprecate allowed, never unpublish).
-  gate:
+  # Fix-forward signal only: no job needs this one.
+  sanity:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      # CHEAPEST FAILING CHECK FIRST. Step order here is not cosmetic: this job
-      # gates every publish job, so whatever it runs first is how fast a broken
-      # release finds out.
-      #
-      # v9.49.0 died on a one-line TS2322 in doctor.ts. The typecheck that
-      # caught it was the LAST step, so the job first spent ~3m46s on pip
-      # installs and the full pytest suite before tsc ran for 7 seconds and
-      # failed. Measured on run 34724377951: gate 4m03s total, pip started
-      # 23:03:29, pytest ended 23:07:15, Bun step 23:07:17 -> 23:07:24. The
-      # pip/pytest steps that ran last are gone now (see above); this ordering
-      # note is kept because the bash/Bun-before-anything-slower principle
-      # still governs what gets added to this job.
-      - name: Bash syntax validation
+      - name: Bash syntax and version-file consistency
         run: |
+          set -euo pipefail
           bash -n autonomy/run.sh
           bash -n autonomy/loki
-      - name: Setup Bun
-        # publish-npm and publish-docker ship the loki-ts Bun dist. This job
-        # only rebuilds it to prove the committed dist is the release SHA's.
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.13
-          # Rule of Two: this job holds a write token or publish secret, so it
-          # never restores a cache an issue-triggered job could have written.
-          no-cache: true
-      # WF-GATE-DEDUP (FC-88): no `bun run typecheck` and no `bun test` here.
-      # The Tests workflow already runs tsc (test.yml "Typecheck loki-ts (tsc)")
-      # and the impacted bun suites on this tree, in parallel with this run. This job did
-      # the same work again in 6m40s (run 37859034694). It keeps only what Tests
-      # cannot know: the dist committed at the release SHA is what a fresh build
-      # of that SHA produces (debugId aside), and so is the dist in the tarball.
-      # Do NOT re-add `bun test`; tests/test-release-gate-dedup.sh fails on it.
-      - name: Install loki-ts dependencies
-        run: bun install --cwd loki-ts --frozen-lockfile
-      # P9 needs bun (its injection case) and PyYAML (its workflow scan), the
-      # same prerequisites as test.yml moat-p9. Python is set up first so the
-      # pip install is not blocked by the runner's system Python. No cache is
-      # restored here (Rule of Two above).
-      - name: Setup Python (PyYAML for the P9 workflow scan)
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install PyYAML (the workflow scan prerequisite)
-        run: python3 -m pip install pyyaml pytest
-      - name: P9 Rule of Two on the exact release SHA (never waived)
-        # CTO N4: P9 must hold at the release SHA, independent of Tests. Fail closed: a missing script or
-        # any nonzero rc fails the gate. About 13s.
-        run: |
-          set -euo pipefail
-          test -f scripts/ci/fast-gate.sh
-          bash scripts/ci/fast-gate.sh p9
-      - name: Verify the committed loki-ts dist is a fresh build of this SHA
-        run: bash scripts/ci/verify-release-dist.sh build
-      - name: Verify the dist inside the npm tarball matches the committed dist
-        run: |
-          set -euo pipefail
-          tgz="$(npm pack --ignore-scripts --silent --pack-destination "$RUNNER_TEMP" | tail -n 1)"
-          bash scripts/ci/verify-release-dist.sh tarball "$RUNNER_TEMP/$tgz"
-      - name: Byte-compile the two version-stamped Python modules
-        # No pip install needed for a syntax/import-surface check; ubuntu-latest
-        # ships a system python3. dashboard/__init__.py and mcp/__init__.py
-        # carry __version__ = "X.Y.Z" and got zero execution here once the
-        # pytest step was removed -- this is the cheap replacement floor.
-        run: python3 -m py_compile dashboard/__init__.py mcp/__init__.py
-      - name: Version-bump file consistency (server.json, plugin.json track VERSION)
-        # Pure bash + stdlib python3 json, no pip install. These are also part
-        # of the sharded shell-tests suite inside "Tests", but running them
-        # here too means a metadata-only release is checked at ITS OWN commit.
-        run: |
+          python3 -m py_compile dashboard/__init__.py mcp/__init__.py
           bash tests/test-server-json-current.sh
           bash tests/test-plugin-json-current.sh
 
-  # WF-2MIN-3: the tarball is built ONCE, here, in parallel with gate,
-  # instead of serially after the release job. This job holds no
-  # secret and no write token. publish-npm downloads the artifact, recomputes
-  # its sha256 and compares it with the digest this job reports, then publishes
-  # exactly those bytes. Every pack-time integrity check (gitHead stamp, dist
-  # presence, embedded VERSION) runs here and fails the whole run before the
-  # publish-npm can publish.
+  # The tarball is built ONCE here, with no secret and no write token.
+  # publish-npm recomputes its sha256 and publishes exactly those bytes.
   pack-npm:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -123,45 +69,31 @@ jobs:
           node-version: '22'
 
       - name: Setup Bun
-        # Required so the npm prepack hook can build the loki-ts dist artifact
-        # before publishing. Without bun on PATH the prepack falls back to the
-        # committed dist (if any) and emits a WARN, which is not desirable for
-        # release builds.
+        # The npm prepack hook builds the loki-ts dist; without bun it falls
+        # back to the committed dist.
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.13
           # Rule of Two: never restore a cache an issue-triggered job could have written.
           no-cache: true
 
-      # The control-plane server bundle imports loki-ts source (runner, engine10),
-      # so @anthropic-ai/sdk and the other loki-ts deps must resolve during pack.
-      # v11.17.14 pack failed with: Could not resolve: "@anthropic-ai/sdk".
+      # The control-plane server bundle imports loki-ts source, so the loki-ts
+      # deps (@anthropic-ai/sdk and others) must resolve during pack.
       - name: Install loki-ts dependencies
         run: bun install --cwd loki-ts --frozen-lockfile
 
       - name: Pack once and verify the PACKED tarball carries a fresh dist
         run: |
-          # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
-          # loki-ts/dist DURING pack, so a check against the checked-out tree
-          # inspects the PRE-rebuild file. `npm pack` runs that prepack once;
-          # the resulting tarball is both what we inspect and what we publish
-          # (D90: before, `npm publish` ran prepack a second time, a second
-          # full dist build, on top of the pack above it).
-          #
-          # WHAT THIS CATCHES. prepack SWALLOWS a failed build, so a broken
-          # build yields exit 0 and a tarball carrying a STALE dist. The
-          # assertion below fails the job before anything is published.
+          # prepack rebuilds loki-ts/dist DURING pack and swallows a failed
+          # build, so the checks run against the packed tarball, which is also
+          # exactly what gets published.
           set -euo pipefail
           want="$(cat VERSION)"
-          # prepack's bun build writes to stdout too: take the LAST line, which
-          # is the tarball npm reports.
           # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
           # scripts, so build the web-app and control-plane dist here, fail closed.
           npm run prepublishOnly
-          # FC-51: `npm publish <tgz>` records NO gitHead of its own (only a
-          # directory publish reads .git), and gitHead lets anyone map a published
-          # version to its commit. Stamp the exact release commit into the manifest
-          # that gets packed, then restore the tracked file.
+          # FC-51: `npm publish <tgz>` records no gitHead; stamp the release
+          # commit into the packed manifest, then restore the tracked file.
           GITHEAD_STAMP="$(git rev-parse HEAD)" || { echo "FATAL: git rev-parse HEAD failed"; exit 1; }
           printf '%s' "$GITHEAD_STAMP" | grep -Eq '^[0-9a-f]{40}$' || { echo "FATAL: HEAD is not a 40-hex SHA: $GITHEAD_STAMP"; exit 1; }
           cp package.json "$RUNNER_TEMP/package.json.orig"
@@ -172,7 +104,6 @@ jobs:
           PACKED_HEAD="$(node -p "require(process.argv[1]).gitHead || ''" "$RUNNER_TEMP/packed-package.json")"
           [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
             echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
-          echo "OK: packed manifest gitHead ${PACKED_HEAD}"
           tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \
@@ -182,28 +113,20 @@ jobs:
           done
           [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {
             echo "FATAL: packed package.json version != VERSION ${want}"; exit 1; }
-          mkdir -p "$RUNNER_TEMP/npm-tarball"
+          mkdir -p "$RUNNER_TEMP/npm-tarball" "$RUNNER_TEMP/unpack"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
-          printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
-          mkdir -p "$RUNNER_TEMP/unpack"
           tar -xzf "$tgz" -C "$RUNNER_TEMP/unpack" package/loki-ts/dist/loki.js
-          test -f "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
-            echo "FATAL: packed tarball has no loki-ts/dist/loki.js"; exit 1; }
           grep -q "\"${want}\"" "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
-            echo "FATAL: packed dist does not embed VERSION ${want}"
-            echo "       embedded: $(grep -oE '\"[0-9]+\.[0-9]+\.[0-9]+\"' "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" | sort -u | head -3 | tr '\n' ' ')"
-            exit 1; }
-          echo "OK: packed dist embeds ${want}"
+            echo "FATAL: packed dist does not embed VERSION ${want}"; exit 1; }
+          echo "OK: packed dist embeds ${want}, gitHead ${PACKED_HEAD}"
 
       - name: Record the tarball sha256
         id: digest
         run: |
           set -euo pipefail
-          tgz="$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")"
-          sha="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          sha="$(sha256sum "$RUNNER_TEMP"/npm-tarball/*.tgz | cut -d' ' -f1)"
           printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$' || { echo "FATAL: bad sha256 '$sha'"; exit 1; }
           echo "sha256=$sha" >> "$GITHUB_OUTPUT"
-          echo "tarball $(cat "$RUNNER_TEMP/npm-tarball/NAME") sha256 $sha"
 
       - name: Upload the tarball that is published
         uses: actions/upload-artifact@v4
@@ -214,15 +137,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # TEN-RELEASE-INSTANT (D102): the npm publish. Depends ONLY on pack-npm
-  # (which verified the packed tarball carries a fresh dist). It does not wait
-  # on gate, Tests, the tag or the GitHub Release; those run in parallel
-  # and a red one means fix forward (npm deprecate allowed, never unpublish).
-  # Publishes under next, then moves latest and next only if VERSION is the
-  # highest (never backwards). Idempotent on rerun; serialized by concurrency.
+  # Depends ONLY on pack-npm. Publishes under next, then moves latest and next
+  # only if VERSION is the highest (never backwards). Idempotent on rerun.
   publish-npm:
     needs: pack-npm
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: release-npm
       cancel-in-progress: false
@@ -262,8 +182,6 @@ jobs:
           got="$(sha256sum "$tgz" | cut -d' ' -f1)"
           [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
             echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}'"; exit 1; }
-          # Publish under next (never moves latest backwards), then move latest
-          # and next only when VERSION is the highest by semver (never-backwards).
           if ! npm publish "$tgz" --access public --tag next; then
             # Rerun case: the version is already on the registry. Anything else is a real failure.
             if [ "$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)" = "$VERSION" ]; then
@@ -286,28 +204,25 @@ jobs:
           fi
           echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
 
+  # Tag and GitHub Release. Needs nothing, so it runs in parallel with npm.
   release:
     runs-on: ubuntu-latest
-    needs: [gate, pack-npm]
+    timeout-minutes: 10
     permissions:
       contents: write
-
     outputs:
       version: ${{ steps.version.outputs.version }}
       release_created: ${{ steps.check_release.outputs.release_exists == 'false' }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Read version
         id: version
         run: |
           VERSION=$(cat VERSION | tr -d '\n')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check if release exists
         id: check_release
@@ -315,192 +230,54 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "release_exists=true" >> $GITHUB_OUTPUT
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "release_exists=false" >> $GITHUB_OUTPUT
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create release artifacts
-        if: steps.check_release.outputs.release_exists == 'false'
-        run: |
-          mkdir -p release
-
-          # ============================================
-          # Artifact 1: loki-mode.zip (for Claude.ai website)
-          # SKILL.md at ROOT level for direct upload
-          # ============================================
-          mkdir -p release/skill-root
-          cp SKILL.md release/skill-root/
-          cp -r references release/skill-root/
-
-          cd release/skill-root
-          zip -r ../loki-mode-${{ steps.version.outputs.version }}.zip .
-          cd ../..
-
-          # Also create .skill file (same as zip, different extension)
-          cp release/loki-mode-${{ steps.version.outputs.version }}.zip release/loki-mode-${{ steps.version.outputs.version }}.skill
-
-          # ============================================
-          # Artifact 2: loki-mode-api.zip (for console.anthropic.com)
-          # SKILL.md inside loki-mode/ folder (API requires folder wrapper)
-          # ============================================
-          mkdir -p release/api-package/loki-mode
-          cp SKILL.md release/api-package/loki-mode/
-          cp -r references release/api-package/loki-mode/
-
-          cd release/api-package
-          zip -r ../loki-mode-api-${{ steps.version.outputs.version }}.zip loki-mode
-          cd ../..
-
-          # ============================================
-          # Artifact 3: loki-mode-claude-code.zip
-          # For Claude Code: full package with loki-mode/ folder
-          # Extract to ~/.claude/skills/
-          # ============================================
-          mkdir -p release/loki-mode
-          cp SKILL.md release/loki-mode/
-          cp README.md release/loki-mode/
-          cp LICENSE release/loki-mode/ 2>/dev/null || true
-          cp VERSION release/loki-mode/
-          cp CHANGELOG.md release/loki-mode/
-          cp -r references release/loki-mode/
-          cp -r examples release/loki-mode/
-          cp -r tests release/loki-mode/
-          cp -r scripts release/loki-mode/
-          cp -r autonomy release/loki-mode/
-          cp -r dashboard release/loki-mode/
-          cp -r memory release/loki-mode/
-          cp -r skills release/loki-mode/
-          cp -r providers release/loki-mode/
-          cp -r events release/loki-mode/
-          cp -r templates release/loki-mode/
-          cp -r learning release/loki-mode/
-          cp -r mcp release/loki-mode/
-          cp -r completions release/loki-mode/
-          cp -r integrations release/loki-mode/
-
-          cd release
-          zip -r loki-mode-claude-code-${{ steps.version.outputs.version }}.zip loki-mode
-          tar -czvf loki-mode-claude-code-${{ steps.version.outputs.version }}.tar.gz loki-mode
-          cd ..
-
-      # THE NPM-TARBALL SBOM IS GENERATED HERE, NOT IN sbom.yml, FOR THE SAME
-      # REASON THE CONTAINER SBOM IS GENERATED IN publish-docker (see :576-591).
-      #
-      # sbom.yml has a `release: published` trigger that has NEVER fired. This
-      # release is created by `gh release create` below under the default
-      # GITHUB_TOKEN, and GitHub suppresses trigger events for that token to
-      # prevent workflow recursion -- measured over sbom.yml's last 15 runs,
-      # every one was `push`, none was `release`. So every release ever cut has
-      # shipped with zero SBOM assets while a green workflow claimed otherwise.
-      # A dead trigger shows as an EMPTY run list, never a red one.
-      #
-      # It must run BEFORE `gh release create`, not after: releases here are
-      # immutable and a post-publish upload fails HTTP 422 (:293-297).
-      #
-      # This SBOM describes the npm TARBALL. publish-docker generates a
-      # SEPARATE image-sbom.cdx.json describing the CONTAINER, which carries an
-      # OS layer and Python runtime the npm tree never lists. They are NOT
-      # interchangeable, which is why the filenames differ -- a collision would
-      # silently overwrite one and ship half the evidence the release claims.
-      - name: Setup Node.js (SBOM generation)
-        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Download the packed tarball
-        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-tarball
-          path: ${{ runner.temp }}/npm-tarball
-
-      - name: Verify the downloaded tarball digest
-        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-        env:
-          WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
-        run: |
-          set -euo pipefail
-          # Recompute locally; never trust the artifact's name or presence alone.
-          [ "$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz | wc -l | tr -d ' ')" = "1" ] || { echo "FATAL: expected exactly one tarball"; exit 1; }
-          tgz="$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz)"
-          got="$(sha256sum "$tgz" | cut -d' ' -f1)"
-          [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
-            echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}'"; exit 1; }
-          echo "OK: tarball sha256 ${got} matches the pack-npm job"
-          basename "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
-
-      - name: Generate npm-tarball SBOM (CycloneDX)
-        if: steps.check_release.outputs.release_exists == 'false'
-        run: |
-          set -euo pipefail
-          # Describe what users actually receive from `npm install`, so pack
-          # the tarball and resolve deps inside it rather than in the source
-          # tree. --omit dev twice: the published tarball declares
-          # devDependencies but does not ship them, and cyclonedx-npm's
-          # `npm ls --all` errors ELSPROBLEMS on the missing ones.
-          # WF-2MIN-3: the tarball is the one pack-npm built and the digest
-          # step above verified (the exact bytes published below), not a
-          # second `npm pack` here.
-          mkdir -p /tmp/published
-          tar xzf "$RUNNER_TEMP"/npm-tarball/*.tgz -C /tmp/published
-          cd /tmp/published/package
-          npm install --omit=dev --no-package-lock
-          npx --yes @cyclonedx/cyclonedx-npm \
-            --omit dev \
-            --output-format JSON \
-            --output-file "$GITHUB_WORKSPACE/release/npm-sbom.cdx.json" \
-            --spec-version 1.5
-
-      - name: Verify the npm SBOM is non-empty
-        if: steps.check_release.outputs.release_exists == 'false'
-        run: |
-          set -euo pipefail
-          # Fail closed. A zero-byte SBOM asset is WORSE than no asset: it
-          # looks like compliance to anyone scanning the release.
-          test -s release/npm-sbom.cdx.json || { echo "FATAL: npm SBOM is empty"; exit 1; }
-          echo "npm SBOM size: $(wc -c < release/npm-sbom.cdx.json) bytes"
-
-      # E-88 (rework, D36): this step used to run AFTER "Create Git Tag", so a
-      # bad or missing CHANGELOG section failed the job only once the tag was
-      # already pushed -- burning that version number (never force-move or
-      # delete a tag, so it cannot be reused). Extraction now runs first, so a
-      # notes failure aborts before anything irreversible happens.
+      # E-88: notes are extracted BEFORE the tag, so a missing or half-written
+      # CHANGELOG section aborts before anything irreversible happens.
       - name: Extract changelog for this version
         if: steps.check_release.outputs.release_exists == 'false'
         run: |
           set -uo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          # scripts/release-notes.sh (E-88) replaces the old inline awk here:
-          # that awk anchored `/^## v$VERSION$/` against headers written as
-          # `## vX.Y.Z (YYYY-MM-DD)`, so it never matched, and it spliced
-          # VERSION into an ERE unescaped, so its dots matched any character.
-          # Both bugs silently fell back to a one-line "Release vX.Y.Z" body;
-          # v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped
-          # that way. The release now FAILS instead of falling back.
-          #
-          # No --include here (E-88a): carrying another version's notes
-          # forward is a manual Release Manager decision written directly
-          # into the CHANGELOG entry (as done for 10.0.1 and 10.2.1), never
-          # auto-detected from prose or an npm lookup.
           if ! bash scripts/release-notes.sh "$VERSION" > changelog_body.txt; then
             echo "ERROR: CHANGELOG.md has no fully-written release notes for v$VERSION." >&2
             echo "Add a '## v$VERSION' section with '### ' subsections and '- ' bullets before releasing." >&2
             exit 1
           fi
 
-      # S-105: a release that changes workflow files cannot have its tag pushed
-      # by GITHUB_TOKEN ("refusing to allow a GitHub App to create or update
-      # workflow ... without workflows permission"). The old step echoed
-      # "continuing" and gh release create then died on "tag exists locally but
-      # has not been pushed" (run 36331009098). Now: a tag already on the remote
-      # (pre-pushed by the Release Manager) is reused only if it points at the
-      # release SHA; a rejected push with no remote tag fails HERE, loudly.
-      # Never --force, never delete a tag. Runs whenever the release is being
-      # created (not only when the tag is absent locally) so a pre-pushed tag
-      # at the wrong SHA is caught instead of silently released.
+      - name: Create release artifacts
+        if: steps.check_release.outputs.release_exists == 'false'
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/skill-root release/api-package/loki-mode release/loki-mode
+          # loki-mode.zip and .skill (Claude.ai upload): SKILL.md at the root.
+          cp SKILL.md release/skill-root/
+          cp -r references release/skill-root/
+          (cd release/skill-root && zip -qr "../loki-mode-${V}.zip" .)
+          cp "release/loki-mode-${V}.zip" "release/loki-mode-${V}.skill"
+          # loki-mode-api.zip (console.anthropic.com): SKILL.md inside loki-mode/.
+          cp SKILL.md release/api-package/loki-mode/
+          cp -r references release/api-package/loki-mode/
+          (cd release/api-package && zip -qr "../loki-mode-api-${V}.zip" loki-mode)
+          # loki-mode-claude-code (extract to ~/.claude/skills/).
+          cp SKILL.md README.md VERSION CHANGELOG.md release/loki-mode/
+          cp LICENSE release/loki-mode/ 2>/dev/null || true
+          for d in references examples tests scripts autonomy dashboard memory skills providers \
+                   events templates learning mcp completions integrations; do
+            cp -r "$d" release/loki-mode/
+          done
+          (cd release && zip -qr "loki-mode-claude-code-${V}.zip" loki-mode && tar -czf "loki-mode-claude-code-${V}.tar.gz" loki-mode)
+          # Brew source asset, attached at creation (releases are immutable).
+          git archive --format=tar.gz --prefix="loki-mode-${V}/" -o "release/loki-mode-${V}.tar.gz" HEAD
+          file "release/loki-mode-${V}.tar.gz" | grep -q 'gzip compressed' || { echo "ERROR: brew asset is not gzip"; exit 1; }
+
+      # S-105: a tag already on the remote is reused only if it points at the
+      # release SHA. Never --force, never delete a tag.
       - name: Create Git Tag
         if: steps.check_release.outputs.release_exists == 'false'
         env:
@@ -509,47 +286,27 @@ jobs:
           set -uo pipefail
           TAG="v${VERSION}"
           RELEASE_SHA="$(git rev-parse HEAD)"
-          # Commit the remote tag points at (peeled for an annotated tag), or empty.
-          remote_tag_sha() {
-            local out
-            out="$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")" || return 1
-            printf '%s\n' "$out" | awk -v p="refs/tags/${TAG}^{}" '$2==p{print $1; f=1} END{if(!f) exit 1}' \
-              || printf '%s\n' "$out" | awk -v r="refs/tags/${TAG}" '$2==r{print $1}'
-          }
-          reuse_or_fail() {
-            if [ "$1" = "$RELEASE_SHA" ]; then
-              echo "Tag ${TAG} already on remote at release SHA ${RELEASE_SHA}; reusing it."
-              git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null \
-                || git fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}"
-              exit 0
-            fi
-            echo "ERROR: tag ${TAG} on remote points at $1, not the release SHA ${RELEASE_SHA}."
-            echo "Refusing to release. Never force-move or delete a release tag; bump the version instead."
-            exit 1
-          }
-          if LOCAL_SHA="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}")"; then
-            if [ "$LOCAL_SHA" != "$RELEASE_SHA" ]; then
-              echo "ERROR: local tag ${TAG} points at ${LOCAL_SHA}, not the release SHA ${RELEASE_SHA}."
-              exit 1
-            fi
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}" || exit 1
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}" "${RELEASE_SHA}" || exit 1
           if git push origin "refs/tags/${TAG}"; then
             echo "Pushed tag ${TAG} at ${RELEASE_SHA}."
             exit 0
           fi
-          # Rejected. A tag already on the remote (pre-pushed by the Release
-          # Manager, before or during this run) is refused client-side, so this
-          # one check covers both; reuse it only at the release SHA.
-          REMOTE_SHA="$(remote_tag_sha)" || REMOTE_SHA=""
-          [ -n "$REMOTE_SHA" ] && reuse_or_fail "$REMOTE_SHA"
+          out="$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")" || out=""
+          REMOTE_SHA="$(printf '%s\n' "$out" | awk -v p="refs/tags/${TAG}^{}" '$2==p{print $1}')"
+          [ -n "$REMOTE_SHA" ] || REMOTE_SHA="$(printf '%s\n' "$out" | awk -v r="refs/tags/${TAG}" '$2==r{print $1}')"
+          if [ "$REMOTE_SHA" = "$RELEASE_SHA" ]; then
+            echo "Tag ${TAG} already on remote at release SHA ${RELEASE_SHA}; reusing it."
+            exit 0
+          fi
+          if [ -n "$REMOTE_SHA" ]; then
+            echo "ERROR: tag ${TAG} on remote points at ${REMOTE_SHA}, not the release SHA ${RELEASE_SHA}."
+            echo "Refusing to release. Never force-move or delete a release tag; bump the version instead."
+            exit 1
+          fi
           echo "ERROR: pushing tag ${TAG} was rejected and the tag is not on the remote."
-          echo "This happens when the release changes .github/workflows/ files: GITHUB_TOKEN lacks"
-          echo "the workflows permission. Workaround: the Release Manager pushes the tag with their"
-          echo "own credentials, then re-runs this workflow:"
+          echo "A release that changes .github/workflows/ needs the tag pushed with the Release Manager's own credentials:"
           echo "  git tag -a ${TAG} -m 'Release ${TAG}' ${RELEASE_SHA} && git push origin refs/tags/${TAG}"
           exit 1
 
@@ -557,557 +314,35 @@ jobs:
         if: steps.check_release.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # v7.32.1: build the brew source asset HERE and attach it at release
-          # creation. Releases in this repo are immutable, so a later job
-          # cannot upload assets (v7.32.0 the homebrew bump failed with HTTP 422
-          # trying). update-homebrew (below) downloads the published asset and hashes
-          # those exact bytes for the formula.
-          REF="v${VERSION}"
-          git rev-parse -q --verify "refs/tags/${REF}" >/dev/null || REF="HEAD"
-          git archive --format=tar.gz --prefix="loki-mode-${VERSION}/" \
-            -o "release/loki-mode-${VERSION}.tar.gz" "${REF}"
-          if ! file "release/loki-mode-${VERSION}.tar.gz" | grep -q 'gzip compressed'; then
-            echo "ERROR: built brew asset is not a valid gzip tarball"
-            exit 1
-          fi
-          gh release create "v${VERSION}" \
-            release/loki-mode-${VERSION}.zip \
-            release/loki-mode-${VERSION}.skill \
-            release/loki-mode-api-${VERSION}.zip \
-            release/loki-mode-${VERSION}.tar.gz \
-            release/loki-mode-claude-code-${VERSION}.zip \
-            release/loki-mode-claude-code-${VERSION}.tar.gz \
-            release/npm-sbom.cdx.json \
-            --title "Loki Mode v${VERSION}" \
+          set -euo pipefail
+          gh release create "v${V}" \
+            "release/loki-mode-${V}.zip" \
+            "release/loki-mode-${V}.skill" \
+            "release/loki-mode-api-${V}.zip" \
+            "release/loki-mode-${V}.tar.gz" \
+            "release/loki-mode-claude-code-${V}.zip" \
+            "release/loki-mode-claude-code-${V}.tar.gz" \
+            --title "Loki Mode v${V}" \
             --notes-file changelog_body.txt
-          # Post-create check (E-88, D36 rework): confirm the published release
-          # body is not the old one-line fallback -- belt-and-braces on top of
-          # the extract step's own failure, which already guarantees a
-          # fully-written body reached --notes-file above, now BEFORE the tag
-          # was even created. A hard failure here can only ever fire on a
-          # `gh`-side mangling of a body already proven good, yet it runs
-          # AFTER gh release create, when downstream jobs (npm, Docker,
-          # Homebrew) depend on this job succeeding -- so `exit 1` here
-          # orphans an already-created release exactly like the v10.2.0
-          # incident this slice exists to prevent. Downgraded to a warning
-          # annotation, never removed outright, because it is still real
-          # evidence if `gh` itself ever mangles a body: worth seeing in the
-          # run log, never worth failing a completed release over.
-          BODY=""
-          for _attempt in 1 2 3; do
-            BODY="$(gh release view "v${VERSION}" --json body --jq .body 2>/dev/null)" && break
-            echo "WARNING: gh release view attempt ${_attempt} failed; retrying." >&2
-            sleep 2
-          done
-          if [ -z "$BODY" ]; then
-            echo "WARNING: could not read back v${VERSION}'s release body after 3 attempts; skipping the placeholder check (the extract step already validated it before --notes-file)." >&2
-          elif [ "$BODY" = "Release v${VERSION}" ]; then
-            echo "::warning::published release v${VERSION} body is the placeholder 'Release v${VERSION}' -- the extract step should have caught this before tagging; investigate but the release stands."
-          fi
 
       - name: Skip message
         if: steps.check_release.outputs.release_exists == 'true'
-        run: |
-          echo "Release v${{ steps.version.outputs.version }} already exists. Skipping."
+        run: echo "Release v${{ steps.version.outputs.version }} already exists. Skipping."
 
-  notify-slack:
-    needs: release
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (for changelog)
-        uses: actions/checkout@v4
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          # E-88 (rework, D36): this used to be the same buggy inline awk the
-          # release job's own extract step replaced (unanchored heading match,
-          # VERSION spliced into a regex unescaped). By the time this job
-          # runs, `release` has already succeeded, which means its own
-          # scripts/release-notes.sh call already validated this version's
-          # section -- so a failure here should never happen, but the
-          # fallback line stays as defense in depth for a Slack message,
-          # never a release gate.
-          if ! bash scripts/release-notes.sh "$VERSION" > /tmp/changelog-body.txt; then
-            echo "Release v$VERSION" > /tmp/changelog-body.txt
-          fi
-          # Truncate to 2000 chars for Slack block limit
-          head -c 2000 /tmp/changelog-body.txt > /tmp/changelog-truncated.txt
-          mv /tmp/changelog-truncated.txt /tmp/changelog-body.txt
-
-      - name: Post to Slack
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "SLACK_WEBHOOK_URL not configured, skipping Slack notification"
-            exit 0
-          fi
-
-          VERSION="v${{ needs.release.outputs.version }}"
-          RELEASE_URL="https://github.com/asklokesh/loki-mode/releases/tag/${VERSION}"
-
-          # Build Slack payload entirely in Python to avoid bash backtick issues
-          VERSION_FOR_SLACK="$VERSION" RELEASE_URL_FOR_SLACK="$RELEASE_URL" python3 -c "
-          import json, os
-
-          version = os.environ['VERSION_FOR_SLACK']
-          release_url = os.environ['RELEASE_URL_FOR_SLACK']
-
-          # Read changelog from file (avoids bash backtick interpretation)
-          with open('/tmp/changelog-body.txt') as f:
-              changelog = f.read().strip()
-
-          changelog_safe = changelog
-          if len(changelog_safe) > 1500:
-              changelog_safe = changelog_safe[:1500] + '...'
-
-          payload = {
-              'blocks': [
-                  {
-                      'type': 'header',
-                      'text': {'type': 'plain_text', 'text': f'Loki Mode {version} Released'}
-                  },
-                  {
-                      'type': 'section',
-                      'text': {'type': 'mrkdwn', 'text': f'*<{release_url}|View Release on GitHub>*'}
-                  },
-                  {
-                      'type': 'section',
-                      'text': {'type': 'mrkdwn', 'text': changelog_safe}
-                  },
-                  {'type': 'divider'},
-                  {
-                      'type': 'section',
-                      'text': {
-                          'type': 'mrkdwn',
-                          'text': f'*Ready for website update.* Reply in this thread:\\n>\`@Claude update the autonomi.dev blog for Loki Mode {version}. Read the changelog from https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md for {version}, then update src/data/blog-posts.ts in https://github.com/asklokesh/autonomi-website with a new blog post entry. Also update the FALLBACK version in src/hooks/useLatestVersion.ts. No emojis. Commit and push.\`'
-                      }
-                  }
-              ]
-          }
-
-          with open('/tmp/slack-payload.json', 'w') as f:
-              json.dump(payload, f)
-          "
-
-          curl -s -X POST "$SLACK_WEBHOOK_URL" \
-            -H 'Content-type: application/json' \
-            -d @/tmp/slack-payload.json
-
-          echo "Slack notification sent for ${VERSION}"
-
-  # D90: split out of the publish so the publish ends when the publish
-  # does. Post-Release Smoke triggers on this WORKFLOW finishing, so holding
-  # this job until the registry serves the exact version keeps the smoke from
-  # running against a version npm does not serve yet. Registry lag is external
-  # time, reported separately.
-  npm-visible:
-    needs: publish-npm
-    runs-on: ubuntu-latest
-    timeout-minutes: 50
-    # WF-2MIN-3: a REPORTER, not a gate. Registry lag is external time and is
-    # recorded in the job summary; no job may `needs:` this one, and a lag
-    # timeout must not turn the Release run red (allow-listed in
-    # tests/test-workflow-no-masked-failures.sh). Informational only.
-    continue-on-error: true
-    steps:
-      - name: Checkout (VERSION only)
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: VERSION
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Wait until npm serves the published version
-        # NPM-LAG: npm can take 30+ minutes to serve a version it just accepted
-        # (10.5.34 smoke failed ETARGET during a 29 minute lag). Post-Release
-        # Smoke triggers on this workflow finishing, so holding THIS job until
-        # the registry serves the exact version keeps it from running against a
-        # version npm does not serve yet. Three states, never conflated:
-        #   visible: npm view prints exactly VERSION, so pass
-        #   lagging: empty output, E404 or a transient error, so keep polling;
-        #            this is neither a failure nor a pass
-        #   timeout: still not visible at the deadline, so fail with the
-        #            distinct NPM-LAG-TIMEOUT message
-        # --prefer-online bypasses the local packument cache. The smoke
-        # retry window stays as it is; this wait only adds the guarantee in
-        # front of it.
-        env:
-          NPM_WAIT_TIMEOUT_S: '2700'
-          NPM_WAIT_BASE_S: '5'
-          NPM_WAIT_CAP_S: '60'
-        run: |
-          set -uo pipefail
-          VERSION="$(tr -d '\n' < VERSION)"
-          start="$(date +%s)"
-          deadline=$(( start + NPM_WAIT_TIMEOUT_S ))
-          delay="$NPM_WAIT_BASE_S"
-          polls=0
-          while :; do
-            polls=$(( polls + 1 ))
-            FOUND="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
-            if [ "$FOUND" = "$VERSION" ]; then
-              echo "OK: npm serves loki-mode@${VERSION} (poll ${polls})"
-              echo "npm registry lag: loki-mode@${VERSION} visible after $(( $(date +%s) - start ))s (${polls} polls)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-              exit 0
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} still not served by npm after ${NPM_WAIT_TIMEOUT_S}s (${polls} polls); the publish step succeeded but the registry never listed it"
-              echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} not visible after ${NPM_WAIT_TIMEOUT_S}s (${polls} polls)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-              exit 1
-            fi
-            echo "poll ${polls}: loki-mode@${VERSION} not visible on npm yet (registry lag, not a failure); sleeping ${delay}s"
-            sleep "$delay"
-            delay=$(( delay * 2 ))
-            [ "$delay" -gt "$NPM_WAIT_CAP_S" ] && delay="$NPM_WAIT_CAP_S"
-          done
-
-  publish-python-sdk:
-    needs: release
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Sync version from VERSION file
-        run: |
-          VERSION=$(cat VERSION | tr -d '\n')
-          echo "Syncing Python SDK version to $VERSION"
-          sed -i "s/^version = .*/version = \"$VERSION\"/" sdk/python/pyproject.toml
-
-      - name: Build Python SDK
-        working-directory: sdk/python
-        run: |
-          pip install build
-          python -m build
-
-      - name: Publish to PyPI
-        working-directory: sdk/python
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          pip install twine
-          twine upload dist/*
-
-  publish-ts-sdk:
-    needs: release
-    concurrency:
-      group: release-npm-sdk
-      cancel-in-progress: false
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Sync version from VERSION file
-        run: |
-          VERSION=$(cat VERSION | tr -d '\n')
-          echo "Syncing TypeScript SDK version to $VERSION"
-          npm --prefix sdk/typescript pkg set version="$VERSION"
-
-      - name: Build TypeScript SDK
-        working-directory: sdk/typescript
-        run: |
-          npm install
-          npm run build
-
-      - name: Publish to npm
-        working-directory: sdk/typescript
-        run: |
-          set -euo pipefail
-          VERSION="$(tr -d '\n' < ../../VERSION)"
-          if ! npm publish --access public --tag next; then
-            if [ "$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)" != "$VERSION" ]; then
-              echo "FATAL: sdk publish failed and loki-mode-sdk@${VERSION} is not on the registry"; exit 1
-            fi
-            echo "loki-mode-sdk@${VERSION} already published"
-          fi
-          CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
-          if [ -z "$CUR" ]; then
-            echo "::error::npm view returned no current latest for loki-mode-sdk; refusing to move latest (fail closed). ${VERSION} stays published under next."
-            exit 1
-          fi
-          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
-            npm dist-tag add "loki-mode-sdk@${VERSION}" latest
-            npm dist-tag add "loki-mode-sdk@${VERSION}" next
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # NATIVE PER-ARCH BUILD, NOT QEMU EMULATION (S-85).
-  #
-  # `docker/build-push-action` with `platforms: linux/amd64,linux/arm64` on a
-  # single ubuntu-latest runner built arm64 under QEMU user-mode emulation,
-  # which is slow enough to dominate this job's runtime. GitHub-hosted
-  # ubuntu-24.04-arm runners build arm64 natively, so each architecture now
-  # builds on its own native runner and pushes only its own digest (no tag);
-  # the publish-docker job below assembles the two digests into the one
-  # multi-arch manifest that carries every tag.
-  publish-docker-build:
-    needs: release
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Setup Bun (for loki-ts build before docker context)
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.13
-          # Rule of Two: this job holds a Docker Hub publish secret, so it
-          # never restores a cache an issue-triggered job could have written.
-          no-cache: true
-
-      - name: Build loki-ts dist (Dockerfile COPY needs loki-ts/dist/loki.js)
-        working-directory: loki-ts
-        run: |
-          bun install --production
-          bun run build
-          test -f dist/loki.js || { echo "FATAL: loki-ts/dist/loki.js not built"; exit 1; }
-          ls -la dist/
-
-      - name: Set up Docker Buildx (native, no QEMU)
-        uses: docker/setup-buildx-action@v3
-        with:
-          # Rule of Two: this job holds a Docker Hub publish secret, so it
-          # never restores a cache an issue-triggered job could have written.
-          cache-binary: false
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push by digest (${{ matrix.platform }}, native)
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=asklokesh/loki-mode,push-by-digest=true,name-canonical=true,push=true
-
-      - name: Export digest
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          test -n "$digest" || { echo "FATAL: build step produced no digest"; exit 1; }
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-docker:
-    needs: [release, publish-docker-build]
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    # id-token: write is what makes cosign KEYLESS signing possible -- it mints
-    # the short-lived OIDC token that Fulcio exchanges for a signing
-    # certificate, so no private key is ever stored or rotated by us. Scoped to
-    # this job rather than the workflow: every other job here publishes
-    # artifacts and has no business minting identity tokens.
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          # Rule of Two: this job holds a Docker Hub publish secret, so it
-          # never restores a cache an issue-triggered job could have written.
-          cache-binary: false
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # Version tags only. `:latest` is added alongside (D102).
-      - name: Create and push multi-arch manifest
-        id: build
-        working-directory: /tmp/digests
-        run: |
-          set -euo pipefail
-          tags=(
-            "asklokesh/loki-mode:v${{ needs.release.outputs.version }}"
-            "asklokesh/loki-mode:${{ needs.release.outputs.version }}"
-            "asklokesh/loki-mode:latest"
-          )
-          tag_args=()
-          for t in "${tags[@]}"; do tag_args+=(-t "$t"); done
-          sources=()
-          for d in *; do sources+=("asklokesh/loki-mode@sha256:${d}"); done
-          test "${#sources[@]}" -ge 2 || { echo "FATAL: expected 2 per-arch digests, found ${#sources[@]}"; exit 1; }
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          # The manifest LIST's own digest (what the registry serves for the
-          # tag, and what gets signed below) is the sha256 of the exact bytes
-          # `imagetools inspect --raw` returns for it -- content-addressable,
-          # so no separate API call to resolve it can race what was just
-          # pushed.
-          digest="sha256:$(docker buildx imagetools inspect "asklokesh/loki-mode:v${{ needs.release.outputs.version }}" --raw | sha256sum | cut -d' ' -f1)"
-          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-
-      # SIGNING AND SBOM LIVE HERE, NOT IN provenance.yml, AND THAT IS THE POINT.
-      #
-      # provenance.yml triggers on `release: published`. Releases in this repo are
-      # created by release.yml using the default GITHUB_TOKEN, and GitHub
-      # deliberately does not emit trigger events for actions taken with that
-      # token -- otherwise a workflow could recursively trigger itself. So
-      # provenance.yml has never once fired on a real release: its only two runs
-      # ever were manual workflow_dispatch on 2026-04-26, and the registry
-      # confirms the consequence -- zero `sha256-*.sig` tags exist on
-      # asklokesh/loki-mode despite the header comment in provenance.yml
-      # claiming images are signed.
-      #
-      # A dead workflow shows up as an EMPTY run list, never as a red one, which
-      # is why this went unnoticed for months across many releases. Signing in
-      # the same job that pushed the image removes the trigger from the equation
-      # entirely: if the image published, the signature ran.
-      #
-      # We sign the DIGEST rather than a tag. Tags are mutable -- `latest` and
-      # even a version tag can be repointed -- so a signature bound to a tag
-      # attests to whatever that tag happens to mean today. A digest is the
-      # content itself. It is the manifest LIST digest: the same one every tag
-      # above now resolves to.
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: 'v2.4.1'
-
-      - name: Sign the image digest (keyless)
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          test -n "$DIGEST" || { echo "FATAL: build step produced no digest"; exit 1; }
-          REF="asklokesh/loki-mode@${DIGEST}"
-          cosign sign --yes "$REF"
-          echo "Signed ${REF}"
-
-      # The SBOM that already existed describes the npm TARBALL. Anyone
-      # deploying via Helm or ECS runs the IMAGE, which carries an OS layer, a
-      # Python runtime and system packages that the npm SBOM never listed. An
-      # enterprise scanning us for CVEs was scanning the wrong artifact.
-      - name: Generate image SBOM (CycloneDX)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: asklokesh/loki-mode@${{ steps.build.outputs.digest }}
-          format: cyclonedx-json
-          output-file: image-sbom.cdx.json
-          upload-artifact: false
-
-      - name: Attest the SBOM to the image
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-          test -s image-sbom.cdx.json || { echo "FATAL: SBOM is empty"; exit 1; }
-          cosign attest --yes \
-            --predicate image-sbom.cdx.json \
-            --type cyclonedx \
-            "asklokesh/loki-mode@${DIGEST}"
-          echo "SBOM attested to asklokesh/loki-mode@${DIGEST}"
-
-      - name: Upload image SBOM as a workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-sbom-${{ needs.release.outputs.version }}
-          path: image-sbom.cdx.json
-          retention-days: 365
-
-      - name: Update Docker Hub description
-        continue-on-error: true  # Cosmetic step; image publish already succeeded above. PATs without admin scope return Forbidden here.
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: asklokesh/loki-mode
-          readme-filepath: ./docs/DOCKER.md
-          short-description: "Autonomous spec-to-product system for Claude Code, Codex CLI, Cline, and Aider"
-
-  # The VS Code marketplace publishing job was removed in v7.2.0. The
-  # Loki Mode VSCode extension is deprecated and no longer maintained. The
-  # marketplace listing remains for legacy users on v7.1.0 and earlier but
-  # receives no further updates. The vscode-extension/ source remains in the
-  # repo for users who want to build locally. See vscode-extension/README.md
-  # for details.
-
-  # D102: Homebrew formula bump moved here from the deleted promote.yml. Runs
-  # after the GitHub Release exists (it hashes the release's brew asset).
+  # Hashes the release's brew asset, so it runs after the GitHub Release.
   update-homebrew:
     needs: release
     if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - name: Read version
-        id: ver
-        run: echo "version=${{ needs.release.outputs.version }}" >> "$GITHUB_OUTPUT"
-
-      - name: Preflight Homebrew (hash asset, render formula, read tap)
+      - name: Render and push the Homebrew formula
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
@@ -1115,7 +350,6 @@ jobs:
           gh release download "v${VERSION}" --repo asklokesh/loki-mode --pattern "${ASSET}" --dir "$RUNNER_TEMP" --clobber
           file "${RUNNER_TEMP}/${ASSET}" | grep -q 'gzip compressed' || { echo "ERROR: asset is not a gzip tarball"; exit 1; }
           SHA256=$(sha256sum "${RUNNER_TEMP}/${ASSET}" | cut -d' ' -f1)
-          rm -f "${RUNNER_TEMP}/${ASSET}"
           cat > "${RUNNER_TEMP}/loki-mode.rb.tpl" << 'FORMULA_EOF'
           class LokiMode < Formula
             desc "Autonomous coding agent platform CLI for Claude Code, Codex CLI, Cline, and Aider"
@@ -1140,14 +374,6 @@ jobs:
           FORMULA_EOF
           sed "s/VERSION_PLACEHOLDER/${VERSION}/g; s/SHA256_PLACEHOLDER/${SHA256}/g" "${RUNNER_TEMP}/loki-mode.rb.tpl" > "${RUNNER_TEMP}/loki-mode.rb"
           grep -q "sha256 \"${SHA256}\"" "${RUNNER_TEMP}/loki-mode.rb" || { echo "FATAL: formula render failed"; exit 1; }
-          gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha' > /dev/null
-
-      - name: Update Homebrew formula via API
-        env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          set -euo pipefail
           CURRENT_SHA=$(gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha')
           CONTENT=$(base64 < "${RUNNER_TEMP}/loki-mode.rb" | tr -d '\n')
           gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb \
@@ -1156,3 +382,263 @@ jobs:
             -f content="$CONTENT" \
             -f sha="$CURRENT_SHA"
           echo "Homebrew formula updated to v${VERSION}"
+
+  notify-slack:
+    needs: release
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (for changelog)
+        uses: actions/checkout@v4
+
+      - name: Post to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          VERSION_FOR_SLACK: v${{ needs.release.outputs.version }}
+          RELEASE_URL_FOR_SLACK: https://github.com/asklokesh/loki-mode/releases/tag/v${{ needs.release.outputs.version }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not configured, skipping Slack notification"
+            exit 0
+          fi
+          if ! bash scripts/release-notes.sh "${VERSION_FOR_SLACK#v}" > "$RUNNER_TEMP/changelog-body.txt"; then
+            echo "Release ${VERSION_FOR_SLACK}" > "$RUNNER_TEMP/changelog-body.txt"
+          fi
+          python3 - "$RUNNER_TEMP/changelog-body.txt" "$RUNNER_TEMP/slack-payload.json" <<'PY'
+          import json, os, sys
+          version = os.environ['VERSION_FOR_SLACK']
+          release_url = os.environ['RELEASE_URL_FOR_SLACK']
+          changelog = open(sys.argv[1]).read().strip()
+          if len(changelog) > 1500:
+              changelog = changelog[:1500] + '...'
+          ask = ('*Ready for website update.* Reply in this thread:\n>`@Claude update the autonomi.dev blog for Loki Mode '
+                 f'{version}. Read the changelog from https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md for {version}, '
+                 'then update src/data/blog-posts.ts in https://github.com/asklokesh/autonomi-website with a new blog post entry. '
+                 'Also update the FALLBACK version in src/hooks/useLatestVersion.ts. No emojis. Commit and push.`')
+          payload = {'blocks': [
+              {'type': 'header', 'text': {'type': 'plain_text', 'text': f'Loki Mode {version} Released'}},
+              {'type': 'section', 'text': {'type': 'mrkdwn', 'text': f'*<{release_url}|View Release on GitHub>*'}},
+              {'type': 'section', 'text': {'type': 'mrkdwn', 'text': changelog}},
+              {'type': 'divider'},
+              {'type': 'section', 'text': {'type': 'mrkdwn', 'text': ask}},
+          ]}
+          json.dump(payload, open(sys.argv[2], 'w'))
+          PY
+          curl -s -X POST "$SLACK_WEBHOOK_URL" -H 'Content-type: application/json' -d @"$RUNNER_TEMP/slack-payload.json"
+          echo "Slack notification sent for ${VERSION_FOR_SLACK}"
+
+  # Idempotent (--skip-existing), so it needs nothing and starts at t=0.
+  publish-python-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build and publish to PyPI
+        working-directory: sdk/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < ../../VERSION)"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+          pip install build twine
+          python -m build
+          twine upload --skip-existing dist/*
+
+  # Idempotent, so it needs nothing and starts at t=0.
+  publish-ts-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: release-npm-sdk
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build and publish loki-mode-sdk under next, then latest and next if highest
+        working-directory: sdk/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < ../../VERSION)"
+          npm pkg set version="$VERSION"
+          npm install
+          npm run build
+          if ! npm publish --access public --tag next; then
+            if [ "$(npm view "loki-mode-sdk@${VERSION}" version --prefer-online 2>/dev/null || true)" != "$VERSION" ]; then
+              echo "FATAL: sdk publish failed and loki-mode-sdk@${VERSION} is not on the registry"; exit 1
+            fi
+            echo "loki-mode-sdk@${VERSION} already published"
+          fi
+          CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
+          if [ -z "$CUR" ]; then
+            echo "::error::npm view returned no current latest for loki-mode-sdk; refusing to move latest (fail closed). ${VERSION} stays published under next."
+            exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            npm dist-tag add "loki-mode-sdk@${VERSION}" latest
+            npm dist-tag add "loki-mode-sdk@${VERSION}" next
+          fi
+
+  # Native per-arch build (no QEMU), pushed by digest; needs nothing, so it
+  # starts at t=0. The docker job assembles the multi-arch manifest.
+  docker-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun (for loki-ts build before docker context)
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+          # Rule of Two: this job holds a Docker Hub publish secret, so it
+          # never restores a cache an issue-triggered job could have written.
+          no-cache: true
+
+      - name: Build loki-ts dist (Dockerfile COPY needs loki-ts/dist/loki.js)
+        working-directory: loki-ts
+        run: |
+          set -euo pipefail
+          bun install --production
+          bun run build
+          test -f dist/loki.js || { echo "FATAL: loki-ts/dist/loki.js not built"; exit 1; }
+
+      - name: Set up Docker Buildx (native, no QEMU)
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Rule of Two: never restore a cache an issue-triggered job could have written.
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push by digest (${{ matrix.platform }}, native)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=asklokesh/loki-mode,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST" || { echo "FATAL: build step produced no digest"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # id-token: write mints the OIDC token for cosign KEYLESS signing.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout (VERSION only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          cache-binary: false
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        id: build
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          sources=()
+          for d in "$RUNNER_TEMP"/digests/*; do sources+=("asklokesh/loki-mode@sha256:$(basename "$d")"); done
+          test "${#sources[@]}" -ge 2 || { echo "FATAL: expected 2 per-arch digests, found ${#sources[@]}"; exit 1; }
+          docker buildx imagetools create \
+            -t "asklokesh/loki-mode:v${VERSION}" \
+            -t "asklokesh/loki-mode:${VERSION}" \
+            -t "asklokesh/loki-mode:latest" \
+            "${sources[@]}"
+          digest="sha256:$(docker buildx imagetools inspect "asklokesh/loki-mode:v${VERSION}" --raw | sha256sum | cut -d' ' -f1)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      # Sign the manifest-list DIGEST (tags are mutable), in the same job that
+      # pushed it: if the image published, the signature ran.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign the image digest (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST" || { echo "FATAL: manifest step produced no digest"; exit 1; }
+          cosign sign --yes "asklokesh/loki-mode@${DIGEST}"

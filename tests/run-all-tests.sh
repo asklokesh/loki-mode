@@ -1369,14 +1369,6 @@ run_test "parent checkout core.bare detection self-heals without green-washing" 
 # always run.
 run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)" "$SCRIPT_DIR/test-local-ci-gitleaks.sh"
 
-# E-114: security-audit.yml's gitleaks CI gate never trusts a pushed
-# .gitleaks.toml -- refuses the job when the range changes it (no automatic
-# bypass), scans with the base commit's config (or gitleaks' default rules),
-# and warns (never blocks) on a .gitleaksignore addition. SKIP not pass when
-# the binary is absent.
-run_test "security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)" "$SCRIPT_DIR/test-security-audit-config.sh"
-run_test "main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)" "timeout -k 10 120 bash $SCRIPT_DIR/test-gitleaks-incremental.sh"
-
 # E-94: local-ci fast-tier hermetic changed-tests scan (re-runs every changed
 # tests/*.sh, tests/*.py, loki-ts/tests/** under env -i with no gh/network,
 # fails naming any file that passes normally but fails stripped). Live temp-
@@ -1391,10 +1383,7 @@ run_test "Time-to-first-preview metric (write-once, never invented)" "$SCRIPT_DI
 run_test "Session knobs stay default-OFF (gates the v8 SDK-flip audit)" "$SCRIPT_DIR/test-session-knobs-default-off.sh"
 run_test "shards partition the suite list (no silently dropped suite)" "$SCRIPT_DIR/test-shard-coverage.sh"
 run_test "shard-durations.tsv drift detector (S-134)" "$SCRIPT_DIR/test-shard-durations-drift.sh"
-run_test "version-bump-only push skips heavy Tests jobs (S-132)" "$SCRIPT_DIR/test-version-bump-only.sh"
-run_test "release gate does not repeat Tests work and keeps dist checks (WF-GATE-DEDUP)" "timeout -k 10 120 bash $SCRIPT_DIR/test-release-gate-dedup.sh"
 run_test "worktree reaper saves, removes and floors slice worktrees (AUTO-REAP, FC-99)" "timeout -k 10 120 bash $SCRIPT_DIR/test-worktree-reap.sh"
-run_test "train verdict reuse on main push (E-160, D55)" "$SCRIPT_DIR/test-train-verdict-reuse.sh"
 run_test "council gate readers use the resolved -I -S interpreter (S-141)" "$SCRIPT_DIR/test-council-gate-readers-pth.sh"
 run_test "Tier A test selector (S-91 rules R0-R7)" "$SCRIPT_DIR/test-select-tests.sh"
 run_test "select-tests --run never a silent no-op (FC-47)" "timeout -k 10 120 $SCRIPT_DIR/test-select-tests-run.sh"
@@ -1422,7 +1411,7 @@ run_test "worker grace period honours mid-build shutdown" "$SCRIPT_DIR/test-work
 run_test "k8s sizing says what was measured and what was not" "$SCRIPT_DIR/test-k8s-sizing-honesty.sh"
 run_test "air-gapped k8s install is honest about scope" "$SCRIPT_DIR/test-airgap-k8s-install.sh"
 run_test "enterprise smoke script contract (offline)" "$SCRIPT_DIR/test-enterprise-smoke-script.sh"
-run_test "image provenance: signing and SBOM in the publish job" "$SCRIPT_DIR/test-image-provenance.sh"
+run_test "image provenance: signing in the docker publish job" "$SCRIPT_DIR/test-image-provenance.sh"
 run_test "doctor is CI-gateable (nonzero on missing required dep)" "$SCRIPT_DIR/test-doctor-ci-gateable.sh"
 run_test "completion coverage (every real command in both shells)" "$SCRIPT_DIR/test-completion-coverage.sh"
 run_test "dry-run paths work and are discoverable from start --help" "$SCRIPT_DIR/test-dry-run-discoverable.sh"
@@ -1445,7 +1434,6 @@ run_test "npm artifacts have portable permissions" "$SCRIPT_DIR/test-package-per
 run_test "packaged MCP server exposes the exact tool surface" "$SCRIPT_DIR/test-mcp-tool-surface-packaged.sh"
 run_test "MCP contract guard rejects rename/deletion/missing prereqs" "$SCRIPT_DIR/test-mcp-tool-surface-guard-rejects.sh"
 run_test "MCP server negotiates the requested protocol version (MCP-B)" "timeout -k 10 120 $SCRIPT_DIR/test-mcp-protocol-version.sh"
-run_test "npm SBOM is attached to the GitHub Release" "$SCRIPT_DIR/test-release-sbom-attached.sh"
 run_test "nightly flake tracker flags same-SHA pass/fail flips (FC-53)" "timeout -k 10 120 bash $SCRIPT_DIR/test-nightly-flake-tracker.sh"
 run_test "workflows never mask a failed test leg (FC-57)" "timeout -k 10 120 bash $SCRIPT_DIR/test-workflow-no-masked-failures.sh"
 run_test "pipe-to-grep-q under pipefail breaks on large output (FC-64)" "timeout -k 10 120 bash $SCRIPT_DIR/test-sigpipe-guard.sh"
@@ -1658,9 +1646,7 @@ run_test "Usage governor measured /usage cap and fallback label (GOV-MEASURE)" "
 run_test "Usage governor seat formula and burn calibration (GOV-FORMULA)" "timeout -k 10 120 $SCRIPT_DIR/test-usage-governor-formula.sh"
 run_test "Usage governor statusLine logger (G-01)" "$SCRIPT_DIR/test-usage-statusline-logger.sh"
 run_test "cloud-dispatch dry-run refuses on overlap, governor max, not-ready (G-04)" "timeout -k 10 120 $SCRIPT_DIR/test-cloud-dispatch.sh"
-run_test "CI security scanners wired, fail-closed (E-123)" "$SCRIPT_DIR/test-security-scan-coverage.sh"
 run_test "Heredoc dollar-digit footgun checker (D44)" "$SCRIPT_DIR/test-check-heredoc-dollar-digit.sh"
-run_test "CI cache scope (D44)" "$SCRIPT_DIR/test-ci-cache-scope.sh"
 run_test "Engine10 push GitLab (D44)" "$SCRIPT_DIR/test-engine10-push-gitlab.sh"
 run_test "gh withhold nested (D44)" "$SCRIPT_DIR/test-gh-withhold-nested.sh"
 run_test "SettingsPage has no Gemini (D44)" "$SCRIPT_DIR/test-settingspage-no-gemini.sh"

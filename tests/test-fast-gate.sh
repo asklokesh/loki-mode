@@ -45,8 +45,8 @@ if has cp tests/test-control-plane.sh && ! grep -q '^FULL' "$T/cp/plan.tsv"; the
     ok "docker/Dockerfile.control-plane selects tests/test-control-plane.sh (CP-04)"
 else bad "docker/Dockerfile.control-plane did not select tests/test-control-plane.sh"; fi
 
-plan_for wf .github/workflows/test.yml
-if has wf tests/test-ci-cache-scope.sh && has wf tests/test-registration-coverage.sh && ! grep -q '^FULL' "$T/wf/plan.tsv"; then
+plan_for wf .github/workflows/release.yml
+if has wf tests/test-registration-coverage.sh && ! grep -q '^FULL' "$T/wf/plan.tsv"; then
     ok "a workflow edit selects the workflow guards, not the full set"
 else bad "a workflow edit did not select the workflow guards"; fi
 
@@ -74,7 +74,7 @@ else bad "an uncomputable diff did not fail safe to FULL"; fi
 # Parity: every sample the planner calls R0 must be R0 in the selector, and
 # every sample it does not must not be.
 parity=1
-for f in VERSION package.json web-app/package.json loki-ts/dist/loki.js tests/lib/x.sh .github/workflows/test.yml \
+for f in VERSION package.json web-app/package.json loki-ts/dist/loki.js tests/lib/x.sh .github/workflows/release.yml \
          docker/Dockerfile.control-plane loki-ts/src/commands/doctor.ts docs/a.md autonomy/loki; do
     sel_r0=0
     printf '%s\n' "$f" | bash scripts/select-tests.sh --files - 2>/dev/null | grep -q '^R0' && sel_r0=1
@@ -125,24 +125,6 @@ PY
 then ok "release.yml no longer blocks on a red nightly (D102: release never waits on CI)"
 else bad "release.yml still blocks the release on a red nightly"; fi
 
-# PLAN-BOUND: the plan step is bounded and a nonzero planner rc forces FULL.
-if python3 - <<'PY'
-import yaml
-d = yaml.safe_load(open(".github/workflows/test.yml"))
-steps = d["jobs"]["plan"]["steps"]
-run = [s for s in steps if s.get("name") == "Compute the plan"][0]["run"]
-assert "timeout -k 10 240 bash scripts/ci/fast-gate.sh plan" in run, "planner not wrapped in timeout"
-assert run.index("rm -f") < run.index("timeout -k"), "stale outputs.txt not removed before the run"
-assert "|| PLAN_RC=$?" in run, "rc not captured under bash -e"
-i = run.index('if [ "$PLAN_RC" -ne 0 ]')
-seg = run[i:i + 400]
-assert "full=true" in seg and "has_shards=false" in seg, "nonzero rc does not force full=true"
-assert "plan.tsv" in seg, "no plan.tsv placeholder for the upload step"
-assert d["jobs"]["plan"]["timeout-minutes"] == 15
-PY
-then ok "the plan step bounds fast-gate.sh with timeout, clears outputs.txt first, and a nonzero rc forces full=true"
-else bad "the plan step is not bounded (timeout / rm -f outputs.txt / nonzero rc -> full=true)"; fi
-
 # PLAN-BOUND: more than 150 changed files goes FULL without calling the selector.
 seq 1 151 | sed 's#^#docs/gen-#; s#$#.md#' >"$T/many.files"
 FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/many.files" bash scripts/ci/fast-gate.sh plan test "$T/many" >"$T/many.log" 2>&1
@@ -168,28 +150,6 @@ if [ -s "$T/ovf2/plan.tsv" ] && ! grep -q '^FULL' "$T/ovf2/plan.tsv" && grep -q 
     ok "PLAN-OVERFLOW: an under-capacity plan is packed normally (no FULL)"
 else bad "PLAN-OVERFLOW: under-capacity plan wrongly went FULL or was empty"; fi
 
-# PLAN-BOUND: force a hang. Run the real step script with a stub planner that
-# sleeps and a 1s timeout; the step must exit 0 under bash -e with full=true.
-mkdir -p "$T/hang/scripts/ci" "$T/hang/rt"
-printf '#!/usr/bin/env bash\nsleep 30\n' >"$T/hang/scripts/ci/fast-gate.sh"
-mkdir -p "$T/hang/rt/plan"
-printf 'full=false\nshards=[0]\nhas_shards=true\n' >"$T/hang/rt/plan/outputs.txt" # stale output must not survive
-python3 - "$T/hang/step.sh" <<'PY'
-import sys, yaml
-d = yaml.safe_load(open(".github/workflows/test.yml"))
-run = [s for s in d["jobs"]["plan"]["steps"] if s.get("name") == "Compute the plan"][0]["run"]
-assert "timeout -k 10 240" in run
-open(sys.argv[1], "w").write(run.replace("timeout -k 10 240", "timeout -k 1 1"))
-PY
-: >"$T/hang/gh_out"; : >"$T/hang/gh_sum"
-( cd "$T/hang" && EVENT_NAME=push BASE_REF='' REF_NAME=main RUNNER_TEMP="$T/hang/rt" \
-    GITHUB_OUTPUT="$T/hang/gh_out" GITHUB_STEP_SUMMARY="$T/hang/gh_sum" \
-    timeout -k 5 60 bash -e step.sh >"$T/hang/step.log" 2>&1 ); hang_rc=$?
-if [ "$hang_rc" -eq 0 ] && grep -q '^full=true$' "$T/hang/gh_out" && ! grep -q 'full=false' "$T/hang/gh_out" \
-    && [ -s "$T/hang/rt/plan/plan.tsv" ]; then
-    ok "a hung planner is cut by the timeout: step exits 0 under bash -e with full=true and a plan.tsv"
-else bad "a hung planner did not yield full=true with exit 0 (rc=$hang_rc)"; fi
-
 # FC-73: a release-commit plan (VERSION, package.json, dist, workflows) must not select suites that
 # have no green baseline, and VERSION must not pull in every test that merely mentions the word.
 printf '%s\n' VERSION package.json loki-ts/dist/loki.js >"$T/rel.files"
@@ -199,7 +159,7 @@ while IFS=$'\t' read -r _k kind target _rest; do
     [ "$_k" = "G" ] || continue
     case "$target" in *.py | *.js) continue ;; esac
     b="${target##*/}"
-    grep -qF -- "$b" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv .github/workflows/full-suite.yml .github/workflows/nightly.yml \
+    grep -qF -- "$b" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv \
         || fc67_bad="$fc67_bad $target"
 done <"$T/rel/raw.tsv"
 if [ -s "$T/rel/raw.tsv" ] && [ -z "$fc67_bad" ]; then

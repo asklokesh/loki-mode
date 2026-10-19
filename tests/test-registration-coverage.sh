@@ -22,15 +22,16 @@
 # cannot mask an orphan. Today only tests/cli holds such suites.
 #
 # WHAT THIS ASSERTS: every tests/test-*.sh and tests/*/test-*.sh is referenced by at least one of the
-# three runners (tests/run-all-tests.sh, scripts/local-ci.sh,
-# .github/workflows/test.yml), or is explicitly listed in IGNORE below.
+# two runners (tests/run-all-tests.sh, scripts/local-ci.sh), or is explicitly
+# listed in IGNORE below. No GitHub workflow runs tests (release.yml is the
+# minimal publish set), so local-ci.sh is the CI.
 #
-# ADDING A TEST: register it in a runner (usually run-all-tests.sh, which both
-# local-ci.sh and test.yml execute). If a file is genuinely not a standalone
+# ADDING A TEST: register it in a runner (usually run-all-tests.sh, which
+# local-ci.sh executes). If a file is genuinely not a standalone
 # suite -- a helper other tests source, or a fixture -- add it to IGNORE with a
 # reason. IGNORE is the honest escape hatch; weakening the glob is not.
 #
-# This gate is itself registered in local-ci.sh and test.yml. A coverage gate
+# This gate is itself registered in local-ci.sh. A coverage gate
 # that is not covered would be self-refuting.
 
 set -uo pipefail
@@ -41,8 +42,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNERS=(
     "$REPO_ROOT/tests/run-all-tests.sh"
     "$REPO_ROOT/scripts/local-ci.sh"
-    "$REPO_ROOT/.github/workflows/test.yml"
-    "$REPO_ROOT/.github/workflows/full-suite.yml"
 )
 
 # Files that are deliberately not registered, each with a reason. Keep this

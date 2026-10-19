@@ -38,22 +38,10 @@ import glob, itertools, os, re, sys, yaml
 wfdir = sys.argv[1]
 
 # (file, job, step name or None for the job itself) -> justification.
-COE_ALLOW = {
-    ("test.yml", "version-bump-gate", "Reuse a train run's verdict for this exact SHA"):
-        "reuse lookup; a failure means reuse=false and the full suite runs",
-    ("security-audit.yml", "train-reuse", "Reuse a train run's verdict for this exact SHA"):
-        "reuse lookup; a failure means no reuse and the audit runs in full",
-    ("security-audit.yml", "python-audit", "pip-audit every requirements file"):
-        "findings reported; the next step asserts a parseable report for every manifest",
-    ("release.yml", "npm-visible", None):
-        "non-blocking registry-lag reporter (WF-2MIN-3): writes the lag to the job summary; nothing needs it; smoke polls for visibility itself",
-    ("release.yml", "publish-docker", "Update Docker Hub description"):
-        "cosmetic; the image publish already succeeded and PAT scope can 403",
-}
-ALWAYS_ALLOW = {
-    ("post-release-smoke.yml", "notify"):
-        "notifier only; the smoke jobs it reports on fail the run themselves",
-}
+# Empty since release.yml became the only workflow; add a row only with a
+# written justification.
+COE_ALLOW = {}
+ALWAYS_ALLOW = {}
 TEST_CMD = re.compile(
     r"(bun test|npm test|npm run test|pytest|node --test|bash tests/|run-all-tests|"
     r"bun run typecheck|tsc --noEmit|first-run-gate|select-tests)")
@@ -366,7 +354,7 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
                     fail(f"{fn}:{jname}: step {sname!r}: test command piped without pipefail: {s[:90]} (R4)")
 
 # Positive control: the files this guard exists for were actually parsed.
-want = ["nightly.yml", "test.yml", "release.yml", "full-suite.yml", "post-release-smoke.yml"]
+want = ["release.yml"]
 if os.path.basename(wfdir.rstrip("/")) == "workflows" and wfdir == ".github/workflows":
     for w in want:
         if not os.path.exists(os.path.join(wfdir, w)):
@@ -387,9 +375,32 @@ rc=$?
 SELF="$(mktemp -d "${TMPDIR:-/tmp}/loki-nomask.XXXXXX")" || exit 1
 trap 'rm -rf -- "$SELF"' EXIT
 SELF_FAIL=0
+# The step-level mutations need a test-running job. release.yml (the only
+# workflow) runs no test suite, so each copy also gets a minimal fixture
+# workflow that carries the anchors; unmutated, it must pass the guard.
+FIXTURE='name: fixture
+on: workflow_dispatch
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        bun-version: [latest]
+        include:
+          - bun-version: latest
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
+    steps:
+      - name: tests
+        run: bun test
+'
+seed() { mkdir -p "$1" && cp .github/workflows/*.yml "$1/" && printf '%s' "$FIXTURE" > "$1/fixture.yml"; }
+seed "$SELF/base"
+bash "$0" "$SELF/base" >/dev/null 2>&1
+if [ $? -eq 0 ]; then echo "  PASS: unmutated fixture stays green"; else echo "  FAIL: unmutated fixture flagged"; SELF_FAIL=1; fi
 mut() { # name file old new
     local d="$SELF/$1"
-    mkdir -p "$d" && cp .github/workflows/*.yml "$d/"
+    seed "$d"
     python3 -I - "$d/$2" "$3" "$4" <<'MP'
 import sys
 p, a, b = sys.argv[1:4]
@@ -402,7 +413,7 @@ MP
 }
 ok() { # name file old new: a legitimate failing handler must stay green
     local d="$SELF/$1"
-    mkdir -p "$d" && cp .github/workflows/*.yml "$d/"
+    seed "$d"
     python3 -I - "$d/$2" "$3" "$4" <<'MP'
 import sys
 p, a, b = sys.argv[1:4]
@@ -416,58 +427,58 @@ MP
 JOB='    continue-on-error: ${{ matrix.experimental == true }}'
 STEP='        run: bun test
 '
-mut M04-job-expr-true nightly.yml "$JOB" '    continue-on-error: ${{ true }}'
-mut M05-job-event-name nightly.yml "$JOB" "    continue-on-error: \${{ github.event_name == 'schedule' }}"
-mut M06-step-expr-true nightly.yml "$STEP" '        continue-on-error: ${{ true }}
+mut M04-job-expr-true fixture.yml "$JOB" '    continue-on-error: ${{ true }}'
+mut M05-job-event-name fixture.yml "$JOB" "    continue-on-error: \${{ github.event_name == 'schedule' }}"
+mut M06-step-expr-true fixture.yml "$STEP" '        continue-on-error: ${{ true }}
         run: bun test
 '
-mut M07-exit-0 nightly.yml "$STEP" '        run: bun test || exit 0
+mut M07-exit-0 fixture.yml "$STEP" '        run: bun test || exit 0
 '
-mut M08-echo nightly.yml "$STEP" '        run: bun test || echo ignored
+mut M08-echo fixture.yml "$STEP" '        run: bun test || echo ignored
 '
-mut M09-true-then nightly.yml "$STEP" '        run: bun test || true; echo next
+mut M09-true-then fixture.yml "$STEP" '        run: bun test || true; echo next
 '
-mut M10-true-comment nightly.yml "$STEP" '        run: bun test || true  # tolerated
+mut M10-true-comment fixture.yml "$STEP" '        run: bun test || true  # tolerated
 '
-mut M11-success-or-failure release.yml '    needs: [gate, pack-npm]
-' '    needs: [gate, pack-npm]
+mut M11-success-or-failure release.yml '    needs: docker-build
+' '    needs: docker-build
     if: success() || failure()
 '
-mut N01-exit-in-string nightly.yml "$STEP" '        run: bun test || echo "gate failed (exit 1), tolerated"
+mut N01-exit-in-string fixture.yml "$STEP" '        run: bun test || echo "gate failed (exit 1), tolerated"
 '
-mut N02-false-in-string nightly.yml "$STEP" '        run: bun test || echo "false alarm, ignoring"
+mut N02-false-in-string fixture.yml "$STEP" '        run: bun test || echo "false alarm, ignoring"
 '
-mut N03-exit-var-zero nightly.yml "$STEP" '        run: |
+mut N03-exit-var-zero fixture.yml "$STEP" '        run: |
           SOFT=0
           bun test || exit $SOFT
 '
-mut N08-exit-arith-zero nightly.yml "$STEP" '        run: bun test || exit $((0))
+mut N08-exit-arith-zero fixture.yml "$STEP" '        run: bun test || exit $((0))
 '
-mut R01-false-or-true nightly.yml "$STEP" '        run: bun test || false || true
+mut R01-false-or-true fixture.yml "$STEP" '        run: bun test || false || true
 '
-mut R02-group-false-or-true nightly.yml "$STEP" '        run: bun test || { false || true; }
+mut R02-group-false-or-true fixture.yml "$STEP" '        run: bun test || { false || true; }
 '
-mut R03-exit-after-echo nightly.yml "$STEP" '        run: bun test || { echo "gate failed"; exit $?; }
+mut R03-exit-after-echo fixture.yml "$STEP" '        run: bun test || { echo "gate failed"; exit $?; }
 '
-mut R04-capture-reassigned nightly.yml "$STEP" '        run: bun test || { rc=$?; rc=0; exit $rc; }
+mut R04-capture-reassigned fixture.yml "$STEP" '        run: bun test || { rc=$?; rc=0; exit $rc; }
 '
-ok C01-capture-echo-exit nightly.yml "$STEP" '        run: bun test || { rc=$?; echo failed; exit $rc; }
+ok C01-capture-echo-exit fixture.yml "$STEP" '        run: bun test || { rc=$?; echo failed; exit $rc; }
 '
-ok C02-exit-status nightly.yml "$STEP" '        run: bun test || exit $?
+ok C02-exit-status fixture.yml "$STEP" '        run: bun test || exit $?
 '
-ok C03-echo-false nightly.yml "$STEP" '        run: bun test || { echo "::error::gate failed"; false; }
+ok C03-echo-false fixture.yml "$STEP" '        run: bun test || { echo "::error::gate failed"; false; }
 '
-ok C04-echo-exit-1 nightly.yml "$STEP" '        run: bun test || { echo "x"; exit 1; }
+ok C04-echo-exit-1 fixture.yml "$STEP" '        run: bun test || { echo "x"; exit 1; }
 '
-mut X01-second-or-true nightly.yml "$STEP" '        run: |
+mut X01-second-or-true fixture.yml "$STEP" '        run: |
           cd "$GITHUB_WORKSPACE" || exit 1; bash scripts/first-run-gate.sh --stub || true
 '
-mut X09-exit-256 nightly.yml "$STEP" '        run: bun test || exit 256
+mut X09-exit-256 fixture.yml "$STEP" '        run: bun test || exit 256
 '
-mut X20-capture-256 nightly.yml "$STEP" '        run: bun test || { rc=256; exit $rc; }
+mut X20-capture-256 fixture.yml "$STEP" '        run: bun test || { rc=256; exit $rc; }
 '
 cap() { # name command run between the capture and the exit
-    mut "$1" nightly.yml "$STEP" "        run: |
+    mut "$1" fixture.yml "$STEP" "        run: |
           bun test || rc=\$?
           $2
           exit \$rc
@@ -484,35 +495,35 @@ cap Y01-colon-arith ': $((rc=0))'
 cap Y02-echo-arith 'echo "$((rc=0))"'
 cap Y04-printf-arith "printf '%s\n' \$((rc=0))"
 cap Y09-printf-v-indirect 'n=rc; printf -v "$n" 0'
-mut Y05-indirect-printf-v nightly.yml "$STEP" '        run: |
+mut Y05-indirect-printf-v fixture.yml "$STEP" '        run: |
           n=rc
           bun test || { rc=$?; printf -v "$n" 0; exit $rc; }
 '
-mut Y08-function-reset nightly.yml "$STEP" '        run: |
+mut Y08-function-reset fixture.yml "$STEP" '        run: |
           reset_rc() { rc=0; }
           bun test || rc=$?
           reset_rc
           exit "$rc"
 '
-mut Y10-subshell-test nightly.yml "$STEP" '        run: |
+mut Y10-subshell-test fixture.yml "$STEP" '        run: |
           ( cd . && bash scripts/first-run-gate.sh --stub ) || true
 '
-mut Y11-group-test nightly.yml "$STEP" '        run: |
+mut Y11-group-test fixture.yml "$STEP" '        run: |
           { bash scripts/first-run-gate.sh --stub; } || true
 '
-ok F01-echo-stderr-exit nightly.yml "$STEP" '        run: bun test || { echo "::error::x" >&2; exit 1; }
+ok F01-echo-stderr-exit fixture.yml "$STEP" '        run: bun test || { echo "::error::x" >&2; exit 1; }
 '
-ok F07-exit-redirect nightly.yml "$STEP" '        run: bun test || exit 1 2>/dev/null
+ok F07-exit-redirect fixture.yml "$STEP" '        run: bun test || exit 1 2>/dev/null
 '
-ok F10-echo-1-to-2 nightly.yml "$STEP" '        run: bun test || { echo "gate failed" 1>&2; false; }
+ok F10-echo-1-to-2 fixture.yml "$STEP" '        run: bun test || { echo "gate failed" 1>&2; false; }
 '
-ok C05-capture-echo nightly.yml "$STEP" '        run: |
+ok C05-capture-echo fixture.yml "$STEP" '        run: |
           bun test || rc=$?
           echo "rc is $rc"
           exit $rc
 '
-mut M12-always release.yml '    needs: [gate, pack-npm]
-' '    needs: [gate, pack-npm]
+mut M12-always release.yml '    needs: docker-build
+' '    needs: docker-build
     if: always()
 '
 exit "$SELF_FAIL"

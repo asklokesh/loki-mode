@@ -13,8 +13,13 @@ delivers is worse than none, because it is exactly what an auditor will test.
 
 | Artifact | Signature | SBOM |
 |---|---|---|
-| Container image (`asklokesh/loki-mode`) | first release after v8.5.2 | first release after v8.5.2 |
-| npm tarball (`loki-mode`) | v7.4.10 and later | v7.4.10 and later |
+| Container image (`asklokesh/loki-mode`) | first release after v8.5.2 | first release after v8.5.2 through v11.17.98 |
+| npm tarball (`loki-mode`) | v7.4.10 and later | v7.4.10 through v11.17.98 |
+
+**Releases after v11.17.98 ship no SBOM.** The release workflow was cut to the
+minimum that publishes (so every channel is live within minutes of a version
+bump), and SBOM generation and attestation were removed with it. The image is
+still signed. Generate an SBOM yourself with `syft` (see below) if you need one.
 
 **Images published up to and including v8.5.2 are not signed and have no SBOM.** A signing
 workflow existed from v7.4.10 but was triggered on `release: published`, and
@@ -60,6 +65,10 @@ A pass prints a JSON block including the certificate's subject, which should
 name `release.yml` in this repository.
 
 ## Verify and read the SBOM
+
+Applies to images through v11.17.98 only; later images carry no SBOM
+attestation, so this command fails for them by design. For those, run `syft`
+against the digest (shown at the end of this section).
 
 The SBOM is attached to the image as a CycloneDX attestation. Note this is a
 *separate* artifact from the npm SBOM published on the GitHub Release: the

@@ -43,6 +43,10 @@ if grep -rl "tests/run-all-tests.sh\|tests/test-\*.sh" "$WORKFLOWS_DIR" >/dev/nu
 fi
 if [ "$direct_workflow_hit" = "1" ] || [ "$runner_workflow_hit" = "1" ]; then
     ok "test-sentrux-gate.sh reachable from at least one workflow (direct=$direct_workflow_hit runner=$runner_workflow_hit)"
+elif ! grep -rlE "run-all-tests|bun test" "$WORKFLOWS_DIR" >/dev/null 2>&1; then
+    # GitHub CI runs no test suite (release.yml only runs two manifest checks); the pre-push
+    # gate scripts/local-ci.sh is the test path, asserted in check 3 below.
+    ok "no workflow runs tests; local-ci.sh is the test path (check 3)"
 else
     bad "test-sentrux-gate.sh NOT referenced or reachable from any .github/workflows/*.yml"
 fi
