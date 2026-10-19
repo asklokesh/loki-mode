@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.97 (2026-10-19)
+
+### Fixed
+- The PR body's "What the issue asked" section no longer copies issue-template boilerplate (preflight checklists, "before submitting" sections, first-person attestations such as "I have searched existing issues") into a public pull request. Real acceptance criteria are always kept: nothing under an acceptance or criteria heading is removed, a user's own Checklist or Prerequisites items stay, and the intent line is used only when the issue has nothing but template text.
+- The PR body no longer lists installed `loki_wall_*` acceptance files among changed files, and the receipt marks a check as pre-red only when it failed on base. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.96 (2026-10-19)
 
 ### Fixed

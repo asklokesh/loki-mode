@@ -2662,3 +2662,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T13:53Z (CoS) v11.17.96
 - 11.17.96: FC-XREVIEW-BLIND-TOOLS bf2b129d8..2a08304d5 (from 54ffc9f0c..74ac1f558; field run #81826 NOT PROVEN 'tool output came back empty'). HIGH APPROVE round 4: python3/curl denied, cat ok, empty-source tokens equal project baseline, 3 mutations red; merged-tree gate 856 pass 0 fail, tsc clean.
+
+## 2026-10-19T13:56Z (CoS) v11.17.97
+- 11.17.97: FC-PR-BODY-PUBLIC-HYGIENE ad8547c68..b8e2c29dc (from f22146704..11b26e039; field run #81826 PR body). HIGH APPROVE round 3: E/I/FireLater17/#81826 kept, M7/M8/M9 red; merged-tree gate 898 pass 0 fail, tsc clean.
