@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.92 (2026-10-19)
+
+### Fixed
+- Medium-tier runs now get one code review by default from the same provider that wrote the change (Claude or Codex), so their Seal can list a real reviewer instead of reporting "one reviewer" as not proven. A blocking review caps the result at PARTIAL. Set `LOKI_REVIEW_PROVIDER=off` to opt out.
+- A slow or stuck reviewer can no longer cost a run its Seal: the review gets its own time box, fits inside the run's remaining time, is skipped and recorded as not run when too little time is left, and stops every process it started when the box or the stage ends. Rerun with `loki start owner/repo#N`.
+
 ## v11.17.91 (2026-10-19)
 
 ### Fixed

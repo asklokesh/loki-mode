@@ -2647,3 +2647,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T12:02Z (CoS) v11.17.91
 - 11.17.91: fix-forward for Tests run 39241305385 on 2f69291d4 (never_below_raw L1 static guard 3 fail: authorModel flagged as unvetted pin). Reverted 405ea194b (TEN-QUALITY-43 rename); never_below_raw+wall+fc23 120 pass 0 fail. TEN-QUALITY-43 reopened: the guard vets the model shorthand, so a rename needs a guard update.
+
+## 2026-10-19T12:12Z (CoS) v11.17.92
+- 11.17.92: medium default same-vendor review (FC-MEDIUM-REVIEWER-UNCREDITED sibling) d40a36677+378bfa1c6+7822aafeb as r3 2abb45519. HIGH APPROVE round 3 after two BLOCKs (seal 60s limit; group kill + backstop clamp). Case D replay: receipt not_run in 5227ms, no orphan. Gates 436/0 (11 files), never_below_raw+l0_guard 19/0, spawn env guards 7/0, tsc clean (control-plane filtered). Follow-ups: bounded pipe drain for setsid grandchild (P2), Number.isFinite guard on roomS.
