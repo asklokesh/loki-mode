@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.98 (2026-10-19)
+
+### Fixed
+- The control-plane Ask policy deny list is back in step with the reviewer deny list (git `--exec-path`, `--output`, `--ext-diff` and `--no-index` forms, `rg --pre` and `--hostname-bin`, `find -exec` and `-delete` forms). It only adds denials; the parity test now names every missing token at once.
+
 ## v11.17.97 (2026-10-19)
 
 ### Fixed

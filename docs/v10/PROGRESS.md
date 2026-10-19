@@ -2665,3 +2665,6 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T13:56Z (CoS) v11.17.97
 - 11.17.97: FC-PR-BODY-PUBLIC-HYGIENE ad8547c68..b8e2c29dc (from f22146704..11b26e039; field run #81826 PR body). HIGH APPROVE round 3: E/I/FireLater17/#81826 kept, M7/M8/M9 red; merged-tree gate 898 pass 0 fail, tsc clean.
+
+## 2026-10-19T14:48Z (CoS) v11.17.98
+- 11.17.98: FC-CP-DENYLIST-DRIFT 6d8767316 (main CI red since 11.17.96: control-plane ask_policy parity + CP-04). TL APPROVE; control-plane package 539 pass 0 fail, tests/test-control-plane.sh 33 passed 0 failed.
