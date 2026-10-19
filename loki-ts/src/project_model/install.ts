@@ -247,19 +247,21 @@ function isYarnBerry(dir: string): boolean {
 export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): LockedInstall {
   const flat = modelCmd.replace(/\\\r?\n/g, " ").replace(/[\s;]+$/, "");
   const parts = flat.split(/(\s*(?:&&|\|\||;|\n)\s*)/);
-  // No shell parser, so an allowlist: only plain words and the separators && ; newline are understood. A `||`, any other character, or
-  // a first install preceded by anything but cd/pushd/export/set/assignments leaves every install in the whole command as written.
-  const wordsOf = (seg: string): { w: string[]; e: number; tool: string; sub: string } => {
+  // No shell parser, so an allowlist: only plain words and the separators && ; newline are understood. A `||`, any other character, any
+  // PATH assignment, or a first install preceded by anything but `cd X`, `export VAR=value` or pure VAR=value assignments leaves every
+  // install in the whole command as written.
+  const wordsOf = (seg: string): { w: string[]; e: number; tool: string; hasSub: boolean; sub: string } => {
     const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
-    const sub = e >= 0 && w[e + 1] !== undefined && !w[e + 1]!.startsWith("-") ? w[e + 1]! : "";
-    return { w, e, tool: e >= 0 ? w[e]! : "", sub };
+    const hasSub = e >= 0 && w[e + 1] !== undefined && !w[e + 1]!.startsWith("-");
+    return { w, e, tool: e >= 0 ? w[e]! : "", hasSub, sub: hasSub ? w[e + 1]! : "" };
   };
   const preludeOk = (): boolean => {
     for (let k = 0; k < parts.length; k += 2) {
-      const { e, tool, sub } = wordsOf(parts[k]!);
+      const { w, e, tool, sub } = wordsOf(parts[k]!);
+      if (w.some((x) => /^PATH=/.test(x))) return false;
       if (e < 0) continue;
       if (LOCK_RULES.some((r) => r.tool === tool && r.subs.includes(sub))) return true;
-      if (e > 0 || !["cd", "pushd", "export", "set"].includes(tool)) return false;
+      if (e > 0 || !(tool === "cd" || (tool === "export" && w.length > 1 && w.slice(1).every((x) => /^[A-Za-z_]\w*=/.test(x))))) return false;
     }
     return true;
   };
@@ -273,9 +275,9 @@ export function lockedInstall(repoDir: string, cwd: string, modelCmd: string): L
   let hits = 0, locked = true, rewritten = false, cur: string | null = realpathSync(cwd);
   const out = parts.map((seg, k) => {
     if (k % 2 === 1) return seg;
-    const w = seg.trim().split(/\s+/).filter(Boolean), e = w.findIndex((x) => !/^[A-Za-z_]\w*=/.test(x));
+    const { w, e, tool, hasSub, sub } = wordsOf(seg);
     if (e < 0) return seg;
-    const env = w.slice(0, e), tool = w[e]!, hasSub = w[e + 1] !== undefined && !w[e + 1]!.startsWith("-"), sub = hasSub ? w[e + 1]! : "";
+    const env = w.slice(0, e);
     if (tool === "cd") {
       try { cur = cur !== null && w.length === e + 2 && !/[$~`*]/.test(w[e + 1]!) && !w[e + 1]!.startsWith("-") ? realpathSync(join(cur, w[e + 1]!)) : null; } catch { cur = null; }
       return seg;
