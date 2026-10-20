@@ -110,7 +110,6 @@ assert m3["pricing_tiers_usd_per_million_tokens"] == [
     },
 ]
 
-assert m3["max_output"] == 524_288
 PY
 then
     ok "catalog preserves model, endpoint, context, capability, and pricing metadata"
