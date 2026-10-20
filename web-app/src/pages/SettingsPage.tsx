@@ -122,7 +122,7 @@ const PROVIDERS: ProviderDef[] = [
     id: 'opencode',
     name: 'opencode',
     description: 'Model-agnostic CLI -- 75+ providers, local models',
-    models: ['openrouter/deepseek/deepseek-v3.2', 'openrouter/z-ai/glm-4.6', 'openrouter/minimax/minimax-m2.1', 'ollama/qwen2.5-coder'],
+    models: ['openrouter/deepseek/deepseek-v3.2', 'openrouter/z-ai/glm-4.6', 'openrouter/minimax/minimax-m3.1-flash:free', 'openrouter/minimax/minimax-m3', 'ollama/qwen2.5-coder'],
     defaultModel: 'openrouter/deepseek/deepseek-v3.2',
   },
 ];
@@ -799,7 +799,12 @@ greet("world");`}</pre>
                 />
                 <SettingSelect
                   label="Model"
-                  options={prov.models.map((m) => ({ value: m, label: m }))}
+                  options={[
+                    ...prov.models.map((m) => ({ value: m, label: m })),
+                    ...(providerModels[prov.id] && !prov.models.includes(providerModels[prov.id])
+                      ? [{ value: providerModels[prov.id], label: `${providerModels[prov.id]} (saved)` }]
+                      : []),
+                  ]}
                   value={providerModels[prov.id] || prov.defaultModel}
                   onChange={(v) =>
                     setProviderModels((prev) => ({ ...prev, [prov.id]: v }))

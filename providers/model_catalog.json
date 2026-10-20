@@ -169,9 +169,12 @@
           "open_weights": true
         },
         {
-          "id": "openrouter/minimax/minimax-m2.1",
-          "tier": "development",
-          "open_weights": true
+          "id": "openrouter/minimax/minimax-m3.1-flash:free",
+          "tier": "development"
+        },
+        {
+          "id": "openrouter/minimax/minimax-m3",
+          "tier": "development"
         },
         {
           "id": "ollama_chat/deepseek-coder",
@@ -206,9 +209,12 @@
           "open_weights": true
         },
         {
-          "id": "openrouter/minimax/minimax-m2.1",
-          "tier": "development",
-          "open_weights": true
+          "id": "openrouter/minimax/minimax-m3.1-flash:free",
+          "tier": "development"
+        },
+        {
+          "id": "openrouter/minimax/minimax-m3",
+          "tier": "development"
         },
         {
           "id": "ollama/qwen2.5-coder",
@@ -237,8 +243,8 @@
     "minimax": {
       "_comment": "Catalog-only compatibility metadata. MiniMax is not a fifth --provider value; select these models through the existing Claude or Aider adapters with the matching endpoint variables.",
       "latest_planning": "MiniMax-M3",
-      "latest_development": "MiniMax-M2.7",
-      "latest_fast": "MiniMax-M2.7",
+      "latest_development": "MiniMax-M3.1-Flash",
+      "latest_fast": "MiniMax-M3.1-Flash",
       "tier_fallback": {
         "fast": "development"
       },
@@ -258,9 +264,38 @@
       ],
       "models": [
         {
+          "id": "MiniMax-M3.1-Flash",
+          "tier": "development",
+          "context_window": 1000000,
+          "max_output": 524288,
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "thinking": [
+            "adaptive"
+          ],
+          "reasoning_effort": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default_reasoning_effort": "max",
+          "pricing_usd_per_million_tokens": {
+            "input": 0.15,
+            "output": 0.6,
+            "cache_read": 0.015,
+            "cache_write": null
+          }
+        },
+        {
           "id": "MiniMax-M3",
           "tier": "planning",
           "context_window": 1000000,
+          "max_output": 524288,
           "input_modalities": [
             "text",
             "image",
@@ -310,23 +345,6 @@
               "cache_write": null
             }
           ]
-        },
-        {
-          "id": "MiniMax-M2.7",
-          "tier": "development",
-          "context_window": 204800,
-          "input_modalities": [
-            "text"
-          ],
-          "thinking": [
-            "always_on"
-          ],
-          "pricing_usd_per_million_tokens": {
-            "input": 0.3,
-            "output": 1.2,
-            "cache_read": 0.06,
-            "cache_write": 0.375
-          }
         }
       ]
     }

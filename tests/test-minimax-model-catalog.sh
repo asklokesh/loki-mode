@@ -23,8 +23,8 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 
 provider = catalog["providers"]["minimax"]
 assert provider["latest_planning"] == "MiniMax-M3"
-assert provider["latest_development"] == "MiniMax-M2.7"
-assert provider["latest_fast"] == "MiniMax-M2.7"
+assert provider["latest_development"] == "MiniMax-M3.1-Flash"
+assert provider["latest_fast"] == "MiniMax-M3.1-Flash"
 assert provider["tier_fallback"] == {"fast": "development"}
 
 endpoints = {item["region"]: item for item in provider["endpoints"]}
@@ -45,7 +45,25 @@ assert endpoints == {
 assert all(item["anthropic_base_url"].endswith("/anthropic") for item in endpoints.values())
 
 models = {item["id"]: item for item in provider["models"]}
-assert list(models)[:2] == ["MiniMax-M3", "MiniMax-M2.7"]
+assert list(models) == ["MiniMax-M3.1-Flash", "MiniMax-M3"]
+
+flash = models["MiniMax-M3.1-Flash"]
+assert flash["context_window"] == 1_000_000
+assert flash["max_output"] == 524_288
+assert flash["input_modalities"] == ["text", "image", "video"]
+assert flash["thinking"] == ["adaptive"]
+assert flash["reasoning_effort"] == ["low", "medium", "high", "xhigh", "max"]
+assert flash["default_reasoning_effort"] == "max"
+assert flash["pricing_usd_per_million_tokens"] == {
+    "input": 0.15, "output": 0.6, "cache_read": 0.015, "cache_write": None,
+}
+for adapter in ("aider", "opencode"):
+    gateway_models = [m for m in catalog["providers"][adapter]["models"]
+                      if m["id"].startswith("openrouter/minimax/")]
+    assert [m["id"] for m in gateway_models] == [
+        "openrouter/minimax/minimax-m3.1-flash:free", "openrouter/minimax/minimax-m3",
+    ]
+    assert all("pricing_usd_per_million_tokens" not in m for m in gateway_models)
 
 m3 = models["MiniMax-M3"]
 assert m3["context_window"] == 1_000_000
@@ -92,16 +110,7 @@ assert m3["pricing_tiers_usd_per_million_tokens"] == [
     },
 ]
 
-m27 = models["MiniMax-M2.7"]
-assert m27["context_window"] == 204_800
-assert m27["input_modalities"] == ["text"]
-assert m27["thinking"] == ["always_on"]
-assert m27["pricing_usd_per_million_tokens"] == {
-    "input": 0.3,
-    "output": 1.2,
-    "cache_read": 0.06,
-    "cache_write": 0.375,
-}
+assert m3["max_output"] == 524_288
 PY
 then
     ok "catalog preserves model, endpoint, context, capability, and pricing metadata"
@@ -122,7 +131,7 @@ for text in \
     'OPENAI_API_KEY' \
     'LOKI_AIDER_MODEL' \
     'MiniMax-M3' \
-    'MiniMax-M2.7'; do
+    'MiniMax-M3.1-Flash'; do
     grep -Fq "$text" "$PROVIDER_DOCS" || docs_ok=false
 done
 if [ "$docs_ok" = true ]; then
@@ -158,6 +167,52 @@ if [ "$aider_model" = "openai/MiniMax-M2.7" ]; then
     ok "OpenAI-compatible adapter resolves the configured model"
 else
     bad "OpenAI-compatible adapter resolved '$aider_model'"
+fi
+
+# Exercise the adapter invocation boundary, including literal legacy/custom IDs.
+if python3 -E - "$REPO_ROOT" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+root = sys.argv[1]
+base_env = {k: os.environ[k] for k in ("HOME", "PATH")}
+script = r'''
+cd "$1"
+source providers/models.sh
+source "providers/$2.sh"
+# Only the external CLI is replaced; use the real resolver and argv builder.
+claude() { python3 -c 'import json,os,sys; print(json.dumps({"args":sys.argv[1:],"base":os.environ["ANTHROPIC_BASE_URL"]}))' "$@"; }
+aider() { python3 -c 'import json,os,sys; print(json.dumps({"args":sys.argv[1:],"base":os.environ["OPENAI_API_BASE"]}))' "$@"; }
+provider_invoke_with_tier development 'Inspect the supplied image reference without changing it.'
+'''
+for host in ("api.minimax.io", "api.minimaxi.com"):
+    for model in ("MiniMax-M3.1-Flash", "MiniMax-M3", "MiniMax-M2.7", "custom-model"):
+        for adapter in ("claude", "aider"):
+            env = dict(base_env)
+            base = "https://" + host + ("/anthropic" if adapter == "claude" else "/v1")
+            expected = model if adapter == "claude" else "openai/" + model
+            env.update({"ANTHROPIC_BASE_URL": base, "LOKI_MODEL_OVERRIDE": model}
+                       if adapter == "claude" else
+                       {"OPENAI_API_BASE": base, "LOKI_AIDER_MODEL": expected})
+            result = subprocess.run(["bash", "-c", script, "_", root, adapter],
+                                    env=env, text=True, capture_output=True, check=True)
+            request = json.loads(result.stdout)
+            args = request["args"]
+            assert args[args.index("--model") + 1] == expected, request
+            assert request["base"] == base, request
+            assert any("Inspect the supplied image reference without changing it." in arg for arg in args), request
+for tier, expected in (("planning", "MiniMax-M3"), ("development", "MiniMax-M3.1-Flash"),
+                       ("fast", "MiniMax-M3.1-Flash")):
+    result = subprocess.run(["bash", "-c", 'source "$1/providers/models.sh"; loki_latest_model minimax "$2"',
+                             "_", root, tier], env=base_env, text=True, capture_output=True, check=True)
+    assert result.stdout.strip() == expected
+PY
+then
+    ok "both regional adapters invoke current, legacy, and custom model IDs unchanged"
+else
+    bad "compatible adapter invocation or catalog default regression"
 fi
 
 printf '\nTotal: %s  Passed: %s  Failed: %s\n' "$((PASS + FAIL))" "$PASS" "$FAIL"
