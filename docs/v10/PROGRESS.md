@@ -2683,3 +2683,12 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 
 ## 2026-10-19T19:33Z (CoS) v11.17.103
 - 11.17.103: FC-REPO-SKIPPED-TEST-DOWNGRADES (opus HIGH APPROVE x4), FC-FULL-SUITE-EXIT-CODED-SCRIPT attribution (opus HIGH APPROVE; harness_intelligence 108/0) and FC-UNOWNED-FILE-OWNED-BY-TESTLESS-PACKAGE (opus HIGH APPROVE; monorepo_cwd 42/0, red 37/5). claude-code#81826 on 11.17.102 sealed PARTIAL on an unowned plugin file; FireLater#20 on 11.17.100 sealed PARTIAL on a repo-skipped suite.
+
+## 2026-10-20T01:40Z (CoS) v11.18.0 checkpoint, session paused to Wednesday
+- Founder: release a minor checkpoint and pause until Wednesday. Weekly usage measured at 91.0% (stop line 92%).
+- claude-code#81826: the verified fix (base-10 round-trip overflow check, 7/7 acceptance, bash -n OK) is pushed fast-forward to fork PR asklokesh/claude-code#1, head 3a4d482, with an updated body. The upstream repo only accepts PRs from collaborators, so the fork PR is how it gets delivered.
+- Filed asklokesh/loki-mode #229-#238 (class issues: run isolation, publish integrity, runner from the owning package, risk tier, decomposition, unmapped start flag, weakened-test false positive, Wall proven vs committed path).
+- Resume Wednesday:
+  1. Re-run `loki start asklokesh/loki-mode#233` in a fresh clone, using an engine built from the candidate fix. The installed engine cannot verify a fix to its own runner selection.
+  2. Before any #233 release, require the full loki-ts `bun test` and an opus HIGH review.
+  3. Then work #238, #236, #237, #234, #235 and #230-#232 under #229.
