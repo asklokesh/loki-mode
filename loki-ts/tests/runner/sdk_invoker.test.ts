@@ -232,8 +232,10 @@ describe("MiniMax compatible text request serialization", () => {
         process.env["ANTHROPIC_BASE_URL"] = `https://${host}/anthropic`;
         delete process.env["LOKI_JUDGE_BATCH"];
         // Intercept the serialized SDK request. No network or paid inference.
-        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-          const request = new Request(input, init);
+        globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const request = input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
           requests.push({ url: request.url, body: await request.json() as Record<string, unknown> });
           return Response.json({ id: "test-message", type: "message", role: "assistant", model,
             content: [{ type: "text", text: "ok" }], stop_reason: "end_turn",
