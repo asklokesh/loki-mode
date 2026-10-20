@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.18.0 (2026-10-20)
+
+### Changed
+- Checkpoint release: no engine code changes since v11.17.103. It records the paused program state in `docs/v10/PROGRESS.md`: the verified ralph-loop overflow fix for claude-code#81826 (delivered on fork PR asklokesh/claude-code#1, since the upstream repo only accepts PRs from collaborators) and the class issues asklokesh/loki-mode#229-#238 that are queued for Loki runs. `loki start` behavior is unchanged from v11.17.103. A Loki run on #233 using the candidate engine sealed PARTIAL (no tests executed), so that fix is not in this release.
+
 ## v11.17.103 (2026-10-19)
 
 ### Fixed
