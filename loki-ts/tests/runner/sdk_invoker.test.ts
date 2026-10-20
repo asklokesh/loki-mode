@@ -210,6 +210,51 @@ describe("COST-WALL-c cliLedger", () => {
   });
 });
 
+describe("MiniMax compatible text request serialization", () => {
+  const savedBase = process.env["ANTHROPIC_BASE_URL"];
+  const savedBatch = process.env["LOKI_JUDGE_BATCH"];
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    for (const [key, value] of [["ANTHROPIC_BASE_URL", savedBase], ["LOKI_JUDGE_BATCH", savedBatch]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const catalog = JSON.parse(readFileSync(new URL("../../../providers/model_catalog.json", import.meta.url), "utf8"));
+  const defaultModel = catalog.providers.minimax.latest_development as string;
+  for (const host of ["api.minimax.io", "api.minimaxi.com"]) {
+    for (const model of [defaultModel, "MiniMax-M3", "MiniMax-M2.7", "custom-model"]) {
+      test(`${host} preserves ${model} at the HTTP boundary`, async () => {
+        const requests: { url: string; body: Record<string, unknown> }[] = [];
+        process.env["ANTHROPIC_API_KEY"] = "test-only-key";
+        process.env["ANTHROPIC_BASE_URL"] = `https://${host}/anthropic`;
+        delete process.env["LOKI_JUDGE_BATCH"];
+        // Intercept the serialized SDK request. No network or paid inference.
+        globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const request = input instanceof Request
+            ? new Request(input, init)
+            : new Request(input.toString(), init);
+          requests.push({ url: request.url, body: await request.json() as Record<string, unknown> });
+          return Response.json({ id: "test-message", type: "message", role: "assistant", model,
+            content: [{ type: "text", text: "ok" }], stop_reason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 } });
+        }) as typeof fetch;
+        for (const effort of [undefined, "low", "medium", "high", "xhigh", "max"] as const) {
+          expect(await judgeText({ prompt: "unchanged prompt", model, effort, maxTokens: 1024 })).toBe("ok");
+          const request = requests.at(-1)!;
+          expect(request.url).toBe(`https://${host}/anthropic/v1/messages`);
+          expect(request.body).toEqual({ model, max_tokens: 1024,
+            messages: [{ role: "user", content: "unchanged prompt" }],
+            ...(effort ? { output_config: { effort } } : {}) });
+        }
+        expect(requests).toHaveLength(6);
+      });
+    }
+  }
+});
+
 describe("TEN-COST-24 LOKI_JUDGE_BATCH opt-in batch path", () => {
   const savedBatch = process.env["LOKI_JUDGE_BATCH"];
   const savedT = process.env["LOKI_JUDGE_BATCH_TIMEOUT_MS"];
