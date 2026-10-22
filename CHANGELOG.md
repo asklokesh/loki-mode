@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.27.0 (2026-10-22)
+
+### Fixed
+- Claude model capacities now match the platform docs: sonnet-5-5, sonnet-5 and haiku-5-5 report 128k max output, and haiku-5-5 a 1M context window. Refs #253.
+- The context tracker reads the window size from providers/model_catalog.json by model id instead of a hardcoded 200k table. 300k tokens on opus-5-5 now shows 30% instead of 150%, so the 90% notification threshold no longer fires early. Codex and Gemini keep a fallback table because the catalog has no window for them. Refs #253.
+
 ## v11.26.0 (2026-10-22)
 
 ### Fixed
