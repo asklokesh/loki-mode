@@ -22788,6 +22788,13 @@ print("</previous_gate_failures>")
 PYEOF
 }
 
+# Single source of the parallel-tool-calls directive. Byte-mirrored with
+# PARALLEL_TOOL_CALLS_INSTRUCTION in loki-ts/src/runner/build_prompt.ts. Used by
+# the shared prefix (inside lsp_grounding_instruction) and the supervised profile.
+_loki_parallel_tool_calls_instruction() {
+    printf '%s' "PARALLEL_TOOL_CALLS: When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups."
+}
+
 _loki_build_supervised_simple_web_prompt() {
     local retry="${1:-0}"
     local prd_path="${2:-}"
@@ -22804,7 +22811,7 @@ _loki_build_supervised_simple_web_prompt() {
 You are the implementation agent for a time-bounded hosted web build. Work directly in the existing workspace and begin with tools, not narration.
 
 Required execution order:
-1. Inspect round: use one parallel read-only tool round to inspect only the harness-detected manifest, primary rendered source, and primary stylesheet listed below. Skip any item marked not-detected. Do not read the test yet. Do not inventory the repository, inspect harness metadata, read planning artifacts, browse the web, install dependencies, or create documentation.
+1. Inspect round: inspect only the harness-detected manifest, primary rendered source, and primary stylesheet listed below. Skip any item marked not-detected. Do not read the test yet. Do not inventory the repository, inspect harness metadata, read planning artifacts, browse the web, install dependencies, or create documentation.
 2. Preview round: make the first visible mutation a bounded, working first viewport, not the complete page. When primary_stylesheet is detected, write no more than 4,000 characters of coherent responsive styles before replacing the rendered placeholder. Then write no more than 6,000 characters to the primary rendered source for a responsive navigation, prompt-specific hero, working primary controls, and a meaningful code-native focal visual. The visual must communicate the product through recognizable objects, labels, relationships, or user-supplied data. Empty translucent shapes, generic gradient blobs, and blank frames do not qualify. Do not implement below-fold sections, plans, or tests in this round. Remove the placeholder sentinel only after this viewport is coherent. Do not write a plan or design document first. If no primary source was detected, use one bounded lookup for the rendered entrypoint and edit it immediately.
 3. Completion round: immediately continue after the visible mutation. Implement every section and interaction explicitly named in the actionable user brief. Do not omit, merge away, replace with a static mock, or count planning text, comments, placeholders, or hidden elements as implementation. Wire every navigation link to a real target, give every visible button its stated effect, and make every form behavior truthful. If primary_test is detected, read it now, update it once so it renders the current primary source and checks prompt-specific visible behavior, and do this before any test command. If no primary test exists, add one using the existing runner. Reuse the existing stack and lockfile.
 4. Verification round: run the real automated test once and the production build once. Fix only observed failures, then request completion. Never start a watch-mode test process. Prefer an existing test:ci script or a runner's one-shot mode; if neither exists, use the platform's native one-shot test runner instead of adding a test framework. Do not launch a development server or browser because the harness owns those checks.
@@ -22813,8 +22820,9 @@ Required execution order:
 6. Do not use emoji characters, em dash characters, or en dash characters in source, copy, logs, or summaries.
 
 The harness owns planning, dependency preparation, review, browser checks, proof, and process cleanup. Your job is to mutate the product source quickly, finish the requested app, and run its local tests and build. Do not install or upgrade dependencies, create documentation, use Git, or run temporary verification scripts. After one successful test and build round, run `touch .loki/signals/COMPLETION_REQUESTED` and end the turn. Do not run a second verification pass. Do not commit or push.
-</loki_system>
 SUPERVISED_PROMPT_EOF
+    printf '%s\n' "$(_loki_parallel_tool_calls_instruction)"
+    printf '</loki_system>\n'
     printf '<execution_context iteration="%s" retry="%s">\n' "$iteration" "$retry"
     printf '%s\n' "$source_hints"
     printf '</execution_context>\n'
@@ -22956,7 +22964,7 @@ build_prompt() {
     # writing any reference to a symbol the agent has not already read with
     # the Read tool, prefer mcp__loki-mode-lsp-proxy__lsp_check_exists. This
     # is the single most leveraged grounding primitive per OpenCode research.
-    local lsp_grounding_instruction="LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship. PARALLEL_TOOL_CALLS: When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups."
+    local lsp_grounding_instruction="LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship. $(_loki_parallel_tool_calls_instruction)"
 
     # AGENTS.md instruction (agents.md standard: plain Markdown at repo root,
     # nearest-file-wins, read natively by Claude Code/Codex/etc.). Loki prefers

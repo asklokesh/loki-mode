@@ -146,6 +146,7 @@ PROMPT_CODE="$(awk '/^_loki_build_supervised_simple_web_prompt\(\)/,/^\}/' "$RUN
 eval "$SOURCE_HINTS_CODE"
 eval "$FAILURE_CONTEXT_CODE"
 eval "$PROMPT_CODE"
+eval "$(awk '/^_loki_parallel_tool_calls_instruction\(\)/,/^\}/' "$RUN_SH")"
 PROMPT_WORKSPACE="$TMPROOT/prompt-workspace"
 mkdir -p "$PROMPT_WORKSPACE/src/views"
 printf '{"scripts":{"build":"vite build"},"devDependencies":{"vite":"latest"}}\n' > "$PROMPT_WORKSPACE/package.json"
@@ -189,6 +190,13 @@ if grep -q 'primary_rendered_source=src/views/Home.tsx' <<< "$SUPERVISED_PROMPT"
     ok "dedicated prompt supplies source hints without the generic discovery loop"
 else
     bad "dedicated prompt omitted source hints or retained generic discovery instructions"
+fi
+
+if grep -q 'PARALLEL_TOOL_CALLS: When issuing independent read-only operations' <<< "$SUPERVISED_PROMPT" \
+   && ! grep -q 'one parallel read-only tool round' <<< "$SUPERVISED_PROMPT"; then
+    ok "dedicated prompt carries the shared parallel-tool-calls directive, not a one-off phrasing"
+else
+    bad "dedicated prompt lacks the shared parallel-tool-calls directive or keeps the one-off phrasing"
 fi
 
 VITE_SEED="$TMPROOT/vite-seed"

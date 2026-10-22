@@ -1,6 +1,6 @@
 // D61-02: LOKI_SPEED=1 gives every stage brief an identical cache-stable lead.
 import { afterEach, describe, expect, test } from "bun:test";
-import { STAGE_PREFIX } from "../../src/features/lean_prefix.ts";
+import { PARALLEL_TOOL_CALLS_INSTRUCTION, STAGE_PREFIX } from "../../src/features/lean_prefix.ts";
 import { buildFixBrief } from "../../src/engine10/stages/fix.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
@@ -22,6 +22,12 @@ const briefs = (task: string): Record<string, string> => ({
 describe("stage prompt prefix identity", () => {
   test("prefix is at least 200 bytes", () => {
     expect(Buffer.byteLength(STAGE_PREFIX)).toBeGreaterThanOrEqual(200);
+  });
+
+  test("every engine10 stage brief carries the shared parallel-tool-calls directive in the prefix", () => {
+    expect(STAGE_PREFIX).toContain(PARALLEL_TOOL_CALLS_INSTRUCTION);
+    process.env["LOKI_SPEED"] = "1";
+    for (const b of Object.values(briefs("fix the bug"))) expect(b.startsWith(STAGE_PREFIX)).toBe(true);
   });
 
   test("LOKI_SPEED=1: first 200 bytes identical across stages and tasks", () => {

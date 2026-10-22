@@ -40,6 +40,7 @@ import { atomicWriteText } from "../util/atomic.ts";
 import { detectComplexity } from "./rarv.ts";
 import { goalSharpeningInstruction } from "./goal_score.ts";
 import { profileFragment } from "./repo_profile.ts";
+import { PARALLEL_TOOL_CALLS_INSTRUCTION } from "../features/lean_prefix.ts";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -371,7 +372,7 @@ const COMPOSE_INSTRUCTION =
 // v7.7.8: LSP grounding instruction. Parity with bash:
 // run.sh build_prompt() $lsp_grounding_instruction.
 const LSP_GROUNDING_INSTRUCTION =
-  `LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship. PARALLEL_TOOL_CALLS: When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups.`;
+  `LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship. ${PARALLEL_TOOL_CALLS_INSTRUCTION}`;
 
 // AGENTS.md instruction (agents.md standard: plain Markdown at repo root,
 // nearest-file-wins, read natively by Claude Code/Codex/etc.). Loki prefers
