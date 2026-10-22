@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.4 (2026-10-22)
+
+### Changed
+- SKILL.md follows the skill-authoring practices in place: one default path, a checklist, worked examples, and no time-sensitive text. Refs #292.
+
 ## v11.36.3 (2026-10-22)
 
 ### Changed
