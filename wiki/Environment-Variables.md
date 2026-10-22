@@ -239,6 +239,7 @@ loki start ./prd.md
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_ALLOW_HAIKU` | `false` | Enable Haiku for fast tier |
+| `LOKI_CLAUDE_TASK_BUDGET` | unset | Positive token count passed to the Agent SDK as `taskBudget {total}` (advisory countdown across the agentic loop; `LOKI_BUDGET_LIMIT` still enforces spend) |
 | `LOKI_PROMPT_REPETITION` | `true` | Prompt repetition for Haiku |
 | `LOKI_CONFIDENCE_ROUTING` | `true` | Confidence-based model routing |
 | `LOKI_AUTONOMY_MODE` | `perpetual` | perpetual, checkpoint, supervised |

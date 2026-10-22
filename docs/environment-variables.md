@@ -90,6 +90,11 @@ with `LOKI_<PROVIDER>_MODEL`.
 usefully set together. Note that `LOKI_MAX_TIER` is a **ceiling** and
 `LOKI_SESSION_MODEL` is a **choice** -- the ceiling still clamps the choice.
 
+`LOKI_CLAUDE_TASK_BUDGET=<tokens>` sends the Agent SDK `taskBudget {total}` so the
+model sees a countdown across the whole loop and wraps up instead of running out.
+It is advisory only; `LOKI_BUDGET_LIMIT` is the enforcing cap. Unset, zero or a
+non-integer sends nothing.
+
 ## Steering the loop
 
 These control how the engine decides what to do next. Every one is on by

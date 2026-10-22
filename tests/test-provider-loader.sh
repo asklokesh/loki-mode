@@ -436,6 +436,34 @@ else
     log_fail "lane label: route=[$_gl_route] gw=[$_gl_gw] claude=[$_gl_claude] none=[$_gl_none]"
 fi
 
+# #242: a PROVIDER_DEFAULT_* knob defined in providers/*.sh must have a reader
+# (any other line naming it, in any tracked-style source file). An orphan makes
+# the matching LOKI_* env var a silent no-op. Run against a planted orphan too.
+_pd_orphans() {
+    local root="$1" name n
+    while IFS= read -r name; do
+        n=$(grep -rIw --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=history \
+            -e "$name" "$root" 2>/dev/null | grep -vE "^[^:]*:[[:space:]]*${name}=" | grep -c . || true)
+        [ "${n:-0}" -eq 0 ] && echo "$name"
+    done < <(grep -rhoE "^[[:space:]]*PROVIDER_DEFAULT_[A-Z0-9_]+=" "$root/providers" 2>/dev/null | tr -d ' \t=' | sort -u)
+}
+_pd_real="$(_pd_orphans "$PROVIDERS_DIR/..")"
+if [ -z "$_pd_real" ]; then
+    log_pass "every PROVIDER_DEFAULT_* knob has a reader"
+else
+    log_fail "PROVIDER_DEFAULT_* knobs with no reader: $_pd_real"
+fi
+_pd_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pd.XXXXXX")"
+mkdir -p "$_pd_dir/providers"
+printf 'PROVIDER_DEFAULT_PLANTED_ORPHAN="${LOKI_PLANTED:-x}"\n' > "$_pd_dir/providers/x.sh"
+_pd_planted="$(_pd_orphans "$_pd_dir")"
+rm -rf "$_pd_dir"
+if [ "$_pd_planted" = "PROVIDER_DEFAULT_PLANTED_ORPHAN" ]; then
+    log_pass "orphan guard goes red on a planted PROVIDER_DEFAULT_* knob"
+else
+    log_fail "orphan guard missed the planted knob: [$_pd_planted]"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"

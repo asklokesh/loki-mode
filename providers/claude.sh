@@ -87,12 +87,6 @@ PROVIDER_CONTEXT_WINDOW=1000000
 PROVIDER_MAX_OUTPUT_TOKENS=128000
 PROVIDER_RATE_LIMIT_RPM=50
 
-# Effort / thinking defaults for Opus 4.7 (used when Loki invokes the API
-# directly; the interactive CLI manages this automatically).
-PROVIDER_DEFAULT_EFFORT="${LOKI_CLAUDE_EFFORT:-xhigh}"     # xhigh recommended for coding
-PROVIDER_DEFAULT_THINKING="${LOKI_CLAUDE_THINKING:-adaptive}"
-PROVIDER_DEFAULT_TASK_BUDGET_TOKENS="${LOKI_CLAUDE_TASK_BUDGET:-0}"  # 0 = unset (open-ended)
-
 # Cost (USD per 1K tokens, approximate)
 PROVIDER_COST_INPUT_PLANNING=0.015
 PROVIDER_COST_OUTPUT_PLANNING=0.075

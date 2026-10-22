@@ -636,6 +636,7 @@ export interface SdkLoopExtraOptions {
   settingSources?: string[];
   effort?: string;
   maxBudgetUsd?: number;
+  taskBudget?: { total: number };
   fallbackModel?: string;
   tools?: string[];
   model?: string;
@@ -720,6 +721,10 @@ export function buildSdkLoopOptions(args: {
   } catch {
     // omit
   }
+  // Advisory token countdown across the whole agentic loop (task-budgets-2026-03-13 beta). It does not
+  // replace maxBudgetUsd enforcement above. Non-positive or non-numeric values are ignored.
+  const taskBudget = Number(process.env["LOKI_CLAUDE_TASK_BUDGET"]);
+  if (Number.isInteger(taskBudget) && taskBudget > 0) out.taskBudget = { total: taskBudget };
   // fallback model (rate-limit resilience), same derivation as the shell route.
   try {
     // fallbackForPrimary has no haiku arm; under the router a haiku 429 falls to sonnet.
@@ -901,6 +906,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...(extra.settingSources ? { settingSources: extra.settingSources } : {}),
             ...(extra.effort ? { effort: extra.effort } : {}),
             ...(extra.maxBudgetUsd ? { maxBudgetUsd: extra.maxBudgetUsd } : {}),
+            ...(extra.taskBudget ? { taskBudget: extra.taskBudget } : {}),
             ...(extra.fallbackModel ? { fallbackModel: extra.fallbackModel } : {}),
             ...(extra.settings ? { settings: extra.settings } : {}),
           },

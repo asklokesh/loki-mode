@@ -74,6 +74,26 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     expect(body).toContain("done");
   });
 
+  it("LOKI_CLAUDE_TASK_BUDGET reaches the query options as taskBudget {total}; unset or invalid omits it (#242)", async () => {
+    const prev = process.env["LOKI_CLAUDE_TASK_BUDGET"];
+    const msgs = [{ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {} }];
+    const run = async (v: string | undefined) => {
+      if (v === undefined) delete process.env["LOKI_CLAUDE_TASK_BUDGET"]; else process.env["LOKI_CLAUDE_TASK_BUDGET"] = v;
+      stubQuery(msgs);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      return lastQueryArgs?.options?.["taskBudget"];
+    };
+    try {
+      expect(await run("64000")).toEqual({ total: 64000 });
+      expect(await run(undefined)).toBeUndefined();
+      expect(await run("0")).toBeUndefined();
+      expect(await run("abc")).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_CLAUDE_TASK_BUDGET"]; else process.env["LOKI_CLAUDE_TASK_BUDGET"] = prev;
+    }
+  });
+
   it("requested_model in the result-cost record is the exact model passed to query (P12-23)", async () => {
     const keys = ["LOKI_MAX_TIER", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_E10_MODEL_DEFAULT", "LOKI_ITERATION", "LOKI_ROUTER", "LOKI_TIER_ROUTING"];
     const prev: Record<string, string | undefined> = {};
