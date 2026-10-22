@@ -16,7 +16,9 @@ import { appendFileSync, writeFileSync, mkdirSync, accessSync, constants as fsCo
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { REPO_ROOT } from "../util/paths.ts";
+import { remoteServersFromEnv } from "../providers/mcp_config.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
@@ -467,16 +469,34 @@ export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
   pyImpl.fn = fn ?? pythonImportOk;
 }
 
-// Served MCP tool-list drift. The python probe hashes the sorted tool names the
-// server registers; the hash recorded on first sight lives under the state dir.
-// A later mismatch means the served tool list changed since the client config
-// or docs were last checked. Never touches network; the probe is a local import.
-type McpToolHash = () => Promise<string | null>;
-async function probeMcpToolHash(): Promise<string | null> {
+// Served MCP tool-list drift. Each server's served list (tool name plus input
+// schema) is hashed. The local loki-mode server is hashed from the tools it
+// registers; every LOKI_MCP_<NAME>_URL remote is asked for tools/list over MCP
+// streamable HTTP. The first hash is recorded per server under the state dir; a
+// later mismatch means what the server serves changed. Header values are sent
+// but never printed.
+const LOCAL_MCP_SERVER = "loki-mode";
+type McpToolHashes = () => Promise<Record<string, string | null>>;
+
+function toolsHash(tools: Array<{ name: string; inputSchema?: unknown }>): string {
+  const canon = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canon)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]))
+        : v;
+  const list = tools
+    .map((t) => ({ name: t.name, inputSchema: canon(t.inputSchema ?? null) }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(list)).digest("hex");
+}
+
+async function probeLocalToolsHash(): Promise<string | null> {
   const src =
-    "import mcp.server as s,hashlib\n" +
-    "n=sorted(s.mcp._tool_manager._tools)\n" +
-    "print(hashlib.sha256('\\n'.join(n).encode()).hexdigest())\n";
+    "import mcp.server as s,hashlib,json\n" +
+    "t=s.mcp._tool_manager._tools\n" +
+    "l=[{'name':n,'inputSchema':t[n].parameters} for n in sorted(t)]\n" +
+    "print(hashlib.sha256(json.dumps(l,sort_keys=True,separators=(',',':')).encode()).hexdigest())\n";
   try {
     const r = await runInline(src, { cwd: REPO_ROOT, timeoutMs: 15000 });
     if (r.exitCode !== 0) return null;
@@ -486,38 +506,100 @@ async function probeMcpToolHash(): Promise<string | null> {
     return null;
   }
 }
-const mcpHashImpl = { fn: probeMcpToolHash as McpToolHash };
-export function _setMcpToolHashForTest(fn: McpToolHash | null): void {
-  mcpHashImpl.fn = fn ?? probeMcpToolHash;
+
+// Parses a JSON-RPC reply that is plain JSON or a single-event SSE stream.
+function parseRpcBody(text: string): { result?: { tools?: Array<{ name: string; inputSchema?: unknown }>; nextCursor?: string } } | null {
+  const t = text.trim();
+  try {
+    if (t.startsWith("{")) return JSON.parse(t);
+    for (const line of t.split("\n")) {
+      if (line.startsWith("data:")) return JSON.parse(line.slice(5).trim());
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export async function fetchRemoteToolsHash(url: string, headers: Record<string, string>): Promise<string | null> {
+  const base: Record<string, string> = {
+    ...headers,
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  };
+  const post = async (body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
+    fetch(url, { method: "POST", headers: { ...base, ...extra }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+  try {
+    const init = await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "loki-doctor", version: "1" } },
+    });
+    if (!init.ok) return null;
+    await init.text();
+    const sid = init.headers.get("mcp-session-id");
+    const extra: Record<string, string> = sid ? { "mcp-session-id": sid } : {};
+    await (await post({ jsonrpc: "2.0", method: "notifications/initialized" }, extra)).text();
+    const tools: Array<{ name: string; inputSchema?: unknown }> = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const r = await post({ jsonrpc: "2.0", id: 2 + page, method: "tools/list", params: cursor ? { cursor } : {} }, extra);
+      if (!r.ok) return null;
+      const body = parseRpcBody(await r.text());
+      if (!body?.result?.tools) return null;
+      tools.push(...body.result.tools);
+      cursor = body.result.nextCursor;
+      if (!cursor) return toolsHash(tools);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function probeMcpToolHashes(): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = { [LOCAL_MCP_SERVER]: await probeLocalToolsHash() };
+  const remote = remoteServersFromEnv(process.env).servers as Record<string, { url: string; headers?: Record<string, string> }>;
+  for (const [name, entry] of Object.entries(remote)) {
+    out[name] = await fetchRemoteToolsHash(entry.url, entry.headers ?? {});
+  }
+  return out;
+}
+const mcpHashImpl = { fn: probeMcpToolHashes as McpToolHashes };
+export function _setMcpToolHashForTest(fn: McpToolHashes | null): void {
+  mcpHashImpl.fn = fn ?? probeMcpToolHashes;
 }
 
 export interface McpDriftResult {
   status: "recorded" | "pass" | "warn" | "skip";
   detail: string;
 }
-export function checkMcpToolDrift(lokiDir: string, served: string | null): McpDriftResult {
-  if (served === null) return { status: "skip", detail: "served tool list unavailable" };
+export function checkMcpToolDrift(lokiDir: string, server: string, served: string | null): McpDriftResult {
+  if (served === null) return { status: "skip", detail: `${server}: served tool list unavailable` };
   if (!existsSync(lokiDir)) return { status: "skip", detail: "no .loki directory" };
-  const file = join(lokiDir, "state", "mcp-tools.sha256");
-  let recorded = "";
+  const file = join(lokiDir, "state", "mcp-tools.json");
+  let record: Record<string, string> = {};
   try {
-    recorded = readFileSync(file, "utf8").trim();
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) record = parsed as Record<string, string>;
   } catch {
-    recorded = "";
+    record = {};
   }
-  if (recorded === "") {
+  const prior = record[server];
+  if (typeof prior !== "string" || prior === "") {
     try {
       mkdirSync(join(lokiDir, "state"), { recursive: true });
-      writeFileSync(file, `${served}\n`);
+      writeFileSync(file, JSON.stringify({ ...record, [server]: served }, null, 2) + "\n");
     } catch {
-      return { status: "skip", detail: "could not record tool list hash" };
+      return { status: "skip", detail: `${server}: could not record tool list hash` };
     }
-    return { status: "recorded", detail: "tool list hash recorded" };
+    return { status: "recorded", detail: `${server}: tool list hash recorded` };
   }
-  if (recorded === served) return { status: "pass", detail: "tool list unchanged" };
+  if (prior === served) return { status: "pass", detail: `${server}: tool list unchanged` };
   return {
     status: "warn",
-    detail: `served MCP tool list drift: recorded ${recorded.slice(0, 12)}, now ${served.slice(0, 12)} (delete ${file} to accept)`,
+    detail: `${server}: served tool list drift (recorded ${prior.slice(0, 12)}, now ${served.slice(0, 12)}); remove "${server}" from ${file} to accept`,
   };
 }
 
@@ -1605,10 +1687,16 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   if (mcpOk) {
     process.stdout.write(`  ${badge("pass")}  MCP SDK (Python)\n`);
     bump(tally, "pass");
-    const drift = checkMcpToolDrift(process.env["LOKI_DIR"] ?? ".loki", await mcpHashImpl.fn());
-    if (drift.status === "warn") {
-      process.stdout.write(`  ${badge("warn")}  MCP tool list drift  ${DIM}${drift.detail}${NC}\n`);
-      bump(tally, "warn");
+    const lokiDir = process.env["LOKI_DIR"] ?? ".loki";
+    if (existsSync(lokiDir)) {
+      const served = await mcpHashImpl.fn();
+      for (const [server, hash] of Object.entries(served)) {
+        const drift = checkMcpToolDrift(lokiDir, server, hash);
+        if (drift.status === "warn") {
+          process.stdout.write(`  ${badge("warn")}  MCP tool list drift  ${DIM}${drift.detail}${NC}\n`);
+          bump(tally, "warn");
+        }
+      }
     }
   } else {
     process.stdout.write(`  ${badge("warn")}  MCP SDK - not installed (pip3 install mcp)\n`);

@@ -82,10 +82,16 @@ loki_mcp_config_path() {
     # Build the bundle to a temp file, then compare bytes before rewriting.
     # This makes the helper idempotent: identical bundle bytes -> no write,
     # mtime stable. python3 is used so JSON encoding is canonical.
-    local tmp_bundle
+    local tmp_bundle has_secret
     tmp_bundle="${mcp_path}.tmp.$$"
-    if ! _MCP_OUT="$tmp_bundle" _MCP_LSP="$lsp_detected" python3 -c "
-import json, os
+    # Outbound remote servers (mirror of remoteServersFromEnv in
+    # loki-ts/src/providers/mcp_config.ts): LOKI_MCP_<NAME>_URL declares an http
+    # server, LOKI_MCP_<NAME>_AUTH its Authorization header. Warnings name the
+    # variable only, never a value. The python step prints "secret" on stdout
+    # when the bundle holds a header value.
+    if ! has_secret=$(_MCP_OUT="$tmp_bundle" _MCP_LSP="$lsp_detected" python3 -c "
+import json, os, re, sys
+from urllib.parse import urlsplit
 out = os.environ['_MCP_OUT']
 lsp = os.environ.get('_MCP_LSP', '0') == '1'
 servers = {
@@ -99,10 +105,46 @@ if lsp:
         'command': 'python3',
         'args': ['-m', 'mcp.lsp_proxy'],
     }
+control = re.compile(r'[\x00-\x1f\x7f]')
+name_re = re.compile(r'^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL\$')
+loopback = ('localhost', '127.0.0.1', '::1')
+secret = False
+for key in sorted(os.environ):
+    m = name_re.match(key)
+    raw = os.environ.get(key, '')
+    if not m or not raw:
+        continue
+    if control.search(raw):
+        sys.stderr.write('[mcp_config] ignoring %s: control characters are not allowed.\n' % key)
+        continue
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname or ''
+    except ValueError:
+        parts = None
+    if parts is None or not host or not (parts.scheme == 'https' or (parts.scheme == 'http' and host in loopback)):
+        sys.stderr.write('[mcp_config] ignoring %s: remote MCP servers must use https (plain http is loopback only).\n' % key)
+        continue
+    entry = {'type': 'http', 'url': raw}
+    auth = os.environ.get('LOKI_MCP_%s_AUTH' % m.group(1), '')
+    if auth and control.search(auth):
+        sys.stderr.write('[mcp_config] ignoring %s: LOKI_MCP_%s_AUTH contains control characters.\n' % (key, m.group(1)))
+        continue
+    if auth:
+        value = auth if re.match(r'^[A-Za-z][A-Za-z0-9-]*\s+\S', auth) else 'Bearer ' + auth
+        entry['headers'] = {'Authorization': value}
+        secret = True
+    name = m.group(1).lower().replace('_', '-')
+    if name not in servers:
+        servers[name] = entry
 bundle = {'mcpServers': servers}
-with open(out, 'w') as f:
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if secret else 0o666)
+with os.fdopen(fd, 'w') as f:
     json.dump(bundle, f, indent=2)
-" 2>/dev/null; then
+if secret:
+    os.chmod(out, 0o600)
+    print('secret')
+"); then
         rm -f "$tmp_bundle" 2>/dev/null
         return 1
     fi
@@ -116,6 +158,11 @@ with open(out, 'w') as f:
             rm -f "$tmp_bundle" 2>/dev/null
             return 1
         }
+    fi
+    # A bundle holding a header value is owner-only, including when the bytes
+    # were unchanged and an older 644 file was kept.
+    if [ "$has_secret" = "secret" ]; then
+        chmod 600 "$mcp_path" 2>/dev/null || return 1
     fi
 
     # Emit absolute path -- python3 handles realpath portably.
