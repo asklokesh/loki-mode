@@ -13,7 +13,9 @@
 // (--compliance, mirofish) are rejected loudly and documented. See
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
-import { accessSync, constants as fsConstants, existsSync as pathExists, statSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync as pathExists, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { basename, join, resolve } from "node:path";
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
@@ -406,11 +408,74 @@ export function missingPrdMessage(args: readonly string[], spec: string, exists:
   if (!fromFlag) {
     if (argVal(args, "--brief") !== undefined || args.some((a) => a.startsWith("--brief="))) return null;
     const noRef = !/#|^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec);
-    const spacedPath = /\s/.test(spec) && !/[\r\n]/.test(spec) && spec.includes("/") && /\.(md|txt|pdf|ya?ml|json)$/i.test(spec); // TEN-UX-50: "My Docs/prd.md"
-    const pathShaped = noRef && (spacedPath || (!/\s/.test(spec) && (spec.includes("/") || /\.(md|txt|ya?ml|json)$/i.test(spec))));
+    const spacedPath = /\s/.test(spec) && !/[\r\n]/.test(spec) && spec.includes("/") && /\.(md|txt|pdf|docx|ya?ml|json)$/i.test(spec); // TEN-UX-50: "My Docs/prd.md"
+    const pathShaped = noRef && (spacedPath || (!/\s/.test(spec) && (spec.includes("/") || /\.(md|txt|pdf|docx|ya?ml|json)$/i.test(spec))));
     if (!pathShaped) return null;
   }
   return exists(spec) ? null : `PRD file not found: ${spec}\n`;
+}
+
+export const SPEC_MAX_BYTES = 32 * 1024 * 1024;
+// stdlib-only docx reader: the last-resort extractor when neither pandoc nor textutil is on PATH.
+const DOCX_PY = "import sys,zipfile,re,html\nx=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode('utf8')\nx=re.sub(r'</w:p>','\\n',x)\nx=re.sub(r'<w:tab/>','\\t',x)\nprint(html.unescape(re.sub(r'<[^>]+>','',x)))";
+
+/** FC-BINARY-SPEC-READ-AS-UTF8: a .pdf or .docx spec is converted to text before any reader sees it. Returns the text, or an error message (missing extractor naming the install, encrypted, over 32 MB, or no text layer). Never returns binary bytes. */
+export function extractSpecText(path: string, env: NodeJS.ProcessEnv = process.env): { text: string } | { error: string } {
+  const ext = /\.(pdf|docx)$/i.exec(path)?.[1]?.toLowerCase();
+  if (!ext) return { error: `start: not a binary spec: ${path}\n` };
+  if (statSync(path).size > SPEC_MAX_BYTES) return { error: `start: ${path} is over the 32 MB spec limit\n` };
+  const run = (cmd: string, argv: string[]): { ok: boolean; missing: boolean; out: string; err: string } => {
+    const r = spawnSync(cmd, argv, { env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 120_000 });
+    return { ok: r.status === 0, missing: (r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT", out: r.stdout ?? "", err: r.stderr ?? "" };
+  };
+  let text = "";
+  if (ext === "pdf") {
+    const info = run("pdfinfo", [path]);
+    if (/^Encrypted:\s+yes/im.test(info.out)) return { error: `start: ${path} is an encrypted PDF; remove the encryption and retry\n` };
+    const r = run("pdftotext", ["-layout", path, "-"]);
+    if (r.missing) return { error: "start: reading a PDF spec needs pdftotext (install poppler: brew install poppler, or apt install poppler-utils)\n" };
+    if (!r.ok) return { error: /password|encrypt/i.test(r.err) ? `start: ${path} is an encrypted PDF; remove the encryption and retry\n` : `start: pdftotext failed on ${path}: ${r.err.trim().split("\n")[0] ?? ""}\n` };
+    text = r.out;
+  } else {
+    const tries: [string, string[]][] = [["pandoc", ["-t", "plain", path]], ["textutil", ["-convert", "txt", "-stdout", path]], ["python3", ["-c", DOCX_PY, path]]];
+    let last: ReturnType<typeof run> | null = null;
+    for (const [cmd, argv] of tries) { const r = run(cmd, argv); if (r.missing) continue; last = r; if (r.ok) { text = r.out; break; } }
+    if (last === null) return { error: "start: reading a DOCX spec needs pandoc (brew install pandoc, or apt install pandoc)\n" };
+    if (!last.ok) return { error: `start: could not read ${path} as DOCX: ${last.err.trim().split("\n")[0] ?? ""}\n` };
+  }
+  if (text.replace(/\s/g, "") === "") return { error: `start: ${path} has no extractable text (a scanned document needs OCR first)\n` };
+  return { text };
+}
+
+/** Extracts a .pdf/.docx spec to <cwd>/.loki/spec-extracted/<name>.txt so every downstream reader sees text; returns the new path, null for a non-binary or absent spec, or an error. */
+export function textSpecPath(spec: string, cwd: string, env: NodeJS.ProcessEnv = process.env): { path: string } | { error: string } | null {
+  if (!/\.(pdf|docx)$/i.test(spec) || !pathExists(spec) || !statSync(spec).isFile()) return null;
+  const r = extractSpecText(spec, env);
+  if ("error" in r) return r;
+  const dir = join(cwd, ".loki", "spec-extracted"), out = join(dir, `${basename(spec)}.txt`);
+  mkdirSync(dir, { recursive: true }); writeFileSync(out, r.text);
+  return { path: resolve(out) };
+}
+
+/** FC-BINARY-SPEC-READ-AS-UTF8: the bash-diverted start (--workspace/--deploy) takes its spec as a positional arg; every .pdf/.docx arg is swapped for its extracted text path, so autonomy/run.sh never reads binary bytes. */
+export function textifyBashArgs(args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): { args: string[] } | { error: string } {
+  const out: string[] = [];
+  for (const a of args) {
+    const t = a.startsWith("-") ? null : textSpecPath(a, cwd, env);
+    if (t && "error" in t) return t;
+    out.push(t ? t.path : a);
+  }
+  return { args: out };
+}
+
+/** `loki internal spec-text <path>`: prints the text path for a .pdf/.docx (or the path itself for any other file), so non-TS readers (the MCP server) share this one extractor. Exit 2 with the error on stderr when it cannot be read as text. */
+export function runInternalSpecText(args: readonly string[], cwd: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): number {
+  const spec = args[0];
+  if (!spec) { process.stderr.write("spec-text: usage: loki internal spec-text <path>\n"); return 2; }
+  const t = textSpecPath(spec, cwd, env);
+  if (t && "error" in t) { process.stderr.write(t.error); return 2; }
+  process.stdout.write(`${t ? t.path : spec}\n`);
+  return 0;
 }
 
 /** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
@@ -563,9 +628,11 @@ export async function runStart(args: readonly string[]): Promise<number> {
       process.stderr.write(deployErr);
       return 2;
     }
+    const textual = textifyBashArgs(args, process.cwd(), process.env);
+    if ("error" in textual) { process.stderr.write(textual.error); return 2; }
     const { spawn } = await import("node:child_process");
     return await new Promise<number>((resolveExit) => {
-      const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: scopedStartEnv(process.env), stdio: "inherit" });
+      const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...textual.args], { env: scopedStartEnv(process.env), stdio: "inherit" });
       child.on("error", () => resolveExit(1));
       child.on("close", (code) => resolveExit(code ?? 1));
     });
@@ -576,6 +643,12 @@ export async function runStart(args: readonly string[]): Promise<number> {
   if (missing) {
     process.stderr.write(missing);
     return 2;
+  }
+  for (const k of ["prdPath", "specPath"] as const) { // FC-BINARY-SPEC-READ-AS-UTF8
+    const v = parsed[k];
+    const t = v ? textSpecPath(v, process.cwd(), process.env) : null;
+    if (t && "error" in t) { process.stderr.write(t.error); return 2; }
+    if (t) parsed[k] = t.path;
   }
   if (parsed.dryRun) return dryRunStart(parsed, process.cwd(), process.env);
   if (startEngine(parsed) === "runner") {

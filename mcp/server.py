@@ -1560,6 +1560,18 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
                 _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error=str(e))
                 return json.dumps({"error": str(e)})
             if os.path.exists(resolved) and os.path.isfile(resolved):
+                if resolved.lower().endswith(('.pdf', '.docx')):
+                    # One extractor: the CLI helper (loki-ts start.ts textSpecPath); a binary spec is never read as utf-8.
+                    import subprocess
+                    loki_bin = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'bin', 'loki')
+                    proc = subprocess.run([loki_bin, 'internal', 'spec-text', resolved],
+                                          capture_output=True, text=True, timeout=120)
+                    text_path = (proc.stdout or '').strip()
+                    if proc.returncode != 0 or not text_path:
+                        err = (proc.stderr or 'could not read the spec as text').strip()[:400]
+                        _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error=err)
+                        return json.dumps({"error": err})
+                    resolved = text_path
                 with open(resolved, 'r', encoding='utf-8') as f:
                     content = f.read()
             else:

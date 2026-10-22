@@ -4,11 +4,12 @@
 // LOKI_SDK_LOOP=1). The runAutonomous delegation itself is covered by the
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capSourceLine, dryRunStart, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
+import { deflateSync } from "node:zlib";
+import { capSourceLine, dryRunStart, extractSpecText, runInternalSpecText, textifyBashArgs, textSpecPath, deployFlagError, isBashOnlyStart, missingPrdMessage, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 import { VALID_PROVIDERS } from "../../src/runner/router/cost_preview.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
@@ -782,5 +783,115 @@ describe("duplicate flag (TEN-UX-56)", () => {
     const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", "build a todo app", "--budget-limit", "1", "--budget-limit", "50"], { encoding: "utf8", timeout: 20_000 });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("more than once");
+  });
+});
+
+describe("FC-BINARY-SPEC-READ-AS-UTF8 pdf and docx specs read as text", () => {
+  const have = (c: string): boolean => spawnSync("which", [c]).status === 0;
+  const pdf = (text: string): Buffer => { const z = deflateSync(Buffer.from(`BT /F1 12 Tf 10 50 Td (${text}) Tj ET`, "latin1")); return Buffer.concat([Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n", "latin1"), Buffer.from(`4 0 obj<</Filter/FlateDecode/Length ${z.length}>>stream\n`, "latin1"), z, Buffer.from("\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n", "latin1")]); }; // Flate stream: a real PDF is mostly binary
+  const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), "spec-pdf-")); dirs.push(d); return d; };
+  const dirs: string[] = [];
+  const ratio = (s: string): number => (s.length === 0 ? 0 : [...s].filter((c) => /[\x20-\x7e\n\t\f]/.test(c)).length / s.length);
+  const fakeBin = (d: string, scripts: Record<string, string>): string => { const b = join(d, "bin"); mkdirSync(b); for (const [n, body] of Object.entries(scripts)) { writeFileSync(join(b, n), `#!/bin/sh\n${body}\n`); chmodSync(join(b, n), 0o755); } return b; };
+  it.skipIf(!have("pdftotext"))("a PDF yields its text, printable ratio >= 0.95 (raw utf8 read is far lower)", () => {
+    const d = tmp(), f = join(d, "spec.pdf"), body = `Build a todo API with login ${Array.from({ length: 120 }, (_, i) => `req${i * 7919 % 1013}x`).join(" ").slice(0, 900)}`; writeFileSync(f, pdf(body));
+    const r = extractSpecText(f);
+    expect("text" in r && r.text).toContain("Build a todo API with login");
+    const before = ratio(require("node:fs").readFileSync(f, "utf8")), after = "text" in r ? ratio(r.text) : 0;
+    console.log(`printable-ASCII ratio before=${before.toFixed(3)} after=${after.toFixed(3)}`);
+    expect(after).toBeGreaterThanOrEqual(0.95);
+    const t = textSpecPath(f, d); expect(t && "path" in t && require("node:fs").readFileSync(t.path, "utf8")).toContain("todo API");
+  });
+  it("an encrypted PDF is refused with the word encrypted", () => {
+    const d = tmp(), f = join(d, "e.pdf"); writeFileSync(f, pdf("secret"));
+    const b = fakeBin(d, { pdfinfo: "echo 'Encrypted:       yes (print:yes)'" });
+    const r = extractSpecText(f, { PATH: b });
+    expect("error" in r && r.error).toContain("encrypted");
+  });
+  it("pdftotext rejecting a password also reads as encrypted", () => {
+    const d = tmp(), f = join(d, "e.pdf"); writeFileSync(f, pdf("x"));
+    const b = fakeBin(d, { pdftotext: "echo 'Command Line Error: Incorrect password' >&2; exit 1" });
+    const r = extractSpecText(f, { PATH: b });
+    expect("error" in r && r.error).toContain("encrypted");
+  });
+  it("without pdftotext on PATH the error names pdftotext and no spec is produced", () => {
+    const d = tmp(), f = join(d, "s.pdf"); writeFileSync(f, pdf("hello"));
+    const r = extractSpecText(f, { PATH: join(d, "empty") });
+    expect("error" in r && r.error).toContain("pdftotext");
+    expect("text" in r).toBe(false);
+  });
+  it("without any docx extractor the error names pandoc", () => {
+    const d = tmp(), f = join(d, "s.docx"); writeFileSync(f, "PK");
+    const r = extractSpecText(f, { PATH: join(d, "empty") });
+    expect("error" in r && r.error).toContain("pandoc");
+  });
+  it.skipIf(!have("python3"))("a DOCX is read through the stdlib zipfile fallback", () => {
+    const d = tmp(), f = join(d, "s.docx");
+    const mk = spawnSync("python3", ["-c", "import sys,zipfile;z=zipfile.ZipFile(sys.argv[1],'w');z.writestr('word/document.xml','<w:document><w:p><w:r><w:t>Ship the widget</w:t></w:r></w:p></w:document>');z.close()", f]);
+    expect(mk.status).toBe(0);
+    const b = fakeBin(d, {}); const py = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
+    require("node:fs").symlinkSync(py, join(b, "python3"));
+    const r = extractSpecText(f, { PATH: b });
+    expect("text" in r && r.text).toContain("Ship the widget");
+  });
+  const docx = (f: string): void => { const mk = spawnSync("python3", ["-c", "import sys,zipfile;z=zipfile.ZipFile(sys.argv[1],'w');z.writestr('word/document.xml','<w:document><w:p><w:r><w:t>Ship the widget</w:t></w:r></w:p></w:document>');z.close()", f]); expect(mk.status).toBe(0); };
+  const pyOnly = (d: string): NodeJS.ProcessEnv => { const b = fakeBin(d, {}); require("node:fs").symlinkSync(spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim(), join(b, "python3")); return { PATH: b }; };
+  it.skipIf(!have("python3"))("bash route (--workspace/--deploy): the spec arg becomes extracted text, flags and other args are untouched", () => {
+    const d = tmp(), f = join(d, "s.docx"); docx(f);
+    const r = textifyBashArgs([f, "--workspace", "w", "--deploy"], d, pyOnly(d));
+    expect("args" in r).toBe(true);
+    if ("args" in r) { expect(r.args[0]).toMatch(/spec-extracted\/s\.docx\.txt$/); expect(require("node:fs").readFileSync(r.args[0]!, "utf8")).toContain("Ship the widget"); expect(r.args.slice(1)).toEqual(["--workspace", "w", "--deploy"]); }
+  });
+  it("bash route: an unreadable binary spec is an error, never passed on", () => {
+    const d = tmp(), f = join(d, "s.docx"); writeFileSync(f, "PK");
+    const r = textifyBashArgs([f, "--deploy"], d, { PATH: join(d, "empty") });
+    expect("error" in r && r.error).toContain("pandoc");
+  });
+  it.skipIf(!have("python3"))("internal spec-text (the MCP route's shared extractor) prints the text path, and errors with exit 2", () => {
+    const d = tmp(), f = join(d, "s.docx"); docx(f);
+    const w: string[] = [], orig = process.stdout.write.bind(process.stdout); process.stdout.write = ((c: string) => { w.push(String(c)); return true; }) as typeof process.stdout.write;
+    let rc: number; try { rc = runInternalSpecText([f], d, pyOnly(d)); } finally { process.stdout.write = orig; }
+    expect(rc).toBe(0); expect(require("node:fs").readFileSync(w.join("").trim(), "utf8")).toContain("Ship the widget");
+    const g = join(d, "bad.docx"); writeFileSync(g, "PK"); const e: string[] = [], oe = process.stderr.write.bind(process.stderr); process.stderr.write = ((c: string) => { e.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { expect(runInternalSpecText([g], d, { PATH: join(d, "empty") })).toBe(2); } finally { process.stderr.write = oe; }
+    expect(e.join("")).toContain("pandoc");
+  });
+  it("a text-less PDF is refused, and md/txt/json/yaml specs are left alone", () => {
+    const d = tmp(), f = join(d, "blank.pdf"); writeFileSync(f, pdf(""));
+    const b = fakeBin(d, { pdftotext: "printf '  \\n'" });
+    const r = extractSpecText(f, { PATH: b });
+    expect("error" in r && r.error).toContain("no extractable text");
+    for (const n of ["a.md", "a.txt", "a.json", "a.yaml"]) { const p = join(d, n); writeFileSync(p, "x"); expect(textSpecPath(p, d)).toBeNull(); }
+  });
+});
+
+describe("FC-BINARY-SPEC-READ-AS-UTF8 start entry wiring", () => {
+  it("a missing .docx spec (plain or with spaces) is a not-found error, never an inline brief", () => {
+    expect(missingPrdMessage(["gone.docx"], "gone.docx", () => false)).toBe("PRD file not found: gone.docx\n");
+    expect(missingPrdMessage(["x"], "My Docs/spec file.docx", () => false)).toBe("PRD file not found: My Docs/spec file.docx\n");
+  });
+  const run = (scripts: Record<string, string>, file: string, args: string[]) => {
+    const d = mkdtempSync(join(tmpdir(), "start-bin-")), bin = join(d, "bin");
+    mkdirSync(bin);
+    for (const [n, body] of Object.entries(scripts)) { writeFileSync(join(bin, n), `#!/bin/sh\n${body}\n`); chmodSync(join(bin, n), 0o755); }
+    for (const a of [["init", "-q"], ["config", "user.name", "t"], ["config", "user.email", "t@example.com"], ["commit", "-q", "--allow-empty", "-m", "init"]]) spawnSync("git", a, { cwd: d });
+    writeFileSync(join(d, file), "%PDF-binary");
+    const r = spawnSync(process.execPath, [join(import.meta.dir, "../../src/cli.ts"), "start", file, ...args], { cwd: d, encoding: "utf8", timeout: 25_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ANTHROPIC_API_KEY: "sk-ant-test", OPENAI_API_KEY: "", LOKI_BUDGET_LIMIT: "" } });
+    return { r, d };
+  };
+  it("runStart swaps a .pdf prd for its extracted text before the engine sees it", () => {
+    const { r, d } = run({ pdfinfo: "echo 'Encrypted:       no'", pdftotext: "echo 'Build a todo API'" }, "spec.pdf", ["--dry-run"]);
+    try {
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain(join(".loki", "spec-extracted", "spec.pdf.txt"));
+      expect(r.stdout).not.toContain('spec "spec.pdf"');
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  it("runStart refuses an encrypted .pdf prd with exit 2", () => {
+    const { r, d } = run({ pdfinfo: "echo 'Encrypted:       yes (print:yes)'" }, "spec.pdf", ["--dry-run"]);
+    try {
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("encrypted");
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

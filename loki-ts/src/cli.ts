@@ -336,6 +336,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           return 1;
         }
       }
+      if (subcmd === "spec-text") {
+        const { runInternalSpecText } = await import("./commands/start.ts");
+        return runInternalSpecText(rest.slice(1));
+      }
       if (subcmd === "exec-manifest") {
         const { runInternalExecManifest } = await import("./commands/internal_exec_manifest.ts");
         return runInternalExecManifest(rest.slice(1));

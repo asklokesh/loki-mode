@@ -310,5 +310,45 @@ class EventBalanceTests(unittest.TestCase):
         self.assertEqual(len(remaining), 0)
 
 
+    def _start_with_binary_spec(self, name, run_result):
+        """loki_start_project on a binary spec, with the CLI extractor stubbed."""
+        from unittest import mock
+        srv = self.server
+        spec = os.path.join(os.path.realpath(self.tmp), name)
+        Path(spec).write_bytes(b"PK\x03\x04\xff\xfe binary")
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return run_result
+
+        with _ChdirToTmp(os.path.realpath(self.tmp)), mock.patch("subprocess.run", fake_run):
+            out = json.loads(_run(srv.loki_start_project(prd_path=spec)))
+        return out, calls
+
+    def test_start_project_binary_spec_goes_through_cli_extractor(self):
+        from types import SimpleNamespace
+        text = os.path.join(os.path.realpath(self.tmp), "extracted.txt")
+        Path(text).write_text("# Extracted PRD\nbuild a thing")
+        for name in ("spec.docx", "spec.pdf"):
+            out, calls = self._start_with_binary_spec(
+                name, SimpleNamespace(returncode=0, stdout=text + "\n", stderr=""))
+            self.assertNotIn("error", out, out)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1:3], ["internal", "spec-text"])
+            self.assertTrue(calls[0][3].endswith(name))
+
+    def test_start_project_unreadable_binary_spec_refuses_with_error(self):
+        from types import SimpleNamespace
+        srv = self.server
+        with srv._tool_call_times_lock:
+            srv._tool_call_start_times.pop("loki_start_project", None)
+        out, _ = self._start_with_binary_spec(
+            "spec.docx",
+            SimpleNamespace(returncode=2, stdout="", stderr="no pandoc, textutil or python zipfile"))
+        self.assertIn("pandoc", out.get("error", ""))
+        self.assertEqual(len(srv._tool_call_start_times.get("loki_start_project", [])), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
