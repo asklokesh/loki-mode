@@ -164,6 +164,8 @@ runtime path.
 
 ## Claude Code (Default, Full Features)
 
+When Claude Code runs on Bedrock, Vertex AI or Foundry (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`), `loki doctor` warns on any missing region, workspace or project id, or credential variable, and never prints their values. The check cannot see keyless auth (an instance role, gcloud ADC, Entra ID), so a warning may not apply if you use one. Use a dedicated service account key with an expiration date rather than a personal long-lived key, and rotate it before it expires.
+
 **Best for:** All use cases. Full autonomous capability.
 
 **Capabilities:**

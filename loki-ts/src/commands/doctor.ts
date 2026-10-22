@@ -283,6 +283,8 @@ export type DoctorJson = {
   provider_availability: ProviderAvailability | null;
   disk: DiskCheck;
   ai_provider: AiProviderCheck;
+  // CLAUDE_CODE_USE_* cloud rows; the same rows the text path prints and tallies.
+  cloud_auth: CloudAuthRow[];
   // Skill-link integrity, counted in the summary tally. See buildDoctorJson.
   skills: SkillJson[];
   sentrux: SentruxCheck;
@@ -986,6 +988,9 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   };
   statuses.push(aiProvider.status);
 
+  const cloudAuth = evaluateCloudAuth(process.env);
+  for (const r of cloudAuth) statuses.push(r.status);
+
   // SKILL LINK INTEGRITY, mirroring autonomy/loki:cmd_doctor_json. The text
   // path on both routes fails closed on a broken skill symlink, but --json
   // omitted skills entirely -- so a host with a dangling ~/.claude/skills/
@@ -1007,6 +1012,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     provider_availability: readProviderAvailability(),
     disk,
     ai_provider: aiProvider,
+    cloud_auth: cloudAuth,
     skills,
     sentrux,
     memory,
@@ -1129,6 +1135,36 @@ export function evaluateClaudeLogin(loggedIn: "yes" | "no" | ""): ClaudeLoginRes
     fix: null,
     blocker: null,
   };
+}
+
+export type CloudAuthRow = { platform: string; status: Status; line: string };
+
+// Cloud-hosted Claude (CLAUDE_CODE_USE_*): one row per configured platform naming
+// the region/credential/workspace vars it still lacks. Presence only; never echoes values.
+const CLOUD_AUTH_PLATFORMS: Array<{ flag: string; platform: string; keyless: string; needs: Array<{ label: string; anyOf: string[] }> }> = [
+  { flag: "CLAUDE_CODE_USE_BEDROCK", platform: "Bedrock", keyless: "an instance or task role, SSO or web identity", needs: [
+    { label: "AWS_REGION", anyOf: ["AWS_REGION", "AWS_DEFAULT_REGION"] },
+    { label: "AWS credentials (AWS_PROFILE, AWS_ACCESS_KEY_ID or AWS_BEARER_TOKEN_BEDROCK)", anyOf: ["AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_BEARER_TOKEN_BEDROCK"] },
+  ] },
+  { flag: "CLAUDE_CODE_USE_VERTEX", platform: "Vertex AI", keyless: "gcloud ADC or an attached service account", needs: [
+    { label: "CLOUD_ML_REGION", anyOf: ["CLOUD_ML_REGION"] },
+    { label: "ANTHROPIC_VERTEX_PROJECT_ID", anyOf: ["ANTHROPIC_VERTEX_PROJECT_ID"] },
+    { label: "Google credentials (GOOGLE_APPLICATION_CREDENTIALS)", anyOf: ["GOOGLE_APPLICATION_CREDENTIALS"] },
+  ] },
+  { flag: "CLAUDE_CODE_USE_FOUNDRY", platform: "Foundry", keyless: "Entra ID", needs: [
+    { label: "ANTHROPIC_FOUNDRY_RESOURCE", anyOf: ["ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_BASE_URL"] },
+    { label: "ANTHROPIC_FOUNDRY_API_KEY", anyOf: ["ANTHROPIC_FOUNDRY_API_KEY"] },
+  ] },
+];
+export const CLOUD_KEY_HYGIENE = "Prefer a dedicated service-account key with an expiration date over a personal long-lived key; rotate it before it expires";
+
+export function evaluateCloudAuth(env: NodeJS.ProcessEnv): CloudAuthRow[] {
+  return CLOUD_AUTH_PLATFORMS.filter((p) => env[p.flag] === "1" || env[p.flag] === "true").map((p) => {
+    const missing = p.needs.filter((n) => !n.anyOf.some((k) => env[k])).map((n) => n.label);
+    return missing.length === 0
+      ? { platform: p.platform, status: "pass" as Status, line: `${p.platform} (${p.flag}) region and credentials are set` }
+      : { platform: p.platform, status: "warn" as Status, line: `${p.platform} (${p.flag}) is enabled but ${missing.join(", ")} not set (this check cannot see ${p.keyless}; ignore if you use that)` };
+  });
 }
 
 function badge(status: Status): string {
@@ -1437,6 +1473,12 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)\n`,
     );
   }
+  const cloudRows = evaluateCloudAuth(env);
+  for (const row of cloudRows) {
+    process.stdout.write(`  ${badge(row.status)}  ${row.line}\n`);
+    bump(tally, row.status);
+  }
+  if (cloudRows.length > 0) process.stdout.write(`         ${DIM}${CLOUD_KEY_HYGIENE}${NC}\n`);
   // Phase I (v7.5.25): detect ANTHROPIC_BASE_URL alt-provider routing
   // (OpenRouter, Ollama, LiteLLM, self-hosted). Claude Code reads this env
   // var natively; Loki passes it through unchanged. Warn when the user sets

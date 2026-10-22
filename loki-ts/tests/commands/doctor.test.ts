@@ -38,6 +38,8 @@ import {
   lowestVolume,
   checkSkills,
   checkTool,
+  evaluateCloudAuth,
+  CLOUD_KEY_HYGIENE,
   readEffectiveProvider,
   readProviderAvailability,
   renderProviderAvailability,
@@ -1575,4 +1577,72 @@ describe("doctor version compare", () => {
     const ok = await checkTool("bun", "bun", "required", null);
     expect(ok.status).toBe("pass");
   });
+});
+
+describe("evaluateCloudAuth", () => {
+  it("is silent when no CLAUDE_CODE_USE_* flag is set", () => {
+    expect(evaluateCloudAuth({})).toEqual([]);
+  });
+  it("warns naming AWS_REGION when Bedrock is on without a region", () => {
+    const rows = evaluateCloudAuth({ CLAUDE_CODE_USE_BEDROCK: "1", AWS_PROFILE: "dev" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe("warn");
+    expect(rows[0]!.line).toContain("AWS_REGION");
+    expect(rows[0]!.line).not.toContain("AWS credentials");
+  });
+  it("passes Bedrock with region and credentials, never echoing values", () => {
+    const rows = evaluateCloudAuth({ CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "us-east-1", AWS_ACCESS_KEY_ID: "AKIASECRET" });
+    expect(rows[0]!.status).toBe("pass");
+    expect(rows[0]!.line).not.toContain("AKIASECRET");
+  });
+  it("names the Vertex project id and region when missing", () => {
+    const line = evaluateCloudAuth({ CLAUDE_CODE_USE_VERTEX: "1", GOOGLE_APPLICATION_CREDENTIALS: "/x" })[0]!.line;
+    expect(line).toContain("CLOUD_ML_REGION");
+    expect(line).toContain("ANTHROPIC_VERTEX_PROJECT_ID");
+  });
+  it("carries the service-account key hygiene hint", () => {
+    expect(CLOUD_KEY_HYGIENE).toContain("service-account");
+    expect(CLOUD_KEY_HYGIENE).toContain("expiration");
+  });
+});
+
+describe("evaluateCloudAuth warn path", () => {
+  it("never echoes env values in a warn line", () => {
+    const cases: Array<Record<string, string>> = [
+      { CLAUDE_CODE_USE_BEDROCK: "1", AWS_PROFILE: "SECRETPROFILE" },
+      { CLAUDE_CODE_USE_VERTEX: "1", GOOGLE_APPLICATION_CREDENTIALS: "SECRETPATH" },
+      { CLAUDE_CODE_USE_FOUNDRY: "1", ANTHROPIC_FOUNDRY_RESOURCE: "SECRETRESOURCE" },
+    ];
+    for (const env of cases) {
+      const rows = evaluateCloudAuth(env);
+      expect(rows[0]!.status).toBe("warn");
+      for (const v of Object.values(env)) {
+        if (v !== "1") expect(rows[0]!.line).not.toContain(v);
+      }
+    }
+  });
+  it("names the keyless paths the check cannot see", () => {
+    expect(evaluateCloudAuth({ CLAUDE_CODE_USE_FOUNDRY: "1" })[0]!.line).toContain("Entra ID");
+    expect(evaluateCloudAuth({ CLAUDE_CODE_USE_VERTEX: "1" })[0]!.line).toContain("gcloud ADC");
+    expect(evaluateCloudAuth({ CLAUDE_CODE_USE_BEDROCK: "1" })[0]!.line).toContain("instance or task role");
+  });
+  it("buildDoctorJson carries cloud_auth rows and counts the warning", async () => {
+    const saved = process.env["CLAUDE_CODE_USE_BEDROCK"];
+    const savedRegion = process.env["AWS_REGION"];
+    const savedDefault = process.env["AWS_DEFAULT_REGION"];
+    process.env["CLAUDE_CODE_USE_BEDROCK"] = "1";
+    delete process.env["AWS_REGION"];
+    delete process.env["AWS_DEFAULT_REGION"];
+    try {
+      const j = await buildDoctorJson();
+      expect(j.cloud_auth).toHaveLength(1);
+      expect(j.cloud_auth[0]!.status).toBe("warn");
+      expect(j.cloud_auth[0]!.line).toContain("AWS_REGION");
+      expect(j.summary.warnings).toBeGreaterThanOrEqual(1);
+    } finally {
+      if (saved === undefined) delete process.env["CLAUDE_CODE_USE_BEDROCK"]; else process.env["CLAUDE_CODE_USE_BEDROCK"] = saved;
+      if (savedRegion !== undefined) process.env["AWS_REGION"] = savedRegion;
+      if (savedDefault !== undefined) process.env["AWS_DEFAULT_REGION"] = savedDefault;
+    }
+  }, 60000);
 });
