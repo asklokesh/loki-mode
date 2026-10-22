@@ -14,6 +14,7 @@
 // fail closed on null (the bash sites already do: inconclusive / REJECT / block).
 // It NEVER throws for a normal failure -- null is the single failure signal.
 
+import { assertStaticSchema } from "../council/finding_schema.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { appendChildLedger, recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
 import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth_dev.js";
@@ -177,6 +178,8 @@ export async function judgeJson(params: JudgeParams): Promise<Record<string, unk
   if (!c) return null;
 
   const { prompt, schema, model, effort, maxTokens = 4096, timeoutMs = 120_000, system } = params;
+  // #295: a schema carrying a literal the static schema files do not (run data, a secret) is refused before it reaches the API's 24h schema cache.
+  try { assertStaticSchema(schema); } catch (e) { process.stderr.write(`[judge] ${(e as Error).message}\n`); return null; }
 
   let noted = false;
   try {

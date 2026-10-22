@@ -23,19 +23,78 @@
 //   validateFinding(obj)      -> AgentVerdict | { error, path }
 //   parseMultiResponse(text)  -> AgentVerdict[]  (throws on malformed JSON)
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve as resolvePath, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentVerdict, Severity } from "../runner/council.ts";
 
-// Resolve the schema file path relative to this module so both runtime
-// (Bun.spawn callers in CI) and bundled callers work.
+// Resolve loki-ts/data relative to this module. The data dir is ../../data from src/council and ../data from the bundled dist/loki.js (the package
+// ships only loki-ts/data/), the same candidate pair runner/budget.ts uses; the first candidate holding finding-schema.json wins.
 const _moduleDir = dirname(fileURLToPath(import.meta.url));
-const _schemaPath = resolvePath(_moduleDir, "..", "..", "data", "finding-schema.json");
+export const SCHEMA_DATA_DIR_CANDIDATES: readonly (readonly string[])[] = [["..", "..", "data"], ["..", "data"]];
+export function resolveSchemaDataDir(moduleDir: string = _moduleDir, candidates: readonly (readonly string[])[] = SCHEMA_DATA_DIR_CANDIDATES): string {
+  for (const rel of candidates) {
+    const dir = resolvePath(moduleDir, ...rel);
+    if (existsSync(resolvePath(dir, "finding-schema.json"))) return dir;
+  }
+  return resolvePath(moduleDir, ...candidates[0]!);
+}
+const _dataDir = resolveSchemaDataDir();
+const _schemaPath = resolvePath(_dataDir, "finding-schema.json");
 
 export const FINDING_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze(
   JSON.parse(readFileSync(_schemaPath, "utf8")) as Record<string, unknown>,
 );
+
+/** Enum case is not guaranteed by structured outputs: trim, uppercase, and map spaces/hyphens to "_" so "high", "High" and "HIGH" tally as one value. */
+export function normalizeEnumValue(v: unknown): unknown {
+  return typeof v === "string" ? v.trim().toUpperCase().replace(/[\s-]+/g, "_") : v;
+}
+
+// Schema hygiene: the API compiles a schema into a grammar and caches it (and every enum, const and pattern literal in it) for 24h, so a schema must be
+// static and carry no run data. The allowlist is every enum/const/pattern literal in the shipped loki-ts/data/*.json schemas.
+export class SchemaLiteralError extends Error {
+  constructor(public readonly kind: string, public readonly path: string, detail: number) {
+    super(`schema ${kind} at ${path} is not in the static schema allowlist (${detail} chars); a judge schema must be a static file with no run-specific literals`);
+    this.name = "SchemaLiteralError";
+  }
+}
+type Literals = { values: Set<string>; patterns: Set<string> };
+function collectLiterals(node: unknown, out: Literals): void {
+  if (Array.isArray(node)) { for (const n of node) collectLiterals(n, out); return; }
+  if (!isRecord(node)) return;
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "enum" && Array.isArray(v)) for (const e of v) out.values.add(String(normalizeEnumValue(e)));
+    else if (k === "const") out.values.add(String(normalizeEnumValue(v)));
+    else if (k === "pattern" && typeof v === "string") out.patterns.add(v);
+    else collectLiterals(v, out);
+  }
+}
+let _static: Literals | null = null;
+function staticLiterals(): Literals {
+  if (_static) return _static;
+  const out: Literals = { values: new Set(), patterns: new Set() };
+  for (const f of readdirSync(_dataDir).filter((n) => n.endsWith("-schema.json"))) {
+    try { collectLiterals(JSON.parse(readFileSync(resolvePath(_dataDir, f), "utf8")), out); } catch { /* an unreadable file contributes nothing */ }
+  }
+  return (_static = out);
+}
+/** Throws SchemaLiteralError when a schema's enum, const or pattern literal is not one the static schema files already carry (case-insensitive for enum and const). */
+export function assertStaticSchema(schema: unknown): void {
+  const allow = staticLiterals();
+  const walk = (node: unknown, path: string): void => {
+    if (Array.isArray(node)) { node.forEach((n, i) => walk(n, `${path}[${i}]`)); return; }
+    if (!isRecord(node)) return;
+    for (const [k, v] of Object.entries(node)) {
+      const at = `${path}.${k}`;
+      if (k === "enum" && Array.isArray(v)) { for (const e of v) if (!allow.values.has(String(normalizeEnumValue(e)))) throw new SchemaLiteralError("enum", at, String(e).length); }
+      else if (k === "const") { if (!allow.values.has(String(normalizeEnumValue(v)))) throw new SchemaLiteralError("const", at, String(v).length); }
+      else if (k === "pattern" && typeof v === "string") { if (!allow.patterns.has(v)) throw new SchemaLiteralError("pattern", at, v.length); }
+      else walk(v, at);
+    }
+  };
+  walk(schema, "$");
+}
 
 const VOTE_ENUM = new Set(["APPROVE", "REJECT", "CANNOT_VALIDATE"]);
 const SEVERITY_ENUM = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
@@ -80,7 +139,8 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
   if (typeof obj["role"] !== "string" || obj["role"].length === 0) {
     return { error: "role must be a non-empty string", path: "$.role" };
   }
-  if (typeof obj["vote"] !== "string" || !VOTE_ENUM.has(obj["vote"])) {
+  const vote = normalizeEnumValue(obj["vote"]);
+  if (typeof vote !== "string" || !VOTE_ENUM.has(vote)) {
     return {
       error: `vote must be one of APPROVE|REJECT|CANNOT_VALIDATE, got ${JSON.stringify(obj["vote"])}`,
       path: "$.vote",
@@ -112,7 +172,7 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
       if (!isRecord(it)) {
         return { error: "issue must be an object", path: `$.issues[${i}]` };
       }
-      const sev = it["severity"];
+      const sev = normalizeEnumValue(it["severity"]);
       const desc = it["description"];
       if (typeof sev !== "string" || !SEVERITY_ENUM.has(sev)) {
         return { error: "issue.severity must be CRITICAL|HIGH|MEDIUM|LOW", path: `$.issues[${i}].severity` };
@@ -134,7 +194,7 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
 
   return {
     role: obj["role"],
-    verdict: obj["vote"] as AgentVerdict["verdict"],
+    verdict: vote as AgentVerdict["verdict"],
     reason: obj["reason"],
     issues: issuesOut,
   };

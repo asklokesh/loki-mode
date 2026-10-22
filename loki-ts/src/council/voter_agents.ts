@@ -41,7 +41,7 @@ import { withChildLedger } from "../util/child_ledger.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
 import { reviewerGitEnv, tokenFreeEnv } from "../util/safe_git.ts";
-import { parseMultiResponse } from "./finding_schema.ts";
+import { parseMultiResponse, resolveSchemaDataDir } from "./finding_schema.ts";
 import {
   claudeFlagSupported,
   effortForTier,
@@ -278,8 +278,7 @@ async function defaultClaudeRunner(argv: string[]): Promise<{ stdout: string; ex
 // Resolve the static schema path relative to this module so the same file
 // powers both bash and Bun routes (architect design Phase C).
 function findingSchemaPath(): string {
-  // Up two dirs from src/council/ to loki-ts/, then into data/.
-  return resolvePath(import.meta.dir, "..", "..", "data", "finding-schema.json");
+  return resolvePath(resolveSchemaDataDir(import.meta.dir), "finding-schema.json");
 }
 
 // v8.x FIX: `claude --json-schema` takes the schema JSON as INLINE CONTENT, not

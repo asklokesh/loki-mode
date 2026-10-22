@@ -31,6 +31,20 @@ beforeEach(() => {
 });
 
 describe("sdk_invoker judge path (fail-closed)", () => {
+  test("#295: a schema with a dynamic enum literal returns null and never reaches the API", async () => {
+    let calls = 0;
+    __setSdkClientForTests({ messages: { create: async () => { calls++; return { content: [{ type: "text", text: "{}" }], usage: {} }; } } });
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((c: string | Uint8Array) => { errs.push(String(c)); return true; }) as typeof process.stderr.write;
+    try {
+      const r = await judgeJson({ prompt: "p", schema: { type: "object", properties: { v: { type: "string", enum: ["run-7c1e-manifest"] } } }, model: "claude-haiku-4-5" });
+      expect(r).toBeNull();
+    } finally { process.stderr.write = orig; }
+    expect(calls).toBe(0);
+    expect(errs.join("")).toContain("static schema allowlist");
+  });
+
   test("no API key -> not available, judgeJson returns null (never throws)", async () => {
     delete process.env["ANTHROPIC_API_KEY"];
     // availability probe is honest

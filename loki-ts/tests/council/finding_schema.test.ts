@@ -9,12 +9,19 @@
 //   - parseMultiResponse propagates per-finding validation errors
 
 import { describe, it, expect } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   FINDING_SCHEMA,
   validateFinding,
   parseMultiResponse,
   hasFileLineAnchor,
   UNANCHORED_TAG,
+  assertStaticSchema,
+  normalizeEnumValue,
+  SchemaLiteralError,
+  resolveSchemaDataDir,
 } from "../../src/council/finding_schema.ts";
 
 describe("FINDING_SCHEMA", () => {
@@ -244,4 +251,82 @@ describe("hasFileLineAnchor", () => {
   const no = ["http://x.com:80/", "a.ts:0", "just words", "a.ts"];
   for (const d of yes) it(`accepts ${d}`, () => expect(hasFileLineAnchor(d)).toBe(true));
   for (const d of no) it(`rejects ${d}`, () => expect(hasFileLineAnchor(d)).toBe(false));
+});
+
+describe("#295 enum case normalization", () => {
+  const base = { role: "r", reason: "ok", confidence: 0.5 };
+  for (const sev of ["high", "High", "HIGH", " high "]) {
+    it(`issue severity ${JSON.stringify(sev)} normalizes to HIGH`, () => {
+      const r = validateFinding({ ...base, vote: "REJECT", issues: [{ severity: sev, description: "a.ts:1 broken" }] });
+      expect("error" in r).toBe(false);
+      expect((r as { issues: { severity: string }[] }).issues[0]!.severity).toBe("HIGH");
+    });
+  }
+  it("vote case and separators normalize (approve, cannot-validate)", () => {
+    expect((validateFinding({ ...base, vote: "approve" }) as { verdict: string }).verdict).toBe("APPROVE");
+    expect((validateFinding({ ...base, vote: "cannot validate" }) as { verdict: string }).verdict).toBe("CANNOT_VALIDATE");
+  });
+  it("a value outside the enum is still rejected after normalization", () => {
+    expect("error" in validateFinding({ ...base, vote: "maybe" })).toBe(true);
+  });
+  it("normalizeEnumValue leaves non-strings alone", () => {
+    expect(normalizeEnumValue(3)).toBe(3);
+  });
+});
+
+describe("#295 static schema allowlist", () => {
+  const sch = (prop: Record<string, unknown>): Record<string, unknown> => ({ type: "object", properties: { x: { type: "string", ...prop } } });
+  it("the shipped finding schema passes", () => {
+    expect(() => assertStaticSchema(FINDING_SCHEMA)).not.toThrow();
+  });
+  it("a known enum in any case passes (verify.sh inline lowercase severity)", () => {
+    expect(() => assertStaticSchema(sch({ enum: ["critical", "high", "medium", "low"] }))).not.toThrow();
+  });
+  for (const [kind, prop] of [
+    ["enum", { enum: ["APPROVE", "run-4f9a-secret"] }],
+    ["const", { const: "sha256:deadbeef" }],
+    ["pattern", { pattern: "^acct-[0-9]{8}$" }],
+  ] as [string, Record<string, unknown>][]) {
+    it(`a dynamic ${kind} literal is rejected with a named error that does not echo it`, () => {
+      let err: unknown;
+      try { assertStaticSchema(sch(prop)); } catch (e) { err = e; }
+      expect(err).toBeInstanceOf(SchemaLiteralError);
+      expect((err as Error).name).toBe("SchemaLiteralError");
+      expect((err as SchemaLiteralError).kind).toBe(kind);
+      expect((err as Error).message).not.toMatch(/secret|deadbeef|acct-/);
+    });
+  }
+  it("a dynamic literal nested in items is rejected with its path", () => {
+    expect(() => assertStaticSchema({ type: "array", items: { enum: ["not-static-zzz"] } })).toThrow(/\$\.items\.enum/);
+  });
+});
+
+describe("schema data dir resolves from source and from the bundled dist", () => {
+  const PKG = join(import.meta.dir, "..", "..");
+  it("src depth and dist depth both land on loki-ts/data", () => {
+    expect(resolveSchemaDataDir(join(PKG, "src", "council"))).toBe(join(PKG, "data"));
+    expect(resolveSchemaDataDir(join(PKG, "dist"))).toBe(join(PKG, "data"));
+  });
+  it("the built bundle runs `internal sdk-judge` past schema load (no ENOENT on data/finding-schema.json)", async () => {
+    const out = join(PKG, `.bundle-probe-${process.pid}`);
+    mkdirSync(out, { recursive: true });
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.sj-"));
+    try {
+      const r = await Bun.build({ entrypoints: [join(PKG, "src", "cli.ts")], outdir: out, target: "bun" });
+      expect(r.success).toBe(true);
+      const built = join(out, "cli.js");
+      expect(existsSync(built)).toBe(true);
+      writeFileSync(join(dir, "p.txt"), "hi");
+      writeFileSync(join(dir, "s.json"), JSON.stringify({ type: "object", properties: { verdict: { enum: ["APPROVE", "REJECT"] } } }));
+      const p = Bun.spawnSync(["bun", built, "internal", "sdk-judge", "--prompt-file", join(dir, "p.txt"), "--schema-file", join(dir, "s.json"), "--model", "claude-haiku-5-5"], {
+        env: { ...process.env, ANTHROPIC_API_KEY: "", LOKI_NO_BROWSER: "1" },
+      });
+      const stderr = p.stderr.toString();
+      expect(stderr).not.toMatch(/ENOENT|finding-schema\.json/);
+      expect(p.stdout.toString()).toBe("");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
