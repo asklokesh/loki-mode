@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.1 (2026-10-22)
+
+### Changed
+- A regression test pins the rerun behavior of a sliced Seal group: when one of three units is already VERIFIED, the rerun dispatches only the other two and logs how many were skipped. Refs #283.
+
 ## v11.36.0 (2026-10-22)
 
 ### Added
