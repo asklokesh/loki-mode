@@ -1,0 +1,159 @@
+{
+  "_about": "Single declared source for env-declared network egress. loki doctor --airgap derives its optional-egress rows from declared; tests/test-airgap-egress-registry.sh fails when a LOKI_*_URL, LOKI_*_HOST or LOKI_*_ENDPOINT reader appears in autonomy, loki-ts/src or dashboard that is in neither list.",
+  "declared": [
+    {
+      "var": "LOKI_MIROFISH_URL",
+      "name": "mirofish_market_validation",
+      "default_host": null,
+      "disable": "unset LOKI_MIROFISH_URL, or pass --no-mirofish to loki start",
+      "reader": "autonomy/loki",
+      "note": "MiroFish market validation: health check and requests go to this URL when set"
+    },
+    {
+      "var": "LOKI_WEBHOOK_URL",
+      "name": "webhook_notifications",
+      "default_host": null,
+      "disable": "unset LOKI_WEBHOOK_URL",
+      "reader": "autonomy/notify.sh",
+      "note": "Generic webhook: notification payloads are POSTed to this URL"
+    },
+    {
+      "var": "LOKI_SLACK_WEBHOOK_URL",
+      "name": "slack_notifications",
+      "default_host": null,
+      "disable": "unset LOKI_SLACK_WEBHOOK_URL (or the variable named by LOKI_SLACK_WEBHOOK_ENV)",
+      "reader": "loki-ts/src/util/slack_events.ts",
+      "note": "Slack events from the engine are POSTed to this URL"
+    },
+    {
+      "var": "LOKI_JIRA_URL",
+      "name": "jira_writeback",
+      "default_host": null,
+      "disable": "unset LOKI_JIRA_URL (and JIRA_BASE_URL) or the Jira token",
+      "reader": "loki-ts/src/integrations/writeback.ts",
+      "note": "Issue comments and transitions are written back to this Jira host when the token and email are also set"
+    },
+    {
+      "var": "LOKI_LINEAR_URL",
+      "name": "linear_writeback",
+      "default_host": "https://api.linear.app/graphql",
+      "disable": "unset LOKI_LINEAR_TOKEN (and LINEAR_API_KEY); LOKI_LINEAR_URL only redirects the call",
+      "reader": "loki-ts/src/integrations/writeback.ts",
+      "note": "Linear writeback calls this URL, default the public Linear API, whenever a Linear token is set"
+    },
+    {
+      "var": "LOKI_MODEL_BASE_URL",
+      "name": "custom_model_route",
+      "default_host": null,
+      "disable": "unset LOKI_MODEL_BASE_URL and do not use a custom/ model route",
+      "reader": "loki-ts/src/providers/model_routes.ts",
+      "note": "Inference for a custom/<id> model route goes to this base URL; point it inside your network or at a local runtime"
+    },
+    {
+      "var": "LOKI_REMOTE_URL",
+      "name": "remote_cluster_submit",
+      "default_host": null,
+      "disable": "unset LOKI_REMOTE_URL and do not pass --remote to loki start",
+      "reader": "autonomy/loki",
+      "note": "loki start --remote submits the run to this deployed cluster"
+    },
+    {
+      "var": "LOKI_CONTROL_URL",
+      "name": "control_plane_client",
+      "default_host": null,
+      "disable": "unset LOKI_CONTROL_URL (default is a loopback control plane)",
+      "reader": "loki-ts/src/commands/control.ts",
+      "note": "loki control and run shipping talk to this control plane; loopback unless overridden"
+    },
+    {
+      "var": "LOKI_QUEUE_URL",
+      "name": "queue_consumer",
+      "default_host": "redis://127.0.0.1:6379",
+      "disable": "unset LOKI_QUEUE_URL and REDIS_URL, or use the file backend",
+      "reader": "autonomy/queue-consumer.sh",
+      "note": "The queue consumer connects to this Redis server; loopback unless overridden"
+    },
+    {
+      "var": "LOKI_AUDIT_SYSLOG_HOST",
+      "name": "audit_syslog_forwarding",
+      "default_host": null,
+      "disable": "unset LOKI_AUDIT_SYSLOG_HOST (forwarding is off by default)",
+      "reader": "dashboard/audit.py",
+      "note": "Dashboard audit log lines are forwarded to this syslog host"
+    },
+    {
+      "var": "LOKI_OTEL_ENDPOINT",
+      "name": "otel_export",
+      "default_host": null,
+      "disable": "unset LOKI_OTEL_ENDPOINT (export is off by default)",
+      "reader": "autonomy/run.sh",
+      "note": "OpenTelemetry spans are exported to this collector"
+    },
+    {
+      "var": "LOKI_HOSTED_ENDPOINT",
+      "name": "hosted_proof_publish",
+      "default_host": null,
+      "disable": "unset LOKI_HOSTED_ENDPOINT and do not pass --hosted to loki proof share",
+      "reader": "loki-ts/src/commands/proof.ts",
+      "note": "loki proof share --hosted POSTs the redacted proof page to this endpoint"
+    },
+    {
+      "var": "LOKI_METADATA_URL",
+      "name": "metadata_store",
+      "default_host": null,
+      "disable": "leave LOKI_METADATA_BACKEND unset (local file store)",
+      "reader": "lokistore/factory.py",
+      "note": "External metadata store connection used by the lokistore factory when a remote backend is selected"
+    },
+    {
+      "var": "LOKI_POSTHOG_HOST",
+      "name": "telemetry",
+      "default_host": "https://us.i.posthog.com",
+      "disable": "loki telemetry off, DO_NOT_TRACK=1, or LOKI_AIRGAP=true",
+      "reader": "autonomy/telemetry.sh",
+      "note": "Reported by the dedicated telemetry row"
+    },
+    {
+      "var": "LOKI_TELEMETRY_ENDPOINT",
+      "name": "telemetry",
+      "default_host": "https://us.i.posthog.com",
+      "disable": "loki telemetry off, DO_NOT_TRACK=1, or LOKI_AIRGAP=true",
+      "reader": "autonomy/telemetry.sh",
+      "note": "Reported by the dedicated telemetry row"
+    }
+  ],
+  "not_egress": [
+    {
+      "var": "LOKI_DASHBOARD_HOST",
+      "reason": "Bind address of the local dashboard server, not an outbound destination"
+    },
+    {
+      "var": "LOKI_CONTROL_PLANE_URL",
+      "reason": "Only a link printed to the user (live line and API moved page); the engine never connects to it"
+    },
+    {
+      "var": "LOKI_DEPLOYED_URL",
+      "reason": "Recorded as text in proof.json; never fetched"
+    },
+    {
+      "var": "LOKI_PROOF_PUBLIC_URL",
+      "reason": "Recorded as text in proof.json at publish time; never fetched"
+    },
+    {
+      "var": "LOKI_TELEM_ENDPOINT",
+      "reason": "Internal hand-off of the OTEL endpoint to a python helper inside loki otel, not an independent input; the endpoint itself is LOKI_OTEL_ENDPOINT"
+    },
+    {
+      "var": "LOKI_PR_URL",
+      "reason": "Internal hand-off of a pull request URL already created; never fetched"
+    },
+    {
+      "var": "LOKI_GIST_URL",
+      "reason": "Internal hand-off of a gist URL already created; never fetched"
+    },
+    {
+      "var": "LOKI_LAST_GIST_URL",
+      "reason": "Internal hand-off of a gist URL already created; never fetched"
+    }
+  ]
+}

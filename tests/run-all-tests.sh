@@ -1526,6 +1526,7 @@ run_test "SKILL.md runtime-migration paragraph does not understate the Bun route
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "doctor --airgap judges OLLAMA_HOST locality from the host, not a substring match" "$SCRIPT_DIR/test-airgap-ollama-host.sh"
+run_test "doctor --airgap derives env-declared egress rows from one registry" "$SCRIPT_DIR/test-airgap-egress-registry.sh"
 run_test "proof phases CLI/API parity (one reader, two surfaces)" "$SCRIPT_DIR/test_cli_phases_parity.sh"
 run_test "web-app has no orphaned modules (reachable from main.tsx)" "$SCRIPT_DIR/test-web-app-no-orphan-components.sh"
 run_test "web-app CommandPalette file-search failure is not no-results (node --test)" "command -v node >/dev/null 2>&1 || { echo 'node not installed: the suite did not run (unmeasured, not clean)'; exit 1; }; node --test $SCRIPT_DIR/../web-app/src/components/CommandPalette.state.test.mjs"
