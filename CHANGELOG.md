@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.5 (2026-10-22)
+
+### Fixed
+- Council transcripts keep one key: every writer records the reviewer's text under `reasoning` and the dashboard panel reads it, while model-facing prompts and schemas ask for a `justification`. A pin test fails if the two drift. Refs #250.
+
 ## v11.36.4 (2026-10-22)
 
 ### Changed
