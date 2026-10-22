@@ -168,7 +168,7 @@ INTERPS = (
     (r"python[\d.]*", r"-[A-Za-z]*c"),
     (r"perl[\d.]*", r"-[A-Za-z]*[eE]"),
     (r"ruby[\d.]*", r"-[A-Za-z]*e"),
-    (r"node(?:js)?", r"(?:-e|--eval)"),
+    (r"node(?:js)?", r"(?:-[ep]|--eval|--print)"),
     (r"php[\d.]*", r"-r"),
     (r"(?:pwsh|powershell)", r"-(?:[Cc]ommand|c)"),
 )
@@ -177,13 +177,17 @@ RUN = "(?:" + "|".join(
     r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s(?=\s|$))" % (n, f) for n, f in INTERPS) + ")"
 FETCH = r"(?:curl|wget|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)\b"
 WRAP = r"(?:(?:/\S*/)?(?:sudo|doas|env|exec|command|nohup|xargs|busybox|time|nice|setsid|stdbuf)\b[^|;&\n]*?\s)?"
+# VAR=value prefixes may sit before an interpreter. Piped, source and . also
+# execute stdin (source /dev/stdin), with no code-flag exemption.
+ENV = r"(?:\w+=\S*\s+)*"
+PIPE_RUN = "(?:" + RUN + r"|(?:source|(?<![\w./-])\.)(?=\s))"
 pipe = re.compile(
-    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + WRAP + RUN
+    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + WRAP + ENV + PIPE_RUN
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*(?:\$\(|`)\s*" + FETCH
     + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?"
-    + r"(?:" + WRAP + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
-    + r"|(?:source|(?<![\w./-])\.)\s+\S+|\./\S+)"
+    + r"(?:" + WRAP + ENV + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
+    + r"|(?:source|(?<![\w./-])\.)\s+\S+|" + WRAP + ENV + r"\./\S+)"
 )
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:
