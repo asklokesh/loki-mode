@@ -1,5 +1,5 @@
 ---
-name: loki-mode
+name: loki-mode-openclaw
 description: "Launch Loki Mode autonomous SDLC agent. Handles PRD-to-deployment with minimal human intervention. Invoke for multi-phase development tasks, bug fixing campaigns, or full product builds."
 ---
 

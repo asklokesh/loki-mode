@@ -33,7 +33,7 @@ For real multi-agent coordination today, use implemented surfaces:
 
 2. Copy skill to OpenClaw workspace:
    ```bash
-   cp -r integrations/openclaw/ ~/.openclaw/workspace/skills/loki-mode/
+   cp -r integrations/openclaw/ ~/.openclaw/workspace/skills/loki-mode-openclaw/
    ```
 
 3. Configure API keys in the OpenClaw environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY).
@@ -51,7 +51,7 @@ From any connected channel, the agent will invoke Loki Mode when:
 Channel (Slack/Discord/Web)
     |
     v
-OpenClaw Gateway --> Agent routes to loki-mode skill
+OpenClaw Gateway --> Agent routes to loki-mode-openclaw skill
     |
     v
 loki start --bg --yes <prd>  (background process)
