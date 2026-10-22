@@ -60,6 +60,7 @@ export interface StreamMsg {
   usage?: Record<string, unknown>;
   session_id?: string;
   result?: string; // SDKResultMessage.result (final assistant text summary)
+  permission_denials?: unknown; // SDKResultMessage.permission_denials: [{ tool_name, tool_use_id, tool_input }] refused by the permission layer
   // SDKAssistantMessage.error: 'rate_limit' | 'overloaded' | ... (structural
   // rate-limit signal). SDKRateLimitEvent carries rate_limit_info.
   error?: string;
@@ -456,6 +457,7 @@ export async function consumeSdkStream(
     // --- result: mark all agents complete, write cost, set exit code
     if (msgType === "result") {
       sawResult = true;
+      recordPermissionDenials(eventsJsonl, data, clock);
       if (data.result) capture(data.result);
       const completedAt = nowIso(clock);
       for (const id of Object.keys(agents)) {
@@ -561,6 +563,25 @@ function toolDesc(tool: string, input: Record<string, unknown>): string {
       return s("pattern");
     default:
       return "";
+  }
+}
+
+// #303: one run-ledger event per tool call the permission layer refused (SDKResultMessage.permission_denials), so a
+// denied Bash read of a secret file is recorded in the run evidence. The result frame carries tool, id and input but
+// not the matching rule, so the event says rule: null (not recorded) rather than guessing one.
+function recordPermissionDenials(eventsJsonl: string, data: StreamMsg, clock?: () => string): void {
+  if (!Array.isArray(data.permission_denials)) return;
+  for (const d of data.permission_denials as Array<Record<string, unknown>>) {
+    if (!d || typeof d !== "object") continue;
+    const input = d["tool_input"] as Record<string, unknown> | undefined;
+    const raw = input && typeof input === "object" ? (input["command"] ?? input["file_path"] ?? input["path"] ?? JSON.stringify(input)) : "";
+    appendRunEvent(eventsJsonl, "permission_denied", {
+      tool: typeof d["tool_name"] === "string" ? d["tool_name"] : null,
+      tool_use_id: typeof d["tool_use_id"] === "string" ? d["tool_use_id"] : null,
+      input_summary: String(raw).slice(0, 200),
+      rule: null,
+      session_id: data.session_id ?? null,
+    }, clock);
   }
 }
 
