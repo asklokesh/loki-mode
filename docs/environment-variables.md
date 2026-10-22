@@ -112,8 +112,19 @@ be compiled (invalid `LOKI_WEB_ALLOW_DOMAINS`, or Node missing), Loki prints a
 warning and runs in `plan` mode instead of skipping the rules. Punycode (`xn--`)
 domains are rejected the same way.
 
-This is not complete secret-file protection: `Read` denies do not stop
-`Bash(cat .env)` under `--dangerously-skip-permissions`.
+The same secret-path list also drives Bash deny rules (one list in
+`src/policies/claude_permissions.js`, so the Read and Bash sides cannot drift):
+`cat`, `head`, `tail`, `sed`, `grep`, `egrep`, `fgrep`, `rg`, `awk`, `less`, `more`, `nl`,
+`tac`, `strings`, `xxd`, `od`, `base64`, `cp`, `source` and `.` naming a denied path, and an
+input redirect (`< .env`), are refused under `--dangerously-skip-permissions`. The rules
+reach every route (bash, TypeScript, Python, SDK) and go away with `LOKI_WEB_POLICY=off`.
+
+This is not complete secret-file protection. A shell cannot be sandboxed by pattern: an
+interpreter (`python -c`, `node -e`, `perl`, `ruby`), a variable or command substitution, a
+glob that avoids the literal name, or a copy to another name still reads the file. The
+residual path is closed only by the native sandbox (#291). The rules are enforced by Claude
+Code; Loki verifies that they reach the worker command line, and a live refusal has not been
+measured without a paid run.
 
 To turn web access back on:
 

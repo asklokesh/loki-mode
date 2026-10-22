@@ -38,7 +38,34 @@ function failClosed(why, warnings) {
 // Read denies use the bare '.env*' glob on purpose: a deny beats any allow, so a name list cannot carve out
 // the templates (.env.example, .env.sample, .env.template) without missing secret names such as .envrc,
 // .env.prod, .env.keys, .env.vault and .env.bak. The templates are blocked too.
-var CRED_DENY = ['Read(//**/.env*)', 'Read(//**/.aws/**)', 'Read(//**/.ssh/**)', 'Read(//**/*.pem)'];
+// One secret-path list drives BOTH the Read denies and the Bash denies, so the two cannot drift (#303).
+// Under the bypass flag a Read deny alone leaves `Bash(cat .env)` open, so each path glob is also turned into
+// Bash rules for the common file readers and for input redirects. A shell cannot be sandboxed by pattern: an
+// interpreter (python, node, perl, ruby), a variable or command substitution, or a copy under another name
+// still reads the file. The native sandbox (#291) is the stronger boundary; these rules close the plain cases.
+var SECRET_PATH_GLOBS = ['.env*', '.aws/**', '.ssh/**', '*.pem'];
+var SECRET_READERS = ['cat', 'head', 'tail', 'sed', 'grep', 'egrep', 'fgrep', 'rg', 'awk', 'less', 'more', 'nl', 'tac', 'strings', 'xxd', 'od', 'base64', 'cp', 'source', '.'];
+// Bash rule operands for a path glob: bare, after other arguments (`head -n 5 .env`) and under any directory,
+// so `cat .env`, `head -n 5 .env` and `cat app/.env` match but `cat app.environment.ts` does not. A glob that starts with '*' is already anchored.
+function bashOperands(glob) {
+    var g = glob.replace(/\/\*\*$/, '/*');
+    if (g.charAt(g.length - 1) !== '*') g += '*';
+    return g.charAt(0) === '*' ? [g] : [g, '* ' + g, '*/' + g];
+}
+function secretReadDenies() {
+    return SECRET_PATH_GLOBS.map(function (g) { return 'Read(//**/' + g + ')'; });
+}
+function secretBashDenies() {
+    var out = [];
+    SECRET_PATH_GLOBS.forEach(function (g) {
+        bashOperands(g).forEach(function (operand) {
+            SECRET_READERS.forEach(function (cmd) { out.push('Bash(' + cmd + ' ' + operand + ')'); });
+            out.push('Bash(* < ' + operand + ')');
+        });
+    });
+    return out;
+}
+var CRED_DENY = secretReadDenies().concat(secretBashDenies());
 var HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
 // Throws on any non-ASCII, malformed or punycode (xn-- label) domain: an ASCII xn-- name can render as a
@@ -184,7 +211,7 @@ function compile(repoDir, env) {
     return { args: args, warnings: warnings };
 }
 
-module.exports = { compile: compile, hasOperatorPolicy: hasOperatorPolicy, legacyArgs: legacyArgs, parseWebAllowDomains: parseWebAllowDomains };
+module.exports = { SECRET_PATH_GLOBS: SECRET_PATH_GLOBS, secretReadDenies: secretReadDenies, secretBashDenies: secretBashDenies, compile: compile, hasOperatorPolicy: hasOperatorPolicy, legacyArgs: legacyArgs, parseWebAllowDomains: parseWebAllowDomains };
 
 if (require.main === module && process.argv[2] === '--has-operator-policy') {
     process.stdout.write(hasOperatorPolicy(process.env) ? '1\n' : '0\n');
