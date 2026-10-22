@@ -31,7 +31,7 @@ Violations result in automatic FAIL during VERIFY phase.
 
 **Use Playwright MCP for browser-based testing.**
 
-Check the rendered result after each UI step, before the next step. A baseline smoke runs on the first iteration of every session and resume, then every `LOKI_PLAYWRIGHT_INTERVAL` iterations.
+After each UI step, check the rendered result before the next step. On the Bun route only, and not under LOKI_SIMPLE=1 (automatic for small tasks), LOKI_PROMPT_SCREENSHOT=1 adds this instruction to the prompt prefix. A baseline smoke runs on the first iteration of every session and resume, then every `LOKI_PLAYWRIGHT_INTERVAL` iterations.
 
 ```python
 # E2E test after feature implementation

@@ -388,10 +388,14 @@ async function installedClaudeCodeVersion(cli: string): Promise<string> {
   }
 }
 
+const ROUTER_SONNET_ADVISOR_EFFORT = "medium";
+
 export interface RouterSessionPlan {
   settings?: { advisorModel: string; autoCompactWindow?: number };
   model: string;
   advisorReason?: string;
+  // Docs: a Sonnet executor with an Opus advisor runs at medium effort. Set only when the advisor is attached.
+  effort?: string;
 }
 
 // Pure: flag off -> null (caller adds nothing). Flag on -> advisor settings when the probe says available;
@@ -408,6 +412,7 @@ export function planRouterSession(args: {
   if (probe.available) {
     return {
       model: args.model,
+      ...(/sonnet/i.test(args.model) ? { effort: ROUTER_SONNET_ADVISOR_EFFORT } : {}),
       settings: {
         advisorModel: ROUTER_ADVISOR_MODEL,
         ...(hasNoPriceCliff(args.model) ? {} : { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW }),
@@ -707,7 +712,7 @@ export function buildSdkLoopOptions(args: {
 
   // effort tier (same mapping as buildAutoFlags).
   try {
-    out.effort = process.env["LOKI_E10_EFFORT"] || effortForTier(args.tier, args.complexity);
+    out.effort = process.env["LOKI_E10_EFFORT"] || router?.effort || effortForTier(args.tier, args.complexity);
   } catch {
     // omit
   }

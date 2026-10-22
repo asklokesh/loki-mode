@@ -273,6 +273,8 @@ Task(
 
 Claude models support an `effort` parameter that controls reasoning depth without requiring thinking prefixes. This is separate from extended thinking and applies at the API level.
 
+A lower effort does not reliably shorten Opus 5 answers. On the Bun route only, and never under LOKI_SIMPLE=1 (set automatically for small tasks, it drops these lines), LOKI_PROMPT_LENGTH=1 adds a prefix line that asks for short replies, and LOKI_PROMPT_ADVISOR=1 with the router on adds the advisor timing and brevity line. The bash route never carries either line. Separately, on the SDK route only (the CLI route never reads the router effort), a router-on Sonnet executor that has the advisor attached runs at medium effort unless LOKI_E10_EFFORT is set.
+
 | Effort Level | When to Use | Token Impact |
 |--------------|-------------|--------------|
 | `low` | Simple, well-defined, high-volume tasks | Minimal reasoning tokens |

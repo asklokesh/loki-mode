@@ -53,4 +53,10 @@ describe("CH-02 probe", () => {
     expect(p?.model).toBe("sonnet");
     expect(p?.settings).toBeUndefined();
   });
+  test("a Sonnet executor with the advisor attached runs at medium effort; others carry no override", () => {
+    const env = { LOKI_ROUTER: "1" };
+    expect(planRouterSession({ model: "sonnet", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env })?.effort).toBe("medium");
+    expect(planRouterSession({ model: "opus", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env })?.effort).toBeUndefined();
+    expect(planRouterSession({ model: "sonnet", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env: { ...env, LOKI_ADVISOR_SCOPE: "off" } })?.effort).toBeUndefined();
+  });
 });
