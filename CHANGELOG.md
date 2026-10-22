@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.50.0 (2026-10-22)
+
+### Added
+- Parallel groups (#283): the slice journal is keyed by the sha256 of the slice card plus the base sha, so a finished unit is reused only for the same card on the same base.
+
+### Fixed
+- Parallel groups (#283): journal adoption now requires the unit branch tip to match the journaled tip and the receipt's signed task sha256 to match the unit's task text. A receipt with an absent, empty or mismatched task hash is rejected and the unit runs again, never a false VERIFIED.
+
 ## v11.49.3 (2026-10-22)
 
 ### Tests
