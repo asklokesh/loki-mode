@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.44.0 (2026-10-22)
+
+### Added
+- Flag-gated prompt lines in the cache-stable prefix (Bun route only, off under `LOKI_SIMPLE=1`): `LOKI_PROMPT_SCREENSHOT=1` adds a check-the-rendered-result instruction after each UI step, a length-guidance line has its own flag, and an advisor line is added only when the advisor flag is on and the router is enabled. With no flag set, the prompt is unchanged.
+
+### Changed
+- skills docs scope the advisor, length, screenshot and medium-effort claims to the route that honors them.
+
 ## v11.43.1 (2026-10-22)
 
 ### Changed
