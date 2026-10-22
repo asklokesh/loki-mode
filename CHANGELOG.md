@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.26.0 (2026-10-22)
+
+### Fixed
+- Every references/*.md guide is now linked from the skills module that owns its concern. That includes the five guides orphaned when skills/00-index.md was removed in v11.22.0, plus twelve older ones. Refs #247.
+
+### Tests
+- tests/test-skill-doc-accuracy.sh fails if any reference becomes unreachable. The list of references is derived at runtime, with no allowlist. Refs #247.
+
 ## v11.25.0 (2026-10-22)
 
 ### Changed
