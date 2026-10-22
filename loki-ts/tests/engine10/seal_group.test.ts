@@ -611,11 +611,11 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[] }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
-    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean; fixKind?: string; fixFor?: string; base?: string }[] };
+    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; items?: string[]; done?: boolean; fixKind?: string; fixFor?: string; base?: string }[] };
     let out = "";
     for (const [i, u] of dag.units.entries()) {
       const n = i + 1, br = `loki/unit-${g}-${n}`;
@@ -643,7 +643,7 @@ describe("group run: Group Seal and resume", () => {
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
       writeFileSync(join(d, "events.jsonl"), events);
-      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), time: { wall_s: 0, stages: {} }, not_proven: [] };
+      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), ...(o.noTask?.includes(n) ? {} : { task: { source: "text", sha256: sha256(o.badTask?.includes(n) ? "forged task" : (u.items ?? []).join("\n")) } }), time: { wall_s: 0, stages: {} }, not_proven: [] };
       const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
       const rec = { ...body, receipt_sha256: h, verification: sig };
       if (o.tamper?.includes(n)) rec.verdict = "FAILED";
@@ -654,7 +654,7 @@ describe("group run: Group Seal and resume", () => {
   };
   const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}, spec = SPEC): Promise<{ code: number; err: string }> => {
     let err = "";
-    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
+    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", LOKI_CACHE_ROOT: `${repo}-cache`, ...env } as NodeJS.ProcessEnv, provider: "claude", spec, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
     return { code, err };
   };
   const groups = (repo: string): string[] => readdirSync(join(repo, ".loki", "groups")).filter((n) => n.startsWith("g"));
@@ -729,6 +729,72 @@ describe("group run: Group Seal and resume", () => {
     expect(calls).toEqual(["u2", "u3"]); // rerun dispatches 2; u1 is skipped
     expect(err).toContain("1 of 3 units already VERIFIED");
     expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, false, false]);
+  });
+
+  test("#283 journal: a fresh group with the same card and base reuses the VERIFIED unit and dispatches 2", async () => {
+    const repo = mkRepo("gr-journal"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    calls.length = 0;
+    sh(["git", "checkout", "-q", "main"], repo); // a run leaves HEAD on the group branch; the user's base is main again
+    const { code, err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
+    expect(code).toBe(0);
+    expect(calls).toEqual(["u2", "u3"]);
+    expect(err).toContain("unit u1 reused from the slice journal");
+    expect(groups(repo).length).toBe(2);
+  });
+  test("#283 journal: a changed base sha misses, all 3 dispatch", async () => {
+    const repo = mkRepo("gr-journal-base"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-base-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    writeFileSync(join(repo, "moved.txt"), "m\n"); sh(["git", "add", "moved.txt"], repo); sh(["git", "commit", "-q", "-m", "moved"], repo);
+    calls.length = 0;
+    expect((await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" })).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+  });
+  test("#283 journal: a moved unit branch head is not reused", async () => {
+    const repo = mkRepo("gr-journal-head"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-head-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    const g = groups(repo)[0]!;
+    sh(["git", "checkout", "-q", `loki/unit-${g}-1`], repo);
+    writeFileSync(join(repo, "extra.txt"), "x\n"); sh(["git", "add", "extra.txt"], repo); sh(["git", "commit", "-q", "-m", "moved"], repo);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    expect((await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" })).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+  });
+
+  test("#283 journal: a unit re-sealed for an edited card in its old group is not adopted for the old card", async () => {
+    const repo = mkRepo("gr-journal-resealed"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-resealed-cache") };
+    const B = "## Acceptance criteria\n- add alpha\n- add beta\n- add gamma\n", R = "## Acceptance criteria\n- add alpha\n- add beta v2\n- add gamma\n";
+    expect((await go(repo, fake(repo, calls), env, B)).code).toBe(0);
+    sh(["git", "checkout", "-q", "main"], repo);
+    expect((await go(repo, fake(repo, calls), env, R)).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3", "u2"]);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" }, B);
+    expect(calls).toEqual(["u2"]);
+    expect(err).not.toContain("unit u2 reused from the slice journal");
+  });
+  test("#283 journal: a journaled receipt whose signed task text differs from the unit is not adopted", async () => {
+    const repo = mkRepo("gr-journal-forged"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-forged-cache") };
+    expect((await go(repo, fake(repo, calls, { badTask: [1], fail: [2, 3] }), env)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    expect(err).not.toContain("unit u1 reused from the slice journal");
+  });
+
+  test("#283 journal: a receipt with no task.sha256 is not adopted", async () => {
+    const repo = mkRepo("gr-journal-notask"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-notask-cache") };
+    expect((await go(repo, fake(repo, calls, { noTask: [1], fail: [2, 3] }), env)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    expect(err).not.toContain("unit u1 reused from the slice journal");
   });
 
   const AC = "## Acceptance criteria\n", BASE = AC + SPEC, REVISED = AC + "- add alpha\n- add beta v2\n- add gamma\n";

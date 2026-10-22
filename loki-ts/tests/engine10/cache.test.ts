@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -10,8 +10,11 @@ import {
   readRepoMapCache,
   readTestMapCache,
   repoCacheDir,
+  readSliceJournal,
   repoKey,
+  sliceKey,
   writeRepoMapCache,
+  writeSliceJournal,
   writeTestMapCache,
 } from "../../src/engine10/cache.ts";
 import { readFlaky, recordFailures, recordFlaky, topFailures } from "../../src/util/failure_memory.ts";
@@ -246,5 +249,25 @@ describe("cache pruning (TEN-STABILITY-45)", () => {
     const dir = repoCacheDir("k", tmpRoot());
     writeRepoMapCache(dir, "t1", REPOMAP);
     expect(() => pruneCache(join(dir, "missing"), "repomap2-", join(dir, "x.json"))).not.toThrow();
+  });
+});
+
+describe("slice journal (#283: sha256 of slice card plus base sha)", () => {
+  const entry = { gid: "g1", n: 1, id: "u1", head: "a".repeat(40) };
+  test("same card and base sha hit; a changed base sha or card misses", () => {
+    const dir = tmpRoot();
+    writeSliceJournal(dir, sliceKey("card-A", "base1"), entry);
+    expect(readSliceJournal(dir, sliceKey("card-A", "base1"))).toEqual(entry);
+    expect(readSliceJournal(dir, sliceKey("card-A", "base2"))).toBeNull();
+    expect(readSliceJournal(dir, sliceKey("card-B", "base1"))).toBeNull();
+  });
+  test("the key is order-sensitive between card and base (no concatenation collision)", () => {
+    expect(sliceKey("ab", "c")).not.toBe(sliceKey("a", "bc"));
+  });
+  test("a corrupt or wrong-shape entry is a miss", () => {
+    const dir = tmpRoot(), k = sliceKey("c", "b");
+    writeSliceJournal(dir, k, entry);
+    writeFileSync(resolve(dir, `slice-${k}.json`), '{"gid":1}');
+    expect(readSliceJournal(dir, k)).toBeNull();
   });
 });

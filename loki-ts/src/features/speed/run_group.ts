@@ -5,13 +5,14 @@
 // receipt is VERIFIED and the suite exited 0; otherwise NOT_PROVEN (4) or 1 on a failed unit. A launcher failure, an orphan
 // criterion or an unreadable result is never VERIFIED. Resume: the same spec (spec_sha256 in dag.json) reuses its group id, DAG,
 // base and contract, and skips units whose harvested receipt still verifies at the unit branch tip (LOKI_GROUP_RESUME=0 forces fresh).
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { assignCriteria, freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
+import { readSliceJournal, repoCacheDir, repoKey, sliceKey, writeSliceJournal } from "../../engine10/cache.ts";
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
 import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
 import type { verifyReceipt as VerifyReceiptFn } from "../../engine10/verify_cmd.ts";
@@ -140,6 +141,24 @@ async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: strin
   return tip !== "" && rec["head_sha"] === tip;
 }
 
+/** #283: a unit of an earlier group with the same card and base sha, whose receipt still verifies at its branch tip, is adopted into this group (receipt copied, branch ref pointed at the same tip) instead of dispatched. */
+async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, task: string, say: (s: string) => void): Promise<boolean> {
+  const e = readSliceJournal(dir, key);
+  if (!e || e.id !== id || !GID_RE.test(e.gid) || e.gid === gid || !UNIT_ID_RE.test(id)) return false;
+  if (!(await unitDone(verifyReceipt, repoDir, e.gid, e.n, id))) return false;
+  const signedTask = ((readJson(join(repoDir, ".loki", "groups", e.gid, "group", "units", id, "receipt.json"))?.["task"] as { sha256?: unknown } | undefined) ?? {}).sha256;
+  if (typeof signedTask !== "string" || signedTask === "" || signedTask !== sha256(task)) return false; // the journal is unsigned: the signed receipt must name this unit's task text (intake always records it, so absent is foreign or forged)
+  const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${e.gid}-${e.n}`]);
+  if (tip === "" || tip !== e.head) return false;
+  const dst = join(repoDir, ".loki", "groups", gid, "group", "units", id);
+  rmSync(dst, { recursive: true, force: true });
+  cpSync(join(repoDir, ".loki", "groups", e.gid, "group", "units", id), dst, { recursive: true });
+  if (safeGitSpawn(repoDir, ["update-ref", `refs/heads/loki/unit-${gid}-${n}`, tip], { encoding: "utf8" }).status !== 0) return false;
+  if (!(await unitDone(verifyReceipt, repoDir, gid, n, id))) return false;
+  say(`loki: unit ${id} reused from the slice journal (group ${e.gid}, same card and base)\n`);
+  return true;
+}
+
 /** The card's exit-0 rule for unit receipts: every unit VERIFIED (ALREADY_SATISFIED does not pass). Shared by the fresh path and the resume short-circuit. */
 function allUnitsVerified(unitVerdicts: string[]): boolean {
   return unitVerdicts.every((x) => x === "VERIFIED");
@@ -232,10 +251,13 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: (u as Partial<FixUnit>).acceptance ?? accOf.get(u.id) ?? [] });
     u.spec = spec;
   }
+  const jdir = repoCacheDir(repoKey(git(repoDir, ["remote", "get-url", "origin"]) || null, repoDir), env.LOKI_CACHE_ROOT ? resolve(env.LOKI_CACHE_ROOT) : undefined);
+  const keyOf = (u: StoredUnit): string => sliceKey(JSON.stringify({ id: u.id, items: u.items, writeSet: u.writeSet, acceptance: accOf.get(u.id) ?? [] }), baseRef);
   // Resume bookkeeping: a unit is done only on a verified, head-matching harvest; anything else drops its stale harvest and reruns.
   let doneCount = 0;
   for (const [i, u] of units.entries()) {
     u.done = resumable && !changed.has(u.id) ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
+    if (!u.done && !changed.has(u.id) && !(u as Partial<FixUnit>).fixKind) { try { u.done = await adoptJournaled(verifyReceipt, repoDir, jdir, keyOf(u), groupId, i + 1, u.id, (u.items ?? []).join("\n"), say); } catch { u.done = false; } }
     if (u.done) { doneCount++; if (revised) say(`loki: unit ${u.id} skipped-unchanged\n`); }
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }
@@ -269,6 +291,10 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     costs.push(parseGroupCost(res.stdout));
     // backlog prints `backlog: unit-<group>-<n> <status>`; a unit passed only when its status is VERIFIED or a PR url. Anything else is a fail.
     for (const m of res.stdout.matchAll(/^backlog: (unit-\S+) (VERIFIED|PR \S+|FAILED.*|BLOCKED.*|BUDGET_STOP.*|SKIPPED.*)$/gm)) status.set(m[1]!, m[2]!);
+  }
+  for (const [i, u] of units.entries()) { // journal every VERIFIED, head-matching unit so a later group with the same card and base skips it
+    if ((u as Partial<FixUnit>).fixKind || !(u.done || /^(VERIFIED|PR )/.test(status.get(`unit-${groupId}-${i + 1}`) ?? ""))) continue;
+    try { if (await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id)) writeSliceJournal(jdir, keyOf(u), { gid: groupId, n: i + 1, id: u.id, head: git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${groupId}-${i + 1}`]) }); } catch { /* an unwritable journal only costs a rerun */ }
   }
   const branches: Record<string, string> = {};
   const failedUnits: string[] = [];
