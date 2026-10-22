@@ -1101,6 +1101,9 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
   const perms = require(join(root, "src/policies/claude_permissions.js")) as {
     compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
     parseWebAllowDomains(raw: string): string[];
+    SECRET_PATH_GLOBS: string[];
+    secretReadDenies(): string[];
+    secretBashDenies(): string[];
   };
   const baseEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
     PATH: process.env["PATH"],
@@ -1197,6 +1200,53 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
     expect(readDenied("/home/u/.aws/credentials")).toBe(true);
     expect(readDenied("/work/app/key.pem")).toBe(true);
     expect(readDenied("/work/app/README.md")).toBe(false);
+  });
+
+  // Minimal model of a Claude Bash rule "Bash(<prefix> <glob>)": the glob "*" spans any characters.
+  const bashRuleMatches = (rule: string, command: string): boolean => {
+    const g = rule.slice("Bash(".length, -1);
+    const re = g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    return new RegExp(`^${re}$`).test(command);
+  };
+  const bashDenied = (argv: string[], command: string): boolean =>
+    denied(argv).some((r) => r.startsWith("Bash(") && bashRuleMatches(r, command));
+
+  it("the Bash deny set is derived from the same list as the Read deny set (#303)", () => {
+    for (const argv of [
+      perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args,
+      permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {}),
+    ]) {
+      const d = denied(argv);
+      expect(d.filter((r) => r.startsWith("Read("))).toEqual(perms.secretReadDenies());
+      expect(d.filter((r) => r.startsWith("Bash("))).toEqual(perms.secretBashDenies());
+      // every glob in the shared list yields at least one Read rule and one Bash rule
+      for (const g of perms.SECRET_PATH_GLOBS) {
+        expect(d).toContain(`Read(//**/${g})`);
+        expect(d.some((r) => r.startsWith("Bash(") && r.includes(g.replace(/\/\*\*$/, "/*").replace(/^\*/, "")))).toBe(true);
+      }
+    }
+  });
+
+  it("under the bypass flag a Bash reader or redirect naming a secret path is denied; ordinary commands are not (#303)", () => {
+    const legacy = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {});
+    expect(legacy[0]).toBe("--dangerously-skip-permissions");
+    for (const c of [
+      "cat .env", "cat app/.env.local", "head -n 5 .env", "tail .env.prod", "sed -n 1p .envrc", "grep KEY .env",
+      "cat ~/.aws/credentials", "cat /home/u/.ssh/id_rsa", "cat deploy/key.pem", "cat < .env", "awk 1 .env.keys",
+    ]) {
+      expect(bashDenied(legacy, c)).toBe(true);
+    }
+    for (const c of ["cat README.md", "ls -la", "cat src/app.environment.ts", "grep -r TODO src", "npm test"]) {
+      expect(bashDenied(legacy, c)).toBe(false);
+    }
+    // the compiled route carries the same set
+    const compiled = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args;
+    expect(bashDenied(compiled, "cat .env")).toBe(true);
+  });
+
+  it("LOKI_WEB_POLICY=off drops the Bash secret denies together with the Read ones (#303)", () => {
+    const off = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_POLICY: "off" }), () => {});
+    expect(off).toEqual(["--dangerously-skip-permissions"]);
   });
 
   it("a punycode (xn--) allow domain is rejected and fails closed to plan", () => {
