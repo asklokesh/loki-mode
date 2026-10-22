@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.37.0 (2026-10-22)
+
+### Added
+- Tool-use and skill-navigation telemetry (#275): the per-run result-cost record and `loki_metrics_efficiency` now report tools per turn, tool error rate, attached MCP tool count and skill module reads, alongside the existing router telemetry. Keys are additive; no existing key changed.
+
 ## v11.36.6 (2026-10-22)
 
 ### Fixed
