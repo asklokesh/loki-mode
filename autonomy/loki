@@ -15287,6 +15287,22 @@ for name, e in (v.get("mcpServers") or {}).items() if isinstance(v, dict) and is
     print("MCP server %s (%s)\t%s\t%s\tremove the server from %s" % (clean(name), clean(p), clean(h or "(unparseable url)"), "yes" if h in ("localhost", "127.0.0.1", "::1") else "no", clean(p)))
 ' "$f" 2>/dev/null
     done
+    # LOKI_MCP_<NAME>_URL servers: listed by the same parser the runner uses (autonomy/lib/mcp-config.sh),
+    # so a URL it refuses is never listed. The doctor drift probe also contacts each one unless LOKI_AIRGAP=true.
+    type loki_mcp_remote_servers_json >/dev/null 2>&1 \
+        || . "$_LOKI_SCRIPT_DIR/lib/mcp-config.sh" 2>/dev/null
+    loki_mcp_remote_servers_json 2>/dev/null | python3 -I -c '
+import json, re, sys
+def clean(s):
+    return re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029]", "?", str(s))
+try:
+    servers = json.load(sys.stdin)
+except ValueError:
+    servers = []
+for s in servers if isinstance(servers, list) else []:
+    h = s.get("host", "")
+    print("remote MCP server %s (%s)\t%s\t%s\tunset %s (loki doctor also asks it for tools/list unless LOKI_AIRGAP=true)" % (clean(s.get("name", "")), clean(s.get("env", "")), clean(h), "yes" if h in ("localhost", "127.0.0.1", "::1") else "no", clean(s.get("env", ""))))
+' 2>/dev/null
 }
 
 # Check system prerequisites

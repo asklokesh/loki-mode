@@ -524,14 +524,14 @@ function parseRpcBody(text: string): { result?: { tools?: Array<{ name: string; 
   return null;
 }
 
-export async function fetchRemoteToolsHash(url: string, headers: Record<string, string>): Promise<string | null> {
+export async function fetchRemoteToolsHash(url: string, headers: Record<string, string>, budget?: AbortSignal): Promise<string | null> {
   const base: Record<string, string> = {
     ...headers,
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
   const post = async (body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
-    fetch(url, { method: "POST", headers: { ...base, ...extra }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+    fetch(url, { method: "POST", headers: { ...base, ...extra }, body: JSON.stringify(body), signal: budget ? AbortSignal.any([AbortSignal.timeout(5000), budget]) : AbortSignal.timeout(5000) });
   try {
     const init = await post({
       jsonrpc: "2.0",
@@ -561,12 +561,27 @@ export async function fetchRemoteToolsHash(url: string, headers: Record<string, 
   }
 }
 
-async function probeMcpToolHashes(): Promise<Record<string, string | null>> {
+// One total budget and bounded concurrency across every remote server (#315): a
+// server not answered in time reads as unavailable (skip), never a hang. Under
+// LOKI_AIRGAP=true no remote server is contacted at all.
+export const MCP_PROBE_BUDGET_MS = 20000;
+export const MCP_PROBE_CONCURRENCY = 4;
+export async function probeMcpToolHashes(
+  env: NodeJS.ProcessEnv = process.env,
+  budgetMs: number = MCP_PROBE_BUDGET_MS,
+): Promise<Record<string, string | null>> {
   const out: Record<string, string | null> = { [LOCAL_MCP_SERVER]: await probeLocalToolsHash() };
-  const remote = remoteServersFromEnv(process.env).servers as Record<string, { url: string; headers?: Record<string, string> }>;
-  for (const [name, entry] of Object.entries(remote)) {
-    out[name] = await fetchRemoteToolsHash(entry.url, entry.headers ?? {});
-  }
+  if (env["LOKI_AIRGAP"] === "true") return out;
+  const remote = Object.entries(remoteServersFromEnv(env).servers as Record<string, { url: string; headers?: Record<string, string> }>);
+  const budget = AbortSignal.timeout(budgetMs);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < remote.length) {
+      const [name, entry] = remote[next++]!;
+      out[name] = budget.aborted ? null : await fetchRemoteToolsHash(entry.url, entry.headers ?? {}, budget);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MCP_PROBE_CONCURRENCY, remote.length) }, worker));
   return out;
 }
 const mcpHashImpl = { fn: probeMcpToolHashes as McpToolHashes };
