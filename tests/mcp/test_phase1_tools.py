@@ -854,7 +854,6 @@ class ResultContractTests(unittest.TestCase):
 
         # fast_verify replays authenticated cache entries as if freshly scanned: an
         # entry for app.py's content must reach the finding text it returns
-        import hashlib
         import importlib.util
 
         Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
@@ -864,7 +863,7 @@ class ResultContractTests(unittest.TestCase):
         sys.modules["fv_seed"] = fv
         spec.loader.exec_module(fv)
         cache = fv.Cache(fv.cache_path(root))
-        cache.put(hashlib.blake2b(b"x = 1\n", digest_size=16).hexdigest(),
+        cache.put(fv.cache_key("app.py", b"x = 1\n"),
                   [{"rule": self._MARK, "line": 1, "message": self._MARK, "severity": "high"}])
         cache.save()
 
