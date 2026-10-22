@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.49.3 (2026-10-22)
+
+### Tests
+- Web policy (#256): a regression test now covers the punycode (`xn--`) allow-domain rejection on the legacy permission route as well as the compiled route. It asserts plan-mode argv, no permission bypass, a punycode warning, and bash/TS argv parity. No product code changed.
+
 ## v11.49.2 (2026-10-22)
 
 ### Fixed
