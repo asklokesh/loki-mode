@@ -58,6 +58,7 @@ import type {
 import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
 import { modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
+import { cacheTtlFor } from "../util/cost_breakdown.ts";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -204,9 +205,16 @@ function claudeTierToModel(tier: SessionTier): string {
 // run.sh lets the pin overwrite the override.
 // TEN-COST-12: engine10 stage sessions last 10-17s, so the 1-hour cache TTL ($4/M write) buys nothing over
 // 5 minutes ($2.50/M). Claude Code honors FORCE_PROMPT_CACHING_5M=1. Engine10 children only (LOKI_E10_STAGE is
-// set by engine10/session.ts); the main RARV loop is untouched. Opt out with LOKI_E10_CACHE_TTL=1h.
+// set by engine10/session.ts); the main RARV loop is untouched.
+// #244: an explicit LOKI_E10_CACHE_TTL wins (1h opts out of the 5m force; any other value keeps it). Unset, the stage's
+// persisted median call gap (LOKI_E10_CACHE_GAP_MS, set by childEnv from the efficiency records) between the 5m and 60m TTLs
+// (cacheTtlFor) chooses 1h for that stage; at 60m or more neither cache hits, so 5m stays. No data keeps 5m.
 export function engine10CacheTtlEnv(env: Record<string, string | undefined>): Record<string, string> {
-  if (!env["LOKI_E10_STAGE"] || env["LOKI_E10_CACHE_TTL"] === "1h") return {};
+  if (!env["LOKI_E10_STAGE"]) return {};
+  const ttl = env["LOKI_E10_CACHE_TTL"];
+  if (ttl) return ttl === "1h" ? {} : { FORCE_PROMPT_CACHING_5M: "1" };
+  const gap = Number(env["LOKI_E10_CACHE_GAP_MS"]);
+  if (env["LOKI_E10_CACHE_GAP_MS"] && Number.isFinite(gap) && cacheTtlFor(gap) === "1h") return {};
   return { FORCE_PROMPT_CACHING_5M: "1" };
 }
 

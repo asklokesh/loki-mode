@@ -1127,6 +1127,21 @@ describe("TEN-COST-12 engine10 5-minute cache TTL", () => {
   test("LOKI_E10_CACHE_TTL=1h opts out", () => {
     expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "plan", LOKI_E10_CACHE_TTL: "1h" })).toEqual({});
   });
+  // #244: the TTL is chosen from the stage's persisted median call gap; an explicit user value always wins
+  test("no gap data keeps 5m; a gap over 5m picks 1h; a gap at or under 5m keeps 5m", () => {
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix" })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: "420000" })).toEqual({});
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: "300000" })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: "junk" })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: String(20 * 60_000) })).toEqual({});
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: String(60 * 60_000 - 1) })).toEqual({});
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: String(60 * 60_000) })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: String(70 * 60_000) })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+  });
+  test("an explicit LOKI_E10_CACHE_TTL beats the measured gap in both directions", () => {
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: "420000", LOKI_E10_CACHE_TTL: "5m" })).toEqual({ FORCE_PROMPT_CACHING_5M: "1" });
+    expect(engine10CacheTtlEnv({ LOKI_E10_STAGE: "fix", LOKI_E10_CACHE_GAP_MS: "1000", LOKI_E10_CACHE_TTL: "1h" })).toEqual({});
+  });
 
   // r2: the helper alone is not enough; pin the claudeProvider shellRun call site.
   describe("claudeProvider child env", () => {

@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CostResult } from "../engine10/cost.ts";
+import { median } from "../util/cost_breakdown.ts";
 import { estimateTokens, priceFor, usdFor } from "../providers/price_table.ts";
 
 export interface ParsedUsage { input: number; output: number; cached: number; usd: number | null }
@@ -115,6 +116,8 @@ export interface EfficiencySessionInfo {
   status: string; // "completed" | "failed" | "killed", matching SessionResult/legacy status_str
   durationMs: number;
   model: string;
+  stage?: string; // #244: the engine10 stage that ran, so cache gaps persist per stage
+  gapMs?: number; // #244: ms since this run's previous session of the same stage ended; absent for a stage's first call
 }
 
 const ITERATION_FILE_RE = /^iteration-(\d+)\.json$/;
@@ -156,6 +159,8 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
     duration_ms: info.durationMs,
     model: cost.model ?? info.model, // E-50: provider-reported model wins over the caller's guess
   };
+  if (info.stage) rec.stage = info.stage;
+  if (info.gapMs !== undefined && Number.isFinite(info.gapMs) && info.gapMs >= 0) rec.gap_ms = Math.round(info.gapMs);
   if (cost.usd !== null) {
     rec.cost_usd = cost.usd;
     rec.cost_source = costSource; // EV-1 gate reads only provider-sourced dollars ("partial-stream": E-98e, priced from streamed usage, never itself provider-reported)
@@ -201,4 +206,19 @@ export function neverRan(path: string, unmeteredMarker: string): boolean {
 /** Sum ids for a run: ids plus archived earlier quota attempts, minus archives that never ran. Follow-up (telemetry only): seal.ts's router sum ignores archived ids. */
 export function liveArchivedCosts(lokiRoot: string, ids: string[], unmeteredMarker: string): string[] {
   return withArchivedCosts(lokiRoot, ids, (id) => !neverRan(join(lokiRoot, "metrics", `result-cost-${id}.json`), unmeteredMarker));
+}
+
+/** #244: median persisted call gap (ms) of a stage across the repo's earlier runs, from the efficiency records' gap_ms; null with no data. Feeds the cache TTL switch. */
+export function stageMedianGapMs(lokiRoot: string, stage: string): number | null {
+  const gaps: number[] = [];
+  try {
+    for (const f of readdirSync(efficiencyDir(lokiRoot))) {
+      if (!ITERATION_FILE_RE.test(f)) continue;
+      try {
+        const r = JSON.parse(readFileSync(join(efficiencyDir(lokiRoot), f), "utf8")) as Record<string, unknown>;
+        if (r["stage"] === stage && typeof r["duration_ms"] === "number" && typeof r["gap_ms"] === "number" && Number.isFinite(r["gap_ms"])) gaps.push(r["gap_ms"]); // a record without duration_ms is not a timed call
+      } catch { /* unreadable record: no data point */ }
+    }
+  } catch { return null; }
+  return gaps.length > 0 ? median(gaps) : null;
 }

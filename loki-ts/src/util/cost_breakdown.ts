@@ -96,20 +96,25 @@ function cacheColdText(events: { type: string; stage: string | null; ts?: string
   return cold.length > 0 ? `cache cold: ${cold.join(", ")}` : null;
 }
 
-const CACHE_TTL_5M_MS = 5 * 60_000;
-/** Measured inter-call gap per stage (median of consecutive same-stage cost event times). A stage whose median gap exceeds the 5 minute cache
- *  TTL cannot hit a 5m cache, so the line names it and the opt-in that fits: "cache ttl: a (median gap 7m); LOKI_E10_CACHE_TTL=1h". The 5m
- *  default stays in engine10CacheTtlEnv (runner/providers.ts), the one TTL switch. null when no stage has two timed calls over the TTL. */
+export const CACHE_TTL_5M_MS = 5 * 60_000;
+export const CACHE_TTL_1H_MS = 60 * 60_000;
+/** Idle time between two same-stage sessions: this session's start (end minus its own runtime) minus the previous session's end. Never negative. */
+export const idleGapMs = (endedAtMs: number, durationMs: number, prevEndedAtMs: number): number => Math.max(0, (endedAtMs - durationMs) - prevEndedAtMs);
+/** The one TTL rule: 1h only when the median idle gap is over 5m (a 5m cache expires between calls) and under 60m (past that neither TTL hits). */
+export const cacheTtlFor = (medianIdleGapMs: number): "5m" | "1h" => (medianIdleGapMs > CACHE_TTL_5M_MS && medianIdleGapMs < CACHE_TTL_1H_MS ? "1h" : "5m");
+export const median = (g: number[]): number => { const a = [...g].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]!; };
+/** Measured idle gap per stage (median of idleGapMs over consecutive same-stage cost events; events without duration_ms are skipped). A stage whose
+ *  median idle gap is between the 5 minute and 1 hour cache TTLs (cacheTtlFor) cannot hit a 5m cache, so the line names it and the opt-in that fits: "cache ttl: a (median gap 7m); LOKI_E10_CACHE_TTL=1h". The 5m
+ *  default stays in engine10CacheTtlEnv (runner/providers.ts), the one TTL switch, which reads the persisted per-stage gaps (provider_cost.stageMedianGapMs). null when no stage has two timed calls over the TTL. */
 function cacheTtlText(events: { type: string; stage: string | null; ts?: string; data: Record<string, unknown> }[]): string | null {
   const last = new Map<string, number>(), gaps = new Map<string, number[]>(), order: string[] = [];
   for (const e of events) {
     const t = e.type === "cost" && e.ts ? Date.parse(e.ts) : NaN;
     if (!Number.isFinite(t)) continue;
-    const stage = e.stage || UNATTRIBUTED;
-    if (last.has(stage)) { if (!gaps.has(stage)) { gaps.set(stage, []); order.push(stage); } gaps.get(stage)!.push(t - last.get(stage)!); }
+    const stage = e.stage || UNATTRIBUTED, dur = e.data["duration_ms"];
+    if (last.has(stage) && typeof dur === "number" && Number.isFinite(dur)) { if (!gaps.has(stage)) { gaps.set(stage, []); order.push(stage); } gaps.get(stage)!.push(idleGapMs(t, dur, last.get(stage)!)); }
     last.set(stage, t);
   }
-  const med = (g: number[]): number => { const a = [...g].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]!; };
-  const slow = order.filter((s) => med(gaps.get(s)!) > CACHE_TTL_5M_MS);
-  return slow.length > 0 ? `cache ttl: ${slow.map((s) => `${s} (median gap ${Math.round(med(gaps.get(s)!) / 60_000)}m)`).join(", ")}; LOKI_E10_CACHE_TTL=1h` : null;
+  const slow = order.filter((s) => cacheTtlFor(median(gaps.get(s)!)) === "1h");
+  return slow.length > 0 ? `cache ttl: ${slow.map((s) => `${s} (median gap ${Math.round(median(gaps.get(s)!) / 60_000)}m)`).join(", ")}; LOKI_E10_CACHE_TTL=1h` : null;
 }

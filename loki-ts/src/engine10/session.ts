@@ -8,6 +8,8 @@ import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
+import { stageMedianGapMs } from "../providers/provider_cost.ts";
+import { idleGapMs } from "../util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
@@ -65,6 +67,8 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
   env["LOKI_ITERATION"] = opts.iterationId;
   env["LOKI_E10_STAGE"] = opts.stage;
   env["LOKI_E10_BRIEF"] = opts.brief;
+  const gap = cfg.lokiRoot ? stageMedianGapMs(cfg.lokiRoot, opts.stage) : null; // #244: the persisted median call gap of this stage picks the cache TTL in engine10CacheTtlEnv
+  if (gap !== null) env["LOKI_E10_CACHE_GAP_MS"] = String(gap); else delete env["LOKI_E10_CACHE_GAP_MS"];
   env["LOKI_E10_TIER"] = opts.tier;
   env["LOKI_E10_PROVIDER"] = cfg.provider;
   if (opts.disallowedTools) env["LOKI_E10_DISALLOWED_TOOLS"] = opts.disallowedTools; else delete env["LOKI_E10_DISALLOWED_TOOLS"];
@@ -165,6 +169,7 @@ function killGroupWithGrace(pgid: number | undefined): void {
   send("SIGTERM");
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
+const lastStageEnd = new WeakMap<SessionRunnerConfig, Map<string, number>>(); // per run: runner config -> stage -> last session end (epoch ms)
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
@@ -180,13 +185,15 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   }
   const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
   const effort = sessionEffortFor(opts).effort;
-  const info = { status, durationMs: Math.round(durationS * 1000), model };
+  const endedAt = Date.now(), ends = lastStageEnd.get(cfg) ?? new Map<string, number>(), prev = ends.get(opts.stage); // #244: gap to this run's previous call of the stage
+  ends.set(opts.stage, endedAt); lastStageEnd.set(cfg, ends);
+  const info = { status, durationMs: Math.round(durationS * 1000), model, stage: opts.stage, ...(prev !== undefined ? { gapMs: idleGapMs(endedAt, Math.round(durationS * 1000), prev) } : {}) };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   const ambiguous = c.records?.resume === "ambiguous"; // FIX-RESUME: this resumed session's total may include its predecessor, so its figures are not emitted (NOT RECORDED), never summed on trust
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
-    session_id: opts.iterationId, model, usd: c.usd, ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
+    session_id: opts.iterationId, model, usd: c.usd, duration_ms: Math.round(durationS * 1000), ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), ...(opts.brief ? { prefix_sha: prefixSha(opts.brief) } : {}), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
