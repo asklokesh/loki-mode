@@ -1203,6 +1203,16 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
     expect(bad.args).toEqual(["--permission-mode", "plan"]);
   });
 
+  it("a punycode (xn--) allow domain fails closed to plan on the legacy route too, with a warning", () => {
+    const warns: string[] = [];
+    const env = baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_ALLOW_DOMAINS: "docs.xn--e1afmkfd.org" });
+    const argv = permissionArgv(repo, env, (m) => warns.push(m));
+    expect(argv).toEqual(["--permission-mode", "plan"]);
+    expect(argv).not.toContain("--dangerously-skip-permissions");
+    expect(warns.join("\n")).toContain("punycode");
+    expect(bashArgv(env)).toEqual(argv);
+  });
+
   it("the legacy route fails closed to plan when the policy module throws, never to allow (B2)", () => {
     const warns: string[] = [];
     const env = new Proxy(baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), {
