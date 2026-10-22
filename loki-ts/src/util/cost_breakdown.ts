@@ -3,6 +3,7 @@
 // P12-21 (E03): per-stage and retry attribution over the same result-cost records sumResultCosts reads.
 // Logic lives here because engine10/cost.ts is at the core line cap. Fails closed: a record whose dollar figure is
 // missing, non-finite, negative or all-zero-usage (E-69, same rule as sumResultCosts) makes its stage's usd (and the total) null, never a silent 0.
+import { createHash } from "node:crypto";
 export interface StageCost {
   usd: number | null;
   sessions: number;
@@ -17,6 +18,8 @@ export interface CostBreakdown {
   retry_sessions: number;
 }
 
+/** Hash of the brief's leading block: the cache key's moving part. cacheColdText compares it across a stage's calls to name a changed prefix. */
+export const prefixSha = (brief: string): string => createHash("sha256").update(brief.slice(0, 2048)).digest("hex").slice(0, 12);
 const UNATTRIBUTED = "unattributed";
 const validUsd = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 const tok = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);

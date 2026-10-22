@@ -2,7 +2,6 @@
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,7 +15,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { safeGit } from "../util/safe_git.ts"; import { prefixSha } from "../util/cost_breakdown.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
@@ -166,8 +165,6 @@ function killGroupWithGrace(pgid: number | undefined): void {
   send("SIGTERM");
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
-/** Hash of the brief's leading block: the cache key's moving part. cacheColdText compares it across a stage's calls to name a changed prefix. */
-export const prefixSha = (brief: string): string => createHash("sha256").update(brief.slice(0, 2048)).digest("hex").slice(0, 12);
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
