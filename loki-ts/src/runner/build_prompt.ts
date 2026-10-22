@@ -1713,6 +1713,9 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   // <dynamic_context>, never in the cache-stable <loki_system> prefix -- putting
   // it above [CACHE_BREAKPOINT] would bust the prompt cache every iteration.
   if (sections.efficiencyTrend.length > 0) lines.push(sections.efficiencyTrend);
+  // LOKI_OUTPUT_LANGUAGE: dynamic tail only, so the cached prefix bytes are unchanged. Unset or not a plain language name: no line.
+  const outLang = envStr(env, "LOKI_OUTPUT_LANGUAGE").trim();
+  if (/^[\p{L}\p{N} _.-]{1,40}$/u.test(outLang)) lines.push(`Respond in ${outLang}. Keep identifiers, file names and PRD requirement titles in their original script.`);
   lines.push(completionText);
   lines.push("</dynamic_context>");
 

@@ -68,7 +68,26 @@ This is also meta.
 - bun 1.3
 `;
 
+const JA_PRD = `# サンプルプロジェクト
+
+## 機能
+
+### ユーザー認証機能の実装
+
+### 注文履歴の一覧表示画面
+
+- 管理者は商品の在庫数を一括で更新できる
+`;
+
 describe("populatePrdQueue", () => {
+  it("keeps requirement titles in their original script (Japanese PRD)", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    writeFileSync(prdPath, JA_PRD);
+    await populatePrdQueue(makeCtx(prdPath));
+    const raw = JSON.parse(readFileSync(join(tmp, ".loki", "queue", "pending.json"), "utf8"));
+    const titles = (Array.isArray(raw) ? raw : raw.tasks).map((t: { title: string }) => t.title);
+    expect(titles).toEqual(["ユーザー認証機能の実装", "注文履歴の一覧表示画面", "管理者は商品の在庫数を一括で更新できる"]);
+  });
   it("extracts tasks from a markdown PRD and writes pending.json atomically", async () => {
     const prdPath = join(tmp, "PRD.md");
     writeFileSync(prdPath, SAMPLE_PRD);
