@@ -20524,6 +20524,14 @@ check_budget_limit() {
     local current_cost=0
     local efficiency_dir=".loki/metrics/efficiency"
 
+    # The pricing table is read from loki-ts/data/model-pricing.json inside the
+    # python below; say once per process when it cannot be and the built-in rows apply.
+    if [[ -z "${_LOKI_BUDGET_PRICING_CHECKED:-}" ]]; then
+        _LOKI_BUDGET_PRICING_CHECKED=1
+        python3 -c "import json,sys; json.load(open(sys.argv[1]))['pricing']" "${SCRIPT_DIR}/../loki-ts/data/model-pricing.json" 2>/dev/null \
+            || log_warn "Budget gate: loki-ts/data/model-pricing.json is missing or unreadable; using the built-in price rows"
+    fi
+
     # Calculate cost from per-iteration efficiency files (same source as /api/cost)
     if [ -d "$efficiency_dir" ]; then
         current_cost=$(python3 -c "
@@ -20553,6 +20561,16 @@ pricing = {
     'gpt-5.6-terra': {'input': 2.00, 'output': 12.00},
     'gpt-5.6-luna': {'input': 0.20, 'output': 1.20},
 }
+# The literal rows above are the fallback only. loki-ts/data/model-pricing.json is
+# the single source the TS gate reads; its rows override these by key.
+try:
+    with open('${SCRIPT_DIR}/../loki-ts/data/model-pricing.json') as pf:
+        for k, v in json.load(pf)['pricing'].items():
+            row = {x: v[x] for x in ('input', 'output', 'cache_read', 'cache_write') if isinstance(v.get(x), (int, float))}
+            if 'input' in row and 'output' in row:
+                pricing[k.lower()] = row
+except Exception:
+    pass
 for f in glob.glob('${efficiency_dir}/*.json'):
     try:
         d = json.load(open(f))

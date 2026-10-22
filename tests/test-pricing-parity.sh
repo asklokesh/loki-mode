@@ -511,5 +511,45 @@ for f in loki-ts/src/providers/model_routes.ts autonomy/lib/efficiency_cost.py a
     fi
 done
 
+
+# #299c: the budget gate derives its rows from loki-ts/data/model-pricing.json
+# (the literal dict is the fallback only). A mutated JSON price must move the
+# number; a missing JSON must fall back to the literal rows.
+src_work="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || exit 1
+mkdir -p "$src_work/mut/autonomy" "$src_work/mut/loki-ts/data" "$src_work/none/autonomy" "$src_work/.loki/metrics/efficiency"
+python3 - "$REPO_ROOT" "$src_work/mut/loki-ts/data/model-pricing.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1] + "/loki-ts/data/model-pricing.json"))
+d["pricing"]["sonnet"]["input"] = 3.0
+json.dump(d, open(sys.argv[2], "w"))
+PYEOF
+printf '{"model":"sonnet","input_tokens":1000000,"output_tokens":1000000}\n' >"$src_work/.loki/metrics/efficiency/1.json"
+src_cost() {
+    (
+        cd "$src_work" || exit 1
+        export SCRIPT_DIR="$1" BUDGET_LIMIT=0.01 ITERATION_COUNT=1
+        log_error() { :; }; log_warn() { echo "$*" >>"$src_work/warns.txt"; }; log_info() { :; }; emit_event_json() { :; }
+        # shellcheck disable=SC1090
+        source <(awk '/^check_budget_limit\(\) \{/ {f=1; print; next} f && /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/ {exit} f {print}' "$REPO_ROOT/autonomy/run.sh")
+        rm -f .loki/metrics/budget.json
+        check_budget_limit >/dev/null 2>&1
+        check_budget_limit >/dev/null 2>&1
+        sed -n 's/.*"budget_used": *\([0-9.]*\).*/\1/p' .loki/metrics/budget.json
+    )
+}
+for src_case in "$REPO_ROOT/autonomy:12.0000" "$src_work/mut/autonomy:13.0000" "$src_work/none/autonomy:12.0000"; do
+    got="$(geo_num "$(src_cost "${src_case%:*}")")"; want="${src_case##*:}"
+    if [ "$got" = "$want" ]; then
+        echo "ok:   budget gate JSON source case ${src_case%:*} spend $got" | sed "s#$src_work#<tmp>#; s#$REPO_ROOT#<repo>#"
+    else
+        echo "FAIL: budget gate with SCRIPT_DIR ${src_case%:*} spent '$got', want $want"; bash_fail=1
+    fi
+done
+if [ "$(grep -c 'missing or unreadable' "$src_work/warns.txt" 2>/dev/null)" = "1" ]; then
+    echo "ok:   missing pricing JSON logged the fallback once"
+else
+    echo "FAIL: missing pricing JSON fallback log count is not 1"; bash_fail=1
+fi
+case "$src_work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$src_work" ;; esac
 case "$geo_work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$geo_work" ;; esac
 exit "$bash_fail"
