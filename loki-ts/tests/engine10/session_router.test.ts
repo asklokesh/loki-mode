@@ -59,7 +59,7 @@ describe("R1-09 cost event fields", () => {
     expect(d["advisor_calls"]).toBe(2);
   });
   test("flag off: cost event keys are exactly the pre-router set (plus COST-1 effort, which is not a router field)", async () => {
-    const PRE = ["cache_creation_tokens", "cache_read_tokens", "input_tokens", "model", "output_tokens", "session_id", "source", "usd"];
+    const PRE = ["cache_creation_tokens", "cache_read_tokens", "input_tokens", "model", "output_tokens", "prefix_sha", "session_id", "source", "usd"]; // prefix_sha: #244 cache-cause hash
     const keep = process.env["LOKI_E10_EFFORT_POLICY"];
     try {
       delete process.env["LOKI_E10_EFFORT_POLICY"]; // COST-1: the effort policy is on by default and records the stage effort

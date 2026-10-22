@@ -59,3 +59,17 @@ test("no hint when all stages warm, exactly 30 percent, or unmetered", () => {
 test("single cold stage still reports the hint alone", () => {
   expect(stageShareText([cev("plan", 100, 0)])).toBe("cache cold: plan");
 });
+
+// #244: a cold stage names its likely cause (prefix changed between calls); a long inter-call gap names the 1h TTL opt-in
+const pev = (stage: string, input: number, read: number, sha: string, ts?: string) => ({ ...cev(stage, input, read), ts, data: { ...cev(stage, input, read).data, prefix_sha: sha } });
+test("cold stage with an unstable prefix is flagged as prefix changed; a stable one is not", () => {
+  expect(stageShareText([pev("plan", 100, 0, "a"), pev("plan", 100, 0, "b")])).toBe("cache cold: plan (prefix changed)");
+  expect(stageShareText([pev("plan", 100, 0, "a"), pev("plan", 100, 0, "a")])).toBe("cache cold: plan");
+  expect(stageShareText([pev("plan", 5, 95, "a"), pev("plan", 5, 95, "b")])).toBeNull();
+});
+test("median gap over 5 minutes names the 1h TTL opt-in; short gaps do not", () => {
+  const t0 = Date.parse("2026-10-22T00:00:00Z"), at = (m: number) => new Date(t0 + m * 60_000).toISOString();
+  const slow = stageShareText([pev("fix", 5, 95, "a", at(0)), pev("fix", 5, 95, "a", at(7)), pev("fix", 5, 95, "a", at(15))])!;
+  expect(slow).toBe("cache ttl: fix (median gap 8m); LOKI_E10_CACHE_TTL=1h");
+  expect(stageShareText([pev("fix", 5, 95, "a", at(0)), pev("fix", 5, 95, "a", at(1))])).toBeNull();
+});

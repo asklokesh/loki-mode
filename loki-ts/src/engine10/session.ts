@@ -2,6 +2,7 @@
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -149,6 +150,8 @@ function killGroupWithGrace(pgid: number | undefined): void {
   send("SIGTERM");
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
+/** Hash of the brief's leading block: the cache key's moving part. cacheColdText compares it across a stage's calls to name a changed prefix. */
+export const prefixSha = (brief: string): string => createHash("sha256").update(brief.slice(0, 2048)).digest("hex").slice(0, 12);
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
@@ -171,7 +174,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), ...(opts.brief ? { prefix_sha: prefixSha(opts.brief) } : {}), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
