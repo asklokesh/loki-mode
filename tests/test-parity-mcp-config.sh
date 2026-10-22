@@ -461,14 +461,39 @@ def _fdopen(fd, *a, **k):
         log.write(format(os.fstat(fd).st_mode & 0o777, 'o') + '\n')
     return _orig(fd, *a, **k)
 os.fdopen = _fdopen
+import tempfile
+_mk = tempfile.mkstemp
+def _mkstemp(*a, **k):
+    with open(os.environ['_HOOK_LOG'] + '.dir', 'a') as log:
+        log.write(os.path.realpath(k.get('dir') or '') + '\n')
+    return _mk(*a, **k)
+tempfile.mkstemp = _mkstemp
 PYEOF
 ( umask 000; HOME="$TMP_HOME" PYTHONPATH="$hook" _HOOK_LOG="$hook/log" TARGET_DIR="$bd" loki_mcp_config_path >/dev/null 2>&1 )
+# The tmp file must sit in the target's own directory, or os.replace is not atomic across filesystems.
+if [ "$(sort -u "$hook/log.dir" 2>/dev/null)" = "$(cd "$bd/.loki" && pwd -P)" ]; then
+    ok "parity F: the bash tmp file is created in the bundle's own directory"
+else
+    bad "parity F tmp dir: recorded=[$(tr '\n' ' ' <"$hook/log.dir" 2>/dev/null)] expected $bd/.loki"
+fi
 if [ -s "$hook/log" ] && [ "$(sort -u "$hook/log")" = "600" ]; then
     ok "parity F: the bash bundle file is 0600 at creation, before any write, even under umask 000"
 else
     bad "parity F creation mode: recorded=[$(tr '\n' ' ' <"$hook/log" 2>/dev/null)] (expected only 600)"
 fi
 rm -rf "$hook" "$bd"
+
+# A bundle with no secret is not a secret file: both routes create it 0666 & ~umask, never 0600 (#330, N2/N3).
+bd=$(mktemp -d -t loki-parity-bash-m-XXXX); bu=$(mktemp -d -t loki-parity-bun-m-XXXX)
+( umask 022; unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH; run_both "$bd" "$bu" )
+mb=$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$bd/.loki/mcp-config.json" 2>/dev/null)
+mu=$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$bu/.loki/mcp-config.json" 2>/dev/null)
+if [ "$mb" = "644" ] && [ "$mu" = "644" ]; then
+    ok "parity F: a secret-free bundle is 0644 under umask 022 on both routes"
+else
+    bad "parity F secret-free mode: bash=[$mb] bun=[$mu] (expected 644)"
+fi
+rm -rf "$bd" "$bu"
 
 # A name the tool owns (REGISTRY, the retired registry test knob, #316) is reserved: a stale shell variable
 # must not become an outbound server on either route.
@@ -507,71 +532,139 @@ else
     bad "parity D reserved sets differ: ts=[$res_ts] bash=[$res_sh]"
 fi
 
-# Guard (#316): a tool-owned setting must not live in the LOKI_MCP_<NAME>_URL namespace. Fixtures that SET
-# such a variable are fine; a READ of a literal name is a setting. The scanner is one function so the
-# self-test below exercises the exact code that guards the tree.
+# Guard (#316, #330): a tool-owned setting must not live in the LOKI_MCP_<NAME>_URL namespace. Fixtures that
+# SET or DELETE such a variable are fine; a READ of a literal name is a setting. The scanner works on whole file
+# text so a read split over lines is seen, and it is one function so the self-test below exercises the exact
+# code that guards the tree.
 scan_ns_reads() {
     python3 -c '
 import re, sys
 N = r"LOKI_MCP_[A-Z0-9_]+_URL"
-Q = r"[\x27\"]"
+Q = r"[\x27\"`]"
+ENV = r"(?:import\.meta\.|process\.|Bun\.)?(?:env|environ)"
 reads = [
-    r"\$\{?" + N,                                         # $VAR, ${VAR}
-    r"\b(?:env|environ)\." + N,                            # process.env.X, Bun.env.X
-    r"\b(?:env|environ)(?:\.get)?\s*[(\[]\s*" + Q + N,      # env["X"], environ.get( "X")
-    r"\bgetenv\s*\(\s*" + Q + N,                           # os.getenv("X")
-    r"\bprintenv\s+" + N,                                  # printenv X
-    r"\{[^}]*\b" + N + r"\b[^}]*\}\s*=\s*(?:process\.|Bun\.)?env\b",  # destructuring
+    r"\$\{?" + N,                                              # $VAR, ${VAR}
+    r"\b(?:env|environ)\??\." + N,                              # process.env.X, process.env?.X, Bun.env.X
+    r"\b(?:env|environ)(?:\??\.(?:get|setdefault|pop))?\s*\??\.?\s*[(\[]\s*" + Q + N,  # env["X"], env[`X`], environ.get(\n "X"), environ.setdefault("X", ..)
+    r"\bgetenv\s*\(\s*" + Q + N,                               # os.getenv("X")
+    r"\bprintenv\s+" + N,                                      # printenv X
+    r"\{[^}]*\b" + N + r"\b[^}]*\}\s*=\s*" + ENV + r"\b",       # destructuring, any line count, process/Bun/import.meta env
 ]
-assign = re.compile(r"\b(?:env|environ)\s*\[\s*" + Q + N + Q + r"\s*\]\s*=(?!=)")
+# A write or a delete of the variable is not a read: blank those spans (same length, so line numbers hold).
+neutral = re.compile(
+    r"\bdelete\s+(?:\w+\.)*(?:env|environ)\s*(?:\.\s*" + N + r"|\[\s*" + Q + N + Q + r"\s*\])"
+    r"|\b(?:\w+\.)*(?:env|environ)\s*(?:\.\s*" + N + r"|\[\s*" + Q + N + Q + r"\s*\])\s*=(?!=)"
+    r"|\b(?:export|unset|declare\s+-x)\s+" + N + r"\b"
+    r"|\b(?:\w+\.)*environ\.pop\(\s*" + Q + N + Q + r"\s*\)")
 pat = re.compile("|".join("(?:%s)" % r for r in reads))
+indirect_def = re.compile(r"\b(?:local\s+)?(\w+)=[\x27\"]?" + N)
 hits = 0
 for path in sys.argv[1:]:
     try:
-        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        text = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         continue
-    for i, line in enumerate(lines, 1):
-        if pat.search(assign.sub("", line)):
-            print("%s:%d:%s" % (path, i, line.strip()[:160]))
-            hits += 1
+    text = neutral.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    spans = [m.start() for m in pat.finditer(text)]
+    for v in set(indirect_def.findall(text)):                   # ${!n} where n holds a LOKI_MCP_<NAME>_URL name
+        spans += [m.start() for m in re.finditer(r"\$\{!" + re.escape(v) + r"\b", text)]
+    lines = text.splitlines()
+    for at in sorted(set(text.count("\n", 0, i) + 1 for i in spans)):
+        print("%s:%d:%s" % (path, at, lines[at - 1].strip()[:160]))
+        hits += 1
 sys.exit(1 if hits else 0)
 ' "$@"
 }
 _self=$(mktemp -d -t loki-parity-guard-XXXX)
+# One read per record; records are separated by a line holding only "--".
 cat >"$_self/forms.txt" <<'FORMS'
 x="$LOKI_MCP_FOO_URL"
+--
 x="${LOKI_MCP_FOO_URL:-}"
+--
 const a = process.env.LOKI_MCP_FOO_URL;
+--
 const b = Bun.env.LOKI_MCP_FOO_URL;
+--
 const c = process.env["LOKI_MCP_FOO_URL"];
+--
+const d = process.env?.LOKI_MCP_FOO_URL;
+--
+const e = process.env[`LOKI_MCP_FOO_URL`];
+--
 const { LOKI_MCP_FOO_URL } = process.env;
+--
 const { A, LOKI_MCP_FOO_URL: u } = Bun.env;
+--
+const {
+  A,
+  LOKI_MCP_FOO_URL,
+} = process.env;
+--
+const { LOKI_MCP_FOO_URL } = import.meta.env;
+--
 v = os.environ.get( "LOKI_MCP_FOO_URL")
+--
+v = os.environ.get(
+    "LOKI_MCP_FOO_URL",
+    "",
+)
+--
+v = os.environ.setdefault("LOKI_MCP_FOO_URL", "x")
+--
 v = os.environ["LOKI_MCP_FOO_URL"]
+--
 v = os.getenv("LOKI_MCP_FOO_URL")
+--
+n=LOKI_MCP_FOO_URL; v="${!n}"
+--
+printenv LOKI_MCP_FOO_URL
 FORMS
 cat >"$_self/assign.txt" <<'ASSIGN'
 process.env["LOKI_MCP_FOO_URL"] = "https://x.example.com";
+process.env.LOKI_MCP_FOO_URL = "https://x.example.com";
+Bun.env.LOKI_MCP_FOO_URL = "https://x.example.com";
+delete process.env["LOKI_MCP_FOO_URL"];
+delete process.env.LOKI_MCP_FOO_URL;
 os.environ["LOKI_MCP_FOO_URL"] = "https://x.example.com"
+os.environ.pop("LOKI_MCP_FOO_URL")
 export LOKI_MCP_FOO_URL="https://x.example.com"
+unset LOKI_MCP_FOO_URL
 ASSIGN
-_nform=$(wc -l <"$_self/forms.txt" | tr -d ' ')
-_caught=$(scan_ns_reads "$_self/forms.txt" | wc -l | tr -d ' ')
+python3 - "$_self" <<'PYEOF'
+import os, sys
+d = sys.argv[1]
+for i, rec in enumerate(open(os.path.join(d, "forms.txt")).read().split("\n--\n")):
+    open(os.path.join(d, "rec%02d.txt" % i), "w").write(rec.rstrip("\n") + "\n")
+PYEOF
+_nform=$(ls "$_self"/rec*.txt | wc -l | tr -d ' ')
 _missed=""
-while IFS= read -r _line; do
-    printf '%s\n' "$_line" >"$_self/one.txt"
+for _f in "$_self"/rec*.txt; do
     # The scanner exits 1 when it finds a read, so exit 0 here means the form was missed.
-    if scan_ns_reads "$_self/one.txt" >/dev/null; then _missed="$_missed [$_line]"; fi
-done <"$_self/forms.txt"
-if [ "$_caught" = "$_nform" ] && [ -z "$_missed" ] && scan_ns_reads "$_self/assign.txt" >/dev/null; then
-    ok "guard self-test: all $_nform read forms are caught and the assignment forms are not"
+    if scan_ns_reads "$_f" >/dev/null; then _missed="$_missed [$(tr '\n' ' ' <"$_f")]"; fi
+done
+_flagged=$(scan_ns_reads "$_self/assign.txt" 2>&1 || true)
+if [ "$_nform" -ge 18 ] && [ -z "$_missed" ] && [ -z "$_flagged" ]; then
+    ok "guard self-test: all $_nform read forms are caught and no set/delete form is flagged"
 else
-    bad "guard self-test: caught $_caught of $_nform; assignment flagged or forms missed"
+    bad "guard self-test: forms=$_nform missed=$_missed falsely-flagged=[$_flagged]"
 fi
 rm -rf "$_self"
+# The scan scope is pinned: every directory must contribute files, and each canary (one per scanned language and
+# test tree) must be in the scanned set, so dropping a directory from the list cannot pass silently.
+_scope="tests scripts autonomy providers loki-ts/src loki-ts/tests mcp bin dashboard"
+_files="$(cd "$REPO_ROOT" && git ls-files $_scope 2>/dev/null | grep -v '^tests/test-parity-mcp-config.sh$')"
+_unscanned=""
+for _canary in autonomy/lib/mcp-config.sh loki-ts/src/providers/mcp_config.ts loki-ts/tests/providers/mcp_config.test.ts tests/test-mcp-registry-not-stale.sh scripts/smoke-install.sh mcp/server.py; do
+    printf '%s\n' "$_files" | grep -qx "$_canary" || _unscanned="$_unscanned $_canary"
+done
+if [ -z "$_unscanned" ]; then
+    ok "guard scope: the scanned set holds every canary file"
+else
+    bad "guard scope: canaries missing from the scanned set:$_unscanned"
+fi
 # shellcheck disable=SC2046
-_reads="$(cd "$REPO_ROOT" && scan_ns_reads $(git ls-files tests scripts autonomy providers loki-ts/src mcp bin dashboard 2>/dev/null | grep -v '^tests/test-parity-mcp-config.sh$') 2>/dev/null || true)"
+_reads="$(cd "$REPO_ROOT" && scan_ns_reads $_files 2>/dev/null || true)"
 if [ -z "$_reads" ]; then
     ok "guard: no tool-owned setting reads a LOKI_MCP_<NAME>_URL variable"
 else

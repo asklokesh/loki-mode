@@ -405,6 +405,18 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     }
   });
 
+  it("a secret-free bundle follows the umask (0666 & ~umask) and is never forced to 0600", () => {
+    const old = process.umask(0o022);
+    try {
+      expect(statSync(mcpConfigPath(td)).mode & 0o777).toBe(0o644);
+      rmSync(join(td, ".loki", "mcp-config.json"));
+      process.umask(0o000);
+      expect(statSync(mcpConfigPath(td)).mode & 0o777).toBe(0o666);
+    } finally {
+      process.umask(old);
+    }
+  });
+
   it("adding a secret to an existing 644 bundle replaces the file atomically at 0600", () => {
     const cfg = mcpConfigPath(td);
     chmodSync(cfg, 0o644);
