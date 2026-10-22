@@ -74,17 +74,20 @@ if python3 - <<'PY'
 import sys
 def build(persona, name, focus, checks):
     _persona_line = (persona.strip() + "\n\n") if persona.strip() else ""
-    return f"""{_persona_line}You are {name}. Your SOLE focus is: {focus}.
+    return f"""Files changed:
+shared
+
+{_persona_line}You are {name}. Your SOLE focus is: {focus}.
 
 Review ONLY for: {checks}."""
 with_p = build("You are a senior backend engineer.", "eng-backend", "APIs", "auth")
 without = build("", "eng-backend", "APIs", "auth")
-# persona leads when present
-if not with_p.startswith("You are a senior backend engineer."): sys.exit(1)
+# persona leads the role block (shared Files/Diff prefix comes first, #270)
+if "\n\nYou are a senior backend engineer.\n\nYou are eng-backend." not in with_p: sys.exit(1)
 # the focus constraint survives in BOTH
 if "SOLE focus" not in with_p or "SOLE focus" not in without: sys.exit(1)
 # no persona == byte-identical to the pre-fix prompt
-if not without.startswith("You are eng-backend. Your SOLE focus is: APIs."): sys.exit(1)
+if "shared\n\nYou are eng-backend. Your SOLE focus is: APIs." not in without: sys.exit(1)
 # whitespace-only persona must behave as absent, not emit a blank block
 if build("   \n ", "x", "y", "z") != without.replace("eng-backend","x").replace("APIs","y").replace("auth","z"): sys.exit(1)
 sys.exit(0)

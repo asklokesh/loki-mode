@@ -51,7 +51,7 @@ import {
   permissionArgv,
   reviewerModelForTier,
 } from "../providers/claude_flags.ts";
-import { judgeJson, sdkJudgeAvailable } from "./sdk_invoker.ts";
+import { judgeJson, sdkJudgeAvailable, type Effort } from "./sdk_invoker.ts";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
@@ -1265,7 +1265,14 @@ export type ReviewerInput = {
   diff: string;
   files: string;
   prompt: string;
+  // #270: one effort for every reviewer of a gate (a differing effort invalidates the shared prompt cache).
+  effort?: Effort;
+  // #270: a reviewer that can observe its first response event calls this so the rest of the battery launches
+  // against a warm cache entry. Optional; the launch stagger is time-bounded without it.
+  onFirstResponse?: () => void;
 };
+
+export const REVIEWER_EFFORT: Effort = "high";
 
 // Dispatcher contract: the orchestrator hands a built prompt to this fn and
 // expects the raw reviewer output text back. Production wiring (v7.5.0+)
@@ -1522,16 +1529,18 @@ export function selectReviewers(
 }
 
 // Port of the BUILD_PROMPT block at autonomy/run.sh:6486-6505.
+// #270: the shared Files and Diff block comes FIRST and the per-reviewer role last, so parallel reviewers of
+// one gate share a byte-identical cacheable prefix. Nothing reviewer-specific may precede the Diff.
 export function buildReviewerPrompt(reviewer: Reviewer, diff: string, files: string): string {
-  return `You are ${reviewer.name}. Your SOLE focus is: ${reviewer.focus}.
-
-Review ONLY for: ${reviewer.checks}.
-
-Files changed:
+  return `Files changed:
 ${files.trim()}
 
 Diff:
 ${diff.trim()}
+
+You are ${reviewer.name}. Your SOLE focus is: ${reviewer.focus}.
+
+Review ONLY for: ${reviewer.checks}.
 
 Output format (STRICT - follow exactly):
 VERDICT: PASS or FAIL
@@ -1645,7 +1654,7 @@ export function rematerializeCodeReview(rawJson: string): string | null {
   return lines.join("\n") + "\n";
 }
 
-export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
+export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort }) => {
   const argv = ["claude", ...permissionArgv()];
   // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
   // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
@@ -1682,7 +1691,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv }) => {
         prompt,
         schema,
         model: process.env["LOKI_SDK_REVIEW_MODEL"] || resolveClaudeModel("sonnet"),
-        effort: "high",
+        effort: effort ?? REVIEWER_EFFORT,
         timeoutMs,
         ledger: { lokiDir: lokiDir(), phase: "reviewer" }, // COST-WALL
       });
@@ -2012,23 +2021,44 @@ export async function runCodeReview(
   });
   atomicWriteText(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
 
-  // Dispatch all reviewers in parallel via Promise.all (parity with the bash
-  // backgrounding-and-wait loop at run.sh:6516-6556).
-  const results = await Promise.all(
-    selection.reviewers.map(async (rv): Promise<ReviewerVerdict> => {
-      const prompt = buildReviewerPrompt(rv, diff, files);
-      writeFileSync(join(reviewDir, `${rv.name}-prompt.txt`), prompt);
-      let output: string;
-      try {
-        output = await reviewer({ reviewer: rv, diff, files, prompt });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        output = `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer threw: ${msg}`;
-      }
-      writeFileSync(join(reviewDir, `${rv.name}.txt`), output);
-      return parseVerdict(rv.name, output);
-    }),
-  );
+  // Dispatch the battery in parallel (parity with the bash backgrounding-and-wait loop at run.sh:6516-6556), but
+  // #270: launch reviewer 1 alone first and hold the rest until its first response event (or its completion, or
+  // LOKI_REVIEW_STAGGER_MS, default 3000, 0 = launch together) so reviewers 2..N read the prompt cache entry
+  // reviewer 1 wrote instead of each writing their own.
+  const runOne = async (rv: Reviewer, onFirstResponse?: () => void): Promise<ReviewerVerdict> => {
+    const prompt = buildReviewerPrompt(rv, diff, files);
+    writeFileSync(join(reviewDir, `${rv.name}-prompt.txt`), prompt);
+    let output: string;
+    try {
+      output = await reviewer({ reviewer: rv, diff, files, prompt, effort: REVIEWER_EFFORT, ...(onFirstResponse ? { onFirstResponse } : {}) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      output = `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer threw: ${msg}`;
+    }
+    writeFileSync(join(reviewDir, `${rv.name}.txt`), output);
+    return parseVerdict(rv.name, output);
+  };
+  const staggerRaw = Number(process.env["LOKI_REVIEW_STAGGER_MS"] ?? 3000);
+  const staggerMs = Number.isFinite(staggerRaw) && staggerRaw >= 0 ? staggerRaw : 3000;
+  const [head, ...rest] = selection.reviewers;
+  let results: ReviewerVerdict[] = [];
+  if (head) {
+    if (staggerMs === 0 || rest.length === 0) {
+      results = await Promise.all(selection.reviewers.map((rv) => runOne(rv)));
+    } else {
+      let signalFirst!: () => void;
+      const firstResponse = new Promise<void>((r) => { signalFirst = r; });
+      const headRun = runOne(head, signalFirst);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        firstResponse,
+        headRun.then(() => undefined),
+        new Promise<void>((r) => { timer = setTimeout(r, staggerMs); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      results = await Promise.all([headRun, ...rest.map((rv) => runOne(rv))]);
+    }
+  }
 
   let passCount = 0;
   let failCount = 0;
@@ -2163,7 +2193,7 @@ export async function runCodeReview(
       writeFileSync(join(reviewDir, `${daReviewer.name}-prompt.txt`), daPrompt);
       let daOutput: string;
       try {
-        daOutput = await reviewer({ reviewer: daReviewer, diff, files, prompt: daPrompt });
+        daOutput = await reviewer({ reviewer: daReviewer, diff, files, prompt: daPrompt, effort: REVIEWER_EFFORT });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Fail-safe: a thrown DA reviewer becomes a Critical so a broken

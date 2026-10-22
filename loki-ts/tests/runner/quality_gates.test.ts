@@ -1646,6 +1646,80 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     expect(agg["nonblocking_low"]).toBe(0);
   });
 
+  // #270: shared Files + Diff first so parallel reviewers share a cacheable prefix.
+  it("reviewer prompts share an identical prefix that covers the Files and Diff block", async () => {
+    const { buildReviewerPrompt } = await import("../../src/runner/quality_gates.ts");
+    const diff = "+ const x = 1;\n".repeat(40);
+    const files = "src/x.ts\n";
+    const a = buildReviewerPrompt({ name: "alpha", focus: "F1", checks: "C1" }, diff, files);
+    const b = buildReviewerPrompt({ name: "beta-two", focus: "F2 other", checks: "C2 other" }, diff, files);
+    let n = 0;
+    while (n < a.length && n < b.length && a[n] === b[n]) n++;
+    expect(n).toBeGreaterThanOrEqual(diff.trim().length);
+    expect(a.slice(0, n)).toContain("Files changed:");
+    expect(a.slice(0, n)).toContain(diff.trim());
+    expect(a).toContain("You are alpha. Your SOLE focus is: F1.");
+    expect(a).toContain("VERDICT: PASS or FAIL");
+  });
+
+  it("launch order: reviewer 2 starts only after reviewer 1's first response event", async () => {
+    const events: string[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => { release = r; });
+    let first = true;
+    const reviewer = async ({ reviewer: rv, onFirstResponse }: { reviewer: { name: string }; onFirstResponse?: () => void }) => {
+      events.push(`start:${rv.name}`);
+      if (first) {
+        first = false;
+        await gate;
+        events.push("first-response");
+        onFirstResponse?.();
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      return "VERDICT: PASS\nFINDINGS:\n- None";
+    };
+    process.env["LOKI_REVIEW_STAGGER_MS"] = "5000";
+    try {
+      const run = runCodeReview(makeCtx(), { diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" }, reviewer });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(events).toEqual([`start:${events[0]!.slice(6)}`]); // only reviewer 1 has started
+      release!();
+      await run;
+    } finally {
+      delete process.env["LOKI_REVIEW_STAGGER_MS"];
+    }
+    expect(events.indexOf("first-response")).toBeLessThan(events.findIndex((e, i) => i > 0 && e.startsWith("start:")));
+    expect(events.filter((e) => e.startsWith("start:")).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("launch stagger is bounded: a first reviewer that never signals does not stall the rest", async () => {
+    const started: string[] = [];
+    const reviewer = async ({ reviewer: rv }: { reviewer: { name: string } }) => {
+      started.push(rv.name);
+      if (started.length === 1) await new Promise((r) => setTimeout(r, 400));
+      return "VERDICT: PASS\nFINDINGS:\n- None";
+    };
+    process.env["LOKI_REVIEW_STAGGER_MS"] = "30";
+    try {
+      const t0 = Date.now();
+      await runCodeReview(makeCtx(), { diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" }, reviewer });
+      expect(started.length).toBeGreaterThanOrEqual(4);
+    } finally {
+      delete process.env["LOKI_REVIEW_STAGGER_MS"];
+    }
+  });
+
+  it("every reviewer in one gate receives the same effort", async () => {
+    const efforts: unknown[] = [];
+    await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },
+      reviewer: async (input) => { efforts.push((input as { effort?: string }).effort); return "VERDICT: PASS\nFINDINGS:\n- None"; },
+    });
+    expect(efforts.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(efforts).size).toBe(1);
+    expect(efforts[0]).toBe("high");
+  });
+
   it("writes per-reviewer .txt outputs alongside the prompt and selection", async () => {
     const r = await runCodeReview(makeCtx(), {
       diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },

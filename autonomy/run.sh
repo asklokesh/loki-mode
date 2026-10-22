@@ -18235,16 +18235,14 @@ metadata. This saves tokens without treating dependency changes as unreviewed.""
 
 _persona_line = (persona.strip() + "\n\n") if persona.strip() else ""
 
-prompt = f"""{_persona_line}You are {name}. Your SOLE focus is: {focus}.
-
-Review ONLY for: {checks}.
-
-Files changed:
+# #270: the shared Files and Review context block, evidence and calibration come FIRST and the per-reviewer
+# role last, so parallel reviewers of one gate share a byte-identical cacheable prefix. Mirrors
+# buildReviewerPrompt in loki-ts/src/runner/quality_gates.ts.
+prompt = f"""Files changed:
 {files}
 
 Review context:
 {diff}
-{requirements_section}
 
 {review_context_note}
 
@@ -18253,6 +18251,11 @@ Tests: {json.dumps(tests, sort_keys=True, ensure_ascii=True)}
 Build: {json.dumps(build, sort_keys=True, ensure_ascii=True)}
 
 {severity_calibration}
+
+{_persona_line}You are {name}. Your SOLE focus is: {focus}.
+
+Review ONLY for: {checks}.
+{requirements_section}
 
 {output_format}"""
 
