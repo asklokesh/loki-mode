@@ -1906,3 +1906,93 @@ describe("doctor MCP tool-list drift", () => {
     expect(cap.out.includes("MCP tool list drift")).toBe(false);
   }, 60000);
 });
+
+// #286: wire behavior of fetchRemoteToolsHash against a configurable fake MCP server.
+describe("fetchRemoteToolsHash protocol", () => {
+  interface Fake { url: string; srv: Server; sessionSeen: string[]; listCalls: Array<Record<string, unknown>> }
+  const servers: Server[] = [];
+  afterEach(() => {
+    for (const s of servers.splice(0)) s.close();
+  });
+  async function fake(pages: Array<Array<{ name: string; inputSchema: unknown }>>, opts: { sse?: boolean } = {}): Promise<Fake> {
+    const f = { sessionSeen: [] as string[], listCalls: [] as Array<Record<string, unknown>> } as Fake;
+    const srv = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (!body) { res.writeHead(202).end(); return; }
+        const m = JSON.parse(body);
+        const reply = (result: unknown): void => {
+          const payload = JSON.stringify({ jsonrpc: "2.0", id: m.id, result });
+          if (opts.sse) {
+            res.setHeader("content-type", "text/event-stream");
+            res.end(`event: message\ndata: ${payload}\n\n`);
+          } else {
+            res.setHeader("content-type", "application/json");
+            res.end(payload);
+          }
+        };
+        if (m.method === "initialize") {
+          res.setHeader("mcp-session-id", "sess-42");
+          reply({ protocolVersion: "2025-03-26", capabilities: {}, serverInfo: { name: "x", version: "1" } });
+          return;
+        }
+        f.sessionSeen.push(String(req.headers["mcp-session-id"] ?? ""));
+        if (m.method === "tools/list") {
+          f.listCalls.push(m.params ?? {});
+          const idx = m.params?.cursor ? Number(m.params.cursor) : 0;
+          const next = idx + 1 < pages.length ? String(idx + 1) : undefined;
+          reply({ tools: pages[idx], ...(next ? { nextCursor: next } : {}) });
+          return;
+        }
+        res.writeHead(202).end();
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    servers.push(srv);
+    f.srv = srv;
+    f.url = `http://127.0.0.1:${(srv.address() as { port: number }).port}/mcp`;
+    return f;
+  }
+  const t = (name: string, inputSchema: unknown = { type: "object" }): { name: string; inputSchema: unknown } => ({ name, inputSchema });
+
+  it("follows nextCursor and hashes every page, so a tool on page 2 changes the hash", async () => {
+    const one = await fake([[t("a")]]);
+    const paged = await fake([[t("a")], [t("b")]]);
+    const pagedOther = await fake([[t("a")], [t("c")]]);
+    const hOne = await fetchRemoteToolsHash(one.url, {});
+    const hPaged = await fetchRemoteToolsHash(paged.url, {});
+    const hOther = await fetchRemoteToolsHash(pagedOther.url, {});
+    expect(paged.listCalls).toEqual([{}, { cursor: "1" }]);
+    expect(hPaged).not.toBe(hOne);
+    expect(hPaged).not.toBe(hOther);
+  }, 30000);
+
+  it("echoes mcp-session-id on every request after initialize", async () => {
+    const f = await fake([[t("a")], [t("b")]]);
+    await fetchRemoteToolsHash(f.url, {});
+    expect(f.sessionSeen.length).toBe(3);
+    expect(f.sessionSeen.every((v) => v === "sess-42")).toBe(true);
+  }, 30000);
+
+  it("parses a text/event-stream reply to the same hash as plain JSON", async () => {
+    const plain = await fake([[t("a", { type: "object", properties: { q: { type: "string" } } })]]);
+    const sse = await fake([[t("a", { type: "object", properties: { q: { type: "string" } } })]], { sse: true });
+    const hp = await fetchRemoteToolsHash(plain.url, {});
+    const hs = await fetchRemoteToolsHash(sse.url, {});
+    expect(hp).toMatch(/^[0-9a-f]{64}$/);
+    expect(hs).toBe(hp);
+  }, 30000);
+
+  it("the hash ignores tool order and schema key order (no false drift)", async () => {
+    const x = await fake([[
+      t("a", { type: "object", properties: { q: { type: "string" }, n: { type: "integer" } }, required: ["q"] }),
+      t("b", { type: "object" }),
+    ]]);
+    const y = await fake([[
+      t("b", { type: "object" }),
+      t("a", { required: ["q"], properties: { n: { type: "integer" }, q: { type: "string" } }, type: "object" }),
+    ]]);
+    expect(await fetchRemoteToolsHash(x.url, {})).toBe(await fetchRemoteToolsHash(y.url, {}));
+  }, 30000);
+});
