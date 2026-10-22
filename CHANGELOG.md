@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.49.1 (2026-10-22)
+
+### Fixed
+- Council votes (#288): a legacy vote that carries only `reasoning` is stored as `justification`. A vote that already has a `justification` keeps it; `reasoning` never overwrites it.
+- The completion council's two vote prompts now ask for "REASON: one-line justification citing path:line evidence" instead of free-form reasoning, so every vote names the evidence it rests on.
+- Tests pin both behaviors.
+
 ## v11.49.0 (2026-10-22)
 
 ### Security
