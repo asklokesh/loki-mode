@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.39.0 (2026-10-22)
+
+### Added
+- Per-stage prompt-cache TTL from measured idle gaps (#244): efficiency records now carry `stage`, `gap_ms` and `duration_ms`. The one TTL switch (`engine10CacheTtlEnv`) picks the 1h cache TTL for a stage only when its persisted median idle gap is between 5 and 60 minutes; with no data it keeps 5m, and an explicit `LOKI_E10_CACHE_TTL` always wins. No stage names are hardcoded.
+- The run report's "cache cold" line names the cause "(prefix changed)" when a stage's cost events carry differing `prefix_sha` values, and a new "cache ttl" line names stages whose median idle gap outruns the 5m TTL.
+
 ## v11.38.0 (2026-10-22)
 
 ### Added
