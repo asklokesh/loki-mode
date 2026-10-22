@@ -393,8 +393,8 @@ def price_from_tokens(model, input_tokens, output_tokens,
                       cache_read_tokens=0, prices=None, prices_path=None):
     """Compute a USD cost from raw token counts and the shared price table.
 
-    Returns a float (rounded to 6 decimals) when the model is present in the
-    price table, else None. None means "cannot price" (honest), never 0.0.
+    Returns a float (rounded to 6 decimals, times inference_geo_multiplier())
+    when the model is present in the price table, else None. None means "cannot price" (honest), never 0.0.
 
     Pricing is per million tokens (mtok). cache_read is priced separately from
     fresh input tokens. Used for tools that expose token counts but not a
@@ -420,4 +420,6 @@ def price_from_tokens(model, input_tokens, output_tokens,
         + (ot / 1_000_000.0) * out_rate
         + (ct / 1_000_000.0) * cache_rate
     )
-    return round(usd, 6)
+    # LOKI_INFERENCE_GEO: same multiplier as the budget gate and dashboard. Only
+    # token-estimated cost reaches here; a provider-reported cost_usd never does.
+    return round(usd * inference_geo_multiplier(), 6)

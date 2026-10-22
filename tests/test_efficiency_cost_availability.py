@@ -36,7 +36,7 @@ import unittest
 _LIB = pathlib.Path(__file__).resolve().parents[1] / "autonomy" / "lib"
 sys.path.insert(0, str(_LIB))
 
-from efficiency_cost import collect_efficiency  # noqa: E402
+from efficiency_cost import collect_efficiency, price_from_tokens  # noqa: E402
 
 
 def _write(loki_dir, records):
@@ -399,6 +399,41 @@ class PartialCostSiblingTests(unittest.TestCase):
                 self.assertIn("costIsPartial(p)", body, fn)
             self.assertIn('"at least "', body, fn)
 
+
+
+class PriceFromTokensGeoTests(unittest.TestCase):
+    """#299b: price_from_tokens applies the same LOKI_INFERENCE_GEO multiplier
+    as the other token-estimated paths, through inference_geo_multiplier."""
+
+    TABLE = {"models": {"m": {"input_per_mtok": 2.0, "output_per_mtok": 10.0, "cache_read_per_mtok": 0.0}}}
+
+    def _price(self, geo):
+        old = os.environ.get("LOKI_INFERENCE_GEO")
+        try:
+            if geo is None:
+                os.environ.pop("LOKI_INFERENCE_GEO", None)
+            else:
+                os.environ["LOKI_INFERENCE_GEO"] = geo
+            return price_from_tokens("m", 1_000_000, 1_000_000, prices=self.TABLE)
+        finally:
+            if old is None:
+                os.environ.pop("LOKI_INFERENCE_GEO", None)
+            else:
+                os.environ["LOKI_INFERENCE_GEO"] = old
+
+    def test_unset_and_global_are_unmultiplied(self):
+        self.assertEqual(self._price(None), 12.0)
+        self.assertEqual(self._price("global"), 12.0)
+
+    def test_us_is_one_point_one_x(self):
+        self.assertEqual(self._price("us"), 13.2)
+
+    def test_unpriceable_model_stays_none(self):
+        os.environ["LOKI_INFERENCE_GEO"] = "us"
+        try:
+            self.assertIsNone(price_from_tokens("nope", 1, 1, prices=self.TABLE))
+        finally:
+            os.environ.pop("LOKI_INFERENCE_GEO", None)
 
 if __name__ == "__main__":
     unittest.main()
