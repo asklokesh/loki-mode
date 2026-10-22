@@ -197,6 +197,23 @@ else
     fail "stale or missing skill TOC: $(echo "$toc_out" | tr '\n' ' ')"
 fi
 
+# --- Every references/*.md is reachable from SKILL.md or a skills/*.md --------
+# A reference no loaded file points to is invisible to the agent. The list comes
+# from the directory, so a new reference file must be linked the day it lands.
+echo "== every references/*.md is linked from SKILL.md or skills/*.md =="
+orphans=""
+for ref in references/*.md; do
+    base=$(basename "$ref")
+    if ! grep -qE "references/${base//./\\.}" SKILL.md skills/*.md 2>/dev/null; then
+        orphans="$orphans $base"
+    fi
+done
+if [ -z "$orphans" ]; then
+    pass "every references/*.md is linked from SKILL.md or skills/*.md"
+else
+    fail "orphaned references (linked from nowhere):$orphans"
+fi
+
 echo ""
 echo "=== results: $PASSED passed, $FAILED failed ==="
 [ "$FAILED" -eq 0 ]

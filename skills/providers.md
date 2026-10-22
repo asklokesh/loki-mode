@@ -427,3 +427,5 @@ Claude blocks destructive commands inline through its hooks and permission flags
 3. Native CLI flags are used where they exist: codex `--sandbox workspace-write`, aider `--no-auto-commits`. Cline and opencode have no filesystem sandbox flag.
 
 The scan is post-hoc, not inline, so the receipt still lists `kill blocking not enforced` for non-Claude providers. Violations emit a `guard.violation` event.
+
+References: `references/multi-provider.md` (provider configuration and model details).

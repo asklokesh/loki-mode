@@ -275,3 +275,5 @@ See `references/agent-types.md` for complete specifications. Summary:
 | Review | code, business, security | 3 |
 
 **Spawn only what you need.** Simple project: 5-10 agents. Complex startup: more as needed.
+
+References: `references/agents.md` (full role prompts for the 41 agents), `references/business-ops.md` (business-domain agent workflows), `references/tool-orchestration.md` (tracing spans, efficiency metrics, reward signals, dynamic agent selection).

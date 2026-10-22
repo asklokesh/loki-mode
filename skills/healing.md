@@ -565,3 +565,5 @@ notes, or institutional-knowledge excerpts could smuggle terminal
 escapes or NUL bytes into the resume path. Rejected writes raise a
 typed error and never partially overwrite the prior checkpoint, so
 `loki heal --resume` always restarts from a clean, validated state.
+
+References: `references/legacy-healing-patterns.md` (sourced healing patterns).

@@ -227,3 +227,5 @@ loki magic diff Button
 - `references/memory-system.md` -- how debate transcripts are stored as episodic memory
 - MagicModules by Roman Nurik (Google Labs) -- original spec-first generation concept
 - MoMoA by Reto Meier (Google Labs) -- original multi-persona debate concept
+
+References: `references/magic-rarv-integration.md` (which RARV-C phase invokes which Magic Modules step).

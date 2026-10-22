@@ -162,3 +162,5 @@ release_notes_template:
     - "## Breaking Changes" (BREAKING: in commit body)
     - "## Migration Guide" (if breaking changes)
 ```
+
+References: `references/design-archetypes.md` (pick one design archetype per build).

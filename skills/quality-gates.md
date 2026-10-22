@@ -1211,3 +1211,5 @@ judge_review_decision:
 > "Dedicated integrator/reviewer roles created more bottlenecks than they solved. Workers were already capable of handling conflicts themselves."
 
 **Implication:** At scale, trust automated checks and worker judgment. Reserve full review for high-risk changes only.
+
+References: `references/confidence-routing.md` (design note, not implemented).

@@ -176,3 +176,5 @@ review_learning:
     severity: "high"
     prevention: "Always define explicit interfaces for API responses"
 ```
+
+References: `references/sdlc-phases.md` (phase workflows and testing procedures), `references/invariant-checks.md` (spec-independent invariant checks).

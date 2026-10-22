@@ -197,3 +197,5 @@ code_only_principle:
     - Tool PreHooks to catch banned operations
     - Initial prompting toward code-generation patterns
 ```
+
+References: `references/advanced-patterns.md` (2025-2026 multi-agent literature), `references/openai-patterns.md` (OpenAI Agents SDK patterns), `references/lab-research-patterns.md` (DeepMind and Anthropic patterns), `references/prompt-repetition.md` (prompt repetition technique), `references/competitive-analysis.md` (competitor survey behind these patterns).

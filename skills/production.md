@@ -273,3 +273,5 @@ requests = [
 - Batch discount: 50% -> $1.50/$7.50
 - Cache hit: 90% reduction on cached tokens
 - Combined: Up to 95% savings on large batches
+
+References: `references/deployment.md` (infrastructure and deployment by platform), `references/task-queue.md` (task queue, dead letters, circuit breakers).
