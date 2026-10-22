@@ -409,7 +409,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 # 5. Security-review model guard comment present at reviewer dispatch.
 # ---------------------------------------------------------------------------
-grep -q "SECURITY-REVIEW MODEL GUARD" "$RUN_SH" \
+grep -q "REVIEWER MODEL PIN" "$RUN_SH" \
   && ok "security-review model guard comment present" || bad "security-review guard comment missing"
 
 # ---------------------------------------------------------------------------

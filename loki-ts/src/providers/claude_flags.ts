@@ -358,7 +358,7 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
 // Specialist reviewer routing (cost program S9). simple and standard tiers run
 // haiku with lean flags. Complex or unknown tier, HIGH-tier changes and the moat
 // reviewers keep today's behavior. LOKI_ADVISOR_MODEL (haiku|sonnet|opus) always
-// wins; fable is refused (its classifiers can end a reviewer turn with no VERDICT).
+// wins; only the tier aliases are honored, any other value is ignored.
 const REVIEWER_MOAT = ["security-sentinel", "devils-advocate"];
 
 export function reviewerModelForTier(opts: {

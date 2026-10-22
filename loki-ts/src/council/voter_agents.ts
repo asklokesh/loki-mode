@@ -36,7 +36,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
-import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
+import { judgeJsonOutcome, judgeOutcomeNote, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
@@ -368,13 +368,15 @@ export async function dispatchClaudeAgents(
   // v8 RAW-SDK COUNCIL PATH (opt-in LOKI_SDK_VOTER_AGENTS=1, only on the real
   // route -- when a test runner is injected we honor the injection). The raw
   // @anthropic-ai/sdk has no --agents primitive, so we inline the agent roster
-  // into the prompt and constrain the SAME finding schema via judgeJson, feeding
+  // into the prompt and constrain the SAME finding schema via judgeJsonOutcome, feeding
   // the resulting {findings:[...]} object into the SAME parseMultiResponse. Runs
   // BEFORE the claude spawn below so the no-binary deploy win holds. Fail-closed:
-  // judgeJson returns null on any miss (no key/transport/refusal/malformed) ->
-  // we fall through to the claude spawn; a caught throw here also falls through
+  // any non-ok judge outcome (truncated/refused/context_exceeded/transport/
+  // malformed) falls through to the claude spawn and its name rides along in any
+  // error the spawn then throws; a caught throw here also falls through
   // (the caller then uses the heuristic council). A council can never fake-APPROVE
   // via this path: a missing per-voter finding still throws below and falls through.
+  let sdkNote = "";
   if (!injected && process.env["LOKI_SDK_VOTER_AGENTS"] === "1" && sdkJudgeAvailable()) {
     try {
       const roster = JSON.stringify(agentsJson);
@@ -382,7 +384,7 @@ export async function dispatchClaudeAgents(
       const schema = JSON.parse(schemaContent) as Record<string, unknown>;
       const reviewSecs = Number(process.env["LOKI_COUNCIL_REVIEW_TIMEOUT"]);
       const timeoutMs = (Number.isFinite(reviewSecs) && reviewSecs > 0 ? reviewSecs : 600) * 1000;
-      const obj = await judgeJson({
+      const sdkOutcome = await judgeJsonOutcome({
         prompt: sdkPrompt,
         schema,
         model: process.env["LOKI_SDK_COUNCIL_MODEL"] || resolveClaudeModel("sonnet"),
@@ -390,14 +392,16 @@ export async function dispatchClaudeAgents(
         timeoutMs,
         ledger: { lokiDir: cec.ctx.lokiDir, phase: "council" },
       });
-      if (obj !== null) {
-        const verdicts = parseMultiResponse(JSON.stringify(obj), citationCtx());
+      if (sdkOutcome.kind === "ok") {
+        const verdicts = parseMultiResponse(JSON.stringify(sdkOutcome.value), citationCtx());
         const expectedSlugs = Object.keys(agentsJson);
         const seen = new Set(verdicts.map((v) => v.role));
         if (expectedSlugs.every((slug) => seen.has(slug))) {
           return verdicts; // SDK path succeeded with a complete council
         }
         // incomplete -> fall through to the claude spawn (fail-closed)
+      } else {
+        sdkNote = judgeOutcomeNote(sdkOutcome);
       }
     } catch {
       // fall through to the claude spawn (fail-closed)
@@ -450,23 +454,28 @@ export async function dispatchClaudeAgents(
   argv.push(...reviewAllowlistArgv());
   argv.push("-p", topPrompt);
 
-  // H6: bound the subcall. A hung runner rejects here -> caller falls through.
-  const result = await withCouncilTimeout(runner(argv), "council voter dispatch");
-  if (result.exitCode !== 0) {
-    throw new Error(`claude exited with code ${result.exitCode}`);
-  }
-  // parseMultiResponse throws on any malformed / schema-violating output.
-  const verdicts = parseMultiResponse(result.stdout, citationCtx());
-  // Ensure each declared voter is represented. If Claude omitted one,
-  // we treat the whole response as invalid so the caller falls through.
-  const expectedSlugs = Object.keys(agentsJson);
-  const seen = new Set(verdicts.map((v) => v.role));
-  for (const slug of expectedSlugs) {
-    if (!seen.has(slug)) {
-      throw new Error(`response missing finding for voter slug ${slug}`);
+  try {
+    // H6: bound the subcall. A hung runner rejects here -> caller falls through.
+    const result = await withCouncilTimeout(runner(argv), "council voter dispatch");
+    if (result.exitCode !== 0) {
+      throw new Error(`claude exited with code ${result.exitCode}`);
     }
+    // parseMultiResponse throws on any malformed / schema-violating output.
+    const verdicts = parseMultiResponse(result.stdout, citationCtx());
+    // Ensure each declared voter is represented. If Claude omitted one,
+    // we treat the whole response as invalid so the caller falls through.
+    const expectedSlugs = Object.keys(agentsJson);
+    const seen = new Set(verdicts.map((v) => v.role));
+    for (const slug of expectedSlugs) {
+      if (!seen.has(slug)) {
+        throw new Error(`response missing finding for voter slug ${slug}`);
+      }
+    }
+    return verdicts;
+  } catch (e) {
+    if (!sdkNote) throw e;
+    throw new Error(`${e instanceof Error ? e.message : String(e)} (${sdkNote})`);
   }
-  return verdicts;
 }
 
 // dispatchDevilsAdvocate -- single-shot LLM anti-sycophancy re-review.

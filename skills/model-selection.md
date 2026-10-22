@@ -63,7 +63,7 @@ Claude Fable 5 (alias `fable`, full id `claude-fable-5`) is Anthropic's most cap
 - Long-horizon tasks you would otherwise decompose.
 
 **When NOT to route to Fable:**
-- Security review. Fable's safety classifiers refuse cybersecurity content, and in non-interactive (`-p`) mode a flagged request ends the turn with a refusal instead of a transparent Opus re-run, which would break the unanimous-council gate. Security review stays on Opus, always. (Defensive-cyber capability lives in Mythos 5 via Project Glasswing, not Fable.)
+- Security review. The reviewer pin (`LOKI_ADVISOR_MODEL`) honors haiku, sonnet and opus only, and Fable is not measured on the `claude -p` reviewer path, so security review stays on Opus. A refusal on the raw-SDK judge path is not a missing verdict: the gate record names it (`refused:<category>`, `truncated`, `context_exceeded`).
 - Default planning/development/fast work. The 2x cost is only worth it for the cases above.
 
 ### Mid-flight model switching

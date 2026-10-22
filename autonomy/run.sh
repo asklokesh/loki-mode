@@ -16475,24 +16475,15 @@ _dispatch_reviewer() {
     fi
     case "${PROVIDER_NAME:-claude}" in
         claude)
-            # SECURITY-REVIEW MODEL GUARD (evidence-based routing, item 4b):
-            # By DEFAULT reviewers pass NO --model, so they run on the account
-            # default model and are NEVER routed to Fable by a mid-flight model
-            # override or LOKI_FABLE_ARCHITECT (those only rewrite the
-            # iteration's tier_param, not this dispatch). The ONLY way to pin the
-            # reviewer model is the explicit opt-in LOKI_ADVISOR_MODEL below,
-            # which honors haiku|sonnet|opus and REFUSES fable for the reason
-            # stated here. This must stay true. The official model-config docs
-            # CONTRADICT
-            # routing security review to Fable: Fable's safety classifiers
-            # refuse cybersecurity content, and in non-interactive (-p)
-            # mode a flagged request ends the turn with stop_reason
-            # "refusal" instead of a transparent Opus re-run. A refused
-            # security reviewer would return no VERDICT and break the
-            # unanimous-council gate. Defensive-cyber capability lives in
-            # Mythos 5 (Project Glasswing), not Fable. If a future change
-            # adds --model here, the security-sentinel reviewer must be
-            # pinned to opus, never fable.
+            # REVIEWER MODEL PIN: by DEFAULT reviewers pass NO --model, so they
+            # run on the account default model; a mid-flight model override or
+            # LOKI_FABLE_ARCHITECT only rewrites the iteration's tier_param, not
+            # this dispatch. The ONLY way to pin the reviewer model is the
+            # explicit opt-in LOKI_ADVISOR_MODEL below (haiku|sonnet|opus).
+            # A reviewer turn that ends with no VERDICT is never a PASS: the
+            # unanimous-council gate counts it as no verdict. On the raw-SDK
+            # judge path a refusal ends in a named outcome (refused:<category>)
+            # in the gate record (sdk_invoker.ts judgeOutcomeNote).
             # EMBED 2 + 3 (v7.33.0). This is a trust-gate council subcall.
             # $prompt_text is fully self-contained (the diff, changed files,
             # checks, and strict VERDICT/FINDINGS output format), output is
@@ -16517,18 +16508,15 @@ _dispatch_reviewer() {
             # account default). When the operator/user sets LOKI_ADVISOR_MODEL to
             # an allowlisted alias, pin the trust-gate reviewer to it for a
             # stronger/consistent judge - the founder's "advisor will be opus if
-            # needed or user opted". FABLE IS REFUSED here: the model-config docs
-            # say Fable's safety classifiers refuse cybersecurity content and end
-            # a -p turn with stop_reason "refusal", which would return no VERDICT
-            # and break the unanimous-council gate. So only haiku|sonnet|opus are
-            # honored; fable (or any other value) is ignored with no --model.
+            # needed or user opted". Only the tier aliases haiku|sonnet|opus are
+            # honored; any other value is ignored with no --model.
             if [ -n "${LOKI_ADVISOR_MODEL:-}" ]; then
                 local _adv _adv_norm
                 _adv="${LOKI_ADVISOR_MODEL}"
                 _adv_norm="$(printf '%s' "$_adv" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
                 case "$_adv_norm" in
                     haiku|sonnet|opus) _rv_argv+=("--model" "$_adv_norm") ;;
-                    *) : ;;  # fable and invalid values: no --model (account default)
+                    *) : ;;  # any other value: no --model (account default)
                 esac
             fi
             if loki_is_supervised_simple_web; then
