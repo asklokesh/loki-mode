@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.23.0 (2026-10-22)
+
+### Fixed
+- `scripts/release.sh --ship` now commits every version stamp that `scripts/generate-stale-zero.sh` rewrites, including the wiki pages it previously left modified after each release. Files already modified before the bump are never swept in. A file the generator produced that is still modified after the commit fails the release with SHIP_DIRTY_AFTER_COMMIT (exit 4).
+- `scripts/generate-stale-zero.sh --outputs` prints the paths the generator may write, so callers stage from the generator's own declaration instead of a hand-kept list.
+
 ## v11.22.0 (2026-10-22)
 
 ### Changed
