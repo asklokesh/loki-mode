@@ -2412,6 +2412,28 @@ describe("COST-WALL-c claudeReviewer ledger wiring", () => {
     } finally { srv.stop(true); }
   });
 
+  // #318: a non-ok SDK judge outcome is named in the reviewer's gate text, never lost to the claude fall-through.
+  for (const [stop, extra, name] of [
+    ["max_tokens", {}, "truncated"],
+    ["refusal", { stop_details: { category: "cyber" } }, "refused:cyber"],
+    ["model_context_window_exceeded", {}, "context_exceeded"],
+  ] as const) {
+    it(`SDK reviewer ${stop} outcome appears by name (${name}) in the gate text`, async () => {
+      writeFileSync(join(root, "bin", "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nexit 3\n`, { mode: 0o755 });
+      const body = JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-haiku-5-5", stop_reason: stop, content: [], usage: { input_tokens: 1, output_tokens: 1 }, ...extra });
+      try {
+        process.env["LOKI_SDK_CODE_REVIEW"] = "1";
+        process.env["LOKI_REVIEW_JSON_SCHEMA"] = "off";
+        process.env["LOKI_SDK_REVIEW_MODEL"] = "claude-haiku-5-5";
+        const { __setSdkClientForTests } = await import("../../src/runner/sdk_invoker.ts");
+        __setSdkClientForTests({ messages: { create: async () => JSON.parse(body), stream: () => ({ finalMessage: async () => JSON.parse(body) }) } });
+        const out = await review();
+        expect(out).toContain("VERDICT: FAIL");
+        expect(out).toContain(`sdk judge outcome: ${name}`);
+      } finally { delete process.env["LOKI_SDK_REVIEW_MODEL"]; }
+    });
+  }
+
   it("negative sdk review timeout falls back to 180s instead of timing out at once", async () => {
     const seen: unknown[] = [];
     const msg = { id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ verdict: "PASS", findings: [] }) }], usage: { input_tokens: 1, output_tokens: 1 } };
