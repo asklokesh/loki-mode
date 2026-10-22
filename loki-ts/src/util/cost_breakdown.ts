@@ -18,8 +18,17 @@ export interface CostBreakdown {
   retry_sessions: number;
 }
 
-/** Hash of the brief's leading block: the cache key's moving part. cacheColdText compares it across a stage's calls to name a changed prefix. */
-export const prefixSha = (brief: string): string => createHash("sha256").update(brief.slice(0, 2048)).digest("hex").slice(0, 12);
+/** #306: the components of the cached prefix. prefixParts hashes each one; prefixSha is the hash of all of them, so a change to ANY component moves it
+ *  and cacheColdText can name which one moved. Add a component here and it is covered everywhere (emit, key, label). */
+export const PREFIX_COMPONENTS = ["system", "tools", "thinking", "effort", "brief"] as const;
+export type PrefixComponent = (typeof PREFIX_COMPONENTS)[number];
+export type PrefixParts = Record<PrefixComponent, string>;
+const h12 = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 12);
+export const prefixParts = (i: { system?: string; tools: readonly string[]; thinking?: string; effort?: string; brief: string }): PrefixParts => ({
+  system: h12(i.system ?? ""), tools: h12(i.tools.join(",")), thinking: h12(i.thinking ?? ""), effort: h12(i.effort ?? ""), brief: h12(i.brief.slice(0, 2048)),
+});
+/** Hash of every prefix component. cacheColdText compares it across a stage's calls to name a changed prefix. */
+export const prefixSha = (parts: PrefixParts): string => h12(PREFIX_COMPONENTS.map((c) => `${c}=${parts[c]}`).join(";"));
 const UNATTRIBUTED = "unattributed";
 const validUsd = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 const tok = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -79,10 +88,10 @@ function shareLine(events: { type: string; stage: string | null; ts?: string; da
 
 /** TEN-COST-29: stages whose prefix cache ran cold (cache read under 30 percent of input-side tokens) as one "cache cold: a, b" line, for the
  *  cost summary. Only metered sessions with token figures count; an unmetered or token-less stage is skipped, never called cold. A cold stage
- *  whose calls carry differing `prefix_sha` values (the hash of the brief's leading block, emitted by engine10/session.ts) is suffixed
- *  "(prefix changed)": the cache key moved between its calls. Without the hash the cause is not named. null when all warm. */
+ *  whose calls carry differing `prefix_sha` values (the hash of every prefix component, emitted by engine10/session.ts) is suffixed
+ *  "(prefix changed: tools, effort)", naming the components whose `prefix_parts` differ between its calls (bare "(prefix changed)" when the events carry no parts). Without the hash the cause is not named. null when all warm. */
 function cacheColdText(events: { type: string; stage: string | null; ts?: string; data: Record<string, unknown> }[]): string | null {
-  const order: string[] = [], read = new Map<string, number>(), all = new Map<string, number>(), shas = new Map<string, Set<string>>();
+  const order: string[] = [], read = new Map<string, number>(), all = new Map<string, number>(), shas = new Map<string, Set<string>>(), parts = new Map<string, Record<string, Set<string>>>();
   for (const e of events) {
     if (e.type !== "cost" || e.data["source"] === "cli-invoker-unmetered" || typeof e.data["input_tokens"] !== "number") continue;
     const stage = e.stage || UNATTRIBUTED;
@@ -91,8 +100,14 @@ function cacheColdText(events: { type: string; stage: string | null; ts?: string
     read.set(stage, read.get(stage)! + r);
     all.set(stage, all.get(stage)! + Math.max(0, tok(e.data["input_tokens"])) + r + Math.max(0, tok(e.data["cache_creation_tokens"])));
     if (typeof e.data["prefix_sha"] === "string") shas.get(stage)!.add(e.data["prefix_sha"]);
+    const pp = e.data["prefix_parts"];
+    if (pp && typeof pp === "object") {
+      const m = parts.get(stage) ?? {}; parts.set(stage, m);
+      for (const c of PREFIX_COMPONENTS) { const v = (pp as Record<string, unknown>)[c]; if (typeof v === "string") (m[c] ??= new Set()).add(v); }
+    }
   }
-  const cold = order.filter((s) => all.get(s)! > 0 && read.get(s)! / all.get(s)! < 0.3).map((s) => (shas.get(s)!.size > 1 ? `${s} (prefix changed)` : s));
+  const changed = (s: string): string => { const m = parts.get(s) ?? {}, names = PREFIX_COMPONENTS.filter((c) => (m[c]?.size ?? 0) > 1); return names.length > 0 ? `: ${names.join(", ")}` : ""; };
+  const cold = order.filter((s) => all.get(s)! > 0 && read.get(s)! / all.get(s)! < 0.3).map((s) => (shas.get(s)!.size > 1 ? `${s} (prefix changed${changed(s)})` : s));
   return cold.length > 0 ? `cache cold: ${cold.join(", ")}` : null;
 }
 

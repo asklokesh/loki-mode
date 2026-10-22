@@ -204,3 +204,5 @@ ec6dd47488fd107d82340d65bfdb112fd5923b97:docs/v10/BOARD.md:generic-api-key:1281
 6eb21ec60d102b26d76089bd85b76f1aa5e25863:docs/v10/BOARD.md:generic-api-key:1281
 c82f3beb4ee3a0a07b9e41ad040815a996a492cf:loki-ts/tests/util/redact.test.ts:generic-api-key:130
 d0795335816881b327f6dfaed2e634f81b03fa1d:loki-ts/tests/util/redact.test.ts:generic-api-key:130
+# Reviewed false positive (#306): line 40 is a list of env var names (MAX_THINKING_TOKENS, LOKI_E10_PREFIX), not a key.
+loki-ts/tests/engine10/session_router.test.ts:generic-api-key:40

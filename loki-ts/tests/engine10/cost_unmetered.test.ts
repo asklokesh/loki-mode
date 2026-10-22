@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stageMedianGapMs, writeEfficiencyRecord } from "../../src/providers/provider_cost.ts";
 import { childEnv } from "../../src/engine10/session.ts";
-import { cacheTtlFor, idleGapMs, stageShareText } from "../../src/util/cost_breakdown.ts";
+import { PREFIX_COMPONENTS, cacheTtlFor, idleGapMs, prefixParts, prefixSha, stageShareText } from "../../src/util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 
 function root(extra: Record<string, unknown>): string {
@@ -68,6 +68,18 @@ test("cold stage with an unstable prefix is flagged as prefix changed; a stable 
   expect(stageShareText([pev("plan", 100, 0, "a"), pev("plan", 100, 0, "b")])).toBe("cache cold: plan (prefix changed)");
   expect(stageShareText([pev("plan", 100, 0, "a"), pev("plan", 100, 0, "a")])).toBe("cache cold: plan");
   expect(stageShareText([pev("plan", 5, 95, "a"), pev("plan", 5, 95, "b")])).toBeNull();
+});
+// #306: the label names the component(s) whose hash differs between the stage's calls
+const BASE = { system: "lean", tools: ["Bash", "Read"], thinking: "", effort: "high", brief: "b" };
+const vary: Record<string, Partial<typeof BASE>> = { system: { system: "preset" }, tools: { tools: ["Bash"] }, thinking: { thinking: "8000" }, effort: { effort: "low" }, brief: { brief: "c" } };
+const pcev = (stage: string, over: Partial<typeof BASE>) => { const parts = prefixParts({ ...BASE, ...over }); const e = cev(stage, 100, 0); return { ...e, data: { ...e.data, prefix_sha: prefixSha(parts), prefix_parts: parts } }; };
+for (const c of PREFIX_COMPONENTS) {
+  test(`cold stage whose only changed prefix component is ${c} is labelled with ${c}`, () => {
+    expect(stageShareText([pcev("plan", {}), pcev("plan", vary[c]!)])).toBe(`cache cold: plan (prefix changed: ${c})`);
+  });
+}
+test("two changed components are both named, in prefix order", () => {
+  expect(stageShareText([pcev("plan", {}), pcev("plan", { effort: "low", tools: ["Bash"] })])).toBe("cache cold: plan (prefix changed: tools, effort)");
 });
 test("median gap over 5 minutes names the 1h TTL opt-in; short gaps do not", () => {
   const t0 = Date.parse("2026-10-22T00:00:00Z"), at = (m: number) => new Date(t0 + m * 60_000).toISOString();

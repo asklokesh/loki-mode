@@ -663,6 +663,15 @@ export interface SdkLoopExtraOptions {
 // The engine brief carries its own rules, so the legacy append (commits, CONTINUITY.md, design) does not apply;
 // user/local settings would pull the operator's CLAUDE.md, memory and plugins into every session.
 const ENGINE10_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"];
+/** The engine10 inputs to the cached prefix that do not vary per call: tool list, system text and the dynamic-section switch.
+ *  buildSdkLoopOptions applies exactly this, and session.ts hashes exactly this (prefixParts), so the cache-cause key cannot drift. */
+export function engine10StaticPrefix(env: Readonly<Record<string, string | undefined>>): { tools: string[]; systemPrompt?: string; excludeDynamic: boolean } {
+  return {
+    tools: ENGINE10_TOOLS,
+    ...(env["LOKI_E10_PREFIX"] === "lean" ? { systemPrompt: LEAN_PREFIX } : {}),
+    excludeDynamic: env["LOKI_E10_STABLE_PREFIX"] !== "0",
+  };
+}
 export function buildSdkLoopOptions(args: {
   tier: string | undefined;
   model: string;
@@ -686,16 +695,17 @@ export function buildSdkLoopOptions(args: {
   }
   const engine10 = Boolean(process.env["LOKI_E10_STAGE"]);
   if (engine10) {
-    out.tools = ENGINE10_TOOLS;
+    const sp = engine10StaticPrefix(process.env);
+    out.tools = sp.tools;
     out.noAppend = true;
     out.strictMcpConfig = true; // no MCP servers at all, ambient .mcp.json included
     // S41-09: LOKI_E10_PREFIX=lean, default off. A fixed string replaces the
     // claude_code preset so every stage/task shares a byte-identical leading
     // block (cache-stable prefix, D41 item 2). Flag off: unchanged preset below.
-    if (process.env["LOKI_E10_PREFIX"] === "lean") out.systemPrompt = LEAN_PREFIX;
+    if (sp.systemPrompt) out.systemPrompt = sp.systemPrompt;
     // CP-01 (D99): cwd, repo status and memory leave the system prompt (moved to the first user message) so the
     // leading block is byte-identical across stages and runs. ON by default; LOKI_E10_STABLE_PREFIX=0 opts out.
-    if (process.env["LOKI_E10_STABLE_PREFIX"] !== "0") out.excludeDynamic = true;
+    if (sp.excludeDynamic) out.excludeDynamic = true;
   }
 
   // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +

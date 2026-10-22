@@ -17,7 +17,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { safeGit } from "../util/safe_git.ts"; import { prefixSha } from "../util/cost_breakdown.ts";
+import { safeGit } from "../util/safe_git.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
@@ -185,6 +185,9 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   }
   const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
   const effort = sessionEffortFor(opts).effort;
+  // #306: hash the whole cached prefix (system text, tool list incl. per-session denials, thinking, effort, brief), from the function providers.ts builds it with.
+  const penv = { ...process.env, ...(cfg.provider === "claude" && process.env["LOKI_E10_PREFIX"] === undefined ? { LOKI_E10_PREFIX: "lean" } : {}) }, sp = engine10StaticPrefix(penv);
+  const pparts = opts.brief ? prefixParts({ system: `${sp.systemPrompt ?? "preset"}|dyn=${sp.excludeDynamic}`, tools: [...sp.tools, ...(opts.disallowedTools ? [`-${opts.disallowedTools}`] : [])], thinking: process.env["MAX_THINKING_TOKENS"], effort, brief: opts.brief }) : undefined;
   const endedAt = Date.now(), ends = lastStageEnd.get(cfg) ?? new Map<string, number>(), prev = ends.get(opts.stage); // #244: gap to this run's previous call of the stage
   ends.set(opts.stage, endedAt); lastStageEnd.set(cfg, ends);
   const info = { status, durationMs: Math.round(durationS * 1000), model, stage: opts.stage, ...(prev !== undefined ? { gapMs: idleGapMs(endedAt, Math.round(durationS * 1000), prev) } : {}) };
@@ -194,7 +197,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, duration_ms: Math.round(durationS * 1000), ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), ...(opts.brief ? { prefix_sha: prefixSha(opts.brief) } : {}), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), ...(pparts ? { prefix_sha: prefixSha(pparts), prefix_parts: pparts } : {}), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {

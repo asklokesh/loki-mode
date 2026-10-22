@@ -36,6 +36,45 @@ describe("R1-09 LOKI_ESCALATE marker", () => {
   });
 });
 
+describe("#306 prefix_sha covers the whole cached prefix", () => {
+  const ENVK = ["MAX_THINKING_TOKENS", "LOKI_E10_PREFIX"];
+  const run = async (o: Partial<SessionRunOptions>, env: Record<string, string> = {}) => {
+    const keep: Record<string, string | undefined> = {};
+    for (const k of ENVK) { keep[k] = process.env[k]; delete process.env[k]; }
+    Object.assign(process.env, env);
+    const dir = mkdtempSync(join(tmpdir(), "loki-p306-"));
+    try {
+      mkdirSync(join(dir, "metrics"), { recursive: true });
+      writeFileSync(join(dir, "cost-fixture.json"), JSON.stringify({ total_cost_usd: 0.01, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, model: "m" }));
+      const events: { type: string; data: Record<string, unknown> }[] = [];
+      await createSessionRunner({ provider: "claude", lokiRoot: dir, childCommand: ["bash", ["-c", `cp "${join(dir, "cost-fixture.json")}" "${join(dir, "metrics", "result-cost-e10-r-1.json")}"`]], emit: (type, _s, data) => events.push({ type, data }) }).run(opts({ cwd: dir, effort: "high", ...o }));
+      return events.find((e) => e.type === "cost")!.data as { prefix_sha: string; prefix_parts: Record<string, string> };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      for (const k of ENVK) { if (keep[k] === undefined) delete process.env[k]; else process.env[k] = keep[k]; }
+    }
+  };
+  const cases: Array<[string, Partial<SessionRunOptions>, Record<string, string>]> = [
+    ["effort", { effort: "low" }, {}],
+    ["tools", { disallowedTools: "Write" }, {}],
+    ["thinking", {}, { MAX_THINKING_TOKENS: "8000" }],
+    ["system", {}, { LOKI_E10_PREFIX: "off" }],
+    ["brief", { brief: "a different brief" }, {}],
+  ];
+  for (const [comp, o, env] of cases) {
+    test(`changing only ${comp} moves prefix_sha and only that part`, async () => {
+      const ref = await run({});
+      const got = await run(o, env);
+      expect(got.prefix_sha).not.toBe(ref.prefix_sha);
+      const moved = Object.keys(ref.prefix_parts).filter((k) => ref.prefix_parts[k] !== got.prefix_parts[k]);
+      expect(moved).toEqual([comp]);
+    });
+  }
+  test("nothing changed: prefix_sha is stable", async () => {
+    expect((await run({})).prefix_sha).toBe((await run({})).prefix_sha);
+  });
+});
+
 describe("R1-09 cost event fields", () => {
   const withCost = async (flag: string | undefined) => {
     if (flag === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = flag;
@@ -59,7 +98,7 @@ describe("R1-09 cost event fields", () => {
     expect(d["advisor_calls"]).toBe(2);
   });
   test("flag off: cost event keys are exactly the pre-router set (plus COST-1 effort, which is not a router field)", async () => {
-    const PRE = ["cache_creation_tokens", "cache_read_tokens", "duration_ms", "input_tokens", "model", "output_tokens", "prefix_sha", "session_id", "source", "usd"]; // prefix_sha: #244 cache-cause hash; duration_ms: #244 call duration
+    const PRE = ["cache_creation_tokens", "cache_read_tokens", "duration_ms", "input_tokens", "model", "output_tokens", "prefix_parts", "prefix_sha", "session_id", "source", "usd"]; // prefix_sha: #244 cache-cause hash; duration_ms: #244 call duration
     const keep = process.env["LOKI_E10_EFFORT_POLICY"];
     try {
       delete process.env["LOKI_E10_EFFORT_POLICY"]; // COST-1: the effort policy is on by default and records the stage effort
