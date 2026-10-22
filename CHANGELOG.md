@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.35.0 (2026-10-22)
+
+### Added
+- Memory namespaces have a byte cap (`LOKI_MEMORY_NAMESPACE_MAX_BYTES`): when a write pushes a namespace past it, the oldest per-entry files (episodes and skills) are evicted first, with a warning naming the file and the cap. Memory view output is truncated at `LOKI_MEMORY_VIEW_MAX_BYTES`. Whole-store files such as `patterns.json` count toward the total but are never deleted. Refs #284.
+
 ## v11.34.1 (2026-10-22)
 
 ### Changed
