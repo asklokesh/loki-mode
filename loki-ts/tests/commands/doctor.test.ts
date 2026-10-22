@@ -28,6 +28,8 @@ import {
   _setPythonImportOkForTest,
   checkMcpToolDrift,
   fetchRemoteToolsHash,
+  probeMcpToolHashes,
+  MCP_PROBE_CONCURRENCY,
   probeIntegrations,
   cmpVersion,
   evaluateClaudeCliCompat,
@@ -1968,4 +1970,59 @@ describe("fetchRemoteToolsHash protocol", () => {
     ]]);
     expect(await fetchRemoteToolsHash(x.url, {})).toBe(await fetchRemoteToolsHash(y.url, {}));
   }, 30000);
+  // #315: the remote drift probe is egress. It is skipped under LOKI_AIRGAP=true and bounded by ONE budget
+  // with capped concurrency otherwise. Dropping the airgap guard, the shared budget or the worker cap turns these red.
+  const hangingServers = async (n: number): Promise<{ urls: string[]; hits: () => number; peak: () => number; close: () => void }> => {
+    let hits = 0, open = 0, peak = 0;
+    const srvs: Server[] = [];
+    const urls: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const srv = createServer((req) => {
+        hits++;
+        open++;
+        peak = Math.max(peak, open);
+        req.on("close", () => { open--; });
+      });
+      srv.closeAllConnections?.();
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      srvs.push(srv);
+      urls.push(`http://127.0.0.1:${(srv.address() as { port: number }).port}/mcp`);
+    }
+    return { urls, hits: () => hits, peak: () => peak, close: () => srvs.forEach((x) => { x.closeAllConnections(); x.close(); }) };
+  };
+  const envFor = (urls: string[], extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
+    ...Object.fromEntries(urls.map((u, i) => [`LOKI_MCP_S${i}_URL`, u])),
+    ...extra,
+  });
+
+  it("LOKI_AIRGAP=true: no remote server is contacted and none is reported", async () => {
+    const h = await hangingServers(2);
+    try {
+      const out = await probeMcpToolHashes(envFor(h.urls, { LOKI_AIRGAP: "true" }), 2000);
+      expect(h.hits()).toBe(0);
+      expect(Object.keys(out)).toEqual(["loki-mode"]);
+    } finally { h.close(); }
+  }, 60000);
+
+  it("one total budget caps the whole probe and a timed-out server reads as unavailable", async () => {
+    const h = await hangingServers(6);
+    try {
+      const t0 = Date.now();
+      const out = await probeMcpToolHashes(envFor(h.urls), 400);
+      const elapsed = Date.now() - t0;
+      expect(h.hits()).toBeGreaterThan(0);
+      for (const k of ["s0", "s1", "s2", "s3", "s4", "s5"]) expect(out[k]).toBeNull();
+      // six 5s probes at concurrency 4 take two waves (10s) without a shared budget; with it they end together
+      expect(elapsed).toBeLessThan(4000);
+    } finally { h.close(); }
+  }, 60000);
+
+  it("concurrency is bounded", async () => {
+    const h = await hangingServers(6);
+    try {
+      await probeMcpToolHashes(envFor(h.urls), 600);
+      expect(h.peak()).toBeLessThanOrEqual(MCP_PROBE_CONCURRENCY);
+      expect(h.peak()).toBeGreaterThan(1);
+    } finally { h.close(); }
+  }, 60000);
 });
