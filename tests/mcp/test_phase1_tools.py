@@ -19,6 +19,7 @@ site-packages directory so server.py can import cleanly under test.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -711,7 +712,60 @@ class ResultContractTests(unittest.TestCase):
             "quality/reviews/r1/rv.txt": "VERDICT: PASS\nHIGH: " + m + "\n",
             "events.jsonl": json.dumps({"type": m, "data": m}) + "\n",
             "signals/TASK_COMPLETION_CLAIMED": m,
+            "magic/registry.json": {"version": "1", "components": [{"name": m, "description": m, "path": m, "version": "1.0.0"}]},
+            "config.json": {"memory": {"disabled": False, "note": m}},
+            "memory/semantic/anti-patterns.json": [{"pattern": m, "what_fails": m, "why": m}],
+            "runs/e10-guard/events.jsonl": "\n".join(json.dumps(e) for e in (
+                {"type": "stage.started", "stage": m},
+                {"type": "stage.completed", "stage": "implement", "data": {"spec_conflict_reason": m}},
+                {"type": "run.completed", "data": {"verdict": "BLOCKED"}},
+            )) + "\n",
         }
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _observe_loki_reads(root):
+        """Record every .loki path opened, stat-checked or listed during the block
+        that does not exist in the seeded tree. Yields the set of such relative
+        paths, whichever module issued the call."""
+        import builtins
+        import io
+
+        real_root = os.path.realpath(root)
+        base = os.path.join(real_root, ".loki")
+        missing = set()
+        real_open, real_io_open = builtins.open, io.open
+        real_exists, real_isfile, real_isdir, real_listdir = os.path.exists, os.path.isfile, os.path.isdir, os.listdir
+
+        def note(path):
+            try:
+                full = os.path.realpath(os.fspath(path))
+            except (TypeError, ValueError):
+                return
+            if (full == base or full.startswith(base + os.sep)) and not real_exists(full):
+                missing.add(os.path.relpath(full, base))
+
+        def wrap(fn, takes_mode=False):
+            def inner(path, *a, **k):
+                mode = a[0] if a else k.get("mode", "r")
+                if not takes_mode or (isinstance(mode, str) and not any(c in mode for c in "wax+")):
+                    note(path)
+                return fn(path, *a, **k)
+            return inner
+
+        patches = [mock.patch.object(builtins, "open", wrap(real_open, True)),
+                   mock.patch.object(io, "open", wrap(real_io_open, True)),
+                   mock.patch.object(os.path, "exists", wrap(real_exists)),
+                   mock.patch.object(os.path, "isfile", wrap(real_isfile)),
+                   mock.patch.object(os.path, "isdir", wrap(real_isdir)),
+                   mock.patch.object(os, "listdir", wrap(real_listdir))]
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            yield missing
+        # A file the call itself created (cache, version history, a new episode)
+        # was not a seed gap; only paths still absent afterwards are.
+        missing.difference_update([rel for rel in list(missing) if real_exists(os.path.join(base, rel))])
 
     def _seed(self, root):
         for rel, body in self._marked_state().items():
@@ -724,6 +778,10 @@ class ResultContractTests(unittest.TestCase):
 
         storage = MemoryStorage(os.path.join(root, ".loki", "memory"))
         storage.save_episode(EpisodeTrace.create(task_id="t1", agent=self._MARK, goal=self._MARK))
+        # mem_get looks entries up by the id the tests pass ("t1")
+        by_id = EpisodeTrace.create(task_id="t1", agent=self._MARK, goal=self._MARK)
+        by_id.id = "t1"
+        storage.save_episode(by_id)
         storage.save_pattern(SemanticPattern.create(pattern=self._MARK, category=self._MARK,
                                                     correct_approach=self._MARK))
 
@@ -760,19 +818,6 @@ class ResultContractTests(unittest.TestCase):
                 shutil.rmtree(tmp, ignore_errors=True)
             self.server.cleanup_mcp_singletons()
 
-    def test_seeded_state_covers_every_loki_path_the_server_reads(self):
-        """A new state file the server reads must be seeded here, or the leak
-        test below cannot see it."""
-        import re
-
-        src = Path(self.server.__file__).read_text(encoding="utf-8")
-        seeded = set(self._marked_state())
-        for call in re.findall(r"safe_path_join\(('\.loki'(?:, '[^']+')*)\)", src):
-            parts = re.findall(r"'([^']+)'", call)[1:]
-            rel = "/".join(parts)
-            covered = (rel == "" or rel in seeded or any(s.startswith(rel + "/") for s in seeded))
-            self.assertTrue(covered, "server reads .loki/%s but the guard does not seed it" % rel)
-
     def test_stored_text_appears_only_inside_untrusted_content(self):
         """Call every registered tool and resource against state carrying a
         marker; the marker must never appear outside untrusted_content."""
@@ -780,7 +825,7 @@ class ResultContractTests(unittest.TestCase):
         tools = [n for kind, n in srv._REGISTERED if kind == "tool"]
         resources = [n for kind, n in srv._REGISTERED if kind == "resource"]
         self.assertGreaterEqual(len(tools), 47)
-        leaks, surfaced = [], set()
+        leaks, surfaced, unseeded = [], set(), set()
 
         def check(label, text):
             try:
@@ -807,7 +852,7 @@ class ResultContractTests(unittest.TestCase):
                 # the learning collector is still bound to the previous tempdir
                 srv.cleanup_mcp_singletons()
                 fn = srv._REGISTERED_FNS[name]
-                with _ChdirToTmp(tmp), \
+                with _ChdirToTmp(tmp), self._observe_loki_reads(tmp) as observed, \
                         mock.patch("subprocess.run", no_spawn), \
                         mock.patch("subprocess.Popen", no_spawn), \
                         mock.patch.object(srv, "_emit_tool_event_async", lambda *a, **k: None):
@@ -816,14 +861,19 @@ class ResultContractTests(unittest.TestCase):
                     else:
                         _, text = _run(srv._run_with_contract(name, fn, (), self._call_args(fn)))
                 check(name, text)
+                unseeded.update("%s reads .loki/%s" % (name, rel) for rel in observed)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
+        # Every .loki path any module the server calls tried to read, observed at
+        # run time, must exist in the seeded tree (else the leak check is blind to it).
+        self.maxDiff = None
+        self.assertEqual(sorted(unseeded), [], "reads the guard does not seed")
         self.assertEqual(leaks, [], "stored text returned outside untrusted_content by: %s" % sorted(leaks))
         # Control: the marker really reaches these tools, so the check above is not vacuous.
         for name in ("loki_task_queue_update", "loki_project_status", "loki_counter_evidence_template",
                      "loki_quality_report", "loki_state_get", "loki_task_queue_list", "loki_findings",
-                     "loki_learnings", "loki://state/continuity", "loki://queue/pending", "loki://memory/index"):
+                     "loki_learnings", "loki_v10_status", "loki://state/continuity", "loki://queue/pending", "loki://memory/index"):
             self.assertIn(name, surfaced, "control: the marker never reached %s" % name)
 
 

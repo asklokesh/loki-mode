@@ -27,8 +27,8 @@ function read() {
   if (!fs.existsSync(continuityPath)) {
     return {
       uri: RESOURCE_URI,
-      mimeType: 'text/markdown',
-      text: '# No CONTINUITY.md found\n\nNo active session continuity document exists.'
+      mimeType: 'application/json',
+      text: JSON.stringify({ error: 'No CONTINUITY.md found. No active session continuity document exists.' })
     };
   }
 
@@ -47,8 +47,8 @@ function read() {
   } catch (err) {
     return {
       uri: RESOURCE_URI,
-      mimeType: 'text/markdown',
-      text: '# Error reading CONTINUITY.md\n\n' + err.message
+      mimeType: 'application/json',
+      text: JSON.stringify({ error: 'Error reading CONTINUITY.md: ' + err.message })
     };
   }
 }

@@ -286,6 +286,20 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
   });
 });
 
+describe('resource bodies match their declared mimeType', () => {
+  it('returns parseable application/json from every resource, including the not-found branch', () => {
+    fs.rmSync(path.join(testDir, '.loki'), { recursive: true, force: true });
+    for (const r of getResources().values()) {
+      const res = handleRequest({ jsonrpc: '2.0', method: 'resources/read', id: 7, params: { uri: r.schema.uri } });
+      const content = res.result.contents[0];
+      assert.equal(content.mimeType, r.schema.mimeType, r.schema.uri);
+      if (r.schema.mimeType === 'application/json') {
+        assert.doesNotThrow(() => JSON.parse(content.text), r.schema.uri);
+      }
+    }
+  });
+});
+
 describe('JSON-RPC 2.0 error handling', () => {
   it('should reject invalid JSON-RPC version', () => {
     const response = handleRequest({

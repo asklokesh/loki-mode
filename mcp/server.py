@@ -633,6 +633,7 @@ _UNTRUSTED_FIELDS = {
     "loki_get_hotspots": ("hotspots",),
     "loki_get_co_changes": ("co_changed_with",),
     "loki_metrics_efficiency": ("tool_breakdown",),
+    "loki_v10_status": ("run_id", "phase", "verdict", "blocked_question"),
     "cp_run_events": ("events",),
     "cp_run_artifact": ("content",),
     "cp_run_get": ("*",),
@@ -649,7 +650,7 @@ _UNTRUSTED_FIELDS = {
 _TRUSTED_TOOLS = frozenset({
     "loki_memory_store_pattern", "loki_task_queue_add",
     "loki_memory_capture_session_summary",
-    "loki_consolidate_memory", "loki_complete_task", "loki_v10_run", "loki_v10_status",
+    "loki_consolidate_memory", "loki_complete_task", "loki_v10_run",
     "loki_v10_verify", "loki_start_project", "loki_code_search_stats",
     "loki_verify_fast", "loki_memory_redact",
     "loki_magic_stats", "loki_magic_tokens_extract",
