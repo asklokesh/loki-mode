@@ -467,6 +467,60 @@ export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
   pyImpl.fn = fn ?? pythonImportOk;
 }
 
+// Served MCP tool-list drift. The python probe hashes the sorted tool names the
+// server registers; the hash recorded on first sight lives under the state dir.
+// A later mismatch means the served tool list changed since the client config
+// or docs were last checked. Never touches network; the probe is a local import.
+type McpToolHash = () => Promise<string | null>;
+async function probeMcpToolHash(): Promise<string | null> {
+  const src =
+    "import mcp.server as s,hashlib\n" +
+    "n=sorted(s.mcp._tool_manager._tools)\n" +
+    "print(hashlib.sha256('\\n'.join(n).encode()).hexdigest())\n";
+  try {
+    const r = await runInline(src, { cwd: REPO_ROOT, timeoutMs: 15000 });
+    if (r.exitCode !== 0) return null;
+    const h = r.stdout.trim().split("\n").pop() ?? "";
+    return /^[0-9a-f]{64}$/.test(h) ? h : null;
+  } catch {
+    return null;
+  }
+}
+const mcpHashImpl = { fn: probeMcpToolHash as McpToolHash };
+export function _setMcpToolHashForTest(fn: McpToolHash | null): void {
+  mcpHashImpl.fn = fn ?? probeMcpToolHash;
+}
+
+export interface McpDriftResult {
+  status: "recorded" | "pass" | "warn" | "skip";
+  detail: string;
+}
+export function checkMcpToolDrift(lokiDir: string, served: string | null): McpDriftResult {
+  if (served === null) return { status: "skip", detail: "served tool list unavailable" };
+  if (!existsSync(lokiDir)) return { status: "skip", detail: "no .loki directory" };
+  const file = join(lokiDir, "state", "mcp-tools.sha256");
+  let recorded = "";
+  try {
+    recorded = readFileSync(file, "utf8").trim();
+  } catch {
+    recorded = "";
+  }
+  if (recorded === "") {
+    try {
+      mkdirSync(join(lokiDir, "state"), { recursive: true });
+      writeFileSync(file, `${served}\n`);
+    } catch {
+      return { status: "skip", detail: "could not record tool list hash" };
+    }
+    return { status: "recorded", detail: "tool list hash recorded" };
+  }
+  if (recorded === served) return { status: "pass", detail: "tool list unchanged" };
+  return {
+    status: "warn",
+    detail: `served MCP tool list drift: recorded ${recorded.slice(0, 12)}, now ${served.slice(0, 12)} (delete ${file} to accept)`,
+  };
+}
+
 // Test seam for the non-python Integration probes (http, PATH lookup, sentrux
 // version) so a test can inject slow probes and time the concurrent gather.
 interface IntegrationProbeFns {
@@ -1662,6 +1716,11 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   if (mcpOk) {
     process.stdout.write(`  ${badge("pass")}  MCP SDK (Python)\n`);
     bump(tally, "pass");
+    const drift = checkMcpToolDrift(process.env["LOKI_DIR"] ?? ".loki", await mcpHashImpl.fn());
+    if (drift.status === "warn") {
+      process.stdout.write(`  ${badge("warn")}  MCP tool list drift  ${DIM}${drift.detail}${NC}\n`);
+      bump(tally, "warn");
+    }
   } else {
     process.stdout.write(`  ${badge("warn")}  MCP SDK - not installed (pip3 install mcp)\n`);
     bump(tally, "warn");
