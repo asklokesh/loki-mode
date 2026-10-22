@@ -311,9 +311,31 @@ def materialize_prompt(workdir: str, spec: Dict[str, Any]) -> str:
     return prompt_path
 
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def parse_efforts(raw: str) -> List[str]:
+    """Split a comma list of effort levels; reject anything outside EFFORT_LEVELS."""
+    levels = [x.strip() for x in raw.split(",") if x.strip()]
+    bad = [x for x in levels if x not in EFFORT_LEVELS]
+    if not levels or bad:
+        raise ValueError("invalid --effort %r (allowed: %s)" % (
+            bad or raw, ", ".join(EFFORT_LEVELS)))
+    return list(dict.fromkeys(levels))
+
+
+def adapter_supports_effort(adapter: Callable[..., Dict[str, Any]]) -> bool:
+    import inspect
+    try:
+        return "effort" in inspect.signature(adapter).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def invoke_adapter(adapter: Callable[..., Dict[str, Any]],
                    workdir: str, spec: Dict[str, Any], model: str,
-                   timeout_s: int, runner_fn: Any = None) -> Dict[str, Any]:
+                   timeout_s: int, runner_fn: Any = None,
+                   effort: Optional[str] = None) -> Dict[str, Any]:
     """Call an adapter and validate its output. Raises ValueError if it judges.
 
     Uses the Slice C adapter call convention: run(workdir, prompt_path, *,
@@ -328,6 +350,8 @@ def invoke_adapter(adapter: Callable[..., Dict[str, Any]],
     kwargs: Dict[str, Any] = {"model": model, "timeout": timeout_s}
     if runner_fn is not None:
         kwargs["runner"] = runner_fn
+    if effort is not None:
+        kwargs["effort"] = effort
     out = adapter(workdir, prompt_path, **kwargs)
     errs = schema.validate_adapter_output(out)
     if errs:
@@ -344,13 +368,15 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
               tool: str, trial_index: int,
               keep_workdir: bool = False,
               runner_fn: Any = None,
-              task_dir: Optional[str] = None) -> Dict[str, Any]:
+              task_dir: Optional[str] = None,
+              effort: Optional[str] = None) -> Dict[str, Any]:
     """One trial: prepare workdir, invoke adapter, GRADE, assemble trial record."""
     agent_timeout = int(spec.get("agent_timeout_s", 1800))
     workdir = prepare_workdir(fixture_dir, tool)
     try:
         adapter_out = invoke_adapter(adapter, workdir, spec, model,
-                                     agent_timeout, runner_fn=runner_fn)
+                                     agent_timeout, runner_fn=runner_fn,
+                                     effort=effort)
         # GRADE on the produced repo state. Grader sees workdir + spec (+ the
         # task dir to resolve a held-out overlay); never adapter-output.
         verdict = grade(workdir, spec, task_dir=task_dir)
@@ -438,11 +464,17 @@ def run_task(task_path: str, adapter_name: str, *,
              trials: int = 3, model: Optional[str] = None,
              adapter: Optional[Callable[..., Dict[str, Any]]] = None,
              keep_workdir: bool = False,
-             runner_fn: Any = None) -> Dict[str, Any]:
+             runner_fn: Any = None,
+             effort: Optional[str] = None) -> Dict[str, Any]:
     """Run a full task: N trials of one adapter, assemble + validate a result-row.
 
     `adapter` may be passed directly (used by tests with a mock); otherwise the
     named adapter module is loaded from benchmarks/bench/adapters/<name>.py.
+
+    `effort` (one of EFFORT_LEVELS) overrides the tier-derived effort for this
+    run and is recorded as row["effort"]. None keeps today's behaviour: the
+    adapter is called without it and the row carries no effort key. An adapter
+    that cannot apply an effort raises rather than record one it did not run.
     """
     spec = load_task(task_path)
     fixture_dir = resolve_fixture_dir(task_path, spec)
@@ -473,11 +505,21 @@ def run_task(task_path: str, adapter_name: str, *,
                 % adapter_name)
         adapter = load_adapter(adapter_name)
 
+    if effort is not None:
+        if effort not in EFFORT_LEVELS:
+            raise ValueError("invalid effort %r (allowed: %s)" % (
+                effort, ", ".join(EFFORT_LEVELS)))
+        if not adapter_supports_effort(adapter):
+            raise ValueError(
+                "adapter %r cannot apply --effort; refusing to record an effort "
+                "it did not run" % adapter_name)
+
     trial_rows: List[Dict[str, Any]] = []
     for i in range(1, max(1, trials) + 1):
         trial_rows.append(run_trial(
             adapter, spec, fixture_dir, used_model, adapter_name, i,
             keep_workdir=keep_workdir, runner_fn=runner_fn, task_dir=task_dir,
+            effort=effort,
         ))
 
     row = {
@@ -502,6 +544,8 @@ def run_task(task_path: str, adapter_name: str, *,
     _cell = os.environ.get("LOKI_BENCH_CELL")
     if _cell:
         row["cell"] = _cell
+    if effort is not None:
+        row["effort"] = effort
     errs = schema.validate_result_row(row)
     if errs:
         raise ValueError("assembled result-row invalid: %s" % "; ".join(errs))
@@ -660,6 +704,10 @@ def _main(argv: List[str]) -> int:
     pr.add_argument("--adapter", default="loki")
     pr.add_argument("--trials", type=int, default=3)
     pr.add_argument("--model", default=None)
+    pr.add_argument("--effort", default=None,
+                    help="comma list of effort levels (%s); one result row per "
+                         "level. Default: tier-derived effort, no effort field"
+                         % ",".join(EFFORT_LEVELS))
     pr.add_argument("--out", default=None)
     pr.add_argument("--keep-workdir", action="store_true")
 
@@ -672,15 +720,37 @@ def _main(argv: List[str]) -> int:
     args = p.parse_args(argv)
 
     if args.cmd == "run":
-        row = run_task(args.task, args.adapter, trials=args.trials,
-                       model=args.model, keep_workdir=args.keep_workdir)
-        payload = json.dumps(row, indent=2, sort_keys=True)
-        if args.out:
-            with open(args.out, "w") as fh:
-                fh.write(payload + "\n")
-            print("wrote %s" % args.out)
-        else:
-            print(payload)
+        if args.effort is None:
+            row = run_task(args.task, args.adapter, trials=args.trials,
+                           model=args.model, keep_workdir=args.keep_workdir)
+            payload = json.dumps(row, indent=2, sort_keys=True)
+            if args.out:
+                with open(args.out, "w") as fh:
+                    fh.write(payload + "\n")
+                print("wrote %s" % args.out)
+            else:
+                print(payload)
+            return 0
+        try:
+            levels = parse_efforts(args.effort)
+        except ValueError as exc:
+            print("ERROR: %s" % exc, file=sys.stderr)
+            return 2
+        rows = [run_task(args.task, args.adapter, trials=args.trials,
+                         model=args.model, keep_workdir=args.keep_workdir,
+                         effort=lv) for lv in levels]
+        if not args.out:
+            print(json.dumps(rows[0] if len(rows) == 1 else rows,
+                             indent=2, sort_keys=True))
+            return 0
+        # One file per row (report.py consumes one row per file); the effort
+        # level is suffixed onto the stem when more than one level was run.
+        stem, ext = os.path.splitext(args.out)
+        for lv, row in zip(levels, rows):
+            dest = args.out if len(rows) == 1 else "%s-effort-%s%s" % (stem, lv, ext)
+            with open(dest, "w") as fh:
+                fh.write(json.dumps(row, indent=2, sort_keys=True) + "\n")
+            print("wrote %s" % dest)
         return 0
 
     if args.cmd == "verify":

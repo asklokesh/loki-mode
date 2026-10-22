@@ -30,6 +30,7 @@ PYTHON="${LOKI_BENCH_PYTHON:-python3}"
 
 TRIALS="${LOKI_BENCH_TRIALS:-3}"
 MODEL=""
+EFFORT=""
 EMIT_PROOF=false
 TIMEOUT_SECS="${LOKI_BENCH_TIMEOUT:-3600}"   # hard wall-clock cap per task run
 
@@ -57,6 +58,8 @@ Subcommands:
 Options:
   --trials N      Number of trials per tool (default 3)
   --model NAME    Override the model
+  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max); one
+                  result per level. Default: tier-derived effort, no effort axis
   --emit-proof    Emit an R1 proof-of-run for the Loki trial(s)
   --out-dir DIR   (report) output dir for results.json + RESULTS.md
 
@@ -86,6 +89,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --trials)     TRIALS="$2"; shift 2 ;;
         --model)      MODEL="$2"; shift 2 ;;
+        --effort)     EFFORT="$2"; shift 2 ;;
         --emit-proof) EMIT_PROOF=true; shift ;;
         --timeout)    TIMEOUT_SECS="$2"; shift 2 ;;
         --out-dir)    OUT_DIR="$2"; shift 2 ;;
@@ -150,10 +154,10 @@ run_one() {
     # "${arr[@]}" as unbound when arr is empty). Branch on $MODEL instead.
     if [ -n "$MODEL" ]; then
         with_timeout "$TIMEOUT_SECS" "$PYTHON" "$RUNNER" run "$task_path" \
-            --adapter "$adapter" --trials "$TRIALS" --model "$MODEL" --out "$resfile"
+            --adapter "$adapter" --trials "$TRIALS" --model "$MODEL" ${EFFORT:+--effort "$EFFORT"} --out "$resfile"
     else
         with_timeout "$TIMEOUT_SECS" "$PYTHON" "$RUNNER" run "$task_path" \
-            --adapter "$adapter" --trials "$TRIALS" --out "$resfile"
+            --adapter "$adapter" --trials "$TRIALS" ${EFFORT:+--effort "$EFFORT"} --out "$resfile"
     fi
     local rc=$?
     if [ $rc -eq 124 ]; then

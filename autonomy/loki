@@ -38311,6 +38311,7 @@ cmd_bench() {
             echo "Options:"
             echo "  --trials N      Number of trials per tool (default 3)"
             echo "  --model NAME    Override the model"
+            echo "  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max); one result per level"
             echo "  --emit-proof    Emit an R1 proof-of-run for the Loki trial(s)"
             echo "  --out-dir DIR   (report) output dir for results.json + RESULTS.md"
             echo ""

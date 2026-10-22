@@ -140,7 +140,7 @@ LEAN_ARGS = (
 
 
 def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
-        lean=False):
+        lean=False, effort=None):
     """Run Claude Code on `spec` inside `workdir`; return adapter-output dict.
 
     `spec` is read as the prompt body (a path inside workdir or absolute).
@@ -149,6 +149,7 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
     `lean=True` is the OAuth-safe raw baseline: project settings only, no MCP,
     no slash commands, and the same 6 tools as ENGINE10_TOOLS (providers.ts).
     It cannot combine with `bare`; that raises ValueError.
+    `effort` adds `--effort <level>`; None leaves the CLI default untouched.
     """
     if lean and bare:
         raise ValueError("claude lean and bare are mutually exclusive")
@@ -169,6 +170,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
         "--model", model,
         "--dangerously-skip-permissions",
     ]
+    if effort:
+        cmd += ["--effort", effort]
     if bare:
         cmd.append("--bare")
     if lean:
