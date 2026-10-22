@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.21.0 (2026-10-22)
+
+### Added
+- The run report's prompt-cache hint now names why a stage missed the cache (#244, part 1). A cold stage is labelled "(prefix changed)" when its brief prefix differed between calls (the cost event now carries `prefix_sha`, a 12-character hash of the brief's first 2048 characters).
+- A new "cache ttl" hint names stages whose median gap between calls exceeds the 5-minute cache TTL and suggests `LOKI_E10_CACHE_TTL=1h`.
+
+### Tests
+- `tests/engine10/cost_unmetered.test.ts` 8 pass, 0 fail (6/2 with the change removed). Tech-lead review: engine10 cost and session tests 105 pass, 0 fail; `tests/test-cost-cli.sh` 11/0; a mutation of the prefix-changed condition turns a test red.
+
+### Not yet done
+- Choosing 5m or 1h automatically from measured gaps (#244, part 2) is in progress; the TTL still defaults to 5m unless set.
+- Effect on a live run is not yet measured.
+
 ## v11.20.0 (2026-10-22)
 
 ### Added
