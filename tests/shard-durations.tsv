@@ -525,6 +525,7 @@ skill docs match source (gate flags, providers, tiers, index routing, seam)	0
 proof md (paste-able receipt, one renderer)	0
 air-gapped read-only path (egress severed)	0
 doctor --airgap judges OLLAMA_HOST locality from the host, not a substring match	0
+doctor --airgap derives env-declared egress rows from one registry	0
 proof phases CLI/API parity (one reader, two surfaces)	4
 web-app has no orphaned modules (reachable from main.tsx)	0
 the moat runner enforces every ratchet rule	13

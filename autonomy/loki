@@ -15212,6 +15212,33 @@ EOF
 #
 # Exit 0 when no REQUIRED egress remains (air-gap achievable in this config),
 # 1 otherwise. Deterministic: reads configuration, performs NO network calls.
+# Audit output names only scheme://host[:port] of an endpoint variable: userinfo, path, query and fragment
+# can carry a credential (a webhook token, user:password), so they never reach text or --json output.
+# A value outside RFC 3986 (a backslash splits the host between parsers) or without a host is not shown.
+_LOKI_AIRGAP_ORIGIN_PY='import re
+from urllib.parse import urlsplit
+def airgap_origin(v):
+    v = v.strip()
+    unshown = "(unparseable value, not shown)"
+    if re.search(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&\x27()*+,;=%]", v):
+        return unshown
+    try:
+        p = urlsplit(v if "://" in v else "//" + v)
+        h = p.hostname
+        port = p.port
+    except ValueError:
+        return unshown
+    if not h:
+        return unshown
+    host = "[%s]" % h if ":" in h else h
+    return (p.scheme + "://" if "://" in v else "") + host + (":%d" % port if port is not None else "")'
+
+_loki_airgap_origin() {
+    python3 -c "$_LOKI_AIRGAP_ORIGIN_PY
+import sys
+print(airgap_origin(sys.argv[1]))" "$1" 2>/dev/null || echo "(unparseable value, not shown)"
+}
+
 _loki_airgap_audit() {
     local as_json="${1:-false}"
 
@@ -15232,15 +15259,15 @@ _loki_airgap_audit() {
     local model_host="" model_required="yes" model_note=""
     case "$provider" in
         claude)
-            model_host="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
+            model_host="$(_loki_airgap_origin "${ANTHROPIC_BASE_URL:-https://api.anthropic.com}")"
             model_note="Claude Code inference. An in-network gateway (ANTHROPIC_BASE_URL) keeps it inside your network but is still counted as required egress here; only a local-weights provider clears it."
             ;;
         codex)
-            model_host="${OPENAI_BASE_URL:-https://api.openai.com}"
+            model_host="$(_loki_airgap_origin "${OPENAI_BASE_URL:-https://api.openai.com}")"
             model_note="Codex inference. An in-network gateway (OPENAI_BASE_URL) is still counted as required egress here; only a local-weights provider clears it."
             ;;
         opencode|cline|aider)
-            model_host="${OPENAI_BASE_URL:-${OPENROUTER_API_KEY:+https://openrouter.ai}}"
+            model_host="${OPENAI_BASE_URL:-${OPENROUTER_API_KEY:+https://openrouter.ai}}"; [ -z "$model_host" ] || model_host="$(_loki_airgap_origin "$model_host")"
             # Local ONLY on positive evidence: a model id naming a local runtime.
             # An unset endpoint is not that evidence -- the opencode catalog
             # default is an openrouter/ model, so inference still leaves the host.
@@ -15279,7 +15306,7 @@ _loki_airgap_audit() {
                     model_required="no"
                     model_note="Local model runtime named by $model_var=$model_id. Judged from the model id (and OLLAMA_HOST when set): the endpoint set in the opencode, cline or aider config is not read, so confirm it is on this host or inside your network."
                 else
-                    model_host="$OLLAMA_HOST"
+                    model_host="$(_loki_airgap_origin "$OLLAMA_HOST")"
                     model_note="OLLAMA_HOST points at a remote host; inference leaves it. Unset OLLAMA_HOST or point it at loopback for zero-egress inference."
                 fi
             else
@@ -15296,7 +15323,7 @@ _loki_airgap_audit() {
     # LOKI_ALLOW_CLAUDE_SIDECALLS=1 lets engine side-calls prompt the claude
     # CLI under another provider: inference to Anthropic whatever the model.
     # Same policy helper the side-call sites use (providers/loader.sh).
-    local sidecall_required="no" sidecall_host="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
+    local sidecall_required="no" sidecall_host="$(_loki_airgap_origin "${ANTHROPIC_BASE_URL:-https://api.anthropic.com}")"
     type loki_claude_sidecall_allowed >/dev/null 2>&1 \
         || . "$_LOKI_SCRIPT_DIR/../providers/loader.sh" 2>/dev/null
     if [ "$provider" != "claude" ] && command -v claude >/dev/null 2>&1 \
@@ -15314,7 +15341,7 @@ _loki_airgap_audit() {
     if declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled; then
         tel_state="on"
     fi
-    local tel_host="${LOKI_POSTHOG_HOST:-https://us.i.posthog.com}"
+    local tel_host; tel_host="$(_loki_airgap_origin "${LOKI_POSTHOG_HOST:-https://us.i.posthog.com}")"
     local upd_state="on"
     [ "${LOKI_NO_UPDATE_CHECK:-0}" = "1" ] && upd_state="off"
 
@@ -15326,11 +15353,45 @@ _loki_airgap_audit() {
     local mcp_remote_json
     mcp_remote_json=$(loki_mcp_remote_servers_json 2>/dev/null) || mcp_remote_json="[]"
     [ -n "$mcp_remote_json" ] || mcp_remote_json="[]"
+    # Env-declared egress (LOKI_*_URL, _HOST, _ENDPOINT) comes from the one
+    # registry the reader scan guard keeps complete; no second list lives here.
+    # The telemetry rows are shown by the dedicated telemetry row above.
+    # LOKI_EGRESS_REGISTRY can only ADD rows (a second file for a downstream distribution); the shipped
+    # registry is always read, so no environment value can empty or shrink the audit.
+    local registry="$_LOKI_SCRIPT_DIR/../loki-ts/data/egress-registry.json"
+    local declared
+    declared=$(_AG_REG="$registry" _AG_REG_EXTRA="${LOKI_EGRESS_REGISTRY:-}" python3 -c "$_LOKI_AIRGAP_ORIGIN_PY
+"'
+import json, os
+decl = list(json.load(open(os.environ["_AG_REG"]))["declared"])
+if os.environ.get("_AG_REG_EXTRA"):
+    seen = {d["name"] for d in decl}
+    decl += [d for d in json.load(open(os.environ["_AG_REG_EXTRA"]))["declared"] if d["name"] not in seen]
+rows = []
+for d in decl:
+    if d["name"] == "telemetry":
+        continue
+    val = os.environ.get(d["var"], "").strip()
+    rows.append({
+        "name": d["name"],
+        "variable": d["var"],
+        "host": airgap_origin(val) if val else d.get("default_host"),
+        "required": False,
+        "enabled": bool(val),
+        "disable": d["disable"],
+        "note": d["note"],
+    })
+print(json.dumps(rows))
+' 2>/dev/null) || declared=""
+    if [ -z "$declared" ]; then
+        echo "Error: egress registry unreadable: $registry" >&2
+        return 1
+    fi
 
     if [ "$as_json" = "true" ]; then
         _AG_PROV="$provider" _AG_PSRC="$provider_src" _AG_HOST="$model_host" _AG_REQ="$model_required" \
         _AG_NOTE="$model_note" _AG_TEL="$tel_state" _AG_TELHOST="$tel_host" _AG_UPD="$upd_state" \
-        _AG_SC="$sidecall_required" _AG_SCHOST="$sidecall_host" \
+        _AG_SC="$sidecall_required" _AG_SCHOST="$sidecall_host" _AG_DECL="$declared" \
         _AG_MCP="$mcp_remote_json" \
         python3 -c '
 import json, os
@@ -15363,6 +15424,7 @@ for srv in json.loads(os.environ["_AG_MCP"]):
         "disable": "unset " + srv["env"],
         "note": "remote MCP server the runner connects to; loki doctor also asks it for tools/list unless LOKI_AIRGAP=true",
     })
+egress.extend(json.loads(os.environ["_AG_DECL"]))
 if os.environ["_AG_SC"] == "yes":
     egress.append({
         "name": "claude_sidecalls",
@@ -15419,6 +15481,12 @@ for s in json.load(sys.stdin):
     print("            disable: unset %s (loki doctor also asks it for tools/list unless LOKI_AIRGAP=true)" % s["env"])
 '
     fi
+    printf '%s' "$declared" | python3 -c '
+import json, sys
+for e in json.load(sys.stdin):
+    print("  optional  %-22s [%s]  -> %s" % (e["name"], "set" if e["enabled"] else "unset", e["host"] or "(no default host)"))
+    print("            disable: " + e["disable"])
+'
     echo ""
     echo -e "${BOLD}Not audited here${NC} (depends on the project; see docs/air-gapped.md)"
     echo "  package installs  app runner (npm, pip, docker), dashboard venv (PyPI), quality-gate"

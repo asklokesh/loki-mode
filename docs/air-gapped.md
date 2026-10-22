@@ -56,7 +56,10 @@ a default install it reports exactly one REQUIRED point:
 REQUIRED  model inference -> https://api.anthropic.com
 optional  telemetry           [on]  -> https://us.i.posthog.com
 optional  update check        [on]  disable: export LOKI_NO_UPDATE_CHECK=1
+optional  mirofish_market_validation [unset]  disable: unset LOKI_MIROFISH_URL, or pass --no-mirofish to loki start
 ```
+
+Every host a `LOKI_*_URL`, `LOKI_*_HOST` or `LOKI_*_ENDPOINT` variable can point the engine at (Mirofish, webhooks, Slack, Jira, Linear, a custom model base URL, a remote cluster, the control plane client, the queue, audit syslog, OTEL, hosted proof publish, the metadata store) is listed as an optional row with how to disable it. The rows come from `loki-ts/data/egress-registry.json`, which a test keeps complete against the code that reads each variable.
 
 It judges the provider `loki start` would use (the project's saved
 `loki provider set` choice, else `LOKI_PROVIDER`), and runs on both the default
