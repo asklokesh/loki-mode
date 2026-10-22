@@ -125,6 +125,59 @@ case "$airgap_out" in
         bad "the egress inventory does not identify model inference" ;;
 esac
 
+# 4b. Remote MCP servers (#315): LOKI_MCP_<NAME>_URL is outbound egress. The audit must list
+#     it from the same parser the runner uses, never claim a clean air-gap past it, and say
+#     how to turn it off. A URL the parser rejects (plain http, not loopback) is not egress.
+mcp_out="$(LOKI_MCP_FOO_URL=https://mcp.example.com/path LOKI_MCP_BAD_URL=http://plain.example.com/x blocked "$LOKI" doctor --airgap 2>&1 || true)"
+case "$mcp_out" in
+    *"remote MCP server"*"foo -> mcp.example.com"*)
+        ok "doctor --airgap lists the LOKI_MCP_FOO_URL server and its host" ;;
+    *)
+        bad "doctor --airgap does not list LOKI_MCP_FOO_URL egress" ;;
+esac
+case "$mcp_out" in
+    *"unset LOKI_MCP_FOO_URL"*)
+        ok "the MCP row names how to disable it" ;;
+    *)
+        bad "the MCP row has no disable instruction" ;;
+esac
+case "$mcp_out" in
+    *plain.example.com*)
+        bad "a URL the runner rejects (http, non-loopback) was listed as egress" ;;
+    *)
+        ok "a URL the runner parser rejects is not listed" ;;
+esac
+mcp_json="$(LOKI_MCP_FOO_URL=https://mcp.example.com/path blocked "$LOKI" doctor --airgap --json 2>/dev/null || true)"
+case "$mcp_json" in
+    *'"mcp_remote:foo"'*)
+        ok "doctor --airgap --json carries the mcp_remote:foo egress entry" ;;
+    *)
+        bad "doctor --airgap --json omits the remote MCP egress entry" ;;
+esac
+# A userinfo password in the URL is a secret: the audit shows the host only.
+mcp_ui="$(LOKI_MCP_USERINFO_URL=https://svc:SECRETPW@user.example.com/x blocked "$LOKI" doctor --airgap 2>&1 || true)"
+mcp_ui_json="$(LOKI_MCP_USERINFO_URL=https://svc:SECRETPW@user.example.com/x blocked "$LOKI" doctor --airgap --json 2>&1 || true)"
+case "$mcp_ui" in
+    *"userinfo -> user.example.com"*) ok "the userinfo URL is listed by host" ;;
+    *) bad "the userinfo URL was not listed by host" ;;
+esac
+case "$mcp_ui$mcp_ui_json" in
+    *SECRETPW*|*svc:*) bad "the audit leaked URL userinfo (user:password) into its output" ;;
+    *) ok "the audit output carries no URL userinfo" ;;
+esac
+# A backslash splits the host between parsers: the audit must not list evil.example or 127.0.0.1 for it.
+mcp_bs="$(LOKI_MCP_BSLASH_URL='http://evil.example\@127.0.0.1/mcp' blocked "$LOKI" doctor --airgap 2>&1 || true)"
+case "$mcp_bs" in
+    *evil.example*|*bslash*) bad "the audit listed a backslash URL the runner refuses" ;;
+    *) ok "a backslash URL is refused by the runner and not listed" ;;
+esac
+case "$(blocked "$LOKI" doctor --airgap 2>&1 || true)" in
+    *"remote MCP server"*)
+        bad "the MCP row appeared with no LOKI_MCP_*_URL set" ;;
+    *)
+        ok "no MCP row when none is declared" ;;
+esac
+
 # 5. The doc must state the limit rather than only the win.
 doc="$REPO_ROOT/docs/air-gapped.md"
 if [ -f "$doc" ] && grep -q "model endpoint is required" "$doc"; then
