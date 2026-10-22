@@ -46,7 +46,6 @@ Todo:
 | `--cost lean` / `LOKI_COST_PROFILE` | loki-lean arm CI upper bound <= 0.5 and acceptance >= floor |
 | `LOKI_IMPLEMENT_HAIKU_FIRST` | same arm plus escalation rate recorded |
 | `LOKI_E10_TRIM` | implement cache reads down >= 25% on medium, completion not lower |
-| `LOKI_JUDGE_BATCH` (API-key runs only) | judge spend down >= 40%, p95 judge latency <= 90s |
 | `LOKI_E10_ATTEMPTS=2` | medium completion >= 18/21, cost not red |
 
 Todo:

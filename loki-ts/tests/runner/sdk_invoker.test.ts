@@ -210,82 +210,32 @@ describe("COST-WALL-c cliLedger", () => {
   });
 });
 
-describe("TEN-COST-24 LOKI_JUDGE_BATCH opt-in batch path", () => {
+describe("judge calls are always synchronous (LOKI_JUDGE_BATCH removed)", () => {
   const savedBatch = process.env["LOKI_JUDGE_BATCH"];
-  const savedT = process.env["LOKI_JUDGE_BATCH_TIMEOUT_MS"];
-  const savedP = process.env["LOKI_JUDGE_BATCH_POLL_MS"];
   afterEach(() => {
-    for (const [k, v] of [["LOKI_JUDGE_BATCH", savedBatch], ["LOKI_JUDGE_BATCH_TIMEOUT_MS", savedT], ["LOKI_JUDGE_BATCH_POLL_MS", savedP]] as const) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
+    if (savedBatch === undefined) delete process.env["LOKI_JUDGE_BATCH"];
+    else process.env["LOKI_JUDGE_BATCH"] = savedBatch;
   });
-  function stub(status: string) {
-    const calls = { sync: 0, create: 0, cancel: 0 };
-    const okMsg = { content: [{ type: "text", text: '{"verdict":"done"}' }], usage: {} };
-    const client = {
+  test("LOKI_JUDGE_BATCH=1 with an API key never touches the batches API", async () => {
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    process.env["LOKI_JUDGE_BATCH"] = "1";
+    const calls = { sync: 0, batch: 0 };
+    const trap = () => {
+      calls.batch++;
+      throw new Error("batches API must not be used in-loop");
+    };
+    __setSdkClientForTests({
       messages: {
         create: async () => {
           calls.sync++;
-          return okMsg;
+          return { content: [{ type: "text", text: '{"verdict":"done"}' }], usage: {} };
         },
-        batches: {
-          create: async () => {
-            calls.create++;
-            return { id: "b1" };
-          },
-          retrieve: async () => ({ processing_status: status }),
-          cancel: async () => {
-            calls.cancel++;
-            return {};
-          },
-          results: async () => ({
-            async *[Symbol.asyncIterator]() {
-              yield { custom_id: "judge-1", result: { type: "succeeded", message: { ...okMsg, content: [{ type: "text", text: '{"verdict":"incomplete"}' }] } } };
-            },
-          }),
-        },
+        batches: { create: trap, retrieve: trap, results: trap, cancel: trap },
       },
-    };
-    return { client, calls };
-  }
-  const run = () => judgeJson({ prompt: "p", schema: SCHEMA as unknown as Record<string, unknown>, model: "claude-haiku-4-5" });
-
-  test("batch success: result comes from the batch, no sync call", async () => {
-    process.env["ANTHROPIC_API_KEY"] = "k";
-    process.env["LOKI_JUDGE_BATCH"] = "1";
-    process.env["LOKI_JUDGE_BATCH_POLL_MS"] = "5";
-    const { client, calls } = stub("ended");
-    __setSdkClientForTests(client);
-    expect(await run()).toEqual({ verdict: "incomplete" });
-    expect(calls.create).toBe(1);
-    expect(calls.sync).toBe(0);
-  });
-
-  test("batch timeout: cancels and falls back to the sync path", async () => {
-    process.env["ANTHROPIC_API_KEY"] = "k";
-    process.env["LOKI_JUDGE_BATCH"] = "1";
-    process.env["LOKI_JUDGE_BATCH_POLL_MS"] = "5";
-    process.env["LOKI_JUDGE_BATCH_TIMEOUT_MS"] = "30";
-    const { client, calls } = stub("in_progress");
-    __setSdkClientForTests(client);
-    expect(await run()).toEqual({ verdict: "done" });
-    expect(calls.cancel).toBe(1);
+    });
+    const out = await judgeJson({ prompt: "p", schema: SCHEMA as unknown as Record<string, unknown>, model: "claude-haiku-4-5" });
+    expect(out).toEqual({ verdict: "done" });
     expect(calls.sync).toBe(1);
-  });
-
-  test("no API key (or flag off): batch never used", async () => {
-    process.env["LOKI_JUDGE_BATCH"] = "1";
-    delete process.env["ANTHROPIC_API_KEY"];
-    const a = stub("ended");
-    __setSdkClientForTests(a.client);
-    expect(await run()).toEqual({ verdict: "done" });
-    expect(a.calls.create).toBe(0);
-    process.env["ANTHROPIC_API_KEY"] = "k";
-    delete process.env["LOKI_JUDGE_BATCH"];
-    const b = stub("ended");
-    __setSdkClientForTests(b.client);
-    expect(await run()).toEqual({ verdict: "done" });
-    expect(b.calls.create).toBe(0);
+    expect(calls.batch).toBe(0);
   });
 });
