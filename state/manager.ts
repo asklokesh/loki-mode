@@ -1744,11 +1744,30 @@ export class StateManager extends EventEmitter {
   }
 }
 
-// Singleton instance
-let defaultManager: StateManager | null = null;
+// Managers are cached per .loki directory, keyed by that directory's (st_dev, st_ino) rather than its path
+// string, so two spellings of one directory (symlink, or case on a case-insensitive volume) share one manager
+// and a second root never receives the first root's manager. The cache holds at most LOKI_STATE_MANAGER_MAX
+// (default 8) managers; the least recently used one past the cap is stop()ped and dropped, which closes its
+// watcher. A caller still holding an evicted manager holds a stopped one; asking again returns a fresh one.
+// The Python manager (state/manager.py) is to follow the same rule. Options other than lokiDir apply only to
+// the call that creates the manager for a root.
+const DEFAULT_MAX_STATE_MANAGERS = 8;
+const managers = new Map<string, StateManager>();
+
+function maxStateManagers(): number {
+  const n = Number.parseInt(process.env["LOKI_STATE_MANAGER_MAX"] ?? "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_STATE_MANAGERS;
+}
+
+function stateRootKey(lokiDir: string): string {
+  const abs = path.resolve(lokiDir);
+  fs.mkdirSync(abs, { recursive: true });
+  const st = fs.statSync(abs);
+  return `${st.dev}:${st.ino}`;
+}
 
 /**
- * Get the default state manager instance
+ * Get the state manager for a .loki directory (default ".loki" under the current directory).
  */
 export function getStateManager(options?: {
   lokiDir?: string;
@@ -1757,18 +1776,29 @@ export function getStateManager(options?: {
   enableVersioning?: boolean;
   versionRetention?: number;
 }): StateManager {
-  if (defaultManager === null) {
-    defaultManager = new StateManager(options);
+  const key = stateRootKey(options?.lokiDir || ".loki");
+  const existing = managers.get(key);
+  if (existing) {
+    managers.delete(key); // re-insert to mark most recently used
+    managers.set(key, existing);
+    return existing;
   }
-  return defaultManager;
+  const created = new StateManager(options);
+  managers.set(key, created);
+  const cap = maxStateManagers();
+  while (managers.size > cap) {
+    const oldest = managers.keys().next().value as string;
+    const evicted = managers.get(oldest);
+    managers.delete(oldest);
+    evicted?.stop();
+  }
+  return created;
 }
 
 /**
- * Reset the default state manager (for testing)
+ * Reset every cached state manager (for testing)
  */
 export function resetStateManager(): void {
-  if (defaultManager) {
-    defaultManager.stop();
-    defaultManager = null;
-  }
+  for (const m of managers.values()) m.stop();
+  managers.clear();
 }
