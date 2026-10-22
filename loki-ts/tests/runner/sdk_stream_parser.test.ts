@@ -637,4 +637,58 @@ describe("consumeSdkStream transcript fixtures", () => {
     expect(r.sawResult).toBe(true);
     expect(r.truncated).toBe(false);
   });
+
+  describe("refusal, fallback and api_retry frames (SDK sdk.d.ts SDKModelRefusal*/SDKAPIRetryMessage)", () => {
+    const ledger = () => readFileSync(eventsPath(), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const asst = (uuid: string, text: string): StreamMsg => ({ type: "assistant", uuid, message: { content: [{ type: "text", text }] } });
+
+    test("model_refusal_fallback: refused=true, one ledger event, retracted text evicted", async () => {
+      const r = await consumeSdkStream([
+        { type: "system", subtype: "init", model: "opus", session_id: "s1" },
+        asst("u-refused", "REFUSED PARTIAL"),
+        { type: "system", subtype: "model_refusal_fallback", api_refusal_category: "cyber", original_model: "opus", fallback_model: "sonnet", retracted_message_uuids: ["u-refused"], session_id: "s1" },
+        asst("u-ok", "kept answer"),
+        { type: "result", subtype: "success", is_error: false, session_id: "s1", total_cost_usd: 0.01 },
+      ], ctx(), clock);
+      expect(r.refused).toBe(true);
+      expect(r.refusedNoFallback).toBe(false);
+      expect(r.capturedText).not.toContain("REFUSED PARTIAL");
+      expect(r.capturedText).toContain("kept answer");
+      const ev = ledger().filter((e) => e.type === "model_refusal_fallback");
+      expect(ev).toHaveLength(1);
+      expect(ev[0].payload).toMatchObject({ category: "cyber", from_model: "opus", to_model: "sonnet" });
+    });
+
+    test("assistant supersedes list evicts earlier text", async () => {
+      const r = await consumeSdkStream([
+        asst("a", "OLD LEG"),
+        { ...asst("b", "NEW LEG"), supersedes: ["a"] },
+      ], ctx(), clock);
+      expect(r.capturedText).not.toContain("OLD LEG");
+      expect(r.capturedText).toContain("NEW LEG");
+    });
+
+    test("model_refusal_no_fallback: refusedNoFallback=true and one ledger event", async () => {
+      const r = await consumeSdkStream([
+        { type: "system", subtype: "model_refusal_no_fallback", api_refusal_category: "bio", original_model: "opus", session_id: "s2" },
+        { type: "result", subtype: "success", is_error: true, session_id: "s2" },
+      ], ctx(), clock);
+      expect(r.refused).toBe(true);
+      expect(r.refusedNoFallback).toBe(true);
+      const ev = ledger().filter((e) => e.type === "model_refusal_no_fallback");
+      expect(ev).toHaveLength(1);
+      expect(ev[0].payload).toMatchObject({ category: "bio", from_model: "opus" });
+    });
+
+    test("api_retry: one retry event with attempt, delay and error class", async () => {
+      const r = await consumeSdkStream([
+        { type: "system", subtype: "api_retry", attempt: 2, max_retries: 5, retry_delay_ms: 1500, error_status: 529, error: "overloaded", session_id: "s3" },
+        { type: "result", subtype: "success", is_error: false, session_id: "s3" },
+      ], ctx(), clock);
+      expect(r.refused).toBe(false);
+      const ev = ledger().filter((e) => e.type === "api_retry");
+      expect(ev).toHaveLength(1);
+      expect(ev[0].payload).toMatchObject({ attempt: 2, max_retries: 5, retry_delay_ms: 1500, error_status: 529, error: "overloaded" });
+    });
+  });
 });

@@ -1,7 +1,7 @@
 // MW-2 / CH-03: warm chain (plan, implement, fix 1..n) over one SDK session. plan -> implement is default ON (LOKI_E10_FIX_RESUME=0 opts out); fix rounds stay OFF, LOKI_E10_FIX_RESUME=1 opts in.
 // Lives outside engine10/ so the core line budget is untouched. Nothing here feeds a verdict: the seal path
 // reads only the engine-recorded mode string and cost-file token counts, never a transcript (see tests/engine10/fix_resume.test.ts).
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { classifyExitCause } from "../engine10/session.ts";
@@ -41,6 +41,18 @@ export function readSessionId(repoDir: string, iterationId: string): string | nu
     const v = (JSON.parse(readFileSync(join(repoDir, ".loki", `e10-session-${iterationId}.json`), "utf8")) as { session_id?: unknown }).session_id;
     return typeof v === "string" && v ? v : null;
   } catch { return null; }
+}
+
+/** Counterpart of readSessionId: record the session id a finished iteration can be resumed from. A truncated turn is
+ *  still resumable (partial work lives in the session). A model_refusal_no_fallback turn is not: the refusal sits in
+ *  that session's history, so any stale id is removed and the next iteration starts fresh. Best-effort. */
+export function writeSessionId(repoDir: string, iterationId: string, res: { sessionId?: string; refusedNoFallback?: boolean }): void {
+  const file = join(repoDir, ".loki", `e10-session-${iterationId}.json`);
+  try {
+    if (res.refusedNoFallback || !res.sessionId) { if (res.refusedNoFallback) rmSync(file, { force: true }); return; }
+    mkdirSync(join(repoDir, ".loki"), { recursive: true });
+    writeFileSync(file, JSON.stringify({ session_id: res.sessionId }));
+  } catch { /* best-effort */ }
 }
 
 /** MW-2: the new user turn of a resumed round; the session already holds the task, plan and earlier work. */

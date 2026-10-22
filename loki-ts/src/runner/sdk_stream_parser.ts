@@ -70,6 +70,19 @@ export interface StreamMsg {
   // E-59: system/init reports the provider's actual model ({"type":"system","subtype":"init",...,"model":"opus"});
   // a result message may also carry it. Never the caller's "sonnet" guess -- writeResultCost records it verbatim.
   model?: string;
+  // Refusal / retry system frames (SDKModelRefusalFallbackMessage, SDKModelRefusalNoFallbackMessage, SDKAPIRetryMessage)
+  // and the assistant-frame supersede list (SDKAssistantMessage.supersedes).
+  uuid?: string;
+  supersedes?: string[];
+  api_refusal_category?: string | null;
+  original_model?: string;
+  fallback_model?: string;
+  scope?: string;
+  retracted_message_uuids?: string[];
+  attempt?: number;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  error_status?: number | null;
 }
 
 export interface ParserContext {
@@ -131,6 +144,12 @@ export interface StreamResult {
   // True iff the stream ended abnormally (source threw mid-iteration, or no terminal result arrived). The
   // result is then partial: whatever was consumed is kept, exitCode stays 1.
   truncated: boolean;
+  // True iff the stream carried a model_refusal_fallback or model_refusal_no_fallback frame. A refused turn is
+  // not a crash and not a REJECT: council and reviewer consumers read this as INCONCLUSIVE.
+  refused: boolean;
+  // True iff a model_refusal_no_fallback frame arrived: nothing replaced the refused turn, so its session must
+  // not be resumed (the refusal sits in that session's history).
+  refusedNoFallback: boolean;
 }
 
 export async function consumeSdkStream(
@@ -161,11 +180,28 @@ export async function consumeSdkStream(
   let streamedText = false; // partial-message deltas already printed this message
   let exitCode = 1; // fail-closed: no result message -> failure (aborted/crashed)
   let sessionId: string | undefined;
+  let seenSessionId: string | undefined;
   let sessionModel: string | undefined; // E-59: from system/init, overridden by a result message's own model if present
   let totalCostUsd: number | null | undefined;
   let captured = ""; // load-bearing capture (final assistant text + result.result)
   // Blocks are newline-separated so a line-anchored marker never swallows the next block's prose.
-  const capture = (t: string) => { captured += (captured && !captured.endsWith("\n") ? "\n" : "") + t; };
+  // Assistant text is remembered per frame uuid so a refusal-fallback retraction can evict exactly that text.
+  const textByUuid = new Map<string, string[]>();
+  const capture = (t: string, uuid?: string) => {
+    captured += (captured && !captured.endsWith("\n") ? "\n" : "") + t;
+    if (uuid) textByUuid.set(uuid, [...(textByUuid.get(uuid) ?? []), t]);
+  };
+  const evict = (uuids: string[] | undefined) => {
+    for (const u of uuids ?? []) {
+      for (const t of textByUuid.get(u) ?? []) {
+        const i = captured.lastIndexOf(t);
+        if (i >= 0) captured = captured.slice(0, i) + captured.slice(i + t.length);
+      }
+      textByUuid.delete(u);
+    }
+  };
+  let refused = false;
+  let refusedNoFallback = false;
   let rateLimit: { resetSeconds?: number } | undefined;
   let sawResult = false;
   // E-98e: per-message usage, keyed by message.id so a repeated streamed
@@ -192,6 +228,7 @@ export async function consumeSdkStream(
   const guard = { truncated: false };
   for await (const data of asAsync(messages, guard)) {
     const msgType = data.type ?? "";
+    if (typeof data.session_id === "string" && data.session_id) seenSessionId = data.session_id; // a truncated turn has no result frame but its session is still resumable
 
     // --- stream_event: live incremental delta text (--include-partial-messages)
     if (msgType === "stream_event") {
@@ -211,6 +248,7 @@ export async function consumeSdkStream(
     // --- assistant: rate-limit error, text blocks + tool_use blocks
     if (msgType === "assistant") {
       // SDKAssistantMessage.error can be 'rate_limit' | 'overloaded' | ...
+      evict(data.supersedes); // refusal-fallback: this frame replaces earlier ones
       const err = data.error;
       if (err === "rate_limit" || err === "overloaded") {
         rateLimit = rateLimit ?? {};
@@ -243,7 +281,7 @@ export async function consumeSdkStream(
           const text = (item["text"] as string) ?? "";
           // Capture EVERY final text block (independent of the live-print dedup):
           // the streamedText guard only prevents double-PRINTING, not capture.
-          if (text) capture(text);
+          if (text) capture(text, data.uuid);
           if (text && !streamedText) write(text);
         } else if (itype === "tool_use") {
           const tool = (item["name"] as string) ?? "unknown";
@@ -329,6 +367,32 @@ export async function consumeSdkStream(
       continue;
     }
 
+    // --- refusal and retry frames -> one run-ledger event each (always written; not gated by hookEventsEnabled).
+    if (msgType === "system" && (data.subtype === "model_refusal_fallback" || data.subtype === "model_refusal_no_fallback")) {
+      refused = true;
+      const noFallback = data.subtype === "model_refusal_no_fallback";
+      if (noFallback) refusedNoFallback = true;
+      else evict(data.retracted_message_uuids);
+      appendRunEvent(eventsJsonl, noFallback ? "model_refusal_no_fallback" : "model_refusal_fallback", {
+        category: data.api_refusal_category ?? null,
+        from_model: data.original_model ?? null,
+        ...(noFallback ? {} : { to_model: data.fallback_model ?? null, scope: data.scope ?? "session" }),
+        session_id: data.session_id ?? null,
+      }, clock);
+      continue;
+    }
+    if (msgType === "system" && data.subtype === "api_retry") {
+      appendRunEvent(eventsJsonl, "api_retry", {
+        attempt: data.attempt ?? null,
+        max_retries: data.max_retries ?? null,
+        retry_delay_ms: data.retry_delay_ms ?? null,
+        error_status: data.error_status ?? null,
+        error: data.error ?? null,
+        session_id: data.session_id ?? null,
+      }, clock);
+      continue;
+    }
+
     // --- rate_limit event (SDKRateLimitEvent). The SDK emits one on EVERY call
     // as a status heartbeat with rate_limit_info.status === "allowed" -- that is
     // NOT a rate limit and must be IGNORED (verified live: status:"allowed",
@@ -388,7 +452,7 @@ export async function consumeSdkStream(
     }
   }
 
-  return { exitCode, sessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult };
+  return { exitCode, sessionId: sessionId ?? seenSessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult, refused, refusedNoFallback };
 }
 
 // --- helpers (translations of the Python functions) -----------------------
@@ -469,6 +533,16 @@ function toolDesc(tool: string, input: Record<string, unknown>): string {
       return s("pattern");
     default:
       return "";
+  }
+}
+
+// Run-ledger event on the same .loki/events.jsonl stream the hook events use. Best-effort.
+function appendRunEvent(eventsJsonl: string, type: string, payload: unknown, clock?: () => string): void {
+  try {
+    mkdirSync(dirname(eventsJsonl), { recursive: true });
+    appendFileSync(eventsJsonl, `${JSON.stringify({ type, source: "claude_cli", timestamp: nowIso(clock), payload })}\n`);
+  } catch {
+    // best-effort
   }
 }
 

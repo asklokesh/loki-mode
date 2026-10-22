@@ -44,6 +44,7 @@ import {
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
+import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
 import { probeAdvisor } from "./router/advisor_probe.ts";
 import { routerEnabled } from "./router/flag.ts";
@@ -904,12 +905,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         });
         captured = res.capturedText;
         // MW-2: engine10 reads this id to resume the session later. Best-effort; a miss only means a fresh fix session.
-        if (res.sessionId && process.env["LOKI_E10_STAGE"]) {
-          try {
-            mkdirSync(join(call.cwd, ".loki"), { recursive: true });
-            writeFileSync(join(call.cwd, ".loki", `e10-session-${process.env["LOKI_ITERATION"] ?? "0"}.json`), JSON.stringify({ session_id: res.sessionId }));
-          } catch { /* best-effort */ }
-        }
+        if (process.env["LOKI_E10_STAGE"]) writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", res);
         // Fail-closed: a stream that never produced a terminal result is a
         // failed iteration, never counted as success.
         exitCode = res.sawResult ? res.exitCode : 1;
