@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.49.0 (2026-10-22)
+
+### Security
+- Web access and secret-file reads are now blocked by default on every Claude route.
+  - `WebFetch` and `WebSearch` are denied.
+  - `Read` is denied anywhere on disk for every `.env*` file (including `.envrc`, `.env.local`, `.env.prod`, `.env.keys` and `.env.vault`), `*.pem`, `.aws/**` and `.ssh/**`.
+  - Templates such as `.env.example` are blocked too: a deny rule beats any allow rule, so they cannot be carved out of the glob safely.
+  - These are `Read` rules only. They do not stop a shell command such as `cat .env` under `--dangerously-skip-permissions`, so they are not complete secret-file protection.
+- Two ways to re-enable web access:
+  - Set `LOKI_WEB_ALLOW_DOMAINS=<comma list>` to allow `WebFetch` for those hostnames only. This is enforced with `LOKI_PERMISSION_POLICY=compiled`. A punycode (`xn--`) domain is refused.
+  - Set `LOKI_WEB_POLICY=off` to turn off the default web and secret-file rules entirely.
+- If the policy cannot be compiled (an invalid domain list, or Node missing), Loki warns and runs in `plan` mode instead of skipping the rules.
+
 ## v11.48.0 (2026-10-22)
 
 ### Added
