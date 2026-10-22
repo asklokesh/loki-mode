@@ -353,6 +353,92 @@ else
 fi
 rm -rf "$bd" "$bu"
 
+# ---------- Case F: secret written through a predictable tmp path (FC-SECRET-WRITTEN-THROUGH-PREDICTABLE-TMP) ----------
+# Pre-plant things where the old writers put their tmp file (<cfg>.tmp.<pid>) and
+# make the target a directory. Neither route may follow a planted link, write the
+# token anywhere but the bundle, or leave a tmp file behind.
+export LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp" LOKI_MCP_ACME_CO_AUTH="$TOKEN_D"
+tmp_case() {
+    # $1 = kind: symlink | file | dir
+    local kind="$1" bd bu rb ru side leak
+    bd=$(mktemp -d -t loki-parity-bash-f-XXXX); bu=$(mktemp -d -t loki-parity-bun-f-XXXX)
+    for side in "$bd" "$bu"; do
+        mkdir -p "$side/.loki"
+        printf 'VICTIM' >"$side/victim"; chmod 644 "$side/victim"
+        [ "$kind" = dir ] && mkdir "$side/.loki/mcp-config.json"
+    done
+    HOME="$TMP_HOME" PLANT="$kind" bash -c '
+        . "$1"; cfg="$2/.loki/mcp-config.json"
+        case "$PLANT" in
+            symlink) ln -s "$2/victim" "$cfg.tmp.$$" ;;
+            file) printf STALE >"$cfg.tmp.$$"; chmod 644 "$cfg.tmp.$$" ;;
+        esac
+        TARGET_DIR="$2" loki_mcp_config_path >/dev/null 2>&1' _ "$BASH_HELPER" "$bd"
+    rb=$?
+    HOME="$TMP_HOME" PLANT="$kind" bun run --cwd "$LOKI_TS_DIR" - <<BUNEOF >/dev/null 2>&1
+import { mcpConfigPath } from "./src/providers/mcp_config.ts";
+import { symlinkSync, writeFileSync, chmodSync } from "node:fs";
+const cfg = "$bu/.loki/mcp-config.json";
+if (process.env.PLANT === "symlink") symlinkSync("$bu/victim", cfg + ".tmp." + process.pid);
+if (process.env.PLANT === "file") { writeFileSync(cfg + ".tmp." + process.pid, "STALE"); chmodSync(cfg + ".tmp." + process.pid, 0o644); }
+mcpConfigPath("$bu");
+BUNEOF
+    ru=$?
+    leak=""
+    for side in "$bd" "$bu"; do
+        [ "$(cat "$side/victim")" = VICTIM ] || leak="$leak victim-changed:$side"
+        [ "$(mode_of "$side/victim")" = 644 ] || leak="$leak victim-mode:$side"
+        # The token may appear only in the bundle itself.
+        if [ "$kind" = dir ]; then
+            [ -d "$side/.loki/mcp-config.json" ] || leak="$leak dir-replaced:$side"
+            grep -rlF "$TOKEN_D" "$side" >/dev/null 2>&1 && leak="$leak token-written:$side"
+        else
+            [ -f "$side/.loki/mcp-config.json" ] && [ ! -L "$side/.loki/mcp-config.json" ] || leak="$leak cfg-not-regular:$side"
+            [ "$(mode_of "$side/.loki/mcp-config.json")" = 600 ] || leak="$leak cfg-mode:$side"
+            [ "$(grep -rlF "$TOKEN_D" "$side" 2>/dev/null)" = "$side/.loki/mcp-config.json" ] || leak="$leak token-elsewhere:$side"
+        fi
+    done
+    if [ "$kind" = file ]; then
+        # The bash route never opens a pre-planted path: the stale file is left exactly as planted.
+        [ "$(cat "$bd"/.loki/mcp-config.json.tmp.* 2>/dev/null)" = STALE ] || leak="$leak planted-file-touched:$bd"
+    fi
+    if [ "$kind" = dir ]; then
+        { [ "$rb" -ne 0 ] && [ "$ru" -ne 0 ]; } || leak="$leak rc-bash=$rb-rc-bun=$ru-expected-nonzero"
+    else
+        { [ "$rb" -eq 0 ] && [ "$ru" -eq 0 ]; } || leak="$leak rc-bash=$rb-rc-bun=$ru-expected-zero"
+    fi
+    if [ -z "$leak" ]; then
+        ok "parity F: a $kind planted at the tmp path or target is never followed, token only in the bundle (both routes)"
+    else
+        bad "parity F $kind:$leak"
+    fi
+    rm -rf "$bd" "$bu"
+}
+tmp_case symlink
+tmp_case file
+tmp_case dir
+
+# The bash tmp file must be owner-only the moment it exists, before any byte is
+# written (a later chmod leaves a window). A sitecustomize hook records the mode
+# of every file object python opens for writing at fdopen time, under umask 000.
+hook=$(mktemp -d -t loki-parity-hook-XXXX); bd=$(mktemp -d -t loki-parity-bash-g-XXXX)
+cat >"$hook/sitecustomize.py" <<'PYEOF'
+import os
+_orig = os.fdopen
+def _fdopen(fd, *a, **k):
+    with open(os.environ['_HOOK_LOG'], 'a') as log:
+        log.write(format(os.fstat(fd).st_mode & 0o777, 'o') + '\n')
+    return _orig(fd, *a, **k)
+os.fdopen = _fdopen
+PYEOF
+( umask 000; HOME="$TMP_HOME" PYTHONPATH="$hook" _HOOK_LOG="$hook/log" TARGET_DIR="$bd" loki_mcp_config_path >/dev/null 2>&1 )
+if [ -s "$hook/log" ] && [ "$(sort -u "$hook/log")" = "600" ]; then
+    ok "parity F: the bash bundle file is 0600 at creation, before any write, even under umask 000"
+else
+    bad "parity F creation mode: recorded=[$(tr '\n' ' ' <"$hook/log" 2>/dev/null)] (expected only 600)"
+fi
+rm -rf "$hook" "$bd"
+
 unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH
 
 echo
