@@ -109,7 +109,7 @@ const UNIT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const GID_RE = /^g[a-z0-9]{1,30}$/;
 const readJson = (p: string): Record<string, unknown> | null => { try { const v = JSON.parse(readFileSync(p, "utf8")) as unknown; return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null; } catch { return null; } };
 /** A unit as stored in dag.json: the decomposer's fields plus `spec` (abs path of its frozen unit spec) and `done` (backlog.py skips it). */
-type StoredUnit = Unit & { spec?: string; done?: boolean };
+type StoredUnit = Unit & { spec?: string; done?: boolean; base?: string };
 
 /** Hash of one unit's contract slice (criterion texts only: ids shift when criteria are inserted). */
 const sliceSha = (criteria: { text: string }[]): string => sha256(JSON.stringify(criteria.map((c) => c.text)));
@@ -250,6 +250,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     const spec = join(specDir, `${u.id}.json`);
     atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: (u as Partial<FixUnit>).acceptance ?? accOf.get(u.id) ?? [] });
     u.spec = spec;
+    if (!(u as Partial<FixUnit>).fixKind) u.base = baseRef; // #317: the base the slice journal keys on is the base the unit starts at (backlog.py would otherwise start it at origin/HEAD)
   }
   const jdir = repoCacheDir(repoKey(git(repoDir, ["remote", "get-url", "origin"]) || null, repoDir), env.LOKI_CACHE_ROOT ? resolve(env.LOKI_CACHE_ROOT) : undefined);
   const keyOf = (u: StoredUnit): string => sliceKey(JSON.stringify({ id: u.id, items: u.items, writeSet: u.writeSet, acceptance: accOf.get(u.id) ?? [] }), baseRef);
