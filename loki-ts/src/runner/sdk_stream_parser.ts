@@ -29,6 +29,7 @@ import { num, routerTelemetryOn } from "../engine10/cost.ts";
 import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 import { recordAdvisorError } from "./router/advisor_probe.ts";
+import { lokiDirFor } from "../util/paths.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -162,7 +163,8 @@ export async function consumeSdkStream(
   const write = ctx.write ?? ((s: string) => process.stdout.write(s));
   const lokiRoot = join(ctx.cwd, ".loki");
   const agentsFile = join(lokiRoot, "state", "agents.json");
-  const eventsJsonl = join(lokiRoot, "events.jsonl");
+  // The run ledger honors LOKI_DIR so the writer and the kpis reader (util/paths lokiDir) share one dir.
+  const eventsJsonl = join(lokiDirFor(ctx.cwd), "events.jsonl");
 
   const agents = loadAgents(agentsFile);
   // Always show the main orchestrator (Python init_orchestrator).

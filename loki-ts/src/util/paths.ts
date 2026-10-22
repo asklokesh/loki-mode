@@ -44,8 +44,12 @@ export function findRepoRootForVersion(here: string): string {
 }
 
 // Honor LOKI_DIR env var; default to ./.loki relative to cwd (bash idiom).
+export function lokiDirFor(cwd: string): string {
+  return process.env["LOKI_DIR"] ?? resolve(cwd, ".loki");
+}
+
 export function lokiDir(): string {
-  return process.env["LOKI_DIR"] ?? resolve(process.cwd(), ".loki");
+  return lokiDirFor(process.cwd());
 }
 
 export function homeLokiDir(): string {

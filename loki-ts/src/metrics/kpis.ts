@@ -73,6 +73,14 @@ export type KpiSnapshot = {
     iteration_success_rate: number | null; // status='success' / iteration_count
   };
 
+  // Reliability KPIs (from the run ledger .loki/events.jsonl, written by sdk_stream_parser.ts).
+  // A refused turn is not a crash: these counters make it visible.
+  reliability: {
+    refusal_count: number; // model_refusal_fallback + model_refusal_no_fallback
+    fallback_served_count: number; // model_refusal_fallback only (another model answered)
+    retry_count: number; // api_retry
+  };
+
   // Notes -- anything the MVP cannot compute, listed explicitly so the
   // operator knows what's missing rather than seeing a silent zero.
   notes: string[];
@@ -112,6 +120,39 @@ function readCouncilRounds(councilDir: string): CouncilRound[] {
       });
     } catch {
       // Malformed round file -- skip, do not fail the snapshot.
+    }
+  }
+  return out;
+}
+
+// Count refusal and retry ledger events. Tolerates a missing ledger and malformed lines.
+// sinceMs windows by the event timestamp; an event with no parseable timestamp is counted.
+function readReliability(eventsJsonl: string, sinceMs?: number): KpiSnapshot["reliability"] {
+  const out = { refusal_count: 0, fallback_served_count: 0, retry_count: 0 };
+  let raw: string;
+  try {
+    raw = readFileSync(eventsJsonl, "utf8");
+  } catch {
+    return out;
+  }
+  for (const line of raw.split("\n")) {
+    if (!line.includes("model_refusal") && !line.includes("api_retry")) continue;
+    try {
+      const rec = JSON.parse(line) as { type?: unknown; timestamp?: unknown };
+      if (sinceMs !== undefined && typeof rec.timestamp === "string") {
+        const at = Date.parse(rec.timestamp);
+        if (Number.isFinite(at) && at < sinceMs) continue;
+      }
+      if (rec.type === "model_refusal_fallback") {
+        out.refusal_count++;
+        out.fallback_served_count++;
+      } else if (rec.type === "model_refusal_no_fallback") {
+        out.refusal_count++;
+      } else if (rec.type === "api_retry") {
+        out.retry_count++;
+      }
+    } catch {
+      // Malformed ledger line -- skip, do not fail the snapshot.
     }
   }
   return out;
@@ -363,6 +404,7 @@ export function computeKpis(lokiDir: string, opts: { sinceMs?: number } = {}): K
     ...(sinceMs !== undefined ? { since: new Date(sinceMs).toISOString() } : {}),
     efficiency,
     accuracy,
+    reliability: readReliability(join(lokiDir, "events.jsonl"), sinceMs),
     notes,
   };
 }
@@ -418,6 +460,11 @@ export function formatKpisHuman(snap: KpiSnapshot): string {
   lines.push(
     `  Iter success rate:    ${snap.accuracy.iteration_success_rate ?? "n/a"}`,
   );
+  lines.push(``);
+  lines.push(`Reliability`);
+  lines.push(`  Refusals:             ${snap.reliability.refusal_count}`);
+  lines.push(`  Fallback served:      ${snap.reliability.fallback_served_count}`);
+  lines.push(`  API retries:          ${snap.reliability.retry_count}`);
   if (snap.notes.length > 0) {
     lines.push(``);
     lines.push(`Notes`);

@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { consumeSdkStream, type StreamMsg } from "../../src/runner/sdk_stream_parser.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
+import { computeKpis } from "../../src/metrics/kpis.ts";
+import { lokiDir } from "../../src/util/paths.ts";
 
 let scratch: string;
 const FIXED = "2026-07-13T00:00:00.000Z";
@@ -657,6 +659,23 @@ describe("consumeSdkStream transcript fixtures", () => {
       const ev = ledger().filter((e) => e.type === "model_refusal_fallback");
       expect(ev).toHaveLength(1);
       expect(ev[0].payload).toMatchObject({ category: "cyber", from_model: "opus", to_model: "sonnet" });
+    });
+
+    test("LOKI_DIR relocates the ledger, and kpis reads the same file the parser wrote", async () => {
+      const lokiDirEnv = join(scratch, "elsewhere");
+      const prev = process.env["LOKI_DIR"];
+      process.env["LOKI_DIR"] = lokiDirEnv;
+      try {
+        await consumeSdkStream([
+          { type: "system", subtype: "model_refusal_fallback", api_refusal_category: "cyber", original_model: "opus", fallback_model: "sonnet", retracted_message_uuids: [], session_id: "s1" },
+          { type: "result", subtype: "success", is_error: false, session_id: "s1", total_cost_usd: 0.01 },
+        ], ctx(), clock);
+        expect(existsSync(join(lokiDirEnv, "events.jsonl"))).toBe(true);
+        expect(existsSync(eventsPath())).toBe(false);
+        expect(computeKpis(lokiDir()).reliability.refusal_count).toBe(1);
+      } finally {
+        if (prev === undefined) delete process.env["LOKI_DIR"]; else process.env["LOKI_DIR"] = prev;
+      }
     });
 
     test("assistant supersedes list evicts earlier text", async () => {

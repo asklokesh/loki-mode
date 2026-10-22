@@ -376,6 +376,48 @@ describe("unmeasured cost reads UNKNOWN, never zero", () => {
   });
 });
 
+describe("computeKpis reliability ledger counters (#252)", () => {
+  const ev = (type: string, timestamp: string, payload: Record<string, unknown> = {}) =>
+    JSON.stringify({ type, source: "claude_cli", timestamp, payload });
+
+  it("counts refusal, fallback-served and retry events from .loki/events.jsonl", () => {
+    writeFileSync(join(td, "events.jsonl"), [
+      ev("model_refusal_fallback", "2026-10-22T10:00:00Z", { category: "cyber", from_model: "a", to_model: "b" }),
+      ev("api_retry", "2026-10-22T10:00:01Z", { attempt: 1 }),
+      ev("api_retry", "2026-10-22T10:00:02Z", { attempt: 2 }),
+      ev("claude_hook_stop", "2026-10-22T10:00:03Z"),
+      "not json",
+    ].join("\n") + "\n");
+    const snap = computeKpis(td);
+    expect(snap.reliability.refusal_count).toBe(1);
+    expect(snap.reliability.fallback_served_count).toBe(1);
+    expect(snap.reliability.retry_count).toBe(2);
+  });
+
+  it("a no-fallback refusal counts as a refusal but not as fallback served", () => {
+    writeFileSync(join(td, "events.jsonl"), ev("model_refusal_no_fallback", "2026-10-22T10:00:00Z") + "\n");
+    const snap = computeKpis(td);
+    expect(snap.reliability.refusal_count).toBe(1);
+    expect(snap.reliability.fallback_served_count).toBe(0);
+  });
+
+  it("reads zero with no ledger, and --since windows the counters", () => {
+    expect(computeKpis(td).reliability).toEqual({ refusal_count: 0, fallback_served_count: 0, retry_count: 0 });
+    writeFileSync(join(td, "events.jsonl"), [
+      ev("model_refusal_fallback", "2026-10-01T00:00:00Z"),
+      ev("model_refusal_fallback", "2026-10-22T00:00:00Z"),
+      ev("model_refusal_fallback", "2026-10-22T01:00:00Z"),
+    ].join("\n") + "\n");
+    // 1 before the window, 2 after: inverting the comparison would report 1, not 2.
+    expect(computeKpis(td, { sinceMs: Date.parse("2026-10-15T00:00:00Z") }).reliability.refusal_count).toBe(2);
+  });
+
+  it("the human format prints refusal_count", () => {
+    writeFileSync(join(td, "events.jsonl"), ev("model_refusal_fallback", "2026-10-22T10:00:00Z") + "\n");
+    expect(formatKpisHuman(computeKpis(td))).toContain("Refusals:             1");
+  });
+});
+
 describe("formatKpisJson", () => {
   it("produces deterministic JSON parseable to KpiSnapshot shape", () => {
     const snap = computeKpis(td);
