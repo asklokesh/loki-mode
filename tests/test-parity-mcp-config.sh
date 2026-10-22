@@ -224,6 +224,80 @@ fi
 
 rm -rf "$TMP_BASH_LSP" "$TMP_BUN_LSP" "$TMP_BIN" 2>/dev/null
 
+# ---------- Case D: outbound remote servers (LOKI_MCP_<NAME>_URL / _AUTH) ----------
+# Both writers must emit the same remote entry with an Authorization header,
+# write the file 0600, refuse plain http to a non-loopback host, and refuse CR,
+# LF or other control characters in the URL or the auth value.
+TOKEN_D="s3cr3t-parity-token"
+canon_of() {
+    _P="$1/.loki/mcp-config.json" python3 -c "
+import json, os
+with open(os.environ['_P']) as f:
+    print(json.dumps(json.load(f), sort_keys=True, separators=(',', ':')))
+" 2>/dev/null
+}
+mode_of() { python3 -c "import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, 'o'))" "$1" 2>/dev/null; }
+run_both() {
+    # $1 = bash dir, $2 = bun dir; remote env is inherited from the caller.
+    HOME="$TMP_HOME" TARGET_DIR="$1" loki_mcp_config_path >/dev/null 2>&1
+    HOME="$TMP_HOME" bun run --cwd "$LOKI_TS_DIR" - <<BUNEOF >/dev/null 2>&1
+import { mcpConfigPath } from "./src/providers/mcp_config.ts";
+mcpConfigPath("$2");
+BUNEOF
+}
+
+TMP_BASH_D=$(mktemp -d -t loki-parity-bash-d-XXXX)
+TMP_BUN_D=$(mktemp -d -t loki-parity-bun-d-XXXX)
+export LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp"
+export LOKI_MCP_ACME_CO_AUTH="$TOKEN_D"
+run_both "$TMP_BASH_D" "$TMP_BUN_D"
+bash_canon_d=$(canon_of "$TMP_BASH_D")
+bun_canon_d=$(canon_of "$TMP_BUN_D")
+if [ -n "$bash_canon_d" ] && [ "$bash_canon_d" = "$bun_canon_d" ] \
+   && printf '%s' "$bash_canon_d" | grep -q "\"Authorization\":\"Bearer $TOKEN_D\"" \
+   && printf '%s' "$bash_canon_d" | grep -q '"acme-co"'; then
+    ok "parity D: bash and Bun emit the same remote entry with an Authorization header"
+else
+    bad "parity D remote entry mismatch: bash=[$bash_canon_d] bun=[$bun_canon_d]"
+fi
+mb=$(mode_of "$TMP_BASH_D/.loki/mcp-config.json"); mu=$(mode_of "$TMP_BUN_D/.loki/mcp-config.json")
+if [ "$mb" = "600" ] && [ "$mu" = "600" ]; then
+    ok "parity D: both routes write the bundle at mode 600 when a header value is present"
+else
+    bad "parity D mode: bash=$mb bun=$mu (expected 600 each)"
+fi
+# Rewrite over an existing 644 file must tighten it (idempotent short-circuit path too).
+chmod 644 "$TMP_BASH_D/.loki/mcp-config.json" "$TMP_BUN_D/.loki/mcp-config.json"
+run_both "$TMP_BASH_D" "$TMP_BUN_D"
+mb=$(mode_of "$TMP_BASH_D/.loki/mcp-config.json"); mu=$(mode_of "$TMP_BUN_D/.loki/mcp-config.json")
+if [ "$mb" = "600" ] && [ "$mu" = "600" ]; then
+    ok "parity D: an unchanged bundle left at 644 is tightened to 600 by both routes"
+else
+    bad "parity D re-chmod: bash=$mb bun=$mu (expected 600 each)"
+fi
+rm -rf "$TMP_BASH_D" "$TMP_BUN_D"
+
+# Refused inputs: both routes must drop the remote server and never write the token.
+refused_case() {
+    # $1 label, $2 url, $3 auth
+    local label="$1" bd bu cb cu
+    bd=$(mktemp -d -t loki-parity-bash-r-XXXX); bu=$(mktemp -d -t loki-parity-bun-r-XXXX)
+    LOKI_MCP_ACME_CO_URL="$2" LOKI_MCP_ACME_CO_AUTH="$3" run_both "$bd" "$bu"
+    cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
+    if [ -n "$cb" ] && [ "$cb" = "$cu" ] \
+       && ! printf '%s' "$cb" | grep -q 'acme-co' \
+       && ! printf '%s' "$cb$cu" | grep -q "$TOKEN_D"; then
+        ok "parity D: both routes refuse $label"
+    else
+        bad "parity D refuse $label: bash=[$cb] bun=[$cu]"
+    fi
+    rm -rf "$bd" "$bu"
+}
+refused_case "plain http to a non-loopback host" "http://co.example.com/mcp" "$TOKEN_D"
+refused_case "CRLF in the auth value" "https://co.example.com/mcp" "$(printf '%s\r\nX-Evil: 1' "$TOKEN_D")"
+refused_case "LF in the url" "$(printf 'https://co.example.com/mcp\nX-Evil: 1')" "$TOKEN_D"
+unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
