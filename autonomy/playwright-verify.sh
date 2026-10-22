@@ -15,7 +15,7 @@
 #
 # Environment Variables:
 #   LOKI_PLAYWRIGHT_ENABLED    - Enable/disable (default: true)
-#   LOKI_PLAYWRIGHT_INTERVAL   - Run every N iterations (default: 5)
+#   LOKI_PLAYWRIGHT_INTERVAL   - Run every N iterations (default: 5); the first iteration of a session or resume always runs
 #   LOKI_PLAYWRIGHT_TIMEOUT    - Page load timeout in ms (default: 15000)
 #
 # Data:
@@ -97,6 +97,12 @@ playwright_verify_should_run() {
     local current_iteration="${ITERATION_COUNT:-0}"
     if [ "$current_iteration" -eq 0 ]; then
         return 1
+    fi
+
+    # Baseline smoke: the first iteration of a session or resume always runs
+    # (nothing verified yet in this process), then the interval applies.
+    if [ "$PLAYWRIGHT_LAST_VERIFY_ITERATION" -eq 0 ]; then
+        return 0
     fi
 
     if [ $((current_iteration % PLAYWRIGHT_INTERVAL)) -ne 0 ]; then

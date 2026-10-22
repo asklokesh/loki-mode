@@ -31,6 +31,8 @@ Violations result in automatic FAIL during VERIFY phase.
 
 **Use Playwright MCP for browser-based testing.**
 
+After each UI step, check the rendered result before the next step. A baseline smoke runs on the first iteration of every session and resume, then every `LOKI_PLAYWRIGHT_INTERVAL` iterations.
+
 ```python
 # E2E test after feature implementation
 Task(

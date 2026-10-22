@@ -145,6 +145,33 @@ fi
 [ "$rc_missing" -eq 0 ] && ok "missing results file -> rc 0" || bad "missing results file -> rc 0" "rc=$rc_missing"
 
 # ---------------------------------------------------------------------------
+# Case 4: baseline smoke. playwright_verify_should_run must fire at the first
+# iteration of a session (1) and of a resume (7) with INTERVAL=5, then follow
+# the interval. Counter fixture: 10-iteration session = 3 runs, first at 1.
+# ---------------------------------------------------------------------------
+_sr="$(awk '/^playwright_verify_should_run\(\) \{/{f=1} f{print} f&&/^}$/{exit}' "$PW_SH" 2>/dev/null || true)"
+# shellcheck disable=SC1090
+eval "$_sr"
+# shellcheck disable=SC2034  # globals are read by the eval-extracted function
+_session() {  # args: first_iter last_iter -> iterations that ran
+    local i ran=""
+    PLAYWRIGHT_ENABLED=true; PLAYWRIGHT_AVAILABLE=true; PLAYWRIGHT_INTERVAL=5
+    PLAYWRIGHT_LAST_VERIFY_ITERATION=0
+    for i in $(seq "$1" "$2"); do
+        ITERATION_COUNT=$i
+        if playwright_verify_should_run; then
+            ran="$ran $i"
+            PLAYWRIGHT_LAST_VERIFY_ITERATION=$i   # mirrors playwright_verify_app
+        fi
+    done
+    printf '%s' "${ran# }"
+}
+r1="$(_session 1 10)"
+if [ "$r1" = "1 5 10" ]; then ok "fresh session: runs at iterations 1 5 10 (3 runs, first at 1)"; else bad "fresh session baseline" "ran=[$r1]"; fi
+r2="$(_session 7 12)"
+if [ "$r2" = "7 10" ]; then ok "resume at 7: runs at 7 then 10"; else bad "resume baseline" "ran=[$r2]"; fi
+
+# ---------------------------------------------------------------------------
 echo
 echo "playwright-verify-as-evidence: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
