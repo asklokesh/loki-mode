@@ -57,3 +57,43 @@ test("every loki start flag is declared in the parity table and matches its real
   const noReason = Object.keys(table).filter((f) => val(f).split(" ")[0] !== "both" && val(f).replace(/^\S+\s*/, "").length < 10);
   expect({ undeclared, stale, wrong, noReason }).toEqual({ undeclared: [], stale: [], wrong: [], noReason: [] });
 });
+
+// #308: the route.sh parser must classify every cmd_start flag the way cmd_start parses it. A value flag missing from the tables
+// leaves its value in the positional list (taken as the PRD or brief); an optional-value or boolean flag declared as a value
+// flag, or a boolean declared as optional (--parallel 3), swallows or keeps the wrong token. The kind is derived from the arm
+// body: _loki_start_optval_consumes means optval, a read of $2 / shift 2 means value, anything else is a boolean.
+test("route.sh classifies every cmd_start flag as cmd_start parses it: value, optval or boolean (#308)", () => {
+  const lines = readFileSync(join(REPO, "autonomy", "loki"), "utf8").split("\n");
+  const s = lines.findIndex((l) => l.startsWith("cmd_start() {"));
+  const e = lines.findIndex((l, i) => i > s && l === "}");
+  // Only the main parse loop decides how cmd_start consumes tokens; the earlier pre-scans (workspace, deploy) have their own arms.
+  const loop = lines.findIndex((l, i) => i > s && /^    while \[\[ \$# -gt 0 \]\]; do$/.test(l) && /case "\$1" in/.test(lines[i + 1] ?? ""));
+  expect(loop).toBeGreaterThan(s);
+  const arms: Array<{ at: number; labels: string[] }> = [];
+  for (let i = loop; i < e; i++) {
+    const m = (lines[i] ?? "").match(/^\s+(-[-a-zA-Z0-9|=*]+)\)/);
+    if (m?.[1]) arms.push({ at: i, labels: m[1].split("|") });
+  }
+  const route = readFileSync(join(REPO, "autonomy", "route.sh"), "utf8");
+  const table = (name: string): Set<string> => {
+    const body = route.match(new RegExp(`^${name}="([^"]*)"`, "m"))?.[1];
+    expect(body).toBeDefined();
+    return new Set((body ?? "").split(/\s+/).filter(Boolean));
+  };
+  const routeValue = table("_ROUTE_VALUE_FLAGS");
+  const routeOptval = table("_ROUTE_OPTVAL_FLAGS");
+  const routeKind = (f: string): string => (routeValue.has(f) ? "value" : routeOptval.has(f) ? "optval" : "boolean");
+  const bashKind = new Map<string, string>();
+  arms.forEach((arm, k) => {
+    const body = lines.slice(arm.at, arms[k + 1]?.at ?? e).join("\n");
+    const kind = /_loki_start_optval_consumes/.test(body) ? "optval" : /shift 2|\$\{?2[:}]|\$2\b/.test(body) ? "value" : "boolean";
+    // A "--flag=*" arm carries its own value and says nothing about the separate-token form; the exact label decides.
+    for (const l of arm.labels) if (!l.includes("*") && !bashKind.has(l)) bashKind.set(l, kind);
+  });
+  expect(bashKind.get("--mirofish")).toBe("optval");
+  expect(bashKind.get("--parallel")).toBe("boolean");
+  expect(bashKind.get("--workspace") ?? bashKind.get("--config")).toBe("value");
+  const mismatched: string[] = [];
+  for (const [f, k] of bashKind) if (routeKind(f) !== k) mismatched.push(`${f}: cmd_start ${k}, route.sh ${routeKind(f)}`);
+  expect(mismatched).toEqual([]);
+});

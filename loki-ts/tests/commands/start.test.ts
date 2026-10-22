@@ -347,6 +347,29 @@ describe("invalid numeric flags (TEN-COST-36)", () => {
   });
 });
 
+// #308: a value flag consumes its value, accepted or refused, so the value never becomes the spec.
+describe("value flag consumes its value (#308)", () => {
+  it("every runner value flag leaves the positional spec unchanged, value first", () => {
+    const vals: Record<string, string> = { "--max-iterations": "7", "--max-retries": "2", "--budget-limit": "3", "--budget": "3", "--base-wait": "1", "--max-wait": "1", "--provider": "claude", "--session-model": "opus", "--completion-promise": "done", "--aider-model": "m", "--aider-flags": "f", "--cline-model": "m", "--cost": "lean" };
+    for (const [f, v] of Object.entries(vals)) {
+      for (const argv of [[f, v, "prd.md"], ["prd.md", f, v], [`${f}=${v}`, "prd.md"]]) {
+        errs.length = 0;
+        const r = parseStartArgs(argv, collect, () => {}, () => {});
+        expect(typeof r).not.toBe("number");
+        expect((r as { prdPath: string }).prdPath).toBe("prd.md");
+      }
+    }
+  });
+
+  it("a refused value flag exits 2 naming the flag, never the value", () => {
+    for (const argv of [["--max-iterations", "7", "--attempts", "2", "prd.md"], ["--aider-model", "m", "--spec", "s.md"]]) {
+      errs.length = 0;
+      expect(parseStartArgs(argv, collect, () => {}, () => {})).toBe(2);
+      expect(errs.join("")).toMatch(/start: flag --(max-iterations|aider-model) is not supported/);
+    }
+  });
+});
+
 describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () => {
   const legacy: string[][] = [
     ["--max-iterations", "5"], ["--max-retries", "2"], ["--completion-promise", "x"], ["--base-wait", "1"],

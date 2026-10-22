@@ -10,7 +10,11 @@
 # Bash 3.2 compatible (no associative arrays, no ${var,,}).
 
 # Flags that take a separate value token.
-_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --aider-model --aider-flags --cline-model --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match "
+_ROUTE_VALUE_FLAGS=" --provider --budget --budget-limit --max-cost --max-iterations --max-retries --session-model --completion-promise --base-wait --max-wait --prd --brief --attempts --spec --aider-model --aider-flags --cline-model --isolation --output --engine --mirofish-rounds --mirofish-timeout --max-duration --log-level --compliance --cost --remote --issue --bmad-project --openspec --mirofish-docker --destination --domain --env-file --health-url --health-match --workspace --config --vars "
+# Flags whose value is optional (cmd_start reads one only when it is present): --mirofish takes a URL (a token that does not
+# start with --, as _loki_start_optval_consumes). Declared here so a refused one still consumes its value. --parallel is NOT
+# here: cmd_start treats it as a plain boolean (_loki_start_flag_kind), so "--parallel 3" leaves 3 as a positional.
+_ROUTE_OPTVAL_FLAGS=" --mirofish "
 # Flags engine10 honors as-is.
 _ROUTE_E10_FLAGS=" --no-pr --deep --json --verbose --quiet --resume --provider --max-cost --spec --attempts "
 # The most a run cap can reach (capCeilingS(true) in loki-ts/src/util/run_cap.ts: the subscription ceiling).
@@ -31,6 +35,11 @@ _route_refusal_hint() {
 }
 
 _route_has() { case "$1" in *" $2 "*) return 0 ;; esac; return 1; }
+
+# _route_optval_consumes FLAG NEXT: whether an optional-value flag takes the next token as its value.
+_route_optval_consumes() {
+    [ -n "$2" ] && [ "${2#--}" = "$2" ]
+}
 
 # _route_duration_s VALUE: seconds from 90, 90s, 90m or 2h; empty output when unusable or zero.
 _route_duration_s() {
@@ -97,6 +106,14 @@ loki_route_resolve() {
                 if _route_has "$_ROUTE_VALUE_FLAGS" "$name"; then
                     if [ "$name" = "$a" ]; then
                         val="${argv[$i]:-}"; i=$((i + 1)); R_CLEAN+=("$val")
+                    else
+                        val="${a#*=}"
+                    fi
+                elif _route_has "$_ROUTE_OPTVAL_FLAGS" "$name"; then
+                    if [ "$name" = "$a" ]; then
+                        if _route_optval_consumes "$name" "${argv[$i]:-}"; then
+                            val="${argv[$i]}"; i=$((i + 1)); R_CLEAN+=("$val")
+                        fi
                     else
                         val="${a#*=}"
                     fi

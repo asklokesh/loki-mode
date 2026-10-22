@@ -473,5 +473,17 @@ else
     echo "SKIP: route contract needs python3"
 fi
 
+# #308: a value flag consumes its value on the route parser, so the value never joins the positional list.
+vf_resolve() { bash -c 'source "$1"; shift; loki_route_resolve start "$@"; printf "%s|%s" "$R_INPUT" "$R_INPUT_TYPE"' _ "$REPO/autonomy/route.sh" "$@" 2>/dev/null; }
+for vf in "--workspace ws" "--config c.yaml" "--vars v.yaml" "--mirofish http://m" "--max-iterations 7" "--completion-promise done"; do
+    got="$(vf_resolve "owner/repo#5" $vf)"
+    expect "route: '$vf' consumes its value, input stays owner/repo#5" "owner/repo#5|issue" "$got"
+done
+# --parallel is a boolean in cmd_start, so its next token stays positional: the route splits it exactly as cmd_start does.
+got="$(vf_resolve "owner/repo#5" --parallel 3)"
+expect "route: '--parallel 3' leaves 3 positional like cmd_start (two inputs, type unchanged from bare)" "$(vf_resolve "owner/repo#5" 3)" "$got"
+got="$(vf_resolve "owner/repo#5" --parallel)"
+expect "route: bare --parallel (no value) keeps the single input" "owner/repo#5|issue" "$got"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
