@@ -354,6 +354,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 6: the tracker resolves the context window from the catalog by model id.
+# 300000 used tokens on claude-opus-5-5 (1M window) is 30.0 percent, not 150.
+# ---------------------------------------------------------------------------
+C6="$WORKROOT/case6"
+mkdir -p "$C6"
+python3 "$CONTEXT_TRACKER" --iteration 1 --loki-dir "$C6/.loki" --provider claude \
+    --model claude-opus-5-5 --tokens-input 300000 >/dev/null 2>&1
+pct6="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["current"]["context_window_pct"])' "$C6/.loki/context/tracking.json" 2>/dev/null)"
+if [ "$pct6" = "30.0" ]; then
+    ok "case6: opus-5-5 + 300000 tokens -> 30.0 percent (catalog window)"
+else
+    bad "case6: catalog window" "pct=$pct6"
+fi
+if ! grep -n '"claude": 200000' "$CONTEXT_TRACKER" >/dev/null; then
+    ok "case6: no hardcoded claude window left in context-tracker.py"
+else
+    bad "case6: hardcoded claude window still present"
+fi
+
+# ---------------------------------------------------------------------------
 echo "-------------------------------------------------------------"
 echo "cost-capture: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

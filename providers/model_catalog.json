@@ -49,23 +49,23 @@
           "alias": "sonnet",
           "tier": "development",
           "context_window": 1000000,
-          "max_output": 64000,
+          "max_output": 128000,
           "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model sonnet, Claude Code 2.1.293, modelUsage key claude-sonnet-5-5); the CLI sonnet alias resolves to it. ROUTER-1 R1-03."
         },
         {
           "id": "claude-sonnet-5",
           "tier": "legacy",
           "context_window": 1000000,
-          "max_output": 64000,
+          "max_output": 128000,
           "notes": "Superseded by claude-sonnet-5-5 (catalog-only, not an alias target). Was the default execution model as of v7.104.0. Intro price $2/$10 per MTok through 2026-08-31; list price $3/$15 per MTok."
         },
         {
           "id": "claude-haiku-5-5",
           "alias": "haiku",
           "tier": "fast",
-          "context_window": 200000,
-          "max_output": 64000,
-          "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model haiku, Claude Code 2.1.293, modelUsage key claude-haiku-5-5); the CLI haiku alias resolves to it. ROUTER-1 R1-03. Context window and max_output carried over from claude-haiku-4-5, not re-measured."
+          "context_window": 1000000,
+          "max_output": 128000,
+          "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model haiku, Claude Code 2.1.293, modelUsage key claude-haiku-5-5); the CLI haiku alias resolves to it. ROUTER-1 R1-03. Context window 1M and max_output 128k per the Anthropic docs snapshot 2026-10 (context-windows.md:38, thinking.md:1217)."
         },
         {
           "id": "claude-haiku-4-5",

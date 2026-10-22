@@ -162,6 +162,35 @@ else
     printf '%s\n' "$orphans" | sed 's/^/        /'
 fi
 
+# ---- CAPACITY ------------------------------------------------------------
+# Capacity values change only with a cited doc line. Source: Anthropic platform
+# docs snapshot 2026-10 (claude-platform-docs-tool-use-sidebar):
+#   build-with-claude/context-windows.md:38  Sonnet 5.5, Sonnet 5, Haiku 5.5 have a
+#     1M-token window and up to 128k output tokens; Haiku 4.5 stays 200k.
+#   build-with-claude/thinking.md:1213-1218  Output limits: Sonnet 5.5 / Sonnet 5 /
+#     Haiku 5.5 128K; Haiku 4.5 64K.
+cap_bad="$(python3 - "$CATALOG" <<'PY'
+import json, sys
+models = {m["id"]: m for m in json.load(open(sys.argv[1]))["providers"]["claude"]["models"]}
+want = {
+    "claude-sonnet-5-5": (1000000, 128000),
+    "claude-sonnet-5": (1000000, 128000),
+    "claude-haiku-5-5": (1000000, 128000),
+    "claude-haiku-4-5": (200000, 64000),
+}
+for mid, (cw, mo) in want.items():
+    m = models[mid]
+    if (m.get("context_window"), m.get("max_output")) != (cw, mo):
+        print("%s: got (%s, %s) want (%s, %s)" % (mid, m.get("context_window"), m.get("max_output"), cw, mo))
+PY
+)"
+if [ -z "$cap_bad" ]; then
+    ok "claude capacity values match the cited docs snapshot"
+else
+    bad "claude capacity drift from docs snapshot:"
+    printf '%s\n' "$cap_bad" | sed 's/^/        /'
+fi
+
 echo
 echo "  passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -12,7 +12,7 @@ Provider-agnostic: supports Claude, Codex, and Gemini CLIs.
 Called by run.sh after each RARV iteration.
 
 Usage:
-    python3 context-tracker.py --iteration N --loki-dir .loki [--window-size 200000]
+    python3 context-tracker.py --iteration N --loki-dir .loki [--window-size N] [--model ID]
     python3 context-tracker.py --iteration N --loki-dir .loki --provider codex \
         --tokens-input 5000 --tokens-output 2000
     python3 context-tracker.py --iteration N --loki-dir .loki --session-file /path/to/session.jsonl
@@ -57,12 +57,29 @@ PRICING_BY_PROVIDER = {
     },
 }
 
-# Default context window sizes per provider
-WINDOW_SIZES = {
-    "claude": 200000,
+# Last-resort window for providers whose models carry no context_window in
+# providers/model_catalog.json (the catalog owns Claude model capacity).
+FALLBACK_WINDOW_SIZES = {
     "codex": 200000,
     "gemini": 1000000,
 }
+DEFAULT_WINDOW_SIZE = 200000
+CATALOG_PATH = Path(__file__).resolve().parent.parent / "providers" / "model_catalog.json"
+
+
+def resolve_window_size(provider, model=None):
+    """Context window in tokens: catalog by model id, else the provider's
+    catalog default model, else FALLBACK_WINDOW_SIZES."""
+    try:
+        entry = json.loads(CATALOG_PATH.read_text())["providers"].get(provider, {})
+        models = {m.get("id"): m for m in entry.get("models", []) if isinstance(m, dict)}
+        for mid in (model, entry.get("latest_development")):
+            window = models.get(mid, {}).get("context_window")
+            if isinstance(window, int) and window > 0:
+                return window
+    except (OSError, ValueError, KeyError, AttributeError):
+        pass
+    return FALLBACK_WINDOW_SIZES.get(provider, DEFAULT_WINDOW_SIZE)
 
 
 def get_pricing(provider):
@@ -153,6 +170,8 @@ def parse_session(jsonl_path, last_offset, iteration, window_size):
     batch_cache_read = 0
     batch_cache_creation = 0
 
+    latest_model = None
+
     # Track latest cumulative usage (last assistant message has running total for that API call)
     latest_input = 0
     latest_output = 0
@@ -189,6 +208,8 @@ def parse_session(jsonl_path, last_offset, iteration, window_size):
             # Extract token usage from assistant messages
             if entry_type == "assistant":
                 usage = entry.get("message", {}).get("usage", {})
+                if entry.get("message", {}).get("model"):
+                    latest_model = entry["message"]["model"]
                 if usage:
                     inp = usage.get("input_tokens", 0)
                     out = usage.get("output_tokens", 0)
@@ -213,19 +234,21 @@ def parse_session(jsonl_path, last_offset, iteration, window_size):
         "batch_cache_creation": batch_cache_creation,
         "latest_input": latest_input,
         "latest_cache_read": latest_cache_read,
+        "model": latest_model,
         "compactions": compactions,
         "new_offset": current_line,
     }
 
 
-def update_tracking(loki_dir, iteration, window_size, provider="claude",
+def update_tracking(loki_dir, iteration, window_size, provider="claude", model=None,
                     session_file=None, direct_tokens=None):
     """Main tracking function - parse session and update tracking.json.
 
     Args:
         loki_dir: Path to .loki directory
         iteration: Current RARV iteration number
-        window_size: Context window size in tokens
+        window_size: Context window size in tokens (0 = resolve from the catalog)
+        model: Run model id used to look up the window (default: model seen in the session)
         provider: Provider name (claude, codex, gemini)
         session_file: Explicit path to session file (optional)
         direct_tokens: Dict with input/output token counts for non-Claude providers
@@ -315,6 +338,9 @@ def update_tracking(loki_dir, iteration, window_size, provider="claude",
         tracking["updated_at"] = datetime.now(timezone.utc).isoformat()
         offset_file.write_text(str(result["new_offset"]))
 
+    if window_size <= 0:
+        window_size = resolve_window_size(provider, model or result.get("model"))
+
     # Calculate iteration cost
     iter_cost = calculate_cost(
         result["batch_input"],
@@ -379,6 +405,8 @@ def main():
                         help="Context window size in tokens (0 = auto-detect from provider)")
     parser.add_argument("--provider", default="claude", choices=["claude", "codex", "gemini"],
                         help="LLM provider (claude, codex, gemini)")
+    parser.add_argument("--model", default=None,
+                        help="Run model id for the catalog window lookup (default: model seen in the session)")
     parser.add_argument("--session-file", default=None,
                         help="Explicit path to session file (overrides auto-detection)")
     parser.add_argument("--tokens-input", type=int, default=0,
@@ -387,8 +415,8 @@ def main():
                         help="Direct output token count (for non-Claude providers)")
     args = parser.parse_args()
 
-    # Auto-detect window size from provider if not specified
-    window_size = args.window_size if args.window_size > 0 else WINDOW_SIZES.get(args.provider, 200000)
+    # window_size 0 is resolved from the catalog once the run's model is known
+    window_size = max(args.window_size, 0)
 
     # Build direct tokens dict if provided
     direct_tokens = None
@@ -396,7 +424,7 @@ def main():
         direct_tokens = {"input": args.tokens_input, "output": args.tokens_output}
 
     update_tracking(args.loki_dir, args.iteration, window_size,
-                    provider=args.provider, session_file=args.session_file,
+                    provider=args.provider, model=args.model, session_file=args.session_file,
                     direct_tokens=direct_tokens)
 
 
