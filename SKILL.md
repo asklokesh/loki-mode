@@ -1,6 +1,6 @@
 ---
 name: loki-mode
-description: An autonomous software factory that knows what it is supposed to deliver, and proves it did. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
+description: Runs an autonomous software factory that knows what it is supposed to deliver and proves it did, with a signed receipt. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
 # Loki Mode v11.36.3
@@ -8,6 +8,8 @@ description: An autonomous software factory that knows what it is supposed to de
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the previous bash loop. PRD-file starts (`loki start ./prd.md`) and the opencode provider still run on it until FC38-SWEEP ports them; the legacy-engine command and the LOKI_ENGINE switch remain removed. Prefer `loki owner/repo#N` for issues.
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
+
+**Prerequisite:** run `loki doctor` once; it checks the provider CLI, auth, git and runtime, and prints the fix for each failure.
 
 **Spec in, verified product out.** Spec-driven: a "spec" is whatever describes the work -- a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket (a PRD is one form of spec). The differentiator is the trust layer: Loki does not call work done until it is verified. The RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate must all clear before completion is accepted. The evidence gate blocks on empty-diff, red tests, an unhealthy serveable app (runtime-boot axis, `LOKI_EVIDENCE_BOOT_GATE=0` to opt out), and a leaked credential in the changed files (secret-leak axis, `LOKI_EVIDENCE_SECRET_GATE=0` to opt out) -- v8.0.0.
 
@@ -76,6 +78,19 @@ VERIFY: Run tests. Check build. Validate against spec.
                After 3 failures: Try simpler approach.
                After 5 failures: Log to dead-letter queue, move to next task.
 ```
+
+Copyable closure checklist (RARV-C; tick each before declaring a task done):
+
+```
+- [ ] Reason: highest-priority unblocked task chosen
+- [ ] Act: change committed atomically
+- [ ] Reflect: outcome logged
+- [ ] Verify: tests green, build passes, diff non-empty
+- [ ] Compound: novel insight saved to ~/.loki/solutions/ (or none)
+- [ ] Closure: gates and council clear; receipt is VERIFIED
+```
+
+Example. Input: `loki owner/repo#123`. Output: a branch with the fix, a PR, and a receipt under `.loki/proofs/<run_id>/` whose headline reads `VERIFIED`; re-check with `loki proof verify <run_id>` (exit 0 = clean).
 
 ---
 
@@ -455,44 +470,9 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-## Implemented Features
+## Feature status
 
-| Feature | Added | Notes |
-|---------|-------|-------|
-| Multi-provider support (5 providers) | v5.0.0 | claude, codex, cline, aider, opencode -- see `providers/` |
-| CONTINUITY.md working memory | v5.35.0 | Auto-managed by run.sh, updated each iteration |
-| Quality gates 3-reviewer system | v5.35.0 | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
-| Memory System (episodic/semantic/procedural) | v5.15.0 | Full implementation in `memory/` |
-| Context Window Tracking | v5.40.0 | Dashboard gauge, per-agent breakdown at `GET /api/context` |
-| Notification Triggers | v5.40.0 | `GET/PUT /api/notifications/triggers` |
-| GitHub integration | v5.42.2 | Import, sync-back, PR creation, export. CLI: `loki github`, API: `/api/github/*` |
-| Legacy System Healing | v6.67.0 | `loki heal <path>` -- friction-as-semantics, characterization tests |
-| Unified `loki start` | v6.84.0 | Auto-detects spec (PRD, OpenAPI, etc.) vs issue input |
-| Managed Agents (memory mirror) | v7.2.0 | Opt-in via `LOKI_MANAGED_AGENTS` -- see Managed Agents section |
-| Bun runtime (Phase 1) | v7.3.0 | Read-only commands routed through `bin/loki`; `LOKI_LEGACY_BASH=1` to revert |
-| Phase 1 RARV-C closure | v7.5.x | Findings injection, real judges, auto-learnings, handoff.md |
-| Anthropic SDK route | v8.0.0 | Opt-in, default-off; one switch `LOKI_SDK_MODE` -- see `references/sdk-mode.md` |
-| Harness intelligence | v8.0.0 | Prompt-cache discipline, confidence-spike re-check, goal scoring, smart retry |
-| SDK degradation event | v8.0.0 | Structured `capability_degraded` record on `.loki/events.jsonl` |
-| Time to first preview | v8.0.0 | `.loki/app-runner/first-preview.json`, write-once (bash route) |
-| Opt-in build analytics | v8.0.0 | `build_verified` event behind a strict second gate, allowlist-only fields |
-
-## Planned / In-Progress Features
-
-| Feature | Target | Notes |
-|---------|--------|-------|
-| Bun runtime (Phase 2+) | TBD | Migrate write-path commands; tracked on `feat/bun-migration` |
-| Managed Agents multiagent path | TBD | `LOKI_EXPERIMENTAL_MANAGED_*` flags -- RESEARCH PREVIEW, not on live API |
-| Benchmarks | TBD | Runner scripts and datasets exist in `benchmarks/`; no published results |
-| `loki run` removal | with legacy removal | Currently a deprecated alias for `loki start` |
-
-## Deprecated
-
-| Item | Deprecated In | Notes |
-|------|---------------|-------|
-| `loki run <issue>` | v6.84.0 | Alias for `loki start`. Removal is part of the planned legacy removal. |
-| `loki start`, RARV skill loop | v10.6.6 | Legacy engine, planned for removal; use `loki "<task>"` / `loki owner/repo#N`. |
-| VSCode extension (`vscode-extension/`) | v7.2.0 | No longer actively maintained; dashboard web UI is the supported front-end. |
+Implemented, planned and deprecated items, with the version each landed in: `skills/release-cadence.md` section 7. `loki start` and the RARV skill loop are the legacy engine (planned removal); prefer `loki "<task>"` or `loki owner/repo#N`.
 
 ---
 

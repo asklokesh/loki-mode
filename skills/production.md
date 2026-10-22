@@ -56,6 +56,8 @@ This module consolidates battle-tested insights from:
 - Simon Willison's Superpowers coding agent patterns
 - Multi-agent orchestration real-world deployments
 
+**Per-surface constraints:** Claude Code has full network access and can install packages locally; the Claude API runs tools without network access and without runtime package installs; claude.ai installs packages from the standard registries only. Check the target surface before a pattern below assumes network or installs.
+
 ---
 
 ## Proactive Context Management (OpenCode Pattern)

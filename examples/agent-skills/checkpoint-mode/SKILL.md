@@ -1,6 +1,6 @@
 ---
 name: checkpoint-mode
-description: Pause for review every N tasks - selective autonomy pattern
+description: Pauses for human review every N tasks (selective autonomy). Use when work needs short autonomous bursts with feedback instead of one long run.
 agent_types: [orchestrator]
 research_source: timdettmers.com
 activation: configurable

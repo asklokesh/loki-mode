@@ -34,6 +34,8 @@
   - [Metrics for Tier Optimization](#metrics-for-tier-optimization)
 <!-- TOC:END -->
 
+For current model ids, pricing, parameters, prompt caching and token counting, use the `claude-api` skill; this module holds only the tier policy and does not restate them.
+
 ## Session-Pinned Model (default)
 
 Since v6.81.0, the main RARV loop uses **one pinned model per session** instead of rotating models per RARV phase. This eliminates per-iteration tier churn and keeps the main loop behavior predictable.

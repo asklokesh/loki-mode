@@ -1,6 +1,6 @@
 ---
 name: prompt-optimization
-description: Applies prompt repetition to improve accuracy for non-reasoning LLMs
+description: Applies prompt repetition to improve accuracy for non-reasoning LLMs. Use when a Haiku or other non-reasoning agent misses details in a long prompt.
 agent_types: [all]
 research_source: arXiv 2512.14982v1
 activation: automatic

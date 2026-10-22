@@ -119,6 +119,19 @@ else
     fi
 fi
 
+# --- 4b. No dangling module link in SKILL.md ---------------------------------
+# The inverse of 4: a skills/ or references/ markdown file SKILL.md names must exist.
+echo "== SKILL.md links and path mentions resolve to real files =="
+dangling=""
+for t in $(grep -oE '\((skills|references)/[A-Za-z0-9._-]+\.md\)|`(skills|references)/[A-Za-z0-9._-]+\.md`' SKILL.md | tr -d '()`' | sort -u); do
+    [ -f "$t" ] || dangling="$dangling $t"
+done
+if [ -z "$dangling" ]; then
+    pass "every skills/ and references/ file SKILL.md names exists"
+else
+    fail "SKILL.md names missing file(s):$dangling"
+fi
+
 # --- 4. SKILL.md links every skill module directly ---------------------------
 # SKILL.md is how the agent decides what to load, one hop from the entry file.
 # A module it does not link is a module that never gets loaded, however binding

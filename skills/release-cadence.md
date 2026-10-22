@@ -14,6 +14,10 @@
 - [5. After the push: verify provenance, not the version string](#5-after-the-push-verify-provenance-not-the-version-string)
   - [5.1 Confirm a release-critical fix THREE ways, never one](#51-confirm-a-release-critical-fix-three-ways-never-one)
 - [6. The cadence, end to end](#6-the-cadence-end-to-end)
+- [7. Feature status: implemented, planned, deprecated](#7-feature-status-implemented-planned-deprecated)
+  - [7.1 Implemented](#71-implemented)
+  - [7.2 Planned and in progress](#72-planned-and-in-progress)
+  - [7.3 Deprecated](#73-deprecated)
 <!-- TOC:END -->
 
 **Purpose:** the shortest VERIFIED path from idea to published. Shortest and
@@ -392,3 +396,46 @@ green job is not yet proof the version is fetchable.
 Steps 4 through 7 are the verified part of "shortest verified path". Dropping
 any one of them has already produced a release that reported success and
 shipped nothing.
+
+## 7. Feature status: implemented, planned, deprecated
+
+Moved from `SKILL.md` so the entry file carries no dated text. Update a row here when a release changes its status.
+
+### 7.1 Implemented
+
+| Feature | Added | Notes |
+|---------|-------|-------|
+| Multi-provider support (5 providers) | v5.0.0 | claude, codex, cline, aider, opencode -- see `providers/` |
+| CONTINUITY.md working memory | v5.35.0 | Auto-managed by run.sh, updated each iteration |
+| Quality gates 3-reviewer system | v5.35.0 | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
+| Memory System (episodic/semantic/procedural) | v5.15.0 | Full implementation in `memory/` |
+| Context Window Tracking | v5.40.0 | Dashboard gauge, per-agent breakdown at `GET /api/context` |
+| Notification Triggers | v5.40.0 | `GET/PUT /api/notifications/triggers` |
+| GitHub integration | v5.42.2 | Import, sync-back, PR creation, export. CLI: `loki github`, API: `/api/github/*` |
+| Legacy System Healing | v6.67.0 | `loki heal <path>` -- friction-as-semantics, characterization tests |
+| Unified `loki start` | v6.84.0 | Auto-detects spec (PRD, OpenAPI, etc.) vs issue input |
+| Managed Agents (memory mirror) | v7.2.0 | Opt-in via `LOKI_MANAGED_AGENTS` -- see Managed Agents section |
+| Bun runtime (Phase 1) | v7.3.0 | Read-only commands routed through `bin/loki`; `LOKI_LEGACY_BASH=1` to revert |
+| Phase 1 RARV-C closure | v7.5.x | Findings injection, real judges, auto-learnings, handoff.md |
+| Anthropic SDK route | v8.0.0 | Opt-in, default-off; one switch `LOKI_SDK_MODE` -- see `references/sdk-mode.md` |
+| Harness intelligence | v8.0.0 | Prompt-cache discipline, confidence-spike re-check, goal scoring, smart retry |
+| SDK degradation event | v8.0.0 | Structured `capability_degraded` record on `.loki/events.jsonl` |
+| Time to first preview | v8.0.0 | `.loki/app-runner/first-preview.json`, write-once (bash route) |
+| Opt-in build analytics | v8.0.0 | `build_verified` event behind a strict second gate, allowlist-only fields |
+
+### 7.2 Planned and in progress
+
+| Feature | Target | Notes |
+|---------|--------|-------|
+| Bun runtime (Phase 2+) | TBD | Migrate write-path commands; tracked on `feat/bun-migration` |
+| Managed Agents multiagent path | TBD | `LOKI_EXPERIMENTAL_MANAGED_*` flags -- RESEARCH PREVIEW, not on live API |
+| Benchmarks | TBD | Runner scripts and datasets exist in `benchmarks/`; no published results |
+| `loki run` removal | with legacy removal | Currently a deprecated alias for `loki start` |
+
+### 7.3 Deprecated
+
+| Item | Deprecated In | Notes |
+|------|---------------|-------|
+| `loki run <issue>` | v6.84.0 | Alias for `loki start`. Removal is part of the planned legacy removal. |
+| `loki start`, RARV skill loop | v10.6.6 | Legacy engine, planned for removal; use `loki "<task>"` / `loki owner/repo#N`. |
+| VSCode extension (`vscode-extension/`) | v7.2.0 | No longer actively maintained; dashboard web UI is the supported front-end. |

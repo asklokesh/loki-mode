@@ -30,11 +30,11 @@ skill-name/
 
 ### Core Skills (Built-in)
 
-| Skill | Description | Agent Types |
-|-------|-------------|-------------|
-| `prompt-optimization` | Prompt repetition for Haiku agents | All |
-| `checkpoint-mode` | Pause for review every N tasks | Orchestrator |
-| `confidence-routing` | Multi-tier routing based on confidence | Orchestrator |
+| Skill | Description | Agent Types | Owner | Version | Deps | Eval status |
+|-------|-------------|-------------|-------|---------|------|-------------|
+| `prompt-optimization` | Applies prompt repetition to improve accuracy for non-reasoning LLMs | All | asklokesh | unversioned | none | none (design note) |
+| `checkpoint-mode` | Pauses for review every N tasks (selective autonomy) | Orchestrator | asklokesh | unversioned | none | none (design note) |
+| `confidence-routing` | Multi-tier routing based on confidence | Orchestrator | asklokesh | no directory in this tree | none | none |
 
 ---
 
