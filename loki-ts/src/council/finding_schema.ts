@@ -23,8 +23,8 @@
 //   validateFinding(obj)      -> AgentVerdict | { error, path }
 //   parseMultiResponse(text)  -> AgentVerdict[]  (throws on malformed JSON)
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve as resolvePath, dirname } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve as resolvePath, dirname, relative, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentVerdict, Severity } from "../runner/council.ts";
 
@@ -97,6 +97,7 @@ export function assertStaticSchema(schema: unknown): void {
 }
 
 const VOTE_ENUM = new Set(["APPROVE", "REJECT", "CANNOT_VALIDATE"]);
+
 const SEVERITY_ENUM = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
 
 // A blocking issue (CRITICAL or HIGH) from a code-reviewing role should cite a
@@ -123,6 +124,118 @@ export function hasFileLineAnchor(desc: string): boolean {
   return false;
 }
 
+export const CITATION_NOT_FOUND_TAG = "[citation not found]";
+const MAX_CITATION_FILE_BYTES = 8 * 1024 * 1024;
+
+// Where cited paths are resolved. root = the reviewed tree (derived by the
+// caller at runtime); diffFiles = paths touched by the reviewed diff, supplied
+// only when the caller really has the diff. Without it nothing is downgraded.
+// Downgrade happens only on positive evidence: (1) the citation matches exactly
+// one file the diff does NOT touch and its line is past that file's EOF (a diff
+// file may have shrunk, so a base-side line past EOF proves nothing), or (2) the
+// file is on neither the disk nor the diff. A basename, a package-relative suffix or a backslash path that
+// matches any file counts as resolving; an ambiguous match is never evidence.
+// cwd = the directory the reviewer ran in when it is below root (a monorepo
+// subdirectory); a cwd-relative citation resolves there first. diffFiles are
+// root-relative, as git diff --name-only prints them. gitlinks are the diffFiles
+// entries that are submodule gitlinks (mode 160000 on either side of git diff --raw).
+export type CitationContext = { root?: string; cwd?: string; diffFiles?: readonly string[]; gitlinks?: readonly string[] };
+
+type Citation = { path: string; line: number };
+
+function extractCitations(desc: string): Citation[] {
+  const out: Citation[] = [];
+  const text = desc.replace(URL_RE, " ").replace(/\\/g, "/"); // a Windows path cites the same file
+  for (const m of text.matchAll(ANCHOR_RE)) {
+    const tok = m[1] as string;
+    if (/\.[A-Za-z][A-Za-z0-9]*$/.test(tok) || tok.includes("/") || EXTENSIONLESS.test(tok)) {
+      out.push({ path: tok.replace(/^\.\//, ""), line: Number(m[2]) });
+    }
+  }
+  return out;
+}
+
+const SKIP_DIRS = new Set([".git", "node_modules", ".loki", "dist", ".claude"]);
+const MAX_WALK_ENTRIES = 100_000;
+const treeFiles = new WeakMap<CitationContext, string[]>();
+
+// Root-relative file list (bounded walk), built once per context.
+function listTree(ctx: CitationContext): string[] {
+  const cached = treeFiles.get(ctx);
+  if (cached) return cached;
+  const root = ctx.root as string, out: string[] = [], stack = [""];
+  while (stack.length > 0 && out.length < MAX_WALK_ENTRIES) {
+    const rel = stack.pop() as string;
+    let names: import("node:fs").Dirent[] = [];
+    try { names = readdirSync(join(root, rel), { withFileTypes: true }); } catch { continue; }
+    for (const d of names) {
+      const r = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) { if (!SKIP_DIRS.has(d.name)) stack.push(r); } else if (d.isFile()) out.push(r);
+    }
+  }
+  treeFiles.set(ctx, out);
+  return out;
+}
+
+const suffixMatches = (files: readonly string[], cited: string): string[] => {
+  const c = cited.replace(/^\/+/, "");
+  return files.filter((f) => f === c || f.endsWith(`/${c}`));
+};
+
+function lineCount(abs: string): number | null {
+  try {
+    const st = statSync(abs);
+    if (!st.isFile() || st.size > MAX_CITATION_FILE_BYTES) return null;
+    const body = readFileSync(abs, "utf8");
+    let n = 1;
+    for (let i = 0; i < body.length; i++) if (body.charCodeAt(i) === 10) n++;
+    return body.endsWith("\n") ? n - 1 : n;
+  } catch { return null; }
+}
+
+// "refuted" only on positive evidence; everything else is "ok" (keep severity).
+function citationVerdict(c: Citation, ctx: CitationContext): "refuted" | "ok" {
+  if (ctx.diffFiles === undefined) return "ok"; // no diff: neither a missing file nor a past-EOF line is evidence
+  const root = ctx.root as string;
+  const touched = (f: string): boolean => ctx.diffFiles!.some((d0) => { const d = d0.replace(/\\/g, "/"); return f === d || f.startsWith(`${d}/`); }); // a submodule shows in the diff as its gitlink path only
+  let files: string[] = [];
+  for (const base of [ctx.cwd ?? root, root]) {
+    const exact = resolvePath(base, c.path), inRoot = relative(root, exact);
+    if (inRoot.startsWith("..") || isAbsolute(inRoot) || lineCount(exact) === null) continue;
+    files = [inRoot.split(sep).join("/")];
+    break;
+  }
+  if (files.length === 0) files = suffixMatches(listTree(ctx), c.path);
+  if (files.length === 1) {
+    if (touched(files[0] as string)) return "ok"; // the diff changed this file: the cited line may be base-side
+    const n = lineCount(join(root, files[0] as string));
+    return n !== null && c.line > n ? "refuted" : "ok";
+  }
+  if (files.length > 1) return "ok"; // ambiguous: not evidence
+  if (ctx.diffFiles.some((f) => suffixMatches([f.replace(/\\/g, "/")], c.path).length > 0)) return "ok";
+  // A file deleted inside a diff-listed submodule is absent on disk and the diff names only the gitlink: the cited path, resolved against cwd or the root, lies under it.
+  for (const base of [ctx.cwd ?? root, root]) {
+    const inRoot = relative(root, resolvePath(base, c.path));
+    if (!inRoot.startsWith("..") && !isAbsolute(inRoot) && touched(inRoot.split(sep).join("/"))) return "ok";
+  }
+  // An unresolved citation may sit inside a bumped submodule only when (i) it is a bare basename, or (ii) one of its directory components equals a gitlink's
+  // final segment, whole (vendor/lib never matches src/libfoo/x.ts). A path starting with a gitlink path plus "/" always has that component, so it needs no rule of its own.
+  // Anything else is refuted.
+  const parts = c.path.replace(/\\/g, "/").replace(/^(\.?\/)+/, "").split("/").filter(Boolean);
+  const links = (ctx.gitlinks ?? []).map((d0) => d0.replace(/\\/g, "/"));
+  if (links.length > 0 && parts.length <= 1) return "ok"; // (i)
+  const names = links.map((d) => d.split("/").filter(Boolean).pop());
+  if (parts.slice(0, -1).some((seg) => names.includes(seg))) return "ok"; // (ii)
+  return "refuted";
+}
+
+// True when a description cites file:line anchors and every one is refuted.
+function citationsAllMissing(desc: string, ctx: CitationContext): boolean {
+  if (!ctx.root || NO_FILE_MARKER.test(desc)) return false;
+  const cites = extractCitations(desc);
+  return cites.length > 0 && cites.every((c) => citationVerdict(c, ctx) === "refuted");
+}
+
 export type ValidationError = { error: string; path: string };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -132,7 +245,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 // Manual validator. Returns AgentVerdict on success, structured error otherwise.
 // Validates required fields, vote enum, confidence range; tolerates optional
 // fields and drops them from the AgentVerdict output.
-export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
+export function validateFinding(obj: unknown, ctx: CitationContext = {}): AgentVerdict | ValidationError {
   if (!isRecord(obj)) {
     return { error: "finding must be an object", path: "$" };
   }
@@ -188,6 +301,14 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
         issuesOut.push({ severity: "MEDIUM", description: `${UNANCHORED_TAG} ${desc}` });
         continue;
       }
+      if (
+        BLOCKING_SEVERITY.has(sev) &&
+        !ANCHOR_EXEMPT_ROLES.has(obj["role"] as string) &&
+        citationsAllMissing(desc, ctx)
+      ) {
+        issuesOut.push({ severity: "MEDIUM", description: `${CITATION_NOT_FOUND_TAG} ${desc}` });
+        continue;
+      }
       issuesOut.push({ severity: sev as Severity, description: desc });
     }
   }
@@ -204,7 +325,7 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
 // and validates each finding. Throws on malformed JSON or on schema-level
 // errors (missing top-level findings, empty array, per-finding validation).
 // Caller (dispatchClaudeAgents) catches throw and falls through to heuristic.
-export function parseMultiResponse(text: string): AgentVerdict[] {
+export function parseMultiResponse(text: string, ctx: CitationContext = {}): AgentVerdict[] {
   if (typeof text !== "string" || text.length === 0) {
     throw new Error("empty response text");
   }
@@ -273,7 +394,7 @@ export function parseMultiResponse(text: string): AgentVerdict[] {
 
   const out: AgentVerdict[] = [];
   for (let i = 0; i < findings.length; i++) {
-    const r = validateFinding(findings[i]);
+    const r = validateFinding(findings[i], ctx);
     if ("error" in r) {
       throw new Error(`findings[${i}] validation: ${r.error} (${r.path})`);
     }

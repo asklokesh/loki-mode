@@ -12,6 +12,7 @@ import { describe, it, expect } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { councilAggregateVotes } from "../../src/runner/council.ts";
 import {
   FINDING_SCHEMA,
   validateFinding,
@@ -22,6 +23,7 @@ import {
   normalizeEnumValue,
   SchemaLiteralError,
   resolveSchemaDataDir,
+  CITATION_NOT_FOUND_TAG,
 } from "../../src/council/finding_schema.ts";
 
 describe("FINDING_SCHEMA", () => {
@@ -329,4 +331,185 @@ describe("schema data dir resolves from source and from the bundled dist", () =>
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("citation existence check (positive evidence only)", () => {
+  const root = mkdtempSync(join(tmpdir(), "loki-run.cite-"));
+  mkdirSync(join(root, "src", "council"), { recursive: true });
+  mkdirSync(join(root, "pkg", "a"), { recursive: true });
+  mkdirSync(join(root, "pkg", "b"), { recursive: true });
+  writeFileSync(join(root, "src", "real.ts"), "a\nb\nc\n");
+  writeFileSync(join(root, "src", "council", "finding_schema.ts"), Array.from({ length: 200 }, (_, i) => `l${i}`).join("\n") + "\n");
+  writeFileSync(join(root, "pkg", "a", "dup.ts"), "1\n");
+  writeFileSync(join(root, "pkg", "b", "dup.ts"), "1\n");
+  const finding = (description: string, severity = "HIGH") => ({
+    role: "devils_advocate",
+    vote: "REJECT",
+    reason: "bad",
+    confidence: 0.8,
+    issues: [{ severity, description }],
+  });
+  const issue = (d: string, ctx: { root?: string; cwd?: string; diffFiles?: string[] } = { root, diffFiles: [] }, severity = "HIGH") => {
+    const r = validateFinding(finding(d, severity), ctx);
+    if ("error" in r) throw new Error(r.error);
+    return r.issues[0]!;
+  };
+
+  it("a unique file with the line past EOF is downgraded with a recorded note; a real line keeps HIGH", () => {
+    const i = issue("bug at src/real.ts:99");
+    expect(i.severity).toBe("MEDIUM");
+    expect(i.description).toContain("citation not found");
+    expect(i.description.startsWith(CITATION_NOT_FOUND_TAG)).toBe(true);
+    expect(issue("bug at src/real.ts:3").severity).toBe("HIGH");
+    expect(issue("bug at src/real.ts:99", { root, diffFiles: [] }, "CRITICAL").severity).toBe("MEDIUM");
+  });
+
+  it("a missing file downgrades only when diffFiles is supplied and lacks it", () => {
+    expect(issue("bug at src/does_not_exist.ts:10", { root, diffFiles: [] }).severity).toBe("MEDIUM");
+    expect(issue("bug at src/does_not_exist.ts:10", { root }).severity).toBe("HIGH"); // no diff: no evidence
+    expect(issue("removed src/gone.ts:4", { root, diffFiles: ["src/gone.ts"] }).severity).toBe("HIGH"); // deleted file in the diff
+  });
+
+  it("repro: a basename citation of a real file keeps HIGH", () => {
+    expect(issue("bug at finding_schema.ts:120", { root, diffFiles: [] }).severity).toBe("HIGH");
+    expect(issue("bug at finding_schema.ts:5000").severity).toBe("MEDIUM"); // unique match, past EOF
+  });
+
+  it("repro: a package-relative suffix path keeps HIGH", () => {
+    expect(issue("bug at council/finding_schema.ts:120", { root, diffFiles: [] }).severity).toBe("HIGH");
+    expect(issue("bug at src/council/finding_schema.ts:120", { root, diffFiles: [] }).severity).toBe("HIGH");
+  });
+
+  it("repro: a backslash (Windows) path resolves like its slash form", () => {
+    expect(issue("bug at src\\council\\finding_schema.ts:120", { root, diffFiles: [] }).severity).toBe("HIGH");
+    expect(issue("bug at src\\real.ts:99").severity).toBe("MEDIUM");
+    expect(issue("bug at pkg\\a\\dup.ts:50").severity).toBe("MEDIUM"); // the full path disambiguates dup.ts; a bare basename would not
+  });
+
+  it("repro: a deleted file named in diffFiles keeps HIGH; an ambiguous basename is never evidence", () => {
+    expect(issue("gone at old/removed.ts:7", { root, diffFiles: ["old/removed.ts"] }).severity).toBe("HIGH");
+    expect(issue("bug at dup.ts:50", { root, diffFiles: [] }).severity).toBe("HIGH"); // two files match
+  });
+
+  it("a base-side line past EOF of a file the diff shrank is not proof; with no diff it is skipped", () => {
+    expect(issue("the deleted guard at src/real.ts:8 removes auth", { root, diffFiles: ["src/real.ts"] }).severity).toBe("HIGH");
+    expect(issue("the deleted guard at real.ts:8 removes auth", { root, diffFiles: ["src\\real.ts"] }).severity).toBe("HIGH");
+    expect(issue("the deleted guard at src/real.ts:8 removes auth", { root }).severity).toBe("HIGH");
+    expect(issue("the deleted guard at src/real.ts:8 removes auth", { root, diffFiles: ["src/other.ts"] }).severity).toBe("MEDIUM");
+  });
+
+  it("a cwd-relative citation from a subdirectory maps to the root-relative diff path", () => {
+    mkdirSync(join(root, "pkg", "a", "src"), { recursive: true });
+    writeFileSync(join(root, "pkg", "a", "src", "own.ts"), "1\n2\n");
+    const ctx = { root, cwd: join(root, "pkg", "a"), diffFiles: ["pkg/a/src/own.ts"] };
+    expect(issue("deleted guard at src/own.ts:15 removes auth", ctx).severity).toBe("HIGH");
+    expect(issue("deleted guard at src/own.ts:15 removes auth", { ...ctx, diffFiles: [] }).severity).toBe("MEDIUM");
+  });
+
+  it("a file inside a diff-listed submodule gitlink counts as touched", () => {
+    mkdirSync(join(root, "pkg", "sub"), { recursive: true });
+    writeFileSync(join(root, "pkg", "sub", "s.ts"), "1\n2\n");
+    const ctx = { root, cwd: join(root, "pkg"), diffFiles: ["pkg/sub"] };
+    expect(issue("deleted guard at sub/s.ts:15 removes auth", ctx).severity).toBe("HIGH");
+    expect(issue("deleted guard at sub/s.ts:15 removes auth", { ...ctx, diffFiles: ["pkg/subx"] }).severity).toBe("MEDIUM");
+  });
+
+  describe("suffix forms of a file deleted inside a diff-listed submodule", () => {
+    // No cwd: the suffix cannot be resolved against disk, so only the gitlink data can place it.
+    const cite = (d: string, diffFiles: string[], gitlinks: string[] = []) =>
+      issue(`deleted guard at ${d} removes auth`, { root, diffFiles, gitlinks } as never).severity;
+
+    it("renamed gitlink: the suffix names the new path", () => {
+      expect(cite("sub2/s.ts:15", ["pkg/sub2"], ["pkg/sub2"])).toBe("HIGH");
+    });
+    it("deleted gitlink: the directory is gone from disk", () => {
+      expect(cite("gone/s.ts:15", ["pkg/gone"], ["pkg/gone"])).toBe("HIGH");
+    });
+    it("dotted-name deleted gitlink", () => {
+      expect(cite("lib.js/s.ts:15", ["pkg/lib.js"], ["pkg/lib.js"])).toBe("HIGH");
+    });
+    it("nested submodule: the diff lists the outer gitlink only", () => {
+      expect(cite("mid/deps/inner/n.ts:15", ["pkg/mid"], ["pkg/mid"])).toBe("HIGH");
+      expect(cite("inner/n.ts:15", ["pkg/mid"], ["pkg/mid"])).toBe("MEDIUM"); // no segment names a listed gitlink: unplaceable, so refutable
+    });
+    it("bare basename falls under a listed gitlink, like a plain file's bare basename", () => {
+      expect(cite("ghost.ts:15", ["pkg/sub2"], ["pkg/sub2"])).toBe("HIGH");
+    });
+    it("plain-file controls stay HIGH for the same forms (green before and after)", () => {
+      expect(cite("old/removed.ts:7", ["pkg/old/removed.ts"])).toBe("HIGH");
+      expect(cite("removed.ts:7", ["pkg/old/removed.ts"])).toBe("HIGH");
+    });
+    it("a deleted plain file is not a gitlink: an unrelated bare path still downgrades", () => {
+      expect(cite("ghost.ts:15", ["pkg/old/removed.ts"])).toBe("MEDIUM");
+      expect(cite("ghost.ts:15", ["pkg/dir"])).toBe("MEDIUM"); // a diff entry not reported as a gitlink is not one
+    });
+    it("an unplaceable path is refuted even with a gitlink bump present", () => {
+      const diff = ["pkg/sub", "src/real.ts"];
+      expect(cite("src/fabricated.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
+      expect(cite("totally/unrelated/ghost.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
+      expect(cite("other/s.ts:15", ["pkg/sub2"], ["pkg/sub2"])).toBe("MEDIUM");
+      expect(cite("src/libfoo/x.ts:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM");
+      expect(cite("src/lib:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM"); // the filename is not a directory component
+    });
+    const diff = ["pkg/sub", "pkg/real.ts"];
+    it("rule (i): a bare basename stays HIGH under a listed gitlink", () => {
+      expect(cite("s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+    });
+    it("rule (ii): a path starting with the gitlink path plus a slash stays HIGH (it carries the final-segment component)", () => {
+      expect(cite("pkg/sub/deep/x.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+    });
+    it("rule (ii): a component equal to the gitlink's final segment stays HIGH", () => {
+      expect(cite("sub/s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+      expect(cite("a/sub/s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+    });
+    it("a path sharing no component with any gitlink is refuted", () => {
+      expect(cite("pkg/other/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
+    });
+    it("a substring-only near miss is refuted, never matched as a substring", () => {
+      expect(cite("src/libfoo/x.ts:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM");
+      expect(cite("src/sublime/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
+      expect(cite("pkg/subx/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM"); // prefix without the slash boundary
+    });
+  });
+
+  it("an ambiguous cwd-relative citation resolves against cwd first", () => {
+    mkdirSync(join(root, "pkg", "b", "src"), { recursive: true });
+    writeFileSync(join(root, "pkg", "b", "src", "own.ts"), "1\n2\n");
+    const ctx = { root, cwd: join(root, "pkg", "a"), diffFiles: [] as string[] };
+    expect(issue("bug at src/own.ts:15", ctx).severity).toBe("MEDIUM");
+    expect(issue("bug at src/own.ts:15", { root, diffFiles: [] }).severity).toBe("HIGH");
+  });
+
+  it("council: 2 APPROVE + 1 REJECT-HIGH citing a shrunk file's base-side line stays CONTINUE", async () => {
+    const mk = (role: string, vote: string, issues: unknown[] = []) => ({ role, vote, reason: "r", confidence: 0.9, issues });
+    const votes = parseMultiResponse(
+      JSON.stringify({ findings: [mk("a", "APPROVE"), mk("b", "APPROVE"), mk("c", "REJECT", [{ severity: "HIGH", description: "the deleted guard at finding_schema.ts:205 removes auth" }])] }),
+      { root, diffFiles: ["src/council/finding_schema.ts"] },
+    );
+    expect((await councilAggregateVotes(votes)).decision).toBe("CONTINUE");
+  });
+
+  it("a path escaping the root is judged on the diff only", () => {
+    expect(issue("bug at ../outside.ts:1", { root, diffFiles: [] }).severity).toBe("MEDIUM");
+    expect(issue("bug at ../outside.ts:1", { root }).severity).toBe("HIGH");
+  });
+
+  it("no root means no check; parseMultiResponse threads the context through", () => {
+    expect(issue("bug at src/real.ts:99", {}).severity).toBe("HIGH");
+    const out = parseMultiResponse(JSON.stringify({ findings: [finding("bug src/real.ts:99")] }), { root, diffFiles: [] });
+    expect(out[0]?.issues[0]?.severity).toBe("MEDIUM");
+  });
+
+  it("council: 2 APPROVE + 1 REJECT-HIGH on a real basename citation stays CONTINUE", async () => {
+    const mk = (role: string, vote: string, issues: unknown[] = []) => ({ role, vote, reason: "r", confidence: 0.9, issues });
+    const votes = parseMultiResponse(
+      JSON.stringify({ findings: [mk("a", "APPROVE"), mk("b", "APPROVE"), mk("c", "REJECT", [{ severity: "HIGH", description: "race at finding_schema.ts:120" }])] }),
+      { root },
+    );
+    const agg = await councilAggregateVotes(votes);
+    expect(agg.decision).toBe("CONTINUE");
+    expect(agg.blockingSeverity).toBe("HIGH");
+  });
+
+  it("cleanup", () => { rmSync(root, { recursive: true, force: true }); });
 });

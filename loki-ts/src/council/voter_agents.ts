@@ -33,15 +33,50 @@
 // unsupported, parse error), dispatchClaudeAgents throws. The caller
 // (councilEvaluate) catches and falls through to the existing heuristic.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
 import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
-import { reviewerGitEnv, tokenFreeEnv } from "../util/safe_git.ts";
+import { reviewerGitEnv, safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+import { changedFiles } from "../util/check_result.ts";
 import { parseMultiResponse, resolveSchemaDataDir } from "./finding_schema.ts";
+import type { CitationContext } from "./finding_schema.ts";
+
+// Citation context for a voter response: the reviewed tree (git toplevel; cwd kept for cwd-relative citations) and the files the
+// reviewed work changed (merge-base with the default branch .. working tree, via
+// changedFiles). No resolvable base means no diffFiles, and finding_schema then
+// downgrades nothing on citation grounds.
+// Submodule gitlinks the reviewed work touched: paths whose mode is 160000 on
+// either side of `git diff --raw` (added, bumped, renamed away or deleted).
+function gitlinkPaths(root: string, base: string): string[] {
+  try {
+    const parts = safeGit(root, ["-c", "core.quotePath=false", "diff", "--raw", "--no-renames", "-z", base]).split("\0");
+    const out: string[] = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const m = /^:(\d+) (\d+) /.exec(parts[i] ?? "");
+      if (m && (m[1] === "160000" || m[2] === "160000")) out.push(parts[i + 1] as string);
+    }
+    return out;
+  } catch { return []; }
+}
+
+export function citationCtx(cwd: string = process.cwd()): CitationContext {
+  let root: string;
+  try {
+    root = realpathSync(safeGit(cwd, ["rev-parse", "--show-toplevel"]).trim());
+  } catch { return { root: cwd }; }
+  const here = realpathSync(cwd);
+  for (const ref of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
+    try {
+      const base = safeGit(root, ["merge-base", "HEAD", ref]).trim();
+      if (base) return { root, cwd: here, diffFiles: changedFiles(root, base), gitlinks: gitlinkPaths(root, base) };
+    } catch { /* ref absent: try the next */ }
+  }
+  return { root, cwd: here };
+}
 import {
   claudeFlagSupported,
   effortForTier,
@@ -356,7 +391,7 @@ export async function dispatchClaudeAgents(
         ledger: { lokiDir: cec.ctx.lokiDir, phase: "council" },
       });
       if (obj !== null) {
-        const verdicts = parseMultiResponse(JSON.stringify(obj));
+        const verdicts = parseMultiResponse(JSON.stringify(obj), citationCtx());
         const expectedSlugs = Object.keys(agentsJson);
         const seen = new Set(verdicts.map((v) => v.role));
         if (expectedSlugs.every((slug) => seen.has(slug))) {
@@ -421,7 +456,7 @@ export async function dispatchClaudeAgents(
     throw new Error(`claude exited with code ${result.exitCode}`);
   }
   // parseMultiResponse throws on any malformed / schema-violating output.
-  const verdicts = parseMultiResponse(result.stdout);
+  const verdicts = parseMultiResponse(result.stdout, citationCtx());
   // Ensure each declared voter is represented. If Claude omitted one,
   // we treat the whole response as invalid so the caller falls through.
   const expectedSlugs = Object.keys(agentsJson);
@@ -510,7 +545,7 @@ export async function dispatchDevilsAdvocate(
   if (result.exitCode !== 0) {
     throw new Error(`claude exited with code ${result.exitCode}`);
   }
-  const verdicts = parseMultiResponse(result.stdout);
+  const verdicts = parseMultiResponse(result.stdout, citationCtx());
   // Exactly one DA finding expected. Best-effort: prefer the devils-advocate
   // slug, but accept the first finding if the model emitted a different role
   // string (this is a single-voter dispatch, so any finding is the DA's). This

@@ -9,7 +9,9 @@
 //   - dispatchClaudeAgents throws when response missing a declared voter
 
 import { describe, it, expect } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { validateFinding } from "../../src/council/finding_schema.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +19,7 @@ import {
   buildDevilsAdvocateAgent,
   dispatchClaudeAgents,
   dispatchDevilsAdvocate,
+  citationCtx,
   VOTER_SLUGS,
   type ClaudeRunner,
 } from "../../src/council/voter_agents.ts";
@@ -546,5 +549,127 @@ describe("dispatchClaudeAgents EMBED 3b --allowedTools least-privilege allowlist
       if (savedAllow === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
       else process.env["LOKI_REVIEW_ALLOWLIST"] = savedAllow;
     }
+  });
+});
+
+describe("citationCtx from a monorepo subdirectory", () => {
+  it("a shrunk pkg/src/a.ts cited as cwd-relative src/a.ts past EOF stays HIGH", () => {
+    const top = realpathSync(mkdtempSync(join(tmpdir(), "loki-citctx-")));
+    try {
+      const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: top, stdio: "ignore" });
+      git("init", "-q", "-b", "main");
+      mkdirSync(join(top, "pkg", "src"), { recursive: true });
+      writeFileSync(join(top, "pkg", "src", "a.ts"), Array.from({ length: 30 }, (_, i) => `l${i}`).join("\n") + "\n");
+      git("add", "."); git("commit", "-q", "-m", "base");
+      git("checkout", "-q", "-b", "work");
+      writeFileSync(join(top, "pkg", "src", "a.ts"), "l0\nl1\n");
+      git("commit", "-q", "-am", "shrink");
+      const ctx = citationCtx(join(top, "pkg"));
+      expect(ctx.root).toBe(top);
+      expect(ctx.diffFiles).toEqual(["pkg/src/a.ts"]);
+      const f = { role: "c", vote: "REJECT", reason: "r", confidence: 0.9, issues: [{ severity: "HIGH", description: "deleted guard at src/a.ts:15 removes auth" }] };
+      const r: any = validateFinding(f, ctx);
+      expect(r.issues[0].severity).toBe("HIGH");
+    } finally { rmSync(top, { recursive: true, force: true }); }
+  });
+
+  it("a shrunk file inside a submodule (diff lists only the gitlink) cited from superproject pkg/ stays HIGH", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "loki-citsub-")));
+    try {
+      const run = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "protocol.file.allow=always", ...a], { cwd, stdio: "ignore" });
+      const sub = join(dir, "subrepo"), top = join(dir, "top");
+      mkdirSync(sub); mkdirSync(top);
+      run(sub, "init", "-q", "-b", "main");
+      writeFileSync(join(sub, "s.ts"), Array.from({ length: 30 }, (_, i) => `l${i}`).join("\n") + "\n");
+      run(sub, "add", "."); run(sub, "commit", "-q", "-m", "s1");
+      run(top, "init", "-q", "-b", "main");
+      mkdirSync(join(top, "pkg"));
+      run(top, "submodule", "add", "-q", sub, "pkg/sub");
+      run(top, "commit", "-q", "-m", "base");
+      run(top, "checkout", "-q", "-b", "work");
+      const inSub = join(top, "pkg", "sub");
+      writeFileSync(join(inSub, "s.ts"), "l0\n");
+      run(inSub, "commit", "-q", "-am", "shrink");
+      run(top, "commit", "-q", "-am", "bump submodule");
+      const ctx = citationCtx(join(top, "pkg"));
+      expect(ctx.diffFiles).toEqual(["pkg/sub"]);
+      expect(ctx.gitlinks).toEqual(["pkg/sub"]); // mode 160000 from git diff --raw, not a disk guess
+      const f = { role: "c", vote: "REJECT", reason: "r", confidence: 0.9, issues: [{ severity: "HIGH", description: "deleted guard at sub/s.ts:15 removes auth" }] };
+      expect((validateFinding(f, ctx) as any).issues[0].severity).toBe("HIGH");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("a deleted file inside a submodule (diff lists only the gitlink) cited from superproject pkg/ stays HIGH", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "loki-citsub-")));
+    try {
+      const run = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "protocol.file.allow=always", ...a], { cwd, stdio: "ignore" });
+      const sub = join(dir, "subrepo"), top = join(dir, "top");
+      mkdirSync(sub); mkdirSync(top);
+      run(sub, "init", "-q", "-b", "main");
+      writeFileSync(join(sub, "s.ts"), Array.from({ length: 30 }, (_, i) => `l${i}`).join("\n") + "\n");
+      run(sub, "add", "."); run(sub, "commit", "-q", "-m", "s1");
+      run(top, "init", "-q", "-b", "main");
+      mkdirSync(join(top, "pkg"));
+      run(top, "submodule", "add", "-q", sub, "pkg/sub");
+      run(top, "commit", "-q", "-m", "base");
+      run(top, "checkout", "-q", "-b", "work");
+      const inSub = join(top, "pkg", "sub");
+      run(inSub, "rm", "-q", "s.ts");
+      run(inSub, "commit", "-q", "-m", "delete");
+      run(top, "commit", "-q", "-am", "bump submodule");
+      const ctx = citationCtx(join(top, "pkg"));
+      expect(ctx.diffFiles).toEqual(["pkg/sub"]);
+      const f = { role: "c", vote: "REJECT", reason: "r", confidence: 0.9, issues: [{ severity: "HIGH", description: "deleted guard at sub/s.ts:15 removes auth" }] };
+      expect((validateFinding(f, ctx) as any).issues[0].severity).toBe("HIGH");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  describe("citationCtx gitlinks come from the mode in git diff --raw", () => {
+    const fixture = (mutate: (run: (cwd: string, ...a: string[]) => void, top: string, sub: string) => void) => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "loki-gitlink-")));
+      const run = (cwd: string, ...a: string[]) => { execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "protocol.file.allow=always", ...a], { cwd, stdio: "ignore" }); };
+      const sub = join(dir, "subrepo"), top = join(dir, "top");
+      mkdirSync(sub); mkdirSync(top);
+      run(sub, "init", "-q", "-b", "main");
+      writeFileSync(join(sub, "s.ts"), "l0\n"); run(sub, "add", "."); run(sub, "commit", "-q", "-m", "s1");
+      run(top, "init", "-q", "-b", "main");
+      mkdirSync(join(top, "src")); writeFileSync(join(top, "src", "real.ts"), "a\n");
+      mutate(run, top, sub);
+      return { dir, top };
+    };
+
+    it("a bumped gitlink plus a plain file: only the gitlink is listed", () => {
+      const { dir, top } = fixture((run, top, sub) => {
+        run(top, "submodule", "add", "-q", sub, "pkg/sub"); run(top, "add", "."); run(top, "commit", "-q", "-m", "base");
+        run(top, "checkout", "-q", "-b", "work");
+        writeFileSync(join(sub, "s.ts"), "l1\n"); run(sub, "commit", "-q", "-am", "s2");
+        run(join(top, "pkg", "sub"), "pull", "-q", "origin", "main");
+        mkdirSync(join(top, "pkg"), { recursive: true }); writeFileSync(join(top, "pkg", "real.ts"), "b\n");
+        run(top, "add", "."); run(top, "commit", "-q", "-m", "bump and edit");
+      });
+      try {
+        const ctx = citationCtx(top);
+        expect([...(ctx.diffFiles ?? [])].sort()).toEqual(["pkg/real.ts", "pkg/sub"]);
+        expect(ctx.gitlinks).toEqual(["pkg/sub"]);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it("a deleted gitlink (mode on the old side only) is listed", () => {
+      const { dir, top } = fixture((run, top, sub) => {
+        run(top, "submodule", "add", "-q", sub, "pkg/sub"); run(top, "add", "."); run(top, "commit", "-q", "-m", "base");
+        run(top, "checkout", "-q", "-b", "work");
+        run(top, "rm", "-q", "-f", "pkg/sub"); run(top, "commit", "-q", "-m", "drop submodule");
+      });
+      try { expect(citationCtx(top).gitlinks).toEqual(["pkg/sub"]); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it("an added gitlink (mode on the new side only) is listed", () => {
+      const { dir, top } = fixture((run, top, sub) => {
+        run(top, "add", "."); run(top, "commit", "-q", "-m", "base");
+        run(top, "checkout", "-q", "-b", "work");
+        run(top, "submodule", "add", "-q", sub, "pkg/sub"); run(top, "commit", "-q", "-m", "add submodule");
+      });
+      try { expect(citationCtx(top).gitlinks).toEqual(["pkg/sub"]); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
   });
 });

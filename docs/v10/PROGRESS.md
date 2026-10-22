@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-10-22T20:25Z: docs-driven batch, v11.44.1 to v11.46.0 shipped, 9 more queued (CoS)
+- Shipped today from the Anthropic platform docs batch (`npm view loki-mode time` at 20:24Z): 11.44.1 (#260), 11.45.0 (#241/#261 typed judge outcomes), 11.45.1 (#299 bench geo multiplier); 11.46.0 (#298 embedding dtype and dimension) released at head 426ac8809, npm pending. dist-tags latest=next=11.45.1 at 20:24Z.
+- Release chains queued in order: H22 #246 advisor bench, H23 #268, H17 #256 web/secret policy, H24 #288, H25 #301 MCP tests, H26 #256 punycode test, H27 #283 journal adoption binding (opus HIGH APPROVE fda2ee2e3, 91/0).
+- H21 #257 part 1 SKIPPED: cherry-pick conflict in tests/mcp/test_phase1_tools.py against 7f5a5b987; rebase engineer eng-257r on pd/257rb, hand-merge goes to review before release.
+- Blocked in review: #249b b0ae92688 (opus BLOCK: a repo bunfig.toml preload forges the owned Playwright path; fix moves the spawn cwd out of the repo and sweeps sibling verdict-path spawns), #308 353cffd5d (TL advisory: --parallel kind split; fixup 28aea4429 in re-review).
+- In review: #251fix2 f46ef8bd8, #286 51fe14c58, #316 f5294eb15, #311 91effcac1, #317 96ab0a819, #237fix4 66c68c567, #259b3, #291.
+- Building: #310, #304, #306, #303 (parked until #256 is on main), #315, #313, #312, #309, spec-hash binding (from #283 review N1), #257 stack fixes, #282.
+- #241 kept open (Fable-avoidance routing not deleted; no in-process caller of the typed outcome); follow-up #318. #261 closed with all 4 criteria MET.
+
 ## 2026-10-09T02:45Z: v11.3.8 shipped, nightly root cause, 5 slices dispatched (CoS)
 - v11.3.8 (WF-2MIN-3): push 80989fdf0, release 37875150528 success on all jobs, npm next 11.3.8, GH release not draft (body 1180 chars). Dispatch to publish 1m43s; registry lag ~4m29s. Steering smoke PASS.
 - Nightly schedule vs dispatch: no trigger-dependent code path besides dedupe. The 10-08 14:12Z scheduled red (37790534786) tested a0d599d0c, before FC-53 0c0069df3 / NR-DOCTOR 0620ecd0e / NR-PIPE 0a66fe634; dispatch 37780519439 on the same SHA failed identically. Current main passes both tests 5/5 locally.
