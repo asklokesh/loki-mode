@@ -5,6 +5,10 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.54.0 (2026-10-22)
+
+- loki doctor checks cloud region, credential and project variables for CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX and CLAUDE_CODE_USE_FOUNDRY, carries the rows in doctor --json, names keyless auth paths, never echoes a credential value, and recommends expiring service account keys. Refs #282.
+
 ## v11.53.1 (2026-10-22)
 
 - .loki/pricing.json model rows are derived from model-pricing.json, so the bash route no longer prices with a stale hand-kept table. A test runs the real writer and compares its output with the catalog. Refs #310.
