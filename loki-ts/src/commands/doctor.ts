@@ -936,6 +936,117 @@ export function describeCatalogFreshness(): CatalogFreshness {
     : { status: "pass", updated, age_days: ageDays, detail: `Last updated ${updated} (${ageDays} days ago)` };
 }
 
+// Capability drift: the catalog's thinking types and effort levels against what
+// the API reports for the same model (GET /v1/models/{id}, models.retrieve).
+// Only the API-expressible thinking types are compared; the catalog also records
+// loki-side states ("disabled", "between_tools") the API does not list.
+const API_THINKING_TYPES = ["adaptive", "enabled"];
+
+export interface ModelCapabilities {
+  effort: string[];
+  thinking: string[];
+}
+
+export interface CapabilityMismatch {
+  id: string;
+  detail: string;
+}
+
+export type ModelsRetrieve = (id: string, apiKey: string) => Promise<ModelCapabilities | null>;
+
+function supportedKeys(group: unknown): string[] {
+  if (!group || typeof group !== "object") return [];
+  return Object.entries(group as Record<string, unknown>)
+    .filter(([, v]) => !!v && typeof v === "object" && (v as { supported?: unknown }).supported === true)
+    .map(([k]) => k);
+}
+
+/** Parse a models.retrieve body into effort levels and thinking types. Null when the body carries no capabilities object. */
+export function parseModelCapabilities(body: unknown): ModelCapabilities | null {
+  const caps = (body as { capabilities?: Record<string, unknown> } | null)?.capabilities;
+  if (!caps || typeof caps !== "object") return null;
+  const effort = caps["effort"] as Record<string, unknown> | undefined;
+  const thinking = caps["thinking"] as { types?: unknown } | undefined;
+  return { effort: supportedKeys(effort), thinking: supportedKeys(thinking?.types) };
+}
+
+async function fetchModelCapabilities(id: string, apiKey: string): Promise<ModelCapabilities | null> {
+  const res = await fetch(`https://api.anthropic.com/v1/models/${encodeURIComponent(id)}`, {
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) return null;
+  return parseModelCapabilities(await res.json());
+}
+
+const modelsRetrieveImpl: { fn: ModelsRetrieve } = { fn: fetchModelCapabilities };
+export function _setModelsRetrieveForTest(fn: ModelsRetrieve | null): void {
+  modelsRetrieveImpl.fn = fn ?? fetchModelCapabilities;
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x));
+}
+
+/** Pure comparison of one catalog entry against the API capabilities. Empty when they agree. */
+export function compareModelCapabilities(
+  entry: { id: string; thinking?: { types?: string[] }; effort?: { levels?: string[] } },
+  api: ModelCapabilities,
+): CapabilityMismatch[] {
+  const out: CapabilityMismatch[] = [];
+  const levels = entry.effort?.levels;
+  if (Array.isArray(levels) && !sameSet(levels, api.effort)) {
+    out.push({ id: entry.id, detail: `effort levels: catalog [${levels.join(", ")}], API [${api.effort.join(", ")}]` });
+  }
+  const types = entry.thinking?.types;
+  if (Array.isArray(types)) {
+    const cat = types.filter((t) => API_THINKING_TYPES.includes(t));
+    const live = api.thinking.filter((t) => API_THINKING_TYPES.includes(t));
+    if (!sameSet(cat, live)) {
+      out.push({ id: entry.id, detail: `thinking types: catalog [${cat.join(", ")}], API [${live.join(", ")}]` });
+    }
+  }
+  return out;
+}
+
+export interface CapabilityCheck {
+  status: "pass" | "warn";
+  detail: string;
+  mismatches: CapabilityMismatch[];
+}
+
+/** Check every claude catalog id against models.retrieve. Never throws, never fails doctor: no key, offline or an error is a warn. */
+export async function checkModelCapabilities(env: NodeJS.ProcessEnv = process.env): Promise<CapabilityCheck> {
+  const apiKey = env["ANTHROPIC_API_KEY"];
+  if (!apiKey) return { status: "warn", detail: "Skipped: set ANTHROPIC_API_KEY to compare the catalog with models.retrieve", mismatches: [] };
+  let models: Array<{ id: string; thinking?: { types?: string[] }; effort?: { levels?: string[] } }>;
+  try {
+    const path = env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    models = JSON.parse(readFileSync(path, "utf-8")).providers?.claude?.models;
+    if (!Array.isArray(models)) throw new Error("no claude models");
+  } catch {
+    return { status: "warn", detail: "Catalog unreadable, cannot compare capabilities", mismatches: [] };
+  }
+  const mismatches: CapabilityMismatch[] = [];
+  let unreachable = 0;
+  await Promise.all(models.map(async (m) => {
+    try {
+      const api = await modelsRetrieveImpl.fn(m.id, apiKey);
+      if (!api) { unreachable++; return; }
+      mismatches.push(...compareModelCapabilities(m, api));
+    } catch {
+      unreachable++;
+    }
+  }));
+  if (mismatches.length > 0) {
+    return { status: "warn", detail: `Capability mismatch on ${new Set(mismatches.map((x) => x.id)).size} model(s)`, mismatches };
+  }
+  if (unreachable > 0) {
+    return { status: "warn", detail: `models.retrieve unavailable for ${unreachable} of ${models.length} model(s) (offline or unknown id); not compared`, mismatches };
+  }
+  return { status: "pass", detail: `Catalog matches models.retrieve for ${models.length} model(s)`, mismatches };
+}
+
 async function requirementsSection(): Promise<RequirementsReport & { first_task_ready: boolean }> {
   const rep = await evaluateRequirements();
   return { ...rep, first_task_ready: firstTaskReady(rep) };
@@ -1777,6 +1888,14 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `         ${YELLOW}Refresh: python3 tools/probe-model-catalog.py${NC} (reports new model IDs from provider docs; you verify and edit the catalog by hand -- never auto-applied)\n`,
     );
   }
+  process.stdout.write(`\n`);
+
+  // Model capabilities: catalog vs models.retrieve. Informational only (never
+  // touches the tally); the only network call here, and only with an API key.
+  process.stdout.write(`${CYAN}Model capabilities:${NC}\n`);
+  const capCheck = await checkModelCapabilities();
+  process.stdout.write(`  ${badge(capCheck.status)}  ${capCheck.detail}\n`);
+  for (const mm of capCheck.mismatches) process.stdout.write(`         ${mm.id}: ${mm.detail}\n`);
   process.stdout.write(`\n`);
 
   // Cockpit capability: what `loki cockpit` will actually do in this terminal.

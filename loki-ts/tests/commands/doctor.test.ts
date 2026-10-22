@@ -19,6 +19,10 @@ import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
   _setJsonProbesForTest,
+  _setModelsRetrieveForTest,
+  checkModelCapabilities,
+  compareModelCapabilities,
+  parseModelCapabilities,
   _setPythonImportOkForTest,
   probeIntegrations,
   cmpVersion,
@@ -1645,4 +1649,70 @@ describe("evaluateCloudAuth warn path", () => {
       if (savedDefault !== undefined) process.env["AWS_DEFAULT_REGION"] = savedDefault;
     }
   }, 60000);
+});
+
+describe("model capability row (models.retrieve vs the catalog)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "capcat-"));
+  const cat = join(dir, "cat.json");
+  writeFileSync(cat, JSON.stringify({ providers: { claude: { models: [
+    { id: "m-a", thinking: { types: ["adaptive", "between_tools"] }, effort: { levels: ["low", "medium", "high"] } },
+  ] } } }));
+  const env = { ANTHROPIC_API_KEY: "k", LOKI_MODEL_CATALOG: cat } as NodeJS.ProcessEnv;
+  afterEach(() => _setModelsRetrieveForTest(null));
+
+  it("parses supported effort levels and thinking types from a retrieve body", () => {
+    const body = { capabilities: { effort: { supported: true, low: { supported: true }, high: { supported: false } }, thinking: { supported: true, types: { adaptive: { supported: true }, enabled: { supported: false } } } } };
+    expect(parseModelCapabilities(body)).toEqual({ effort: ["low"], thinking: ["adaptive"] });
+    expect(parseModelCapabilities({})).toBeNull();
+  });
+
+  it("prints a mismatch when the API lacks an effort level the catalog lists", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["low", "medium"], thinking: ["adaptive"] }));
+    const r = await checkModelCapabilities(env);
+    expect(r.status).toBe("warn");
+    expect(r.mismatches.map((m) => m.detail).join("|")).toContain("effort levels: catalog [low, medium, high], API [low, medium]");
+  });
+
+  it("flags a thinking type drift but ignores loki-side types the API cannot list", () => {
+    const entry = { id: "m-a", thinking: { types: ["adaptive", "between_tools"] }, effort: { levels: ["low"] } };
+    expect(compareModelCapabilities(entry, { effort: ["low"], thinking: ["adaptive"] })).toEqual([]);
+    expect(compareModelCapabilities(entry, { effort: ["low"], thinking: ["adaptive", "enabled"] })[0]!.detail).toContain("thinking types");
+  });
+
+  it("passes when the API matches the catalog", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["high", "medium", "low"], thinking: ["adaptive"] }));
+    expect((await checkModelCapabilities(env)).status).toBe("pass");
+  });
+
+  it("warns, never throws, without a key and when offline", async () => {
+    let calls = 0;
+    _setModelsRetrieveForTest(async () => { calls++; throw new Error("offline"); });
+    const noKey = await checkModelCapabilities({ LOKI_MODEL_CATALOG: cat } as NodeJS.ProcessEnv);
+    expect(noKey.status).toBe("warn");
+    expect(calls).toBe(0);
+    const offline = await checkModelCapabilities(env);
+    expect(offline.status).toBe("warn");
+    expect(offline.mismatches).toEqual([]);
+  });
+
+  it("runDoctor renders the Model capabilities section without changing the exit code basis", async () => {
+    _setModelsRetrieveForTest(async () => ({ effort: ["low"], thinking: ["adaptive"] }));
+    const saved = { k: process.env["ANTHROPIC_API_KEY"], c: process.env["LOKI_MODEL_CATALOG"] };
+    process.env["ANTHROPIC_API_KEY"] = "k";
+    process.env["LOKI_MODEL_CATALOG"] = cat;
+    const chunks: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    (process.stdout as { write: unknown }).write = (c: string | Uint8Array) => { chunks.push(String(c)); return true; };
+    try {
+      stubPythonImportOk();
+      await runDoctor([]);
+    } finally {
+      (process.stdout as { write: unknown }).write = orig;
+      if (saved.k === undefined) delete process.env["ANTHROPIC_API_KEY"]; else process.env["ANTHROPIC_API_KEY"] = saved.k;
+      if (saved.c === undefined) delete process.env["LOKI_MODEL_CATALOG"]; else process.env["LOKI_MODEL_CATALOG"] = saved.c;
+    }
+    const out = chunks.join("");
+    expect(out).toContain("Model capabilities:");
+    expect(out).toContain("m-a: effort levels: catalog [low, medium, high], API [low]");
+  });
 });

@@ -51,6 +51,22 @@ for (const tier of TIERS) {
   }
 }
 
+// ---- effort clamp matrix (bad combinations) ---------------------------------
+// A level the model does not list must be clamped (or omitted for a no-effort
+// model) identically on both routes. The harness writes the fixture catalog and
+// passes its path in PARITY_CLAMP_CATALOG; the bash side reads the same file.
+const clamp: Record<string, string> = {};
+const clampCatalog = process.env["PARITY_CLAMP_CATALOG"];
+if (clampCatalog) {
+  process.env["LOKI_MODEL_CATALOG"] = clampCatalog;
+  for (const model of ["m-gap", "m-low", "m-all", "m-none"]) {
+    for (const tier of ["planning", "development", "fast"]) {
+      // null means "omit --effort"; the bash route emits an empty string.
+      clamp[`${model}|${tier}`] = effortForTier(tier, "standard", model) ?? "";
+    }
+  }
+}
+
 // ---- fallback-model matrix ---------------------------------------------------
 // opus/sonnet/haiku/other crossed with LOKI_ALLOW_HAIKU true/false.
 const PRIMARIES = ["opus", "sonnet", "haiku", "gpt-5.3-codex"];
@@ -66,6 +82,7 @@ for (const primary of PRIMARIES) {
 
 const out = {
   effort,
+  clamp,
   fallback,
   autonomy_override_text: AUTONOMY_OVERRIDE_TEXT,
 };
