@@ -3196,7 +3196,7 @@ INSTRUCTIONS:
 
 Output format:
 VOTE:APPROVE or VOTE:REJECT or VOTE:CANNOT_VALIDATE
-REASON: your reasoning here
+REASON: one-line justification citing path:line evidence
 ISSUES: CRITICAL:description (optional, one per line per issue)"
 
     local verdict_file="$vote_dir/member-${member_id}.txt"
@@ -3428,7 +3428,7 @@ If you find ANY legitimate concern, output VOTE:REJECT.
 Only output VOTE:APPROVE if you genuinely cannot find a single issue.
 
 VOTE:APPROVE or VOTE:REJECT
-REASON: your reasoning"
+REASON: one-line justification citing path:line evidence"
 
     local verdict=""
     case "${PROVIDER_NAME:-claude}" in

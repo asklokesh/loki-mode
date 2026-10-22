@@ -45,6 +45,16 @@ class TestDetectSycophancy(unittest.TestCase):
         score = detect_sycophancy(votes)
         self.assertGreater(score, 0.5)
 
+    def test_justification_key_scores_like_legacy_reasoning(self):
+        """The renamed field is read; a legacy reasoning vote scores the same."""
+        text = 'All requirements are met and tests pass'
+        new = [{'verdict': 'APPROVE', 'justification': text, 'issues': []} for _ in range(3)]
+        old = [{'verdict': 'APPROVE', 'reasoning': text, 'issues': []} for _ in range(3)]
+        self.assertGreater(detect_sycophancy(new), 0.5)
+        self.assertEqual(detect_sycophancy(new), detect_sycophancy(old))
+        mixed = new[:1] + old[1:]
+        self.assertEqual(detect_sycophancy(mixed), detect_sycophancy(old))
+
     def test_diverse_votes_low_score(self):
         """Diverse votes with different reasoning should score low."""
         votes = [

@@ -76,10 +76,10 @@ run_vote() {
 # (DA read, detector, compare, calibration, and both in the reviewer).
 n_fixed="$(grep -cF '"$_c2_py" -I -S -c' "$SRC")"
 n_bare="$(grep -cE '(^|[^/_A-Za-z0-9])python3 ' "$SRC")"
-if [ "$n_fixed" = 7 ] && [ "$n_bare" = 0 ]; then
-    ok "all 7 python sites run the resolved interpreter -I -S; no bare python3"
+if [ "$n_fixed" = 8 ] && [ "$n_bare" = 0 ]; then
+    ok "all 8 python sites run the resolved interpreter -I -S; no bare python3"
 else
-    bad "python sites: $n_fixed of 7 run \"\$_c2_py\" -I -S, $n_bare bare python3 call(s) remain"
+    bad "python sites: $n_fixed of 8 run \"\$_c2_py\" -I -S, $n_bare bare python3 call(s) remain"
 fi
 
 # ---------------------------------------------------------------- leg 1: .pth

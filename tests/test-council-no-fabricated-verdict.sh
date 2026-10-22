@@ -298,6 +298,43 @@ else
 fi
 rm -rf "$D7"
 
+# ---- JUSTIFY (#288): a legacy reasoning answer is stored under justification --
+JD="$(mktemp -d "${TMPDIR:-/tmp}/c2-just.XXXXXX")"
+JD="$(cd "$JD" && pwd -P)"
+mkdir -p "$JD/bin"
+printf 'evidence\n' > "$JD/evidence.md"
+c2_just() { # <stub json> -> stored vote json on stdout
+    printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s" '"'"'%s'"'"'\n' "$1" > "$JD/bin/claude"
+    chmod +x "$JD/bin/claude"
+    (
+        cd "$JD" || exit 99
+        log_header() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
+        emit_event_json() { :; }
+        # shellcheck source=/dev/null
+        source "$C2" || exit 98
+        PATH="$JD/bin:$PATH" PROVIDER_NAME=claude LOKI_REVIEW_JSON_SCHEMA=off LOKI_SDK_COUNCIL_V2=0 \
+            council_v2_run_reviewer general "$JD/evidence.md" "$JD/vote.json" >/dev/null 2>&1
+    )
+    cat "$JD/vote.json" 2>/dev/null
+}
+jfield() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("verdict"), d.get("justification","-"), "reasoning" in d)' 2>/dev/null; }
+if [ "$(c2_just '{"verdict":"APPROVE","justification":"src/a.ts:4 covers it","issues":[]}' | jfield)" = "APPROVE src/a.ts:4 covers it False" ]; then
+    ok "JUSTIFY: a verdict carrying justification is stored as-is"
+else
+    bad "JUSTIFY: a verdict carrying justification was altered or lost"
+fi
+if [ "$(c2_just '{"verdict":"REJECT","reasoning":"old on-disk key","issues":[]}' | jfield)" = "REJECT old on-disk key False" ]; then
+    ok "JUSTIFY: a legacy reasoning verdict still parses and is stored under justification"
+else
+    bad "JUSTIFY: a legacy reasoning verdict was lost or kept under the old key"
+fi
+if [ "$(c2_just '{"verdict":"APPROVE","justification":"keep-me","reasoning":"drop-me","issues":[]}' | jfield)" = "APPROVE keep-me False" ]; then
+    ok "JUSTIFY: a present justification wins over a stale reasoning key"
+else
+    bad "JUSTIFY: reasoning overwrote a present justification"
+fi
+rm -rf "$JD"
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

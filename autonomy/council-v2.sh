@@ -596,5 +596,20 @@ print(json.dumps({
         extracted='{"verdict":"INCONCLUSIVE","justification":"failed to parse review output (no verdict obtained; NOT a rejection)","issues":[]}'
     fi
 
+    # READ-COMPAT: a reviewer that still answers with the legacy reasoning key
+    # (an older prompt, a custom agent, a non-schema provider) is stored under
+    # "justification", the only key any writer emits. Verdict and issues pass
+    # through untouched; on any failure the original text is kept as-is.
+    local _c2_norm
+    _c2_norm="$(printf '%s' "$extracted" | _LOKI_LEGACY_KEY=reasoning "$_c2_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json, os
+d = json.load(sys.stdin)
+k = os.environ["_LOKI_LEGACY_KEY"]
+if isinstance(d, dict) and k in d:
+    old = d.pop(k)
+    d.setdefault("justification", old)
+    sys.stdout.write(json.dumps(d))
+else:
+    sys.exit(1)' 2>/dev/null)" && [ -n "$_c2_norm" ] && extracted="$_c2_norm"
+
     echo "$extracted" > "$output_file"
 }

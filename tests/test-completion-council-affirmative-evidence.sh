@@ -298,5 +298,17 @@ assert_vote "zero-test-exploit: devils_advocate"       devils_advocate       CON
 cdx "$ORIG_DIR"
 
 echo
+echo "=== Case 11 (#288): both completion-council vote prompts ask for path:line evidence ==="
+n_evidence=$(grep -c '^REASON: one-line justification citing path:line evidence' "$COUNCIL_SH")
+n_old=$(grep -c '^REASON: your reasoning' "$COUNCIL_SH")
+if [ "$n_evidence" = "2" ] && [ "$n_old" = "0" ]; then
+    echo "PASS: both vote prompts carry the path:line evidence wording, none the old wording"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: path:line evidence prompts=$n_evidence (want 2), old prompts=$n_old (want 0)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
