@@ -147,7 +147,7 @@ async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir:
   if (!e || e.id !== id || !GID_RE.test(e.gid) || e.gid === gid || !UNIT_ID_RE.test(id)) return false;
   if (!(await unitDone(verifyReceipt, repoDir, e.gid, e.n, id))) return false;
   const signedTask = ((readJson(join(repoDir, ".loki", "groups", e.gid, "group", "units", id, "receipt.json"))?.["task"] as { sha256?: unknown } | undefined) ?? {}).sha256;
-  if (typeof signedTask === "string" && signedTask !== "" && signedTask !== sha256(task)) return false; // the journal is unsigned: the signed receipt must name this unit's task text
+  if (typeof signedTask !== "string" || signedTask === "" || signedTask !== sha256(task)) return false; // the journal is unsigned: the signed receipt must name this unit's task text (intake always records it, so absent is foreign or forged)
   const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${e.gid}-${e.n}`]);
   if (tip === "" || tip !== e.head) return false;
   const dst = join(repoDir, ".loki", "groups", gid, "group", "units", id);
