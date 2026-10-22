@@ -336,6 +336,51 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     });
   });
 
+  it("CR, LF or any control character in AUTH refuses the server and never echoes the value", () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => void warns.push(a.join(" "));
+    try {
+      for (const bad of [`${TOKEN}\r\nX-Evil: 1`, `${TOKEN}\n`, `${TOKEN}\u0000`, `${TOKEN}\u007f`, `Bearer ${TOKEN}\tx`]) {
+        process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+        process.env["LOKI_MCP_ACME_AUTH"] = bad;
+        expect(bundle().mcpServers["acme"]).toBeUndefined();
+      }
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.length).toBe(5);
+    expect(warns.join("\n")).toContain("LOKI_MCP_ACME_AUTH");
+    expect(warns.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("a control character in the URL refuses the server", () => {
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp\r\nX-Evil: 1";
+      expect(bundle().mcpServers["acme"]).toBeUndefined();
+      process.env["LOKI_MCP_ACME_URL"] = "https://mcp.exa\nmple.com/mcp";
+      expect(bundle().mcpServers["acme"]).toBeUndefined();
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  it("plain http to a non-loopback host is refused even with a token", () => {
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      process.env["LOKI_MCP_ACME_URL"] = "http://mcp.example.com/mcp";
+      process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+      const b = bundle();
+      expect(b.mcpServers["acme"]).toBeUndefined();
+      expect(JSON.stringify(b)).not.toContain(TOKEN);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
   it("a value that already names a scheme is used verbatim", () => {
     process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
     process.env["LOKI_MCP_ACME_AUTH"] = "Basic abc123";
