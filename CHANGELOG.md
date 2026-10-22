@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.39.2 (2026-10-22)
+
+### Fixed
+- Judge enum case is normalized (#295): `high`, `High` and `HIGH` map to one value for votes and issue severity.
+- Judge output schemas must be static (#295). A schema carrying a literal that is not in the `data/*-schema.json` allowlist is rejected with a named `SchemaLiteralError`, because the API caches compiled schemas and a per-run schema body defeats that cache.
+- The packaged `loki internal sdk-judge` failed with ENOENT on `finding-schema.json`. It now resolves `loki-ts/data` from the bundled dist as well as from src.
+
 ## v11.39.1 (2026-10-22)
 
 ### Fixed
