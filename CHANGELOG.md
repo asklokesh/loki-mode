@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.45.1 (2026-10-22)
+
+### Fixed
+- Token-priced benchmark costs (`price_from_tokens`, used by the claude_code and aider bench adapters only when the provider reports no native cost) now apply the shared `LOKI_INFERENCE_GEO` multiplier. `us` prices at 1.1x, and unset or `global` stays at 1.0x. A provider-reported cost is never multiplied.
+
 ## v11.45.0 (2026-10-22)
 
 ### Changed
