@@ -227,6 +227,68 @@ def test_fallback_embed_uses_chunked_path_for_multichunk():
         )
 
 
+def _clean_env(monkeypatch_env):
+    saved = {k: os.environ.pop(k, None) for k in monkeypatch_env}
+    return saved
+
+
+def _restore_env(saved):
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def test_voyage_key_alone_never_selects_voyage():
+    """VOYAGE_API_KEY with LOKI_EMBEDDING_PROVIDER unset must stay local (privacy)."""
+    saved = _clean_env(["LOKI_EMBEDDING_PROVIDER", "LOKI_EMBEDDING_MODEL"])
+    os.environ["VOYAGE_API_KEY"] = "pa-test-key"
+    try:
+        config = EmbeddingConfig.from_env()
+        assert config.provider == "local", config.provider
+        assert "voyage" not in config.fallback_providers
+        engine = EmbeddingEngine(config=config)
+        assert engine._current_provider_name == "local", engine._current_provider_name
+        assert "voyage" not in engine._providers, "voyage must not be registered from key alone"
+    finally:
+        os.environ.pop("VOYAGE_API_KEY", None)
+        _restore_env(saved)
+
+
+def test_voyage_selected_only_when_named():
+    """LOKI_EMBEDDING_PROVIDER=voyage registers Voyage with the code model default."""
+    saved = _clean_env(["LOKI_EMBEDDING_MODEL"])
+    os.environ["VOYAGE_API_KEY"] = "pa-test-key"
+    os.environ["LOKI_EMBEDDING_PROVIDER"] = "voyage"
+    try:
+        config = EmbeddingConfig.from_env()
+        assert config.provider == "voyage"
+        assert config.model == "voyage-code-4", config.model
+        assert config.dimension == 1024, config.dimension
+        engine = EmbeddingEngine(config=config)
+        assert "voyage" in engine._providers
+        assert engine._providers["voyage"].get_name() == "voyage"
+        assert engine._providers["voyage"].api_key == "pa-test-key"
+        assert "voyage" not in config.to_dict().get("fallback_providers")
+        assert config.to_dict()["has_voyage_key"] is True
+    finally:
+        os.environ.pop("VOYAGE_API_KEY", None)
+        os.environ.pop("LOKI_EMBEDDING_PROVIDER", None)
+        _restore_env(saved)
+
+
+def test_voyage_named_without_key_falls_back_local():
+    saved = _clean_env(["VOYAGE_API_KEY", "LOKI_EMBEDDING_MODEL"])
+    os.environ["LOKI_EMBEDDING_PROVIDER"] = "voyage"
+    try:
+        engine = EmbeddingEngine(config=EmbeddingConfig.from_env())
+        assert engine._current_provider_name == "local", engine._current_provider_name
+    finally:
+        os.environ.pop("LOKI_EMBEDDING_PROVIDER", None)
+        _restore_env(saved)
+
+
 def _run():
     tests = [
         test_similarity_search_single_1d_corpus,
@@ -235,6 +297,9 @@ def _run():
         test_compute_quality_score_zero_vector_normalize,
         test_fallback_embed_caches_and_hits_on_repeat,
         test_fallback_embed_uses_chunked_path_for_multichunk,
+        test_voyage_key_alone_never_selects_voyage,
+        test_voyage_selected_only_when_named,
+        test_voyage_named_without_key_falls_back_local,
     ]
     failed = 0
     for t in tests:

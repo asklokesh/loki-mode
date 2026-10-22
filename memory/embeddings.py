@@ -6,6 +6,7 @@ with support for multiple providers:
 - Local: sentence-transformers (default, no API key required)
 - OpenAI: text-embedding-3-small/large
 - Cohere: embed-english-v3.0
+- Voyage: voyage-code-4 (code retrieval; opt-in only via LOKI_EMBEDDING_PROVIDER=voyage)
 
 Features:
 - Provider fallback chain for resilience
@@ -60,6 +61,7 @@ class EmbeddingProvider(Enum):
     LOCAL = "local"
     OPENAI = "openai"
     COHERE = "cohere"
+    VOYAGE = "voyage"
 
 
 class ChunkingStrategy(Enum):
@@ -88,6 +90,7 @@ class EmbeddingConfig:
     # API keys (loaded from env if not provided)
     openai_api_key: Optional[str] = None
     cohere_api_key: Optional[str] = None
+    voyage_api_key: Optional[str] = None
 
     # Chunking settings
     chunking_strategy: str = "semantic"
@@ -126,6 +129,11 @@ class EmbeddingConfig:
         "multilingual": "embed-multilingual-v3.0",
     }
 
+    VOYAGE_MODELS = {
+        "default": "voyage-code-4",
+        "general": "voyage-4",
+    }
+
     # Model dimensions
     MODEL_DIMENSIONS = {
         "all-MiniLM-L6-v2": 384,
@@ -137,6 +145,10 @@ class EmbeddingConfig:
         "embed-english-v3.0": 1024,
         "embed-english-light-v3.0": 384,
         "embed-multilingual-v3.0": 1024,
+        "voyage-code-4": 1024,
+        "voyage-4": 1024,
+        "voyage-code-3": 1024,
+        "voyage-3": 1024,
     }
 
     def __post_init__(self):
@@ -145,6 +157,8 @@ class EmbeddingConfig:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY")
         if self.cohere_api_key is None:
             self.cohere_api_key = os.environ.get("COHERE_API_KEY")
+        if self.voyage_api_key is None:
+            self.voyage_api_key = os.environ.get("VOYAGE_API_KEY")
 
         # Set default model based on provider
         if self.model is None:
@@ -154,6 +168,8 @@ class EmbeddingConfig:
                 self.model = self.OPENAI_MODELS["default"]
             elif self.provider == "cohere":
                 self.model = self.COHERE_MODELS["default"]
+            elif self.provider == "voyage":
+                self.model = self.VOYAGE_MODELS["default"]
 
         # Update dimension based on model
         if self.model in self.MODEL_DIMENSIONS:
@@ -167,6 +183,7 @@ class EmbeddingConfig:
             model=os.environ.get("LOKI_EMBEDDING_MODEL"),
             openai_api_key=os.environ.get("OPENAI_API_KEY"),
             cohere_api_key=os.environ.get("COHERE_API_KEY"),
+            voyage_api_key=os.environ.get("VOYAGE_API_KEY"),
             chunking_strategy=os.environ.get("LOKI_EMBEDDING_CHUNKING", "semantic"),
             include_context=os.environ.get("LOKI_EMBEDDING_CONTEXT", "true").lower() == "true",
         )
@@ -217,6 +234,7 @@ class EmbeddingConfig:
             "timeout": self.timeout,
             "has_openai_key": self.openai_api_key is not None,
             "has_cohere_key": self.cohere_api_key is not None,
+            "has_voyage_key": self.voyage_api_key is not None,
         }
 
 
@@ -770,6 +788,83 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
         return self._cohere_available and self.api_key is not None
 
 
+class VoyageEmbeddingProvider(BaseEmbeddingProvider):
+    """Voyage AI embedding provider (voyage-code-4 for code retrieval).
+
+    Remote: sends text to a third party. Registered only when the user
+    names it via LOKI_EMBEDDING_PROVIDER=voyage; a VOYAGE_API_KEY alone
+    never selects it.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "voyage-code-4",
+        dimension: int = 1024,
+        timeout: float = 30.0
+    ):
+        self.api_key = api_key or os.environ.get("VOYAGE_API_KEY")
+        self.model = model
+        self.dimension = dimension
+        self.timeout = timeout
+        self._client: Optional[Any] = None
+        self._voyage_available = False
+
+        try:
+            import voyageai  # noqa: F401
+            self._voyage_available = True
+        except ImportError:
+            logger.warning("voyageai package not installed. Install with: pip install voyageai")
+
+    def _get_client(self) -> Any:
+        """Get or create Voyage client."""
+        if self._client is None:
+            import voyageai
+            self._client = voyageai.Client(
+                api_key=self.api_key,
+                timeout=self.timeout
+            )
+        return self._client
+
+    def embed(self, text: str) -> np.ndarray:
+        """Generate embedding for a single text."""
+        return self.embed_batch([text])[0]
+
+    def embed_batch(self, texts: List[str]) -> np.ndarray:
+        """Generate embeddings for multiple texts."""
+        if not texts:
+            return np.empty((0, self.dimension), dtype=np.float32)
+
+        if not self.is_available():
+            raise RuntimeError("Voyage provider not available")
+
+        client = self._get_client()
+
+        # Voyage accepts up to 128 inputs per request
+        embeddings = []
+        batch_size = 128
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            response = client.embed(
+                batch,
+                model=self.model,
+                input_type="document"
+            )
+            embeddings.extend(response.embeddings)
+
+        return np.array(embeddings, dtype=np.float32)
+
+    def get_dimension(self) -> int:
+        return self.dimension
+
+    def get_name(self) -> str:
+        return "voyage"
+
+    def is_available(self) -> bool:
+        return self._voyage_available and self.api_key is not None
+
+
 # -----------------------------------------------------------------------------
 # Main Embedding Engine
 # -----------------------------------------------------------------------------
@@ -870,6 +965,22 @@ class EmbeddingEngine:
                 api_key=self.config.cohere_api_key,
                 model=cohere_model,
                 dimension=cohere_dim,
+                timeout=self.config.timeout,
+            )
+
+        # Voyage is opt-in only: registered when named as the provider or an
+        # explicit fallback, never from the presence of VOYAGE_API_KEY alone.
+        voyage_named = (
+            self.config.provider == "voyage"
+            or "voyage" in self.config.fallback_providers
+        )
+        if self.config.voyage_api_key and voyage_named:
+            voyage_model = self.config.model if self.config.provider == "voyage" else "voyage-code-4"
+            voyage_dim = self.config.MODEL_DIMENSIONS.get(voyage_model, 1024)
+            self._providers["voyage"] = VoyageEmbeddingProvider(
+                api_key=self.config.voyage_api_key,
+                model=voyage_model,
+                dimension=voyage_dim,
                 timeout=self.config.timeout,
             )
 
