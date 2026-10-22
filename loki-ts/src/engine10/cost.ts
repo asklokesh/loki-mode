@@ -23,6 +23,8 @@ export interface RouterUsage {
   advisor_calls: number;
   advisor_input_tokens: number;
   advisor_output_tokens: number;
+  advisor_errors?: number; // #269: present only when an advisor error or truncation was seen
+  advisor_truncated?: number;
 }
 
 export interface CostResult {
@@ -129,6 +131,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     if (out.router) out.router["advisor_calls"] += num(rec["advisor_calls"]);
     if (out.router) out.router["advisor_input_tokens"] += num(rec["advisor_input_tokens"]);
     if (out.router) out.router["advisor_output_tokens"] += num(rec["advisor_output_tokens"]);
+    if (out.router) for (const k of ["advisor_errors", "advisor_truncated"] as const) if (num(rec[k]) > 0) out.router[k] = (out.router[k] ?? 0) + num(rec[k]);
     if (typeof rec["model"] === "string" && rec["model"]) out.model = rec["model"];
     sources.push(path);
     recs.push({ iter, rec });

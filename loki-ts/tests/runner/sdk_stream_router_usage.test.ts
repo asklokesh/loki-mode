@@ -129,3 +129,54 @@ describe("RECEIPT-TRUTH: absent cache usage keys stay absent through the real wr
     expect(t.cacheCreationSeen).toBe(false);
   });
 });
+
+describe("#269 advisor error results and truncation", () => {
+  const errMsg = (id: string, code: string): StreamMsg => ({ type: "assistant", message: { id, content: [
+    { type: "advisor_tool_result", tool_use_id: `srv-${id}`, content: { type: "advisor_tool_result_error", error_code: code } },
+  ], usage: { input_tokens: 10, output_tokens: 1 } } });
+  const done: StreamMsg = { type: "result", subtype: "success", total_cost_usd: 0.1, usage: { input_tokens: 10, output_tokens: 1 } };
+
+  test("an advisor error result is counted and recorded through recordAdvisorError", async () => {
+    mkdirSync(join(scratch, ".loki"), { recursive: true });
+    await consumeSdkStream([errMsg("e1", "overloaded"), errMsg("e2", "too_many_requests"), done], ctx(), () => "t");
+    const rec = JSON.parse(readFileSync(costFile(), "utf8"));
+    expect(rec.advisor_errors).toBe(2);
+    expect(readFileSync(join(scratch, ".loki", "advisor-error.txt"), "utf8")).toContain("overloaded");
+  });
+
+  test("an advisor sub-call that stopped on max_tokens is counted as truncated and an error", async () => {
+    mkdirSync(join(scratch, ".loki"), { recursive: true });
+    const m: StreamMsg = { type: "assistant", message: { id: "t1", content: [], usage: { input_tokens: 10, output_tokens: 1, iterations: [
+      { ...advisor(100, 50), stop_reason: "max_tokens" },
+    ] } } };
+    await consumeSdkStream([m, done], ctx(), () => "t");
+    const rec = JSON.parse(readFileSync(costFile(), "utf8"));
+    expect(rec.advisor_truncated).toBe(1);
+    expect(rec.advisor_errors).toBe(1);
+    expect(readFileSync(join(scratch, ".loki", "advisor-error.txt"), "utf8")).toContain("max_tokens");
+  });
+
+  test("a growing snapshot of one message does not double count an error", async () => {
+    mkdirSync(join(scratch, ".loki"), { recursive: true });
+    await consumeSdkStream([errMsg("e1", "overloaded"), errMsg("e1", "overloaded"), done], ctx(), () => "t");
+    expect(JSON.parse(readFileSync(costFile(), "utf8")).advisor_errors).toBe(1);
+  });
+
+  test("no error keys when none happened, and none when the flag is off", async () => {
+    await consumeSdkStream(stream(), ctx(), () => "t");
+    const rec = JSON.parse(readFileSync(costFile(), "utf8"));
+    expect("advisor_errors" in rec).toBe(false);
+    expect("advisor_truncated" in rec).toBe(false);
+    delete process.env["LOKI_ROUTER"];
+    await consumeSdkStream([errMsg("e9", "overloaded"), done], ctx(), () => "t");
+    expect("advisor_errors" in JSON.parse(readFileSync(costFile(), "utf8"))).toBe(false);
+  });
+
+  test("sumResultCosts sums advisor_errors across sessions", () => {
+    mkdirSync(join(scratch, "metrics"), { recursive: true });
+    const base = { total_cost_usd: 1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 };
+    writeFileSync(join(scratch, "metrics", "result-cost-1.json"), JSON.stringify({ ...base, requests_total: 1, advisor_errors: 2 }));
+    writeFileSync(join(scratch, "metrics", "result-cost-2.json"), JSON.stringify({ ...base, requests_total: 1, advisor_errors: 1 }));
+    expect(sumResultCosts(scratch, ["1", "2"]).router?.advisor_errors).toBe(3);
+  });
+});

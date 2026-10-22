@@ -8,6 +8,7 @@ import {
   ADVISOR_ERROR_MARKER,
   probeAdvisor,
   recordAdvisorError,
+  ADVISOR_ERROR_LIMIT,
 } from "../../src/runner/router/advisor_probe.ts";
 
 let runDir: string;
@@ -97,5 +98,29 @@ describe("probeAdvisor", () => {
     const body = readFileSync(join(runDir, ADVISOR_ERROR_MARKER), "utf-8");
     expect(body).toContain("first");
     expect(body).not.toContain("second");
+  });
+});
+
+describe("probeAdvisor valid executor/advisor pair (#269)", () => {
+  it("advisor haiku under executor opus is disabled with invalid_pair", () => {
+    const r = probeAdvisor({}, "claude", OK, runDir, { executor: "opus", advisor: "haiku" });
+    expect(r.available).toBe(false);
+    expect(r.reason).toContain("invalid_pair");
+  });
+  it("advisor weaker than executor by id is disabled too", () => {
+    const r = probeAdvisor({}, "claude", OK, runDir, { executor: "claude-opus-5-5", advisor: "claude-sonnet-5-5" });
+    expect(r.reason).toContain("invalid_pair");
+  });
+  it("advisor opus under executor haiku or sonnet, and equal tiers, are valid", () => {
+    expect(probeAdvisor({}, "claude", OK, runDir, { executor: "haiku", advisor: "opus" }).available).toBe(true);
+    expect(probeAdvisor({}, "claude", OK, runDir, { executor: "sonnet", advisor: "opus" }).available).toBe(true);
+    expect(probeAdvisor({}, "claude", OK, runDir, { executor: "opus", advisor: "opus" }).available).toBe(true);
+  });
+  it("an unknown model never rejects the pair, and no pair is the old behavior", () => {
+    expect(probeAdvisor({}, "claude", OK, runDir, { executor: "mystery-model", advisor: "haiku" }).available).toBe(true);
+    expect(probeAdvisor({}, "claude", OK, runDir, { executor: "opus" }).available).toBe(true);
+  });
+  it("the error limit is 3", () => {
+    expect(ADVISOR_ERROR_LIMIT).toBe(3);
   });
 });

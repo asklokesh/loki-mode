@@ -4,6 +4,7 @@
 // Route facts (executor, advisor, escalations, units) are read defensively from the implement stage output
 // (`route`, written by R1-11) and the R1-08 cost fields; when the router is on but nothing was recorded the
 // block says "not routed" with the reason, never a guessed executor.
+import { ADVISOR_ERROR_LIMIT } from "./advisor_probe.ts";
 import { routerEnabled } from "./flag.ts";
 export interface RouteEscalation { trigger: string; from: string; to: string; evidence: string }
 /** One row per work unit. A per-run route renders as the single unit "run". */
@@ -71,13 +72,15 @@ export function buildRouteBlock(
   env: Record<string, string | undefined>,
   provider: string,
   route: Record<string, unknown> | undefined,
-  telemetry: Partial<Record<"requests_total" | "requests_over_100k" | "advisor_calls" | "advisor_input_tokens" | "advisor_output_tokens", number>> | undefined,
+  telemetry: Partial<Record<"requests_total" | "requests_over_100k" | "advisor_calls" | "advisor_input_tokens" | "advisor_output_tokens" | "advisor_errors", number>> | undefined,
   runModel?: string,
 ): RouteBlock | null {
   if (!routerEnabled(env)) return null;
   const applied = route?.["applied"] !== false;
   const executor = s0(route?.["executor"]);
-  const unavailable = s0(route?.["advisor_unavailable_reason"]) ?? advisorUnavailableReason(env, provider);
+  const errors = nN(telemetry?.advisor_errors) ?? 0;
+  const unavailable = s0(route?.["advisor_unavailable_reason"]) ?? advisorUnavailableReason(env, provider)
+    ?? (errors >= ADVISOR_ERROR_LIMIT ? `${errors} advisor errors this session, advisor backed off (limit ${ADVISOR_ERROR_LIMIT})` : null);
   const total = nN(telemetry?.requests_total);
   const over = nN(telemetry?.requests_over_100k);
   const shape = s0(route?.["shape_key"]);

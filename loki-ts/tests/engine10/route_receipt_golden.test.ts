@@ -97,3 +97,21 @@ describe("FC-OUTCOME-FLOOD receipt.md", () => {
     expect(r.not_proven.length).toBe(300);
   });
 });
+
+describe("#269 advisor error backoff", () => {
+  const route = { executor: "sonnet", source: "opus", reason: "small change", shape_key: "k" };
+  test("fewer than 3 advisor errors leave the advisor attached", () => {
+    const b = buildRouteBlock(ON, "claude", route, { ...tel, advisor_errors: 2 });
+    expect(b?.advisor).toBe("opus-5.5");
+    expect(b?.advisor_unavailable_reason).toBeNull();
+  });
+  test("3 advisor errors disable the advisor for the rest of the session and the receipt says why", () => {
+    const b = buildRouteBlock(ON, "claude", route, { ...tel, advisor_errors: 3 });
+    expect(b?.advisor).toBeNull();
+    expect(b?.advisor_unavailable_reason).toContain("3 advisor errors");
+    expect(routeNotProven(b!).join("\n")).toContain("advisor: NOT PROVEN (owner provider): 3 advisor errors");
+  });
+  test("no error count is the old output", () => {
+    expect(buildRouteBlock(ON, "claude", route, tel)?.advisor).toBe("opus-5.5");
+  });
+});

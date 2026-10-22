@@ -393,7 +393,7 @@ export function planRouterSession(args: {
 }): RouterSessionPlan | null {
   const env = args.env ?? process.env;
   if (!routerEnabled(env)) return null;
-  const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir);
+  const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, { executor: args.model, advisor: ROUTER_ADVISOR_MODEL });
   if (probe.available) {
     return {
       model: args.model,

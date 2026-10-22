@@ -21,3 +21,24 @@ export function resolveClaudeModel(want: string): string {
 export function isUnresolvedClaudeAlias(model: string): boolean {
   return FAMILY_ALIASES.has(model);
 }
+
+/**
+ * Strength rank of a Claude model from the catalog's own tier order: the order tiers first appear in the claude models[] (the catalog
+ * says position is load-bearing), skipping legacy. 0 is the strongest tier. Null for an unknown model or an unreadable catalog, so a
+ * caller never rejects on a guess.
+ */
+export function claudeTierRank(model: string): number | null {
+  try {
+    const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    const models = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models as Array<{ id: string; alias?: string; tier: string }> | undefined;
+    if (!Array.isArray(models)) return null;
+    const order: string[] = [];
+    for (const m of models) if (m.tier !== "legacy" && !order.includes(m.tier)) order.push(m.tier);
+    const id = resolveClaudeModel(model);
+    const hit = models.find((m) => m.id === id || m.alias === model);
+    const rank = hit ? order.indexOf(hit.tier) : -1;
+    return rank >= 0 ? rank : null;
+  } catch {
+    return null;
+  }
+}

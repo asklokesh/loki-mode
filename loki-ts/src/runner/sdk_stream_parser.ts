@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { num, routerTelemetryOn } from "../engine10/cost.ts";
 import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
+import { recordAdvisorError } from "./router/advisor_probe.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -224,6 +225,7 @@ export async function consumeSdkStream(
   // entries of type 'advisor_message' (BetaAdvisorMessageIterationUsage, @anthropic-ai/sdk).
   const reqById = new Map<string, RequestUsage>();
   const advisorById = new Map<string, AdvisorUsage>();
+  const advisorFaults = new Set<string>(); // #269: one key per distinct advisor error or truncation, so a growing snapshot counts once
 
   const guard = { truncated: false };
   for await (const data of asAsync(messages, guard)) {
@@ -265,6 +267,7 @@ export async function consumeSdkStream(
           cache_creation_input_tokens: Math.max(prev["cache_creation_input_tokens"] ?? 0, num(u["cache_creation_input_tokens"])),
         });
         recordRouterUsage(reqById, advisorById, id, u);
+        recordAdvisorFaults(advisorFaults, id, data.message?.content, u, process.env["LOKI_DIR"] ?? lokiRoot);
         writePartialUsage(lokiRoot, ctx.iteration, usageById, data.model ?? sessionModel ?? null);
 
         if (firstTurnId === undefined) firstTurnId = id;
@@ -445,7 +448,7 @@ export async function consumeSdkStream(
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
       if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
-      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById), ctx.requestedModel);
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById, advisorFaults), ctx.requestedModel);
 
       exitCode = data.is_error ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
@@ -599,14 +602,42 @@ function recordRouterUsage(
   if (!old || calls >= old.calls) advisors.set(id, { calls, input, output });
 }
 
-function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, AdvisorUsage>): Record<string, number> | undefined {
+// #269: advisor error results (an advisor_tool_result block whose content is advisor_tool_result_error) and advisor sub-calls cut off
+// at max_tokens. Each distinct fault is keyed once and handed to the existing recordAdvisorError (sticky marker, first message wins).
+function recordAdvisorFaults(faults: Set<string>, id: string, content: unknown, u: Record<string, unknown>, runDir: string): void {
+  if (!routerTelemetryOn()) return;
+  const note = (key: string, message: string): void => {
+    if (faults.has(key)) return;
+    faults.add(key);
+    recordAdvisorError(runDir, message);
+  };
+  if (Array.isArray(content)) {
+    for (const [i, item] of (content as Array<Record<string, unknown>>).entries()) {
+      const res = item?.["type"] === "advisor_tool_result" ? (item["content"] as Record<string, unknown> | undefined) : undefined;
+      if (res?.["type"] === "advisor_tool_result_error") note(`err:${id}:${String(item["tool_use_id"] ?? i)}`, `advisor tool error: ${String(res["error_code"] ?? "unknown")}`);
+    }
+  }
+  const its = u["iterations"];
+  if (Array.isArray(its)) {
+    let n = 0;
+    for (const it of its as Array<Record<string, unknown>>) {
+      if (it?.["type"] !== "advisor_message") continue;
+      if (it["stop_reason"] === "max_tokens") note(`trunc:${id}:${n}`, "advisor sub-call truncated (stop_reason max_tokens)");
+      n++;
+    }
+  }
+}
+
+function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, AdvisorUsage>, faults: Set<string>): Record<string, number> | undefined {
   if (!routerTelemetryOn()) return undefined; // flag off: result-cost file stays byte-identical to pre-router
-  if (reqs.size === 0 && advisors.size === 0) return undefined; // nothing streamed: keep the file shape unchanged
+  if (reqs.size === 0 && advisors.size === 0 && faults.size === 0) return undefined; // nothing streamed: keep the file shape unchanged
   let over = 0, maxSize = 0, overIn = 0, overOut = 0;
   for (const r of reqs.values()) {
     maxSize = Math.max(maxSize, r.size);
     if (r.size > OVER_100K_TOKENS) { over++; overIn += r.size; overOut += r.output; }
   }
+  let truncated = 0;
+  for (const k of faults) if (k.startsWith("trunc:")) truncated++;
   let calls = 0, aIn = 0, aOut = 0;
   for (const a of advisors.values()) { calls += a.calls; aIn += a.input; aOut += a.output; }
   return {
@@ -618,6 +649,8 @@ function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, 
     advisor_calls: calls,
     advisor_input_tokens: aIn,
     advisor_output_tokens: aOut,
+    ...(faults.size > 0 ? { advisor_errors: faults.size } : {}),
+    ...(truncated > 0 ? { advisor_truncated: truncated } : {}),
   };
 }
 
