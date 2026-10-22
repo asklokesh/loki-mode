@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.44.1 (2026-10-22)
+
+### Fixed
+- PDF and DOCX specs passed to `loki start` now reach the bash route and the MCP start tool as extracted text, not as raw bytes read as UTF-8 (FC-BINARY-SPEC-READ-AS-UTF8). On the TS route, `runStart` swaps a `.pdf` or `.docx` PRD path for its extracted text before the engine reads it.
+- A missing `.docx` spec path now reports "PRD file not found" instead of being run as an inline brief.
+- An encrypted PDF spec is refused with exit 2.
+
 ## v11.44.0 (2026-10-22)
 
 ### Added
