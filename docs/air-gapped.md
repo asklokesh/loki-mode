@@ -61,6 +61,10 @@ optional  update check        [on]  disable: export LOKI_NO_UPDATE_CHECK=1
 It judges the provider `loki start` would use (the project's saved
 `loki provider set` choice, else `LOKI_PROVIDER`), and runs on both the default
 route and `LOKI_LEGACY_BASH=1`. `--json` gives the same inventory for scripts.
+Each remote MCP server declared with `LOKI_MCP_<NAME>_URL` is listed as optional
+egress (`unset LOKI_MCP_<NAME>_URL` to close it), read through the same parser the
+runner uses. `loki doctor` also asks each one for its tool list unless
+`LOKI_AIRGAP=true`, and caps that probe at 20 seconds in total across all servers.
 It covers the egress the engine configures, and names what it does not audit
 because it depends on the project: package installs (the app runner's npm, pip
 and docker steps for the built app, the dashboard venv from PyPI, and

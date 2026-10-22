@@ -301,6 +301,32 @@ refused_case "backslash before userinfo, evil host (WHATWG evil)" 'http://evil.e
 refused_case "backslash userinfo on 127.0.0.1" 'http://evil\@127.0.0.1/' "$TOKEN_D"
 refused_case "backslash userinfo on localhost" 'http://evil\@localhost/' "$TOKEN_D"
 refused_case "backslash in an https url" 'https://co.example.com\@127.0.0.1/mcp' "$TOKEN_D"
+refused_case "a percent-encoded host (WHATWG decodes it)" 'https://ex%61mple.com/mcp' "$TOKEN_D"
+refused_case "a decimal-integer IPv4 host" 'https://2130706433/mcp' "$TOKEN_D"
+# One accept/reject contract (#315): an empty authority, a non-canonical loopback spelling
+# and an out-of-range port are refused by both routes, the same as the airgap audit lists.
+refused_case "an empty authority (https:///x)" "https:///x" "$TOKEN_D"
+refused_case "a non-canonical loopback spelling (http://[0:0:0:0:0:0:0:1])" "http://[0:0:0:0:0:0:0:1]:9/x" "$TOKEN_D"
+refused_case "an out-of-range port" "https://a.example.com:99999/x" "$TOKEN_D"
+
+# Agreement: the names the airgap audit lists equal the remote servers the TS writer registers
+# for the same environment, accepted and refused URLs mixed.
+ad=$(mktemp -d -t loki-parity-agree-XXXX); au=$(mktemp -d -t loki-parity-agree-u-XXXX)
+agree_env() {
+    LOKI_MCP_AGA_URL="https://good.example.com/mcp" LOKI_MCP_AGB_URL="http://[::1]:9/x" \
+    LOKI_MCP_AGC_URL="https:///x" LOKI_MCP_AGD_URL="http://[0:0:0:0:0:0:0:1]:9/x" \
+    LOKI_MCP_AGE_URL="https://a.example.com:99999/x" LOKI_MCP_AGF_URL="http://plain.example.com/x" \
+    LOKI_MCP_AGG_URL="https://u:pw@user.example.com/x" LOKI_MCP_ACME_CO_URL="" LOKI_MCP_ACME_CO_AUTH="" "$@"
+}
+agree_env run_both "$ad" "$au"
+audit_names=$(agree_env loki_mcp_remote_servers_json | python3 -c "import json,sys; print(','.join(sorted(s['name'] for s in json.load(sys.stdin))))")
+writer_names=$(_P="$au/.loki/mcp-config.json" python3 -c "import json,os; print(','.join(sorted(k for k,v in json.load(open(os.environ['_P']))['mcpServers'].items() if 'url' in v)))")
+if [ -n "$audit_names" ] && [ "$audit_names" = "$writer_names" ] && [ "$audit_names" = "aga,agb,agg" ]; then
+    ok "airgap audit lists exactly the remote servers the TS writer registers ($audit_names)"
+else
+    bad "audit/writer disagree: audit=[$audit_names] writer=[$writer_names] (expected aga,agb,agg)"
+fi
+rm -rf "$ad" "$au"
 
 # A 644 bundle with no secret, then a secret is added: both routes must replace
 # the file (new inode) at 600 with the token present, never write into the 644 file.

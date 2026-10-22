@@ -58,8 +58,17 @@ function detectLsp(): boolean {
 
 // Build the bundle, optionally with the Phase G lsp-proxy entry.
 // Pure function; takes lsp_detected so tests can drive the conditional path.
-function isLoopbackHost(h: string): boolean {
-  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+// One loopback set, matched against the host as written (new URL() would rewrite 0:0:0:0:0:0:0:1 and 0x7f.1 into
+// loopback forms); mirrored in autonomy/lib/mcp-config.sh so the airgap audit and the writer agree.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+// Host as written in the URL authority: userinfo, port and IPv6 brackets removed, lowercased. Empty when the
+// authority is missing (new URL("https:///x") would otherwise treat "x" as the host).
+function literalHost(raw: string): string {
+  const authority = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#]*)/.exec(raw)?.[1] ?? "";
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  const bracketed = /^\[([^\]]*)\]/.exec(hostPort);
+  return (bracketed ? bracketed[1]! : hostPort.replace(/:[^:]*$/, "")).toLowerCase();
 }
 
 // CR, LF, NUL, tab, DEL and the rest of C0 would let a value inject headers.
@@ -102,7 +111,12 @@ export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<
       console.warn(`[mcp_config] ignoring ${key}: not a valid URL.`);
       continue;
     }
-    const secure = url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHost(url.hostname));
+    const host = literalHost(raw);
+    // The host as written must be the host WHATWG connects to (no percent-decoding, no IPv4 rewrite) and a plain
+    // name or canonical IP; mirrored by host_agrees in autonomy/lib/mcp-config.sh.
+    const whatwgHost = url.hostname.replace(/^\[(.*)\]$/, "$1").toLowerCase();
+    const hostOk = host !== "" && host === whatwgHost && (host.includes(":") || /^[a-z0-9._-]+$/.test(host));
+    const secure = hostOk && (url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(host)));
     if (!secure) {
       console.warn(`[mcp_config] ignoring ${key}: remote MCP servers must use https (plain http is loopback only).`);
       continue;

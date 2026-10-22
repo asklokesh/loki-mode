@@ -15318,10 +15318,20 @@ _loki_airgap_audit() {
     local upd_state="on"
     [ "${LOKI_NO_UPDATE_CHECK:-0}" = "1" ] && upd_state="off"
 
+    # Remote MCP servers (LOKI_MCP_<NAME>_URL): optional egress, listed from the
+    # same parser the runner uses (autonomy/lib/mcp-config.sh), never a second
+    # pattern. The doctor drift probe also contacts each of them unless airgap.
+    type loki_mcp_remote_servers_json >/dev/null 2>&1 \
+        || . "$_LOKI_SCRIPT_DIR/lib/mcp-config.sh" 2>/dev/null
+    local mcp_remote_json
+    mcp_remote_json=$(loki_mcp_remote_servers_json 2>/dev/null) || mcp_remote_json="[]"
+    [ -n "$mcp_remote_json" ] || mcp_remote_json="[]"
+
     if [ "$as_json" = "true" ]; then
         _AG_PROV="$provider" _AG_PSRC="$provider_src" _AG_HOST="$model_host" _AG_REQ="$model_required" \
         _AG_NOTE="$model_note" _AG_TEL="$tel_state" _AG_TELHOST="$tel_host" _AG_UPD="$upd_state" \
         _AG_SC="$sidecall_required" _AG_SCHOST="$sidecall_host" \
+        _AG_MCP="$mcp_remote_json" \
         python3 -c '
 import json, os
 req = os.environ["_AG_REQ"] == "yes"
@@ -15344,6 +15354,15 @@ egress = [{
     "enabled": os.environ["_AG_UPD"] == "on",
     "disable": "export LOKI_NO_UPDATE_CHECK=1",
 }]
+for srv in json.loads(os.environ["_AG_MCP"]):
+    egress.append({
+        "name": "mcp_remote:" + srv["name"],
+        "host": srv["host"],
+        "required": False,
+        "enabled": True,
+        "disable": "unset " + srv["env"],
+        "note": "remote MCP server the runner connects to; loki doctor also asks it for tools/list unless LOKI_AIRGAP=true",
+    })
 if os.environ["_AG_SC"] == "yes":
     egress.append({
         "name": "claude_sidecalls",
@@ -15392,6 +15411,14 @@ print(json.dumps({
     echo -e "  optional  telemetry           [$tel_state]  -> $tel_host"
     echo "            disable: loki telemetry off, DO_NOT_TRACK=1, or LOKI_AIRGAP=true (on by default for interactive installs)"
     echo -e "  optional  update check        [$upd_state]  disable: export LOKI_NO_UPDATE_CHECK=1"
+    if [ "$mcp_remote_json" != "[]" ]; then
+        printf '%s' "$mcp_remote_json" | python3 -c '
+import json, sys
+for s in json.load(sys.stdin):
+    print("  optional  remote MCP server   [on]  %s -> %s" % (s["name"], s["host"]))
+    print("            disable: unset %s (loki doctor also asks it for tools/list unless LOKI_AIRGAP=true)" % s["env"])
+'
+    fi
     echo ""
     echo -e "${BOLD}Not audited here${NC} (depends on the project; see docs/air-gapped.md)"
     echo "  package installs  app runner (npm, pip, docker), dashboard venv (PyPI), quality-gate"

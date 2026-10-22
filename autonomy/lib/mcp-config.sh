@@ -37,6 +37,141 @@ if [ "${__LOKI_MCP_CONFIG_SH_LOADED:-0}" = "1" ]; then
 fi
 __LOKI_MCP_CONFIG_SH_LOADED=1
 
+# The one parser for LOKI_MCP_<NAME>_URL servers (mirror of remoteServersFromEnv in
+# loki-ts/src/providers/mcp_config.ts). The bundle writer and the airgap audit
+# (_loki_airgap_audit, loki_mcp_remote_servers_json) both run this source, so the
+# audit cannot disagree with what the runner would actually connect to.
+_LOKI_MCP_BUNDLE_PY=$(cat <<'LOKI_MCP_PY_EOF'
+import ipaddress, json, os, re, sys, tempfile
+from urllib.parse import urlsplit
+out = os.environ.get('_MCP_OUT', '')
+lsp = os.environ.get('_MCP_LSP', '0') == '1'
+servers = {
+    'loki-mode': {
+        'command': 'python3',
+        'args': ['-m', 'mcp.server'],
+    },
+}
+if lsp:
+    servers['lsp-proxy'] = {
+        'command': 'python3',
+        'args': ['-m', 'mcp.lsp_proxy'],
+    }
+control = re.compile(r'[\x00-\x1f\x7f]')
+name_re = re.compile(r'^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$')
+loopback = ('localhost', '127.0.0.1', '::1')
+# Anything outside RFC 3986 lets two URL parsers name different hosts (a backslash is a slash to
+# WHATWG but userinfo to urlsplit). Mirrors NON_RFC3986 in loki-ts/src/providers/mcp_config.ts.
+non_rfc3986 = re.compile(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]")
+numeric_tail = re.compile(r'^(.*\.)?(0x[0-9a-f]*|[0-9]+)\.?$')
+
+def host_agrees(host):
+    # The host as written must be the host WHATWG would connect to: a plain name or a canonical IP.
+    if ':' in host:
+        try:
+            return ipaddress.IPv6Address(host).compressed == host
+        except ValueError:
+            return False
+    if not re.match(r'^[a-z0-9._-]+$', host):
+        return False
+    if numeric_tail.match(host):
+        try:
+            return str(ipaddress.IPv4Address(host)) == host
+        except ValueError:
+            return False
+    return True
+
+secret = False
+for key in sorted(os.environ):
+    m = name_re.match(key)
+    raw = os.environ.get(key, '')
+    if not m or not raw:
+        continue
+    if m.group(1) in ('REGISTRY',):
+        sys.stderr.write('[mcp_config] ignoring %s: %s is a reserved name, not a remote server.\n' % (key, m.group(1)))
+        continue
+    if control.search(raw):
+        sys.stderr.write('[mcp_config] ignoring %s: control characters are not allowed.\n' % key)
+        continue
+    if non_rfc3986.search(raw):
+        sys.stderr.write('[mcp_config] ignoring %s: the URL contains characters outside RFC 3986 (for example a backslash).\n' % key)
+        continue
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname or ''
+        parts.port  # a non-numeric or out-of-range port raises ValueError, like new URL()
+    except ValueError:
+        parts = None
+    if parts is None or not host or not host_agrees(host) or not (parts.scheme == 'https' or (parts.scheme == 'http' and host in loopback)):
+        sys.stderr.write('[mcp_config] ignoring %s: remote MCP servers must use https (plain http is loopback only).\n' % key)
+        continue
+    entry = {'type': 'http', 'url': raw}
+    auth = os.environ.get('LOKI_MCP_%s_AUTH' % m.group(1), '')
+    if auth and control.search(auth):
+        sys.stderr.write('[mcp_config] ignoring %s: LOKI_MCP_%s_AUTH contains control characters.\n' % (key, m.group(1)))
+        continue
+    if auth:
+        value = auth if re.match(r'^[A-Za-z][A-Za-z0-9-]*\s+\S', auth) else 'Bearer ' + auth
+        entry['headers'] = {'Authorization': value}
+        secret = True
+    name = m.group(1).lower().replace('_', '-')
+    if name not in servers:
+        servers[name] = entry
+def audit_host(url):
+    # host[:port] only, the host the client connects to: userinfo, path, query and fragment never reach the audit.
+    p = urlsplit(url)
+    h = '[%s]' % p.hostname if ':' in p.hostname else p.hostname
+    return '%s%s' % (h, ':%d' % p.port if p.port is not None else '')
+
+if os.environ.get('_MCP_LIST') == '1':
+    # Audit mode: report the remote servers without writing a bundle or a header value.
+    print(json.dumps([{'name': n, 'env': 'LOKI_MCP_' + n.upper().replace('-', '_') + '_URL', 'host': audit_host(e['url']), 'auth': 'headers' in e} for n, e in servers.items() if 'url' in e]))
+    sys.exit(0)
+data = json.dumps({'mcpServers': servers}, indent=2)
+# Write through an exclusive, random-named, owner-only sibling and rename it
+# over the target: no predictable path to pre-plant, no symlink followed, no
+# window where a token sits in a file with wider permissions.
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(prefix='.mcp-config.', suffix='.tmp', dir=os.path.dirname(out))
+    with os.fdopen(fd, 'w') as f:
+        f.write(data)
+        f.flush()
+        if not secret:
+            mask = os.umask(0)
+            os.umask(mask)
+            os.fchmod(f.fileno(), 0o666 & ~mask)
+    same = False
+    if os.path.isfile(out):
+        with open(out, encoding='utf-8') as cur:
+            same = cur.read() == data
+    if same:
+        # Idempotent: identical bytes already on disk, keep the file and its mtime.
+        os.unlink(tmp)
+        if secret:
+            os.chmod(out, 0o600)
+    else:
+        os.replace(tmp, out)
+    tmp = None
+except OSError as exc:
+    sys.stderr.write('[mcp_config] cannot write %s: %s\n' % (out, exc.__class__.__name__))
+    sys.exit(1)
+finally:
+    if tmp is not None:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+LOKI_MCP_PY_EOF
+)
+
+# Emit a JSON array [{"name","env","host","auth"}] of the remote MCP servers the runner
+# would register from this environment. Reads env only: no file write, no network,
+# no header value in the output. Always returns 0 (empty array when none).
+loki_mcp_remote_servers_json() {
+    _MCP_LIST=1 python3 -c "$_LOKI_MCP_BUNDLE_PY" 2>/dev/null || echo '[]'
+}
+
 # ---------- Loki MCP bundle path ----------
 # Emits the absolute path to .loki/mcp-config.json (TARGET_DIR-relative).
 # Bundle includes the always-on `loki-mode` server. Phase G (v7.5.24):
@@ -87,96 +222,7 @@ loki_mcp_config_path() {
     # loki-ts/src/providers/mcp_config.ts): LOKI_MCP_<NAME>_URL declares an http
     # server, LOKI_MCP_<NAME>_AUTH its Authorization header. Warnings name the
     # variable only, never a value. The python step also writes the file.
-    if ! _MCP_OUT="$mcp_path" _MCP_LSP="$lsp_detected" python3 -c "
-import json, os, re, sys, tempfile
-from urllib.parse import urlsplit
-out = os.environ['_MCP_OUT']
-lsp = os.environ.get('_MCP_LSP', '0') == '1'
-servers = {
-    'loki-mode': {
-        'command': 'python3',
-        'args': ['-m', 'mcp.server'],
-    },
-}
-if lsp:
-    servers['lsp-proxy'] = {
-        'command': 'python3',
-        'args': ['-m', 'mcp.lsp_proxy'],
-    }
-control = re.compile(r'[\x00-\x1f\x7f]')
-name_re = re.compile(r'^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL\$')
-loopback = ('localhost', '127.0.0.1', '::1')
-secret = False
-for key in sorted(os.environ):
-    m = name_re.match(key)
-    raw = os.environ.get(key, '')
-    if not m or not raw:
-        continue
-    if m.group(1) in ('REGISTRY',):
-        sys.stderr.write('[mcp_config] ignoring %s: %s is a reserved name, not a remote server.\n' % (key, m.group(1)))
-        continue
-    if control.search(raw):
-        sys.stderr.write('[mcp_config] ignoring %s: control characters are not allowed.\n' % key)
-        continue
-    if re.search(r\"[^A-Za-z0-9\\-._~:/?#\\[\\]@!\$&'()*+,;=%]\", raw):
-        sys.stderr.write('[mcp_config] ignoring %s: the URL contains characters outside RFC 3986 (for example a backslash).\\n' % key)
-        continue
-    try:
-        parts = urlsplit(raw)
-        host = parts.hostname or ''
-    except ValueError:
-        parts = None
-    if parts is None or not host or not (parts.scheme == 'https' or (parts.scheme == 'http' and host in loopback)):
-        sys.stderr.write('[mcp_config] ignoring %s: remote MCP servers must use https (plain http is loopback only).\n' % key)
-        continue
-    entry = {'type': 'http', 'url': raw}
-    auth = os.environ.get('LOKI_MCP_%s_AUTH' % m.group(1), '')
-    if auth and control.search(auth):
-        sys.stderr.write('[mcp_config] ignoring %s: LOKI_MCP_%s_AUTH contains control characters.\n' % (key, m.group(1)))
-        continue
-    if auth:
-        value = auth if re.match(r'^[A-Za-z][A-Za-z0-9-]*\s+\S', auth) else 'Bearer ' + auth
-        entry['headers'] = {'Authorization': value}
-        secret = True
-    name = m.group(1).lower().replace('_', '-')
-    if name not in servers:
-        servers[name] = entry
-data = json.dumps({'mcpServers': servers}, indent=2)
-# Write through an exclusive, random-named, owner-only sibling and rename it
-# over the target: no predictable path to pre-plant, no symlink followed, no
-# window where a token sits in a file with wider permissions.
-tmp = None
-try:
-    fd, tmp = tempfile.mkstemp(prefix='.mcp-config.', suffix='.tmp', dir=os.path.dirname(out))
-    with os.fdopen(fd, 'w') as f:
-        f.write(data)
-        f.flush()
-        if not secret:
-            mask = os.umask(0)
-            os.umask(mask)
-            os.fchmod(f.fileno(), 0o666 & ~mask)
-    same = False
-    if os.path.isfile(out):
-        with open(out, encoding='utf-8') as cur:
-            same = cur.read() == data
-    if same:
-        # Idempotent: identical bytes already on disk, keep the file and its mtime.
-        os.unlink(tmp)
-        if secret:
-            os.chmod(out, 0o600)
-    else:
-        os.replace(tmp, out)
-    tmp = None
-except OSError as exc:
-    sys.stderr.write('[mcp_config] cannot write %s: %s\\n' % (out, exc.__class__.__name__))
-    sys.exit(1)
-finally:
-    if tmp is not None:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-"; then
+    if ! _MCP_OUT="$mcp_path" _MCP_LSP="$lsp_detected" python3 -c "$_LOKI_MCP_BUNDLE_PY"; then
         return 1
     fi
 
