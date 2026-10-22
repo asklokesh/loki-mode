@@ -153,7 +153,7 @@ def test_update_pattern_with_merge_accepts_semanticpattern_object(storage):
 
 
 class _FakeEmbeddingEngine:
-    def embed(self, text):
+    def embed(self, text, input_type="document"):
         return [0.1, 0.2, 0.3]
 
 

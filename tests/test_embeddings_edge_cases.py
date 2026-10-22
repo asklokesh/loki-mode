@@ -127,10 +127,10 @@ class _FailingPrimary:
     def __init__(self, inner):
         self._inner = inner
 
-    def embed(self, text):
+    def embed(self, text, input_type="document"):
         raise RuntimeError("primary embed down")
 
-    def embed_batch(self, texts):
+    def embed_batch(self, texts, input_type="document"):
         raise RuntimeError("primary batch down")
 
     def is_available(self):
@@ -289,6 +289,142 @@ def test_voyage_named_without_key_falls_back_local():
         _restore_env(saved)
 
 
+class _Resp:
+    def __init__(self, n):
+        self.embeddings = [[1.0, 0.0, 0.0, 0.0]] * n
+
+
+class _RecordingClient:
+    """Stands in for cohere.Client / voyageai.Client; records input_type."""
+
+    def __init__(self):
+        self.input_types = []
+
+    def embed(self, *args, **kwargs):
+        self.input_types.append(kwargs.get("input_type"))
+        texts = kwargs.get("texts", args[0] if args else [])
+        return _Resp(len(texts))
+
+
+def _remote(cls_name):
+    import memory.embeddings as m
+
+    prov = getattr(m, cls_name)(api_key="test-key", dimension=4)
+    prov._cohere_available = True
+    prov._voyage_available = True
+    client = _RecordingClient()
+    prov._client = client
+    return prov, client
+
+
+def test_cohere_maps_input_type():
+    prov, client = _remote("CohereEmbeddingProvider")
+    prov.embed("q", input_type="query")
+    prov.embed("d")
+    prov.embed("d2", input_type="document")
+    prov.embed_batch(["a", "b"], input_type="query")
+    assert client.input_types == [
+        "search_query", "search_document", "search_document", "search_query"
+    ], client.input_types
+
+
+def test_voyage_maps_input_type():
+    prov, client = _remote("VoyageEmbeddingProvider")
+    prov.embed("q", input_type="query")
+    prov.embed("d")
+    assert client.input_types == ["query", "document"], client.input_types
+
+
+def test_input_type_rejects_unknown_value():
+    prov, _ = _remote("CohereEmbeddingProvider")
+    for call in (lambda: prov.embed("x", input_type="search_query"), lambda: _engine().embed("x", input_type="bogus")):
+        try:
+            call()
+        except ValueError:
+            continue
+        raise AssertionError("unknown input_type must raise ValueError")
+
+
+def test_local_and_openai_accept_and_ignore_input_type():
+    import memory.embeddings as m
+
+    eng = _engine()
+    a = eng.embed("same text", input_type="query")
+    b = eng.embed("same text")
+    assert np.allclose(a, b), "local provider must ignore input_type"
+    local = eng._providers["local"]
+    assert np.allclose(local.embed("t", "query"), local.embed("t", "document"))
+    oa = m.OpenAIEmbeddingProvider(api_key="k")
+    seen = []
+
+    class _OA:
+        class embeddings:
+            @staticmethod
+            def create(**kw):
+                seen.append(sorted(kw))
+
+                class R:
+                    data = [type("D", (), {"embedding": [0.1, 0.2]})()] * len(
+                        kw["input"] if isinstance(kw["input"], list) else [1]
+                    )
+
+                return R
+
+    oa._client = _OA
+    oa._openai_available = True
+    oa.embed("x", input_type="query")
+    oa.embed_batch(["x"], input_type="query")
+    assert all("input_type" not in k for k in seen), seen
+
+
+def test_engine_cache_separates_query_from_document():
+    import memory.embeddings as m
+
+    cfg = EmbeddingConfig(provider="local", cache_enabled=True)
+    eng = EmbeddingEngine(config=cfg)
+    calls = []
+    real = eng._primary_provider
+
+    class _Spy:
+        def __getattr__(self, n):
+            return getattr(real, n)
+
+        def embed(self, text, input_type="document"):
+            calls.append(input_type)
+            return real.embed(text, input_type)
+
+    eng._primary_provider = _Spy()
+    eng.embed("hello world", input_type="query")
+    eng.embed("hello world")
+    eng.embed("hello world", input_type="query")
+    assert calls == ["query", "document"], calls
+
+
+def test_retrieval_query_path_passes_query_input_type():
+    from memory.retrieval import MemoryRetrieval
+
+    seen = []
+
+    class _SpyEngine:
+        def embed(self, text, *args, **kwargs):
+            seen.append((text, args, kwargs))
+            return np.zeros(4, dtype=np.float32)
+
+    class _Index:
+        def search(self, vec, top_k):
+            return []
+
+    r = MemoryRetrieval.__new__(MemoryRetrieval)
+    r.embedding_engine = _SpyEngine()
+    r.vector_indices = {"episodic": _Index()}
+    r._indices_built_at = None
+    r.retrieve_by_similarity("find the thing", "episodic")
+    assert len(seen) == 1, seen
+    text, args, kwargs = seen[0]
+    assert text == "find the thing"
+    assert kwargs.get("input_type") == "query" or "query" in args, seen
+
+
 def _run():
     tests = [
         test_similarity_search_single_1d_corpus,
@@ -300,6 +436,12 @@ def _run():
         test_voyage_key_alone_never_selects_voyage,
         test_voyage_selected_only_when_named,
         test_voyage_named_without_key_falls_back_local,
+        test_cohere_maps_input_type,
+        test_voyage_maps_input_type,
+        test_input_type_rejects_unknown_value,
+        test_local_and_openai_accept_and_ignore_input_type,
+        test_engine_cache_separates_query_from_document,
+        test_retrieval_query_path_passes_query_input_type,
     ]
     failed = 0
     for t in tests:

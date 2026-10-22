@@ -51,8 +51,8 @@ from .token_economics import estimate_memory_tokens, optimize_context, get_conte
 class EmbeddingEngine(Protocol):
     """Protocol for embedding engines."""
 
-    def embed(self, text: str) -> Any:
-        """Generate embedding for text. Returns numpy array if available."""
+    def embed(self, text: str, input_type: str = "document") -> Any:
+        """Generate embedding for text (input_type: "query" or "document"). Returns numpy array if available."""
         ...
 
     def embed_batch(self, texts: List[str]) -> List[Any]:
@@ -876,7 +876,7 @@ class MemoryRetrieval:
         # search (the honest, accurate fallback), same as the staleness path.
         index = self.vector_indices[collection]
         try:
-            query_embedding = self.embedding_engine.embed(query)
+            query_embedding = self.embedding_engine.embed(query, input_type="query")
             results = index.search(query_embedding, top_k)
         except ValueError as exc:
             logger.info(

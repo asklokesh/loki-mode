@@ -479,7 +479,7 @@ def test_similarity_dimension_mismatch_falls_back_to_keyword():
             raise ValueError("query dimension 640 != index dimension 384")
 
     class _Engine:
-        def embed(self, text):
+        def embed(self, text, input_type="document"):
             return [0.0] * 640
 
     retriever.embedding_engine = _Engine()
