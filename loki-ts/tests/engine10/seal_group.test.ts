@@ -611,7 +611,7 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[] }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[]; originHead?: string }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
@@ -632,7 +632,7 @@ describe("group run: Group Seal and resume", () => {
         else if (!o.fixNoop) { writeFileSync(join(repo, "ok.txt"), "ok\n"); sh(["git", "add", "ok.txt"], repo); }
         sh(["git", "commit", "-q", "--allow-empty", "-m", "fix"], repo);
       } else {
-        sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, "main"], repo);
+        sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, u.base ?? o.originHead ?? "main"], repo); // backlog.py: an empty base starts at origin/HEAD
         const f = o.shared?.includes(n) ? "shared.txt" : `${g}-u${n}.txt`;
         writeFileSync(join(repo, f), o.shared?.includes(n) ? `${n}\n` : `${calls.length}\n`);
         sh(["git", "add", f], repo); sh(["git", "commit", "-q", "-m", `u${n}`], repo);
@@ -795,6 +795,19 @@ describe("group run: Group Seal and resume", () => {
     const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
     expect(calls).toEqual(["u1", "u2", "u3"]);
     expect(err).not.toContain("unit u1 reused from the slice journal");
+  });
+
+  test("#317: local HEAD ahead of origin/HEAD, every unit starts at the journal-key base, not at origin/HEAD", async () => {
+    const repo = mkRepo("gr-base317"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-base317-cache") };
+    sh(["git", "branch", "origin-sim"], repo); // stands in for origin/HEAD at the init commit
+    writeFileSync(join(repo, "ahead.txt"), "a\n"); sh(["git", "add", "ahead.txt"], repo); sh(["git", "commit", "-q", "-m", "local ahead"], repo);
+    expect((await go(repo, fake(repo, calls, { originHead: "origin-sim" }), env)).code).toBe(0);
+    const g = groups(repo)[0]!, d = dagOf(repo, g), baseRef = d.base_ref as string;
+    expect(baseRef).toBe(sh(["git", "rev-parse", "main"], repo).trim());
+    for (const [i, u] of (d.units as { id: string; base?: string }[]).entries()) {
+      expect(u.base).toBe(baseRef);
+      expect(sh(["git", "rev-parse", `loki/unit-${g}-${i + 1}~1`], repo).trim()).toBe(baseRef);
+    }
   });
 
   const AC = "## Acceptance criteria\n", BASE = AC + SPEC, REVISED = AC + "- add alpha\n- add beta v2\n- add gamma\n";
