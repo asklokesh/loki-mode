@@ -35,7 +35,7 @@ check() {
         printf 'PASS %6dms  %s\n' $((t1 - t0)) "$label"
     else
         printf 'FAIL %6dms  %s\n' $((t1 - t0)) "$label"
-        printf '%s\n' "$out" | tail -15 | sed 's/^/     | /'
+        printf '%s\n' "$out" | tail -"${STRUCTURAL_TAIL:-15}" | sed 's/^/     | /'
         FAILED=$((FAILED + 1))
     fi
 }
@@ -156,38 +156,64 @@ override = re.compile(r"ignore (all |any )?(previous|prior|above) (instructions|
 #  1. Pipe: any pipe into an interpreter (under any path prefix or sudo/env/exec
 #     style wrapper) fails unless that interpreter's OWN code flag comes next.
 #  2. Process or command substitution: sh <(curl ...), source <(...), sh -c
-#     "$(curl ...)", eval "$(...)", backticks.
-#  3. Download then run: a curl or wget followed, in the same joined snippet, by
-#     running a local file (sh f, python f, source f, . f, ./f); the name is free.
+#     "$(curl ...)", eval "$(...)", backticks, and "$(cat f)" or "$(<f)".
+#  3. Download then run: a curl or wget followed, in the same joined snippet or
+#     on a following line of the same fenced block, by running a local file
+#     (sh f, python f, source f, . f, ./f, /abs/f); the name is free.
 SH = r"(?:/\S*/)?(?:ba|z|da|k|c|fi|a|tc)?sh(?![\w.-])"
-# One table: interpreter name -> the flag that makes it read code from its
-# argument instead of stdin or a file. No flag class is shared across entries.
 SHELL = r"(?:ba|z|da|k|c|fi|a|tc)?sh"
+# One table, used by every rule below: command word -> the token that makes it
+# read code from its own argument instead of stdin or a file (each flag carries
+# its own terminator, no class is shared), or None for a builtin that executes a
+# file in the current shell (source and the dot command).
 INTERPS = (
-    (SHELL, r"-[A-Za-z]*c"),
-    (r"python[\d.]*", r"-[A-Za-z]*c"),
-    (r"perl[\d.]*", r"-[A-Za-z]*[eE]"),
-    (r"ruby[\d.]*", r"-[A-Za-z]*e"),
-    (r"node(?:js)?", r"(?:-[ep]|--eval|--print)"),
-    (r"php[\d.]*", r"-r"),
-    (r"(?:pwsh|powershell)", r"-(?:[Cc]ommand|c)"),
+    (SHELL, r"-[A-Za-z]*c(?=\s|$)"),
+    (r"python[\d.]*", r"-[A-Za-z]*c(?=\s|$)"),
+    (r"perl[\d.]*", r"-[A-Za-z]*[eE](?=\s|$)"),
+    (r"ruby[\d.]*", r"-[A-Za-z]*e(?=\s|$)"),
+    (r"node(?:js)?", r"(?:-[ep]|--eval|--print)(?=\s|$)"),
+    (r"php[\d.]*", r"-r(?=\s|$)"),
+    (r"(?:pwsh|powershell)", r"-(?:[Cc]ommand|c)(?=\s|$)"),
+    (r"deno", r"eval(?=\s|$)"),
+    (r"bun", r"(?:-e|--eval|-p|--print)(?=\s|$)"),
+    (r"lua(?:jit)?[\d.]*", r"-e(?=\s|$)"),
+    (r"(?:[gmn]?awk)", r"""['"]"""),
+    (r"source", None),
+    (r"(?<![\w./-])\.", None),
 )
 # An interpreter that is NOT followed by its own code flag.
 RUN = "(?:" + "|".join(
-    r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s(?=\s|$))" % (n, f) for n, f in INTERPS) + ")"
+    r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s)" % (n, f) for n, f in INTERPS if f) + ")"
+# A builtin that executes a file in the current shell. It is the command word
+# itself, never an argument: no sudo or xargs wrapper (a builtin cannot be run
+# through one), only a builtin-prefix keyword with flags.
+SRC = "(?:" + "|".join(n for n, f in INTERPS if not f) + r")(?=\s)"
 FETCH = r"(?:curl|wget|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)\b"
 WRAP = r"(?:(?:/\S*/)?(?:sudo|doas|env|exec|command|nohup|xargs|busybox|time|nice|setsid|stdbuf)\b[^|;&\n]*?\s)?"
-# VAR=value prefixes may sit before an interpreter. Piped, source and . also
-# execute stdin (source /dev/stdin), with no code-flag exemption.
-ENV = r"(?:\w+=\S*\s+)*"
-PIPE_RUN = "(?:" + RUN + r"|(?:source|(?<![\w./-])\.)(?=\s))"
+SRCPFX = r"(?:(?:time|command|builtin|exec)\s+(?:-\S+\s+)*)?"
+# VAR=value prefixes may sit before a wrapper or an interpreter, values may be
+# quoted and hold spaces. Piped, source and . also execute stdin (source
+# /dev/stdin), with no code-flag exemption.
+ENV = r"""(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*"""
+PIPE_RUN = "(?:" + ENV + WRAP + ENV + RUN + "|" + ENV + SRCPFX + SRC + ")"
+SUBST = r"(?:\$\(|`)\s*(?:" + FETCH + r"|cat\b|<)"
+# A local file run: an interpreter or builtin with a file operand, or a path.
+FILE_RUN = (
+    r"(?:" + WRAP + ENV + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
+    + r"|" + SRCPFX + SRC + r"\s+\S+|" + WRAP + ENV + r"(?:\.{0,2}/|~/)\S+)"
+)
 pipe = re.compile(
-    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + WRAP + ENV + PIPE_RUN
+    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + PIPE_RUN
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
-    + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*(?:\$\(|`)\s*" + FETCH
-    + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?"
-    + r"(?:" + WRAP + ENV + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
-    + r"|(?:source|(?<![\w./-])\.)\s+\S+|" + WRAP + ENV + r"\./\S+)"
+    + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*" + SUBST
+    + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?" + FILE_RUN
+)
+# The same download-then-run across lines of one fenced block: the fetch line
+# opens the statement (an optional shell prompt aside) and the run line follows
+# within three lines.
+split = re.compile(
+    r"^[ \t]*(?:\$[ \t]+)?(?:curl|wget)\b[^\n]*\n(?:[^\n]*\n){0,3}?[ \t]*(?:\$[ \t]+)?" + FILE_RUN,
+    re.M,
 )
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:
@@ -235,6 +261,17 @@ for f in sys.argv[1:]:
         for what, rx in (("download piped into a shell", pipe), ("instruction-override phrase", override), ("inline key", key)):
             if rx.search(ln):
                 bad.append("%s:%d: %s" % (f, i, what))
+    # Fenced blocks as multi-line snippets for the cross-line download-then-run.
+    fence, block, bstart = False, [], 0
+    for i, ln in enumerate(text.split("\n"), 1):
+        if ln.lstrip().startswith("```"):
+            if fence and any("skill-lint-ok" in b for b in block):
+                block = []
+            if fence and block and split.search("\n".join(block) + "\n"):
+                bad.append("%s:%d: download piped into a shell" % (f, bstart))
+            fence, block, bstart = not fence, [], i + 1
+        elif fence:
+            block.append(ln)
 print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY
