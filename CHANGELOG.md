@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.34.1 (2026-10-22)
+
+### Changed
+- Every one of the 47 MCP tools now says when to use it and when not to, and skills refer to tools by their fully qualified MCP names, so the model picks the right tool on the first call. A test pins the description shape for every registered tool. Refs #276.
+
 ## v11.34.0 (2026-10-22)
 
 ### Changed
