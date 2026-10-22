@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.45.0 (2026-10-22)
+
+### Changed
+- Judge outcomes are typed (ok, truncated, malformed, refused, failed). A judge call that fails never reads as a pass.
+- A truncated judge reply retries at a larger max_tokens, up to the effort ceiling of 64000. High effort (16384) retries at 32768. xhigh is already at 64000 and does not retry. An override of 40000 retries at 64000.
+- The fallback retry streams, with the same beta header. Each streamed turn is bounded by an abort signal that covers the whole turn.
+- The child ledger and the failure lines record max_tokens.
+
+### Fixed
+- `--thinking` accepts only `disabled` or `adaptive`. Any other value, or `disabled` with `--effort xhigh` or `max`, exits 2 on `sdk-judge` and `sdk-text`. Before this, it was accepted silently.
+
 ## v11.44.1 (2026-10-22)
 
 ### Fixed
