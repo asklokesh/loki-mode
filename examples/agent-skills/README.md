@@ -106,7 +106,7 @@ Nothing reads these SKILL.md files on any route.
 The snippet below is the DESIGN SKETCH for how such a loader would work, not
 a description of current behavior. Treat the skills here as design notes.
 The live, loaded skill system is `skills/` at the repository root, routed by
-`skills/00-index.md`.
+the routing table in `SKILL.md`.
 
 A loader would discover skills like this:
 

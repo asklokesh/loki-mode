@@ -234,7 +234,6 @@ api/                       REST API (TypeScript/Deno-style)
 events/                    Unified event bus (py + ts + sh emitter)
 
 skills/                    On-demand skill modules (progressive disclosure)
-  00-index.md              Module selection and routing
   quality-gates.md         The 8-gate system (canonical)
   healing.md / testing.md / production.md / providers.md / agents.md / ...
 

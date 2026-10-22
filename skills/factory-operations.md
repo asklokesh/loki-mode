@@ -37,11 +37,11 @@ for ONE change. This module defines what happens when several such fleets run
 concurrently. Read sdlc-fleet.md for the roles; read this one for the traffic
 rules between them.
 
-**REGISTRATION REQUIRED (blocking).** `tests/test-skill-doc-accuracy.sh:126-133`
-loops every `skills/*.md` and FAILS any file that `skills/00-index.md` cannot
-route to. Measured on creation: the suite went from 57 passed / 0 failed to 57
+**REGISTRATION REQUIRED (blocking).** `tests/test-skill-doc-accuracy.sh` check 4
+loops every `skills/*.md` and FAILS any file that `SKILL.md` does not
+link. Measured on creation: the suite went from 57 passed / 0 failed to 57
 passed / 2 failed, both failures being this file and `release-cadence.md`.
-Until a routing row is added to `00-index.md`, the gate is red. This is the
+Until a routing row is added to the `SKILL.md` table, the gate is red. This is the
 cross-cutting-registration failure class this repo already records: a new
 artifact needs ALL its registrations, not just its own file.
 

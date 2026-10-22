@@ -31,12 +31,12 @@ publish nothing.
 Section 5 there (release windows) and section 4 here are the same rule seen
 from two sides.
 
-**REGISTRATION REQUIRED (blocking).** `tests/test-skill-doc-accuracy.sh:126-133`
-loops every `skills/*.md` and FAILS any file that `skills/00-index.md` cannot
-route to. Measured on creation: the suite went from 57 passed / 0 failed to 57
+**REGISTRATION REQUIRED (blocking).** `tests/test-skill-doc-accuracy.sh` check 4
+loops every `skills/*.md` and FAILS any file that `SKILL.md` does not
+link. Measured on creation: the suite went from 57 passed / 0 failed to 57
 passed / 2 failed, both failures being this file and `factory-operations.md`.
-Until a routing row is added to `00-index.md`, the gate is red. A module the
-index cannot name is also a module the agent never loads, however binding it
+Until a routing row is added to the `SKILL.md` table, the gate is red. A module the
+table cannot name is also a module the agent never loads, however binding it
 claims to be.
 
 All measured numbers below carry their measurement date. Line numbers drift;

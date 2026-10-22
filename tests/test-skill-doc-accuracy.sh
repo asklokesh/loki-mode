@@ -119,19 +119,24 @@ else
     fi
 fi
 
-# --- 4. 00-index.md can route to every skill module --------------------------
-# The index is how the agent decides what to load. A module it cannot name is a
-# module that never gets loaded, however binding the module claims to be.
-echo "== 00-index.md routes to every module in skills/ =="
+# --- 4. SKILL.md links every skill module directly ---------------------------
+# SKILL.md is how the agent decides what to load, one hop from the entry file.
+# A module it does not link is a module that never gets loaded, however binding
+# the module claims to be.
+echo "== SKILL.md links every module in skills/ =="
 for f in skills/*.md; do
     b=$(basename "$f")
-    [ "$b" = "00-index.md" ] && continue
-    if grep -q "$b" skills/00-index.md; then
-        pass "00-index.md references $b"
+    if grep -q "(skills/$b)" SKILL.md; then
+        pass "SKILL.md links skills/$b"
     else
-        fail "$b exists in skills/ but 00-index.md cannot route to it"
+        fail "$b exists in skills/ but SKILL.md does not link it"
     fi
 done
+if [ -e skills/00-index.md ]; then
+    fail "skills/00-index.md must not exist: SKILL.md routes to modules directly"
+else
+    pass "no second-hop skills/00-index.md"
+fi
 
 # --- 5. The documented extension seam is real and exercised ------------------
 # skills/extending.md tells developers they can add a reviewer without editing

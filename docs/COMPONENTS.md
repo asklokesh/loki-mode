@@ -345,7 +345,6 @@ On-demand skill modules following the progressive-disclosure architecture
 skill file.
 
 **Key files:**
-- `00-index.md` - Module selection rules and routing.
 - `quality-gates.md` - The canonical 8-gate table and RARV-C flags.
 - `model-selection.md`, `providers.md`, `healing.md`, `testing.md`,
   `production.md`, `troubleshooting.md`, `agents.md`, `artifacts.md`,

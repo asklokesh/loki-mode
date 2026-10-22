@@ -27,8 +27,7 @@ Execute these steps IN ORDER at the start of EVERY turn:
 
 ```
 1. IF first turn of session:
-   - Read skills/00-index.md
-   - Load 1-2 modules matching your current phase
+   - Load 1-2 modules matching your current phase (Module Loading Protocol)
    - Register session: Write .loki/session.json with:
      {"pid": null, "startedAt": "<ISO timestamp>", "provider": "<provider>",
       "invokedVia": "skill", "status": "running", "updatedAt": "<ISO timestamp>"}
@@ -139,7 +138,7 @@ GROWTH ──[continuous improvement loop]──> GROWTH
 
 **Your context window is finite. Preserve it.**
 
-- Load only 1-2 skill modules at a time (from skills/00-index.md)
+- Load only 1-2 skill modules at a time (see Module Loading Protocol)
 - Use Task tool with subagents for exploration (isolates context)
 - **Context Window Tracking (v5.40.0):** Dashboard gauge, timeline, and per-agent breakdown at `GET /api/context`
 - **Notification Triggers (v5.40.0):** Configurable alerts when context exceeds thresholds, tasks fail, or budget limits hit. Manage via `GET/PUT /api/notifications/triggers`
@@ -155,7 +154,6 @@ GROWTH ──[continuous improvement loop]──> GROWTH
 | `.loki/queue/pending.json` | Every turn | When claiming/completing tasks |
 | `.loki/queue/current-task.json` | Before each ACT | When claiming task |
 | `.loki/specs/openapi.yaml` | Before API work | After API changes |
-| `skills/00-index.md` | Session start | Never |
 | `.loki/memory/index.json` | Session start | On topic change |
 | `.loki/memory/timeline.json` | On context need | After task completion |
 | `.loki/memory/token_economics.json` | Never (metrics only) | Every turn |
@@ -174,21 +172,36 @@ One-command rollback (v7.5.2+): `loki rollback latest` or `loki rollback to <id>
 
 This protocol governs **skill module** loading -- task-scoped instruction files in `skills/`. It is distinct from the Memory System Progressive Disclosure (see below), which governs persistent **memory layers** in `.loki/memory/`.
 
+Pick modules from this table, one hop from here. Each module over 100 lines opens with a contents map.
+
+| Task | Module |
+|------|--------|
+| Writing code, spawning subagents, Task tool | [model-selection.md](skills/model-selection.md), [agents.md](skills/agents.md) |
+| Tests, E2E, Playwright | [testing.md](skills/testing.md) |
+| Code review, quality checks | [quality-gates.md](skills/quality-gates.md) |
+| Deployment, CI/CD, infrastructure | [production.md](skills/production.md) |
+| Debugging, errors, failures | [troubleshooting.md](skills/troubleshooting.md) |
+| Architecture, design decisions | [patterns-advanced.md](skills/patterns-advanced.md) |
+| Artifacts, reports | [artifacts.md](skills/artifacts.md) |
+| Parallel features, git worktrees, 50+ agents | [parallel-workflows.md](skills/parallel-workflows.md) |
+| GitHub issues, PRs, syncing | [github-integration.md](skills/github-integration.md) |
+| Multi-provider (Codex, Cline, Aider) | [providers.md](skills/providers.md) |
+| OpenSpec delta context, brownfield changes | [openspec-integration.md](skills/openspec-integration.md) |
+| MiroFish validation, `--mirofish` | [mirofish-integration.md](skills/mirofish-integration.md) |
+| Writing documentation, `loki docs` | [documentation.md](skills/documentation.md) |
+| UI components, design tokens, Gate 12 | [magic-modules.md](skills/magic-modules.md) |
+| Legacy healing, modernization | [healing.md](skills/healing.md) |
+| Plan deepening, knowledge extraction | [compound-learning.md](skills/compound-learning.md) |
+| Managed Agents memory, council, flag hierarchy | [memory.md](skills/memory.md) |
+| Non-trivial change (>3 files, MINOR/MAJOR) | [sdlc-fleet.md](skills/sdlc-fleet.md) |
+| Several agent teams at once, WIP limits | [factory-operations.md](skills/factory-operations.md) |
+| Release, version bump, publish check | [release-cadence.md](skills/release-cadence.md) |
+| Adding your own gate, reviewer or agent | [extending.md](skills/extending.md) |
+
 ```
-1. Read skills/00-index.md (once per session)
-2. Match current task to module:
-   - Writing code? Load model-selection.md
-   - Running tests? Load testing.md
-   - Code review? Load quality-gates.md
-   - Debugging? Load troubleshooting.md
-   - Legacy healing? Load healing.md
-   - Deploying? Load production.md
-   - Parallel features? Load parallel-workflows.md
-   - Architecture planning? Load compound-learning.md (deepen-plan)
-   - Post-verification? Load compound-learning.md (knowledge extraction)
-3. Read the selected module(s)
-4. Execute with that context
-5. When task category changes: Load new modules (old context discarded)
+1. Match current task to a row above; read that module (1-2 at a time)
+2. Execute with that context
+3. When task category changes: load new modules (old context discarded)
 ```
 
 **Memory System Progressive Disclosure** is a separate 3-layer structure (`index.json` -> `timeline.json` -> `episodic/*.json`) for retrieving past episodes/patterns. See `skills/memory.md` and `references/memory-system.md`.

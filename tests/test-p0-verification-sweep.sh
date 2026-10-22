@@ -51,7 +51,6 @@ DOC_SET=(
     "docs/cursor-comparison.md"
     "docs/COMPARISON.md"
     "skills/quality-gates.md"
-    "skills/00-index.md"
 )
 
 # Build the list of doc paths that actually exist (absolute), so a missing file

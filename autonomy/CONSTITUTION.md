@@ -153,7 +153,6 @@ GROWTH ──[continuous improvement loop]──> GROWTH
 ```
 SKILL.md (~190 lines)         # Always loaded: RARV cycle, autonomy rules
 skills/
-  00-index.md                  # Module routing table
   model-selection.md           # Task tool, parallelization
   quality-gates.md             # 8-gate system, anti-sycophancy
   testing.md                   # Playwright, E2E, property-based
@@ -166,7 +165,7 @@ skills/
 ```
 
 **Loading Protocol:**
-1. Read `skills/00-index.md` at session start
+1. Pick modules from the routing table in `SKILL.md` at session start
 2. Load 1-2 modules matching current task
 3. Execute with focused context
 4. When task changes: Load new modules (old context discarded)

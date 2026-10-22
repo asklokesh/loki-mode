@@ -25,7 +25,6 @@ memory/                     # Memory system (core v5.15.0; cross-project + RAG i
   vector_index.py           # Vector search index
   layers/                   # Progressive disclosure implementation
 skills/                     # On-demand skill modules (v3.0 architecture)
-  00-index.md               # Module selection rules and routing
   model-selection.md        # Task tool, parallelization, thinking modes
   providers.md              # Multi-provider documentation
   quality-gates.md          # 8-gate system, velocity-quality balance

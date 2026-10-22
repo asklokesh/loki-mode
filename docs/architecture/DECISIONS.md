@@ -319,7 +319,7 @@ available on demand.
 ### Decision
 
 Keep `SKILL.md` slim (a few hundred lines) and split detailed guidance into
-on-demand modules under `skills/`, with an index (`skills/00-index.md`) that routes
+on-demand modules under `skills/`, with a routing table in `SKILL.md` that routes
 to the right module, and deeper reference material under `references/`. Modules are
 pulled in only when relevant to the current task.
 

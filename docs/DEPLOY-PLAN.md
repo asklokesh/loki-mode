@@ -305,7 +305,7 @@ Also covered transitively by `tests/run-shellcheck.sh` and the mutation/mock det
   invariant; filesystem-only detection; best-effort clipboard; bash-only (Bun parity note).
 - `docs/INSTALLATION.md` -- optional "Deploying your build" note pointing at `loki deploy`.
 - `wiki/CLI-Reference.md` -- add the `deploy` command entry + options.
-- `skills/production.md` (and `skills/00-index.md` if it indexes commands) -- document the advisory
+- `skills/production.md` -- document the advisory
   deploy step in the production workflow.
 - Create this plan's sibling precedent set is `docs/PREVIEW-LINK-PLAN.md` / `docs/BUILD-HUD-PLAN.md`
   -- this file (`docs/DEPLOY-PLAN.md`) is the matching plan artifact.
