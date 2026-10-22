@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.48.0 (2026-10-22)
+
+### Added
+- Model catalog (#268): each Claude model records the thinking types and effort levels it supports, with its default effort. Opus 5.5 and Haiku 5.5 default to `medium`; Fable 5, Fable 5.1, Opus 5, Sonnet 5 and Sonnet 5.5 default to `high`.
+- A requested effort the model does not support is clamped to the nearest supported level. TypeScript and bash resolve the same value for every tier and complexity.
+
+### Fixed
+- Models with no effort parameter (Claude Haiku 4.5) no longer get an `--effort` flag; the resolver returns nothing for them.
+- The thinking and effort table is pinned by a test, so a catalog model without a pinned capability row fails CI.
+
 ## v11.47.0 (2026-10-22)
 
 ### Changed
