@@ -329,17 +329,17 @@ class EventBalanceTests(unittest.TestCase):
             return run_result
 
         with _ChdirToTmp(os.path.realpath(self.tmp)), mock.patch("subprocess.run", fake_run):
-            _is_error, text = _run(srv._run_with_contract(
+            is_error, text = _run(srv._run_with_contract(
                 "loki_start_project", srv.loki_start_project, (), {"prd_path": spec}))
             out = json.loads(text)
-        return out, calls
+        return out, calls, is_error
 
     def test_start_project_binary_spec_goes_through_cli_extractor(self):
         from types import SimpleNamespace
         text = os.path.join(os.path.realpath(self.tmp), "extracted.txt")
         Path(text).write_text("# Extracted PRD\nbuild a thing")
         for name in ("spec.docx", "spec.pdf"):
-            out, calls = self._start_with_binary_spec(
+            out, calls, _ = self._start_with_binary_spec(
                 name, SimpleNamespace(returncode=0, stdout=text + "\n", stderr=""))
             self.assertNotIn("error", out, out)
             self.assertEqual(len(calls), 1)
@@ -351,9 +351,10 @@ class EventBalanceTests(unittest.TestCase):
         srv = self.server
         with srv._tool_call_times_lock:
             srv._tool_call_start_times.pop("loki_start_project", None)
-        out, _ = self._start_with_binary_spec(
+        out, _, is_error = self._start_with_binary_spec(
             "spec.docx",
             SimpleNamespace(returncode=2, stdout="", stderr="no pandoc, textutil or python zipfile"))
+        self.assertTrue(is_error)
         self.assertIn("pandoc", out.get("error", ""))
         self.assertEqual(len(srv._tool_call_start_times.get("loki_start_project", [])), 0)
 

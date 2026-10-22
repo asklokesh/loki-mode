@@ -299,7 +299,9 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
         }
       }
     }
-    assert.ok(mutations >= 17, 'expected the declared fields to be mutated, got ' + mutations);
+    const declaredTotal = [...getTools().values()].reduce((n, mod) => n + mod.UNTRUSTED_FIELDS.length, 0);
+    assert.equal(mutations, declaredTotal, 'every declared field must be mutated exactly once');
+    assert.equal(declaredTotal, 18, 'declared UNTRUSTED_FIELDS total changed: update this count with the new field');
     assert.deepEqual(survived, [], 'removing this field left the guard green (the seed or args never reach it)');
   });
 

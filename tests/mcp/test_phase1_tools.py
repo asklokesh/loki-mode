@@ -710,6 +710,7 @@ class ResultContractTests(unittest.TestCase):
             "intelligence/co-changes.json": [[["t1", m], 2]],
             "docs/docs-manifest.json": {"total_files": 1, "documented_files": 0, "stale_docs": [m], "missing_docs": [m]},
             "quality/reviews/r1/rv.txt": "VERDICT: PASS\nHIGH: " + m + "\n",
+            "events/processed.json": {"ids": [m]},
             "events.jsonl": json.dumps({"type": m, "data": m}) + "\n",
             "signals/TASK_COMPLETION_CLAIMED": m,
             "magic/registry.json": {"version": "1", "components": [{"name": m, "description": m, "path": m, "version": "1.0.0"}]},
@@ -725,47 +726,122 @@ class ResultContractTests(unittest.TestCase):
     @staticmethod
     @contextlib.contextmanager
     def _observe_loki_reads(root):
-        """Record every .loki path opened, stat-checked or listed during the block
-        that does not exist in the seeded tree. Yields the set of such relative
-        paths, whichever module issued the call."""
+        """Record every .loki path read, stat-checked or listed during the block
+        that did not exist in the seeded tree at the moment of the access. Yields
+        the set of such relative paths, whichever module issued the call. A path
+        whose content was read, opened or listed counts as soon as the attempt
+        was made while absent: a later write by the same call never excludes it.
+        Only a bare existence probe (exists, isfile, isdir, stat) of a path the
+        call then created itself is dropped: that is a create-if-absent check on
+        the call's own output (a temp file, a version slot), not a data source."""
         import builtins
+        import glob as glob_mod
         import io
 
         real_root = os.path.realpath(root)
         base = os.path.join(real_root, ".loki")
-        missing = set()
+        missing, probed = set(), set()
         real_open, real_io_open = builtins.open, io.open
         real_exists, real_isfile, real_isdir, real_listdir = os.path.exists, os.path.isfile, os.path.isdir, os.listdir
+        real_scandir, real_stat = os.scandir, os.stat
+        real_iterdir, real_glob, real_iglob = Path.iterdir, glob_mod.glob, glob_mod.iglob
+        busy = []
 
-        def note(path):
+        def note(path, probe=False):
+            if busy:
+                return
+            busy.append(1)
             try:
                 full = os.path.realpath(os.fspath(path))
+                if (full == base or full.startswith(base + os.sep)) and not real_exists(full):
+                    (probed if probe else missing).add(os.path.relpath(full, base))
             except (TypeError, ValueError):
                 return
-            if (full == base or full.startswith(base + os.sep)) and not real_exists(full):
-                missing.add(os.path.relpath(full, base))
+            finally:
+                busy.pop()
 
-        def wrap(fn, takes_mode=False):
+        def wrap(fn, takes_mode=False, probe=False):
             def inner(path, *a, **k):
                 mode = a[0] if a else k.get("mode", "r")
                 if not takes_mode or (isinstance(mode, str) and not any(c in mode for c in "wax+")):
-                    note(path)
+                    note(path, probe)
                 return fn(path, *a, **k)
             return inner
 
+        def wrap_glob(fn):
+            def inner(pattern, *a, **k):
+                note(os.path.dirname(os.fspath(pattern)) or ".")
+                return fn(pattern, *a, **k)
+            return inner
+
+        def iterdir(self):
+            note(self)
+            return real_iterdir(self)
+
         patches = [mock.patch.object(builtins, "open", wrap(real_open, True)),
                    mock.patch.object(io, "open", wrap(real_io_open, True)),
-                   mock.patch.object(os.path, "exists", wrap(real_exists)),
-                   mock.patch.object(os.path, "isfile", wrap(real_isfile)),
-                   mock.patch.object(os.path, "isdir", wrap(real_isdir)),
-                   mock.patch.object(os, "listdir", wrap(real_listdir))]
+                   mock.patch.object(os.path, "exists", wrap(real_exists, probe=True)),
+                   mock.patch.object(os.path, "isfile", wrap(real_isfile, probe=True)),
+                   mock.patch.object(os.path, "isdir", wrap(real_isdir, probe=True)),
+                   mock.patch.object(os, "listdir", wrap(real_listdir)),
+                   mock.patch.object(os, "scandir", wrap(real_scandir)),
+                   mock.patch.object(os, "stat", wrap(real_stat, probe=True)),
+                   mock.patch.object(Path, "iterdir", iterdir),
+                   mock.patch.object(glob_mod, "glob", wrap_glob(real_glob)),
+                   mock.patch.object(glob_mod, "iglob", wrap_glob(real_iglob))]
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
             yield missing
-        # A file the call itself created (cache, version history, a new episode)
-        # was not a seed gap; only paths still absent afterwards are.
-        missing.difference_update([rel for rel in list(missing) if real_exists(os.path.join(base, rel))])
+        # a probed path the call went on to create was its own output
+        missing.update(rel for rel in probed if not real_exists(os.path.join(base, rel)))
+
+    def test_read_observer_sees_every_read_primitive_and_keeps_written_paths(self):
+        """The observer must flag an absent .loki path reached through each read
+        primitive, and must keep it even if the same call writes it afterwards."""
+        tmp = tempfile.mkdtemp(prefix="loki-mcp-observer-")
+        try:
+            os.makedirs(os.path.join(tmp, ".loki"))
+            import glob as glob_mod
+
+            def probes():
+                d = os.path.join(tmp, ".loki")
+                for name, fn in (
+                    ("open", lambda p: open(p)),
+                    ("exists", lambda p: os.path.exists(p)),
+                    ("isfile", lambda p: os.path.isfile(p)),
+                    ("isdir", lambda p: os.path.isdir(p)),
+                    ("listdir", lambda p: os.listdir(p)),
+                    ("scandir", lambda p: os.scandir(p)),
+                    ("stat", lambda p: os.stat(p)),
+                    ("iterdir", lambda p: list(Path(p).iterdir())),
+                    ("glob", lambda p: glob_mod.glob(os.path.join(p, "*.json"))),
+                ):
+                    yield name, os.path.join(d, "absent-" + name), fn
+
+            for name, path, fn in probes():
+                with self._observe_loki_reads(tmp) as seen:
+                    try:
+                        fn(path)
+                    except OSError:
+                        pass
+                self.assertIn("absent-" + name, seen, "observer missed " + name)
+            target = os.path.join(tmp, ".loki", "cache", "x.json")
+            with self._observe_loki_reads(tmp) as seen:
+                try:
+                    open(target)
+                except OSError:
+                    pass
+                os.makedirs(os.path.dirname(target))
+                Path(target).write_text("{}")
+            self.assertIn(os.path.join("cache", "x.json"), seen)
+            other = os.path.join(tmp, ".loki", "cache", "y.json")
+            with self._observe_loki_reads(tmp) as seen:
+                os.path.exists(other)
+                Path(other).write_text("{}")
+            self.assertNotIn(os.path.join("cache", "y.json"), seen)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def _seed(self, root):
         for rel, body in self._marked_state().items():
@@ -775,6 +851,17 @@ class ResultContractTests(unittest.TestCase):
         # memory layers go through the real storage so every memory reader finds them
         from memory.schemas import EpisodeTrace, SemanticPattern
         from memory.storage import MemoryStorage
+
+        # fast_verify trusts a content-hash cache as if freshly scanned: a planted
+        # entry for app.py's content flows to the finding text it returns
+        import hashlib
+
+        Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
+        digest = hashlib.blake2b(b"x = 1\n", digest_size=16).hexdigest()
+        cache = Path(root, ".loki", "cache", "fast-verify.json")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"schema": 1, "entries": {digest: [
+            {"rule": self._MARK, "line": 1, "message": self._MARK, "severity": "high"}]}}), encoding="utf-8")
 
         storage = MemoryStorage(os.path.join(root, ".loki", "memory"))
         storage.save_episode(EpisodeTrace.create(task_id="t1", agent=self._MARK, goal=self._MARK))
@@ -873,7 +960,7 @@ class ResultContractTests(unittest.TestCase):
         # Control: the marker really reaches these tools, so the check above is not vacuous.
         for name in ("loki_task_queue_update", "loki_project_status", "loki_counter_evidence_template",
                      "loki_quality_report", "loki_state_get", "loki_task_queue_list", "loki_findings",
-                     "loki_learnings", "loki_v10_status", "loki://state/continuity", "loki://queue/pending", "loki://memory/index"):
+                     "loki_learnings", "loki_v10_status", "loki_verify_fast", "loki://state/continuity", "loki://queue/pending", "loki://memory/index"):
             self.assertIn(name, surfaced, "control: the marker never reached %s" % name)
 
 

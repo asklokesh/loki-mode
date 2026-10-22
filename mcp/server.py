@@ -639,6 +639,8 @@ _UNTRUSTED_FIELDS = {
     "cp_run_get": ("*",),
     "cp_runs_search": ("*",),
     "cp_runs_compare": ("runs",),
+    # finding rule, message and path come from the content-hash cache and the scanned repo
+    "loki_verify_fast": ("findings",),
     "loki_magic_generate": ("*",),
     "loki_magic_list": ("*",),
     "loki_magic_get": ("*",),
@@ -652,7 +654,7 @@ _TRUSTED_TOOLS = frozenset({
     "loki_memory_capture_session_summary",
     "loki_consolidate_memory", "loki_complete_task", "loki_v10_run",
     "loki_v10_verify", "loki_start_project", "loki_code_search_stats",
-    "loki_verify_fast", "loki_memory_redact",
+    "loki_memory_redact",
     "loki_magic_stats", "loki_magic_tokens_extract",
     "cp_stats", "cp_cost", "cp_repos_list",
 })
