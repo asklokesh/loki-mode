@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.2 (2026-10-22)
+
+### Changed
+- Each `references/` twin is merged into the `skills/` or `references/` module that owns its concern and the twin is deleted: the per-role Capabilities lists now live in `references/agent-types.md` and the production patterns intro and Sources in `skills/production.md`. Every inbound link is re-pointed. Refs #281.
+
 ## v11.36.1 (2026-10-22)
 
 ### Changed
