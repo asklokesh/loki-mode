@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.39.1 (2026-10-22)
+
+### Fixed
+- Verification risk grading (#234): a change that touches a repo-declared critical path (CODEOWNERS, `.loki/config.json` `critical_paths`), or a diff that adds a push, publish, signing or credential operation, now grades HIGH, so it gets the full test command, full suite, council and security scan. The risk summary names the matching rule. Rules are read from the base tree, so a diff cannot empty, delete or shadow CODEOWNERS or `critical_paths` to downgrade itself. Edits to the ownership files themselves are critical.
+- If a repo has no owners file or config, a changed path that is not a test or doc still grades HIGH when it names a release, publish, sign, auth, security, seal or verification area.
+- Shell tests under `tests/` and `test-*.sh` are now recognised as test files. An edit to an existing shell test now goes through the stricter test-weakening check.
+
 ## v11.39.0 (2026-10-22)
 
 ### Added
