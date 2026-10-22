@@ -27,6 +27,7 @@ import {
   _setMcpToolHashForTest,
   _setPythonImportOkForTest,
   checkMcpToolDrift,
+  fetchRemoteToolsHash,
   probeIntegrations,
   cmpVersion,
   evaluateClaudeCliCompat,
@@ -1766,10 +1767,12 @@ describe("model capability row (models.retrieve vs the catalog)", () => {
   });
 });
 
-// g05-61: the served MCP tool list is hashed and compared with the recorded hash.
+// #286: the served MCP tool list (name plus input schema) is hashed per server
+// and compared with the hash recorded on first sight.
 describe("doctor MCP tool-list drift", () => {
   let lokiDir: string;
-  const recordFile = (): string => join(lokiDir, "state", "mcp-tools.sha256");
+  const recordFile = (): string => join(lokiDir, "state", "mcp-tools.json");
+  const recorded = (): Record<string, string> => JSON.parse(readFileSync(recordFile(), "utf8"));
   beforeEach(() => {
     lokiDir = mkdtempSync(join(tmpdir(), "loki-mcp-drift-"));
   });
@@ -1779,52 +1782,99 @@ describe("doctor MCP tool-list drift", () => {
     _setPythonImportOkForTest(null);
     _setIntegrationProbesForTest(null);
     delete process.env["LOKI_DIR"];
+    delete process.env["LOKI_MCP_DRIFTY_URL"];
+    delete process.env["LOKI_MCP_DRIFTY_AUTH"];
   });
 
-  it("first sight records the hash and prints nothing", () => {
-    expect(checkMcpToolDrift(lokiDir, "aaa").status).toBe("recorded");
-    expect(readFileSync(recordFile(), "utf8").trim()).toBe("aaa");
+  it("first sight records the hash per server and prints nothing", () => {
+    expect(checkMcpToolDrift(lokiDir, "loki-mode", "aaa").status).toBe("recorded");
+    expect(recorded()).toEqual({ "loki-mode": "aaa" });
   });
 
-  it("an unchanged hash passes and leaves the record alone", () => {
-    checkMcpToolDrift(lokiDir, "aaa");
-    expect(checkMcpToolDrift(lokiDir, "aaa").status).toBe("pass");
+  it("an unchanged hash passes and a second server is recorded beside the first", () => {
+    checkMcpToolDrift(lokiDir, "loki-mode", "aaa");
+    expect(checkMcpToolDrift(lokiDir, "loki-mode", "aaa").status).toBe("pass");
+    expect(checkMcpToolDrift(lokiDir, "acme", "ccc").status).toBe("recorded");
+    expect(recorded()).toEqual({ "loki-mode": "aaa", acme: "ccc" });
   });
 
-  it("a changed hash is a warn that says drift and does not overwrite the record", () => {
-    checkMcpToolDrift(lokiDir, "aaa");
-    const r = checkMcpToolDrift(lokiDir, "bbb");
+  it("a changed hash is a warn that names the server and does not overwrite the record", () => {
+    checkMcpToolDrift(lokiDir, "acme", "aaa");
+    const r = checkMcpToolDrift(lokiDir, "acme", "bbb");
     expect(r.status).toBe("warn");
+    expect(r.detail).toContain("acme");
     expect(r.detail).toContain("drift");
-    expect(readFileSync(recordFile(), "utf8").trim()).toBe("aaa");
+    expect(recorded()["acme"]).toBe("aaa");
   });
 
   it("an unavailable served hash or a missing .loki dir skips without writing", () => {
-    expect(checkMcpToolDrift(lokiDir, null).status).toBe("skip");
-    expect(checkMcpToolDrift(join(lokiDir, "absent"), "aaa").status).toBe("skip");
+    expect(checkMcpToolDrift(lokiDir, "loki-mode", null).status).toBe("skip");
+    expect(checkMcpToolDrift(join(lokiDir, "absent"), "loki-mode", "aaa").status).toBe("skip");
     expect(existsSync(recordFile())).toBe(false);
   });
 
-  it("runDoctor prints one drift warn row when the served hash differs from the recorded one", async () => {
+  it("the served-tools hash covers the input schema, not only the names", async () => {
+    const serve = async (schema: object): Promise<{ srv: Server; url: string; seen: string[] }> => {
+      const seen: string[] = [];
+      const srv = createServer((req, res) => {
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => {
+          seen.push(String(req.headers["authorization"] ?? ""));
+          if (!body) { res.writeHead(202).end(); return; }
+          const m = JSON.parse(body);
+          res.setHeader("content-type", "application/json");
+          res.setHeader("mcp-session-id", "sess1");
+          if (m.method === "initialize") res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2025-03-26", capabilities: {}, serverInfo: { name: "x", version: "1" } } }));
+          else if (m.method === "tools/list") res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "t1", inputSchema: schema }] } }));
+          else res.writeHead(202).end();
+        });
+      });
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      const port = (srv.address() as { port: number }).port;
+      return { srv, url: `http://127.0.0.1:${port}/mcp`, seen };
+    };
+    const a = await serve({ type: "object", properties: { q: { type: "string" } } });
+    const b = await serve({ type: "object", properties: { q: { type: "integer" } } });
+    try {
+      const ha = await fetchRemoteToolsHash(a.url, { Authorization: "Bearer tok-1" });
+      const ha2 = await fetchRemoteToolsHash(a.url, { Authorization: "Bearer tok-1" });
+      const hb = await fetchRemoteToolsHash(b.url, {});
+      expect(ha).toMatch(/^[0-9a-f]{64}$/);
+      expect(ha2).toBe(ha);
+      expect(hb).not.toBe(ha);
+      expect(a.seen.includes("Bearer tok-1")).toBe(true);
+    } finally {
+      a.srv.close();
+      b.srv.close();
+    }
+    expect(await fetchRemoteToolsHash("http://127.0.0.1:9/mcp", {})).toBeNull();
+  }, 30000);
+
+  it("runDoctor prints one drift warn row naming a remote server whose served list changed", async () => {
     mkdirSync(join(lokiDir, "state"), { recursive: true });
-    writeFileSync(recordFile(), "aaa\n");
+    writeFileSync(recordFile(), JSON.stringify({ "loki-mode": "aaa", drifty: "old" }));
     process.env["LOKI_DIR"] = lokiDir;
+    process.env["LOKI_MCP_DRIFTY_URL"] = "https://drifty.example.com/mcp";
+    process.env["LOKI_MCP_DRIFTY_AUTH"] = "sekret-token-xyz";
     _setPythonImportOkForTest(async () => true);
     _setIntegrationProbesForTest({ http: async () => false, command: async () => null, sentruxVersion: async () => "1" });
-    _setMcpToolHashForTest(async () => "bbb");
+    _setMcpToolHashForTest(async () => ({ "loki-mode": "aaa", drifty: "new" }));
     const { cap } = await captureStdio(() => runDoctor([]));
     const rows = cap.out.split("\n").filter((l) => l.includes("MCP tool list drift"));
     expect(rows.length).toBe(1);
     expect(rows[0]).toContain("WARN");
+    expect(rows[0]).toContain("drifty");
+    expect(cap.out).not.toContain("sekret-token-xyz");
   }, 60000);
 
-  it("runDoctor prints no drift row when the hash matches", async () => {
+  it("runDoctor prints no drift row when every served hash matches", async () => {
     mkdirSync(join(lokiDir, "state"), { recursive: true });
-    writeFileSync(recordFile(), "aaa\n");
+    writeFileSync(recordFile(), JSON.stringify({ "loki-mode": "aaa" }));
     process.env["LOKI_DIR"] = lokiDir;
     _setPythonImportOkForTest(async () => true);
     _setIntegrationProbesForTest({ http: async () => false, command: async () => null, sentruxVersion: async () => "1" });
-    _setMcpToolHashForTest(async () => "aaa");
+    _setMcpToolHashForTest(async () => ({ "loki-mode": "aaa" }));
     const { cap } = await captureStdio(() => runDoctor([]));
     expect(cap.out.includes("MCP tool list drift")).toBe(false);
   }, 60000);

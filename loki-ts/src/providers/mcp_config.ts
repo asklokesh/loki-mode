@@ -75,15 +75,23 @@ function isLoopbackHost(h: string): boolean {
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
 }
 
+// CR, LF, NUL, tab, DEL and the rest of C0 would let a value inject headers.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
 // Collect LOKI_MCP_<NAME>_URL servers from env. Returns the server map and
 // whether any carries a header value. Warns by variable name only.
-function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<string, unknown>; hasSecret: boolean } {
+export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<string, unknown>; hasSecret: boolean } {
   const servers: Record<string, unknown> = {};
   let hasSecret = false;
   for (const key of Object.keys(env).sort()) {
     const m = /^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/.exec(key);
     const raw = env[key];
     if (!m || !raw) continue;
+    // new URL() silently strips CR, LF and tab, so the raw value is checked first.
+    if (CONTROL_CHARS.test(raw)) {
+      console.warn(`[mcp_config] ignoring ${key}: control characters are not allowed.`);
+      continue;
+    }
     let url: URL;
     try {
       url = new URL(raw);
@@ -98,6 +106,10 @@ function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<string,
     }
     const entry: Record<string, unknown> = { type: "http", url: raw };
     const auth = env[`LOKI_MCP_${m[1]}_AUTH`];
+    if (auth && CONTROL_CHARS.test(auth)) {
+      console.warn(`[mcp_config] ignoring ${key}: LOKI_MCP_${m[1]}_AUTH contains control characters.`);
+      continue;
+    }
     if (auth) {
       entry["headers"] = { Authorization: /^[A-Za-z][A-Za-z0-9-]*\s+\S/.test(auth) ? auth : `Bearer ${auth}` };
       hasSecret = true;
