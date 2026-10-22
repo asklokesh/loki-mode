@@ -7,7 +7,7 @@
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync, symlinkSync, lstatSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -381,6 +381,42 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     // A new inode proves the token never went into the world-readable file.
     expect(statSync(cfg).ino).not.toBe(before);
     expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("a stale or planted tmp file at the predictable path does not fail the run or receive the token", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    mkdirSync(join(td, ".loki"), { recursive: true });
+    const cfg = join(td, ".loki", "mcp-config.json");
+    const tmp = `${cfg}.tmp.${process.pid}`;
+    const victim = join(td, "victim");
+    writeFileSync(victim, "VICTIM");
+    chmodSync(victim, 0o644);
+    // A stale regular file from a crashed run with the same pid.
+    writeFileSync(tmp, "STALE");
+    mcpConfigPath(td);
+    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+    // A symlink planted at the tmp path is replaced, never followed.
+    rmSync(cfg);
+    symlinkSync(victim, tmp);
+    mcpConfigPath(td);
+    expect(readFileSync(victim, "utf8")).toBe("VICTIM");
+    expect(statSync(victim).mode & 0o777).toBe(0o644);
+    expect(lstatSync(cfg).isSymbolicLink()).toBe(false);
+    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
+    expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("a failed rename leaves no tmp file holding the token and rethrows", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    // A directory at the target makes the rename fail after the tmp file was written.
+    mkdirSync(join(td, ".loki", "mcp-config.json"), { recursive: true });
+    expect(() => mcpConfigPath(td)).toThrow();
+    expect(lstatSync(join(td, ".loki", "mcp-config.json")).isDirectory()).toBe(true);
+    expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
+    expect(readdirSync(join(td, ".loki", "mcp-config.json"))).toEqual([]);
   });
 
   it("an unchanged bundle holding a secret that was left at 644 is tightened to 0600", () => {
