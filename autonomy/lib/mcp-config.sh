@@ -79,18 +79,16 @@ loki_mcp_config_path() {
         fi
     done
 
-    # Build the bundle to a temp file, then compare bytes before rewriting.
-    # This makes the helper idempotent: identical bundle bytes -> no write,
-    # mtime stable. python3 is used so JSON encoding is canonical.
-    local tmp_bundle has_secret
-    tmp_bundle="${mcp_path}.tmp.$$"
+    # Build the bundle, write it to a random-named 0600 sibling and rename it
+    # over the target only when bytes differ. This makes the helper idempotent:
+    # identical bundle bytes -> no replace, mtime stable. python3 is used so
+    # JSON encoding is canonical.
     # Outbound remote servers (mirror of remoteServersFromEnv in
     # loki-ts/src/providers/mcp_config.ts): LOKI_MCP_<NAME>_URL declares an http
     # server, LOKI_MCP_<NAME>_AUTH its Authorization header. Warnings name the
-    # variable only, never a value. The python step prints "secret" on stdout
-    # when the bundle holds a header value.
-    if ! has_secret=$(_MCP_OUT="$tmp_bundle" _MCP_LSP="$lsp_detected" python3 -c "
-import json, os, re, sys
+    # variable only, never a value. The python step also writes the file.
+    if ! _MCP_OUT="$mcp_path" _MCP_LSP="$lsp_detected" python3 -c "
+import json, os, re, sys, tempfile
 from urllib.parse import urlsplit
 out = os.environ['_MCP_OUT']
 lsp = os.environ.get('_MCP_LSP', '0') == '1'
@@ -137,32 +135,43 @@ for key in sorted(os.environ):
     name = m.group(1).lower().replace('_', '-')
     if name not in servers:
         servers[name] = entry
-bundle = {'mcpServers': servers}
-fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if secret else 0o666)
-with os.fdopen(fd, 'w') as f:
-    json.dump(bundle, f, indent=2)
-if secret:
-    os.chmod(out, 0o600)
-    print('secret')
-"); then
-        rm -f "$tmp_bundle" 2>/dev/null
+data = json.dumps({'mcpServers': servers}, indent=2)
+# Write through an exclusive, random-named, owner-only sibling and rename it
+# over the target: no predictable path to pre-plant, no symlink followed, no
+# window where a token sits in a file with wider permissions.
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(prefix='.mcp-config.', suffix='.tmp', dir=os.path.dirname(out))
+    with os.fdopen(fd, 'w') as f:
+        f.write(data)
+        f.flush()
+        if not secret:
+            mask = os.umask(0)
+            os.umask(mask)
+            os.fchmod(f.fileno(), 0o666 & ~mask)
+    same = False
+    if os.path.isfile(out):
+        with open(out, encoding='utf-8') as cur:
+            same = cur.read() == data
+    if same:
+        # Idempotent: identical bytes already on disk, keep the file and its mtime.
+        os.unlink(tmp)
+        if secret:
+            os.chmod(out, 0o600)
+    else:
+        os.replace(tmp, out)
+    tmp = None
+except OSError as exc:
+    sys.stderr.write('[mcp_config] cannot write %s: %s\\n' % (out, exc.__class__.__name__))
+    sys.exit(1)
+finally:
+    if tmp is not None:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+"; then
         return 1
-    fi
-
-    # Idempotent write: only replace the file when bytes differ. cmp -s
-    # exits 0 when identical, so we keep the existing file in that case.
-    if [ -f "$mcp_path" ] && cmp -s "$tmp_bundle" "$mcp_path" 2>/dev/null; then
-        rm -f "$tmp_bundle" 2>/dev/null
-    else
-        mv -f "$tmp_bundle" "$mcp_path" 2>/dev/null || {
-            rm -f "$tmp_bundle" 2>/dev/null
-            return 1
-        }
-    fi
-    # A bundle holding a header value is owner-only, including when the bytes
-    # were unchanged and an older 644 file was kept.
-    if [ "$has_secret" = "secret" ]; then
-        chmod 600 "$mcp_path" 2>/dev/null || return 1
     fi
 
     # Emit absolute path -- python3 handles realpath portably.
