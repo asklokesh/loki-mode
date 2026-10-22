@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.43.0 (2026-10-22)
+
+### Added
+- `LOKI_CLAUDE_TASK_BUDGET=<tokens>` passes an SDK `taskBudget` on the SDK route and engine10. It is an advisory token countdown and does not replace `--max-budget-usd` or `LOKI_BUDGET_LIMIT`. The claude CLI lane does not receive it.
+
+### Removed
+- The unused `PROVIDER_DEFAULT_EFFORT`, `PROVIDER_DEFAULT_THINKING` and `PROVIDER_DEFAULT_TASK_BUDGET_TOKENS` knobs in `providers/claude.sh`, and the dead `LOKI_CLAUDE_EFFORT` and `LOKI_CLAUDE_THINKING` entries in the dashboard build supervisor. Nothing read them. A new guard fails on any `PROVIDER_DEFAULT_*` that has no reader.
+
 ## v11.42.0 (2026-10-22)
 
 ### Changed
