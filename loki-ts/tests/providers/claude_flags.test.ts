@@ -40,6 +40,37 @@ import {
   leanReviewerFlags,
 } from "../../src/providers/claude_flags.ts";
 
+describe("effortForTier model clamp", () => {
+  const cat = join(mkdtempSync(join(tmpdir(), "clampcat-")), "cat.json");
+  writeFileSync(cat, JSON.stringify({ providers: { claude: { cli_aliases: { mini: "m-low" }, models: [
+    { id: "m-low", alias: "mini", effort: { levels: ["low", "medium", "high"] } },
+    { id: "m-all", effort: { levels: ["low", "medium", "high", "xhigh", "max"] } },
+    { id: "m-none", effort: { levels: [] } },
+  ] } } }));
+  const prev = process.env["LOKI_MODEL_CATALOG"];
+  beforeEach(() => { process.env["LOKI_MODEL_CATALOG"] = cat; });
+  afterEach(() => { if (prev === undefined) delete process.env["LOKI_MODEL_CATALOG"]; else process.env["LOKI_MODEL_CATALOG"] = prev; });
+  it("clamps xhigh to the highest allowed level", () => { expect(effortForTier("planning", "standard", "m-low")).toBe("high"); });
+  it("resolves a cli alias", () => { expect(effortForTier("planning", "standard", "mini")).toBe("high"); });
+  it("leaves a supported level alone", () => { expect(effortForTier("planning", "standard", "m-all")).toBe("xhigh"); });
+  it("leaves unknown models alone", () => {
+    expect(effortForTier("planning", "standard", "unknown-model")).toBe("xhigh");
+  });
+  it("returns null for a no-effort model so the caller omits --effort", () => {
+    expect(effortForTier("planning", "standard", "m-none")).toBeNull();
+    expect(effortForTier("fast", "standard", "m-none")).toBeNull();
+  });
+  it("catalog haiku-4-5 has no effort parameter", () => {
+    delete process.env["LOKI_MODEL_CATALOG"];
+    expect(effortForTier("planning", "standard", "claude-haiku-4-5")).toBeNull();
+    expect(effortForTier("fast", "standard", "claude-haiku-4-5")).toBeNull();
+  });
+  it("catalog haiku-5-5 supports the planning effort", () => {
+    delete process.env["LOKI_MODEL_CATALOG"];
+    expect(effortForTier("planning", "standard", "claude-haiku-5-5")).toBe("xhigh");
+  });
+});
+
 describe("claude_flags.effortForTier", () => {
   it("maps planning -> xhigh", () => {
     expect(effortForTier("planning")).toBe("xhigh");

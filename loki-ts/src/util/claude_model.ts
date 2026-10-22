@@ -42,3 +42,21 @@ export function claudeTierRank(model: string): number | null {
     return null;
   }
 }
+
+/**
+ * Effort levels the catalog records for a Claude model (providers.claude.models[].effort.levels), ordered low to max. Null when the
+ * model is unknown, the catalog is unreadable, or the entry records no capability data, so a caller never clamps on a guess. An empty
+ * array means the model accepts no effort parameter.
+ */
+export function claudeEffortLevels(model: string): string[] | null {
+  try {
+    const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    const models = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models as Array<{ id: string; alias?: string; effort?: { levels?: string[] } }> | undefined;
+    if (!Array.isArray(models)) return null;
+    const id = resolveClaudeModel(model);
+    const levels = models.find((m) => m.id === id || m.alias === model)?.effort?.levels;
+    return Array.isArray(levels) ? levels : null;
+  } catch {
+    return null;
+  }
+}

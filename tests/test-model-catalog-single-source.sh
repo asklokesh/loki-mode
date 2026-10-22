@@ -191,6 +191,49 @@ else
     printf '%s\n' "$cap_bad" | sed 's/^/        /'
 fi
 
+# CAPABILITIES: every claude entry's thinking.types, effort.levels and effort.default are pinned to
+# the claude-api skill model table (thinking and effort rows). A shape-only check would pass a wrong
+# value, so the exact expected set is diffed. Empty levels (haiku-4-5) means no effort parameter.
+capab_bad="$(python3 - "$CATALOG" <<'PY'
+import json, sys
+ALL = ["low", "medium", "high", "xhigh", "max"]
+WANT = {
+    "claude-fable-5-1":  (["adaptive"], ALL, "high"),
+    "claude-fable-5":    (["adaptive"], ALL, "high"),
+    "claude-opus-5-5":   (["adaptive"], ALL, "medium"),
+    "claude-opus-5":     (["adaptive", "disabled"], ALL, "high"),
+    "claude-sonnet-5-5": (["adaptive", "between_tools"], ALL, "high"),
+    "claude-sonnet-5":   (["adaptive", "disabled"], ALL, "high"),
+    "claude-haiku-5-5":  (["adaptive", "disabled"], ALL, "medium"),
+    "claude-haiku-4-5":  (["enabled", "disabled"], [], None),
+}
+got = {m["id"]: m for m in json.load(open(sys.argv[1]))["providers"]["claude"]["models"]}
+for mid in sorted(set(WANT) - set(got)):
+    print("%s: pinned model missing from catalog" % mid)
+for mid in sorted(set(got) - set(WANT)):
+    print("%s: catalog model has no pinned capability row" % mid)
+for mid, (types, levels, default) in WANT.items():
+    m = got.get(mid)
+    if m is None:
+        continue
+    gt = m.get("thinking", {}).get("types")
+    gl = m.get("effort", {}).get("levels")
+    gd = m.get("effort", {}).get("default")
+    if gt != types:
+        print("%s: thinking.types %r != %r" % (mid, gt, types))
+    if gl != levels:
+        print("%s: effort.levels %r != %r" % (mid, gl, levels))
+    if gd != default:
+        print("%s: effort.default %r != %r" % (mid, gd, default))
+PY
+)"
+if [ -z "$capab_bad" ]; then
+    ok "every claude model matches its pinned thinking.types, effort.levels and effort.default"
+else
+    bad "claude capability drift from pinned table:"
+    printf '%s\n' "$capab_bad" | sed 's/^/        /'
+fi
+
 echo
 echo "  passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

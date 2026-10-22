@@ -67,6 +67,17 @@ v=$(loki_effort_for_tier fast complex); [ "$v" = "high" ] && ok "effort fast+com
 v=$(loki_effort_for_tier cheap complex); [ "$v" = "medium" ] && ok "effort cheap+complex=medium" || bad "effort cheap+complex got [$v]"
 v=$(loki_effort_for_tier planning complex); [ "$v" = "xhigh" ] && ok "effort planning+complex=xhigh (no auto-max)" || bad "effort planning+complex got [$v]"
 
+# Model clamp: effort is limited to the model's catalog effort.levels (mirror of effortForTier's model argument).
+_clamp_cat="$(mktemp -t clampcat.XXXXXX)"
+printf '%s' '{"providers":{"claude":{"cli_aliases":{"mini":"m-low"},"models":[{"id":"m-low","alias":"mini","effort":{"levels":["low","medium","high"]}},{"id":"m-all","effort":{"levels":["low","medium","high","xhigh","max"]}},{"id":"m-none","effort":{"levels":[]}}]}}}' > "$_clamp_cat"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier planning standard m-low); [ "$v" = "high" ] && ok "effort planning on 3-level model clamps xhigh to high" || bad "effort clamp got [$v]"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier planning standard mini); [ "$v" = "high" ] && ok "effort clamp resolves cli alias" || bad "effort clamp alias got [$v]"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier planning standard m-all); [ "$v" = "xhigh" ] && ok "effort unchanged when model supports level" || bad "effort m-all got [$v]"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier planning standard unknown-model); [ "$v" = "xhigh" ] && ok "effort unchanged for unknown model" || bad "effort unknown model got [$v]"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier planning standard m-none); [ -z "$v" ] && ok "effort empty for no-effort model (callers omit --effort)" || bad "effort m-none got [$v]"
+v=$(LOKI_MODEL_CATALOG="$_clamp_cat" loki_effort_for_tier fast standard m-none); [ -z "$v" ] && ok "effort empty for no-effort model on fast tier" || bad "effort m-none fast got [$v]"
+rm -f "$_clamp_cat"
+
 # ---------- loki_remaining_budget ----------
 TMPROOT=$(mktemp -d -t loki-claude-flags-XXXX)
 mkdir -p "$TMPROOT/.loki/metrics"

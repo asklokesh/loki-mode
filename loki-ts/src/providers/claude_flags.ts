@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
+import { claudeEffortLevels } from "../util/claude_model.ts";
 
 // --disallowedTools tree-mutation guard for reviewer sessions. Byte-identical to
 // loki_review_guard_denylist in autonomy/lib/claude-flags.sh. Kept in this leaf
@@ -28,8 +29,15 @@ export const REVIEW_GUARD_DENYLIST =
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
-// Mirror of loki_effort_for_tier in autonomy/lib/claude-flags.sh.
-export function effortForTier(tier: string | undefined, complexity?: string): EffortLevel {
+const EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+// Mirror of loki_effort_for_tier in autonomy/lib/claude-flags.sh. With a model, the result is clamped
+// to that model's catalog effort.levels (highest allowed level not above the request, else the lowest allowed).
+// A model whose levels list is empty (claude-haiku-4-5) has no effort parameter: the result is null and the
+// caller must omit --effort. Without a model the result is never null.
+export function effortForTier(tier: string | undefined, complexity?: string): EffortLevel;
+export function effortForTier(tier: string | undefined, complexity: string | undefined, model: string | undefined): EffortLevel | null;
+export function effortForTier(tier: string | undefined, complexity?: string, model?: string): EffortLevel | null {
   let effort: EffortLevel;
   switch (tier) {
     case "planning":
@@ -64,6 +72,14 @@ export function effortForTier(tier: string | undefined, complexity?: string): Ef
         break;
       // xhigh stays xhigh; max not auto-reached.
     }
+  }
+  const allowed = model ? claudeEffortLevels(model) : null;
+  if (allowed && allowed.length === 0) return null;
+  if (allowed && !allowed.includes(effort)) {
+    const want = EFFORT_ORDER.indexOf(effort);
+    const ok = EFFORT_ORDER.filter((l) => allowed.includes(l));
+    const below = ok.filter((l) => EFFORT_ORDER.indexOf(l) <= want);
+    effort = below.length > 0 ? below[below.length - 1]! : ok[0]!;
   }
   return effort;
 }
