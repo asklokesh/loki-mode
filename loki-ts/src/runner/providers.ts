@@ -47,7 +47,7 @@ import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { writeSessionId } from "./session_resume.ts";
 import { createTrimHook } from "./trim.ts";
 import { probeAdvisor } from "./router/advisor_probe.ts";
-import { routerEnabled } from "./router/flag.ts";
+import { advisorOnlyEnabled, routerEnabled, sessionPlanEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -398,7 +398,7 @@ export interface RouterSessionPlan {
   effort?: string;
 }
 
-// Pure: flag off -> null (caller adds nothing). Flag on -> advisor settings when the probe says available;
+// Pure: both flags off -> null (caller adds nothing). Flag on -> advisor settings when the probe says available;
 // otherwise the executor is Sonnet, never Haiku (L1 amendment, 4.4: Haiku runs only with the advisor attached).
 export function planRouterSession(args: {
   model: string;
@@ -407,8 +407,11 @@ export function planRouterSession(args: {
   env?: Record<string, string | undefined>;
 }): RouterSessionPlan | null {
   const env = args.env ?? process.env;
-  if (!routerEnabled(env)) return null;
+  const routed = routerEnabled(env);
+  if (!routed && !advisorOnlyEnabled(env)) return null;
   const probe = probeAdvisor(env, "claude", args.claudeCodeVersion, args.runDir, { executor: args.model, advisor: ROUTER_ADVISOR_MODEL });
+  // Advisor alone (#246): the advisor and nothing else. No executor swap, no compact window, so the only variable is the advisor.
+  if (!routed) return probe.available ? { model: args.model, settings: { advisorModel: ROUTER_ADVISOR_MODEL } } : null;
   if (probe.available) {
     return {
       model: args.model,
@@ -461,7 +464,7 @@ export function claudeProvider(): ProviderInvoker {
   return {
     async invoke(call: ProviderInvocation): Promise<ProviderResult> {
       const baseModel = claudeModelFor(call);
-      const routed = routerEnabled()
+      const routed = sessionPlanEnabled()
         ? planRouterSession({
             model: baseModel,
             runDir: process.env["LOKI_DIR"] ?? resolve(call.cwd, ".loki"),
@@ -665,7 +668,7 @@ export function buildSdkLoopOptions(args: {
   claudeCodeVersion?: string;
 }): SdkLoopExtraOptions {
   const out: SdkLoopExtraOptions = {};
-  const router = routerEnabled()
+  const router = sessionPlanEnabled()
     ? planRouterSession({
         model: args.model,
         runDir: args.runDir ?? process.env["LOKI_DIR"] ?? resolve(args.cwd, ".loki"),

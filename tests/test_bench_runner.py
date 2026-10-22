@@ -420,6 +420,25 @@ class RealAdapterIntegrationTest(unittest.TestCase):
         # Adapter output passed our validator (no forbidden keys).
         self.assertEqual(schema.validate_adapter_output(row["trials"][0]["adapter"]), [])
 
+    def test_trial_records_advisor_calls_from_the_run(self):
+        spec_path = _make_task(self.tmp, acceptance_cmd="test -f agent-touched.txt", task_id="adv-calls")
+        base = self._fake_runner(marker_in_workdir=True)
+
+        def with_advisor(cmd, cwd=None, **kw):
+            if "start" in " ".join(str(a) for a in (cmd if isinstance(cmd, list) else [cmd])):
+                os.makedirs(os.path.join(cwd, ".loki", "metrics"), exist_ok=True)
+                with open(os.path.join(cwd, ".loki", "metrics", "result-cost-1.json"), "w") as fh:
+                    json.dump({"total_cost_usd": 0.1, "advisor_calls": 4}, fh)
+            return base(cmd, cwd=cwd, **kw)
+
+        row = runner.run_task(spec_path, "loki", trials=1, adapter=self.loki_adapter, runner_fn=with_advisor)
+        self.assertEqual(row["trials"][0]["advisor_calls"], 4)
+        self.assertEqual(row["trials"][0]["advisor_errors"], 0)
+        # No cost record at all: unknown (None), never 0.
+        row = runner.run_task(spec_path, "loki", trials=1, adapter=self.loki_adapter,
+                              runner_fn=self._fake_runner(marker_in_workdir=True))
+        self.assertIsNone(row["trials"][0]["advisor_calls"])
+
     def test_runner_drives_real_loki_adapter_failure(self):
         # Agent does NOT produce the marker -> grader fails the trial.
         spec_path = _make_task(

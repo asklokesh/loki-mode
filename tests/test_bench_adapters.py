@@ -132,6 +132,26 @@ class TestLokiAdapter(unittest.TestCase):
             self.assertEqual(out["model_used"], "claude-opus-4")
 
 
+    def test_advisor_calls_read_from_result_cost_records(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            metrics = os.path.join(wd, ".loki", "metrics")
+            os.makedirs(metrics)
+            for i, rec in enumerate([{"total_cost_usd": 0.1, "advisor_calls": 2, "advisor_errors": 1},
+                                     {"total_cost_usd": 0.1, "advisor_calls": 3},
+                                     {"total_cost_usd": 0.1}]):
+                with open(os.path.join(metrics, "result-cost-%d.json" % i), "w") as fh:
+                    json.dump(rec, fh)
+            out = loki_adapter.run(wd, "prd.md", runner=make_runner(version_out="7.10.0", run_out="ok"))
+            self.assertEqual(out["provenance"]["advisor"], {"calls": 5, "errors": 1})
+
+    def test_advisor_unknown_not_zero_without_result_cost_records(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as wd:
+            out = loki_adapter.run(wd, "prd.md", runner=make_runner(version_out="7.10.0", run_out="ok"))
+            self.assertIsNone(out["provenance"]["advisor"])
+
+
 class TestAiderAdapter(unittest.TestCase):
     def test_schema_with_native_cost(self):
         run_out = "Tokens: 1,200 sent, 800 received\nCost: $0.0345 session."

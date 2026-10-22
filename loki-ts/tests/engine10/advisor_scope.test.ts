@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { probeAdvisor } from "../../src/runner/router/advisor_probe.ts";
 import { planRouterSession } from "../../src/runner/providers.ts";
+import { advisorOnlyEnabled } from "../../src/runner/router/flag.ts";
+import { routerTelemetryOn } from "../../src/engine10/cost.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 const KEYS = ["LOKI_ROUTER", "LOKI_ADVISOR_SCOPE", "SESSION_TEST_ENV_FILE"];
@@ -58,5 +60,40 @@ describe("CH-02 probe", () => {
     expect(planRouterSession({ model: "sonnet", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env })?.effort).toBe("medium");
     expect(planRouterSession({ model: "opus", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env })?.effort).toBeUndefined();
     expect(planRouterSession({ model: "sonnet", runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env: { ...env, LOKI_ADVISOR_SCOPE: "off" } })?.effort).toBeUndefined();
+  });
+});
+
+describe("advisor alone (#246): LOKI_ADVISOR=1 measures the advisor without the router", () => {
+  const plan = (env: Record<string, string>, model = "sonnet") => planRouterSession({ model, runDir: "/nonexistent", claudeCodeVersion: "2.1.300", env });
+  test("both flags unset: nothing added (default stays off until the parity run proves it)", () => {
+    expect(plan({})).toBeNull();
+    expect(advisorOnlyEnabled({})).toBe(false);
+  });
+  test("LOKI_ADVISOR=1 attaches the advisor and keeps the caller's model, even Haiku, with no compact window", () => {
+    for (const m of ["haiku", "sonnet"]) {
+      const p = plan({ LOKI_ADVISOR: "1" }, m);
+      expect(p?.model).toBe(m);
+      expect(p?.settings).toEqual({ advisorModel: "opus" });
+    }
+  });
+  test("LOKI_ADVISOR=1 with an unavailable advisor adds nothing and never swaps the model", () => {
+    expect(plan({ LOKI_ADVISOR: "1", CLAUDE_CODE_USE_BEDROCK: "1" }, "haiku")).toBeNull();
+  });
+  test("LOKI_ADVISOR=0 and LOKI_ROUTER_ADVISOR=off both win over LOKI_ADVISOR=1", () => {
+    expect(plan({ LOKI_ADVISOR: "0" })).toBeNull();
+    expect(plan({ LOKI_ADVISOR: "1", LOKI_ROUTER_ADVISOR: "off" })).toBeNull();
+  });
+  test("the executor pair is checked on the advisor-only path too: an advisor weaker than its executor adds nothing", () => {
+    expect(plan({ LOKI_ADVISOR: "1" }, "fable")).toBeNull();
+    expect(plan({ LOKI_ROUTER: "1", LOKI_ADVISOR: "1" }, "fable")?.advisorReason).toContain("invalid_pair");
+  });
+  test("advisor telemetry is recorded when the advisor runs alone, and only then or with the router", () => {
+    expect(routerTelemetryOn({ LOKI_ADVISOR: "1" })).toBe(true);
+    expect(routerTelemetryOn({ LOKI_ROUTER: "1" })).toBe(true);
+    expect(routerTelemetryOn({})).toBe(false);
+    expect(routerTelemetryOn({ LOKI_ADVISOR: "0" })).toBe(false);
+  });
+  test("router on keeps the router plan (compact window for haiku)", () => {
+    expect(plan({ LOKI_ROUTER: "1", LOKI_ADVISOR: "1" }, "haiku")?.settings).toEqual({ advisorModel: "opus", autoCompactWindow: 100000 });
   });
 });

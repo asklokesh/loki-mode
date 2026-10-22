@@ -3,13 +3,15 @@
 # experiment. Sets steering env vars per cell and calls the EXISTING run.sh; no
 # adapter or grader change (the grader stays a held-out acceptance exit code).
 #
-# A cell = (model, config). config in {baseline, full}:
+# A cell = (model, config). config in {baseline, full, advisor}:
 #   baseline = raw model, minimal orchestration (the Replit/Cursor mode)
 #   full     = all steering levers on (the harness)
+#   advisor  = full plus LOKI_ADVISOR=1 (the Opus advisor alone, router off); the only difference from full
 #
 # Usage:
 #   matrix.sh smoke                  # Stage 0: H.B + O.B on fizzbuzz, N=1 (~$1)
 #   matrix.sh pilot                  # Stage 1: H.F vs O.B on 3 hard tasks, N=<TRIALS>
+#   matrix.sh advisor <model> [task...]      # #246 parity: <model>-full vs <model>-advisor, same tasks
 #   matrix.sh cell <model> <config> <task>   # one cell
 #
 # Env: LOKI_BENCH_TRIALS (default 2), LOKI_BENCH_ISO (isolated engine bin dir on PATH)
@@ -70,6 +72,7 @@ run_cell() {
   case "$config" in
     baseline) cfg_env="$(baseline_env)" ;;
     full)     cfg_env="$(full_env)" ;;
+    advisor)  cfg_env="$(full_env) LOKI_ADVISOR=1" ;;
     *) echo "unknown config: $config"; return 2 ;;
   esac
   # Config-aware timeout (caps ALL trials of the cell together). An explicit
@@ -80,7 +83,7 @@ run_cell() {
   # produce zero haiku-full rows -- so err large.
   if [ -n "$TIMEOUT" ]; then
     cell_timeout="$TIMEOUT"
-  elif [ "$config" = "full" ]; then
+  elif [ "$config" = "full" ] || [ "$config" = "advisor" ]; then
     cell_timeout=$(( 2400 * (TRIALS > 0 ? TRIALS : 1) ))   # 40 min/trial
   else
     cell_timeout=1200
@@ -101,7 +104,7 @@ run_cell() {
   # assignments. Quoting would pass one string and break every cell.
   env -u LOKI_MAX_ITERATIONS -u LOKI_COUNCIL_ENABLED -u LOKI_PHASE_CODE_REVIEW \
       -u LOKI_SELF_HEAL -u LOKI_TIER_ROUTING -u LOKI_AUTO_TUNE \
-      -u LOKI_SESSION_MODEL -u LOKI_ALLOW_HAIKU \
+      -u LOKI_SESSION_MODEL -u LOKI_ALLOW_HAIKU -u LOKI_ADVISOR -u LOKI_ROUTER \
       $(model_env "$model") $cfg_env \
       LOKI_BENCH_TRIALS="$TRIALS" LOKI_BENCH_TIMEOUT="$cell_timeout" \
       LOKI_BENCH_CELL="$cell" \
@@ -131,9 +134,20 @@ case "$cmd" in
     for t in $HARD_TASKS; do run_cell opus baseline "$t"; done
     echo "### PILOT DONE ###"
     ;;
+  advisor)
+    # #246 win criteria (D99): flip the advisor default only if VERIFIED rate and cost per VERIFIED
+    # task with the advisor are no worse than without, on the same tasks. Read the verdict with
+    # equivalence_report.py (the "advisor default" decision line). Arms alternate per task so a
+    # mid-run drift in the provider hits both.
+    model="${2:?usage: matrix.sh advisor <model> [task...]}"; shift 2
+    tasks="${*:-$HARD_TASKS}"
+    echo "### ADVISOR PARITY: $model full vs advisor (N=$TRIALS, tasks: $tasks) ###"
+    for t in $tasks; do run_cell "$model" full "$t"; run_cell "$model" advisor "$t"; done
+    echo "### ADVISOR PARITY DONE: python3 $SCRIPT_DIR/equivalence_report.py ###"
+    ;;
   cell)
     run_cell "$2" "$3" "$4"
     ;;
   *)
-    echo "usage: matrix.sh smoke|pilot|cell <model> <config> <task>"; exit 2 ;;
+    echo "usage: matrix.sh smoke|pilot|advisor <model> [task...]|cell <model> <config> <task>"; exit 2 ;;
 esac

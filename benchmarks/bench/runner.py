@@ -165,7 +165,18 @@ def prepare_workdir(fixture_dir: str, tool: str) -> str:
                 shutil.copytree(src, dst)
             else:
                 shutil.copy2(src, dst)
+    _git_baseline(workdir)
     return workdir
+
+
+def _git_baseline(workdir: str) -> None:
+    """Commit the copied fixture as a git baseline. loki start (engine10) refuses a
+    folder that is not a git work tree and exits rc 2 in under a second, which a
+    bench run would otherwise record as a measured failure of the tool under test.
+    Local identity only; the fixture is the baseline so a diff shows what the agent changed."""
+    git = ["git", "-c", "user.name=bench", "-c", "user.email=bench@localhost"]
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"], git + ["commit", "-q", "-m", "baseline", "--allow-empty"]):
+        subprocess.run(argv, cwd=workdir, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +374,17 @@ def invoke_adapter(adapter: Callable[..., Dict[str, Any]],
 # trial + run orchestration
 # ---------------------------------------------------------------------------
 
+def _advisor_field(adapter_out: Dict[str, Any], key: str) -> Optional[int]:
+    prov = adapter_out.get("provenance")
+    adv = prov.get("advisor") if isinstance(prov, dict) else None
+    v = adv.get(key) if isinstance(adv, dict) else None
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _advisor_calls(adapter_out: Dict[str, Any]) -> Optional[int]:
+    return _advisor_field(adapter_out, "calls")
+
+
 def run_trial(adapter: Callable[..., Dict[str, Any]],
               spec: Dict[str, Any], fixture_dir: str, model: str,
               tool: str, trial_index: int,
@@ -426,6 +448,11 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
             # a missing key, which is how the original defect stayed invisible.
             "measured": not unmeasured_reasons,
             "unmeasured_reasons": unmeasured_reasons,
+            # Advisor calls this trial streamed; None when not recorded (non-loki tool, or no cost
+            # record). advisor_verdict treats None as not attached, never as zero calls.
+            "advisor_calls": _advisor_calls(adapter_out),
+            # Advisor errors this trial hit; a trial with calls but errors is not attached.
+            "advisor_errors": _advisor_field(adapter_out, "errors"),
         }
         if unmeasured_reasons:
             # Held-out grader evidence preserved separately, never discarded.

@@ -261,6 +261,157 @@ def test_cost_is_partial_hardening():
     assert not bs.cost_is_partial({"cost_usd": 1.0, "cost_partial": "no"})
 
 
+def _advisor_row(config, task_id, outcomes, cost, task_hash="h1", sig="s1", calls=None):
+    """Advisor-arm fixture. The advisor arm records advisor calls per trial; the off arm records 0."""
+    row = _fixture_row("sonnet-" + config, task_id, task_hash, outcomes, cost=cost, harness_sig=sig)
+    row["model"] = "sonnet"
+    if calls is None:
+        calls = 2 if config == "advisor" else 0
+    for t in row["trials"]:
+        t["cost_usd"] = cost  # a failed trial still spent money; None would read as a partial cost
+        t["advisor_calls"] = calls
+    return row
+
+
+def _set_trial(row, i, **kw):
+    row["trials"][i].update(kw)
+    return row
+
+
+def _unmeasure(row, n):
+    """Mark the last n trials of a row as lost to a timeout (not measured)."""
+    for t in row["trials"][-n:]:
+        t["adapter"] = {"exit_status": "timeout"}
+    return row
+
+
+def test_advisor_verdict_flips_only_when_both_criteria_met():
+    off = [_advisor_row("full", "t1", [1, 1, 0, 1], 1.0)]
+    # Same VERIFIED rate, cheaper per VERIFIED task: both criteria met.
+    v = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 1, 0, 1], 0.9)], "sonnet")
+    assert v["flip_default"] is True and v["verdict"].startswith("FLIP ON"), v
+    # Higher rate but dearer per VERIFIED task: criterion 2 fails, stays off.
+    v = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 1, 1, 1], 1.5)], "sonnet")
+    assert v["flip_default"] is False and v["verdict"].startswith("KEEP OFF"), v
+    assert v["verified_rate"]["met"] is True and v["cost_per_verified"]["met"] is False, v
+    # Lower rate but cheaper: criterion 1 fails, stays off.
+    v = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 0, 0, 1], 0.1)], "sonnet")
+    assert v["flip_default"] is False and v["verified_rate"]["met"] is False, v
+    print("[PASS] advisor_verdict both criteria")
+
+
+def test_advisor_verdict_not_proven_keeps_default_off():
+    off = [_advisor_row("full", "t1", [1, 1], 1.0)]
+    assert "missing arm" in eq.advisor_verdict(off, "sonnet")["verdict"]
+    assert "same tasks" in eq.advisor_verdict(
+        off + [_advisor_row("advisor", "t1", [1, 1], 0.5, task_hash="h2")], "sonnet")["verdict"]
+    assert "unequal" in eq.advisor_verdict(
+        off + [_advisor_row("advisor", "t1", [1, 1, 1], 0.5)], "sonnet")["verdict"]
+    assert "harness" in eq.advisor_verdict(
+        [_advisor_row("full", "t1", [1, 1], 1.0, sig="a")] + [_advisor_row("advisor", "t1", [1, 1], 0.5, sig="b")], "sonnet")["verdict"]
+    nothing = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [0, 0], 0.5)], "sonnet")
+    assert nothing["flip_default"] is False and nothing["verdict"].startswith("NOT PROVEN"), nothing
+    print("[PASS] advisor_verdict not proven")
+
+
+def test_advisor_verdict_unequal_per_task_measured_counts_not_proven():
+    # (a) Totals match (4 vs 4) but the advisor arm has no measured trial on t2.
+    off = [_advisor_row("full", "t1", [1, 1], 1.0), _advisor_row("full", "t2", [1, 1], 1.0)]
+    on = [_advisor_row("advisor", "t1", [1, 1, 1, 1], 0.5),
+          _unmeasure(_advisor_row("advisor", "t2", [1, 1], 0.5), 2)]
+    v = eq.advisor_verdict(off + on, "sonnet")
+    assert v["flip_default"] is False and v["verdict"].startswith("NOT PROVEN"), v
+    assert "per-task" in v["verdict"], v
+    print("[PASS] advisor_verdict per-task measured counts")
+
+
+def test_advisor_verdict_duplicate_task_id_with_different_hash_not_proven():
+    # (b) A duplicate task_id carrying an old and a new task_hash must not collapse to the new one.
+    off = [_advisor_row("full", "t1", [1, 1], 1.0, task_hash="new")]
+    on = [_advisor_row("advisor", "t1", [1, 1], 0.5, task_hash="old"),
+          _advisor_row("advisor", "t1", [1, 1], 0.5, task_hash="new")]
+    v = eq.advisor_verdict(off + on, "sonnet")
+    assert v["flip_default"] is False and "task_hash" in v["verdict"], v
+    v = eq.advisor_verdict(on + off, "sonnet")
+    assert v["flip_default"] is False and "task_hash" in v["verdict"], v
+    print("[PASS] advisor_verdict duplicate task_id")
+
+
+def test_advisor_verdict_rows_without_identity_or_harness_not_proven():
+    # (c) No task_id, no task_hash, no harness_sig on either arm: nothing ties the arms together.
+    off = _advisor_row("full", "t1", [1, 1], 1.0)
+    on = _advisor_row("advisor", "t1", [1, 1], 0.5)
+    for r in (off, on):
+        for k in ("task_id", "task_hash", "harness_sig"):
+            r.pop(k)
+    v = eq.advisor_verdict([off, on], "sonnet")
+    assert v["flip_default"] is False and v["verdict"].startswith("NOT PROVEN"), v
+    # Each missing field alone is enough.
+    for k in ("task_id", "task_hash", "harness_sig"):
+        a, b = _advisor_row("full", "t1", [1, 1], 1.0), _advisor_row("advisor", "t1", [1, 1], 0.5)
+        b.pop(k)
+        v = eq.advisor_verdict([a, b], "sonnet")
+        assert v["flip_default"] is False and v["verdict"].startswith("NOT PROVEN"), (k, v)
+    # Both arms unstamped: equal to each other, but nothing shows they ran the same harness.
+    a, b = _advisor_row("full", "t1", [1, 1], 1.0, sig=None), _advisor_row("advisor", "t1", [1, 1], 0.5, sig=None)
+    v = eq.advisor_verdict([a, b], "sonnet")
+    assert v["flip_default"] is False and "harness_sig" in v["verdict"], v
+    print("[PASS] advisor_verdict unstamped rows")
+
+
+def test_advisor_verdict_requires_every_on_trial_attached():
+    off = [_advisor_row("full", "t1", [1, 1, 1, 1], 1.0)]
+    # Per-task sum is 1 but only trial 0 attached: must be NOT PROVEN, not FLIP ON.
+    on = _advisor_row("advisor", "t1", [1, 1, 1, 1], 0.5)
+    for i, c in enumerate([1, 0, 0, 0]):
+        on["trials"][i]["advisor_calls"] = c
+    v = eq.advisor_verdict(off + [on], "sonnet")
+    assert v["flip_default"] is False and v["verdict"].startswith("NOT PROVEN") and "t1#2" in v["verdict"] and "t1#1" not in v["verdict"], v
+    # An off-arm trial with a call is not an off arm, even when the other trials are 0.
+    off2 = _set_trial(_advisor_row("full", "t1", [1, 1, 1, 1], 1.0), 2, advisor_calls=1)
+    v = eq.advisor_verdict([off2, _advisor_row("advisor", "t1", [1, 1, 1, 1], 0.5)], "sonnet")
+    assert v["flip_default"] is False and "off arm" in v["verdict"], v
+    # Control: every trial attached still flips.
+    v = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 1, 1, 1], 0.5)], "sonnet")
+    assert v["flip_default"] is True, v
+    print("[PASS] advisor_verdict every on-arm trial attached")
+
+
+def test_advisor_verdict_trial_with_advisor_errors_is_not_attached():
+    off = [_advisor_row("full", "t1", [1, 1], 1.0)]
+    on = _set_trial(_advisor_row("advisor", "t1", [1, 1], 0.5), 1, advisor_errors=2)
+    v = eq.advisor_verdict(off + [on], "sonnet")
+    assert v["flip_default"] is False and "errors" in v["verdict"] and "t1#2" in v["verdict"], v
+    # Zero errors recorded is fine.
+    on = _set_trial(_advisor_row("advisor", "t1", [1, 1], 0.5), 1, advisor_errors=0)
+    assert eq.advisor_verdict(off + [on], "sonnet")["flip_default"] is True
+    print("[PASS] advisor_verdict advisor errors")
+
+
+def test_advisor_verdict_requires_advisor_attached_in_on_arm():
+    off = [_advisor_row("full", "t1", [1, 1], 1.0)]
+    assert eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 1], 0.5)], "sonnet")["flip_default"] is True
+    # Advisor arm recorded zero advisor calls: it never attached, so the arms are the same config.
+    v = eq.advisor_verdict(off + [_advisor_row("advisor", "t1", [1, 1], 0.5, calls=0)], "sonnet")
+    assert v["flip_default"] is False and "attach" in v["verdict"], v
+    # Advisor calls not recorded at all: unknown is not attached.
+    row = _advisor_row("advisor", "t1", [1, 1], 0.5)
+    for t in row["trials"]:
+        del t["advisor_calls"]
+    v = eq.advisor_verdict(off + [row], "sonnet")
+    assert v["flip_default"] is False and "attach" in v["verdict"], v
+    # Advisor attached on only one of two tasks.
+    off2 = off + [_advisor_row("full", "t2", [1, 1], 1.0)]
+    v = eq.advisor_verdict(off2 + [_advisor_row("advisor", "t1", [1, 1], 0.5),
+                                   _advisor_row("advisor", "t2", [1, 1], 0.5, calls=0)], "sonnet")
+    assert v["flip_default"] is False and "attach" in v["verdict"], v
+    # The off arm made advisor calls: it was contaminated.
+    v = eq.advisor_verdict([_advisor_row("full", "t1", [1, 1], 1.0, calls=1)]
+                           + [_advisor_row("advisor", "t1", [1, 1], 0.5)], "sonnet")
+    assert v["flip_default"] is False and "attach" in v["verdict"], v
+    print("[PASS] advisor_verdict advisor attached")
+
+
 if __name__ == "__main__":
     test_wilson()
     test_bootstrap_gap()
@@ -276,4 +427,12 @@ if __name__ == "__main__":
     test_summarize_trials_partial_nulls_per_solved()
     test_bench_report_markdown_prefixes_lower_bound()
     test_cost_is_partial_hardening()
+    test_advisor_verdict_flips_only_when_both_criteria_met()
+    test_advisor_verdict_not_proven_keeps_default_off()
+    test_advisor_verdict_unequal_per_task_measured_counts_not_proven()
+    test_advisor_verdict_duplicate_task_id_with_different_hash_not_proven()
+    test_advisor_verdict_rows_without_identity_or_harness_not_proven()
+    test_advisor_verdict_requires_advisor_attached_in_on_arm()
+    test_advisor_verdict_requires_every_on_trial_attached()
+    test_advisor_verdict_trial_with_advisor_errors_is_not_attached()
     print("\nALL EQUIVALENCE-REPORT SELF-CHECKS PASSED")

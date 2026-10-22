@@ -343,6 +343,34 @@ def _read_group_cost(loki_dir):
             "units_measured": measured, "units_unmeasured": unmeasured}
 
 
+def _read_advisor(loki_dir):
+    """Advisor use summed from the per-session result-cost records (advisor_calls, advisor_errors).
+    Returns {calls, errors}, or None when no result-cost record exists: unknown is never zero.
+    A record with no advisor_calls key means the session streamed no advisor call."""
+    metrics = os.path.join(loki_dir, "metrics")
+    try:
+        names = sorted(os.listdir(metrics))
+    except Exception:
+        return None
+    calls = errors = 0
+    seen = False
+    for name in names:
+        if not (name.startswith("result-cost-") and name.endswith(".json")):
+            continue
+        rec = _read_json_file(os.path.join(metrics, name))
+        if rec is None:
+            continue
+        seen = True
+        for key in ("advisor_calls", "advisor_errors"):
+            v = rec.get(key)
+            if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                if key == "advisor_calls":
+                    calls += v
+                else:
+                    errors += v
+    return {"calls": calls, "errors": errors} if seen else None
+
+
 def _cache_tokens_by_phase(loki_dir, cost, eff):
     """{phase: {cache_read, cache_creation}} so cache economics are comparable
     across lever configs. Ledger records give child phases; the remainder of the
@@ -493,6 +521,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             # gap behind a "WITH GAPS" headline must survive in the row.
             "honesty": honesty,
             "engine": engine,
+            # Advisor calls the session actually streamed ({calls, errors}); None when no cost
+            # record was written. The advisor parity verdict reads this to prove it attached.
+            "advisor": _read_advisor(loki_dir),
             # True spend split by phase, and whether the child-session ledger
             # was read ("present") or missing ("absent"), from the shared
             # efficiency_cost collector.

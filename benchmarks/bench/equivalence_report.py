@@ -513,6 +513,8 @@ def build_report(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
         "bootstrap_seed": BOOTSTRAP_SEED,
         "cells": cells,
+        "advisor_default": [advisor_verdict(rows, m) for m in sorted(grid)
+                            if ADVISOR_ON_CONFIG in grid[m]],
         "hero_correctness": hero,
         "axes": {
             "correctness": "measured (held-out acceptance exit 0)",
@@ -545,6 +547,121 @@ def _decision_line(gap, lo, hi, n_hf, n_ob, n_tasks) -> str:
     return ("UNDERPOWERED at N=%d: gap=%+.3f CI [%+.3f, %+.3f] straddles "
             "-epsilon=%.2f, need N>=%d total"
             % (min(n_hf, n_ob), gap, lo, hi, EPSILON, need))
+
+
+# ---------------------------------------------------------------------------
+# Advisor default verdict (#246, win criteria fixed by D99 on 2026-10-22)
+# ---------------------------------------------------------------------------
+
+ADVISOR_OFF_CONFIG = "full"       # router off, advisor off
+ADVISOR_ON_CONFIG = "advisor"     # LOKI_ADVISOR=1, everything else identical
+
+
+def advisor_verdict(rows: List[Dict[str, Any]], model: str) -> Dict[str, Any]:
+    """Decide whether the advisor default flips ON for one executor model.
+
+    Flip only when, on the same tasks, (1) VERIFIED rate with the advisor >= VERIFIED
+    rate without, and (2) cost per VERIFIED task with the advisor <= without. A missing
+    arm, a different task set or task_hash, unequal trial counts, or a cost that is
+    null or partial is NOT PROVEN, which keeps the default OFF. Every measured advisor-arm trial
+    must have attached (calls >= 1, no advisor errors) and every off-arm trial must have 0 calls.
+    No other gate.
+    """
+    off_rows = [r for r in rows if parse_cell(r) == (model, ADVISOR_OFF_CONFIG)]
+    on_rows = [r for r in rows if parse_cell(r) == (model, ADVISOR_ON_CONFIG)]
+    out: Dict[str, Any] = {"model": model, "flip_default": False}
+
+    def not_proven(why: str) -> Dict[str, Any]:
+        out["verdict"] = "NOT PROVEN: %s. Default stays OFF." % why
+        return out
+
+    if not off_rows or not on_rows:
+        return not_proven("missing arm(s): %s" % ", ".join(
+            n for n, rs in (("%s-%s" % (model, ADVISOR_OFF_CONFIG), off_rows),
+                            ("%s-%s" % (model, ADVISOR_ON_CONFIG), on_rows)) if not rs))
+    # Identity first: every row of both arms names its task, its task_hash and a stamped harness. A row
+    # missing any of them cannot be tied to the other arm, so it is never silently pooled.
+    for r in off_rows + on_rows:
+        tid, th = r.get("task_id"), r.get("task_hash")
+        if not (isinstance(tid, str) and tid.strip() and isinstance(th, str) and th.strip()):
+            return not_proven("a row has no task_id or task_hash, so the arms cannot be tied to the same tasks")
+    sigs = {harness_sig(r) for r in off_rows + on_rows}
+    if "unknown" in sigs:
+        return not_proven("a row carries no harness_sig, so the arms cannot be shown to share a harness")
+    if len(sigs) > 1:
+        return not_proven("the arms ran different harness versions")
+
+    def hashes_by_task(rs: List[Dict[str, Any]]) -> Dict[str, set]:
+        # Every row counts: a duplicate task_id with another task_hash stays visible, never overwritten.
+        d: Dict[str, set] = {}
+        for r in rs:
+            d.setdefault(r["task_id"], set()).add(r["task_hash"])
+        return d
+
+    off_h, on_h = hashes_by_task(off_rows), hashes_by_task(on_rows)
+    if off_h != on_h or any(len(h) != 1 for h in off_h.values()):
+        return not_proven("the arms did not run the same tasks at the same single task_hash")
+
+    def measured_by_task(rs: List[Dict[str, Any]]) -> Dict[str, int]:
+        d: Dict[str, int] = {t: 0 for t in hashes_by_task(rs)}
+        for r in rs:
+            d[r["task_id"]] += sum(1 for t in r.get("trials") or [] if _schema.trial_is_measured(t))
+        return d
+
+    off_n, on_n = measured_by_task(off_rows), measured_by_task(on_rows)
+    if off_n != on_n or any(n == 0 for n in off_n.values()):
+        return not_proven("unequal or empty per-task measured trial counts (off=%s, on=%s)"
+                          % (sorted(off_n.items()), sorted(on_n.items())))
+
+    def is_int(v: Any) -> bool:
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    def unattached(rs: List[Dict[str, Any]], want_attached: bool) -> List[str]:
+        # Judged per measured trial, never summed per task: one attached trial must not carry its siblings.
+        # On arm: calls >= 1 and no advisor errors. Off arm: calls recorded and exactly 0.
+        # An unrecorded count or error figure is unknown, which is not attached.
+        bad: set = set()
+        for r in rs:
+            for i, t in enumerate(r.get("trials") or []):
+                if not _schema.trial_is_measured(t):
+                    continue
+                c, e = t.get("advisor_calls"), t.get("advisor_errors")
+                if want_attached:
+                    ok = is_int(c) and c >= 1 and not (is_int(e) and e > 0)
+                else:
+                    ok = is_int(c) and c == 0
+                if not ok:
+                    bad.add("%s#%s" % (r["task_id"], t.get("trial", i)))
+        return sorted(bad)
+
+    bad_on, bad_off = unattached(on_rows, True), unattached(off_rows, False)
+    if bad_on:
+        return not_proven("the advisor did not attach in every measured advisor-arm trial (no recorded advisor "
+                          "call, or advisor errors, on trial(s) %s)" % ", ".join(bad_on))
+    if bad_off:
+        return not_proven("the advisor attached in the off arm or its calls were not recorded (trial(s) %s)"
+                          % ", ".join(bad_off))
+    off, on = cell_axes(off_rows), cell_axes(on_rows)
+    out["off"] = {k: off[k] for k in ("n_trials", "n_success", "cost_usd_per_verified")}
+    out["on"] = {k: on[k] for k in ("n_trials", "n_success", "cost_usd_per_verified")}
+    rate_off = off["n_success"] / off["n_trials"]
+    rate_on = on["n_success"] / on["n_trials"]
+    out["verified_rate"] = {"off": round(rate_off, 4), "on": round(rate_on, 4),
+                            "met": rate_on >= rate_off}
+    c_off, c_on = off["cost_usd_per_verified"], on["cost_usd_per_verified"]
+    if c_off is None or c_on is None:
+        return not_proven("cost per VERIFIED task is not measured for both arms "
+                          "(no VERIFIED trial, or a partial or missing cost)")
+    out["cost_per_verified"] = {"off": c_off, "on": c_on, "met": c_on <= c_off}
+    if rate_on >= rate_off and c_on <= c_off:
+        out["flip_default"] = True
+        out["verdict"] = "FLIP ON: VERIFIED %.2f >= %.2f and cost per VERIFIED $%.4f <= $%.4f" % (
+            rate_on, rate_off, c_on, c_off)
+    else:
+        out["verdict"] = "KEEP OFF: VERIFIED %.2f vs %.2f (%s), cost per VERIFIED $%.4f vs $%.4f (%s)" % (
+            rate_on, rate_off, "met" if rate_on >= rate_off else "not met",
+            c_on, c_off, "met" if c_on <= c_off else "not met")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +748,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
                      % ", ".join(missing))
     else:
         lines.append("- correctness: %s" % hero["decision"])
+    for av in report.get("advisor_default", []):
+        lines.append("- advisor default (%s): %s" % (av["model"], av["verdict"]))
     lines.append("- honesty: not_captured (no proof/verify verdict present in "
                  "current results)")
     lines.append("- design: not_captured (D-val judge is Planned, not built)")

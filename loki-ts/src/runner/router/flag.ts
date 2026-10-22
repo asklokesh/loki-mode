@@ -11,3 +11,16 @@ export function routerMode(env: Record<string, string | undefined> = process.env
 
 /** True only when the router is explicitly on. Off and opt-out both keep the pre-router path. */
 export const routerEnabled = (env: Record<string, string | undefined> = process.env): boolean => routerMode(env) === "on";
+
+/**
+ * #246: the advisor alone, without executor routing. LOKI_ADVISOR=1 attaches the Opus advisor to a session and changes nothing else,
+ * so a parity run can compare advisor on against router off. Unset or 0 is off: the default flips only on a measured win
+ * (benchmarks/bench/equivalence_report.py advisor verdict).
+ */
+export function advisorOnlyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const v = (env.LOKI_ADVISOR ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on";
+}
+
+/** True when a session plan applies: the router is on, or the advisor was asked for on its own. */
+export const sessionPlanEnabled = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) || advisorOnlyEnabled(env);
