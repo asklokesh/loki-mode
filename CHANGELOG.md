@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.51.1 (2026-10-22)
+
+### Fixed
+- Cost (#306): prefix_sha now covers the whole cached prefix (system prompt, tools and denials, MAX_THINKING_TOKENS, effort and the brief head), so any change that breaks the prompt cache moves the hash. The cost breakdown names which component changed instead of a bare "(prefix changed)". Older events without prefix_parts still render as before.
+
 ## v11.51.0 (2026-10-22)
 
 ### Changed
