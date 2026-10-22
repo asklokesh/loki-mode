@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.40.0 (2026-10-22)
+
+### Changed
+- A `loki start` flag never switches the engine any more. `--max-duration` maps to the engine10 run cap. `--quiet`, `--resume`, `--pr` and `--dry-run` are mapped. Any flag that engine10 does not support is refused with a message that names its replacement, instead of silently falling back to the legacy engine. Internal callers were migrated.
+
+### Fixed
+- Webhook-triggered starts no longer force `LOKI_ENGINE=legacy` or pass `--detach`, so they run on engine10.
+- Trigger-server dispatch writes child output to per-run files under `.loki/triggers` (mode 0600) instead of pipes. A detached child writing more than 64KB can no longer hang the server.
+
 ## v11.39.3 (2026-10-22)
 
 ### Changed
