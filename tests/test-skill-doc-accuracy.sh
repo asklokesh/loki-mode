@@ -181,6 +181,17 @@ else
     fail "skills/extending.md missing: the extension seam is undocumented"
 fi
 
+# --- Contents map on every long module ----------------------------------------
+# A partial read of a long module must still show its whole scope, so every
+# skills/*.md over 100 lines carries a generated TOC. scripts/skill-toc.sh owns
+# the generation; --check fails on a missing or stale one.
+echo "== skills/*.md over 100 lines carry a current contents map =="
+if toc_out=$(bash scripts/skill-toc.sh --check 2>&1); then
+    pass "every long skills/*.md has a current generated TOC"
+else
+    fail "stale or missing skill TOC: $(echo "$toc_out" | tr '\n' ' ')"
+fi
+
 echo ""
 echo "=== results: $PASSED passed, $FAILED failed ==="
 [ "$FAILED" -eq 0 ]
