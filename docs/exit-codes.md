@@ -455,13 +455,10 @@ The table below is rendered from live `loki route --json` output by `tests/test-
 | `start p.md --provider cline` | engine10 | engine10:cline | 1 listed | default: prd input runs on engine10 regardless of flag order |
 | `start p.md --provider aider` | engine10 | engine10:aider | 1 listed | default: prd input runs on engine10 regardless of flag order |
 | `start p.md --provider opencode` | engine10 | engine10:opencode | 1 listed | default: prd input runs on engine10 regardless of flag order |
-| `start p.md --provider gemini` | legacy | legacy-bash:gemini | 2 listed | provider gemini has no engine10 invoker (use claude, codex, cline, aider or opencode) |
 | `start p.md --engine legacy` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
 | `start --engine legacy p.md` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
 | `LOKI_ENGINE=legacy start p.md` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
 | `start p.md --engine engine10` | engine10 | engine10:claude | none | explicit: --engine engine10 |
 | `LOKI_ENGINE=engine10 start p.md` | engine10 | engine10:claude | none | explicit: --engine engine10 |
-| `start p.md --parallel` | legacy | legacy-bash:claude | 2 listed | flag --parallel is not supported by engine10 |
-| `start --parallel p.md` | legacy | legacy-bash:claude | 2 listed | flag --parallel is not supported by engine10 |
 | `start big.md` | legacy | legacy-bash:claude | 1 listed | PRD is larger than 100000 bytes (engine10 takes the task as one argument) |
 <!-- route-table:end -->

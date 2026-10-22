@@ -259,9 +259,9 @@ loki start --provider codex ./prd.json       # GPT-5.3 Codex, degraded mode
 loki start --provider cline ./prd.md         # Cline CLI, degraded mode
 loki start --provider aider ./prd.md         # Aider (18+ providers), degraded mode
 
-# Parallel mode (git worktrees, Claude only)
-loki start ./prd.md --parallel
-loki start 123 --ship                        # Issue -> PR -> auto-merge
+# Parallel and auto-merge (legacy loop only; the default engine refuses these flags)
+loki start ./prd.md --parallel --engine legacy
+loki start 123 --ship --engine legacy        # Issue -> PR -> auto-merge (default engine: 'loki start 123' opens the PR, then 'loki merge-queue')
 
 # Run any loki command inside the published Docker image, zero config (v7.45.0).
 # Bind-mounts the current folder to /workspace so .loki state, resume, and

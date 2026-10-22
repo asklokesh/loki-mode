@@ -93,7 +93,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
         self.assertNotIn("run", args)
         self.assertIn("myorg/myrepo#99", args)
         self.assertIn("--pr", args)
-        self.assertIn("--detach", args)
+        self.assertNotIn("--detach", args)
 
     def test_pr_synchronize_uses_start_with_ref(self):
         payload = {
@@ -106,7 +106,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
         args = self.mock_run.call_args[0][0]
         self.assertEqual(args[0], "start")
         self.assertIn("myorg/myrepo#17", args)
-        self.assertIn("--detach", args)
+        self.assertNotIn("--detach", args)
 
     def test_workflow_failure_uses_start(self):
         payload = {
@@ -118,7 +118,7 @@ class TestEventRoutingUsesLokiStart(unittest.TestCase):
         self.assertEqual(status, "fired")
         args = self.mock_run.call_args[0][0]
         self.assertEqual(args[0], "start")
-        self.assertIn("--detach", args)
+        self.assertNotIn("--detach", args)
 
     def test_issue_closed_skipped_no_dispatch(self):
         payload = {"action": "closed", "issue": {"number": 1, "author_association": "OWNER"}, "repository": {}}
@@ -211,7 +211,7 @@ class TestRefFlagInjection(unittest.TestCase):
         _, status = ts.handle_issues_event(payload, dry_run=False)
         self.assertEqual(status, "fired")
         args = self.mock_run.call_args[0][0]
-        self.assertEqual(args, ["start", "owner/repo#5", "--pr", "--detach"])
+        self.assertEqual(args, ["start", "owner/repo#5", "--pr"])
         # The ref can never begin with a dash, so it can never parse as a flag.
         self.assertFalse(args[1].startswith("-"))
 
@@ -265,7 +265,7 @@ class TestChildReaping(unittest.TestCase):
         env = {n: "probe" for n in names}
         env["LOKI_KEEP_ME"] = "ok"
         with patch.dict(os.environ, env), patch("subprocess.Popen", side_effect=fake_popen):
-            ts.run_loki_command(["start", "Fix x", "--pr", "--detach"])
+            ts.run_loki_command(["start", "Fix x", "--pr"])
         self.assertNotIn("__unscoped__", seen)
         for n in names:
             self.assertNotIn(n, seen)
@@ -273,9 +273,9 @@ class TestChildReaping(unittest.TestCase):
 
     def test_success_child_reaped(self):
         with self._stub_loki(exit_code=0):
-            ok = ts.run_loki_command(["start", "owner/repo#1", "--detach"])
+            ok = ts.run_loki_command(["start", "owner/repo#1"])
         self.assertTrue(ok)
-        # Deterministic: assert THIS specific child pid was reaped (communicate()
+        # Deterministic: assert THIS specific child pid was reaped (wait()
         # collects it on the success path) -> os.waitpid on its exact pid raises
         # ChildProcessError. Using os.waitpid(-1) was flaky: it reaps ANY child in
         # the interpreter, so under pytest (which may have other/no children) the
@@ -287,9 +287,48 @@ class TestChildReaping(unittest.TestCase):
     def test_failed_child_returns_false_and_captures_stderr(self):
         with self._stub_loki(exit_code=2, stderr_text="boom"):
             with self.assertLogs(level="ERROR") as cm:
-                ok = ts.run_loki_command(["start", "owner/repo#1", "--detach"])
+                ok = ts.run_loki_command(["start", "owner/repo#1"])
         self.assertFalse(ok)
         self.assertTrue(any("boom" in line for line in cm.output))
+
+    def test_detached_child_writing_1mb_is_not_blocked_on_a_pipe(self):
+        """#236: past the wait window nothing drains a pipe, so a child that
+        writes more than the ~64KB pipe buffer used to hang forever."""
+        import tempfile, shutil, stat
+        d = tempfile.mkdtemp()
+        cwd = os.getcwd()
+        try:
+            fake = os.path.join(d, "loki")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\nsleep 2\nhead -c 1048576 /dev/zero\nhead -c 1048576 /dev/zero >&2\n")
+            os.chmod(fake, os.stat(fake).st_mode | stat.S_IXUSR)
+            os.chdir(d)
+            launched = {}
+            real_popen = subprocess.Popen
+
+            def spy(cmd, **kw):
+                launched["proc"] = real_popen(cmd, **kw)
+                return launched["proc"]
+
+            with patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}), \
+                 patch.object(ts, "DISPATCH_WAIT_SECONDS", 1), \
+                 patch.object(ts.subprocess, "Popen", spy):
+                status = ts.run_loki_outcome(["start", "owner/repo#1"])
+            self.assertEqual(status, ts.OUTCOME_UNKNOWN)
+            try:
+                launched["proc"].wait(timeout=10)
+                finished = True
+            except subprocess.TimeoutExpired:
+                launched["proc"].kill()
+                launched["proc"].wait()
+                finished = False
+            self.assertTrue(finished, "child finished: False (blocked on a full pipe)")
+            logs = list((Path(d) / ".loki" / "triggers").glob("dispatch-*.out"))
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0].stat().st_size, 1048576)
+        finally:
+            os.chdir(cwd)
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_launch_failure_returns_false(self):
         with patch("subprocess.Popen", side_effect=FileNotFoundError("no loki")):
@@ -328,7 +367,7 @@ class TestChildReaping(unittest.TestCase):
 
         with patch.object(ts, "DISPATCH_WAIT_SECONDS", 0.2):
             with patch("subprocess.Popen", side_effect=fake_popen):
-                ok = ts.run_loki_command(["start", "owner/repo#1", "--detach"])
+                ok = ts.run_loki_command(["start", "owner/repo#1"])
         self.assertTrue(ok)  # timeout path reports success (detached dispatch)
 
         # Find and join the one-shot reaper thread spawned for this child.
@@ -871,7 +910,7 @@ class TestSentryWebhook(unittest.TestCase):
         self.assertIn("Sentry issue", args[2])
         self.assertFalse(args[2].startswith("-"))
         self.assertNotIn("\n", args[2])
-        self.assertEqual(args[3:], ["--pr", "--detach"])
+        self.assertEqual(args[3:], ["--pr"])
 
     def test_no_deploy_argument_ever_present(self):
         _, seen = self._run(
@@ -935,7 +974,7 @@ class TestSentryWebhook(unittest.TestCase):
         with patch.object(ts, "run_loki_command",
                           side_effect=lambda a, dry_run=False: seen.append(a) or True):
             ts.handle_sentry_event(SENTRY_PAYLOAD, dry_run=True)
-        self.assertEqual(seen[0][3:], ["--pr", "--detach"])
+        self.assertEqual(seen[0][3:], ["--pr"])
 
     def test_non_triggering_action_skipped(self):
         payload = dict(SENTRY_PAYLOAD, action="resolved")
@@ -1119,7 +1158,7 @@ class TestSlackLinearDelegation(unittest.TestCase):
         self.assertEqual(status, 200)
         reply = json.loads(data)
         self.assertEqual(reply["response_type"], "ephemeral")
-        self.assertEqual(seen, [["start", "fix owner/repo#12", "--detach"]])
+        self.assertEqual(seen, [["start", "fix owner/repo#12"]])
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0][0], HOOK)
         self.assertIn("passed", posts[0][1]["text"])
@@ -1195,7 +1234,7 @@ class TestSlackLinearDelegation(unittest.TestCase):
             self._linear_post(self._linear_body()), outcome="failed")
         self.assertEqual(status, 202)
         self.assertIn("id", json.loads(data))
-        self.assertEqual(seen, [["start", "linear:ENG-42", "--detach"]])
+        self.assertEqual(seen, [["start", "linear:ENG-42"]])
         self.assertEqual(len(posts), 1)
         url, payload, headers = posts[0]
         self.assertEqual(url, ts.LINEAR_API_URL)
@@ -1339,7 +1378,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertIn("ENG-7", args[2])
         self.assertIn("Crash on save", args[2])
         self.assertIn("Line one Line two", args[2])
-        self.assertEqual(args[3:], ["--pr", "--detach"])
+        self.assertEqual(args[3:], ["--pr"])
         self.assertNotIn("--deploy", args)
 
     JIRA_ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net/",
@@ -1427,7 +1466,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         (status, _), seen = self._run(self._jira(self._jira_body(desc="--deploy prod")))
         self.assertEqual(status, 202)
         self.assertTrue(seen[0][2].startswith("Resolve Jira issue"))
-        self.assertEqual(seen[0][3:], ["--pr", "--detach"])
+        self.assertEqual(seen[0][3:], ["--pr"])
 
     def test_teams_bad_or_missing_signature_401(self):
         body = self._teams_body()
@@ -1452,7 +1491,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         reply = json.loads(data)
         self.assertEqual(reply["type"], "message")
         self.assertTrue(reply["text"].startswith("Queued loki job "))
-        self.assertEqual(seen, [["start", "--brief", "fix the flaky login test", "--pr", "--detach"]])
+        self.assertEqual(seen, [["start", "--brief", "fix the flaky login test", "--pr"]])
         self.assertNotIn("--deploy", seen[0])
 
     def test_teams_invalid_brief_and_replay_not_enqueued(self):
@@ -1525,7 +1564,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         # /jobs behaviour unchanged: only Jira/Teams opt into --pr.
         with patch.object(ts, "run_loki_outcome", return_value="passed") as m:
             ts.handle_job_event({"spec": "build a thing", "job_id": "j"})
-        self.assertEqual(m.call_args[0][0], ["start", "build a thing", "--detach"])
+        self.assertEqual(m.call_args[0][0], ["start", "build a thing"])
 
     def test_secrets_denied_to_child_and_must_differ(self):
         with patch.dict(os.environ, {"JIRA_WEBHOOK_SECRET": "x", "TEAMS_SECURITY_TOKEN": "y"}):
@@ -1617,78 +1656,53 @@ class TestTrackerCommentSteer(unittest.TestCase):
             self.assertEqual(len(seen), 1 if live else 0)
 
 
-class TestBriefPrReachesWorktreePath(unittest.TestCase):
-    """The argv the server enqueues must really produce a worktree + PR run.
+class TestServerStartsRunOnEngine10(unittest.TestCase):
+    """Every webhook start must reach engine10 (Wall, VERIFIED), never legacy.
 
-    Drives the real `loki start` (cmd_start) in a scratch copy of the skill with
-    a stub run.sh and a stub gh, so a flag that cmd_start silently ignores in
-    brief mode turns this red even though the mocked-runner tests stay green.
+    A --detach start used to be forced onto the legacy loop with LOKI_ENGINE=legacy.
+    Resolves the real route for each argv the server builds; nothing is started.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.root = tempfile.mkdtemp(prefix="loki-brief-pr-")
-        repo = Path(__file__).resolve().parent.parent
-        cls.skill = os.path.join(cls.root, "skill")
-        subprocess.run(
-            ["rsync", "-a", "--exclude=.git", "--exclude=node_modules",
-             "--exclude=docs", "--exclude=tests", "--exclude=.claude",
-             "--exclude=loki-ts", "--exclude=dashboard", "--exclude=web-app",
-             "--exclude=website", str(repo) + "/", cls.skill + "/"], check=True)
-        cls.log = os.path.join(cls.root, "log")
-        stub = os.path.join(cls.skill, "autonomy", "run.sh")
-        with open(stub, "w") as f:
-            f.write('#!/usr/bin/env bash\n'
-                    'echo "RUN_SH_ARGV: $*" >> "$STUB_LOG"\n'
-                    'echo "ENV: PM=${LOKI_PARALLEL_MODE:-} WB=${LOKI_WORKTREE_BRANCH:-}" >> "$STUB_LOG"\n')
-        os.chmod(stub, 0o755)
-        cls.bin = os.path.join(cls.root, "bin")
-        os.makedirs(cls.bin)
-        with open(os.path.join(cls.bin, "gh"), "w") as f:
-            f.write('#!/usr/bin/env bash\necho "GH: $*" >> "$STUB_LOG"\n')
-        os.chmod(os.path.join(cls.bin, "gh"), 0o755)
-        # Hermetic provider: the CLI refuses to start with no provider CLI on PATH.
-        with open(os.path.join(cls.bin, "claude"), "w") as f:
-            f.write('#!/usr/bin/env bash\nexit 0\n')
-        os.chmod(os.path.join(cls.bin, "claude"), 0o755)
-        os.symlink(os.path.join(cls.skill, "autonomy", "loki"),
-                   os.path.join(cls.bin, "loki"))
-        cls.origin = os.path.join(cls.root, "origin.git")
-        subprocess.run(["git", "init", "-q", "--bare", cls.origin], check=True)
-        cls.proj = os.path.join(cls.root, "proj")
-        os.makedirs(cls.proj)
-        for cmd in (["git", "init", "-q", "-b", "feature"],
-                    ["git", "config", "user.email", "t@example.com"],
-                    ["git", "config", "user.name", "t"],
-                    ["git", "commit", "-q", "--allow-empty", "-m", "init"],
-                    ["git", "remote", "add", "origin", cls.origin]):
-            subprocess.run(cmd, cwd=cls.proj, check=True)
+    ROUTE = str(Path(__file__).resolve().parent.parent / "autonomy" / "route.sh")
 
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.root, ignore_errors=True)
+    def _engine(self, argv):
+        out = subprocess.run(
+            ["bash", "-c", 'source "$1"; shift; loki_route_resolve "$@"; echo "$R_ENGINE"',
+             "_", self.ROUTE] + argv,
+            capture_output=True, text=True, timeout=60,
+            env={k: v for k, v in os.environ.items() if k != "LOKI_ENGINE"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip().splitlines()[-1]
 
-    def test_server_argv_takes_worktree_detach_and_pr_path(self):
-        argv = ts.brief_start_args("Resolve Jira issue ABC-1: login fails. notes.md")
-        env = dict(os.environ, STUB_LOG=self.log, LOKI_NO_BROWSER="1",
-                   PATH=self.bin + os.pathsep + os.environ["PATH"])
-        proc = subprocess.run(
-            ["bash", os.path.join(self.skill, "autonomy", "loki")] + argv,
-            cwd=self.proj, env=env, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=120)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        deadline = time.time() + 60
-        text = ""
-        while time.time() < deadline:
-            if os.path.exists(self.log):
-                text = open(self.log).read()
-                if "GH: pr create" in text:
-                    break
-            time.sleep(0.5)
-        self.assertIn("RUN_SH_ARGV: --parallel", text)
-        self.assertIn("PM=true WB=issue/brief-", text)
-        self.assertIn("GH: pr create", text)
-        self.assertNotIn("--deploy", text)
+    def test_webhook_start_argv_has_no_detach_and_routes_engine10(self):
+        argvs = [
+            ts.brief_start_args("Resolve Jira issue ABC-1: login fails. notes.md"),
+            ["start", "owner/repo#5", "--pr"],
+            ["start", "owner/repo#5"],
+            ["start", __file__],  # an existing path, as a PRD spec would be
+        ]
+        for argv in argvs:
+            self.assertNotIn("--detach", argv)
+            self.assertNotIn("-d", argv)
+            self.assertEqual(self._engine(argv), "engine10", argv)
+
+    def test_run_loki_outcome_never_sets_engine_legacy(self):
+        seen = {}
+
+        class _P:
+            pid = 1
+            returncode = 0
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(cmd, **kw):
+            seen["env"] = kw.get("env", {})
+            return _P()
+
+        with patch.object(ts.subprocess, "Popen", fake_popen):
+            ts.run_loki_outcome(["start", "owner/repo#5", "--pr"])
+        self.assertNotEqual(seen["env"].get("LOKI_ENGINE"), "legacy")
 
 
 if __name__ == "__main__":

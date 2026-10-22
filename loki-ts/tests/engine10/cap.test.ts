@@ -248,3 +248,14 @@ describe("invalid cap warns", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+describe("route.sh cap ceiling mirrors run_cap.ts (#236)", () => {
+  test("_ROUTE_CAP_CEILING_S equals capCeilingS(true)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { capCeilingS } = await import("../../src/util/run_cap.ts");
+    const m = readFileSync(join(import.meta.dir, "..", "..", "..", "autonomy", "route.sh"), "utf8").match(/^_ROUTE_CAP_CEILING_S=(\d+)$/m);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(capCeilingS(true));
+  });
+});

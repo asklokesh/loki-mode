@@ -472,10 +472,15 @@ export function itemTimeoutMin(raw: string | undefined, warn: (s: string) => voi
   return 120;
 }
 
+/** The `loki start` argv for one queue item: engine10 opens a PR by default, so PR-off passes --no-pr and PR-on passes the accepted no-op --pr. */
+export function queueStartArgs(ref: string, pr: boolean): string[] {
+  return ["start", ref, pr ? "--pr" : "--no-pr"];
+}
+
 export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
   return async (ref, opts) => {
     const since = Date.now();
-    const argv = [resolve(REPO_ROOT, "bin", "loki"), "start", ref, ...(opts.pr ? ["--pr"] : [])];
+    const argv = [resolve(REPO_ROOT, "bin", "loki"), ...queueStartArgs(ref, !!opts.pr)];
     // A per-issue worktree gets its own .loki so parallel runs never share run state (autonomy/loki refuses that).
     const runLoki = opts.cwd ? join(opts.cwd, ".loki") : lokiDir;
     const env = runnerEnv(opts, runLoki);

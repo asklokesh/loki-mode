@@ -28,5 +28,5 @@ tail to a bounded repair session on the PR branch (LOKI_PR_REPAIR_CMD, default a
 argument), pushes, and re-checks, up to LOKI_PR_REPAIR_MAX attempts (default 2).
 Green goes through the same merge gate as `loki merge pr`. When attempts run out
 the PR is returned to draft, nothing merges, and the last failure log is printed.
-`loki start --ship` calls this after it opens the PR; `/merge watch <pr>` runs it
+`loki start --ship --engine legacy` calls this after it opens the PR; `/merge watch <pr>` runs it
 from `loki chat`.

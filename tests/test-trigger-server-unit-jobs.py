@@ -160,7 +160,7 @@ class TestUnitJobsHttp(base._JobsTestBase):
         status, _ = self.post({"kind": "shell", "spec": "./prd.md"})
         self.assertEqual(status, 202)
         self.assertTrue(self.fired.wait(5))
-        self.assertEqual(self.dispatched[0], ["start", "./prd.md", "--detach"])
+        self.assertEqual(self.dispatched[0], ["start", "./prd.md"])
 
     def test_trailing_newline_and_unicode_digits_get_400(self):
         self.start()

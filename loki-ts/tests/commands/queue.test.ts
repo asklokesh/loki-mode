@@ -2,7 +2,8 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runQueue, readQueue, itemTimeoutMin, makeDefaultRunner, normalizeRef, type GovernorReading, type RunResult } from "../../src/commands/queue.ts";
+import { spawnSync } from "node:child_process";
+import { runQueue, readQueue, itemTimeoutMin, makeDefaultRunner, queueStartArgs, normalizeRef, type GovernorReading, type RunResult } from "../../src/commands/queue.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -374,5 +375,28 @@ describe("loki queue run arg hint (TEN-UX-44)", () => {
     expect(await runQueue(["run", "zzzzzzzz"], h3.inject)).toBe(2);
     expect(h3.err.join("")).toContain("unknown argument 'zzzzzzzz'");
     expect(h3.err.join("")).not.toContain("did you mean");
+  });
+});
+
+describe("queue run start argv reaches engine10 (#236)", () => {
+  const route = (args: string[]) => {
+    const env: Record<string, string | undefined> = { ...process.env, LOKI_NO_BROWSER: "1", HOME: dir };
+    delete env["LOKI_ENGINE"]; delete env["LOKI_PROVIDER"];
+    return spawnSync(join(import.meta.dir, "..", "..", "..", "bin", "loki"), ["route", ...args, "--json"], { encoding: "utf8", env, cwd: dir });
+  };
+  test("PR on: argv carries the accepted --pr and routes to engine10, not the refusal", () => {
+    const argv = queueStartArgs("owner/repo#5", true);
+    expect(argv).toEqual(["start", "owner/repo#5", "--pr"]);
+    const r = route(argv);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).engine).toBe("engine10");
+    expect(r.stderr).not.toContain("not supported");
+  });
+  test("PR off: argv carries --no-pr (engine10 opens a PR by default) and routes to engine10", () => {
+    const argv = queueStartArgs("owner/repo#5", false);
+    expect(argv).toEqual(["start", "owner/repo#5", "--no-pr"]);
+    const r = route(argv);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).engine).toBe("engine10");
   });
 });

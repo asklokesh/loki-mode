@@ -119,9 +119,11 @@ logged and ignored.
 
 | Event | Action | What runs |
 |---|---|---|
-| `issues` | `opened` | `loki start owner/repo#N --pr --detach` |
-| `pull_request` | `synchronize` | `loki start owner/repo#N --detach` |
-| `workflow_run` | `completed` with `conclusion=failure` | `loki start --detach` |
+| `issues` | `opened` | `loki start owner/repo#N --pr` |
+| `pull_request` | `synchronize` | `loki start owner/repo#N` |
+| `workflow_run` | `completed` with `conclusion=failure` | `loki start` |
+
+The trigger server runs each of these starts in the foreground on the Loki 10 engine (Wall and VERIFIED apply). A run longer than the dispatch wait window is reaped in the background and its job status stays unknown until it exits.
 
 Note what is **not** there. Labelling an issue does nothing. Commenting on an
 issue does nothing. Opening a pull request does nothing -- for PRs it is

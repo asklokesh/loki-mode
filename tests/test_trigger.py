@@ -136,7 +136,7 @@ class TestEventRouting(unittest.TestCase):
         call_args = self.mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "start")
         self.assertIn("--pr", call_args)
-        self.assertIn("--detach", call_args)
+        self.assertNotIn("--detach", call_args)
 
     def test_issues_opened_from_stranger_skipped(self):
         for assoc in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
@@ -293,7 +293,7 @@ class TestEventRouting(unittest.TestCase):
 
     def test_run_loki_outcome_extra_env_reaches_child_and_overrides(self):
         proc = MagicMock(returncode=0)
-        proc.communicate.return_value = (b"", b"")
+        proc.wait.return_value = 0
         with patch.dict(os.environ, {"LOKI_STEER_SOURCE": "stale"}), \
              patch("subprocess.Popen", return_value=proc) as popen:
             self.real_outcome(["steer", "n"], extra_env={"LOKI_STEER_SOURCE": "github"})
@@ -301,16 +301,20 @@ class TestEventRouting(unittest.TestCase):
 
     def test_run_loki_outcome_extra_env_cannot_restore_denied_secret(self):
         proc = MagicMock(returncode=0)
-        proc.communicate.return_value = (b"", b"")
+        proc.wait.return_value = 0
         with patch("subprocess.Popen", return_value=proc) as popen:
             self.real_outcome(["steer", "n"], extra_env={"LOKI_API_TOKEN": "x"})
         self.assertNotIn("LOKI_API_TOKEN", popen.call_args.kwargs["env"])
 
     def test_run_loki_outcome_captures_stdout(self):
         proc = MagicMock(returncode=0)
-        proc.communicate.return_value = (b"Steer rev 9 received: x\n", b"")
         sink = []
-        with patch("subprocess.Popen", return_value=proc):
+
+        def fake_popen(cmd, stdout=None, **kw):
+            stdout.write(b"Steer rev 9 received: x\n")
+            return proc
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
             self.real_outcome(["steer", "n"], stdout_sink=sink)
         self.assertEqual(ts.parse_steer_rev("".join(sink)), 9)
 
@@ -443,7 +447,7 @@ class TestEventRouting(unittest.TestCase):
         self.assertIn("17", summary)
         call_args = self.mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "start")
-        self.assertIn("--detach", call_args)
+        self.assertNotIn("--detach", call_args)
 
     def test_pr_opened_skipped(self):
         payload = self._make_pr_payload("opened")

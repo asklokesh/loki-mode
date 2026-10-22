@@ -174,7 +174,7 @@ class TestSpecValidation(unittest.TestCase):
                 patch.object(ts, "send_notification"), \
                 patch.object(ts, "log_event"):
             ts.handle_job_event({"spec": "a; rm -rf /", "job_id": "j1"})
-        self.assertEqual(m.call_args[0][0], ["start", "a; rm -rf /", "--detach"])
+        self.assertEqual(m.call_args[0][0], ["start", "a; rm -rf /"])
 
 
 class TestNoTokenFailsClosed(_JobsTestBase):
@@ -406,7 +406,7 @@ class TestSuccessfulSubmit(_JobsTestBase):
         # Enqueued the same job shape the webhook path produces: `loki start`
         # with the spec as ONE argv element.
         self.assertEqual(len(self.dispatched), 1)
-        self.assertEqual(self.dispatched[0], ["start", "owner/repo#42", "--detach"])
+        self.assertEqual(self.dispatched[0], ["start", "owner/repo#42"])
 
     def test_job_status_is_pollable(self):
         srv = self.start()
@@ -649,7 +649,7 @@ class TestBuildOutcomeIsReported(unittest.TestCase):
 
         with patch("subprocess.Popen", side_effect=fake_popen), \
                 patch.object(ts, "DISPATCH_WAIT_SECONDS", 0.3):
-            return ts.run_loki_outcome(["start", "spec", "--detach"])
+            return ts.run_loki_outcome(["start", "spec"])
 
     def test_exit_zero_is_passed(self):
         self.assertEqual(self._outcome_for(exit_code=0), ts.OUTCOME_PASSED)

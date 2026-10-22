@@ -18,7 +18,7 @@ The token is sent only to the Sentry host through a curl config on stdin, never 
 
 1. Set the client secret: `LOKI_SENTRY_WEBHOOK_SECRET` (or `SENTRY_CLIENT_SECRET`). It must differ from the GitHub webhook secret and the API token. With no secret the route answers 503 and nothing is enqueued.
 2. Start the server: `python3 autonomy/trigger-server.py --port 8080` and point the Sentry alert webhook at `/sentry`.
-3. A valid alert is normalized with `normalize_sentry_json` and enqueues `loki start "<brief>" --pr --detach`. A bad signature gets 401.
+3. A valid alert is normalized with `normalize_sentry_json` and enqueues `loki start "<brief>" --pr`. A bad signature gets 401.
 
 The brief also carries the event's release and environment, the newest `.loki/deploys` record (`last deploy <sha7> <finished_at> health=<status>`) and, when the culprit file resolves inside the project, its last `git log -1` author. All of it is sanitized to one line and capped; it adds no authority.
 
@@ -35,30 +35,30 @@ Slack (`POST /slack`):
 
 1. Set `SLACK_SIGNING_SECRET`. Point a `/loki` slash command (and Events URL verification) at `/slack`.
 2. The signature is `v0=` + hex HMAC-SHA256 over `v0:<X-Slack-Request-Timestamp>:<raw body>`, window 300s, the same contract as `loki-ts/src/contrib/slack_inbound.ts`. Bad, stale or missing signature: 401, nothing queued.
-3. The command text is the spec (one line, not starting with `-`) and runs as `loki start <text> --detach`. Slack gets an ephemeral reply carrying the job id.
+3. The command text is the spec (one line, not starting with `-`) and runs as `loki start <text>`. Slack gets an ephemeral reply carrying the job id.
 4. On completion the summary is posted to the request's `response_url`, only if it starts with `https://hooks.slack.com/`. Any other host is never contacted.
 
 Linear (`POST /linear`):
 
 1. Set `LINEAR_WEBHOOK_SECRET`. Point a Linear issue webhook at `/linear`.
 2. `Linear-Signature` is the hex HMAC-SHA256 of the raw body, and the signed `webhookTimestamp` must be within 300s. Otherwise 401.
-3. A created issue enqueues `loki start linear:<identifier> --detach` and answers 202 with the job id. Other events are skipped.
+3. A created issue enqueues `loki start linear:<identifier>` and answers 202 with the job id. Other events are skipped.
 4. If `LINEAR_API_KEY` is set, a comment with the result is posted on the issue through `https://api.linear.app/graphql`. Without it nothing is posted.
 
 Jira (`POST /jira`):
 
 1. Set `JIRA_WEBHOOK_SECRET` (the secret on a Jira Cloud webhook) and point the webhook at `/jira`. Set `JIRA_ASSIGNEES` (comma-separated accountId, email or display name) and/or `JIRA_LABELS`. With neither set, every event is skipped.
 2. `X-Hub-Signature` is `sha256=` + hex HMAC-SHA256 of the raw body. Bad or missing signature: 401. Jira signs no timestamp and the `X-Atlassian-Webhook-Identifier` header is not covered by the HMAC, so replay is bounded two ways: a repeated delivery id, or a repeated signed body (sha256 of the raw body, so changing or dropping the header does not help), answers `duplicate` and queues nothing. A replay of a body Jira never sent twice still needs the secret to forge.
-3. `jira:issue_created`, or `jira:issue_updated` whose changelog touches assignee or labels, runs only when the issue is assigned to a configured user or has a configured label. The key, summary and description are folded into a one-line brief (1500 bytes max; an Atlassian Document Format description is flattened to its text) and run as `loki start --brief "<brief>" --pr --detach`. Answers 202 with the job id.
+3. `jira:issue_created`, or `jira:issue_updated` whose changelog touches assignee or labels, runs only when the issue is assigned to a configured user or has a configured label. The key, summary and description are folded into a one-line brief (1500 bytes max; an Atlassian Document Format description is flattened to its text) and run as `loki start --brief "<brief>" --pr`. Answers 202 with the job id.
 
 Teams (`POST /teams`):
 
 1. Set `TEAMS_SECURITY_TOKEN` (the base64 token Teams shows when you create the outgoing webhook) and point the webhook at `/teams`.
 2. `Authorization: HMAC <base64>` is the base64 HMAC-SHA256 of the raw body keyed by the base64-decoded token. Bad signature: 401. The activity `timestamp` must be within 300s; a stale or missing one is refused with 401.
-3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr --detach`. Teams gets a synchronous reply whose text starts with "Queued" and ends with the job id. A repeated activity id is not queued twice.
+3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr`. Teams gets a synchronous reply whose text starts with "Queued" and ends with the job id. A repeated activity id is not queued twice.
 
 Jira completion comments: set `JIRA_BASE_URL` (https only), `JIRA_EMAIL` and `JIRA_API_TOKEN`; the result is then posted as a comment on the issue that triggered the run. Without all three nothing is posted, and `JIRA_API_TOKEN` never reaches the `loki start` child environment.
 
-Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. `--brief` forces brief mode, so text that ends in `.md` or contains an issue URL is never reclassified, and `loki start --brief ... --pr/--worktree/--detach` runs in an isolated worktree, detached, and opens a PR carrying the Evidence Receipt (the same machinery as `loki start <issue>`). Sentry alerts use the same form. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
+Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. `--brief` forces brief mode, so text that ends in `.md` or contains an issue URL is never reclassified, and `loki start --brief ... --pr` runs on the Loki 10 engine, which opens a PR carrying the Evidence Receipt (the same machinery as `loki start <issue>`). Sentry alerts use the same form. The server never passes `--detach` and never sets `LOKI_ENGINE`, so every webhook start gets the Wall and VERIFIED. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
 
 Reply targets are stored server side keyed by job id, captured only after verification. Notifier errors are logged and never fail the job. Poll status with `GET /jobs/<id>`.

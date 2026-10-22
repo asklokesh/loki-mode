@@ -29,7 +29,7 @@ every /jobs request is rejected with 503 and an audit log line.
 Self-healing entry point: POST /sentry accepts a Sentry integration webhook
 authenticated by Sentry's own HMAC (sentry-hook-signature) under a THIRD,
 separate secret (LOKI_SENTRY_WEBHOOK_SECRET or SENTRY_CLIENT_SECRET). A valid
-alert enqueues `loki start "<normalized brief>" --pr --detach`: the output is a
+alert enqueues `loki start "<normalized brief>" --pr`: the output is a
 receipt-gated PR only, never a deploy. No secret means the route answers 503.
 
 Usage:
@@ -268,9 +268,9 @@ def constant_time_equals(a, b):
 
 
 # How long to wait for a dispatched `loki start` to finish before we stop
-# waiting on it. The child is launched detached (--detach) so it backgrounds
-# itself quickly; this bound only guards the worker thread against a wedged
-# launch. The child keeps running independently after we stop waiting.
+# waiting on it. The start runs in the foreground on the Loki 10 engine; this bound only
+# stops the worker thread waiting on a long run. The child keeps running and
+# is reaped in the background after we stop waiting.
 DISPATCH_WAIT_SECONDS = 30
 
 # Defaults for the bounded worker queue.
@@ -445,6 +445,32 @@ def send_notification(message):
         pass
 
 
+def _dispatch_log_paths():
+    """Fresh stdout and stderr log paths for one dispatch under .loki/triggers."""
+    paths = []
+    for suffix in (".out", ".err"):
+        fd, path = tempfile.mkstemp(prefix="dispatch-", suffix=suffix, dir=str(get_loki_dir()))
+        os.close(fd)
+        paths.append(path)
+    return paths
+
+
+def _read_bytes(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+
+
+def _remove_quietly(*paths):
+    for path in paths:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _reap_child(proc):
     """Wait on a child process so it is always reaped (no zombie).
 
@@ -514,29 +540,34 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
         logging.info("[DRY-RUN] Would run: %s", " ".join(cmd))
         return OUTCOME_PASSED
     logging.info("Running: %s", " ".join(cmd))
+    # Child output goes to per-run files, never a pipe: past the wait window
+    # nothing reads a pipe, so a child writing more than the ~64KB pipe buffer
+    # would block forever. The files double as the run log for a detached child.
+    out_path, err_path = _dispatch_log_paths()
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_scoped_child_env(extra_env),
-        )
+        with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=out_f,
+                stderr=err_f,
+                env=_scoped_child_env(extra_env),
+            )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
+        _remove_quietly(out_path, err_path)
         return OUTCOME_FAILED
 
     try:
-        stdout, stderr = proc.communicate(timeout=DISPATCH_WAIT_SECONDS)
-        if stdout_sink is not None:
-            stdout_sink.append((stdout or b"").decode("utf-8", errors="replace"))
+        proc.wait(timeout=DISPATCH_WAIT_SECONDS)
     except subprocess.TimeoutExpired:
         # Detached past the wait window. The reaper collects the child, but we
         # never see its exit code, so the outcome is genuinely UNKNOWN -- NOT a
         # pass. Reporting success here is exactly the defect this replaces.
         logging.info(
-            "Dispatch pid=%d still running after %ds; reaping in background",
+            "Dispatch pid=%d still running after %ds; reaping in background, output in %s",
             proc.pid,
             DISPATCH_WAIT_SECONDS,
+            out_path,
         )
         threading.Thread(
             target=_reap_child,
@@ -545,6 +576,12 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
             daemon=True,
         ).start()
         return OUTCOME_UNKNOWN
+
+    stdout = _read_bytes(out_path)
+    stderr = _read_bytes(err_path)
+    _remove_quietly(out_path, err_path)
+    if stdout_sink is not None:
+        stdout_sink.append(stdout.decode("utf-8", errors="replace"))
 
     if proc.returncode == 0:
         logging.info("Dispatch pid=%d completed (exit 0)", proc.pid)
@@ -778,7 +815,7 @@ def tracker_comment_steer(kind, payload, is_live, dry_run=False):
 
 
 def handle_issues_event(payload, dry_run=False):
-    """Handle issues event: opened -> loki start <issue-ref> --pr --detach."""
+    """Handle issues event: opened -> loki start <issue-ref> --pr."""
     action = payload.get("action", "")
     if action != "opened":
         return None, "skipped (action=%s)" % action
@@ -801,7 +838,7 @@ def handle_issues_event(payload, dry_run=False):
     ref = str(issue_number)
     if repo_full_name:
         ref = "%s#%s" % (repo_full_name, issue_number)
-    args = ["start", ref, "--pr", "--detach"]
+    args = ["start", ref, "--pr"]
     summary = "issue #%s opened in %s" % (issue_number, repo_full_name)
     success = run_loki_command(args, dry_run=dry_run)
     status = "fired" if success else "error"
@@ -811,7 +848,7 @@ def handle_issues_event(payload, dry_run=False):
 
 
 def handle_pull_request_event(payload, dry_run=False):
-    """Handle pull_request event: synchronize -> loki start <pr-ref> --detach."""
+    """Handle pull_request event: synchronize -> loki start <pr-ref>."""
     action = payload.get("action", "")
     if action != "synchronize":
         return None, "skipped (action=%s)" % action
@@ -828,7 +865,7 @@ def handle_pull_request_event(payload, dry_run=False):
     ref = str(pr_number)
     if repo_full_name:
         ref = "%s#%s" % (repo_full_name, pr_number)
-    args = ["start", ref, "--detach"]
+    args = ["start", ref]
     summary = "PR #%s synchronized in %s" % (pr_number, repo_full_name)
     success = run_loki_command(args, dry_run=dry_run)
     status = "fired" if success else "error"
@@ -852,7 +889,7 @@ def handle_workflow_run_event(payload, dry_run=False):
     summary = "workflow '%s' failed in %s" % (wf_name, repo_full_name)
     # CI-failure context: re-run the current spec in the working directory so
     # the agent can repair the failing build. No issue/PR ref to attach here.
-    args = ["start", "--detach"]
+    args = ["start"]
     success = run_loki_command(args, dry_run=dry_run)
     status = "fired" if success else "error"
     if success:
@@ -862,14 +899,14 @@ def handle_workflow_run_event(payload, dry_run=False):
 
 def brief_start_args(brief):
     """argv for a delegated PR run. `--brief` forces brief mode so the text is
-    never reclassified as a PRD path or issue URL, and `--pr --detach` are only
+    never reclassified as a PRD path or issue URL, and `--pr` are only
     honored by `loki start` in brief mode because cmd_start routes them through
     the worktree + PR path."""
-    return ["start", "--brief", brief, "--pr", "--detach"]
+    return ["start", "--brief", brief, "--pr"]
 
 
 def handle_job_event(payload, dry_run=False):
-    """Handle a remotely-submitted job: loki start <spec> --detach.
+    """Handle a remotely-submitted job: loki start <spec>.
 
     Runs on the same worker pool as the webhook handlers. The spec was already
     validated by valid_spec() at admission; it is re-checked here so this
@@ -890,7 +927,7 @@ def handle_job_event(payload, dry_run=False):
     elif payload.get("pr") is True:
         args = brief_start_args(spec.strip())
     else:
-        args = ["start", spec.strip(), "--detach"]
+        args = ["start", spec.strip()]
     summary = "job %s: %s" % (payload.get("job_id", "?"), spec.strip())
     # A remote submitter gates CI on this, so report the BUILD's outcome, not
     # merely that a build was launched. "fired" (launched) and "passed" must
@@ -1338,7 +1375,7 @@ def build_sentry_brief(norm, payload=None):
 
 
 def handle_sentry_event(payload, dry_run=False):
-    """Handle a verified Sentry alert: loki start <brief> --pr --detach.
+    """Handle a verified Sentry alert: loki start <brief> --pr.
 
     PR only. Never passes a deploy argument: a fix still has to earn a VERIFIED
     receipt, and shipping it stays a separate, gated human step.
@@ -1535,7 +1572,7 @@ class Dispatcher:
         borrowed-receipt failure this design exists to prevent.
 
         Attribution is deliberately NOT resolved when the dispatch returns.
-        `loki start --detach` returns as soon as the child forks, while the
+        `loki start` can outlast the dispatch wait window, and the
         build runs for minutes and writes its receipt at the very end -- so a
         window closed at dispatch-return would always see an unchanged pointer
         and every real build would 404. Resolution happens lazily in

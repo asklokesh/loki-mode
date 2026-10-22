@@ -277,14 +277,11 @@ provider-codex-env|codex|LOKI_PROVIDER=codex|start p.md
 provider-cline|cline||start p.md --provider cline
 provider-aider|aider||start p.md --provider aider
 provider-opencode|opencode||start p.md --provider opencode
-provider-gemini|gemini||start p.md --provider gemini
 engine-legacy-flag|legacy-explicit||start p.md --engine legacy
 engine-legacy-flag-first|legacy-explicit||start --engine legacy p.md
 engine-legacy-env|legacy-explicit|LOKI_ENGINE=legacy|start p.md
 engine-engine10-flag|engine10-explicit||start p.md --engine engine10
 engine-engine10-env|engine10-explicit|LOKI_ENGINE=engine10|start p.md
-unsupported-flag|legacy-flag||start p.md --parallel
-unsupported-flag-first|legacy-flag||start --parallel p.md
 prd-too-large|legacy-size||start big.md
 '
 
@@ -356,6 +353,10 @@ while IFS='|' read -r id group rc_env argstr; do
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$rc_env" "$argstr" "$eng" "$adp" "$ncd" "$rsn" >>"$ROWS_TSV"
 done <<<"$TABLE"
 
+# A --provider the engine has no invoker for is refused, not routed to legacy (LOKI_PROVIDER=gemini in env stays a notice).
+( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start p.md --provider gemini --json >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" = "2" ]; then ok "--provider gemini: refused (exit 2)"; else bad "--provider gemini: exit $rc, want 2"; fi
 # Error forms: missing PRD file is a usage error (exit 2), never a silent route.
 ( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start nope.md --json >/dev/null 2>&1 )
 rc=$?
@@ -363,6 +364,68 @@ if [ "$rc" = "2" ]; then ok "missing PRD file: exit 2"; else bad "missing PRD fi
 ( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start p.md --engine engine10 --parallel --json >/dev/null 2>&1 )
 rc=$?
 if [ "$rc" = "2" ]; then ok "--engine engine10 with an unsupported flag: exit 2"; else bad "--engine engine10 + --parallel: exit $rc, want 2"; fi
+
+# FC-START-FLAG-ENGINE (#236): no flag changes the engine and no flag value reaches the task
+# text. The flag list is read from `loki start --help` now, never hardcoded: every flag must
+# keep an issue ref on engine10 (mapped) or be refused with exit 2 (never a silent legacy route).
+ISSUE_REF="owner/repo#5"
+START_HELP="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" start --help 2>&1 )"
+FLAG_TSV="$RC_TMP/flags.tsv"
+python3 -I - "$START_HELP" >"$FLAG_TSV" <<'PY'
+import re, sys
+seen = {}
+for line in sys.argv[1].split("Environment Variables:")[0].splitlines():
+    for m in re.finditer(r"""(?:^|[\s,(])(--[a-z][a-z0-9-]+|-[a-z])(?:=\S+)?(?= |,|$|\))(?: +(\[?[A-Z][A-Z_|]*\]?|"[A-Z]+")(?=\s|$)(?! mode))?""", line):
+        f, v = m.group(1), m.group(2)
+        if f in ("--help", "-h"):
+            continue
+        seen[f] = seen.get(f, False) or bool(v)
+for f, v in sorted(seen.items()):
+    print(f + "\t" + ("1" if v else "0"))
+PY
+nflags="$(wc -l <"$FLAG_TSV" | tr -d ' ')"
+if [ "$nflags" -ge 30 ]; then ok "read $nflags flags from loki start --help"; else bad "only $nflags flags read from loki start --help"; fi
+while IFS=$'\t' read -r flag takes; do
+    [ -n "$flag" ] || continue
+    fargs=("$flag"); if [ "$takes" = "1" ] && [ "$flag" != "--resume" ]; then fargs+=(3); fi
+    out="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE -u LOKI_MODEL_ROUTE -u LOKI_SESSION_MODEL -u LOKI_MODEL_OVERRIDE \
+        LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start "$ISSUE_REF" "${fargs[@]}" --json 2>"$RC_TMP/flag.err" )"
+    rc=$?
+    if [ "$rc" = "2" ] && [ -s "$RC_TMP/flag.err" ] && grep -q -- "$flag" "$RC_TMP/flag.err"; then
+        ok "flag $flag: refused, error names the flag"
+    elif [ "$rc" = "0" ] && [ "$(printf '%s' "$out" | field engine 2>/dev/null)" = "engine10" ] && [ "$(printf '%s' "$out" | field input 2>/dev/null)" = "$ISSUE_REF" ]; then
+        ok "flag $flag: stays on engine10, task text is the issue ref only"
+    else
+        bad "flag $flag: rc=$rc engine=$(printf '%s' "$out" | field engine 2>/dev/null) input=$(printf '%s' "$out" | field input 2>/dev/null) err=$(head -c 200 "$RC_TMP/flag.err")"
+    fi
+done <"$FLAG_TSV"
+# --max-duration maps to the engine10 run cap (LOKI_E10_CAP_S semantics: seconds), bounded by the 3600s ceiling.
+for row in "50m|3000" "2h|3600" "90|90" "5h|3600"; do
+    dur="${row%%|*}"; want="${row##*|}"
+    out="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start "$ISSUE_REF" --max-duration "$dur" --json 2>/dev/null )"
+    got="$(printf '%s' "$out" | field run_cap_s 2>/dev/null)"
+    if [ "$got" = "$want" ] && [ "$(printf '%s' "$out" | field engine 2>/dev/null)" = "engine10" ]; then ok "--max-duration $dur: engine10, run cap ${got}s"; else bad "--max-duration $dur: run_cap_s=$got engine=$(printf '%s' "$out" | field engine 2>/dev/null), want ${want}s on engine10"; fi
+done
+( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start "$ISSUE_REF" --max-duration soon --json >/dev/null 2>&1 )
+rc=$?
+if [ "$rc" = "2" ]; then ok "--max-duration soon: refused (exit 2)"; else bad "--max-duration soon: exit $rc, want 2"; fi
+# An unknown flag on a non-issue input is refused too, and --engine legacy still honors any flag.
+# Each flag with no engine10 equivalent is refused (exit 2) and the message names its replacement.
+for row in "--parallel|queue run --parallel" "--ship|loki merge-queue" "--worktree|isolated worktree" "-w|isolated worktree" "--detach|nohup loki start" "-d|nohup loki start"; do
+    rf="${row%%|*}"; hint="${row##*|}"
+    ( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start p.md "$rf" --json >/dev/null 2>"$RC_TMP/ref.err" )
+    rc=$?
+    if [ "$rc" = "2" ] && grep -q -- "$hint" "$RC_TMP/ref.err" && grep -q -- "--engine legacy" "$RC_TMP/ref.err"; then ok "flag $rf: refused (exit 2), names '$hint' and --engine legacy"; else bad "flag $rf: exit $rc, err=$(head -c 200 "$RC_TMP/ref.err")"; fi
+done
+# --pr is an accepted no-op on engine10; --quiet and --resume pass through to the supervisor.
+out="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start "$ISSUE_REF" --pr --quiet --json 2>/dev/null )"
+if [ "$(printf '%s' "$out" | field engine 2>/dev/null)" = "engine10" ]; then ok "--pr --quiet: stay on engine10"; else bad "--pr --quiet: $out"; fi
+# --dry-run prints provider, model, max-cost and run cap, starts nothing, exits 0.
+dry="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" start "$ISSUE_REF" --dry-run --max-cost 5 --max-duration 90 2>&1 )"
+rc=$?
+if [ "$rc" = "0" ] && printf '%s' "$dry" | grep -q "^provider:" && printf '%s' "$dry" | grep -q "^model:" && printf '%s' "$dry" | grep -q "^max-cost: 5$" && printf '%s' "$dry" | grep -q "^run-cap: 90s$" && printf '%s' "$dry" | grep -q "nothing was started"; then ok "--dry-run on an issue ref: prints provider, model, max-cost, run cap; exit 0"; else bad "--dry-run: rc=$rc out=$dry"; fi
+out="$( cd "$WORK" && env -u LOKI_PROVIDER -u LOKI_ENGINE LOKI_NO_BROWSER=1 HOME="$RC_TMP" "$RC_LOKI" route start "$ISSUE_REF" --ship --engine legacy --json 2>/dev/null )"
+if [ "$(printf '%s' "$out" | field engine 2>/dev/null)" = "legacy" ]; then ok "--engine legacy still honors --ship"; else bad "--engine legacy --ship: $out"; fi
 
 # Render the contract table from the live results.
 RENDER="$RC_TMP/render.md"
