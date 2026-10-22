@@ -224,7 +224,7 @@ READERS = {
     "load_pattern", "list_patterns", "load_skill", "list_skills", "get_index",
     "get_timeline", "get_active_context", "read_json", "list_files",
     "calculate_importance", "apply_decay", "boost_on_retrieval",
-    "list_namespaces", "get_namespace_stats",
+    "list_namespaces", "get_namespace_stats", "view_file",
 }
 
 

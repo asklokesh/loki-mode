@@ -75,8 +75,9 @@ class LangMapAndDetectionTests(unittest.TestCase):
         # TS/TSX/JS/JSX -> typescript-language-server
         for lang in ('typescript', 'javascript'):
             self.assertEqual(self.lp.LANG_MAP[lang][2], 'typescript-language-server')
-        # .py -> pylsp
-        self.assertEqual(self.lp.LANG_MAP['python'][2], 'pylsp')
+        # .py -> pyright-langserver preferred (v7.7.0 swap), pylsp as fallback entry
+        self.assertEqual(self.lp.LANG_MAP['python'][2], 'pyright-langserver')
+        self.assertEqual(self.lp.LANG_MAP['python-pylsp'][2], 'pylsp')
         # .go -> gopls
         self.assertEqual(self.lp.LANG_MAP['go'][2], 'gopls')
         # .rs -> rust-analyzer
@@ -98,9 +99,11 @@ class LangMapAndDetectionTests(unittest.TestCase):
             self.lp._reset_detection_cache()
             result = self.lp._detect_lsps()
         self.assertIn('go', result)
-        self.assertIn('python', result)
+        # pylsp resolves under its own fallback key; pyright is absent here.
+        self.assertIn('python-pylsp', result)
+        self.assertNotIn('python', result)
         self.assertEqual(result['go'], '/usr/local/bin/gopls')
-        self.assertEqual(result['python'], '/opt/homebrew/bin/pylsp')
+        self.assertEqual(result['python-pylsp'], '/opt/homebrew/bin/pylsp')
         self.assertNotIn('rust', result)
         self.assertNotIn('typescript', result)
 
