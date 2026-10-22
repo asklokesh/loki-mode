@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.25.0 (2026-10-22)
+
+### Changed
+- The effort table in skills/model-selection.md now lists all five levels (low, medium, high, xhigh, max) with per-model defaults and xhigh/max availability from the current platform docs. It notes that effort does not reliably shorten Opus 5 output and points to the claude-api skill for SDK code. Refs #255.
+
+### Tests
+- The bash `loki_effort_for_tier` and TypeScript `effortForTier` effort mappings are now pinned equal per tier and complexity. Refs #255.
+
 ## v11.24.0 (2026-10-22)
 
 ### Fixed
