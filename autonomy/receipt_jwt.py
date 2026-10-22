@@ -41,9 +41,12 @@ receipt is presented as signed.
 """
 
 import base64
+import importlib.util
 import json
 import logging
 import os
+import re
+import time
 from pathlib import Path
 
 # Default signer file name; one definition, free of key-ish words (E-156).
@@ -168,6 +171,20 @@ def _tighten(path: str) -> None:
         logging.warning("receipt signing: could not tighten %s: %s", path, e)
 
 
+def sweep_stale_secret_tmp(directory, patterns):
+    """FC-STALE-SECRET-TMP-NEVER-SWEPT: delegate to the one shared sweep in lib/secret_tmp.py."""
+    # loaded by path so autonomy/lib never joins sys.path; hygiene only, a missing helper must not block signing
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "secret_tmp.py")
+    try:
+        spec = importlib.util.spec_from_file_location("loki_secret_tmp", helper)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except (OSError, ImportError, AttributeError) as e:
+        logging.warning("receipt signing: stale key temp sweep unavailable: %s", e)
+        return
+    mod.sweep_stale_secret_tmp(directory, patterns)
+
+
 def _create_key_file(path: str) -> bytes:
     """Create the key 0600, published atomically via link(); a concurrent first run reads the winner's file."""
     pem = Ed25519PrivateKey.generate().private_bytes(
@@ -179,6 +196,8 @@ def _create_key_file(path: str) -> bytes:
     if d.endswith(os.path.join(".loki", "keys")):
         os.makedirs(os.path.dirname(d), mode=0o700, exist_ok=True)
     os.makedirs(d, mode=0o700, exist_ok=True)
+    base = re.escape(os.path.basename(path))
+    sweep_stale_secret_tmp(d, [r"^%s\.(\d{1,8})\.tmp$" % base, r"^%s\.[0-9a-f]{12}\.tmp$" % base])
     tmp = "%s.%d.tmp" % (path, os.getpid())
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:

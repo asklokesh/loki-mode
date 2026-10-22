@@ -449,6 +449,22 @@ tmp_case symlink
 tmp_case file
 tmp_case dir
 
+# FC-STALE-SECRET-TMP-NEVER-SWEPT: the bash writer, killed after mkstemp and before os.replace,
+# leaves .mcp-config.<rand>.tmp holding the token. The next write removes a stale one, keeps a
+# fresh one (a live writer's) and a directory of the same shape.
+bd=$(mktemp -d -t loki-parity-bash-h-XXXX); mkdir -p "$bd/.loki"
+printf '%s' "$TOKEN_D" >"$bd/.loki/.mcp-config.stale001.tmp"; chmod 600 "$bd/.loki/.mcp-config.stale001.tmp"
+touch -t 202001010000 "$bd/.loki/.mcp-config.stale001.tmp"
+printf '%s' "$TOKEN_D" >"$bd/.loki/.mcp-config.fresh002.tmp"; chmod 600 "$bd/.loki/.mcp-config.fresh002.tmp"
+mkdir "$bd/.loki/.mcp-config.dirdir03.tmp"
+HOME="$TMP_HOME" TARGET_DIR="$bd" loki_mcp_config_path >/dev/null 2>&1
+if [ ! -e "$bd/.loki/.mcp-config.stale001.tmp" ] && [ -f "$bd/.loki/.mcp-config.fresh002.tmp" ] && [ -d "$bd/.loki/.mcp-config.dirdir03.tmp" ]; then
+    ok "parity H: the bash route sweeps a stale killed-writer tmp and keeps a fresh tmp and a directory"
+else
+    bad "parity H: stale=$(ls "$bd/.loki" 2>&1 | tr '\n' ' ')"
+fi
+rm -rf "$bd"
+
 # The bash tmp file must be owner-only the moment it exists, before any byte is
 # written (a later chmod leaves a window). A sitecustomize hook records the mode
 # of every file object python opens for writing at fdopen time, under umask 000.
