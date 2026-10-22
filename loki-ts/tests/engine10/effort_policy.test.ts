@@ -70,3 +70,28 @@ describe("child env", () => {
     for (const s of ["implement", "wall", "fix"]) expect(effortLine(await envFor(s))).toBeUndefined();
   });
 });
+
+describe("ER-05: a resumed session keeps its effort unless the stage escalates", () => {
+  const stub = (iter: string, sid: string) => `mkdir -p .loki && echo '{"session_id":"${sid}"}' > .loki/e10-session-${iter}.json; env > '${join(tmp, `env-${iter}.txt`)}'`;
+  async function call(iter: string, o: Partial<SessionRunOptions>, sid: string, events: string[] = []): Promise<string | undefined> {
+    const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", stub(iter, sid)]], emit: (t) => { events.push(t); } });
+    await runner.run({ stage: "implement", brief: "b", tier: "development", iterationId: iter, limitS: 20, signal: new AbortController().signal, cwd: tmp, ...o } as SessionRunOptions);
+    return effortLine(readFileSync(join(tmp, `env-${iter}.txt`), "utf8"));
+  }
+  test("resumed call whose stage policy says medium after a high session keeps high", async () => {
+    expect(await call("er05-a1", { effort: "high" }, "S-A")).toBe("high");
+    const events: string[] = [];
+    expect(await call("er05-a2", { resumeSessionId: "S-A" }, "S-A2", events)).toBe("high");
+    expect(events).not.toContain("effort_escalation_cache_reset");
+  });
+  test("escalation high to xhigh is allowed and logs effort_escalation_cache_reset", async () => {
+    expect(await call("er05-b1", { effort: "high" }, "S-B")).toBe("high");
+    const events: string[] = [];
+    expect(await call("er05-b2", { effort: "xhigh", resumeSessionId: "S-B" }, "S-B2", events)).toBe("xhigh");
+    expect(events).toContain("effort_escalation_cache_reset");
+  });
+  test("a fresh session (no resume id) is unaffected", async () => {
+    expect(await call("er05-c1", { effort: "high" }, "S-C")).toBe("high");
+    expect(await call("er05-c2", {}, "S-C2")).toBe("medium");
+  });
+});

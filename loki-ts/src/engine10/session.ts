@@ -12,6 +12,7 @@ import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
+import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
@@ -46,6 +47,20 @@ export function resolveModel(provider: string): string {
   if (provider !== "claude") return `${provider} (model not recorded)`;
   return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
 }
+// ER-05 / g09-47: effort is part of the cached prefix key, so a resumed session keeps the effort it was created with unless the stage
+// escalates. Per-message effort (mid-conversation output_config) is not exposed by the SDK; revisit when it is, instead of adding a new path.
+const EFFORT_RANK = ["low", "medium", "high", "xhigh", "max"];
+const sessionEffort = new Map<string, string>(); // provider session id -> effort it ran with, filled when a session closes
+/** Effort a call really runs at. A resumed session never drops below its recorded effort; a user LOKI_E10_EFFORT is explicit and always wins. */
+export function sessionEffortFor(opts: SessionRunOptions): { effort: string | undefined; escalated?: { from: string; to: string } } {
+  const resolved = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
+  const prior = opts.resumeSessionId ? sessionEffort.get(opts.resumeSessionId) : undefined;
+  if (!prior || process.env["LOKI_E10_EFFORT"]) return { effort: resolved };
+  const pr = EFFORT_RANK.indexOf(prior), rr = resolved ? EFFORT_RANK.indexOf(resolved) : -1;
+  if (resolved && rr > pr && pr >= 0) return { effort: resolved, escalated: { from: prior, to: resolved } }; // escalation is allowed; it resets the cache
+  if (resolved && rr < 0) return { effort: resolved }; // unknown level: pass through untouched
+  return { effort: prior };
+}
 export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   env["LOKI_ITERATION"] = opts.iterationId;
@@ -70,7 +85,8 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
     }
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
-  const effort = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy
+  const { effort, escalated } = sessionEffortFor(opts); // ER-01: a user LOKI_E10_EFFORT (already in env) wins over opts and the policy; ER-05: a resumed session keeps its effort
+  if (escalated) cfg.emit?.("effort_escalation_cache_reset", opts.stage, { session_id: opts.iterationId, resume_session_id: opts.resumeSessionId, ...escalated });
   const lim = childBudgetLimit(cfg.remaining?.() ?? null); if (lim !== null) env["LOKI_BUDGET_LIMIT"] = lim; if (effort) env["LOKI_E10_EFFORT"] = effort; // lim: the SDK maxBudgetUsd (claude_flags.ts) then caps this one call at what is left
   if (routerEnabled() && !ADVISOR_MARKED_STAGES.has(opts.stage)) env["LOKI_ADVISOR_SCOPE"] = "off"; else delete env["LOKI_ADVISOR_SCOPE"]; // CH-02: only with the router on, so router-off envs stay byte-identical
   const pin = routerSessionPin(env, cfg.provider, cfg.advisor, opts); // ROUTER-1 (runner/router/session_route.ts): identical to opts.model with the router off or a user override set
@@ -166,7 +182,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
   }
   const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
-  const effort = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
+  const effort = sessionEffortFor(opts).effort;
   const info = { status, durationMs: Math.round(durationS * 1000), model };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
@@ -242,6 +258,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           cfg.emit?.("session.ended", opts.stage, {
             session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
+          const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) sessionEffort.set(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           untrack();
           resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
