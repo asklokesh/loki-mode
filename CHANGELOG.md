@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.52.0 (2026-10-22)
+
+### Added
+- Metrics (#252): `loki kpis` reports refusal_count, fallback_served_count and retry_count, read from the run ledger.
+
+### Fixed
+- Metrics (#252): the run-ledger writer honors LOKI_DIR, and the kpis since-window test is symmetric.
+
 ## v11.51.2 (2026-10-22)
 
 ### Fixed
