@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.47.0 (2026-10-22)
+
+### Changed
+- Advisor benchmark (#246): the bench now measures the advisor on its own (advisor arm vs no-advisor arm on the same tasks). The advisor stays OFF by default until a parity run proves it helps.
+
+### Fixed
+- The bench commits its fixture as a git baseline, so `loki start` can run in the bench workdir.
+- `advisor_verdict` judges attachment per measured trial. An advisor-arm trial counts only with at least one advisor call and zero advisor errors. A no-advisor trial must record exactly zero calls. Partial data (for example 1 of 4 trials attached) now yields NOT PROVEN, naming the unattached trials, and can never flip the default ON.
+- Each trial row records `advisor_errors` from the advisor provenance.
+
 ## v11.46.0 (2026-10-22)
 
 ### Added
