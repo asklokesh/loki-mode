@@ -1,10 +1,10 @@
 // getStateManager keying (#312). The older state/test_manager.ts and tests/test-state-versioning.ts are
-// standalone scripts that bun test does not discover, so this file is the bun-discoverable home for them.
+// standalone scripts that bun test does not discover, so this file, under loki-ts/tests where local-ci runs bun test, is the discoverable home for them.
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getStateManager, resetStateManager } from "./manager";
+import { getStateManager, resetStateManager } from "../../state/manager";
 
 const quiet = { enableWatch: false, enableEvents: false } as const;
 

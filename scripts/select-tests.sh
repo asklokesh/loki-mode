@@ -570,6 +570,13 @@ for f in "${CHANGED[@]}"; do
             ;;
     esac
 
+    # The repo-root TS state manager is covered by a bun test under loki-ts/tests (#312).
+    case "$f" in
+        state/manager.ts | loki-ts/tests/state_manager.test.ts)
+            already_seen "bun_test:loki-ts/tests/state_manager.test.ts" || { mark_seen "bun_test:loki-ts/tests/state_manager.test.ts"; emit R4 bun_test "loki-ts/tests/state_manager.test.ts"; }
+            ;;
+    esac
+
     # R4: changed loki-ts/src -> matching bun tests + typecheck. Match on the
     # src-relative path minus extension ("runner/council"), not the bare
     # basename ("council") -- the bare word appears as ordinary English in
