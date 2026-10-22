@@ -2433,3 +2433,54 @@ describe("COST-WALL-c claudeReviewer ledger wiring", () => {
   });
 
 });
+
+// #311: the production reviewer must call onFirstResponse when its child's first stdout byte arrives, so the
+// #270 stagger releases the next reviewer on that event instead of waiting out LOKI_REVIEW_STAGGER_MS.
+// Removing the onFirstStdout wiring in claudeReviewer (either claude path) turns this red.
+describe("#311 claudeReviewer calls onFirstResponse on first stdout", () => {
+  const KEYS = ["PATH", "LOKI_DIR", "LOKI_SDK_CODE_REVIEW", "LOKI_REVIEW_JSON_SCHEMA"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let root = "";
+  const setup = async (schemaOff: boolean) => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    root = mkdtempSync(join(tmpdir(), "loki-fr311-"));
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    // Emits the verdict, then lingers 1s: a hook fired on first stdout runs well before the child exits.
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nprintf 'VERDICT: PASS\\nFINDINGS:\\n- None\\n'\nsleep 1\n`, { mode: 0o755 });
+    process.env["PATH"] = `${bin}:${saved["PATH"]}`;
+    process.env["LOKI_DIR"] = join(root, ".loki");
+    delete process.env["LOKI_SDK_CODE_REVIEW"];
+    if (schemaOff) process.env["LOKI_REVIEW_JSON_SCHEMA"] = "off"; else delete process.env["LOKI_REVIEW_JSON_SCHEMA"];
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+  };
+  afterEach(async () => {
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  for (const [label, schemaOff] of [["plain text path", true], ["structured --json-schema path", false]] as const) {
+    it(`${label}: hook fires before the child exits`, async () => {
+      await setup(schemaOff);
+      const t0 = Date.now();
+      let firedAt = -1;
+      const done = claudeReviewer({
+        reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "review this",
+        onFirstResponse: () => { firedAt = Date.now() - t0; },
+      });
+      await done;
+      const total = Date.now() - t0;
+      expect(firedAt).toBeGreaterThanOrEqual(0);
+      expect(firedAt).toBeLessThan(total - 500);
+    }, 60000);
+  }
+
+  it("no onFirstResponse supplied: reviewer still returns normally", async () => {
+    await setup(true);
+    const out = await claudeReviewer({ reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "p" });
+    expect(out).toContain("VERDICT: PASS");
+  }, 60000);
+});

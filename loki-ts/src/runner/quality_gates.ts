@@ -1268,7 +1268,9 @@ export type ReviewerInput = {
   // #270: one effort for every reviewer of a gate (a differing effort invalidates the shared prompt cache).
   effort?: Effort;
   // #270: a reviewer that can observe its first response event calls this so the rest of the battery launches
-  // against a warm cache entry. Optional; the launch stagger is time-bounded without it.
+  // against a warm cache entry. claudeReviewer fires it on the child's first stdout byte (#311); the SDK judge
+  // path is a single non-streaming call and never fires it. The LOKI_REVIEW_STAGGER_MS timeout stays as the
+  // deliberate fallback. The bash _dispatch_reviewer has no stagger, so it has no sibling hook.
   onFirstResponse?: () => void;
 };
 
@@ -1654,7 +1656,7 @@ export function rematerializeCodeReview(rawJson: string): string | null {
   return lines.join("\n") + "\n";
 }
 
-export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort }) => {
+export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort, onFirstResponse }) => {
   const argv = ["claude", ...permissionArgv()];
   // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
   // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
@@ -1716,7 +1718,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort 
     if (claudeFlagSupported("--json-schema")) {
       const schemaContent = readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8");
       const sArgv = [...argv, "-p", prompt, "--json-schema", schemaContent, "--output-format", "json"];
-      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000 }); // FC-REVIEWER-GIT-CONFIG-EXEC // COST-WALL: result JSON carries total_cost_usd
+      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000, ...(onFirstResponse ? { onFirstStdout: onFirstResponse } : {}) }); // FC-REVIEWER-GIT-CONFIG-EXEC // COST-WALL: result JSON carries total_cost_usd
       if (rs.exitCode === 0 && rs.stdout.trim().length > 0) {
         const legacy = rematerializeCodeReview(rs.stdout);
         if (legacy !== null) return legacy;
@@ -1733,6 +1735,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort 
   const r = await withChildLedger(run, lokiDir(), "reviewer")(argv, { // COST-WALL: text output carries no cost, so this line is unmeasured (a lower bound, never zero)
     env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, // FC-REVIEWER-GIT-CONFIG-EXEC
     timeoutMs: 600_000,
+    ...(onFirstResponse ? { onFirstStdout: onFirstResponse } : {}),
   });
   if (r.exitCode !== 0) {
     // A failed dispatch must not silently pass. Surface a blocking Critical so a

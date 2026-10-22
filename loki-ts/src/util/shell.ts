@@ -16,6 +16,7 @@ export type ShellOpts = {
   cwd?: string;
   group?: boolean; // own process group: a timeout/abort kills the whole tree (wrapper scripts that do not exec), and strays are reaped on exit
   signal?: AbortSignal; // abort: SIGTERM, then SIGKILL after 2s (same as a timeout)
+  onFirstStdout?: () => void; // fires once when the first stdout byte arrives (a throwing callback is ignored)
 };
 
 // v7.77.0 (W77-D LOW): cap how many bytes we slurp from a child's stdout.
@@ -32,8 +33,10 @@ export const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
 export async function readStreamCapped(
   stream: ReadableStream<Uint8Array>,
   maxBytes = MAX_STDOUT_BYTES,
+  onFirstChunk?: () => void,
 ): Promise<string> {
   const reader = stream.getReader();
+  let first = onFirstChunk;
   const decoder = new TextDecoder();
   let out = "";
   let total = 0;
@@ -42,6 +45,11 @@ export async function readStreamCapped(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
+      if (first && value.byteLength > 0) {
+        const cb = first;
+        first = undefined;
+        try { cb(); } catch { /* observer only: never break the read */ }
+      }
       total += value.byteLength;
       if (total > maxBytes) {
         // Keep only the slice that fits under the cap, then stop.
@@ -126,7 +134,7 @@ export async function run(
     const [stdout, stderr, exitCode] = await Promise.all([
       // v7.77.0 (W77-D LOW): bounded read so a runaway child cannot OOM the
       // parent. Timeout behavior above is preserved -- the cap is independent.
-      readStreamCapped(proc.stdout as ReadableStream<Uint8Array>),
+      readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, MAX_STDOUT_BYTES, opts.onFirstStdout),
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
