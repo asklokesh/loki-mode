@@ -439,6 +439,28 @@ else
 fi
 rm -rf "$hook" "$bd"
 
+# A name the tool owns (REGISTRY, the retired registry test knob, #316) is reserved: a stale shell variable
+# must not become an outbound server on either route.
+bd=$(mktemp -d -t loki-parity-bash-r-XXXX); bu=$(mktemp -d -t loki-parity-bun-r-XXXX)
+LOKI_MCP_REGISTRY_URL="https://registry.example.com/mcp" run_both "$bd" "$bu"
+cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
+if [ -n "$cb" ] && [ "$cb" = "$cu" ] && ! printf '%s' "$cb" | grep -q 'registry'; then
+    ok "parity D: a remote named registry is reserved and ignored on both routes"
+else
+    bad "parity D reserved registry: bash=[$cb] bun=[$cu]"
+fi
+rm -rf "$bd" "$bu"
+
+# Guard (#316): a tool-owned setting must not live in the LOKI_MCP_<NAME>_URL namespace. Fixtures that SET
+# such a variable are fine; a READ ($VAR, ${VAR}, environ/env lookup) of a literal name is a setting.
+_ns="LOKI_MCP_"
+_reads="$(git -C "$REPO_ROOT" grep -nE "(\\$\\{?|environ(\\.get)?[(\\[]['\"]|env\\[['\"]|getenv[(]['\"])${_ns}[A-Z0-9_]+_URL" -- tests scripts autonomy providers loki-ts/src ':!tests/test-parity-mcp-config.sh' 2>/dev/null || true)"
+if [ -z "$_reads" ]; then
+    ok "guard: no tool-owned setting reads a ${_ns}<NAME>_URL variable"
+else
+    bad "guard: a tool setting reads a ${_ns}<NAME>_URL variable (use LOKI_TEST_ or another namespace): $_reads"
+fi
+
 unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH
 
 echo

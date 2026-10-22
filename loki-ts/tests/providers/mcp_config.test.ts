@@ -297,7 +297,7 @@ describe("mcp_config.mcpLaunchFor", () => {
 describe("mcp_config outbound remote servers and auth headers", () => {
   let td: string;
   let savedPath: string | undefined;
-  const KEYS = ["LOKI_MCP_LOKI_MODE_AUTH", "LOKI_MCP_LOKI_MODE_URL", "LOKI_MCP_LOOP_URL", "LOKI_MCP_ACME_URL", "LOKI_MCP_ACME_AUTH", "LOKI_MCP_ACME_CO_URL", "LOKI_MCP_ACME_CO_AUTH", "LOKI_MCP_NOURL_AUTH"];
+  const KEYS = ["LOKI_MCP_LOKI_MODE_AUTH", "LOKI_MCP_LOKI_MODE_URL", "LOKI_MCP_LOOP_URL", "LOKI_MCP_ACME_URL", "LOKI_MCP_ACME_AUTH", "LOKI_MCP_ACME_CO_URL", "LOKI_MCP_ACME_CO_AUTH", "LOKI_MCP_NOURL_AUTH", "LOKI_MCP_REGISTRY_URL"];
   const TOKEN = "s3cr3t-token-value";
   const bundle = (): any => JSON.parse(readFileSync(mcpConfigPath(td), "utf8"));
   beforeEach(() => {
@@ -311,6 +311,21 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     for (const k of KEYS) delete process.env[k];
     if (savedPath === undefined) delete process.env["PATH"];
     else process.env["PATH"] = savedPath;
+  });
+
+  it("the reserved name REGISTRY never becomes a remote server, with a warning that names only the variable (#316)", () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => void warns.push(a.join(" "));
+    try {
+      process.env["LOKI_MCP_REGISTRY_URL"] = "https://registry.example.com/mcp";
+      expect(bundle().mcpServers["registry"]).toBeUndefined();
+      expect(JSON.stringify(bundle())).not.toContain("registry.example.com");
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.join("\n")).toContain("LOKI_MCP_REGISTRY_URL");
+    expect(warns.join("\n")).toContain("reserved");
   });
 
   it("an env auth var produces an Authorization header on its remote server", () => {

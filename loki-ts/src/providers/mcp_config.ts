@@ -78,6 +78,10 @@ function isLoopbackHost(h: string): boolean {
 // CR, LF, NUL, tab, DEL and the rest of C0 would let a value inject headers.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
+// Names the tool owns inside the LOKI_MCP_<NAME>_URL namespace. REGISTRY was the registry test's URL knob (#316);
+// a stale shell variable of that name must never become an outbound server. Mirrored in autonomy/lib/mcp-config.sh.
+const RESERVED_REMOTE_NAMES = new Set(["REGISTRY"]);
+
 // Collect LOKI_MCP_<NAME>_URL servers from env. Returns the server map and
 // whether any carries a header value. Warns by variable name only.
 export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<string, unknown>; hasSecret: boolean } {
@@ -87,6 +91,10 @@ export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<
     const m = /^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/.exec(key);
     const raw = env[key];
     if (!m || !raw) continue;
+    if (RESERVED_REMOTE_NAMES.has(m[1]!)) {
+      console.warn(`[mcp_config] ignoring ${key}: ${m[1]} is a reserved name, not a remote server.`);
+      continue;
+    }
     // new URL() silently strips CR, LF and tab, so the raw value is checked first.
     if (CONTROL_CHARS.test(raw)) {
       console.warn(`[mcp_config] ignoring ${key}: control characters are not allowed.`);

@@ -117,6 +117,9 @@ for key in sorted(os.environ):
     raw = os.environ.get(key, '')
     if not m or not raw:
         continue
+    if m.group(1) in ('REGISTRY',):
+        sys.stderr.write('[mcp_config] ignoring %s: %s is a reserved name, not a remote server.\n' % (key, m.group(1)))
+        continue
     if control.search(raw):
         sys.stderr.write('[mcp_config] ignoring %s: control characters are not allowed.\n' % key)
         continue
