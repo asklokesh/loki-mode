@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.35.1 (2026-10-22)
+
+### Fixed
+- The engine10 core is back under its 5000-line budget: the prompt-prefix hash helper moved next to its only consumer in the cost breakdown module, so the structural line-budget check and `budget.test.ts` pass again.
+
 ## v11.35.0 (2026-10-22)
 
 ### Added
