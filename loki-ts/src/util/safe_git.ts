@@ -8,6 +8,8 @@
 // and credential helpers are neutralised too (FC-25c a); the user's global and system values are re-added so they keep working.
 // Always returns stdout as a utf8 string.
 import { hardenCredentialEnv } from "./credential_env.ts";
+import { lstatSync, readdirSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
 export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper="];
@@ -262,3 +264,46 @@ export async function safeGitRun(repoDir: string, args: readonly string[], opts:
     return { stdout, stderr, exitCode };
   } finally { if (timer) clearTimeout(timer); }
 }
+const SKIP_DIRS = new Set([
+  ".git", "node_modules", "dist", "build", "target", "coverage",
+  ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".loki", ".next",
+]);
+/** TEN-SPEED-13: tracked plus untracked-not-ignored files from git (honours .gitignore), same SKIP_DIRS filter and sort as the walk. Null outside a repo or when git lists nothing, so the caller falls back to the walk. */
+function gitFiles(root: string): string[] | null {
+  try {
+    const raw = safeGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 256 * 1024 * 1024, timeout: 60_000 });
+    const out = new Set<string>();
+    for (const p of raw.split("\0")) {
+      if (p === "" || p.split("/").some((seg, i, a) => i < a.length - 1 && SKIP_DIRS.has(seg))) continue;
+      try { if (lstatSync(join(root, p)).isFile()) out.add(p); } catch { /* deleted but still indexed */ }
+    }
+    return out.size ? [...out].sort() : null;
+  } catch {
+    return null;
+  }
+}
+/** Recursive walk minus SKIP_DIRS: the fallback outside a git repo. */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) stack.push(full);
+      } else if (e.isFile()) {
+        out.push(relative(root, full).split(sep).join("/"));
+      }
+    }
+  }
+  return out.sort();
+}
+/** Tracked plus untracked-not-ignored files, else a walk; relative, sorted, SKIP_DIRS removed (testmap's runner detection). */
+export const listProjectFiles = (root: string): string[] => gitFiles(root) ?? walkFiles(root);

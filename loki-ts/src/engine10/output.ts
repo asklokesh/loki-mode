@@ -140,9 +140,5 @@ export async function estimateEtaS(targetS: number | null, elapsedS: number, mod
     throw err;
   }
   if (typeof mod.estimate !== "function") return null;
-  try {
-    return mod.estimate(targetS, elapsedS);
-  } catch {
-    return null;
-  }
+  try { return mod.estimate(targetS, elapsedS); } catch { return null; }
 }

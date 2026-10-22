@@ -21,6 +21,7 @@ import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Sta
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
+import { DEFAULT_PUSH_SH, SHA_RE } from "./pr.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
@@ -73,13 +74,11 @@ export interface DeepOptions {
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
 }
-export const DEFAULT_PUSH_SH = new URL("../../../../autonomy/lib/engine10-push.sh", import.meta.url).pathname;
 export const DEFAULT_SECRET_SCAN_SH = new URL("../../../../autonomy/lib/secret-scan.sh", import.meta.url).pathname;
 const MAX_COUNCIL_DIFF_BYTES = 400_000; // ENGINE.md section 2 cause 4: a 431361-byte context was refused
 const COUNCIL_LIMIT_S = 600;
 const FULL_SUITE_TIMEOUT_MS = 300_000; // 5 min per runner; deep's own stage limit (2700s) is the outer bound
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
-const SHA_RE = /^[0-9a-f]{40}$/;
 /** One check per detected runner, run to completion (no retry: flaky-rerun
  *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
@@ -171,12 +170,6 @@ async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptio
   checks.push({ name, cmd, result, duration_s: (Date.now() - started) / 1000, ...(result === "pass" ? {} : { reason: (result === "fail" ? reasons : gaps).join("; ") }) });
   if (result === "not_run") notProven.add(`not run: ${name} (${gaps.join("; ")})`);
 }
-/** engine10-push.sh's real `comment` usage is `comment <pr-number> <body-file>`
- *  (see the contract-gap note above) -- built here rather than through
- *  pushArgv, whose "comment" case does not match the script. */
-function commentArgv(prNumber: string, bodyFile: string): string[] {
-  return ["comment", prNumber, bodyFile];
-}
 function buildCommentBody(checks: DeepCheck[], notProven: string[], statusState: "success" | "failure"): string {
   const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
   lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
@@ -200,7 +193,8 @@ async function postResults(
     mkdirSync(ctx.runDir, { recursive: true });
     const bodyFile = join(ctx.runDir, "deep-comment.md");
     writeFileSync(bodyFile, buildCommentBody(checks, notProven, statusState), "utf8");
-    const commentResult = await run(["bash", scriptPath, ...commentArgv(prNumber, bodyFile)], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
+    // engine10-push.sh takes `comment <pr-number> <body-file>`; pushArgv "comment" does not match that contract
+    const commentResult = await run(["bash", scriptPath, "comment", prNumber, bodyFile], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
     if (commentResult.exitCode !== 0) out.push(`deep comment not posted (engine10-push.sh exit ${commentResult.exitCode})`);
   } else {
     out.push("deep comment not posted (no PR number)");
@@ -217,17 +211,9 @@ async function postResults(
 }
 export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before deep verify started" };
-  try {
-    assertWorkerEnv(opts.env ?? process.env);
-  } catch (err) {
-    return { status: "failed", data: {}, reason: (err as Error).message };
-  }
+  try { assertWorkerEnv(opts.env ?? process.env); } catch (err) { return { status: "failed", data: {}, reason: (err as Error).message }; }
   let changed: string[];
-  try {
-    changed = changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created));
-  } catch (err) {
-    return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` };
-  }
+  try { changed = changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)); } catch (err) { return { status: "failed", data: {}, reason: `git diff against base failed: ${(err as Error).message}` }; }
   const checks: DeepCheck[] = [];
   const notProven = new Set<string>();
   await runFullSuite(ctx, signal, { ...opts, changed }, checks, notProven);

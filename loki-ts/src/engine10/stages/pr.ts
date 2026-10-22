@@ -43,7 +43,7 @@ export interface PrOptions {
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 export const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 export const DEFAULT_PUSH_GITLAB_SH = join(REPO_ROOT, "autonomy/lib/engine10-push-gitlab.sh"); export const MR_URL_RE = /^https:\/\/gitlab\.com\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\/-\/merge_requests\/\d+$/; export const isGitlabOrigin = (o: string): boolean => /^(?:https:\/\/gitlab\.com\/|git@gitlab\.com:|ssh:\/\/git@gitlab\.com\/)/i.test(o); // TEN-ADOPTION-09: a literal gitlab.com pinned origin routes to engine10-push-gitlab.sh push-mr (the script re-validates the URL), whose MR URL must match MR_URL_RE.
-const SHA_RE = /^[0-9a-f]{40}$/;
+export const SHA_RE = /^[0-9a-f]{40}$/;
 function lastNonEmptyLine(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter((l) => l.length > 0); return lines[lines.length - 1] ?? "";
 }

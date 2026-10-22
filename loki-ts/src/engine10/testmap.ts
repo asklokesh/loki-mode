@@ -4,7 +4,7 @@
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
-import { safeGit } from "../util/safe_git.ts";
+import { listProjectFiles } from "../util/safe_git.ts";
 import { loadProjectApi } from "../project_model/resolve.ts";
 import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
@@ -26,10 +26,6 @@ export interface EngineTestMap extends TestMap {
   readonly sourceRefs: Record<string, string[]>;
 }
 const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo"];
-const SKIP_DIRS = new Set([
-  ".git", "node_modules", "dist", "build", "target", "coverage",
-  ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".loki", ".next",
-]);
 const COMMANDS: Record<RunnerName, CommandSpec> = {
   pytest: { cmd: "python -m pytest -q <files>", coarse: false },
   vitest: { cmd: "npx vitest run <files>", coarse: false },
@@ -56,56 +52,11 @@ export function projectInterpreter(root: string): "project" | "system" {
   const ve = process.env["VIRTUAL_ENV"], inRepo = (p: string): boolean => { try { const r = relative(realpathSync(root), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
   return [join(root, ".venv", "bin", "python"), join(root, "venv", "bin", "python"), ...(ve && inRepo(ve) ? [join(ve, "bin", "python")] : [])].some(existsSync) ? "project" : "system";
 }
-function readText(p: string): string {
-  try {
-    return readFileSync(p, "utf8");
-  } catch {
-    return "";
-  }
-}
-function normalizeRel(raw: string): string {
-  return raw.split(sep).join("/").replace(/^\.\//, "");
-}
-/** TEN-SPEED-13: tracked plus untracked-not-ignored files from git (honours .gitignore), same SKIP_DIRS filter and sort as the walk. Null outside a repo or when git lists nothing, so the caller falls back to the walk. */
-function gitFiles(root: string): string[] | null {
-  try {
-    const raw = safeGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 256 * 1024 * 1024, timeout: 60_000 });
-    const out = new Set<string>();
-    for (const p of raw.split("\0")) {
-      if (p === "" || p.split("/").some((seg, i, a) => i < a.length - 1 && SKIP_DIRS.has(seg))) continue;
-      try { if (lstatSync(join(root, p)).isFile()) out.add(p); } catch { /* deleted but still indexed */ }
-    }
-    return out.size ? [...out].sort() : null;
-  } catch {
-    return null;
-  }
-}
-/** Recursive walk minus SKIP_DIRS: the fallback outside a git repo. */
-function walk(root: string): string[] {
-  const out: string[] = [];
-  const stack = [root];
-  while (stack.length) {
-    const dir = stack.pop()!;
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name)) stack.push(full);
-      } else if (e.isFile()) {
-        out.push(relative(root, full).split(sep).join("/"));
-      }
-    }
-  }
-  return out.sort();
-}
+const readText = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
+const normalizeRel = (raw: string): string => raw.split(sep).join("/").replace(/^\.\//, "");
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
-  const files = gitFiles(root) ?? walk(root);
+  const files = listProjectFiles(root);
   const evidence: Partial<Record<RunnerName, string>> = {};
   const mark = (r: RunnerName, file: string): void => {
     if (!(r in evidence)) evidence[r] = file;
