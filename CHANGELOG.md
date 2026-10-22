@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.32.0 (2026-10-22)
+
+### Added
+- Opt-in sandbox egress allowlist. With it on, the sandbox reaches the network only through a proxy that allows ports 80 and 443 to allowed hosts. The proxy blocks link-local, private, CGNAT (100.64.0.0/10, which includes cloud metadata at 100.100.100.200), site-local (fec0::/10) and every other non-global address, including IPv4-mapped IPv6 forms. Refs #258.
+
+### Fixed
+- The egress network and proxy sidecar are torn down on every failed sandbox start, and when stop_sandbox finds no running sandbox. Refs #258.
+
 ## v11.31.1 (2026-10-22)
 
 ### Documentation
