@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.49.2 (2026-10-22)
+
+### Fixed
+- MCP test suite (#301): three stale tests now match the shipped code. `MemoryStorage.view_file` is classified as a read-only method, and the LSP proxy tests expect `pyright-langserver` under `python` and `pylsp` under `python-pylsp` (the mapping since v7.7.0). No product code changed.
+
 ## v11.49.1 (2026-10-22)
 
 ### Fixed
