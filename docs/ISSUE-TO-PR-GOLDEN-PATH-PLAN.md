@@ -5,8 +5,8 @@ Lane: LOKI-GOLDEN-PATH-68. Status: plan for the first user-visible slice.
 ## 0. Two scope facts stated up front
 
 **Which file was read as AGENTS.md.** There is no `AGENTS.md` at the repo root.
-The two candidates are `skills/agents.md` (263 lines) and `references/agents.md`
-(1043 lines). `skills/agents.md` was read in full; it is the agent-dispatch and
+The two candidates are `skills/agents.md` (263 lines) and the former 1043-line
+`agents.md` reference twin (since merged into `references/agent-types.md`). `skills/agents.md` was read in full; it is the agent-dispatch and
 structured-prompting module, and its "Project AGENTS.md" section (L184-192)
 defines the AAIF priority order this repo follows. It contains no numbered
 feature list.

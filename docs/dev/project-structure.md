@@ -42,7 +42,6 @@ references/                 # Detailed documentation (21 files)
   legacy-healing-patterns.md # Amazon AGI Lab: friction, adapters, archaeology
   openai-patterns.md        # OpenAI Agents SDK: guardrails, tripwires, handoffs
   lab-research-patterns.md  # DeepMind + Anthropic: Constitutional AI, debate
-  production-patterns.md    # HN 2025: What actually works in production
   advanced-patterns.md      # 2025 research patterns (MAR, Iter-VF, GoalAct)
   tool-orchestration.md     # ToolOrchestra-inspired efficiency & rewards
   memory-system.md          # Episodic/semantic memory architecture

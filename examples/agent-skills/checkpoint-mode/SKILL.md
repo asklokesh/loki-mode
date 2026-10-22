@@ -171,7 +171,7 @@ Storage: `.loki/metrics/checkpoint-mode/`
 
 ## References
 
-- `references/production-patterns.md` - HN production insights
+- `skills/production.md` - HN production insights
 - [timdettmers.com/use-agents-or-be-left-behind](https://timdettmers.com/2026/01/13/use-agents-or-be-left-behind/)
 
 ---

@@ -150,7 +150,7 @@ fi
 # 5. The README must not say the orchestrator "assembles an agent team from 41
 #    specialized agent roles". Measured: types.json carries 41 role definitions,
 #    the review selector can keyword-score 10 of them (run.sh FOCUS_KEYWORDS),
-#    and the other 31 exist only as descriptions in references/agents.md, which
+#    and the other 31 exist only as descriptions in references/agent-types.md, which
 #    nothing injects into the prompt. Marker-PRESENCE on the precise wording,
 #    because a grep for "41" fires on the honest sentence too.
 if [ ! -f README.md ]; then
