@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.19.0 (2026-10-22)
+
+### Added
+- Voyage embedding provider (`voyage-code-4`, 1024 dims; `voyage-4` general) in `memory/embeddings.py` (#248). Opt-in only: used when `LOKI_EMBEDDING_PROVIDER=voyage` and `VOYAGE_API_KEY` are both set. The key alone never selects Voyage or adds it to the fallback chain, so memory content never leaves the machine unless the user names the provider. Named without a key, it falls back to local.
+
+### Tests
+- `tests/test_embeddings_edge_cases.py` 9/9 (3 new: opt-in selection, key-alone stays local, named-without-key falls back). `tests/test-embeddings.sh` 25 passed, 0 failed.
+
+### Not yet measured
+- Recall versus the grep fallback on the memory fixtures needs a live Voyage key and user consent to send fixtures to Voyage; #248 stays open for it.
+
 ## v11.18.0 (2026-10-20)
 
 ### Changed
