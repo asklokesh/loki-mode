@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.31.0 (2026-10-22)
+
+### Added
+- The stream parser records advisor tool errors and advisor truncation through the existing recordAdvisorError. After 3 advisor errors in a session, the route receipt backs the advisor off. Cost records include advisor_errors and advisor_truncated only when they are non-zero. Refs #269.
+
+### Fixed
+- An advisor that ranks below its executor in providers/model_catalog.json is now rejected as invalid_pair. An unknown model is never rejected. Refs #269.
+
 ## v11.30.0 (2026-10-22)
 
 ### Changed
