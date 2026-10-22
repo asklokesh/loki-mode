@@ -129,6 +129,7 @@ sandbox:
 | `LOKI_SANDBOX_MEMORY` | `4g` | Memory limit |
 | `LOKI_SANDBOX_CPUS` | `2` | CPU limit |
 | `LOKI_SANDBOX_NETWORK` | `bridge` | Network mode: `bridge`, `none`, `host` |
+| `LOKI_SANDBOX_ALLOW_HOSTS` | unset | Opt-in egress allowlist, comma-separated hostnames. The sandbox joins an internal network and reaches only these hosts through a proxy sidecar; link-local (169.254/16, fe80::/10) and private (10/8, 172.16/12, 192.168/16) targets are always refused. Requires `LOKI_SANDBOX_NETWORK=bridge`. |
 
 ---
 

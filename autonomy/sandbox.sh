@@ -12,6 +12,8 @@
 # Environment Variables:
 #   LOKI_SANDBOX_IMAGE    - Docker image to use (default: loki-mode:sandbox)
 #   LOKI_SANDBOX_NETWORK  - Network mode: bridge, none, host (default: bridge)
+#   LOKI_SANDBOX_ALLOW_HOSTS - Opt-in egress allowlist (comma-separated hostnames);
+#                              blocks link-local and private ranges (default: unset)
 #   LOKI_SANDBOX_CPUS     - CPU limit (default: 2)
 #   LOKI_SANDBOX_MEMORY   - Memory limit (default: 4g)
 #   LOKI_SANDBOX_READONLY - Mount project as read-only (default: false)
@@ -261,6 +263,7 @@ warn_missing_api_keys() {
 cleanup_container() {
     log_warn "Interrupted - cleaning up container..."
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    _sandbox_egress_down
     exit 130
 }
 
@@ -1083,6 +1086,196 @@ except: pass
     fi
 }
 
+#-------------------------------------------------------------------------------
+# Opt-in egress allowlist (LOKI_SANDBOX_ALLOW_HOSTS, comma-separated hostnames).
+# Unset: nothing below runs and the docker run argv is unchanged. Set: the sandbox
+# joins an --internal network (no route out) and reaches the world only through a
+# filtering proxy sidecar that permits the listed hosts and refuses any target
+# resolving to link-local, loopback or private ranges.
+#-------------------------------------------------------------------------------
+SANDBOX_ALLOW_HOSTS="${LOKI_SANDBOX_ALLOW_HOSTS:-}"
+EGRESS_PROXY_PORT=3128
+EGRESS_BLOCKED_CIDRS="169.254.0.0/16 fe80::/10 fec0::/10 100.64.0.0/10 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 ::1/128 fc00::/7"
+
+# Print the validated allowlist one host per line. Rejects IP literals and
+# anything that is not a plain hostname, so a literal metadata IP can never be
+# allowlisted. Returns 1 on an invalid entry or an empty list.
+_sandbox_egress_hosts() {
+    local raw="${1:-$SANDBOX_ALLOW_HOSTS}" h count=0
+    local -a parts
+    IFS=',' read -ra parts <<< "$raw"
+    for h in "${parts[@]}"; do
+        h="${h//[[:space:]]/}"
+        [[ -z "$h" ]] && continue
+        if [[ ! "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] \
+            || [[ "$h" =~ ^[0-9.]+$ ]]; then
+            log_error "LOKI_SANDBOX_ALLOW_HOSTS: invalid host (hostnames only, no IPs): $h"
+            return 1
+        fi
+        printf '%s\n' "$h" | tr '[:upper:]' '[:lower:]'
+        count=$((count+1))
+    done
+    [[ $count -gt 0 ]]
+}
+
+# Filtering proxy (CONNECT and plain HTTP). Decision function is check_target so
+# tests can exercise it with an injected resolver; no network needed.
+_sandbox_egress_proxy_source() {
+    cat <<'PYEOF'
+import ipaddress, os, socket, sys, threading
+
+ALLOW = {h.strip().lower() for h in os.environ.get("ALLOW_HOSTS", "").split(",") if h.strip()}
+BLOCKED = [ipaddress.ip_network(c) for c in os.environ.get("BLOCKED_CIDRS", "").split()]
+
+
+def ip_blocked(ip):
+    a = ipaddress.ip_address(ip)
+    if getattr(a, "ipv4_mapped", None):
+        a = a.ipv4_mapped
+    return (not a.is_global or getattr(a, "is_site_local", False) or a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified
+            or a.is_multicast or a.is_reserved or any(a in n for n in BLOCKED))
+
+
+def check_target(host, resolve=None, port=443):
+    """Return (ok, reason). Allowed only if host is listed, port is 80 or 443 and every resolved IP is global."""
+    if port not in (80, 443):
+        return False, "port not allowed"
+    host = host.strip().lower().rstrip(".")
+    if host not in ALLOW:
+        return False, "host not in allowlist"
+    resolve = resolve or (lambda h: [i[4][0] for i in socket.getaddrinfo(h, None)])
+    try:
+        ips = resolve(host)
+    except Exception:
+        return False, "resolution failed"
+    if not ips:
+        return False, "no address"
+    for ip in ips:
+        if ip_blocked(ip):
+            return False, "resolves to blocked range " + ip
+    return True, ips[0]
+
+
+def pipe(a, b):
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d:
+                break
+            b.sendall(d)
+    except OSError:
+        pass
+    finally:
+        for s in (a, b):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def handle(c):
+    try:
+        buf = b""
+        while b"\r\n\r\n" not in buf and len(buf) < 65536:
+            d = c.recv(4096)
+            if not d:
+                return
+            buf += d
+        head, _, rest = buf.partition(b"\r\n\r\n")
+        line = head.split(b"\r\n")[0].decode("latin1").split()
+        if len(line) < 3:
+            return
+        method, target = line[0], line[1]
+        if method.upper() == "CONNECT":
+            host, _, port = target.rpartition(":")
+            port = int(port or 443)
+            rest_out = b""
+        else:
+            u = target.split("://", 1)[-1].split("/", 1)[0]
+            host, _, port = u.partition(":")
+            port = int(port or 80)
+            rest_out = buf
+        ok, info = check_target(host, port=port)
+        if not ok:
+            c.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            return
+        up = socket.create_connection((info, port), timeout=20)
+        if method.upper() == "CONNECT":
+            c.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        else:
+            up.sendall(rest_out)
+        t = threading.Thread(target=pipe, args=(up, c), daemon=True)
+        t.start()
+        pipe(c, up)
+    except Exception:
+        pass
+    finally:
+        c.close()
+
+
+def main():
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", int(os.environ.get("PROXY_PORT", "3128"))))
+    s.listen(128)
+    while True:
+        conn, _ = s.accept()
+        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+
+if __name__ == "__main__":
+    main()
+PYEOF
+}
+
+# Echo the docker run argv fragments the sandbox container needs when the
+# allowlist is on: one token per line (network override first, then proxy env).
+_sandbox_egress_container_args() {
+    local net="$1" proxy="http://${CONTAINER_NAME}-egress:${EGRESS_PROXY_PORT}"
+    printf '%s\n' "--network=$net"
+    local v
+    for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
+        printf '%s\n' "--env" "$v=$proxy"
+    done
+    printf '%s\n' "--env" "NO_PROXY=localhost,127.0.0.1"
+}
+
+# Echo the docker run argv for the proxy sidecar (test-visible, no side effects).
+_sandbox_egress_proxy_args() {
+    local script="$1" hosts="$2"
+    printf '%s\n' run --detach --name "${CONTAINER_NAME}-egress" \
+        --network=bridge --cap-drop=ALL --security-opt=no-new-privileges:true \
+        --read-only --pids-limit=128 --memory=256m \
+        --env "ALLOW_HOSTS=$hosts" --env "BLOCKED_CIDRS=$EGRESS_BLOCKED_CIDRS" \
+        --env "PROXY_PORT=$EGRESS_PROXY_PORT" \
+        --volume "$script:/egress-proxy.py:ro" \
+        --entrypoint python3 "$SANDBOX_IMAGE" /egress-proxy.py
+}
+
+# Create the internal network and proxy sidecar. Echoes the internal network name.
+_sandbox_egress_up() {
+    local hosts="$1" net="${CONTAINER_NAME}-internal" script
+    local dir="${LOKI_RUN_TMP:-${TMPDIR:-/tmp}/loki-egress-${CONTAINER_NAME}}"
+    mkdir -p "$dir" && chmod 700 "$dir" || return 1
+    script="$dir/egress-proxy.py"
+    _sandbox_egress_proxy_source > "$script"
+    docker rm -f "${CONTAINER_NAME}-egress" >/dev/null 2>&1 || true
+    docker network rm "$net" >/dev/null 2>&1 || true
+    docker network create --internal "$net" >/dev/null || return 1
+    local -a pargs=()
+    while IFS= read -r line; do pargs+=("$line"); done < <(_sandbox_egress_proxy_args "$script" "$(echo "$hosts" | paste -sd, -)")
+    docker "${pargs[@]}" >/dev/null || return 1
+    docker network connect --alias "${CONTAINER_NAME}-egress" "$net" "${CONTAINER_NAME}-egress" >/dev/null || return 1
+    printf '%s\n' "$net"
+}
+
+_sandbox_egress_down() {
+    local fb="${TMPDIR:-/tmp}/loki-egress-${CONTAINER_NAME}"
+    if [[ -z "${LOKI_RUN_TMP:-}" && -d "$fb" && ! -L "$fb" ]]; then rm -rf -- "$fb"; fi
+    docker rm -f "${CONTAINER_NAME}-egress" >/dev/null 2>&1 || true
+    docker network rm "${CONTAINER_NAME}-internal" >/dev/null 2>&1 || true
+}
+
 start_sandbox() {
     # Parse arguments: extract flags before positional args
     local prd_path=""
@@ -1158,6 +1351,22 @@ start_sandbox() {
     # Clean up any stopped container with same name
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
+    local network_arg="--network=$SANDBOX_NETWORK" egress_args=() egress_ok=1
+    if [[ -n "$SANDBOX_ALLOW_HOSTS" ]]; then
+        local egress_hosts egress_net
+        egress_hosts=$(_sandbox_egress_hosts) || return 1
+        if [[ "$SANDBOX_NETWORK" != "bridge" ]]; then
+            log_error "LOKI_SANDBOX_ALLOW_HOSTS requires LOKI_SANDBOX_NETWORK=bridge (got $SANDBOX_NETWORK)"
+            return 1
+        fi
+        egress_net=$(_sandbox_egress_up "$egress_hosts") || { _sandbox_egress_down; log_error "Failed to start egress proxy"; return 1; }
+        # Any return after this point (refusal, failed docker run) must tear the proxy and network down.
+        egress_ok=0
+        trap '[[ "${egress_ok:-1}" == 1 ]] || _sandbox_egress_down; trap - RETURN' RETURN
+        while IFS= read -r line; do egress_args+=("$line"); done < <(_sandbox_egress_container_args "$egress_net")
+        network_arg="${egress_args[0]}"
+    fi
+
     log_info "Starting sandbox container..."
     log_info "  Image:    $SANDBOX_IMAGE"
     log_info "  Project:  $PROJECT_DIR"
@@ -1188,8 +1397,12 @@ start_sandbox() {
         # and should not be able to change UID/GID, which would undermine isolation
 
         # Network
-        "--network=$SANDBOX_NETWORK"
+        "$network_arg"
     )
+    if [[ ${#egress_args[@]} -gt 1 ]]; then
+        docker_args+=("${egress_args[@]:1}")
+        log_info "  Egress:   allowlist only ($(echo "$egress_hosts" | paste -sd, -)); private and link-local ranges blocked"
+    fi
 
     # Add seccomp profile if available
     local seccomp_profile="$SKILL_DIR/autonomy/seccomp-sandbox.json"
@@ -1393,7 +1606,8 @@ start_sandbox() {
 
     # Run container
     local container_id
-    container_id=$(docker "${docker_args[@]}")
+    container_id=$(docker "${docker_args[@]}") || { log_error "docker run failed"; return 1; }
+    egress_ok=1
 
     log_success "Sandbox started: ${container_id:0:12}"
     log_info ""
@@ -1435,6 +1649,7 @@ stop_sandbox() {
         while [ $waited -lt 10 ]; do
             if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 log_success "Sandbox stopped gracefully"
+                _sandbox_egress_down
                 # Remove the temp state dir now that the container has stopped.
                 if [[ -n "$_state_dir" ]] && [[ -d "$_state_dir" ]]; then
                     rm -rf -- "$_state_dir" 2>/dev/null || true
@@ -1455,8 +1670,10 @@ stop_sandbox() {
             rm -rf -- "$_state_dir" 2>/dev/null || true
         fi
 
+        _sandbox_egress_down
         log_success "Sandbox stopped"
     else
+        _sandbox_egress_down
         log_warn "No running sandbox found"
     fi
 }
@@ -1880,6 +2097,7 @@ show_help() {
     echo "Environment Variables:"
     echo "  LOKI_SANDBOX_IMAGE    Docker image (default: loki-mode:sandbox)"
     echo "  LOKI_SANDBOX_NETWORK  Network mode: bridge, none, host (default: bridge)"
+    echo "  LOKI_SANDBOX_ALLOW_HOSTS  Egress allowlist, comma-separated hostnames (default: unset)"
     echo "  LOKI_SANDBOX_CPUS     CPU limit (default: 2)"
     echo "  LOKI_SANDBOX_MEMORY   Memory limit (default: 4g)"
     echo "  LOKI_SANDBOX_READONLY Mount project read-only (default: false)"
