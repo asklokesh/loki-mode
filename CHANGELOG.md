@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.41.0 (2026-10-22)
+
+### Added
+- `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_HAIKU_MODEL` pins are honored by the tier resolver, in the same way Claude Code resolves its own aliases. With no pin set, tier routing is unchanged. A pin is user-set only (Loki never writes these variables), and it can route a tier below its default or above `LOKI_MAX_TIER`.
+- `LOKI_INFERENCE_GEO=us` applies the 1.1x US-only inference price multiplier, mirrored across bash, TypeScript, Python and the dashboard. Scope: it applies where Loki estimates cost from tokens. Records that carry a provider-reported cost (`cost_usd`, which is most Claude and Codex records) are kept as reported and are not multiplied again.
+
 ## v11.40.0 (2026-10-22)
 
 ### Changed
