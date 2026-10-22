@@ -78,3 +78,22 @@ describe("shell.run abort signal", () => {
     expect(r.exitCode).not.toBe(0);
   });
 });
+
+describe("shell.run onFirstStdout", () => {
+  it("fires exactly once across several stdout chunks", async () => {
+    let n = 0;
+    const r = await run(["sh", "-c", "echo a; sleep 0.1; echo b; sleep 0.1; echo c"], { onFirstStdout: () => { n++; } });
+    expect(r.stdout).toBe("a\nb\nc\n");
+    expect(n).toBe(1);
+  });
+  it("a throwing callback is ignored: stdout and exit code are intact", async () => {
+    const r = await run(["sh", "-c", "echo ok"], { onFirstStdout: () => { throw new Error("boom"); } });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("ok\n");
+  });
+  it("does not fire when the child prints nothing", async () => {
+    let n = 0;
+    await run(["true"], { onFirstStdout: () => { n++; } });
+    expect(n).toBe(0);
+  });
+});

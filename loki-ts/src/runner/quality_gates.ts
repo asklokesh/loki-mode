@@ -1656,7 +1656,29 @@ export function rematerializeCodeReview(rawJson: string): string | null {
   return lines.join("\n") + "\n";
 }
 
+// #320: `claude -p` json/text buffers stdout until the run ends, so the #270 stagger hook only fired at completion.
+// With a hook to release, the reviewer asks for stream-json (first event arrives at once) and this lifts the final
+// `result` event back out: the same object --output-format json prints, or its text as --output-format text prints it.
+export function streamFinalResult(stdout: string, format: "json" | "text"): string {
+  let last: Record<string, unknown> | null = null;
+  for (const line of stdout.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const ev = JSON.parse(t) as Record<string, unknown>;
+      if (ev["type"] === "result") last = ev;
+    } catch { /* a truncated or non-JSON line is not the result */ }
+  }
+  if (last === null) return "";
+  if (format === "json") return JSON.stringify(last);
+  return typeof last["result"] === "string" && last["result"].length > 0 ? `${last["result"]}\n` : "";
+}
+
 export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort, onFirstResponse }) => {
+  // Reduce the stream before the cost ledger and the verdict parse see it, so both read exactly what json/text gave them.
+  const streamed = (format: "json" | "text"): typeof run => onFirstResponse
+    ? async (...a) => { const r = await run(...a); return { ...r, stdout: streamFinalResult(r.stdout, format) }; }
+    : run;
   const argv = ["claude", ...permissionArgv()];
   // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
   // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
@@ -1717,8 +1739,8 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
     await ensureClaudeHelpCache();
     if (claudeFlagSupported("--json-schema")) {
       const schemaContent = readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8");
-      const sArgv = [...argv, "-p", prompt, "--json-schema", schemaContent, "--output-format", "json"];
-      const rs = await withChildLedger(run, lokiDir(), "reviewer")(sArgv, { env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000, ...(onFirstResponse ? { onFirstStdout: onFirstResponse } : {}) }); // FC-REVIEWER-GIT-CONFIG-EXEC // COST-WALL: result JSON carries total_cost_usd
+      const sArgv = [...argv, "-p", prompt, "--json-schema", schemaContent, "--output-format", ...(onFirstResponse ? ["stream-json", "--verbose"] : ["json"])];
+      const rs = await withChildLedger(streamed("json"), lokiDir(), "reviewer")(sArgv, { env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, timeoutMs: 600_000, ...(onFirstResponse ? { onFirstStdout: onFirstResponse } : {}) }); // FC-REVIEWER-GIT-CONFIG-EXEC // COST-WALL: result JSON carries total_cost_usd
       if (rs.exitCode === 0 && rs.stdout.trim().length > 0) {
         const legacy = rematerializeCodeReview(rs.stdout);
         if (legacy !== null) return legacy;
@@ -1728,11 +1750,11 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
     }
   }
 
-  argv.push("-p", prompt, "--output-format", "text");
+  argv.push("-p", prompt, "--output-format", ...(onFirstResponse ? ["stream-json", "--verbose"] : ["text"]));
 
   // Mirror the bash subcall: cwd-agnostic (the prompt carries the diff), caveman
   // hard-suppressed, generous timeout for a single review turn.
-  const r = await withChildLedger(run, lokiDir(), "reviewer")(argv, { // COST-WALL: text output carries no cost, so this line is unmeasured (a lower bound, never zero)
+  const r = await withChildLedger(streamed("text"), lokiDir(), "reviewer")(argv, { // COST-WALL: text output carries no cost, so this line is unmeasured (a lower bound, never zero)
     env: { ...(reviewerGitEnv(process.cwd(), tokenFreeEnv(process.env)) as Record<string, string>), CAVEMAN_DEFAULT_MODE: "off" }, // FC-REVIEWER-GIT-CONFIG-EXEC
     timeoutMs: 600_000,
     ...(onFirstResponse ? { onFirstStdout: onFirstResponse } : {}),

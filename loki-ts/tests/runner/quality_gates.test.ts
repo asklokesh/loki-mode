@@ -33,6 +33,7 @@ import {
   trackGateFailure,
   resolveDefaultReviewer,
   claudeReviewer,
+  streamFinalResult,
   stubReviewer,
   REVIEWER_UNAVAILABLE_MARKER,
   computeMergeabilityScore,
@@ -2434,6 +2435,15 @@ describe("COST-WALL-c claudeReviewer ledger wiring", () => {
 
 });
 
+// Fake `claude` honouring --output-format like the real CLI: stream-json prints an init event at once, lingers 1s,
+// then the result event; json prints only the result object; text prints only the text. All three carry one verdict.
+const fakeClaudeScript = (verdict: "PASS" | "FAIL"): string => {
+  const finding = verdict === "FAIL" ? `[{"severity":"High","description":"x"}]` : "[]";
+  const text = verdict === "FAIL" ? "VERDICT: FAIL\\nFINDINGS:\\n- [High] x" : "VERDICT: PASS\\nFINDINGS:\\n- None";
+  const result = `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.5,"result":"${text}","structured_output":{"verdict":"${verdict}","findings":${finding}}}`;
+  return `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nfmt=text\nprev=\nfor a in "$@"; do [ "$prev" = "--output-format" ] && fmt="$a"; prev="$a"; done\ncase "$fmt" in\n  stream-json) printf '%s\\n' '{"type":"system","subtype":"init"}'; sleep 1; printf '%s\\n' '${result}';;\n  json) sleep 1; printf '%s\\n' '${result}';;\n  *) printf '${text}\\n'; sleep 1;;\nesac\n`;
+};
+
 // #311: the production reviewer must call onFirstResponse when its child's first stdout byte arrives, so the
 // #270 stagger releases the next reviewer on that event instead of waiting out LOKI_REVIEW_STAGGER_MS.
 // Removing the onFirstStdout wiring in claudeReviewer (either claude path) turns this red.
@@ -2447,7 +2457,7 @@ describe("#311 claudeReviewer calls onFirstResponse on first stdout", () => {
     const bin = join(root, "bin");
     mkdirSync(bin, { recursive: true });
     // Emits the verdict, then lingers 1s: a hook fired on first stdout runs well before the child exits.
-    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nprintf 'VERDICT: PASS\\nFINDINGS:\\n- None\\n'\nsleep 1\n`, { mode: 0o755 });
+    writeFileSync(join(bin, "claude"), fakeClaudeScript("PASS"), { mode: 0o755 });
     process.env["PATH"] = `${bin}:${saved["PATH"]}`;
     process.env["LOKI_DIR"] = join(root, ".loki");
     delete process.env["LOKI_SDK_CODE_REVIEW"];
@@ -2483,4 +2493,56 @@ describe("#311 claudeReviewer calls onFirstResponse on first stdout", () => {
     const out = await claudeReviewer({ reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "p" });
     expect(out).toContain("VERDICT: PASS");
   }, 60000);
+});
+
+// #320: the hook must fire on the first stream event (init), 1s before the result, and the verdict must be the one
+// the non-stream formats give. Dropping stream-json from either claude path, or the final-result reassembly, turns this red.
+describe("#320 claudeReviewer streams so the stagger hook fires before completion", () => {
+  const KEYS = ["PATH", "LOKI_DIR", "LOKI_SDK_CODE_REVIEW", "LOKI_REVIEW_JSON_SCHEMA"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let root = "";
+  const setup = async (schemaOff: boolean) => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    root = mkdtempSync(join(tmpdir(), "loki-fr320-"));
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "claude"), fakeClaudeScript("FAIL"), { mode: 0o755 });
+    process.env["PATH"] = `${bin}:${saved["PATH"]}`;
+    process.env["LOKI_DIR"] = join(root, ".loki");
+    delete process.env["LOKI_SDK_CODE_REVIEW"];
+    if (schemaOff) process.env["LOKI_REVIEW_JSON_SCHEMA"] = "off"; else delete process.env["LOKI_REVIEW_JSON_SCHEMA"];
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+  };
+  afterEach(async () => {
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const args = { reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "review this" };
+
+  for (const [label, schemaOff] of [["text path", true], ["structured path", false]] as const) {
+    it(`${label}: fires more than 500ms before exit and the verdict equals the non-stream one`, async () => {
+      await setup(schemaOff);
+      const plain = await claudeReviewer(args);
+      const t0 = Date.now();
+      let firedAt = -1;
+      const streamed = await claudeReviewer({ ...args, onFirstResponse: () => { firedAt = Date.now() - t0; } });
+      const total = Date.now() - t0;
+      expect(firedAt).toBeGreaterThanOrEqual(0);
+      expect(firedAt).toBeLessThan(total - 500);
+      expect(streamed).toBe(plain);
+      expect(streamed).toContain("VERDICT: FAIL");
+      expect(streamed).toContain("- [High] x");
+    }, 60000);
+  }
+
+  it("streamFinalResult: json keeps the last result object, text unwraps it, a missing result is empty (fail-closed upstream)", () => {
+    const stream = `{"type":"system"}\nnot json\n{"type":"result","result":"VERDICT: PASS","n":1}\n`;
+    expect(JSON.parse(streamFinalResult(stream, "json"))).toEqual({ type: "result", result: "VERDICT: PASS", n: 1 });
+    expect(streamFinalResult(stream, "text")).toBe("VERDICT: PASS\n");
+    expect(streamFinalResult(`{"type":"system"}\n`, "json")).toBe("");
+    expect(streamFinalResult(`{"type":"system"}\n`, "text")).toBe("");
+  });
 });
