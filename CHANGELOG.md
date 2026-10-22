@@ -5,6 +5,10 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.53.0 (2026-10-22)
+
+- Model catalog encodes each model's effort-dependent thinking limit (claude-opus-5 and claude-haiku-5-5 disabled up to high, claude-sonnet-5-5 between_tools up to high), and the SDK judge clamps the thinking type to it instead of sending a request the API refuses. Each clamp is written to the ledger. Refs #314.
+
 ## v11.52.0 (2026-10-22)
 
 ### Added
