@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.43.1 (2026-10-22)
+
+### Changed
+- Structural checks lint every shipped SKILL.md (#259): skill_lint now reads `git ls-files '*SKILL.md'`, so worktree and `.loki` copies no longer report duplicate skill names and turn local-ci red. The OpenClaw skill directory is renamed, and its README points at the new name.
+- The fetch-to-shell lint pattern now also catches:
+  - base64-decoded payloads
+  - process substitution (`<(...)`)
+  - command substitution (`$(...)`)
+  - `tee` stages
+  - `sudo` and `env` wrappers with flags
+
+  Each variant has a planted test, alongside benign controls.
+
 ## v11.43.0 (2026-10-22)
 
 ### Added
