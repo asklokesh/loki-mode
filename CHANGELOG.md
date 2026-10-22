@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.22.0 (2026-10-22)
+
+### Changed
+- SKILL.md now routes to every skills/*.md module in one hop. The Module Loading Protocol is the task-to-module table, and the second-hop index skills/00-index.md is removed. Every live reference to it is updated (#247).
+- tests/test-skill-doc-accuracy.sh check 4 now requires SKILL.md to link every skills/*.md module, and fails if skills/00-index.md is reintroduced (#247).
+
 ## v11.21.0 (2026-10-22)
 
 ### Added
