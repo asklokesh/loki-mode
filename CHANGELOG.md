@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.50.4 (2026-10-22)
+
+### Fixed
+- Parallel groups (#317): every non-fix unit now starts at the same base SHA the slice journal keys on, instead of origin/HEAD. Dispatch, the journal key and integration share one base, so a unit no longer builds on upstream commits the user has not pulled while being merged onto local HEAD.
+
 ## v11.50.3 (2026-10-22)
 
 ### Fixed
