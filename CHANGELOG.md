@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.34.0 (2026-10-22)
+
+### Changed
+- Memory retrieval embeds the search query with the query input type and stored entries with the document type, on providers that support it (Cohere and Voyage). The cache key includes the input type, so stored document embeddings are reused unchanged. Voyage stays opt-in. Refs #287.
+
 ## v11.33.0 (2026-10-22)
 
 ### Changed
