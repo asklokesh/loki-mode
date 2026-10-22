@@ -7715,29 +7715,51 @@ BUDGET_EOF
     log_info "Loki directory initialized: .loki/"
 }
 
-# Write .loki/pricing.json based on active provider
+# Write .loki/pricing.json. The model rows derive from loki-ts/data/model-pricing.json
+# (single source of truth, also read by budget.ts); nothing is hand-kept here.
+# Readers: dashboard/server.py (_load_pricing_from_file, /api/pricing).
+# Fail-safe: an unreadable source (or no python3) writes an empty models map, which the dashboard
+# treats as "use my static defaults".
 _write_pricing_json() {
     local provider="${LOKI_PROVIDER:-claude}"
     local updated
     updated=$(date -u +%Y-%m-%d)
 
-    cat > ".loki/pricing.json" << PRICING_EOF
-{
-  "provider": "${provider}",
-  "updated": "${updated}",
-  "source": "static",
-  "models": {
-    "fable":           {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20, "label": "Fable 5 (top tier)", "provider": "claude"},
-    "claude-fable-5":  {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20, "label": "Fable 5 (top tier)", "provider": "claude"},
-    "opus":            {"input": 4.00,  "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8, "label": "Opus (latest)",   "provider": "claude"},
-    "sonnet":          {"input": 2.00,  "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4, "label": "Sonnet (latest)", "provider": "claude"},
-    "haiku":           {"input": 0.10,  "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5 (latest)",  "provider": "claude"},
-    "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2, "label": "Haiku 4.5", "provider": "claude"},
-    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5", "provider": "claude"},
-    "gpt-5.3-codex":   {"input": 1.75,  "output": 14.00, "label": "GPT-5.3 Codex", "provider": "codex"}
-  }
-}
-PRICING_EOF
+    PRICING_SRC="${SCRIPT_DIR}/../loki-ts/data/model-pricing.json" \
+    PRICING_PROVIDER="$provider" PRICING_UPDATED="$updated" \
+    python3 - > ".loki/pricing.json" << 'PRICING_PY' || printf '{"provider": "%s", "models": {}}\n' "$provider" > ".loki/pricing.json"
+import json, os, sys
+
+src = os.environ["PRICING_SRC"]
+models = {}
+try:
+    with open(src, encoding="utf-8") as fh:
+        rows = json.load(fh)["pricing"]
+    for key, row in rows.items():
+        if not isinstance(row, dict) or "input" not in row or "output" not in row:
+            continue
+        owner = row.get("provider") or ("codex" if key.startswith("gpt-") else "claude")
+        out = {"input": row["input"], "output": row["output"]}
+        if owner == "claude":
+            for field in ("cache_read", "cache_write", "cache_write_1h"):
+                if field in row:
+                    out[field] = row[field]
+            tier = row.get("over_100k")
+            if isinstance(tier, dict) and "input" in tier and "output" in tier:
+                out["over_100k"] = {"input": tier["input"], "output": tier["output"]}
+        out["label"] = row.get("label", key)
+        out["provider"] = owner
+        models[key] = out
+except (OSError, ValueError, KeyError, AttributeError) as exc:
+    sys.stderr.write("loki: warning: cannot derive .loki/pricing.json models from %s: %s\n" % (src, exc))
+    models = {}
+print(json.dumps({
+    "provider": os.environ["PRICING_PROVIDER"],
+    "updated": os.environ["PRICING_UPDATED"],
+    "source": "static",
+    "models": models,
+}, indent=2))
+PRICING_PY
     log_info "Pricing data written: .loki/pricing.json (provider: ${provider})"
 }
 

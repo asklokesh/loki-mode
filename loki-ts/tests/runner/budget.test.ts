@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { PRICING, calculateCostFromRecords, calculateRateLimitBackoff, checkBudgetLimit, isRateLimited, parseRetryAfter, readBudgetState, readEfficiencyDir, writeBudgetState, partialUsagePath, recordPartialStreamCost, loadDefaultMaxCostUsd, resetPricingFallbackWarning } from "../../src/runner/budget.ts";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 let scratch: string;
 
@@ -680,11 +681,37 @@ describe("budget haiku 5.5 pricing", () => {
     });
 
     it("bash _write_pricing_json mirrors the JSON row", () => {
-      const run = readFileSync(join(repoRoot, "autonomy", "run.sh"), "utf8");
-      const m = run.match(/"claude-haiku-5-5":\s*\{"input":\s*([0-9.]+),\s*"output":\s*([0-9.]+)/);
-      expect(m).not.toBeNull();
-      expect(Number(m![1])).toBe(0.1);
-      expect(Number(m![2])).toBe(0.5);
+      // Run the real function against the real pricing file and compare its
+      // output with model-pricing.json (no grep of run.sh source).
+      const work = mkdtempSync(join(tmpdir(), "loki-run-"));
+      try {
+        mkdirSync(join(work, "autonomy"), { recursive: true });
+        mkdirSync(join(work, "loki-ts", "data"), { recursive: true });
+        mkdirSync(join(work, "proj", ".loki"), { recursive: true });
+        writeFileSync(join(work, "loki-ts", "data", "model-pricing.json"), readFileSync(join(repoRoot, "loki-ts", "data", "model-pricing.json")));
+        const script = [
+          `cd ${JSON.stringify(join(work, "proj"))} || exit 1`,
+          `SCRIPT_DIR=${JSON.stringify(join(work, "autonomy"))}`,
+          "log_error() { :; }; log_warn() { :; }; log_info() { :; }",
+          `source <(awk 'f && /^[A-Za-z_][A-Za-z0-9_]*\\(\\) \\{/ {exit} /^_write_pricing_json\\(\\) \\{/ {f=1} f' ${JSON.stringify(join(repoRoot, "autonomy", "run.sh"))})`,
+          "_write_pricing_json",
+        ].join("\n");
+        const r = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+        expect(r.status).toBe(0);
+        const out = JSON.parse(readFileSync(join(work, "proj", ".loki", "pricing.json"), "utf8"));
+        const raw = JSON.parse(readFileSync(join(repoRoot, "loki-ts", "data", "model-pricing.json"), "utf8"));
+        const row = raw.pricing["claude-haiku-5-5"];
+        expect(out.models["claude-haiku-5-5"]).toMatchObject({ input: row.input, output: row.output, cache_read: row.cache_read, cache_write: row.cache_write });
+        expect(row.input).toBe(0.1);
+        expect(row.output).toBe(0.5);
+        // every claude row in the JSON appears in the bash output with the same prices
+        for (const [key, val] of Object.entries(raw.pricing as Record<string, { input: number; output: number }>)) {
+          if (!key.startsWith("claude-")) continue;
+          expect(out.models[key]).toMatchObject({ input: val.input, output: val.output });
+        }
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -350,9 +350,10 @@ grep -Eq "LOKI_MODEL[^_A-Za-z]*=*.*fable" "$LOKI" \
 # ---------------------------------------------------------------------------
 # 3. Pricing-table presence: fable rows at $10/$50 (2x Opus).
 # ---------------------------------------------------------------------------
-# run.sh pricing.json template
-grep -q '"fable":.*"input": 10.00,.*"output": 50.00' "$RUN_SH" \
-  && ok "run.sh pricing.json template has fable 10/50" || bad "run.sh pricing.json fable row missing"
+# run.sh pricing.json rows derive from model-pricing.json (#310); the 10/50 row lives there
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))["pricing"]["fable"]; sys.exit(0 if (r["input"],r["output"])==(10.0,50.0) else 1)' "$REPO_ROOT/loki-ts/data/model-pricing.json" \
+  && grep -q 'model-pricing.json' "$RUN_SH" \
+  && ok "run.sh pricing.json derives fable 10/50 from model-pricing.json" || bad "run.sh pricing.json fable row missing"
 # run.sh check_budget_limit inline dict
 grep -q "'fable': {'input': 10.00, 'output': 50.00" "$RUN_SH" \
   && ok "run.sh check_budget_limit dict has fable 10/50" || bad "run.sh budget dict fable row missing"
