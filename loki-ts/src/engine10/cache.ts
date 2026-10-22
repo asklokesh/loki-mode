@@ -45,7 +45,7 @@ export function writeJson(path: string, dir: string, data: unknown): void {
   writeFileSync(path, JSON.stringify(data));
 }
 /** TEN-STABILITY-45: after a write keep the newest 5 `<prefix>*.json` files (the one just written always survives). Never throws. */
-export function pruneCache(dir: string, prefix: string, keepPath: string, keep = 5): void {
+export function pruneCache(dir: string, prefix: string, keepPath: string, keep = prefix === "slice-" ? 500 : 5): void {
   const mt = (f: string): number => { try { return statSync(resolve(dir, f)).mtimeMs; } catch { return 0; } };
   try { readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json") && f !== basename(keepPath)).sort((x, y) => mt(y) - mt(x) || (x < y ? 1 : -1)).slice(keep - 1).forEach((f) => { try { unlinkSync(resolve(dir, f)); } catch { /* best effort */ } }); } catch { /* prune failure never fails a write */ }
 }
@@ -66,3 +66,12 @@ function viaCache<T>(hit: T | null, build: () => T, save: (m: T) => void): T {
 /** Same tree hash as an earlier fix round: reuse the stored map; otherwise build once and store. */
 export const cachedRepoMap = (dir: string, tree: string, build: () => RepoMap): RepoMap => viaCache(readRepoMapCache(dir, tree), build, (m) => writeRepoMapCache(dir, tree, m));
 export const cachedTestMap = (dir: string, tree: string, build: () => TestMap): TestMap => viaCache(readTestMapCache(dir, tree), build, (m) => writeTestMapCache(dir, tree, m));
+/** #283 slice journal: sha256 of the slice card plus the base sha. A unit whose card and base are unchanged and whose result is journaled is not dispatched again. The length prefix keeps ("ab","c") and ("a","bc") apart. */
+export const sliceKey = (card: string, baseSha: string): string => createHash("sha256").update(`${card.length}:${card}\0${baseSha}`).digest("hex");
+export interface SliceJournalEntry { gid: string; n: number; id: string; head: string }
+const isJournalEntry = (v: unknown): v is SliceJournalEntry => {
+  const e = v as SliceJournalEntry | null;
+  return typeof e === "object" && e !== null && typeof e.gid === "string" && typeof e.id === "string" && typeof e.head === "string" && Number.isInteger(e.n);
+};
+export const readSliceJournal = (dir: string, key: string): SliceJournalEntry | null => readJson<SliceJournalEntry>(resolve(dir, `slice-${key}.json`), isJournalEntry);
+export const writeSliceJournal = (dir: string, key: string, entry: SliceJournalEntry): void => writeAndPrune(resolve(dir, `slice-${key}.json`), dir, "slice-", entry);

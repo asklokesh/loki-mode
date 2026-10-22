@@ -654,7 +654,7 @@ describe("group run: Group Seal and resume", () => {
   };
   const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}, spec = SPEC): Promise<{ code: number; err: string }> => {
     let err = "";
-    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
+    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", LOKI_CACHE_ROOT: `${repo}-cache`, ...env } as NodeJS.ProcessEnv, provider: "claude", spec, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
     return { code, err };
   };
   const groups = (repo: string): string[] => readdirSync(join(repo, ".loki", "groups")).filter((n) => n.startsWith("g"));
@@ -729,6 +729,39 @@ describe("group run: Group Seal and resume", () => {
     expect(calls).toEqual(["u2", "u3"]); // rerun dispatches 2; u1 is skipped
     expect(err).toContain("1 of 3 units already VERIFIED");
     expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, false, false]);
+  });
+
+  test("#283 journal: a fresh group with the same card and base reuses the VERIFIED unit and dispatches 2", async () => {
+    const repo = mkRepo("gr-journal"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    calls.length = 0;
+    sh(["git", "checkout", "-q", "main"], repo); // a run leaves HEAD on the group branch; the user's base is main again
+    const { code, err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
+    expect(code).toBe(0);
+    expect(calls).toEqual(["u2", "u3"]);
+    expect(err).toContain("unit u1 reused from the slice journal");
+    expect(groups(repo).length).toBe(2);
+  });
+  test("#283 journal: a changed base sha misses, all 3 dispatch", async () => {
+    const repo = mkRepo("gr-journal-base"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-base-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    writeFileSync(join(repo, "moved.txt"), "m\n"); sh(["git", "add", "moved.txt"], repo); sh(["git", "commit", "-q", "-m", "moved"], repo);
+    calls.length = 0;
+    expect((await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" })).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+  });
+  test("#283 journal: a moved unit branch head is not reused", async () => {
+    const repo = mkRepo("gr-journal-head"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-head-cache") };
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }), env)).code).toBe(1);
+    const g = groups(repo)[0]!;
+    sh(["git", "checkout", "-q", `loki/unit-${g}-1`], repo);
+    writeFileSync(join(repo, "extra.txt"), "x\n"); sh(["git", "add", "extra.txt"], repo); sh(["git", "commit", "-q", "-m", "moved"], repo);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    expect((await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" })).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
   });
 
   const AC = "## Acceptance criteria\n", BASE = AC + SPEC, REVISED = AC + "- add alpha\n- add beta v2\n- add gamma\n";
