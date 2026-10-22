@@ -21,6 +21,7 @@ import {
   fsyncSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   openSync,
   readSync,
   renameSync,
@@ -30,7 +31,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 let _tmpCounter = 0;
 
@@ -132,6 +133,58 @@ export async function withAppendLock<T>(
       _appendChains.delete(target);
     }
   }
+}
+
+// FC-STALE-SECRET-TMP-NEVER-SWEPT: a secret writer that publishes by rename leaves its owner-only
+// temp (holding the token or key) behind when it is killed between create and rename. Every such
+// writer calls this before it writes. A name is swept when it matches a caller pattern, is a
+// non-directory owned by the current user, and is not in use: a pid-bearing name (capture group 1)
+// is live while that pid exists, any other name must be older than SECRET_TMP_GRACE_MS (a live
+// writer holds its temp for milliseconds). Mirrored in autonomy/lib/mcp-config.sh and
+// autonomy/receipt_jwt.py (SECRET_TMP_GRACE_SECONDS); a test pins the constants together.
+export const SECRET_TMP_GRACE_MS = 60_000;
+export function sweepStaleSecretTmp(dir: string, patterns: RegExp[], now: number = Date.now()): string[] {
+  const swept: string[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return swept;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  for (const name of names) {
+    let m: RegExpMatchArray | null = null;
+    for (const re of patterns) {
+      m = name.match(re);
+      if (m) break;
+    }
+    if (!m) continue;
+    const path = join(dir, name);
+    try {
+      const st = lstatSync(path);
+      if (st.isDirectory() || (uid !== -1 && st.uid !== uid)) continue;
+      if (m[1] !== undefined) {
+        const pid = Number(m[1]);
+        let live = pid === process.pid;
+        if (!live) {
+          try {
+            process.kill(pid, 0);
+            live = true;
+          } catch (e) {
+            live = (e as NodeJS.ErrnoException).code === "EPERM";
+          }
+        }
+        if (live) continue;
+      } else if (now - st.mtimeMs < SECRET_TMP_GRACE_MS) {
+        continue;
+      }
+      unlinkSync(path);
+      swept.push(name);
+    } catch {
+      // raced with another sweeper or the writer's own cleanup: nothing to do
+    }
+  }
+  return swept;
 }
 
 // Test-only: reset internal state so per-target locks from one test do

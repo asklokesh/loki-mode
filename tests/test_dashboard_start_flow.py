@@ -286,3 +286,17 @@ def test_unknown_provider_400_and_no_file(env, tmp_path, monkeypatch):
     assert m._read_secret("../evil") is None
     assert not (tmp_path / ".loki" / "evil").exists()
     assert not [p for p in (tmp_path / ".loki" / "credentials").glob("*")]
+
+
+def test_write_secret_sweeps_the_tmp_a_killed_writer_left(tmp_path, monkeypatch):
+    # FC-STALE-SECRET-TMP-NEVER-SWEPT: a dead pid's tmp goes, a live pid's and another secret's stay.
+    from dashboard import api_start as m
+    monkeypatch.setenv("HOME", str(tmp_path))
+    d = m._creds_dir()
+    dead = d / ".github.99999999.tmp"
+    live = d / (".github.%d.tmp" % os.getppid())
+    other = d / ".openai.99999999.tmp"
+    for f in (dead, live, other):
+        f.write_text("sk-LEAKED")
+    m._write_secret("github", "new")
+    assert sorted(os.listdir(d)) == sorted(["github", live.name, other.name])
