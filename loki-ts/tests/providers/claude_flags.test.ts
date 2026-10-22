@@ -768,6 +768,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     PATH: process.env["PATH"],
     HOME: repo,
     LOKI_MANAGED_SETTINGS: join(repo, "no-such-managed.json"),
+    LOKI_WEB_POLICY: "off", // pre-w2-07 assertions pin the policy-only argv; the web defaults have their own tests below
     LOKI_PERMISSION_POLICY: "compiled",
     ...extra,
   });
@@ -1088,6 +1089,166 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     mkdirSync(join(lay, "src", "policies"), { recursive: true });
     copyFileSync(join(root, "src/policies/claude_permissions.js"), join(lay, "src", "policies", "claude_permissions.js"));
     expect(JSON.parse(run())).toEqual(["--permission-mode", "acceptEdits", "--disallowedTools", "Bash(rm:*)"]);
+  });
+});
+
+describe("claude_flags web and credential default deny (w2-07)", () => {
+  let repo: string;
+  const root = join(import.meta.dir, "../../..");
+  const perms = require(join(root, "src/policies/claude_permissions.js")) as {
+    compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
+    parseWebAllowDomains(raw: string): string[];
+  };
+  const baseEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
+    PATH: process.env["PATH"],
+    HOME: repo,
+    LOKI_MANAGED_SETTINGS: join(repo, "no-such-managed.json"),
+    ...extra,
+  });
+  const bashArgv = (env: NodeJS.ProcessEnv): string[] => {
+    const r = Bun.spawnSync(
+      ["bash", "-c", `source "${root}/providers/claude.sh" 2>/dev/null; _loki_claude_permission_argv; printf '%s\\n' "\${_LOKI_PERM_ARGV[@]}"`],
+      { env: { ...env, LOKI_PROJECT_DIR: repo }, cwd: repo },
+    );
+    return r.stdout.toString().split("\n").filter((l) => l.length > 0);
+  };
+  const denied = (argv: string[]): string[] => (argv[argv.indexOf("--disallowedTools") + 1] ?? "").split(",").filter(Boolean);
+  beforeEach(() => { repo = mkdtempSync(join(tmpdir(), "web-pol-")); });
+  afterEach(() => { rmSync(repo, { recursive: true, force: true }); });
+
+  it("default compile denies WebFetch, WebSearch and credential reads", () => {
+    const d = denied(perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args);
+    expect(d).toContain("WebFetch");
+    expect(d).toContain("WebSearch");
+    expect(d).toContain("Read(//**/.env*)");
+    expect(d).toContain("Read(//**/.aws/**)");
+    expect(d).toContain("Read(//**/.ssh/**)");
+    expect(d).toContain("Read(//**/*.pem)");
+  });
+
+  it("LOKI_WEB_ALLOW_DOMAINS allows only the listed domain; non-ASCII throws", () => {
+    const r = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled", LOKI_WEB_ALLOW_DOMAINS: "docs.python.org" }));
+    const a = r.args[r.args.indexOf("--allowedTools") + 1]!.split(",");
+    expect(a).toEqual(["WebFetch(domain:docs.python.org)"]);
+    expect(denied(r.args)).not.toContain("WebFetch");
+    expect(denied(r.args)).toContain("WebSearch");
+    expect(() => perms.parseWebAllowDomains("d\u043ccs.python.org")).toThrow(/non-ASCII/); // Cyrillic homograph
+    expect(() => perms.parseWebAllowDomains("a b.com")).toThrow();
+    const bad = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled", LOKI_WEB_ALLOW_DOMAINS: "d\u043ccs.python.org" }));
+    expect(bad.args).toEqual(["--permission-mode", "plan"]); // fails closed
+  });
+
+  it("legacy permissionArgv keeps bypass and denies WebFetch; bash argv is byte-equal", () => {
+    const env = baseEnv({ LOKI_PERMISSION_POLICY: "legacy" });
+    const ts = permissionArgv(repo, env, () => {});
+    expect(ts[0]).toBe("--dangerously-skip-permissions");
+    expect(denied(ts)).toContain("WebFetch");
+    expect(bashArgv(env)).toEqual(ts);
+    const c = baseEnv({ LOKI_PERMISSION_POLICY: "compiled", LOKI_WEB_ALLOW_DOMAINS: "docs.python.org" });
+    expect(bashArgv(c)).toEqual(permissionArgv(repo, c, () => {}));
+    expect(sdkPermissionOptions(repo, env).disallowedTools).toContain("WebSearch");
+  });
+
+  it("legacy with an allowlist still denies WebFetch (deny beats allow) and warns", () => {
+    const warns: string[] = [];
+    const a = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_ALLOW_DOMAINS: "docs.python.org" }), (m) => warns.push(m));
+    expect(denied(a)).toContain("WebFetch");
+    expect(warns.join("\n")).toContain("LOKI_WEB_ALLOW_DOMAINS");
+  });
+
+  it("credential deny rules are root-anchored so paths outside the repo are covered (B1)", () => {
+    const cred = (argv: string[]) => denied(argv).filter((d) => d.startsWith("Read("));
+    for (const argv of [
+      perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args,
+      permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {}),
+    ]) {
+      expect(cred(argv).length).toBe(4);
+      for (const r of cred(argv)) expect(r.startsWith("Read(//**/")).toBe(true);
+      expect(cred(argv)).toContain("Read(//**/.aws/**)"); // matches /home/u/.aws/credentials, outside cwd
+      expect(cred(argv).some((r) => r.startsWith("Read(**/"))).toBe(false);
+    }
+  });
+
+  // Minimal model of a Claude Read rule: "//" anchors at the root, "**/" spans directories, "*" stays in one segment.
+  const ruleMatches = (rule: string, path: string): boolean => {
+    const g = rule.slice("Read(//".length, -1);
+    const re = g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\//g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, "(?:.*/)?");
+    return new RegExp(`^${re}$`).test(path.replace(/^\//, ""));
+  };
+  const readDenied = (path: string): boolean => {
+    const argvs = [
+      perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args,
+      permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {}),
+    ];
+    const hits = argvs.map((a) => denied(a).some((r) => r.startsWith("Read(") && ruleMatches(r, path)));
+    expect(hits[0]).toBe(hits[1]);
+    return hits[0]!;
+  };
+
+  it("every .env variant that can carry a secret is denied, derived from the shipped rule", () => {
+    for (const f of [".env", ".env.local", ".envrc", ".env.prod", ".env.production", ".env.staging.local", ".env.keys", ".env.vault", ".env.secrets", ".env.bak"]) {
+      expect(readDenied(`/work/app/${f}`)).toBe(true);
+    }
+    // Templates are blocked too: a deny beats any allow, so they cannot be carved out of the glob.
+    for (const f of [".env.example", ".env.sample", ".env.template"]) expect(readDenied(`/work/app/${f}`)).toBe(true);
+    expect(readDenied("/home/u/.aws/credentials")).toBe(true);
+    expect(readDenied("/work/app/key.pem")).toBe(true);
+    expect(readDenied("/work/app/README.md")).toBe(false);
+  });
+
+  it("a punycode (xn--) allow domain is rejected and fails closed to plan", () => {
+    expect(() => perms.parseWebAllowDomains("xn--80ak6aa92e.com")).toThrow(/punycode/);
+    expect(() => perms.parseWebAllowDomains("docs.xn--e1afmkfd.org")).toThrow(/punycode/);
+    const bad = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled", LOKI_WEB_ALLOW_DOMAINS: "xn--80ak6aa92e.com" }));
+    expect(bad.args).toEqual(["--permission-mode", "plan"]);
+  });
+
+  it("the legacy route fails closed to plan when the policy module throws, never to allow (B2)", () => {
+    const warns: string[] = [];
+    const env = new Proxy(baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), {
+      get(t, k) { if (k === "LOKI_WEB_POLICY") throw new Error("boom"); return (t as Record<string | symbol, unknown>)[k]; },
+    });
+    const argv = permissionArgv(repo, env, (m) => warns.push(m));
+    expect(argv).toEqual(["--permission-mode", "plan"]);
+    expect(argv).not.toContain("--dangerously-skip-permissions");
+    expect(warns.join("\n")).toContain("most restrictive");
+  });
+
+  it("an unusable web policy fails closed to plan with a warning on bash, python and TS alike (B2)", () => {
+    const env = baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_ALLOW_DOMAINS: "a b" });
+    const warns: string[] = [];
+    const ts = permissionArgv(repo, env, (m) => warns.push(m));
+    expect(ts).toEqual(["--permission-mode", "plan"]);
+    expect(warns.join("\n")).toContain("most restrictive");
+    const py = Bun.spawnSync(
+      ["python3", "-c", `import sys, json; sys.path.insert(0, "${root}/autonomy/lib"); from claude_permissions import claude_permission_argv; print(json.dumps(claude_permission_argv("${repo}")))`],
+      { env: { ...env, LOKI_PROJECT_DIR: repo }, cwd: repo },
+    );
+    expect(JSON.parse(py.stdout.toString())).toEqual(ts);
+    expect(py.stderr.toString()).toContain("most restrictive");
+    expect(bashArgv(env)).toEqual(ts);
+  });
+
+  it("with node missing, legacy fails closed to plan with a warning on bash and python (B2)", () => {
+    const empty = join(repo, "empty-bin"); mkdirSync(empty);
+    const env = { ...baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), LOKI_PROJECT_DIR: repo };
+    const bash = Bun.spawnSync(["/bin/bash", "-c", `source "${root}/providers/claude.sh" 2>/dev/null; PATH="${empty}"; _loki_claude_permission_argv; printf '%s\\n' "\${_LOKI_PERM_ARGV[@]}"`], { env, cwd: repo });
+    expect(bash.stdout.toString().split("\n").filter(Boolean)).toEqual(["--permission-mode", "plan"]);
+    expect(bash.stderr.toString()).toContain("most restrictive");
+    const pyBin = Bun.which("python3")!;
+    const py = Bun.spawnSync([pyBin, "-c", `import sys, json; sys.path.insert(0, "${root}/autonomy/lib"); from claude_permissions import claude_permission_argv; print(json.dumps(claude_permission_argv("${repo}")))`], { env: { ...env, PATH: empty }, cwd: repo });
+    expect(JSON.parse(py.stdout.toString())).toEqual(["--permission-mode", "plan"]);
+    expect(py.stderr.toString()).toContain("most restrictive");
+  });
+
+  it("LOKI_WEB_POLICY=off restores the pre-w2-07 argv; an operator allow of a web tool keeps it", () => {
+    expect(permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_POLICY: "off" }), () => {})).toEqual(["--dangerously-skip-permissions"]);
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.json"), JSON.stringify({ claude_permissions: { mode: "acceptEdits", allow: ["WebFetch", "WebSearch"] } }));
+    const r = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" }));
+    expect(r.args[r.args.indexOf("--allowedTools") + 1]).toBe("WebFetch,WebSearch");
+    expect(denied(r.args)).not.toContain("WebFetch");
+    expect(denied(r.args)).not.toContain("WebSearch");
   });
 });
 

@@ -209,9 +209,12 @@ describe("runAutonomous E2E with fake claude binary (stream-json)", () => {
       //    -p, <prompt>]
       // The script sees argv WITHOUT $0. Position-tolerant assertions.
       expect(argv[0]).toBe("--dangerously-skip-permissions");
-      expect(argv[1]).toBe("--model");
-      // Position 2 = model name. Just assert non-empty.
-      expect(argv[2]?.length ?? 0).toBeGreaterThan(0);
+      // w2-07: legacy also carries --disallowedTools <web + credential deny rules> right after the bypass flag.
+      expect(argv[1]).toBe("--disallowedTools");
+      expect(argv[2]).toContain("WebFetch");
+      const modelIdx = argv.indexOf("--model");
+      expect(modelIdx).toBeGreaterThan(-1);
+      expect(argv[modelIdx + 1]?.length ?? 0).toBeGreaterThan(0);
 
       // -p marker exists, with a non-empty prompt immediately after.
       const promptIdx = argv.indexOf("-p");

@@ -95,6 +95,34 @@ model sees a countdown across the whole loop and wraps up instead of running out
 It is advisory only; `LOKI_BUDGET_LIMIT` is the enforcing cap. Unset, zero or a
 non-integer sends nothing.
 
+### Web access is now off by default
+
+Claude workers can no longer search or fetch from the web, and cannot read secret
+files, unless you opt in. This is intended, not a bug. A worker that follows a
+prompt-injected instruction in a web page or a file could otherwise send your
+credentials to an outside site, so the default denies the tools that make that
+possible:
+
+- `WebFetch` and `WebSearch` are denied.
+- `Read` of anything matching `.env*` (so `.env`, `.env.local`, `.envrc`, `.env.prod`, `.env.keys`, and the templates `.env.example`, `.env.sample`, `.env.template`), `*.pem`, and anything under `.aws/` or `.ssh/` is denied, anywhere on disk. The templates are blocked too: a deny beats any allow, so they cannot be carved out of the glob without missing secret names.
+
+This applies to every Claude route (shell, TypeScript and Python launch sites),
+whether `LOKI_PERMISSION_POLICY` is `compiled` or `legacy`. If the policy cannot
+be compiled (invalid `LOKI_WEB_ALLOW_DOMAINS`, or Node missing), Loki prints a
+warning and runs in `plan` mode instead of skipping the rules. Punycode (`xn--`)
+domains are rejected the same way.
+
+This is not complete secret-file protection: `Read` denies do not stop
+`Bash(cat .env)` under `--dangerously-skip-permissions`.
+
+To turn web access back on:
+
+| Setting | Effect |
+|---|---|
+| `LOKI_WEB_ALLOW_DOMAINS=docs.python.org,*.example.com` | Allows `WebFetch` for those hostnames only (comma list, ASCII hostnames). `WebSearch` stays denied. Enforced with `LOKI_PERMISSION_POLICY=compiled`; the legacy route keeps both web tools denied and warns. |
+| `allow` entry for `WebFetch` or `WebSearch` in your `claude_permissions` policy | Keeps that tool enabled. |
+| `LOKI_WEB_POLICY=off` | Disables this policy entirely: no web or credential deny rules, the previous behavior. |
+
 ## Steering the loop
 
 These control how the engine decides what to do next. Every one is on by

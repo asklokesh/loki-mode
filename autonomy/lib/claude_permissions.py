@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-_LEGACY = ["--dangerously-skip-permissions"]
 _FAIL_CLOSED = ["--permission-mode", "plan"]
 _unknown_warned = False
 
@@ -30,16 +29,37 @@ def _has_operator_policy(node: str | None, helper: Path, env: dict) -> bool:
     return done.stdout.strip() == "1"
 
 
+def _legacy_argv(env: dict) -> list:
+    """Legacy bypass flag plus the default web/credential deny rules (w2-07), from the same js helper.
+
+    An unusable compiler fails closed to plan with a warning, like compiled mode and the TS route.
+    """
+    helper = Path(__file__).resolve().parents[2] / "src" / "policies" / "claude_permissions.js"
+    node = shutil.which("node")
+    if node is None or not helper.is_file():
+        print("[loki] WARNING: legacy permission policy: compiler unavailable; using most restrictive mode (plan)", file=sys.stderr)
+        return list(_FAIL_CLOSED)
+    try:
+        done = subprocess.run([node, str(helper), "--legacy-args"], capture_output=True, text=True,
+                              timeout=30, env=dict(env), check=False)
+    except (OSError, subprocess.SubprocessError):
+        return list(_FAIL_CLOSED)
+    if done.stderr:
+        sys.stderr.write(done.stderr)
+    args = [a for a in done.stdout.split("\n") if a]
+    return args if done.returncode == 0 and args else list(_FAIL_CLOSED)
+
+
 def claude_permission_argv(project_dir: str | None = None, env: dict | None = None) -> list:
     env = os.environ if env is None else env
     mode = env.get("LOKI_PERMISSION_POLICY", "")
     if mode == "legacy":
-        return list(_LEGACY)
+        return _legacy_argv(env)
     global _unknown_warned
     helper = Path(__file__).resolve().parents[2] / "src" / "policies" / "claude_permissions.js"
     node = shutil.which("node")
     if mode == "" and not _has_operator_policy(node, helper, env):
-        return list(_LEGACY)
+        return _legacy_argv(env)
     if mode not in ("", "compiled") and not _unknown_warned:
         _unknown_warned = True
         print(f"[loki] WARNING: LOKI_PERMISSION_POLICY={mode}: unknown value; using compiled", file=sys.stderr)

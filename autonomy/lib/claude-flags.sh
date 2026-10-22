@@ -1138,9 +1138,22 @@ loki_permission_policy_banner() {
 _loki_claude_permission_argv() {
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     _loki_permission_warn_unknown_once
-    [ "$(_loki_permission_policy_mode)" = "legacy" ] && return 0
     local _helper _out _a
     _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src/policies/claude_permissions.js"
+    if [ "$(_loki_permission_policy_mode)" = "legacy" ]; then
+        # w2-07: legacy keeps bypass but carries the default web/credential deny rules (same js source).
+        # Unusable compiler or helper failure fails closed to plan, like compiled mode and the TS route.
+        _LOKI_PERM_ARGV=(--permission-mode plan)
+        if ! command -v node >/dev/null 2>&1 || [ ! -f "$_helper" ]; then
+            echo "[loki] WARNING: legacy permission policy: compiler unavailable; using most restrictive mode (plan)" >&2
+            return 0
+        fi
+        _out="$(node "$_helper" --legacy-args)" || return 0
+        [ -n "$_out" ] || return 0
+        _LOKI_PERM_ARGV=()
+        while IFS= read -r _a; do _LOKI_PERM_ARGV+=("$_a"); done <<< "$_out"
+        return 0
+    fi
     _LOKI_PERM_ARGV=(--permission-mode plan)
     if ! command -v node >/dev/null 2>&1 || [ ! -f "$_helper" ]; then
         echo "[loki] WARNING: compiled permission policy: compiler unavailable; using most restrictive mode (plan)" >&2

@@ -298,6 +298,7 @@ fi
 # Test 13: P12-26 permission policy flags (claude)
 # ===========================================
 log_test "claude permission argv: default is compiled only with an operator policy (else legacy); legacy keeps skip-permissions; unknown fails closed to compiled"
+export LOKI_WEB_POLICY=off # w2-07: these assertions pin the policy-only argv; defaults are tested in Test 13b
 _pp_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pp.XXXXXX")"
 mkdir -p "$_pp_dir/.loki"
 printf '%s' '{"claude_permissions":{"mode":"acceptEdits","allow":["Read","Bash(rm:*)"],"deny":["Bash(rm:*)"]}}' > "$_pp_dir/.loki/policies.json"
@@ -340,10 +341,32 @@ else
     log_fail "permission argv mismatch: leg=[$_pp_leg] unk=[$_pp_unk] banner=[$_pp_banner_def] def=[$_pp_def] cmp=[$_pp_cmp] bad=[$_pp_bad] nopol_banner=[$_pp_banner_nopol] nopol_unset=[$_pp_nopol_unset] nopol_cmp=[$_pp_nopol_cmp] yaml_cost=[$_pp_yaml_cost] yaml_cp=[$_pp_yaml_cp]"
 fi
 
+unset LOKI_WEB_POLICY
+
+# ===========================================
+# Test 13b: w2-07 default web and credential deny on the bash route
+# ===========================================
+log_test "claude permission argv: web tools and credential reads denied by default; LOKI_WEB_POLICY=off restores"
+_pw_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pw.XXXXXX")"
+# shellcheck disable=SC2016
+_pw_probe='source "$1/providers/claude.sh" 2>/dev/null; _loki_claude_permission_argv; printf "%s|" "${_LOKI_PERM_ARGV[@]}"'
+_pw_want="--dangerously-skip-permissions|--disallowedTools|WebFetch,WebSearch,Read(//**/.env*),Read(//**/.aws/**),Read(//**/.ssh/**),Read(//**/*.pem)|"
+_pw_leg=$(env -u LOKI_WEB_POLICY LOKI_PERMISSION_POLICY=legacy HOME="$_pw_dir" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/..")
+_pw_off=$(LOKI_WEB_POLICY=off LOKI_PERMISSION_POLICY=legacy HOME="$_pw_dir" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/..")
+_pw_allow=$(env -u LOKI_WEB_POLICY LOKI_PERMISSION_POLICY=compiled LOKI_WEB_ALLOW_DOMAINS=docs.python.org HOME="$_pw_dir" LOKI_MANAGED_SETTINGS="$_pw_dir/none.json" LOKI_PROJECT_DIR="$_pw_dir" bash -c "$_pw_probe" _ "$PROVIDERS_DIR/.." 2>/dev/null)
+rm -rf "$_pw_dir"
+if [ "$_pw_leg" = "$_pw_want" ] && [ "$_pw_off" = "--dangerously-skip-permissions|" ] \
+   && [ "$_pw_allow" = "--permission-mode|acceptEdits|--allowedTools|WebFetch(domain:docs.python.org)|--disallowedTools|WebSearch,Read(//**/.env*),Read(//**/.aws/**),Read(//**/.ssh/**),Read(//**/*.pem)|" ]; then
+    log_pass "default deny, opt-out, and domain allowlist on the bash route"
+else
+    log_fail "web policy argv: leg=[$_pw_leg] off=[$_pw_off] allow=[$_pw_allow]"
+fi
+
 # ===========================================
 # Test 14: P12-26b quickstart + python sites reach the shared helper
 # ===========================================
 log_test "quickstart classify and magic debate honor LOKI_PERMISSION_POLICY (stub claude)"
+export LOKI_WEB_POLICY=off # w2-07: pin the policy-only argv (see Test 13b)
 _pq_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pq.XXXXXX")"
 mkdir -p "$_pq_dir/.loki" "$_pq_dir/bin"
 printf '%s' '{"claude_permissions":{"mode":"acceptEdits","deny":["Bash(rm:*)"]}}' > "$_pq_dir/.loki/policies.json"
@@ -374,10 +397,13 @@ else
     log_fail "p12-26b mismatch: qs_def=[$_pq_def] qs_cmp=[$_pq_cmp] py_def=[$_pq_pdef] py_cmp=[$_pq_pcmp]"
 fi
 
+unset LOKI_WEB_POLICY
+
 # ===========================================
 # Test 15: P12-26b helper leaks no exports and fails closed
 # ===========================================
 log_test "loki _loki_perm_argv_for: no caveman leak under legacy, plan when helper missing"
+export LOKI_WEB_POLICY=off # w2-07: pin the policy-only argv (see Test 13b)
 _pl_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pl.XXXXXX")"
 sed -n '/^_loki_perm_argv_for() {/,/^}/p' "$PROVIDERS_DIR/../autonomy/loki" > "$_pl_dir/fn.sh"
 # shellcheck disable=SC2016
@@ -399,6 +425,8 @@ if [ "$_pl_leak" = "full|--dangerously-skip-permissions" ] \
 else
     log_fail "p12-26b helper: leak=[$_pl_leak] cmpleak=[$_pl_cmpleak] miss=[$_pl_miss] qs=[$_pl_qs]"
 fi
+
+unset LOKI_WEB_POLICY
 
 # Test 16: P12-27 OTel passthrough (set vars only, unchanged, never invented)
 echo ""

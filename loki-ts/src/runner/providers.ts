@@ -60,6 +60,11 @@ import { applyAliasPin, modelRouteEnv, modelRouteModel, otelPassthroughEnv } fro
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
 
+// Q18-04: the stage deny list (LOKI_E10_DISALLOWED_TOOLS) is added to the policy deny list, never replaces it.
+export function mergeDisallowedTools(policy: string[] | undefined, stageCsv: string): string[] {
+  return [...new Set([...(policy ?? []), ...stageCsv.split(",").filter(Boolean)])];
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -863,6 +868,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // MW-2: LOKI_E10_RESUME_SESSION is set only by engine10 session.ts from a per-call resumeSessionId: the default spec-conflict
         // (FC-19) and empty-done (FC-43) resumes on claude, and the CH-03 chain under opt-in LOKI_E10_FIX_RESUME. It is read from process.env here, before the LOKI_E10_* strip above applies to the child's env.
         const resumeId = process.env["LOKI_E10_RESUME_SESSION"] || undefined;
+        const permissionOpts = sdkPermissionOptions(call.cwd);
         const q = query({
           prompt: call.prompt,
           options: {
@@ -871,8 +877,8 @@ export function sdkQueryProvider(): ProviderInvoker {
             cwd: call.cwd,
             // P12-26c: honours LOKI_PERMISSION_POLICY via the shared resolver. Legacy keeps
             // bypassPermissions + the required allowDangerouslySkipPermissions companion.
-            ...sdkPermissionOptions(call.cwd),
-            ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? { disallowedTools: process.env["LOKI_E10_DISALLOWED_TOOLS"].split(",").filter(Boolean) } : {}), // Q18-04
+            ...permissionOpts,
+            ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? { disallowedTools: mergeDisallowedTools(permissionOpts.disallowedTools, process.env["LOKI_E10_DISALLOWED_TOOLS"]) } : {}), // Q18-04: merged with, never replacing, the policy deny list
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
             // S41-11: LOKI_E10_TRIM=1, default off. Read directly from

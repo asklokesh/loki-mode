@@ -875,6 +875,7 @@ export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
 interface PermissionsModule {
   compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
   hasOperatorPolicy(e: NodeJS.ProcessEnv): boolean;
+  legacyArgs(e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
 }
 
 function loadPermissionsModule(): PermissionsModule {
@@ -931,7 +932,17 @@ export function permissionArgv(
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
 ): string[] {
-  if (permissionPolicyMode(env, warn) === "legacy") return ["--dangerously-skip-permissions"];
+  if (permissionPolicyMode(env, warn) === "legacy") {
+    // w2-07: legacy keeps bypass but still carries the default web and credential deny rules.
+    try {
+      const l = loadPermissionsModule().legacyArgs(env);
+      l.warnings.forEach(warn);
+      return l.args;
+    } catch (e) {
+      warn(`legacy web policy: compiler unavailable (${(e as Error).message}); using most restrictive mode (plan)`);
+      return ["--permission-mode", "plan"];
+    }
+  }
   try {
     const mod = loadPermissionsModule();
     const r = mod.compile(repoDir, env);
@@ -960,9 +971,6 @@ export function sdkPermissionOptions(
   warn?: (m: string) => void,
 ): SdkPermissionOptions {
   const argv = warn ? permissionArgv(repoDir, env, warn) : permissionArgv(repoDir, env);
-  if (argv.includes("--dangerously-skip-permissions")) {
-    return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
-  }
   const val = (flag: string): string | undefined => {
     const i = argv.indexOf(flag);
     return i >= 0 ? argv[i + 1] : undefined;
@@ -971,6 +979,10 @@ export function sdkPermissionOptions(
     const l = (s ?? "").split(",").filter(Boolean);
     return l.length ? l : undefined;
   };
+  if (argv.includes("--dangerously-skip-permissions")) {
+    const legacyDeny = csv(val("--disallowedTools"));
+    return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...(legacyDeny ? { disallowedTools: legacyDeny } : {}) };
+  }
   const m = val("--permission-mode");
   const modes = ["plan", "default", "acceptEdits", "bypassPermissions"] as const;
   const mode = modes.find((x) => x === m) ?? "plan"; // unreadable mode fails closed

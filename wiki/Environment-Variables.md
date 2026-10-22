@@ -72,6 +72,22 @@ Complete reference for all Loki Mode environment variables.
 rm -rf /,dd if=,mkfs,:(){ :|:& };:
 ```
 
+### Web access and secret files are blocked by default
+
+Claude workers cannot use web search or web fetch, and cannot read secret files, unless you opt in. This is intended: a worker that follows a prompt-injected instruction in a web page or file could otherwise send your credentials to an outside site.
+
+- `WebFetch` and `WebSearch` are denied.
+- `Read` of anything matching `.env*` (so `.env`, `.env.local`, `.envrc`, `.env.prod`, `.env.keys`, and the templates `.env.example`, `.env.sample`, `.env.template`), `*.pem`, and anything under `.aws/` or `.ssh/` is denied, anywhere on disk. The templates are blocked too: a deny beats any allow, so they cannot be carved out of the glob without missing secret names.
+
+This applies to every Claude route, with `LOKI_PERMISSION_POLICY` set to `compiled` or `legacy`. If the policy cannot be compiled (invalid `LOKI_WEB_ALLOW_DOMAINS`, or Node missing), Loki warns and runs in `plan` mode. Punycode (`xn--`) domains are rejected the same way.
+
+This is not complete secret-file protection: `Read` denies do not stop `Bash(cat .env)` under `--dangerously-skip-permissions`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOKI_WEB_ALLOW_DOMAINS` | (unset) | Comma list of ASCII hostnames (for example `docs.python.org,*.example.com`). Allows `WebFetch` for those domains only; `WebSearch` stays denied. Enforced with `LOKI_PERMISSION_POLICY=compiled`; the legacy route keeps both tools denied and warns. |
+| `LOKI_WEB_POLICY` | (unset) | Set to `off` to disable the default web and secret-file rules entirely (the previous behavior). |
+
 ---
 
 ## Enterprise Features

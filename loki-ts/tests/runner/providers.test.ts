@@ -9,7 +9,7 @@
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
-import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
+import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
@@ -1211,5 +1211,15 @@ describe("bad call timeout (TEN-STABILITY-39)", () => {
     expect(providerCallTimeoutMs({ [KEY]: "0" })).toBeUndefined();
     expect(providerCallTimeoutMs({ [KEY]: "30" })).toBe(30000);
     expect(writes.length).toBe(0);
+  });
+});
+
+describe("LOKI_E10_DISALLOWED_TOOLS merge (Q18-04)", () => {
+  it("keeps the policy deny list and the stage deny list, deduplicated", () => {
+    const m = mergeDisallowedTools(["WebFetch", "WebSearch", "Read(//**/.env)"], "Bash(rm:*),WebSearch,");
+    expect(m).toEqual(["WebFetch", "WebSearch", "Read(//**/.env)", "Bash(rm:*)"]);
+  });
+  it("with no policy deny list returns the stage list alone", () => {
+    expect(mergeDisallowedTools(undefined, "A,B")).toEqual(["A", "B"]);
   });
 });
