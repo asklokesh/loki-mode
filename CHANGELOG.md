@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.50.3 (2026-10-22)
+
+### Fixed
+- Command routing (#308): a refused value flag consumes its value instead of leaving it in the positionals. `--parallel` is a boolean on the route parser, as in cmd_start, so `--parallel 3` leaves 3 as a positional. The start flag parity guard now derives each flag's kind (value, optional value or boolean) from the cmd_start main parse loop and fails on any disagreement with route.sh.
+
 ## v11.50.2 (2026-10-22)
 
 ### Fixed
