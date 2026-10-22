@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.24.0 (2026-10-22)
+
+### Fixed
+- Playwright verification now runs a baseline UI smoke check on the first iteration of every session and on the first iteration after a resume, instead of waiting for the interval to elapse. Regressions present at session start are caught immediately. Refs #254.
+
 ## v11.23.0 (2026-10-22)
 
 ### Fixed
