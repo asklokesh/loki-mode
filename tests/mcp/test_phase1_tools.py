@@ -737,6 +737,29 @@ class ResultContractTests(unittest.TestCase):
             kwargs[pname] = 1 if p.annotation is int else ("." if pname in ("repo_path", "path", "prd_path", "receipt_path") else "t1")
         return kwargs
 
+    def test_state_get_follows_a_cwd_switch_between_projects(self):
+        """A session that moves from project A to project B must get B's state."""
+        projects = []
+        try:
+            for phase in ("alpha", "beta"):
+                tmp = tempfile.mkdtemp(prefix="loki-mcp-switch-")
+                projects.append(tmp)
+                os.makedirs(os.path.join(tmp, ".loki"))
+                with open(os.path.join(tmp, ".loki", "autonomy-state.json"), "w") as f:
+                    json.dump({"phase": phase}, f)
+            seen = []
+            for tmp in projects:
+                with _ChdirToTmp(tmp):
+                    body = json.loads(_run(self.server.loki_state_get()))
+                    seen.append(json.dumps(body))
+            self.assertIn("alpha", seen[0])
+            self.assertIn("beta", seen[1])
+            self.assertNotIn("alpha", seen[1])
+        finally:
+            for tmp in projects:
+                shutil.rmtree(tmp, ignore_errors=True)
+            self.server.cleanup_mcp_singletons()
+
     def test_seeded_state_covers_every_loki_path_the_server_reads(self):
         """A new state file the server reads must be seeded here, or the leak
         test below cannot see it."""
@@ -781,11 +804,8 @@ class ResultContractTests(unittest.TestCase):
             tmp = tempfile.mkdtemp(prefix="loki-mcp-partition-")
             try:
                 self._seed(tmp)
-                # both cached managers are bound to the previous tempdir
+                # the learning collector is still bound to the previous tempdir
                 srv.cleanup_mcp_singletons()
-                if getattr(srv, "get_state_manager", None) is not None:
-                    from state.manager import reset_state_manager
-                    reset_state_manager()
                 fn = srv._REGISTERED_FNS[name]
                 with _ChdirToTmp(tmp), \
                         mock.patch("subprocess.run", no_spawn), \

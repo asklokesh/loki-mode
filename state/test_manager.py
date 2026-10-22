@@ -395,6 +395,30 @@ class TestSingletonManager:
 
         reset_state_manager()
 
+    def test_get_state_manager_follows_cwd(self, tmp_path):
+        """The default manager is keyed on the project root, so a cwd change
+        switches to that project's state instead of serving the first one."""
+        reset_state_manager()
+        a, b = tmp_path / "a", tmp_path / "b"
+        for proj, phase in ((a, "alpha"), (b, "beta")):
+            (proj / ".loki").mkdir(parents=True)
+            (proj / ".loki" / "autonomy-state.json").write_text(json.dumps({"phase": phase}))
+        prev = os.getcwd()
+        try:
+            os.chdir(a)
+            mgr_a = get_state_manager(enable_watch=False, enable_events=False)
+            assert mgr_a.get_state(ManagedFile.AUTONOMY)["phase"] == "alpha"
+            assert get_state_manager() is mgr_a
+            os.chdir(b)
+            mgr_b = get_state_manager(enable_watch=False, enable_events=False)
+            assert mgr_b is not mgr_a
+            assert mgr_b.get_state(ManagedFile.AUTONOMY)["phase"] == "beta"
+            os.chdir(a)
+            assert get_state_manager() is mgr_a
+        finally:
+            os.chdir(prev)
+            reset_state_manager()
+
 
 class TestVersionVector:
     """Tests for VersionVector class."""
