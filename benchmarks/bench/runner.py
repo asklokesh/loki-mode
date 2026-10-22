@@ -325,12 +325,41 @@ def materialize_prompt(workdir: str, spec: Dict[str, Any]) -> str:
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 
-def parse_efforts(raw: str) -> List[str]:
-    """Split a comma list of effort levels; reject anything outside EFFORT_LEVELS."""
+def catalog_effort_levels(model: Optional[str]) -> List[str]:
+    """Effort levels providers/model_catalog.json lists for `model` (id, alias or cli alias).
+
+    Raises ValueError for a missing model, an unknown model or a model with no
+    effort parameter, so a sweep never runs a level the model does not accept.
+    """
+    if not model:
+        raise ValueError("--effort sweep needs --model to know which levels to run")
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.environ.get("LOKI_MODEL_CATALOG") or os.path.join(
+        here, "..", "..", "providers", "model_catalog.json")
+    with open(path) as fh:
+        claude = json.load(fh)["providers"]["claude"]
+    mid = claude.get("cli_aliases", {}).get(model, model)
+    for m in claude["models"]:
+        if m["id"] == mid or m.get("alias") == model:
+            levels = [lv for lv in EFFORT_LEVELS if lv in m.get("effort", {}).get("levels", [])]
+            if not levels:
+                raise ValueError("model %r lists no effort levels; nothing to sweep" % model)
+            return levels
+    raise ValueError("model %r is not in the catalog; cannot sweep" % model)
+
+
+def parse_efforts(raw: str, model: Optional[str] = None) -> List[str]:
+    """Split a comma list of effort levels; reject anything outside EFFORT_LEVELS.
+
+    The single value "sweep" is the effort_sweep axis: every level the catalog
+    lists for `model`, low to max.
+    """
+    if raw.strip() == "sweep":
+        return catalog_effort_levels(model)
     levels = [x.strip() for x in raw.split(",") if x.strip()]
     bad = [x for x in levels if x not in EFFORT_LEVELS]
     if not levels or bad:
-        raise ValueError("invalid --effort %r (allowed: %s)" % (
+        raise ValueError("invalid --effort %r (allowed: %s, or sweep)" % (
             bad or raw, ", ".join(EFFORT_LEVELS)))
     return list(dict.fromkeys(levels))
 
@@ -732,7 +761,8 @@ def _main(argv: List[str]) -> int:
     pr.add_argument("--trials", type=int, default=3)
     pr.add_argument("--model", default=None)
     pr.add_argument("--effort", default=None,
-                    help="comma list of effort levels (%s); one result row per "
+                    help="comma list of effort levels (%s), or sweep for every level "
+                         "the catalog lists for --model; one result row per "
                          "level. Default: tier-derived effort, no effort field"
                          % ",".join(EFFORT_LEVELS))
     pr.add_argument("--out", default=None)
@@ -759,7 +789,7 @@ def _main(argv: List[str]) -> int:
                 print(payload)
             return 0
         try:
-            levels = parse_efforts(args.effort)
+            levels = parse_efforts(args.effort, args.model)
         except ValueError as exc:
             print("ERROR: %s" % exc, file=sys.stderr)
             return 2

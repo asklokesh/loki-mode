@@ -136,6 +136,11 @@ echo ""
 # Extract Bun-route values once (JSON blob).
 # ---------------------------------------------------------------------------
 BUN_JSON="$TMPDIR_PARITY/bun.json"
+# Fixture catalog for the effort clamp cells: m-gap lists a non-contiguous set
+# so medium and xhigh are levels the model does not list.
+CLAMP_CATALOG="$TMPDIR_PARITY/clamp-catalog.json"
+printf '%s' '{"providers":{"claude":{"models":[{"id":"m-gap","effort":{"levels":["low","high"]}},{"id":"m-low","effort":{"levels":["low","medium","high"]}},{"id":"m-all","effort":{"levels":["low","medium","high","xhigh","max"]}},{"id":"m-none","effort":{"levels":[]}}]}}}' > "$CLAMP_CATALOG"
+export PARITY_CLAMP_CATALOG="$CLAMP_CATALOG"
 if ! "$BUN_BIN" run tests/parity-extract.ts > "$BUN_JSON" 2>"$TMPDIR_PARITY/bun.err"; then
     echo "FATAL: bun extraction failed:"
     sed 's/^/    /' "$TMPDIR_PARITY/bun.err"
@@ -304,6 +309,40 @@ check_effort() {
         d="$(diff <(printf '%s' "$bash_json" | python3 -m json.tool) <(printf '%s' "$bun_json" | python3 -m json.tool))"
         fail "$name" "DRIFT (diff bash vs bun):
 $d"
+    fi
+}
+
+# Effort clamp on a bad combination: a level the model does not list is clamped
+# down to the highest listed level at or below it (else the lowest listed), and a
+# no-effort model emits nothing. Same fixture catalog on both routes.
+check_effort_clamp() {
+    local name="effort clamp on unlisted levels (claude-flags.sh <-> claude_flags.ts)"
+    local bash_json bun_json
+    bash_json="$(
+        set +u
+        . autonomy/lib/claude-flags.sh >/dev/null 2>&1 || exit 9
+        printf '{'
+        first=1
+        for m in m-gap m-low m-all m-none; do
+            for t in planning development fast; do
+                v="$(LOKI_MODEL_CATALOG="$CLAMP_CATALOG" loki_effort_for_tier "$t" standard "$m")"
+                [ $first -eq 0 ] && printf ','
+                first=0
+                printf '"%s|%s":"%s"' "$m" "$t" "$v"
+            done
+        done
+        printf '}'
+    )"
+    if [ -z "$bash_json" ]; then
+        fail "$name" "could not source claude-flags.sh / call loki_effort_for_tier"
+        return
+    fi
+    bash_json="$(printf '%s' "$bash_json" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin),sort_keys=True))' 2>/dev/null)"
+    bun_json="$(bun_field clamp)"
+    if [ "$bash_json" = "$bun_json" ] && [ "$bash_json" != "{}" ]; then
+        pass "$name"
+    else
+        fail "$name" "DRIFT or empty (bash: $bash_json, bun: $bun_json)"
     fi
 }
 
@@ -514,6 +553,7 @@ $d"
 check_autonomy_override
 check_phase_keys
 check_effort
+check_effort_clamp
 check_fallback
 check_gate_env
 check_report_session_stats
