@@ -298,11 +298,11 @@ export async function withExplain(args: readonly string[], run: (args: readonly 
 // RISKTIER: classify risk on the ARTIFACT (the actual diff), never the prompt, and map the tier to a verification plan.
 // The bash `loki review --risk` scorer (autonomy/lib/review_risk.py) stays a separate 0-100 advisory view.
 export type RiskTier = "low" | "medium" | "high";
-export interface DiffFile { path: string; added: number; deleted: number; status?: "added" | "modified" | "deleted"; deps?: boolean /* set by diffFiles for a dependency manifest whose dependency set changed */ }
+export interface DiffFile { path: string; added: number; deleted: number; status?: "added" | "modified" | "deleted"; deps?: boolean /* set by diffFiles for a dependency manifest whose dependency set changed */; critical?: string /* set by diffFiles: the repo-derived rule (CODEOWNERS, .loki/config.json critical_paths, or an added publish/push/signing/credential line) that makes this file critical */ }
 export interface RiskOverride { from: RiskTier; to: RiskTier; reason: string }
 export interface RiskAssessment {
   version: 1; tier: RiskTier; computed: RiskTier; reasons: string[];
-  stats: { files: number; lines: number; sensitive: string[]; tests_modified: string[]; tests_deleted: string[]; api: string[] };
+  stats: { files: number; lines: number; sensitive: string[]; critical?: string[]; tests_modified: string[]; tests_deleted: string[]; api: string[] };
   checks_selected: string[]; checks_deferred: string[]; // deferred = planned for this tier but NOT run by the fast verify stage; never a pass
   override?: RiskOverride; override_ignored?: string; advisories?: string[]; summary: string;
 }
@@ -400,6 +400,58 @@ export function manifestsWithoutLock(files: DiffFile[]): string[] {
   });
 }
 
+// FC-CRITICAL-CLASS-GRADED-LOW: critical paths come from the repo itself (CODEOWNERS entries, .loki/config.json critical_paths) and from what the diff adds
+// (a push, publish, signing or credential call), never from a list of one repo's paths. SENSITIVE above stays the generic name heuristic.
+const SEM_RULES: [string, RegExp][] = [
+  ["git push", /\bgit\s+(-\S+\s+)*push\b/],
+  ["publish command", /\b(npm|pnpm|yarn|bun)\s+publish\b|\btwine\s+upload\b|\bcargo\s+publish\b|\bdocker\s+push\b|\bgh\s+release\s+create\b|\bgem\s+push\b/],
+  ["signing call", /\bcosign\s+sign\b|\bjwt\.sign\(|\bcreateSign\(|\bcreateHmac\(|\bhmac\.new\(|\bgpg\b[^\n]*--(detach-)?sign\b|\bminisign\s+-S\b/i],
+  ["credential or token", /\bAuthorization:\s*(Bearer|token)\b|\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\s*[:=]\s*\S/i],
+];
+const DOC_FILE = /\.(md|mdx|txt|rst|adoc)$/i;
+/** gitignore-style glob to RegExp: a pattern with a "/" anchors at the root, one without matches any basename, trailing "/" is a directory. */
+export function globToRegExp(glob: string): RegExp {
+  let g = glob.trim(); const anchored = g.replace(/\/$/, "").includes("/"), dir = g.endsWith("/");
+  g = g.replace(/^\//, "").replace(/\/$/, "");
+  const body = g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\//g, "\u0001").replace(/\/\*\*/g, "\u0002").replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0001/g, "(.*/)?").replace(/\u0002/g, "(/.*)?");
+  return new RegExp(`${anchored ? "^" : "(^|/)"}${body}${dir ? "/" : "($|/)"}`);
+}
+/** Pure: critical globs with their source label. CODEOWNERS text: the first token of each non-comment line; the match-everything "*" is skipped (it would grade every change critical). */
+export function criticalRulesFrom(codeowners: string | null, configJson: string | null): { glob: string; source: string }[] {
+  const out: { glob: string; source: string }[] = [];
+  for (const l of (codeowners ?? "").split("\n")) { const t = l.replace(/#.*/, "").trim().split(/\s+/)[0] ?? ""; if (t && !/^(\/?\*{1,2}|\/)$/.test(t)) out.push({ glob: t, source: `CODEOWNERS ${t}` }); }
+  try { const c = (JSON.parse(configJson ?? "null") as { critical_paths?: unknown } | null)?.critical_paths; if (Array.isArray(c)) for (const g of c) if (typeof g === "string" && g.trim()) out.push({ glob: g, source: `.loki/config.json critical_paths ${g}` }); } catch { /* unreadable config: CODEOWNERS and diff rules still apply */ }
+  return out;
+}
+const readOr = (p: string): string | null => { try { return readFileSync(p, "utf8"); } catch { return null; } };
+const OWNER_FILES = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
+/** Rules come from the BASE tree when baseSha is given: a diff must not be able to empty, delete or shadow the files that grade it. Without a readable base the working tree is used. */
+export function criticalRules(repoDir: string, baseSha?: string): { glob: string; source: string }[] {
+  const read = (p: string): string | null => {
+    if (!baseSha) return readOr(join(repoDir, p));
+    try { return safeGit(repoDir, ["show", `${baseSha}:${p}`]); } catch { return null; }
+  };
+  const co = OWNER_FILES.map(read).find((t) => t !== null) ?? null;
+  return [
+    ...criticalRulesFrom(co, read(".loki/config.json")),
+    // editing the grading inputs is itself critical, whatever they said before
+    ...OWNER_FILES.map((g) => ({ glob: `/${g}`, source: `ownership file ${g} changed` })),
+    { glob: "/.loki/config.json", source: "critical-paths config .loki/config.json changed" },
+  ];
+}
+// Generic path tokens that name a trust boundary in any repo (split on / . _ -): releasing, publishing, signing, auth, security, sealing, verifying.
+const CRITICAL_TOKENS = /^(release|publish|sign|signing|signer|auth|security|seal|verif\w*)$/i;
+const criticalToken = (path: string): string | undefined => path.split(/[\/._-]+/).find((t) => CRITICAL_TOKENS.test(t));
+/** Pure: the rule that makes a file critical, or undefined. Path rules first, then what the file's added text does. Docs and test files are not graded by their text. */
+export function criticalRuleFor(path: string, addedText: string, rules: { glob: string; source: string }[]): string | undefined {
+  const hit = rules.find((r) => { try { return globToRegExp(r.glob).test(path); } catch { return false; } });
+  if (hit) return hit.source;
+  if (DOC_FILE.test(path) || isTestFile(path)) return undefined;
+  const tok = criticalToken(path); if (tok) return `path names a trust boundary (${tok})`;
+  const sem = SEM_RULES.find(([, re]) => re.test(addedText));
+  return sem ? `added ${sem[0]}` : undefined;
+}
+
 export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process.env): RiskAssessment {
   const lines = files.reduce((n, f) => n + f.added + f.deleted, 0);
   const sensitive = files.flatMap((f) => { const hit = SENSITIVE.find(([, re]) => re.test(f.path)); return hit && !isTestFile(f.path) ? [`${f.path} (${hit[0]})`] : []; });
@@ -408,6 +460,8 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
   const testsModified = [...testFiles.filter((f) => f.status !== "added" && f.status !== "deleted").map((f) => f.path), ...files.filter((f) => TEST_CFG.test(f.path)).map((f) => f.path)];
   const api = files.filter((f) => API.test(f.path) && !isTestFile(f.path)).map((f) => f.path);
   const high: string[] = [], med: string[] = [];
+  const critical = files.filter((f) => f.critical).map((f) => `${f.path} (${f.critical})`);
+  if (critical.length) high.push(`critical class: ${critical.slice(0, 3).join(", ")}${critical.length > 3 ? ` (+${critical.length - 3})` : ""}`);
   if (sensitive.length) high.push(`sensitive paths: ${sensitive.slice(0, 5).join(", ")}${sensitive.length > 5 ? ` (+${sensitive.length - 5})` : ""}`);
   if (testsDeleted.length) high.push(`test files deleted: ${testsDeleted.join(", ")}`);
   if (api.length) high.push(`public API surface: ${api.slice(0, 3).join(", ")}`);
@@ -433,7 +487,7 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
   const summary = summaryOf({ tier, computed, reasons, ...(override ? { override } : {}), checks_deferred }) + (advisories.length ? `; advisory: ${advisories.join(", ")}` : "");
   return {
     version: 1, tier, computed, reasons,
-    stats: { files: files.length, lines, sensitive, tests_modified: testsModified, tests_deleted: testsDeleted, api },
+    stats: { files: files.length, lines, sensitive, ...(critical.length ? { critical } : {}), tests_modified: testsModified, tests_deleted: testsDeleted, api },
     checks_selected: plan.selected, checks_deferred,
     ...(override ? { override } : {}), ...(ignored ? { override_ignored: ignored } : {}), ...(advisories.length ? { advisories } : {}), summary,
   };
@@ -468,6 +522,8 @@ export function changedFiles(repoDir: string, baseSha: string, skip?: (f: string
 /** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
 export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) => boolean): DiffFile[] {
   const paths = changedFiles(repoDir, baseSha, skip), stat = new Map<string, DiffFile>();
+  // changedFiles hides .loki/ (runtime state), but a tracked .loki/config.json is a grading input: a change to it must stay visible to the critical rules
+  try { if (safeGit(repoDir, ["diff", "--no-renames", "--name-only", baseSha, "--", ".loki/config.json"]).trim() && !paths.includes(".loki/config.json")) paths.push(".loki/config.json"); } catch { /* best effort */ }
   // -z with --no-renames: NUL-terminated simple records, so a name with a quote, backslash, tab or newline is never escaped (FC-CHANGED-PATH-QUOTED)
   for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--no-renames", "--numstat", "-z", baseSha]).split("\0")) {
     const [a, d, ...p] = l.split("\t"), path = p.join("\t");
@@ -484,6 +540,18 @@ export function diffFiles(repoDir: string, baseSha: string, skip?: (f: string) =
     let n = 0; try { n = readFileSync(join(repoDir, path), "utf8").split("\n").length; } catch { /* unreadable or binary */ }
     return { path, added: n, deleted: 0, status: "added" as const };
   });
+  const rules = criticalRules(repoDir, baseSha), added = new Map<string, string>();
+  try { // FC-CRITICAL-CLASS-GRADED-LOW: the added lines per file feed the diff-semantic rules; a read failure leaves only the path rules
+    let cur = "";
+    for (const l of safeGit(repoDir, ["-c", "core.quotePath=false", "diff", "--no-renames", "-U0", baseSha]).split("\n")) {
+      if (l.startsWith("+++ b/")) cur = l.slice(6); else if (l.startsWith("+++ ")) cur = ""; else if (cur && l.startsWith("+")) added.set(cur, `${added.get(cur) ?? ""}${l.slice(1)}\n`);
+    }
+  } catch { /* best effort */ }
+  for (const f of out) {
+    let text = added.get(f.path) ?? "";
+    if (!text && f.status === "added") { try { text = readFileSync(join(repoDir, f.path), "utf8"); } catch { /* unreadable or binary */ } }
+    const rule = criticalRuleFor(f.path, text, rules); if (rule) f.critical = rule;
+  }
   for (const f of out) { // TEN-GATES-18: tag manifests whose dependency set changed (advisory input; a read failure leaves it untagged)
     if (f.status === "deleted" || !MANIFEST_LOCKS.some(([m]) => m.test(f.path))) continue;
     try {

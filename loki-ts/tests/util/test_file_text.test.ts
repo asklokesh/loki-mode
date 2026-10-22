@@ -9,6 +9,14 @@ test("isTestFile recognises js, py and go test names", () => {
   expect(isTestFile("src/plain.ts")).toBe(false);
 });
 
+test("isTestFile recognises shell tests under tests/ and test-*.sh names, not other shell", () => {
+  expect(isTestFile("tests/check-seal.sh")).toBe(true);
+  expect(isTestFile("pkg/test/run.bash")).toBe(true);
+  expect(isTestFile("scripts/test-gate.sh")).toBe(true);
+  expect(isTestFile("scripts/release.sh")).toBe(false);
+  expect(isTestFile("tests/fixtures/data.txt")).toBe(false);
+});
+
 test("coveredStem maps names to source stems", () => {
   expect(coveredStem("x/search.test.ts")).toBe("search");
   expect(coveredStem("test_ranker.py")).toBe("ranker");

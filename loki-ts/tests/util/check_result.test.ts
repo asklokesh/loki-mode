@@ -9,10 +9,10 @@ const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
 const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, encoding: "utf8" }).trim();
-function repo(base: Record<string, string>, change: Record<string, string>): ReturnType<typeof classifyRisk> {
+function repo(base: Record<string, string>, change: Record<string, string | null>): ReturnType<typeof classifyRisk> {
   const d = mkdtempSync(join(tmpdir(), "gates18-")); dirs.push(d);
   git(d, "init", "-q");
-  const put = (m: Record<string, string>): void => { for (const [p, c] of Object.entries(m)) { mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), c); } };
+  const put = (m: Record<string, string | null>): void => { for (const [p, c] of Object.entries(m)) { if (c === null) { rmSync(join(d, p)); continue; } mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), c); } };
   put(base); git(d, "add", "-A"); git(d, "commit", "-q", "-m", "base");
   const sha = git(d, "rev-parse", "HEAD"); put(change);
   return classifyRisk(diffFiles(d, sha), {});
@@ -198,5 +198,66 @@ describe("FC-FULL-SUITE-EXIT-CODED-SCRIPT", () => {
   test("framework and ambiguous commands are never exit-coded", () => {
     for (const c of ["pytest -q", "python -m unittest", "npx jest", "yarn test", "bun test", "node --test", "go test ./...", "cargo test", "make check", "./run.sh", "bash scripts/run_tests.sh", "(cd pkg && pnpm run test)", "dotnet test", "mvn test", "tox", "nox -s lint", "python3 -c 'print(1)'"]) expect(isExitCodedScript(c)).toBe(false);
     expect(isExitCodedScript(`(cd tools && ${checker})`)).toBe(true);
+  });
+});
+
+describe("FC-CRITICAL-CLASS-GRADED-LOW critical classes derived from the repo", () => {
+  const OWNERS = "# owners\n*  @org/all\n/ship/  @org/release\n*.pem  @org/sec\n";
+  const cases: { name: string; base: Record<string, string>; change: Record<string, string>; tier: "low" | "high"; reason?: string }[] = [
+    { name: "CODEOWNERS directory entry", base: { CODEOWNERS: OWNERS }, change: { "ship/step.txt": "x\n" }, tier: "high", reason: "CODEOWNERS /ship/" },
+    { name: ".github/CODEOWNERS glob entry", base: { ".github/CODEOWNERS": OWNERS }, change: { "certs/a.pem": "x\n" }, tier: "high", reason: "CODEOWNERS *.pem" },
+    { name: ".loki/config.json critical_paths", base: { ".loki/config.json": JSON.stringify({ critical_paths: ["lib/gate/**"] }) }, change: { "lib/gate/a.txt": "x\n" }, tier: "high", reason: "critical_paths lib/gate/**" },
+    { name: "added signing call", base: { "a.txt": "x\n" }, change: { "tool.sh": "cosign sign --key k img\n" }, tier: "high", reason: "added signing call" },
+    { name: "added publish command", base: { "a.txt": "x\n" }, change: { "rel.sh": "npm publish --tag latest\n" }, tier: "high", reason: "added publish command" },
+    { name: "added git push", base: { "a.txt": "x\n" }, change: { "up.sh": "git push origin main\n" }, tier: "high", reason: "added git push" },
+    { name: "added credential assignment", base: { "a.txt": "x\n" }, change: { "c.py": "api_key = load()\n" }, tier: "high", reason: "added credential or token" },
+    { name: "plain docs change with owners file stays low", base: { CODEOWNERS: OWNERS }, change: { "docs/guide.md": "run git push to share\n" }, tier: "low" },
+    { name: "match-everything owner line is not critical", base: { CODEOWNERS: "* @org/all\n" }, change: { "src/a.txt": "x\n" }, tier: "low" },
+  ];
+  for (const c of cases) test(c.name, () => {
+    const r = repo(c.base, c.change);
+    expect(r.tier).toBe(c.tier);
+    if (c.reason) { expect(r.reasons.join(" ")).toContain(c.reason); expect(r.summary).toContain("critical class"); expect(r.checks_selected).toEqual(expect.arrayContaining(["full test command", "full suite", "council", "security scan"])); }
+    else expect(r.stats.critical).toBeUndefined();
+  });
+});
+
+describe("FC-CRITICAL-CLASS-GRADED-LOW rules are read from the base tree, never the diff", () => {
+  const OWNERS = "/ship/  @org/release\n";
+  const cfg = JSON.stringify({ critical_paths: ["lib/gate/**"] });
+  const cases: { name: string; base: Record<string, string>; change: Record<string, string | null>; reason: string }[] = [
+    { name: "emptied CODEOWNERS still grades the owned path", base: { CODEOWNERS: OWNERS }, change: { CODEOWNERS: "", "ship/a.txt": "x\n" }, reason: "CODEOWNERS /ship/" },
+    { name: "git rm CODEOWNERS still grades the owned path", base: { CODEOWNERS: OWNERS }, change: { CODEOWNERS: null, "ship/a.txt": "x\n" }, reason: "CODEOWNERS /ship/" },
+    { name: "critical_paths set to [] still grades the path", base: { ".loki/config.json": cfg }, change: { ".loki/config.json": JSON.stringify({ critical_paths: [] }), "lib/gate/a.txt": "x\n" }, reason: "critical_paths lib/gate/**" },
+    { name: "root CODEOWNERS shadowing docs/CODEOWNERS still grades the path", base: { "docs/CODEOWNERS": OWNERS }, change: { CODEOWNERS: "* @org/all\n", "ship/a.txt": "x\n" }, reason: "CODEOWNERS /ship/" },
+    { name: "touching CODEOWNERS alone is critical", base: { CODEOWNERS: OWNERS }, change: { CODEOWNERS: "/ship/  @someone-else\n" }, reason: "ownership file CODEOWNERS changed" },
+    { name: "touching .loki/config.json alone is critical", base: { ".loki/config.json": cfg }, change: { ".loki/config.json": "{}\n" }, reason: "critical-paths config .loki/config.json changed" },
+  ];
+  for (const c of cases) test(c.name, () => {
+    const r = repo(c.base, c.change);
+    expect(r.tier).toBe("high");
+    expect(r.reasons.join(" ")).toContain(c.reason);
+  });
+});
+
+describe("FC-CRITICAL-CLASS-GRADED-LOW built-in floor with no CODEOWNERS and no config", () => {
+  const cases: { name: string; path: string; tier: "low" | "high" }[] = [
+    { name: "seal path", path: "src/stages/seal.ts", tier: "high" },
+    { name: "verifier path", path: "lib/verifier/run.py", tier: "high" },
+    { name: "publish path", path: "scripts/publish.sh", tier: "high" },
+    { name: "release path", path: "tools/release/notes.ts", tier: "high" },
+    { name: "signing path", path: "pkg/signing/key_ops.go", tier: "high" },
+    { name: "security path", path: "app/security/policy.ts", tier: "high" },
+    { name: "auth path", path: "web/auth_handler.ts", tier: "high" },
+    { name: "similar words are not tokens (signal, design, sealed-ish)", path: "src/signal_design.ts", tier: "low" },
+    { name: "a test file is not graded by its path", path: "tests/seal.test.ts", tier: "low" },
+    { name: "a shell test under tests/ is not graded by its path", path: "tests/test-seal-check.sh", tier: "low" },
+    { name: "a doc is not graded by its path", path: "docs/release-notes.md", tier: "low" },
+    { name: "ordinary source stays low", path: "src/render/list.ts", tier: "low" },
+  ];
+  for (const c of cases) test(c.name, () => {
+    const r = repo({ "README.txt": "x\n" }, { [c.path]: "export const a = 1;\n" });
+    expect(r.tier).toBe(c.tier);
+    if (c.tier === "high") expect(r.reasons.join(" ")).toContain("trust boundary");
   });
 });
