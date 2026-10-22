@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.42.0 (2026-10-22)
+
+### Changed
+- Reviewer prompts (both the bash and TypeScript quality gates) now put the shared Files changed and diff block first and the reviewer's persona, role and checks last, so parallel reviewers share a cacheable prompt prefix.
+- The TypeScript gate launches the first reviewer, then starts the rest after its first response or after `LOKI_REVIEW_STAGGER_MS` (default 3000; 0 launches all at once). Current reviewers do not emit a first-response signal, so in practice this is a fixed wait of up to 3 seconds. The bash gate is not staggered.
+- Every reviewer, including the devil's advocate, now runs at the same effort (high).
+
 ## v11.41.0 (2026-10-22)
 
 ### Added
