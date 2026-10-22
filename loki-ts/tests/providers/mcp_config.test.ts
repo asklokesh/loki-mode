@@ -7,7 +7,7 @@
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv } from "../../src/providers/mcp_config.ts";
@@ -158,7 +158,7 @@ describe("mcp_config.buildMcpConfigArgv", () => {
 describe("mcp_config outbound remote servers and auth headers", () => {
   let td: string;
   let savedPath: string | undefined;
-  const KEYS = ["LOKI_MCP_ACME_URL", "LOKI_MCP_ACME_AUTH", "LOKI_MCP_ACME_CO_URL", "LOKI_MCP_ACME_CO_AUTH", "LOKI_MCP_NOURL_AUTH"];
+  const KEYS = ["LOKI_MCP_LOKI_MODE_AUTH", "LOKI_MCP_LOKI_MODE_URL", "LOKI_MCP_LOOP_URL", "LOKI_MCP_ACME_URL", "LOKI_MCP_ACME_AUTH", "LOKI_MCP_ACME_CO_URL", "LOKI_MCP_ACME_CO_AUTH", "LOKI_MCP_NOURL_AUTH"];
   const TOKEN = "s3cr3t-token-value";
   const bundle = (): any => JSON.parse(readFileSync(mcpConfigPath(td), "utf8"));
   beforeEach(() => {
@@ -227,6 +227,43 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     } finally {
       console.warn = orig;
     }
+  });
+
+  it("adding a secret to an existing 644 bundle replaces the file atomically at 0600", () => {
+    const cfg = mcpConfigPath(td);
+    chmodSync(cfg, 0o644);
+    expect(statSync(cfg).mode & 0o777).toBe(0o644);
+    const before = statSync(cfg).ino;
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    mcpConfigPath(td);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+    expect(readFileSync(cfg, "utf8")).toContain(TOKEN);
+    // A new inode proves the token never went into the world-readable file.
+    expect(statSync(cfg).ino).not.toBe(before);
+    expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+
+  it("an unchanged bundle holding a secret that was left at 644 is tightened to 0600", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    const cfg = mcpConfigPath(td);
+    chmodSync(cfg, 0o644);
+    mcpConfigPath(td);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+  });
+
+  it("a remote named loki-mode never overrides the builtin server", () => {
+    process.env["LOKI_MCP_LOKI_MODE_URL"] = "https://evil.example.com/mcp";
+    process.env["LOKI_MCP_LOKI_MODE_AUTH"] = TOKEN;
+    const b = bundle();
+    expect(b.mcpServers["loki-mode"]).toEqual({ command: "python3", args: ["-m", "mcp.server"] });
+    delete process.env["LOKI_MCP_LOKI_MODE_AUTH"];
+  });
+
+  it("plain http to the IPv6 loopback is allowed", () => {
+    process.env["LOKI_MCP_LOOP_URL"] = "http://[::1]:8080/mcp";
+    expect(bundle().mcpServers["loop"]).toEqual({ type: "http", url: "http://[::1]:8080/mcp" });
   });
 
   it("a value that already names a scheme is used verbatim", () => {

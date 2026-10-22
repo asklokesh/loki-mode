@@ -296,6 +296,63 @@ refused_case() {
 refused_case "plain http to a non-loopback host" "http://co.example.com/mcp" "$TOKEN_D"
 refused_case "CRLF in the auth value" "https://co.example.com/mcp" "$(printf '%s\r\nX-Evil: 1' "$TOKEN_D")"
 refused_case "LF in the url" "$(printf 'https://co.example.com/mcp\nX-Evil: 1')" "$TOKEN_D"
+
+# A 644 bundle with no secret, then a secret is added: both routes must replace
+# the file (new inode) at 600 with the token present, never write into the 644 file.
+ino_of() { python3 -c "import os,sys; print(os.stat(sys.argv[1]).st_ino)" "$1" 2>/dev/null; }
+bd=$(mktemp -d -t loki-parity-bash-e-XXXX); bu=$(mktemp -d -t loki-parity-bun-e-XXXX)
+LOKI_MCP_ACME_CO_URL="" LOKI_MCP_ACME_CO_AUTH="" run_both "$bd" "$bu"
+chmod 644 "$bd/.loki/mcp-config.json" "$bu/.loki/mcp-config.json"
+ib=$(ino_of "$bd/.loki/mcp-config.json"); iu=$(ino_of "$bu/.loki/mcp-config.json")
+LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp" LOKI_MCP_ACME_CO_AUTH="$TOKEN_D" run_both "$bd" "$bu"
+if [ "$(mode_of "$bd/.loki/mcp-config.json")" = "600" ] && [ "$(mode_of "$bu/.loki/mcp-config.json")" = "600" ] \
+   && grep -q "$TOKEN_D" "$bd/.loki/mcp-config.json" && grep -q "$TOKEN_D" "$bu/.loki/mcp-config.json" \
+   && [ "$ib" != "$(ino_of "$bd/.loki/mcp-config.json")" ] && [ "$iu" != "$(ino_of "$bu/.loki/mcp-config.json")" ]; then
+    ok "parity D: adding a secret to a 644 bundle replaces the file at 600 on both routes"
+else
+    bad "parity D 644 to secret: bash mode=$(mode_of "$bd/.loki/mcp-config.json") bun mode=$(mode_of "$bu/.loki/mcp-config.json")"
+fi
+rm -rf "$bd" "$bu"
+
+# Authorization scheme handling: a bare token gets "Bearer ", a scheme value is verbatim.
+auth_case() {
+    # $1 label, $2 auth value, $3 expected Authorization header
+    local bd bu cb cu
+    bd=$(mktemp -d -t loki-parity-bash-a-XXXX); bu=$(mktemp -d -t loki-parity-bun-a-XXXX)
+    LOKI_MCP_ACME_CO_URL="https://co.example.com/mcp" LOKI_MCP_ACME_CO_AUTH="$2" run_both "$bd" "$bu"
+    cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
+    if [ -n "$cb" ] && [ "$cb" = "$cu" ] && printf '%s' "$cb" | grep -qF "\"Authorization\":\"$3\""; then
+        ok "parity D: $1"
+    else
+        bad "parity D $1: bash=[$cb] bun=[$cu]"
+    fi
+    rm -rf "$bd" "$bu"
+}
+auth_case "bare token gets the Bearer prefix on both routes" "$TOKEN_D" "Bearer $TOKEN_D"
+auth_case "a value naming a scheme is sent verbatim on both routes" "Basic abc123" "Basic abc123"
+
+# A remote named loki-mode must not replace the builtin server on either route.
+bd=$(mktemp -d -t loki-parity-bash-b-XXXX); bu=$(mktemp -d -t loki-parity-bun-b-XXXX)
+LOKI_MCP_LOKI_MODE_URL="https://evil.example.com/mcp" run_both "$bd" "$bu"
+cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
+if [ -n "$cb" ] && [ "$cb" = "$cu" ] && ! printf '%s' "$cb" | grep -q 'evil.example.com' && printf '%s' "$cb" | grep -q '"mcp.server"'; then
+    ok "parity D: a remote named loki-mode does not override the builtin on either route"
+else
+    bad "parity D loki-mode override: bash=[$cb] bun=[$cu]"
+fi
+rm -rf "$bd" "$bu"
+
+# IPv6 loopback over plain http is allowed on both routes.
+bd=$(mktemp -d -t loki-parity-bash-c-XXXX); bu=$(mktemp -d -t loki-parity-bun-c-XXXX)
+LOKI_MCP_LOOP_URL="http://[::1]:8080/mcp" run_both "$bd" "$bu"
+cb=$(canon_of "$bd"); cu=$(canon_of "$bu")
+if [ -n "$cb" ] && [ "$cb" = "$cu" ] && printf '%s' "$cb" | grep -qF 'http://[::1]:8080/mcp'; then
+    ok "parity D: http://[::1] loopback is accepted on both routes"
+else
+    bad "parity D ipv6 loopback: bash=[$cb] bun=[$cu]"
+fi
+rm -rf "$bd" "$bu"
+
 unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH
 
 echo

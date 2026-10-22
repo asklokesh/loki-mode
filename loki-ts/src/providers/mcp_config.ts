@@ -29,7 +29,7 @@
 //   and short-circuits before fs.writeFileSync when equal, preserving mtime.
 // - Variadic emission: separate argv elements per Commander `<configs...>` syntax
 //   verified via `claude --help` (v2.1.34).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { resolve as resolvePath, join, delimiter } from "node:path";
 
 // Phase G: supported LSP binaries. Match autonomy/lib/mcp-config.sh exactly so
@@ -156,8 +156,22 @@ export function mcpConfigPath(targetDir: string): string {
   }
 
   mkdirSync(lokiDir, { recursive: true });
-  writeFileSync(cfgPath, desired, { encoding: "utf8", mode: remote.hasSecret ? 0o600 : 0o666 });
-  if (remote.hasSecret) chmodSync(cfgPath, 0o600);
+  if (!remote.hasSecret) {
+    writeFileSync(cfgPath, desired, { encoding: "utf8", mode: 0o666 });
+    return cfgPath;
+  }
+  // writeFileSync's mode applies only when it creates the file, so writing a
+  // token into an existing 644 bundle would expose it. Write a sibling opened
+  // 0600 and rename it over the target (mirrors tmp + mv in the bash route).
+  const tmpPath = `${cfgPath}.tmp.${process.pid}`;
+  try {
+    rmSync(tmpPath, { force: true });
+    writeFileSync(tmpPath, desired, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    renameSync(tmpPath, cfgPath);
+  } catch (err) {
+    rmSync(tmpPath, { force: true });
+    throw err;
+  }
   return cfgPath;
 }
 
