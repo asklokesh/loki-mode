@@ -20,6 +20,8 @@ export interface LedgerRecord {
   usd?: number;
   source: string;
   cost_status?: "unmeasured";
+  outcome?: string; // judge calls: ok | truncated | refused:<category> | context_exceeded | malformed | transport
+  max_tokens?: number; // judge calls only: the request cap, to read against output_tokens
 }
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isInteger(v) ? v : 0);

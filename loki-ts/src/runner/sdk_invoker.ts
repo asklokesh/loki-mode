@@ -10,9 +10,10 @@
 // Agent SDK; do NOT route agentic work through here.
 //
 // Contract: judgeJson() returns the parsed object matching `schema`, or null on
-// ANY failure (missing key, refusal, transport error, no API key). Callers MUST
-// fail closed on null (the bash sites already do: inconclusive / REJECT / block).
-// It NEVER throws for a normal failure -- null is the single failure signal.
+// ANY failure (missing key, refusal, truncation, transport error, no API key).
+// Callers MUST fail closed on null (the bash sites already do: inconclusive /
+// REJECT / block). It NEVER throws for a normal failure. judgeJsonOutcome()
+// returns the same call as a typed JudgeOutcome naming the cause.
 
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import Anthropic from "@anthropic-ai/sdk";
@@ -63,22 +64,39 @@ export interface JudgeParams {
   schema: Record<string, unknown>; // JSON Schema (draft-07); Loki's loki-ts/data/*.json
   model: string; // full model id, resolved from the catalog
   effort?: Effort;
-  maxTokens?: number;
+  maxTokens?: number; // default sized by effort (EFFORT_MAX_TOKENS), 4096 without one
+  thinking?: Anthropic.ThinkingConfigParam; // forwarded to the request unchanged; unset sends nothing
   timeoutMs?: number;
   system?: string;
   ledger?: { lokiDir: string; phase: string }; // COST-WALL: append this call's usage to .loki/metrics/child-sessions.jsonl
 }
 
+// Thinking tokens count against max_tokens, so a 4096 cap shared by adaptive thinking and the answer starves an xhigh/max judge.
+export const EFFORT_MAX_TOKENS: Record<Effort, number> = { low: 4096, medium: 8192, high: 16384, xhigh: 64000, max: 64000 };
+// The SDK refuses a non-streaming request above this cap; the catch below would turn that throw into a silent null.
+export const STREAM_ABOVE_TOKENS = 21_333;
+export const judgeMaxTokens = (effort?: Effort, maxTokens?: number): number => maxTokens ?? (effort ? EFFORT_MAX_TOKENS[effort] : 4096);
+
+/** One judge request: streamed (finalMessage) above STREAM_ABOVE_TOKENS, else messages.create. */
+async function sendJudge(c: Anthropic, body: Anthropic.MessageCreateParamsNonStreaming, timeoutMs: number, headers?: Record<string, string>): Promise<Anthropic.Message> {
+  const opts = { timeout: timeoutMs, ...(headers ? { headers } : {}) };
+  // A stream's timeout covers only the connection; the signal bounds the whole turn.
+  return body.max_tokens > STREAM_ABOVE_TOKENS ? c.messages.stream(body, { ...opts, signal: AbortSignal.timeout(timeoutMs) }).finalMessage() : c.messages.create(body, opts);
+}
+
 /** COST-WALL: a judge call that threw may still have spent (timeout after the request was accepted): record an unmeasured line, a lower bound never a zero. No-op without params.ledger. */
-export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string): void {
+export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string, outcome = "transport", maxTokens?: number): void {
   if (!ledger) return;
-  appendChildLedger(ledger.lokiDir, unmeasuredRecord(ledger.phase, model, "sdk-judge"));
+  appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, model, "sdk-judge"), outcome, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }) });
 }
 
 /** COST-WALL: one ledger line per SDK judge call, priced from the response usage (the API returns tokens, not dollars). No-op without params.ledger. */
-export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg: { usage?: unknown } | null | undefined): void {
+export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg: { usage?: unknown } | null | undefined, outcome?: string, maxTokens?: number): void {
   if (!ledger) return;
-  appendChildLedger(ledger.lokiDir, recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null));
+  const rec = recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null);
+  if (outcome) rec.outcome = outcome;
+  if (maxTokens !== undefined) rec.max_tokens = maxTokens; // output_tokens against max_tokens shows a cap that truncated the answer
+  appendChildLedger(ledger.lokiDir, rec);
 }
 
 // Same shape as JudgeParams but with no schema: a free-form text turn (grill
@@ -169,100 +187,204 @@ export function __setSdkClientForTests(stub: unknown): void {
   _client = stub as Anthropic;
 }
 
+// Stop reasons are HTTP 200, not errors (handling-stop-reasons). Every judge
+// call resolves to ONE typed outcome so a truncated or refused vote is named,
+// never a bare null.
+export type JudgeOutcome<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "truncated" }
+  | { kind: "refused"; category: string | null }
+  | { kind: "context_exceeded" }
+  | { kind: "malformed" }
+  | { kind: "transport" };
+
+/** Compact name for a non-ok outcome (stderr line, ledger field): "refused:cyber", "truncated". */
+export function describeJudgeOutcome(o: JudgeOutcome<unknown>): string {
+  return o.kind === "refused" && o.category ? `refused:${o.category}` : o.kind;
+}
+
+// Server-side fallback (refusals-and-fallback): the API re-runs a refused turn
+// on a fallback model. Beta header plus "fallbacks": "default". Not available
+// on Batches (retries here are always synchronous). An allowlist: only the
+// Claude 5 Fable, Opus and Sonnet ids support it; Haiku 5.5, older models and
+// unknown overrides (for example claude-opus-4-8) never send "fallbacks".
+const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const TRUNCATION_RETRY_CAP = Math.max(...Object.values(EFFORT_MAX_TOKENS)); // the effort table's ceiling, so an xhigh/max default is never capped below its own size
+
+function fallbackEligible(model: string): boolean {
+  return /^claude-(fable|opus|sonnet)-5(-\d+)?$/i.test(model);
+}
+
+// Refusal categories the default fallback does NOT retry (claude-api model
+// migration guide): Sonnet 5.x retries only cyber and frontier_llm; Opus 5.x
+// never retries reasoning_extraction. Fable per-category routing is unpublished
+// server-side, so retry-all is assumed and fail-safe (a wasted retry, never a
+// lost one). A null category is tried: unknown.
+function fallbackCovers(model: string, category: string | null): boolean {
+  if (category === null) return true;
+  if (/^claude-sonnet-/i.test(model)) return category === "cyber" || category === "frontier_llm";
+  if (/^claude-opus-/i.test(model)) return category !== "reasoning_extraction";
+  return true;
+}
+
+// Server-side fallback is an Anthropic API feature. A gateway or proxy base URL
+// (ANTHROPIC_BASE_URL or the client's own) may reject the beta field, so only
+// the default endpoint gets it.
+const DEFAULT_BASE_URL = "https://api.anthropic.com";
+function onDefaultEndpoint(c: Anthropic): boolean {
+  const raw = (c as { baseURL?: unknown }).baseURL;
+  const url = (typeof raw === "string" && raw ? raw : process.env["ANTHROPIC_BASE_URL"] || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return url.toLowerCase() === DEFAULT_BASE_URL;
+}
+
+// A 400/413 "prompt is too long" is a context overflow, not a transport fault.
+function isContextOverflow(err: unknown): boolean {
+  const e = err as { status?: unknown; message?: unknown; error?: unknown } | null;
+  if (!e || (e.status !== 400 && e.status !== 413)) return false;
+  let detail = String(e.message ?? "");
+  try { detail += " " + JSON.stringify(e.error ?? ""); } catch { /* unserializable body */ }
+  return /prompt is too long|too long|context (window|length)|exceed(s|ed)? .*(context|token|limit)/i.test(detail);
+}
+
+function createWithFallback(
+  c: Anthropic,
+  body: Anthropic.MessageCreateParamsNonStreaming,
+  timeoutMs: number,
+): Promise<Anthropic.Message> {
+  // The dev-OAuth client carries its own default anthropic-beta header; a
+  // per-request header replaces it, so re-send it alongside the fallback beta.
+  const beta = process.env["ANTHROPIC_API_KEY"] ? FALLBACK_BETA : `${OAUTH_BETA_HEADER},${FALLBACK_BETA}`;
+  return sendJudge(c, { ...body, fallbacks: "default" } as Anthropic.MessageCreateParamsNonStreaming, timeoutMs, { "anthropic-beta": beta });
+}
+
+function classifyStop(msg: Anthropic.Message): JudgeOutcome<string> {
+  const text = (msg.content ?? [])
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  switch (msg.stop_reason) {
+    case "max_tokens":
+      return { kind: "truncated" };
+    case "refusal":
+      return { kind: "refused", category: (msg.stop_details as { category?: string } | null)?.category ?? null };
+    case "model_context_window_exceeded":
+      return { kind: "context_exceeded" };
+    case "end_turn":
+    case "stop_sequence":
+      return text.trim() ? { kind: "ok", value: text } : { kind: "malformed" };
+    default:
+      // tool_use, pause_turn, null: text may exist but the turn is not a finished answer.
+      return { kind: "malformed" };
+  }
+}
+
+// Shared core for judgeJson/judgeText. Recovery, bounded to 3 calls:
+//   truncated -> ONE retry with a larger max_tokens
+//   refused   -> ONE retry with server-side fallback (eligible models only)
+// Anything else is returned as its named outcome. Never throws.
+async function runJudge(params: JudgeParams | TextParams, schema: Record<string, unknown> | null): Promise<JudgeOutcome<string>> {
+  const c = client();
+  if (!c) return { kind: "transport" };
+  const { prompt, model, effort, thinking, timeoutMs = 120_000, system, ledger } = params;
+
+  let max = judgeMaxTokens(effort, params.maxTokens);
+  let retriedTruncation = false;
+  let usedFallback = false;
+  let refused: Extract<JudgeOutcome<string>, { kind: "refused" }> | null = null;
+  for (let call = 0; call < 3; call++) {
+    const body: Anthropic.MessageCreateParamsNonStreaming = {
+      model,
+      max_tokens: max,
+      ...(system ? { system } : {}),
+      ...(thinking ? { thinking } : {}),
+      messages: [{ role: "user", content: buildUserContent(prompt) }],
+      // messages.create with output_config.format = { type: 'json_schema', schema }
+      // constrains the model to emit JSON matching the schema. Verified against
+      // @anthropic-ai/sdk@0.111.0 (JSONOutputFormat, OutputConfig). Free-form
+      // text turns send effort only.
+      ...(schema || effort
+        ? { output_config: { ...(effort ? { effort } : {}), ...(schema ? { format: { type: "json_schema" as const, schema } } : {}) } }
+        : {}),
+    };
+    let msg: Anthropic.Message;
+    try {
+      msg = usedFallback
+        ? await createWithFallback(c, body, timeoutMs)
+        : await sendJudge(c, body, timeoutMs);
+    } catch (err) {
+      // A throw, unlike a stop_reason. If the fallback retry threw after a
+      // refusal, the refusal is the real answer; do not downgrade it to transport.
+      if (usedFallback && refused) {
+        noteJudgeFailure(ledger, model, describeJudgeOutcome(refused), max);
+        return refused;
+      }
+      if (isContextOverflow(err)) {
+        noteJudgeFailure(ledger, model, "context_exceeded", max);
+        return { kind: "context_exceeded" };
+      }
+      noteJudgeFailure(ledger, model, "transport", max);
+      return { kind: "transport" };
+    }
+    const outcome = classifyStop(msg);
+    const billed = typeof msg.model === "string" && msg.model ? msg.model : model;
+    noteJudgeUsage(ledger, billed, msg, describeJudgeOutcome(outcome), max);
+
+    if (outcome.kind === "truncated" && !retriedTruncation && Math.min(max * 2, TRUNCATION_RETRY_CAP) > max) {
+      retriedTruncation = true;
+      max = Math.min(max * 2, TRUNCATION_RETRY_CAP);
+      continue;
+    }
+    if (outcome.kind === "refused" && !usedFallback && fallbackEligible(model) && onDefaultEndpoint(c) && fallbackCovers(model, outcome.category)) {
+      usedFallback = true;
+      refused = outcome;
+      continue;
+    }
+    return outcome;
+  }
+  return { kind: "transport" };
+}
+
+/** Run a one-shot schema-constrained judge call and return its typed outcome. */
+export async function judgeJsonOutcome(params: JudgeParams): Promise<JudgeOutcome<Record<string, unknown>>> {
+  // #295: a schema carrying a literal the static schema files do not (run data, a secret) is refused before it reaches the API's 24h schema cache.
+  try { assertStaticSchema(params.schema); } catch (e) { process.stderr.write(`[judge] ${(e as Error).message}\n`); return { kind: "malformed" }; }
+  const o = await runJudge(params, params.schema);
+  if (o.kind !== "ok") return o;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(o.value);
+  } catch {
+    // The schema-constrained turn should always be valid JSON; if a provider/
+    // gateway returned prose, fail closed rather than guess.
+    return { kind: "malformed" };
+  }
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return { kind: "malformed" };
+  return { kind: "ok", value: obj as Record<string, unknown> };
+}
+
 /**
  * Run a one-shot schema-constrained judge call via the raw Anthropic SDK.
- * Returns the parsed object (typed loosely as Record) or null on any failure.
+ * Returns the parsed object (typed loosely as Record) or null on any non-ok
+ * outcome. Callers that need the cause use judgeJsonOutcome.
  */
 export async function judgeJson(params: JudgeParams): Promise<Record<string, unknown> | null> {
-  const c = client();
-  if (!c) return null;
+  const o = await judgeJsonOutcome(params);
+  return o.kind === "ok" ? o.value : null;
+}
 
-  const { prompt, schema, model, effort, maxTokens = 4096, timeoutMs = 120_000, system } = params;
-  // #295: a schema carrying a literal the static schema files do not (run data, a secret) is refused before it reaches the API's 24h schema cache.
-  try { assertStaticSchema(schema); } catch (e) { process.stderr.write(`[judge] ${(e as Error).message}\n`); return null; }
-
-  let noted = false;
-  try {
-    // messages.create with output_config.format = { type: 'json_schema', schema }
-    // constrains the model to emit JSON matching the schema. Verified against
-    // @anthropic-ai/sdk@0.111.0 (JSONOutputFormat, OutputConfig).
-    const msg = await c.messages.create(
-      {
-        model,
-        max_tokens: maxTokens,
-        ...(system ? { system } : {}),
-        messages: [{ role: "user", content: buildUserContent(prompt) }],
-        output_config: {
-          ...(effort ? { effort } : {}),
-          format: { type: "json_schema", schema },
-        },
-      },
-      { timeout: timeoutMs },
-    );
-    noteJudgeUsage(params.ledger, model, msg);
-    noted = true;
-
-    // A structured turn ends with the JSON in a text block. Concatenate text
-    // blocks and JSON.parse. (parse() would type this, but create() keeps us
-    // schema-driven without a compile-time Zod/type dependency.)
-    const text = (msg.content ?? [])
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    if (!text.trim()) return null;
-
-    let obj: unknown;
-    try {
-      obj = JSON.parse(text);
-    } catch {
-      // The schema-constrained turn should always be valid JSON; if a provider/
-      // gateway returned prose, fail closed rather than guess.
-      return null;
-    }
-    if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return null;
-    return obj as Record<string, unknown>;
-  } catch {
-    // Transport / auth / rate-limit / refusal -> single null failure signal.
-    if (!noted) noteJudgeFailure(params.ledger, model);
-    return null;
-  }
+/** Free-form sibling of judgeJsonOutcome. */
+export async function judgeTextOutcome(params: TextParams): Promise<JudgeOutcome<string>> {
+  return runJudge(params, null);
 }
 
 /**
  * Run a one-shot FREE-FORM text call via the raw Anthropic SDK (no schema).
  * The sibling of judgeJson for prose sites (grill, prd-enrich) whose callers
  * parse the text themselves. Returns the concatenated text, or null on any
- * failure (missing key, transport, refusal, empty) -- same single failure
- * signal, so callers fail closed to their existing claude/deterministic path.
+ * non-ok outcome -- same single failure signal, so callers fail closed to their
+ * existing claude/deterministic path.
  */
 export async function judgeText(params: TextParams): Promise<string | null> {
-  const c = client();
-  if (!c) return null;
-
-  const { prompt, model, effort, maxTokens = 4096, timeoutMs = 120_000, system } = params;
-
-  let noted = false;
-  try {
-    const msg = await c.messages.create(
-      {
-        model,
-        max_tokens: maxTokens,
-        ...(system ? { system } : {}),
-        messages: [{ role: "user", content: buildUserContent(prompt) }],
-        // No output_config.format: a plain text turn. effort still applies.
-        ...(effort ? { output_config: { effort } } : {}),
-      },
-      { timeout: timeoutMs },
-    );
-    noteJudgeUsage(params.ledger, model, msg);
-    noted = true;
-    const text = (msg.content ?? [])
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    return text.trim() ? text : null;
-  } catch {
-    if (!noted) noteJudgeFailure(params.ledger, model);
-    return null;
-  }
+  const o = await judgeTextOutcome(params);
+  return o.kind === "ok" ? o.value : null;
 }
