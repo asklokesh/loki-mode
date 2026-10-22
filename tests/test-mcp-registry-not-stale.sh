@@ -48,7 +48,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$REPO_ROOT" || exit 2
 
-REGISTRY_URL="${LOKI_MCP_REGISTRY_URL:-https://registry.modelcontextprotocol.io/v0/servers?search=loki-mode}"
+REGISTRY_URL="${LOKI_TEST_MCP_REGISTRY_URL:-https://registry.modelcontextprotocol.io/v0/servers?search=loki-mode}"
 SERVER_NAME="${LOKI_MCP_SERVER_NAME:-io.github.asklokesh/loki-mode}"
 TIMEOUT="${LOKI_MCP_REGISTRY_TIMEOUT:-20}"
 
