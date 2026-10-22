@@ -13,13 +13,22 @@
 #   docs/v10/CLI-MODERN.md       whole file (existing registry generator)
 # Block markers: <!-- generated:NAME --> ... <!-- /generated -->
 #
-# Usage: scripts/generate-stale-zero.sh [--check]   (--check: exit 1 if anything would change)
+# Usage: scripts/generate-stale-zero.sh [--check|--outputs]
+#   --check:   exit 1 if anything would change
+#   --outputs: print the pathspecs this script may write, one per line (release.sh stages
+#              exactly the files under them that a run changed), then exit
 # shellcheck disable=SC2016
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 CHECK=0
+# Single source for everything this script may write; --check and release.sh both read it.
+OUTPUT_PATHSPEC="SKILL.md README.md wiki helm deploy/helm docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md"
+if [ "${1:-}" = "--outputs" ]; then
+    printf '%s\n' $OUTPUT_PATHSPEC
+    exit 0
+fi
 [ "${1:-}" = "--check" ] && CHECK=1
 
 command -v bun >/dev/null 2>&1 || { echo "generate-stale-zero: bun is required" >&2; exit 1; }
@@ -86,7 +95,7 @@ if [ "$lines" -ge 500 ]; then
     exit 1
 fi
 
-if [ "$CHECK" = 1 ] && [ -n "$(git status --porcelain -- SKILL.md README.md wiki helm deploy/helm docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md)" ]; then
+if [ "$CHECK" = 1 ] && [ -n "$(git status --porcelain -- $OUTPUT_PATHSPEC)" ]; then
     echo "generate-stale-zero: generated facts are stale (run scripts/generate-stale-zero.sh)" >&2
     exit 1
 fi

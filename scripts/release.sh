@@ -754,6 +754,15 @@ SHIP_PHASE_START=0
 SHIP_T0=0
 SHIP_COMMITTED=""
 
+# Tracked files under the generator's declared outputs that differ from HEAD.
+ship_generator_dirty() {
+    local specs
+    [ -x "$ROOT_DIR/scripts/generate-stale-zero.sh" ] || return 0
+    specs="$("$ROOT_DIR/scripts/generate-stale-zero.sh" --outputs)" || return 0
+    # shellcheck disable=SC2086 # pathspecs contain no spaces
+    git -C "$ROOT_DIR" diff --name-only HEAD -- $specs
+}
+
 ship_refuse() {
     log_error "$1: $2"
     if [ -n "$SHIP_COMMITTED" ]; then
@@ -867,7 +876,17 @@ run_ship() {
     ship_require_ancestor
 
     ship_phase "bump version files"
+    # Tracked generator outputs already dirty before the bump are the user's own
+    # edits: they are never staged and never counted as release-produced.
+    ship_gen_pre_dirty="$(ship_generator_dirty)"
     bump_all_version_files "$new"
+    ship_gen_changed=""
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        printf '%s\n' "$ship_gen_pre_dirty" | grep -qxF -- "$f" && continue
+        case " $RELEASE_COMMIT_FILES " in *" $f "*) continue ;; esac
+        ship_gen_changed="$ship_gen_changed $f"
+    done <<<"$(ship_generator_dirty)"
 
     ship_phase "write CHANGELOG section"
     ship_write_changelog "$notes" || ship_refuse SHIP_CHANGELOG_WRITE "could not write CHANGELOG.md"
@@ -880,6 +899,11 @@ run_ship() {
     ship_phase "stage and commit"
     for f in $RELEASE_COMMIT_FILES; do
         if [ -e "$ROOT_DIR/$f" ]; then git -C "$ROOT_DIR" add -- "$f"; fi
+    done
+    # Files the generator rewrote beyond the fixed list (for example every wiki
+    # page carrying the version stamp), staged by name.
+    for f in $ship_gen_changed; do
+        git -C "$ROOT_DIR" add -- "$f"
     done
     for f in loki-ts/dist/loki.js loki-ts/dist/loki.js.map; do
         [ -f "$ROOT_DIR/$f" ] || ship_refuse SHIP_DIST_MISSING "$f does not exist after the build"
@@ -899,7 +923,7 @@ run_ship() {
     hit=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        case " $RELEASE_COMMIT_FILES loki-ts/dist/loki.js loki-ts/dist/loki.js.map " in
+        case " $RELEASE_COMMIT_FILES$ship_gen_changed loki-ts/dist/loki.js loki-ts/dist/loki.js.map " in
             *" $f "*) ;;
             *) hit="$hit $f" ;;
         esac
@@ -914,6 +938,15 @@ run_ship() {
     if [ -n "$(git -C "$ROOT_DIR" diff --name-only HEAD -- VERSION CHANGELOG.md loki-ts/dist/loki.js loki-ts/dist/loki.js.map)" ]; then
         ship_refuse SHIP_DIRTY_AFTER_COMMIT "release files still differ from the commit"
     fi
+    # Anything the generator changed that the commit did not take is a
+    # release-produced file left modified; pre-existing dirt is excluded.
+    left=""
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        printf '%s\n' "$ship_gen_pre_dirty" | grep -qxF -- "$f" && continue
+        left="$left $f"
+    done <<<"$(ship_generator_dirty)"
+    [ -z "$left" ] || ship_refuse SHIP_DIRTY_AFTER_COMMIT "release left generated files modified:$left"
 
     ship_phase "ancestry check"
     ship_require_ancestor
