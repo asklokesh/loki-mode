@@ -187,6 +187,7 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     }
     expect(warns.join("\n")).toContain("LOKI_MCP_REGISTRY_URL");
     expect(warns.join("\n")).toContain("reserved");
+    expect(warns.join("\n")).not.toContain("registry.example.com");
   });
 
   it("an env auth var produces an Authorization header on its remote server", () => {
