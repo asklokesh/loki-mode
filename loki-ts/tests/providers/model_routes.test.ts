@@ -6,6 +6,8 @@ import {
   GATEWAY_LANE_LOSS,
   gatewayLaneLabel,
   otelPassthroughEnv,
+  applyAliasPin,
+  inferenceGeoMultiplier,
 } from "../../src/providers/model_routes.ts";
 
 describe("gatewayLaneLabel", () => {
@@ -45,5 +47,32 @@ describe("otelPassthroughEnv", () => {
   });
   it("never invents values when nothing is set", () => {
     expect(otelPassthroughEnv({})).toEqual({});
+  });
+});
+
+describe("applyAliasPin (ANTHROPIC_DEFAULT_*_MODEL)", () => {
+  it("the sonnet tier resolves to the pinned id, unset resolves to the catalog id", () => {
+    const pinned = applyAliasPin("sonnet", { ANTHROPIC_DEFAULT_SONNET_MODEL: "x" });
+    const unset = applyAliasPin("sonnet", {});
+    console.log(`sonnet pinned=${pinned} unset=${unset}`);
+    expect(pinned).toBe("x");
+    expect(unset).toBe("sonnet");
+  });
+  it("pins each family from its own var and leaves other ids alone", () => {
+    const env = { ANTHROPIC_DEFAULT_OPUS_MODEL: "o", ANTHROPIC_DEFAULT_SONNET_MODEL: "s", ANTHROPIC_DEFAULT_HAIKU_MODEL: "h" };
+    expect(applyAliasPin("opus", env)).toBe("o");
+    expect(applyAliasPin("haiku", env)).toBe("h");
+    expect(applyAliasPin("claude-sonnet-5-5", env)).toBe("claude-sonnet-5-5");
+    expect(applyAliasPin("sonnet", { ANTHROPIC_DEFAULT_SONNET_MODEL: "  " })).toBe("sonnet");
+  });
+});
+
+describe("inferenceGeoMultiplier (LOKI_INFERENCE_GEO)", () => {
+  it("us is 1.1x; unset, global and unknown values are 1x", () => {
+    expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "us" })).toBe(1.1);
+    expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: " US " })).toBe(1.1);
+    expect(inferenceGeoMultiplier({})).toBe(1);
+    expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "global" })).toBe(1);
+    expect(inferenceGeoMultiplier({ LOKI_INFERENCE_GEO: "eu" })).toBe(1);
   });
 });

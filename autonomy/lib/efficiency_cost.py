@@ -32,6 +32,7 @@ __all__ = [
     "read_child_ledger",
     "load_prices",
     "price_from_tokens",
+    "inference_geo_multiplier",
     "DEFAULT_PRICES_PATH",
 ]
 
@@ -47,6 +48,29 @@ DEFAULT_PRICES_PATH = os.path.join(
 # ---------------------------------------------------------------------------
 # small helpers (self-contained copies; proof-generator.py keeps its own)
 # ---------------------------------------------------------------------------
+
+# Price multiplier for LOKI_INFERENCE_GEO, read from the same file the TS gate
+# reads (inference_geo_multipliers in loki-ts/data/model-pricing.json). Unset,
+# global and unknown values are 1.0; an unreadable file falls back to 1.1 for
+# "us" so a budget never silently under-counts.
+MODEL_PRICING_PATH = os.path.join(_REPO_ROOT, "loki-ts", "data", "model-pricing.json")
+
+
+def inference_geo_multiplier(env=None, pricing_path=None):
+    geo = ((env if env is not None else os.environ).get("LOKI_INFERENCE_GEO") or "").strip().lower()
+    if not geo:
+        return 1.0
+    table = None
+    try:
+        with open(pricing_path or MODEL_PRICING_PATH, "r") as f:
+            table = json.load(f).get("inference_geo_multipliers")
+    except Exception:
+        table = None
+    if not isinstance(table, dict):
+        table = {"us": 1.1}
+    m = table.get(geo)
+    return float(m) if isinstance(m, (int, float)) and m > 0 else 1.0
+
 
 def _read_json(path, default=None):
     try:

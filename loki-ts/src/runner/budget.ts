@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWriteText } from "../util/atomic.ts";
+import { inferenceGeoMultiplier } from "../providers/model_routes.ts";
 import { lokiDir } from "../util/paths.ts";
 import { type CostResult, type EfficiencySessionInfo, num, writeEfficiencyRecord } from "../engine10/cost.ts";
 
@@ -234,8 +235,10 @@ function exactIdKey(m: string): string | undefined {
 
 // Calculate total cost from a list of efficiency records.
 // Mirrors run.sh:7867-7892 Python block.
-export function calculateCostFromRecords(records: readonly EfficiencyRecord[]): number {
+export function calculateCostFromRecords(records: readonly EfficiencyRecord[], env: Record<string, string | undefined> = process.env): number {
   let total = 0;
+  // LOKI_INFERENCE_GEO=us bills 1.1x. Applies to token-priced records only; a recorded cost_usd is the provider's own figure.
+  const geo = inferenceGeoMultiplier(env);
   for (const d of records) {
     if (typeof d.cost_usd === "number" && Number.isFinite(d.cost_usd)) {
       total += d.cost_usd;
@@ -254,10 +257,10 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[]): 
     const readRate = p.cache_read ?? p.input;
     const writeRate = p.cache_write ?? p.input;
     total +=
-      (inp / 1_000_000) * p.input +
-      (out / 1_000_000) * p.output +
-      (cRead / 1_000_000) * readRate +
-      (cWrite / 1_000_000) * writeRate;
+      ((inp / 1_000_000) * p.input +
+        (out / 1_000_000) * p.output +
+        (cRead / 1_000_000) * readRate +
+        (cWrite / 1_000_000) * writeRate) * geo;
   }
   return round4(total);
 }

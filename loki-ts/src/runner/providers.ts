@@ -56,7 +56,7 @@ import type {
   SessionTier,
 } from "./types.ts";
 import { PROVIDER_DEFAULT_MODEL, resolveClaudeModel } from "../util/claude_model.ts";
-import { modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
+import { applyAliasPin, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
 
@@ -180,7 +180,10 @@ function claudeTierToModel(tier: SessionTier): string {
   // enable haiku on either route (v7.41.4 parity fix).
   const allowHaiku = process.env["LOKI_ALLOW_HAIKU"] === "true";
   const pinned = (name: string, fallback: string): string =>
-    process.env[`LOKI_CLAUDE_MODEL_${name}`] || process.env[`LOKI_MODEL_${name}`] || fallback;
+    applyAliasPin(
+      process.env[`LOKI_CLAUDE_MODEL_${name}`] || process.env[`LOKI_MODEL_${name}`] || fallback,
+      process.env,
+    );
   switch (tier) {
     case "planning":
       return pinned("PLANNING", "sonnet");

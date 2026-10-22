@@ -69,6 +69,7 @@ const MODEL_ENV_KEYS = [
   "LOKI_LEGACY_TIER_SWITCHING", "LOKI_TIER_ROUTING", "LOKI_COMPLEXITY",
   "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_CLAUDE_MODEL_FAST",
   "LOKI_MODEL_PLANNING", "LOKI_MODEL_DEVELOPMENT", "LOKI_MODEL_FAST",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 ];
 
 beforeEach(() => {
@@ -624,6 +625,17 @@ describe("claude model resolution (per-tier pins, opus session pin)", () => {
     expect(await dispatched({ tier: "development" }, env)).toBe("claude-sonnet-5");
     expect(await dispatched({ tier: "fast" }, env)).toBe("haiku");
     expect(await dispatched({ tier: "fast" })).toBe("sonnet");
+  });
+
+  it("ANTHROPIC_DEFAULT_<FAMILY>_MODEL pins the family alias a tier resolves to (#299)", async () => {
+    // Pinned: the sonnet tier resolves to the pin. Unset: the plain alias.
+    expect(await dispatched({ tier: "development" }, { ANTHROPIC_DEFAULT_SONNET_MODEL: "x" })).toBe("x");
+    expect(await dispatched({ tier: "development" })).toBe("sonnet");
+    expect(await dispatched({ tier: "planning" }, { LOKI_CLAUDE_MODEL_PLANNING: "opus", ANTHROPIC_DEFAULT_OPUS_MODEL: "o" })).toBe("o");
+    expect(await dispatched({ tier: "fast" }, { LOKI_ALLOW_HAIKU: "true", ANTHROPIC_DEFAULT_HAIKU_MODEL: "h" })).toBe("h");
+    // An explicit non-alias tier pin is not rewritten, and a blank pin is ignored.
+    expect(await dispatched({ tier: "development" }, { LOKI_CLAUDE_MODEL_DEVELOPMENT: "claude-sonnet-5", ANTHROPIC_DEFAULT_SONNET_MODEL: "x" })).toBe("claude-sonnet-5");
+    expect(await dispatched({ tier: "development" }, { ANTHROPIC_DEFAULT_SONNET_MODEL: "  " })).toBe("sonnet");
   });
 
   it("LOKI_CLAUDE_MODEL_<TIER> beats LOKI_MODEL_<TIER>, and an empty value counts as unset", async () => {

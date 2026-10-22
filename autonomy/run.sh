@@ -20502,8 +20502,16 @@ check_budget_limit() {
     # Calculate cost from per-iteration efficiency files (same source as /api/cost)
     if [ -d "$efficiency_dir" ]; then
         current_cost=$(python3 -c "
-import json, glob
+import json, glob, os, sys
 total = 0.0
+# LOKI_INFERENCE_GEO multiplier on token-priced records, from the same JSON the
+# TS gate reads (autonomy/lib/efficiency_cost.py); the fallback keeps us at 1.1.
+try:
+    sys.path.insert(0, '${SCRIPT_DIR}/lib')
+    from efficiency_cost import inference_geo_multiplier
+    geo = inference_geo_multiplier()
+except Exception:
+    geo = 1.1 if os.environ.get('LOKI_INFERENCE_GEO', '').strip().lower() == 'us' else 1.0
 pricing = {
     'fable': {'input': 10.00, 'output': 50.00, 'cache_read': 0.25, 'cache_write': 12.5, 'cache_write_1h': 20},
     'claude-fable-5': {'input': 10.00, 'output': 50.00, 'cache_read': 0.25, 'cache_write': 12.5, 'cache_write_1h': 20},
@@ -20544,8 +20552,9 @@ for f in glob.glob('${efficiency_dir}/*.json'):
             # same run reports two different spends.
             cr = d.get('cache_read_tokens', 0) or 0
             cw = d.get('cache_creation_tokens', 0) or 0
-            total += (inp / 1_000_000) * p['input'] + (out / 1_000_000) * p['output']
-            total += (cr / 1_000_000) * p.get('cache_read', p['input'] * 0.1) + (cw / 1_000_000) * p.get('cache_write', p['input'] * 1.25)
+            rec = (inp / 1_000_000) * p['input'] + (out / 1_000_000) * p['output']
+            rec += (cr / 1_000_000) * p.get('cache_read', p['input'] * 0.1) + (cw / 1_000_000) * p.get('cache_write', p['input'] * 1.25)
+            total += rec * geo
     except: pass
 print(round(total, 4))
 " 2>/dev/null || echo "0")

@@ -355,4 +355,80 @@ rm -f "$price"
 budget_case "absent file" 0 "100.00"
 
 case "$budget_work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$budget_work" ;; esac
+# #299: LOKI_INFERENCE_GEO=us is a 1.1x multiplier on token-priced cost. TS
+# (calculateCostFromRecords), bash (check_budget_limit) and the Python surfaces
+# (efficiency_cost helper, dashboard _calculate_model_cost) must report the same
+# spend for the same record, geo unset and geo=us. All read one JSON key.
+geo_work="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || exit 1
+mkdir -p "$geo_work/.loki/metrics/efficiency"
+printf '{"model":"sonnet","input_tokens":1000000,"output_tokens":1000000}\n' \
+    >"$geo_work/.loki/metrics/efficiency/iter-1.json"
+
+geo_ts() {
+    (cd "$REPO_ROOT/loki-ts" && LOKI_INFERENCE_GEO="$1" bun -e '
+import { calculateCostFromRecords } from "./src/runner/budget.ts";
+console.log(calculateCostFromRecords([{ model: "sonnet", input_tokens: 1000000, output_tokens: 1000000 }]));
+' 2>/dev/null)
+}
+# BUDGET_LIMIT is tiny so check_budget_limit takes the exceeded branch, which
+# records the computed spend as budget_used in budget.json.
+geo_bash() {
+    (
+        cd "$geo_work" || exit 1
+        export SCRIPT_DIR="$REPO_ROOT/autonomy" BUDGET_LIMIT=0.01 ITERATION_COUNT=1
+        log_error() { :; }; log_warn() { :; }; log_info() { :; }; emit_event_json() { :; }
+        # shellcheck disable=SC1090
+        source <(awk '/^check_budget_limit\(\) \{/ {f=1; print; next} f && /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/ {exit} f {print}' "$REPO_ROOT/autonomy/run.sh")
+        rm -f .loki/metrics/budget.json
+        LOKI_INFERENCE_GEO="$1" check_budget_limit >/dev/null 2>&1
+        sed -n 's/.*"budget_used": *\([0-9.]*\).*/\1/p' .loki/metrics/budget.json
+    )
+}
+geo_py() {
+    LOKI_INFERENCE_GEO="$1" python3 - "$REPO_ROOT" <<'PYEOF' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1] + "/autonomy/lib")
+from efficiency_cost import inference_geo_multiplier
+print(round(12.0 * inference_geo_multiplier(), 4))
+PYEOF
+}
+geo_dash() {
+    LOKI_INFERENCE_GEO="$1" python3 - "$REPO_ROOT" <<'PYEOF' 2>/dev/null
+import json, os, sys
+from pathlib import Path as _Path
+root = sys.argv[1]
+src = open(root + "/dashboard/server.py").read()
+seg = src[src.index("def _inference_geo_multiplier"):src.index('@app.get("/api/cost"')]
+ns = {"os": os, "json": json, "_Path": _Path, "__file__": root + "/dashboard/server.py"}
+ns["_get_model_pricing"] = lambda: {"sonnet": {"input": 2.0, "output": 10.0, "cache_read": 0.1, "cache_write": 2.5}}
+exec(seg, ns)
+print(round(ns["_calculate_model_cost"]("sonnet", 1000000, 1000000), 4))
+PYEOF
+}
+geo_num() { awk -v v="$1" 'BEGIN{printf "%.4f", v}'; }
+
+for geo_case in "unset:12.0000" "us:13.2000" "global:12.0000"; do
+    geo="${geo_case%%:*}"; want="${geo_case##*:}"; [ "$geo" = unset ] && geo=""
+    for surf in ts bash py dash; do
+        got="$(geo_num "$(geo_$surf "$geo")")"
+        if [ "$got" = "$want" ]; then
+            echo "ok:   geo '${geo_case%%:*}' $surf spend $got"
+        else
+            echo "FAIL: geo '${geo_case%%:*}' $surf spend '$got', want $want"; bash_fail=1
+        fi
+    done
+done
+
+# The fallback constants must equal the JSON value, or an unreadable file would
+# make the surfaces disagree with each other.
+json_us="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]+'/loki-ts/data/model-pricing.json'))['inference_geo_multipliers']['us'])" "$REPO_ROOT")"
+for f in loki-ts/src/providers/model_routes.ts autonomy/lib/efficiency_cost.py autonomy/run.sh dashboard/server.py; do
+    if grep -Eq '(FALLBACK = |\{"us": |geo = )1\.1\b|1\.1 if os\.environ' "$REPO_ROOT/$f" && [ "$json_us" = "1.1" ]; then
+        echo "ok:   geo fallback 1.1 matches JSON in $f"
+    else
+        echo "FAIL: geo fallback in $f missing or differs from JSON ($json_us)"; bash_fail=1
+    fi
+done
+
+case "$geo_work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$geo_work" ;; esac
 exit "$bash_fail"

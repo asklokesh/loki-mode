@@ -19,6 +19,20 @@ afterEach(() => {
   delete process.env["LOKI_DIR"];
 });
 
+describe("budget.calculateCostFromRecords -- inference geo multiplier (#299)", () => {
+  const rec = { model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 };
+  it("geo us multiplies token-priced cost by 1.1; unset leaves it unchanged", () => {
+    const base = calculateCostFromRecords([rec], {});
+    const geo = calculateCostFromRecords([rec], { LOKI_INFERENCE_GEO: "us" });
+    console.log(`base=${base} geo=${geo}`);
+    expect(geo).toBe(Math.round(base * 1.1 * 10000) / 10000);
+    expect(geo).toBeGreaterThan(base);
+  });
+  it("a recorded cost_usd is never multiplied", () => {
+    expect(calculateCostFromRecords([{ cost_usd: 1 }], { LOKI_INFERENCE_GEO: "us" })).toBe(1);
+  });
+});
+
 describe("budget.calculateCostFromRecords -- pricing per provider", () => {
   it("uses cost_usd directly when present", () => {
     const cost = calculateCostFromRecords([{ cost_usd: 1.2345 }, { cost_usd: 0.0001 }]);

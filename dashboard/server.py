@@ -7830,6 +7830,25 @@ def _record_is_measured(rec: Any) -> bool:
     return False
 
 
+def _inference_geo_multiplier() -> float:
+    """LOKI_INFERENCE_GEO price multiplier. Mirrors inference_geo_multiplier() in
+    autonomy/lib/efficiency_cost.py (same JSON key, us falls back to 1.1); kept as
+    a local copy for the same reason as _MEASURED_FIELDS."""
+    geo = (os.environ.get("LOKI_INFERENCE_GEO") or "").strip().lower()
+    if not geo:
+        return 1.0
+    table = None
+    try:
+        path = _Path(__file__).resolve().parent.parent / "loki-ts" / "data" / "model-pricing.json"
+        table = json.loads(path.read_text()).get("inference_geo_multipliers")
+    except Exception:
+        table = None
+    if not isinstance(table, dict):
+        table = {"us": 1.1}
+    m = table.get(geo)
+    return float(m) if isinstance(m, (int, float)) and m > 0 else 1.0
+
+
 def _calculate_model_cost(
     model: str,
     input_tokens: int,
@@ -7856,7 +7875,9 @@ def _calculate_model_cost(
     output_cost = (output_tokens / 1_000_000) * pricing.get("output", 15.00)
     cache_read_cost = (cache_read_tokens / 1_000_000) * pricing.get("cache_read", inp_rate * 0.1)
     cache_write_cost = (cache_creation_tokens / 1_000_000) * pricing.get("cache_write", inp_rate * 1.25)
-    return round(input_cost + output_cost + cache_read_cost + cache_write_cost, 6)
+    return round(
+        (input_cost + output_cost + cache_read_cost + cache_write_cost) * _inference_geo_multiplier(), 6
+    )
 
 
 @app.get("/api/cost", dependencies=[Depends(auth.require_scope("read"))])

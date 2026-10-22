@@ -6,6 +6,10 @@
 // module never mutates process.env and never logs a token.
 // Plain Claude ids (opus, sonnet, claude-*) resolve to null: behavior unchanged.
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 export interface ModelRoute {
   kind: string;
   model: string;
@@ -77,6 +81,40 @@ export function modelRouteEnv(env: Env = process.env): Record<string, string> {
 /** Model id the route serves, or null when no route is configured. */
 export function modelRouteModel(env: Env = process.env): string | null {
   return resolveModelRoute(routeSpecFromEnv(env), env)?.model ?? null;
+}
+
+/** Claude Code's alias pinning vars (cloud platforms pin the family aliases by env). */
+const ALIAS_PIN_VARS: Record<string, string> = {
+  opus: "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+};
+
+/** A family alias (opus, sonnet, haiku) resolves to its ANTHROPIC_DEFAULT_*_MODEL pin when set and non-blank; any other id, or no pin, is returned unchanged. */
+export function applyAliasPin(model: string, env: Env = process.env): string {
+  const v = ALIAS_PIN_VARS[model.trim().toLowerCase()];
+  const pin = v ? (env[v] ?? "").trim() : "";
+  return pin || model;
+}
+
+/**
+ * LOKI_INFERENCE_GEO picks a price multiplier from "inference_geo_multipliers" in loki-ts/data/model-pricing.json
+ * (us is 1.1x), the one source the TS gate, the bash gate and the Python surfaces all read. Unset, global and
+ * unknown values are 1x. If the file is unreadable, us falls back to 1.1 so a budget never silently under-counts.
+ */
+const INFERENCE_GEO_US_FALLBACK = 1.1;
+function inferenceGeoTable(): Record<string, number> {
+  try {
+    const p = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "data", "model-pricing.json");
+    const t = (JSON.parse(readFileSync(p, "utf8")) as { inference_geo_multipliers?: unknown }).inference_geo_multipliers;
+    if (t && typeof t === "object") return t as Record<string, number>;
+  } catch { /* fall through */ }
+  return { us: INFERENCE_GEO_US_FALLBACK };
+}
+export function inferenceGeoMultiplier(env: Env = process.env): number {
+  const geo = (env["LOKI_INFERENCE_GEO"] ?? "").trim().toLowerCase();
+  const m = geo ? inferenceGeoTable()[geo] : undefined;
+  return typeof m === "number" && Number.isFinite(m) && m > 0 ? m : 1;
 }
 
 /** Label for a non-Anthropic model behind the claude CLI (D99 item 1). */
