@@ -718,6 +718,19 @@ describe("group run: Group Seal and resume", () => {
     expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, true, false]);
   });
 
+  // #283: per-subtask resume is run_group's signed-receipt skip (unitDone); a 3-unit rerun with one VERIFIED unit dispatches the other two.
+  test("rerun of a 3-unit group with one VERIFIED unit dispatches exactly the 2 others", async () => {
+    const repo = mkRepo("gr-resume-1of3"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls, { fail: [2, 3] }))).code).toBe(1);
+    expect(calls).toEqual(["u1", "u2", "u3"]); // first run dispatches 3
+    calls.length = 0;
+    const { code, err } = await go(repo, fake(repo, calls));
+    expect(code).toBe(0);
+    expect(calls).toEqual(["u2", "u3"]); // rerun dispatches 2; u1 is skipped
+    expect(err).toContain("1 of 3 units already VERIFIED");
+    expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, false, false]);
+  });
+
   const AC = "## Acceptance criteria\n", BASE = AC + SPEC, REVISED = AC + "- add alpha\n- add beta v2\n- add gamma\n";
   test("spec revision resume: unaffected units are skipped-unchanged, the changed unit reruns on the same gid", async () => {
     const repo = mkRepo("gr-revised"), calls: string[] = [];
