@@ -11,7 +11,8 @@
 // drive the actual runCodeReview + buildPrompt + override council flow
 // end-to-end against a deterministic stub reviewer.
 
-import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import {
   existsSync,
   mkdtempSync,
@@ -34,7 +35,7 @@ import { canonicalFindingId } from "../../src/runner/counter_evidence.ts";
 // WHICH ones fail changes between runs. That is a timeout signature, not a
 // defect, and it reads as a regression. 30s is far beyond the honest worst
 // case while still catching a genuine hang.
-setDefaultTimeout(30_000);
+setLoadAwareTimeout(30_000);
 
 let scratch = "";
 const ENV_KEYS = [

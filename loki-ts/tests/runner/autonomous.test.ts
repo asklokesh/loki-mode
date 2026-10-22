@@ -3,7 +3,8 @@
 // invoked; no network calls. The goal is to lock in the loop's exit
 // conditions before the C1/C2/C3/B1 modules land.
 
-import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 
 // These are E2E-shaped: they drive the real runAutonomous loop, which writes
 // state files and spawns processes. Bun's 5000ms default is fine on an idle
@@ -13,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "
 // and it cost real time to diagnose because a flake reads like a regression.
 // 30s is far beyond the honest worst case (the slowest of these does ~5s of
 // actual work) while still catching a genuine hang.
-setDefaultTimeout(30_000);
+setLoadAwareTimeout(30_000);
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
