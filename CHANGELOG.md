@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.3 (2026-10-22)
+
+### Changed
+- The test runner now registers test-cost-capture.sh, so the cost-capture suite runs in the full test sweep instead of being skipped. Refs #253.
+
 ## v11.36.2 (2026-10-22)
 
 ### Changed
