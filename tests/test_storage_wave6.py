@@ -255,6 +255,9 @@ def _run() -> int:
         test_null_phase_category_does_not_crash_calculate_importance,
         test_decay_semantic_does_not_drop_concurrent_save,
         test_save_episode_rejects_path_traversal,
+        test_namespace_cap_evicts_oldest_and_logs,
+        test_namespace_cap_never_evicts_patterns_store,
+        test_view_file_over_cap_is_truncated,
     ]
     failures = 0
     for t in tests:
@@ -266,6 +269,71 @@ def _run() -> int:
             print(f"FAIL {t.__name__}: {type(exc).__name__}: {exc}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     return 1 if failures else 0
+
+def _ep(i: int, pad: int = 2000) -> dict:
+    return {"id": f"cap{i}", "timestamp": "2026-01-01T00:00:00+00:00", "pad": "x" * pad}
+
+
+def test_namespace_cap_evicts_oldest_and_logs() -> None:
+    """Pre-fix, writes past the namespace cap grew storage without bound."""
+    import logging
+    import os
+    import time
+    records = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    lg = logging.getLogger("memory.storage")
+    h = _H()
+    lg.addHandler(h)
+    os.environ["LOKI_MEMORY_NAMESPACE_MAX_BYTES"] = "10000"
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            s = _new_storage(d)
+            for i in range(10):  # ~2x the cap
+                s.save_episode(_ep(i))
+                time.sleep(0.01)
+            total = sum(f.stat().st_size for f in (Path(d) / "episodic").rglob("*.json"))
+            assert total <= 10000, total
+            assert s.load_episode("cap9") is not None
+            assert s.load_episode("cap0") is None
+            assert any("evicted oldest entry" in m for m in records)
+    finally:
+        lg.removeHandler(h)
+        os.environ.pop("LOKI_MEMORY_NAMESPACE_MAX_BYTES", None)
+
+
+def test_namespace_cap_never_evicts_patterns_store() -> None:
+    """Pre-fix, an oldest semantic/patterns.json was evicted, losing every pattern."""
+    import os
+    import time
+    os.environ["LOKI_MEMORY_NAMESPACE_MAX_BYTES"] = "10000"
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            s = _new_storage(d)
+            pat = Path(d) / "semantic" / "patterns.json"
+            pat.write_text(json.dumps({"patterns": [{"id": "p"}], "pad": "z" * 4000}))
+            time.sleep(0.05)
+            for i in range(8):
+                s.save_episode(_ep(i))
+                time.sleep(0.01)
+            assert pat.exists()
+            assert s.load_episode("cap7") is not None
+    finally:
+        os.environ.pop("LOKI_MEMORY_NAMESPACE_MAX_BYTES", None)
+
+
+def test_view_file_over_cap_is_truncated() -> None:
+    """Pre-fix there was no capped read; a large file came back whole."""
+    with tempfile.TemporaryDirectory() as d:
+        s = _new_storage(d)
+        s.write_json("big.json", {"pad": "y" * 5000})
+        r = s.view_file("big.json", max_bytes=1000)
+        assert r["truncated"] is True and len(r["content"]) == 1000
+        r2 = s.view_file("big.json", max_bytes=100000)
+        assert r2["truncated"] is False
 
 
 if __name__ == "__main__":

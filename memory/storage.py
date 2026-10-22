@@ -32,6 +32,26 @@ except ImportError:
 
 # Default namespace constant
 DEFAULT_NAMESPACE = "default"
+
+# Per-namespace byte cap for stored memory entries (episodic, semantic, skills).
+# Oldest entries are evicted first. 0 disables the cap.
+_DEFAULT_NAMESPACE_MAX_BYTES = 256 * 1024 * 1024
+# Cap on bytes returned by view_file before the result is marked truncated.
+_DEFAULT_VIEW_MAX_BYTES = 64 * 1024
+_ENTRY_DIRS = ("episodic", "semantic", "skills")
+# Only per-entry files are evictable: episodic/<date>/task-*.json and
+# skills/*.json. Whole-store files (semantic/patterns.json) count toward the
+# total but are never deleted, since one eviction would drop every pattern.
+_EVICTABLE_GLOBS = ("episodic/*/task-*.json", "skills/*.json")
+
+
+def _env_bytes(name: str, default: int) -> int:
+    """Read a non-negative byte count from the environment, else default."""
+    try:
+        v = int(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return v if v >= 0 else default
 DEFAULT_TENANT = "default"
 
 # Allowed namespace characters. A namespace becomes a single path segment under
@@ -406,6 +426,59 @@ class MemoryStorage:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
                 raise
+
+        self._enforce_namespace_cap(keep=path)
+
+    def _enforce_namespace_cap(self, keep: Path) -> None:
+        """Evict oldest memory entries until the namespace is within its byte cap.
+
+        Cap is LOKI_MEMORY_NAMESPACE_MAX_BYTES (0 disables). Only entry files
+        under episodic/, semantic/ and skills/ count and are evicted; the file
+        just written (``keep``) is never evicted. Each eviction is logged.
+        """
+        cap = _env_bytes("LOKI_MEMORY_NAMESPACE_MAX_BYTES", _DEFAULT_NAMESPACE_MAX_BYTES)
+        if cap == 0:
+            return
+        base = Path(self.base_path)
+        try:
+            rel = Path(keep).relative_to(base)
+        except ValueError:
+            return
+        if not rel.parts or rel.parts[0] not in _ENTRY_DIRS:
+            return
+        entries = []
+        total = 0
+        for d in _ENTRY_DIRS:
+            for f in (base / d).rglob("*.json"):
+                if f.name.startswith(".tmp_"):
+                    continue
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, str(f), st.st_size, f))
+                total += st.st_size
+        if total <= cap:
+            return
+        import logging
+        log = logging.getLogger(__name__)
+        evictable = set()
+        for g in _EVICTABLE_GLOBS:
+            evictable.update(str(f) for f in base.glob(g))
+        for _mtime, _name, size, f in sorted(entries):
+            if total <= cap:
+                break
+            if f == Path(keep) or str(f) not in evictable:
+                continue
+            try:
+                f.unlink()
+            except OSError:
+                continue  # total only drops on a successful unlink
+            total -= size
+            log.warning(
+                "memory namespace %s over %d bytes: evicted oldest entry %s (%d bytes)",
+                self._namespace or DEFAULT_NAMESPACE, cap, f, size,
+            )
 
     def _load_json(self, path: Path) -> Optional[dict]:
         """
@@ -1325,6 +1398,27 @@ class MemoryStorage:
         """Read JSON file, return None if not found."""
         full_path = self._resolve_path(filepath)
         return self._load_json(full_path)
+
+    def view_file(self, filepath: str, max_bytes: Optional[int] = None) -> Optional[dict]:
+        """Read a file's text capped at max_bytes (default LOKI_MEMORY_VIEW_MAX_BYTES).
+
+        Returns {"content", "bytes", "truncated"} or None if not found. ``bytes``
+        is the full file size; ``truncated`` is True when content was cut.
+        """
+        full_path = self._resolve_path(filepath)
+        cap = max_bytes if max_bytes is not None else _env_bytes(
+            "LOKI_MEMORY_VIEW_MAX_BYTES", _DEFAULT_VIEW_MAX_BYTES)
+        try:
+            size = os.path.getsize(full_path)
+            with open(full_path, "rb") as f:
+                raw = f.read(cap) if cap > 0 else f.read()
+        except OSError:
+            return None
+        return {
+            "content": raw.decode("utf-8", errors="ignore"),
+            "bytes": size,
+            "truncated": cap > 0 and size > cap,
+        }
 
     def write_json(self, filepath: str, data: dict) -> None:
         """Write JSON file atomically."""
