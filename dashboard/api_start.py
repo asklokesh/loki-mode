@@ -86,6 +86,10 @@ def _creds_dir() -> Path:
 
 def _write_secret(name: str, value: str) -> None:
     dest = _secret_path(name)
+    # FC-STALE-SECRET-TMP-NEVER-SWEPT: drop the tmp a killed predecessor left holding a token
+    _autonomy_lib()
+    import secret_tmp
+    secret_tmp.sweep_stale_secret_tmp(str(dest.parent), [r"^%s\.(\d{1,8})\.tmp$" % re.escape("." + dest.name)])
     tmp = dest.with_name(".%s.%d.tmp" % (dest.name, os.getpid()))
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:

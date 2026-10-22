@@ -29,6 +29,7 @@
 //   and short-circuits before fs.writeFileSync when equal, preserving mtime.
 // - Variadic emission: separate argv elements per Commander `<configs...>` syntax
 //   verified via `claude --help` (v2.1.34).
+import { sweepStaleSecretTmp } from "../util/atomic.ts";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, chmodSync, renameSync, rmSync } from "node:fs";
 import { resolve as resolvePath, join, delimiter } from "node:path";
 
@@ -164,6 +165,9 @@ function stableStringify(obj: unknown): string {
 
 // Resolves to <targetDir>/.loki/mcp-config.json. Writes the Loki bundle when the
 // existing file content differs (idempotent). Returns the absolute path either way.
+// Temp names both routes leave behind: the TS pid-named sibling and the bash route's mkstemp name.
+export const MCP_SECRET_TMP_PATTERNS = [/^mcp-config\.json\.tmp\.(\d{1,8})$/, /^\.mcp-config\.[A-Za-z0-9_]+\.tmp$/];
+
 export function mcpConfigPath(targetDir: string): string {
   const lokiDir = resolvePath(targetDir, ".loki");
   const cfgPath = join(lokiDir, "mcp-config.json");
@@ -178,6 +182,8 @@ export function mcpConfigPath(targetDir: string): string {
       existing = null;
     }
   }
+
+  sweepStaleSecretTmp(lokiDir, MCP_SECRET_TMP_PATTERNS);
 
   if (existing === desired) {
     // Idempotent: identical bytes already on disk, skip write to preserve mtime.

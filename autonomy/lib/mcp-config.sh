@@ -37,6 +37,9 @@ if [ "${__LOKI_MCP_CONFIG_SH_LOADED:-0}" = "1" ]; then
 fi
 __LOKI_MCP_CONFIG_SH_LOADED=1
 
+# Directories that may hold lib/secret_tmp.py (the shared stale-secret-tmp sweep), tried in order.
+_LOKI_MCP_LIBDIRS="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd):${_LOKI_SCRIPT_DIR:-}/lib:${SCRIPT_DIR:-}/lib"
+
 # The one parser for LOKI_MCP_<NAME>_URL servers (mirror of remoteServersFromEnv in
 # loki-ts/src/providers/mcp_config.ts). The bundle writer and the airgap audit
 # (_loki_airgap_audit, loki_mcp_remote_servers_json) both run this source, so the
@@ -117,6 +120,20 @@ for key in sorted(os.environ):
     name = m.group(1).lower().replace('_', '-')
     if name not in servers:
         servers[name] = entry
+def sweep_stale_secret_tmp(directory, patterns):
+    # FC-STALE-SECRET-TMP-NEVER-SWEPT: the one shared sweep lives in lib/secret_tmp.py; hygiene only, so a
+    # missing helper never blocks writing the bundle.
+    import importlib.util
+    for d in os.environ.get('_MCP_LIBDIR', '').split(os.pathsep):
+        helper = os.path.join(d, 'secret_tmp.py')
+        if d and os.path.isfile(helper):
+            spec = importlib.util.spec_from_file_location('loki_secret_tmp', helper)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.sweep_stale_secret_tmp(directory, patterns)
+            return
+    sys.stderr.write('[mcp_config] stale tmp sweep unavailable: lib/secret_tmp.py not found\n')
+
 def audit_host(url):
     # host[:port] only, the host the client connects to: userinfo, path, query and fragment never reach the audit.
     p = urlsplit(url)
@@ -133,6 +150,7 @@ data = json.dumps({'mcpServers': servers}, indent=2)
 # window where a token sits in a file with wider permissions.
 tmp = None
 try:
+    sweep_stale_secret_tmp(os.path.dirname(out), [r'^mcp-config\.json\.tmp\.(\d{1,8})$', r'^\.mcp-config\.[A-Za-z0-9_]+\.tmp$'])
     fd, tmp = tempfile.mkstemp(prefix='.mcp-config.', suffix='.tmp', dir=os.path.dirname(out))
     with os.fdopen(fd, 'w') as f:
         f.write(data)
@@ -222,7 +240,7 @@ loki_mcp_config_path() {
     # loki-ts/src/providers/mcp_config.ts): LOKI_MCP_<NAME>_URL declares an http
     # server, LOKI_MCP_<NAME>_AUTH its Authorization header. Warnings name the
     # variable only, never a value. The python step also writes the file.
-    if ! _MCP_OUT="$mcp_path" _MCP_LSP="$lsp_detected" python3 -c "$_LOKI_MCP_BUNDLE_PY"; then
+    if ! _MCP_OUT="$mcp_path" _MCP_LSP="$lsp_detected" _MCP_LIBDIR="$_LOKI_MCP_LIBDIRS" python3 -c "$_LOKI_MCP_BUNDLE_PY"; then
         return 1
     fi
 
