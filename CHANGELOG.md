@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.50.1 (2026-10-22)
+
+### Fixed
+- Council (#251, #302): a blocking finding whose cited path:line is not in the reviewed tree is downgraded to MEDIUM instead of blocking. The gitlink set comes from git diff --raw, not a disk guess. A citation inside a diff-listed submodule keeps its severity only when a directory component of the path matches a gitlink segment; a filename or a substring near miss (src/lib, src/libfoo/x.ts against vendor/lib) no longer counts.
+- Progress log: 2026-10-22 docs-driven batch checkpoint in docs/v10/PROGRESS.md.
+
 ## v11.50.0 (2026-10-22)
 
 ### Added
