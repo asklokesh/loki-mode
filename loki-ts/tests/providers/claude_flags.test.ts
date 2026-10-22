@@ -1127,3 +1127,16 @@ describe("claude_flags.leanReviewerFlags (S9)", () => {
     _resetClaudeHelpCacheForTest(null);
   });
 });
+
+describe("claude_flags.effortForTier bash parity (w2-06)", () => {
+  const sh = join(import.meta.dir, "../../../autonomy/lib/claude-flags.sh");
+  for (const tier of ["planning", "development", "fast"]) {
+    for (const cx of ["standard", "complex"]) {
+      it(`${tier}/${cx}: TS equals bash loki_effort_for_tier`, () => {
+        const r = Bun.spawnSync(["bash", "-c", `source "${sh}"; loki_effort_for_tier ${tier} ${cx}`]);
+        expect(r.exitCode).toBe(0);
+        expect(String(effortForTier(tier, cx))).toBe(r.stdout.toString());
+      });
+    }
+  }
+});

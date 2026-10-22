@@ -273,10 +273,25 @@ Claude models support an `effort` parameter that controls reasoning depth withou
 
 | Effort Level | When to Use | Token Impact |
 |--------------|-------------|--------------|
-| `low` | Simple, well-defined tasks | Minimal reasoning tokens |
-| `medium` | Standard tasks (default) | Balanced reasoning |
-| `high` | Complex multi-step tasks | Extended reasoning |
-| `max` | Critical decisions, architecture | Maximum reasoning depth |
+| `low` | Simple, well-defined, high-volume tasks | Minimal reasoning tokens |
+| `medium` | Balanced speed, cost and quality | Moderate reasoning |
+| `high` | Complex reasoning, difficult coding, agentic tasks | Extended reasoning |
+| `xhigh` | Long-horizon coding and agentic work | Meaningfully above `high` |
+| `max` | Frontier problems, evals show headroom | No limit on reasoning spend |
+
+Per-model API defaults (an explicit value equal to the default behaves like omitting `effort`):
+
+| Model | Default effort | `xhigh` | `max` |
+|-------|----------------|---------|-------|
+| Claude Opus 5.5, Claude Haiku 5.5 | `medium` | yes | yes |
+| Claude Sonnet 5.5, Claude Sonnet 5, Claude Opus 5, Claude Opus 4.8, Claude Opus 4.7 | `high` | yes | yes |
+| Claude Opus 4.6, Claude Sonnet 4.6 | `high` | no | yes |
+
+Loki's resolver (one function per engine, pinned equal by tests): `loki_effort_for_tier` in `autonomy/lib/claude-flags.sh` and `effortForTier` in `loki-ts/src/providers/claude_flags.ts`. Tiers: planning=xhigh, development=high, fast=medium, plus one notch up when complexity is `complex` (never auto-reaches `max`). Codex uses its own `PROVIDER_EFFORT_*` table in `providers/codex.sh` (fast=low).
+
+**Length:** on Claude Opus 5, effort controls thinking volume and does not reliably shorten visible responses. State the wanted length and verbosity in the prompt.
+
+**SDK code:** for Anthropic SDK or Claude API code (model ids, `effort`, `max_tokens`, caching), use the `claude-api` skill instead of guessing parameters.
 
 **Note:** The effort parameter and thinking prefixes serve different purposes. Effort controls the model's internal reasoning budget; thinking prefixes guide the structure of the response.
 
