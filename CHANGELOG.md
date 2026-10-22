@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.36.0 (2026-10-22)
+
+### Added
+- `LOKI_OUTPUT_LANGUAGE` sets the language the model answers in. It adds one line after the cache breakpoint, so the cached prompt prefix is byte-identical with or without it, and a value containing a newline is refused. Bun route only; the bash route ignores it. A Japanese PRD fixture covers it. Refs #285.
+
 ## v11.35.1 (2026-10-22)
 
 ### Fixed
