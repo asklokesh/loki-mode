@@ -916,6 +916,10 @@ mcp = _build_lsp_fastmcp()
 async def lsp_find_references(file: str, line: int, character: int,
                               include_declaration: bool = False) -> str:
     """Find references to the symbol at the given file / line / character.
+    Use it to see every place a symbol at a known file, line and character is used,
+    for example before renaming it. Do not use it to jump to the definition (use
+    lsp_go_to_definition) or when you only know the name (use lsp_workspace_symbols
+    first).
 
     Args:
         file: Absolute or cwd-relative path to the source file.
@@ -940,6 +944,9 @@ async def lsp_find_references(file: str, line: int, character: int,
 async def lsp_go_to_definition(file: str, line: int, character: int) -> str:
     """Resolve the definition location for the symbol at file / line /
     character.
+    Use it when you have a file position and want the file and line where that
+    symbol is defined. Do not use it when you only have a name (use
+    lsp_find_definition_by_name) or want usages (use lsp_find_references).
 
     Args:
         file: Absolute or cwd-relative path to the source file.
@@ -962,6 +969,9 @@ async def lsp_symbol_at_position(file: str, line: int, character: int) -> str:
     """Return the hover / symbol info at the given file / line /
     character. Uses LSP `textDocument/hover` which returns a
     `MarkupContent` plus an optional range.
+    Use it to read the type and documentation of the symbol at a known position
+    without opening its definition. Do not use it to locate the definition (use
+    lsp_go_to_definition) or to check that a name exists (use lsp_check_exists).
 
     Args:
         file: Absolute or cwd-relative path to the source file.
@@ -1099,6 +1109,10 @@ def _lsp_check_exists_blocking(symbol: str, kind: Optional[str] = None,
 async def lsp_check_exists(symbol: str, kind: Optional[str] = None,
                            language: Optional[str] = None) -> str:
     """Cheap existence check for a symbol in the current workspace.
+    Call it before writing a reference to a symbol you have not read, because it
+    answers quickly and is cheap. Do not use it to find where the symbol lives (use
+    lsp_find_definition_by_name) or to search by concept (use
+    lsp_workspace_symbols).
 
     The single most useful grounding primitive: an agent about to write
     `flightApi.getStatus()` should call `lsp_check_exists("getStatus")`
@@ -1172,6 +1186,9 @@ def _lsp_get_diagnostics_blocking(file: str) -> str:
 @mcp.tool()
 async def lsp_get_diagnostics(file: str) -> str:
     """Return current LSP diagnostics (errors + warnings) for a file.
+    Call it after editing a file to see new errors and warnings before the next
+    iteration. Do not use it to look up symbols (use lsp_check_exists or
+    lsp_workspace_symbols); it reports problems in one file only.
 
     Diagnostics are published asynchronously by LSP servers via
     `textDocument/publishDiagnostics`. This tool opens the file (if not
@@ -1229,6 +1246,9 @@ def _lsp_workspace_symbols_blocking(query: str, limit: int = 20,
 async def lsp_workspace_symbols(query: str, limit: int = 20,
                                 language: Optional[str] = None) -> str:
     """Fuzzy-search symbols across the entire workspace.
+    Use it when you know the concept but not the identifier. Do not use it to verify
+    a single known name (use lsp_check_exists) or to get one definition location
+    (use lsp_find_definition_by_name).
 
     Use when an agent is hunting for the right name (knows the
     function/class is about "config loading" but isn't sure of the
@@ -1288,6 +1308,9 @@ async def lsp_find_definition_by_name(symbol: str,
     """Find where a named symbol is defined, without needing a file
     position upfront. Convenience wrapper: runs workspace/symbol then
     returns the first result's location.
+    Use it when you know the symbol name but have no file position. Do not use it
+    when you already have a position (use lsp_go_to_definition) or only a fuzzy
+    concept (use lsp_workspace_symbols).
 
     Args:
         symbol: Symbol name to find.

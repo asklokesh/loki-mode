@@ -610,6 +610,10 @@ async def loki_memory_retrieve(
 ) -> str:
     """
     Retrieve relevant memories for a task using task-aware retrieval.
+    Use it at the start of a task to pull the memories most relevant to what you are
+    about to do, ranked for the task type. Do not use it for exact keyword lookups
+    (use mem_search), for recent history (use mem_timeline) or to fetch known ids
+    (use mem_get).
 
     Args:
         query: Search query describing what you're looking for
@@ -677,6 +681,10 @@ async def loki_memory_store_pattern(
 ) -> str:
     """
     Store a new semantic pattern learned during this session.
+    Use it to save a reusable lesson with its correct and incorrect approach so
+    later sessions can retrieve it. Do not use it to log what happened this session
+    (use loki_memory_capture_session_summary) or to read patterns back (use
+    loki_memory_retrieve).
 
     Args:
         pattern: Brief description of the pattern
@@ -735,6 +743,10 @@ async def loki_memory_store_pattern(
 async def loki_task_queue_list() -> str:
     """
     List all tasks in the Loki Mode task queue.
+    Use it to see every queued task with its status and priority before adding or
+    updating one. Do not use it to change tasks (use loki_task_queue_add or
+    loki_task_queue_update) or for overall project progress (use
+    loki_project_status).
 
     Returns:
         JSON array of tasks with status, priority, and description
@@ -788,6 +800,9 @@ async def loki_task_queue_add(
 ) -> str:
     """
     Add a new task to the Loki Mode task queue.
+    Use it to queue new work with a title, description, priority and SDLC phase. Do
+    not use it to change an existing task (use loki_task_queue_update) or to see
+    what is already queued (use loki_task_queue_list).
 
     Args:
         title: Brief task title
@@ -884,6 +899,9 @@ async def loki_task_queue_update(
 ) -> str:
     """
     Update a task's status or priority.
+    Use it to change the status or priority of a task that is already queued. Do not
+    use it to create tasks (use loki_task_queue_add) or to declare the whole project
+    finished (use loki_complete_task).
 
     Args:
         task_id: ID of the task to update
@@ -959,6 +977,10 @@ async def loki_task_queue_update(
 async def loki_state_get() -> str:
     """
     Get the current Loki Mode state including phase, metrics, and status.
+    Use it for a quick read of the current phase, autonomy state and memory presence
+    from the .loki directory. Do not use it for task counts and agent activity (use
+    loki_project_status) or for token and cost numbers (use
+    loki_metrics_efficiency).
 
     Returns:
         JSON object with current state information
@@ -1013,6 +1035,9 @@ async def loki_state_get() -> str:
 async def loki_metrics_efficiency() -> str:
     """
     Get efficiency metrics for the current session.
+    Use it to see token usage, tool calls and efficiency ratios for the current
+    session. Do not use it for per-agent breakdowns (use loki_agent_metrics) or for
+    run state (use loki_state_get).
 
     Returns:
         JSON object with token usage, tool calls, and efficiency ratios
@@ -1065,6 +1090,10 @@ async def loki_memory_capture_session_summary(
     duration_seconds: int = 0,
 ) -> str:
     """v7.7.18 capture wedge: store an episode for the current agent session.
+    Call it once at iteration close to record what happened as an episode in the
+    project memory. Do not use it to store a reusable lesson (use
+    loki_memory_store_pattern) or to distill many episodes into patterns (use
+    loki_consolidate_memory).
 
     Call this voluntarily at iteration close (or session end) to write a
     structured Episode into the project's .loki/memory/ store. Solves
@@ -1148,6 +1177,10 @@ async def loki_memory_capture_session_summary(
 async def loki_consolidate_memory(since_hours: int = 24) -> str:
     """
     Run memory consolidation to extract patterns from recent episodes.
+    Use it to turn recent episodes into semantic patterns, typically after several
+    sessions have written episodes. Do not use it to record the current session (use
+    loki_memory_capture_session_summary) or to search what is stored (use
+    mem_search).
 
     Args:
         since_hours: Process episodes from the last N hours
@@ -1188,6 +1221,10 @@ async def loki_complete_task(
 ) -> str:
     """
     Declare that the current PRD / task is complete.
+    Call it once, when the PRD or task is fully done and verified, so the
+    orchestrator stops the iteration loop. Do not call it for a single finished
+    subtask (use loki_task_queue_update) or to report progress (use
+    loki_project_status).
 
     Replaces the legacy 'COMPLETION PROMISE FULFILLED: ...' prose string with a
     structured tool call. The orchestrator (run.sh) detects this via a signal
@@ -1381,6 +1418,9 @@ async def get_pending_tasks() -> str:
 async def loki_v10_run(ref: str, repo_path: str) -> str:
     """
     Start a Loki 10 run in the background (same engine as `loki <ref>`).
+    Use it to start a Loki 10 run in the background for a task text or issue
+    reference. Do not use it to follow a run that is already started (use
+    loki_v10_status) or to check a finished receipt (use loki_v10_verify).
 
     Args:
         ref: Task text or issue reference (owner/repo#N or issue URL)
@@ -1406,6 +1446,9 @@ async def loki_v10_run(ref: str, repo_path: str) -> str:
 async def loki_v10_status(repo_path: str, run_id: str = "") -> str:
     """
     Read the state of a Loki 10 run from its events log.
+    Use it to poll a Loki 10 run for its phase, verdict and cost after starting one.
+    Do not use it to start a run (use loki_v10_run) or to check a receipt (use
+    loki_v10_verify).
 
     Args:
         repo_path: Repository directory containing .loki/runs
@@ -1431,6 +1474,9 @@ async def loki_v10_status(repo_path: str, run_id: str = "") -> str:
 async def loki_v10_verify(receipt_path: str = "", repo_path: str = "") -> str:
     """
     Run `loki verify` on a receipt (or the newest run of a repo).
+    Use it to re-verify a finished run's receipt through the same check as `loki
+    verify`. Do not use it to follow a run in progress (use loki_v10_status) or to
+    check changed files quickly (use loki_verify_fast).
 
     Args:
         receipt_path: Path to a receipt.json (takes priority)
@@ -1457,6 +1503,9 @@ async def loki_v10_verify(receipt_path: str = "", repo_path: str = "") -> str:
 async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
     """
     Start a new Loki Mode project from a PRD.
+    Use it to initialize a Loki Mode project from a PRD given inline or by path. Do
+    not use it for a single task or issue reference (use loki_v10_run) or to inspect
+    a running project (use loki_project_status).
 
     Args:
         prd_content: Inline PRD content (takes priority over prd_path)
@@ -1520,6 +1569,10 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
 async def loki_project_status() -> str:
     """
     Get the current project status including RARV cycle state, agent activity, and task progress.
+    Use it for the broad picture: RARV cycle state, agent activity and task counts.
+    Do not use it for the raw phase and memory presence (use loki_state_get),
+    quality gates (use loki_quality_report) or token metrics (use
+    loki_agent_metrics).
 
     Returns:
         JSON with project status, phase, iteration, agents, and task counts
@@ -1612,6 +1665,9 @@ def _honest_efficiency_record(rec):
 async def loki_agent_metrics() -> str:
     """
     Get agent metrics including token usage, task completion rates, and timing.
+    Use it to compare agents on token usage, completion rate and timing. Do not use
+    it for session-wide efficiency ratios (use loki_metrics_efficiency) or for task
+    progress (use loki_project_status).
 
     Returns:
         JSON with per-agent metrics and aggregates
@@ -1653,6 +1709,9 @@ async def loki_agent_metrics() -> str:
 async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
     """
     List available checkpoints or restore project state from a specific checkpoint.
+    Call it with no id to list checkpoints and with an id to restore project state,
+    which changes project state. Do not use it to read current state (use
+    loki_state_get); list first so you restore the right checkpoint.
 
     Args:
         checkpoint_id: ID of checkpoint to restore (empty = list all)
@@ -1707,6 +1766,9 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
 async def loki_quality_report() -> str:
     """
     Get quality gate results including blind review scores, council verdicts, and test coverage.
+    Use it for gate results, council verdicts and coverage for the project. Do not
+    use it for the individual review findings of one iteration (use loki_findings)
+    or for overall progress (use loki_project_status).
 
     Returns:
         JSON with quality gate status, review results, and coverage metrics
@@ -1872,6 +1934,10 @@ async def loki_code_search(
     type_filter: Optional[str] = None,
 ) -> str:
     """Search the loki-mode codebase semantically.
+    Use it when you know what the code does but not its name, because it ranks by
+    meaning. Do not use it for relationship questions across files (use
+    loki_graph_query), for exact names (use lsp_workspace_symbols) or to check index
+    health (use loki_code_search_stats).
 
     Finds functions, classes, and code sections by meaning, not just keywords.
     Returns file paths, line numbers, and code snippets ranked by relevance.
@@ -1992,6 +2058,9 @@ async def loki_code_search(
 @mcp.tool()
 async def loki_code_search_stats() -> str:
     """Get statistics about the code search index.
+    Use it to confirm the code search index exists and is up to date before trusting
+    results. Do not use it to search code (use loki_code_search); it returns counts
+    only.
 
     Shows total chunks, files indexed, breakdown by language and type.
     Useful for verifying the index is up to date.
@@ -2060,6 +2129,10 @@ async def mem_search(
 ) -> str:
     """
     Search memory using full-text search (FTS5).
+    Use it for fast keyword lookups across stored memory with AND, OR, NOT and
+    prefix matching. Do not use it for task-aware ranking (use
+    loki_memory_retrieve), for recent history (use mem_timeline) or to read full
+    entries (use mem_get).
 
     Fast keyword search across all memory types. Supports AND, OR, NOT
     operators and prefix matching (e.g. "debug*").
@@ -2159,6 +2232,9 @@ async def mem_timeline(
 ) -> str:
     """
     Get chronological context from memory timeline.
+    Use it to see what happened recently, or around one memory entry, in time order.
+    Do not use it to find entries by keyword (use mem_search) or to rank memories
+    for a task (use loki_memory_retrieve).
 
     Shows recent actions, key decisions, and episode traces in time order.
     Use around_id to get context surrounding a specific memory entry.
@@ -2229,6 +2305,9 @@ async def mem_get(
 ) -> str:
     """
     Fetch full details for one or more memory entries by ID.
+    Use it after mem_search or mem_timeline to read full details for the ids you
+    picked. Do not use it to discover entries, because it needs ids (use mem_search
+    or loki_memory_retrieve first).
 
     Use after mem_search to get complete data for specific results.
 
@@ -2310,6 +2389,9 @@ async def loki_get_hotspots(
     limit: int = 10,
 ) -> str:
     """Get the most frequently changed files in the repository.
+    Use it to find the files that change most often so you can take extra care
+    there. Do not use it to find which files change with a given file (use
+    loki_get_co_changes) or to check documentation (use loki_get_doc_coverage).
 
     Identifies code hotspots based on git commit frequency analysis.
     These files deserve extra care during changes (higher risk of regressions).
@@ -2370,6 +2452,9 @@ async def loki_get_co_changes(
     file_path: str,
 ) -> str:
     """Find files that frequently change together with a given file.
+    Use it before editing a file to learn which other files usually change with it.
+    Do not use it to rank the riskiest files overall (use loki_get_hotspots) or to
+    read code relationships (use loki_graph_query).
 
     Uses git co-change analysis to identify coupling between files.
     Useful for understanding hidden dependencies and ensuring related
@@ -2449,6 +2534,9 @@ async def loki_get_co_changes(
 @mcp.tool()
 async def loki_get_doc_coverage() -> str:
     """Get documentation coverage status for the project.
+    Use it to decide where documentation work is needed, based on the docs manifest.
+    Do not use it to find risky code (use loki_get_hotspots) or to search code (use
+    loki_code_search).
 
     Reads from the docs manifest to report which files are documented,
     which have stale documentation, and which are missing docs entirely.
@@ -2508,6 +2596,9 @@ async def loki_get_doc_coverage() -> str:
 @mcp.tool()
 async def loki_findings(iteration: int = -1) -> str:
     """Read structured code-review findings for a given iteration.
+    Use it to read the structured review findings of one iteration, newest by
+    default. Do not use it for gate and council summaries (use loki_quality_report)
+    or to prepare counter-evidence (use loki_counter_evidence_template).
 
     Args:
         iteration: iteration number (default -1 = most recent).
@@ -2591,7 +2682,12 @@ async def loki_findings(iteration: int = -1) -> str:
 
 @mcp.tool()
 async def loki_learnings(limit: int = 50) -> str:
-    """Read recent learnings (newest first) from relevant-learnings.json."""
+    """Read recent learnings (newest first) from relevant-learnings.json.
+    Use it to read recent learnings recorded in relevant-learnings.json, newest
+    first, to avoid repeating past mistakes. Do not use it to search or rank memory
+    (use loki_memory_retrieve or mem_search) or to save a new lesson (use
+    loki_memory_store_pattern).
+    """
     _emit_tool_event_async('loki_learnings', 'start', parameters={'limit': limit})
     try:
         path = safe_path_join('.loki', 'state', 'relevant-learnings.json')
@@ -2629,6 +2725,10 @@ async def loki_learnings(limit: int = 50) -> str:
 @mcp.tool()
 async def loki_graph_query(question: str, budget: int = 1500, path: str = ".") -> str:
     """Answer a codebase question from a knowledge graph instead of reading files.
+    Use it for questions about structure and relationships, such as what calls what
+    or what depends on what, without reading files. Do not use it to find code by
+    meaning (use loki_code_search) or for exact symbol lookups (use
+    lsp_workspace_symbols).
 
     WHY THIS EXISTS
         Loading a large repo into context is the dominant token cost of working
@@ -2710,6 +2810,9 @@ async def loki_graph_query(question: str, budget: int = 1500, path: str = ".") -
 @mcp.tool()
 async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
     """Verify code deterministically in milliseconds. No model call, no network.
+    Use it for an immediate, deterministic check of a repo or its diff against a git
+    ref. Do not use it to verify a finished run's receipt (use loki_v10_verify) or
+    to review code quality (use loki_quality_report).
 
     This is the embeddable verification primitive: an IDE, another agent, a CI
     step, or a third-party tool can call it and get a structured verdict back
@@ -2780,6 +2883,9 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
 @mcp.tool()
 async def loki_counter_evidence_template(iteration: int) -> str:
     """Generate a counter-evidence file template for the given iteration.
+    Use it when you disagree with review findings and need a pre-filled file to
+    argue each one. Do not use it to read the findings themselves (use
+    loki_findings); it only generates the template for the iteration.
 
     Pre-fills canonical findingId for each Critical/High finding so the
     user only has to fill in `claim` + `proofType`. Save the template

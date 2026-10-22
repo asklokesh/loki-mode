@@ -339,5 +339,65 @@ class Phase1ToolsTests(unittest.TestCase):
         self.assertIn("counter-evidence-3.json", body["usage"])
 
 
+# ----- Tool description lint (tool-selection quality, issue #276) ----------
+
+# Tools whose purposes overlap. Each description must name at least one sibling
+# from its own group so the model can pick between them.
+_OVERLAP_GROUPS = [
+    {"loki_memory_retrieve", "mem_search", "mem_get", "mem_timeline", "loki_memory_store_pattern",
+     "loki_memory_capture_session_summary", "loki_consolidate_memory", "loki_memory_redact", "loki_learnings"},
+    {"loki_code_search", "loki_code_search_stats", "loki_graph_query", "lsp_workspace_symbols"},
+    {"loki_project_status", "loki_state_get", "loki_agent_metrics", "loki_metrics_efficiency",
+     "loki_quality_report", "loki_findings", "loki_counter_evidence_template"},
+    {"loki_task_queue_list", "loki_task_queue_add", "loki_task_queue_update", "loki_complete_task"},
+    {"loki_v10_run", "loki_v10_status", "loki_v10_verify", "loki_verify_fast", "loki_start_project"},
+    {"loki_get_hotspots", "loki_get_co_changes", "loki_get_doc_coverage"},
+    {"lsp_find_references", "lsp_go_to_definition", "lsp_symbol_at_position", "lsp_check_exists",
+     "lsp_get_diagnostics", "lsp_workspace_symbols", "lsp_find_definition_by_name"},
+    {"cp_runs_search", "cp_run_get", "cp_run_events", "cp_run_artifact", "cp_runs_compare",
+     "cp_stats", "cp_cost", "cp_repos_list"},
+]
+
+
+def _mcp_tool_descriptions() -> dict[str, str]:
+    """name -> description text (docstring before Args/Returns) for every @mcp.tool in mcp/*.py."""
+    import ast
+    import re
+
+    out: dict[str, str] = {}
+    for f in sorted((Path(__file__).resolve().parents[2] / "mcp").glob("*.py")):
+        for n in ast.walk(ast.parse(f.read_text())):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                ast.unparse(d).startswith("mcp.tool") for d in n.decorator_list
+            ):
+                doc = ast.get_docstring(n) or ""
+                out[n.name] = " ".join(re.split(r"\n\s*(?:Args|Returns):", doc)[0].split())
+    return out
+
+
+def _sentence_count(text: str) -> int:
+    import re
+
+    return len([x for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()])
+
+
+class TestToolDescriptionLint(unittest.TestCase):
+    def test_every_tool_has_three_sentences(self):
+        tools = _mcp_tool_descriptions()
+        short = sorted(n for n, d in tools.items() if _sentence_count(d) < 3)
+        if os.environ.get("MCP_DOCLINT_REPORT"):
+            print(f"tools={len(tools)} under_3_sentences={len(short)}")
+        self.assertEqual(short, [], "tool descriptions under 3 sentences")
+
+    def test_overlapping_tools_name_a_sibling(self):
+        tools = _mcp_tool_descriptions()
+        missing = []
+        for name in sorted(tools):
+            sibs = set().union(*(g - {name} for g in _OVERLAP_GROUPS if name in g))
+            if sibs and not any(sib in tools[name] for sib in sibs):
+                missing.append(name)
+        self.assertEqual(missing, [], "overlapping tools must name a sibling in their description")
+
+
 if __name__ == "__main__":
     unittest.main()

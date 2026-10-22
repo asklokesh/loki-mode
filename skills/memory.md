@@ -131,13 +131,13 @@ With managed memory on, a new project gets access to:
 
 Promotions from user-RW to org-RO are MANUAL only at v7.0.x. Use the
 Managed Agents API directly (`memory_stores.memories.create` against the
-org store) with human review. An MCP `loki_memory_promote` tool is on
+org store) with human review. An MCP `loki-mode:loki_memory_promote` tool is on
 the roadmap but NOT shipped in v7.0.x; do not depend on it. Never
 auto-promote.
 
 ## PII redaction
 
-MCP tool `loki_memory_redact(pattern, scope="all")` matches a regex
+MCP tool `loki-mode:loki_memory_redact(pattern, scope="all")` matches a regex
 across memory versions and calls `memory_versions.redact(...)` on
 matches. Produces a structured audit event. Requires
 `LOKI_MANAGED_MEMORY=true`.
@@ -199,7 +199,7 @@ Dashboard endpoints (read-only, view-layer merge):
 - `memory/managed_memory/` -- package (sole SDK import site, with `providers/managed.py`)
 - `providers/managed.py` -- multiagent session orchestration
 - `agents/managed_registry.py` -- lazy agent materialization
-- `mcp/managed_tools.py` -- MCP tools (`loki_memory_redact`)
+- `mcp/managed_tools.py` -- MCP tools (`loki-mode:loki_memory_redact`)
 - `CHANGELOG.md` -- per-release honest disclosure
 
 ---

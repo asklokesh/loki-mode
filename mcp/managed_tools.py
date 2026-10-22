@@ -227,6 +227,10 @@ def register_managed_tools(mcp) -> None:
     async def loki_memory_redact(pattern: str, scope: str = "all") -> str:
         """
         Redact memory versions in the managed-agents store whose content matches a regex.
+        Use it to redact sensitive content, for example a leaked secret, from
+        managed memory versions that match a regex. Do not use it to read or
+        search memory (use mem_search or loki_memory_retrieve); it needs managed
+        memory enabled.
 
         Iterates memory versions within the requested scope and calls
         ``client.beta.memory_stores.memory_versions.redact(...)`` for each
