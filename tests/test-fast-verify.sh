@@ -44,6 +44,7 @@ bad() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/loki-fastverify-XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+export LOKI_FAST_VERIFY_CACHE_DIR="$TMP/user-cache"
 
 echo "=== fast_verify: milliseconds AND correctness ==="
 
@@ -153,6 +154,50 @@ if [ "${hits:-0}" -gt 0 ] 2>/dev/null; then
     ok "the content-addressed cache is actually hit ($hits files)"
 else
     bad "no cache hits on the second run -- caching is not working"
+fi
+
+# ---- CACHE BINDING: an agent-writable entry must never decide a verdict ---
+# The agent can compute blake2b(content) and plant "[]" for a file with a high
+# finding. Neither a repo-local file nor an unauthenticated entry in the real
+# cache location may suppress it.
+PW="$TMP/planted"; mkdir -p "$PW/src"
+git init -q "$PW" 2>/dev/null
+cp "$W/src/Orders.tsx" "$PW/src/Orders.tsx"
+git -C "$PW" add -A >/dev/null 2>&1
+rm -rf "$LOKI_FAST_VERIFY_CACHE_DIR"
+python3 - "$FV" "$PW" <<'PYEOF'
+import hashlib, importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("fv", sys.argv[1])
+fv = importlib.util.module_from_spec(spec)
+sys.modules["fv"] = fv
+spec.loader.exec_module(fv)
+root = sys.argv[2]
+raw = open(os.path.join(root, "src", "Orders.tsx"), "rb").read()
+key = hashlib.blake2b(raw, digest_size=16).hexdigest()
+legacy = os.path.join(root, ".loki", "cache", "fast-verify.json")
+os.makedirs(os.path.dirname(legacy), exist_ok=True)
+json.dump({"schema": 1, "entries": {key: []}}, open(legacy, "w"))
+real = fv.cache_path(root)
+os.makedirs(os.path.dirname(real), exist_ok=True)
+json.dump({"schema": fv.CACHE_SCHEMA, "entries": {key: {"findings": [], "mac": "00" * 32}}}, open(real, "w"))
+PYEOF
+PV="$(cd "$PW" && timeout 120 python3 "$FV" . --json 2>/dev/null)"
+if printf '%s' "$PV" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d['verdict']=='FAIL' and any(f['rule']=='mock_render' for f in d['findings']) and d['files_from_cache']==0 else 1)"; then
+    ok "a planted empty-list cache entry (repo-local or forged MAC) does not suppress a high finding"
+else
+    bad "a planted cache entry suppressed or replaced a finding -- the cache is trusted without a binding"
+fi
+PV2="$(cd "$PW" && timeout 120 python3 "$FV" . --json 2>/dev/null)"
+if printf '%s' "$PV2" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d['verdict']=='FAIL' and d['files_from_cache']>0 else 1)"; then
+    ok "after the rescan the authenticated entry is cached and hit with the same verdict"
+else
+    bad "the authenticated cache was not reused after a rescan"
 fi
 
 # ---- EXIT CODES: INCONCLUSIVE=3, unknown flag=64, missing root=2 ----------

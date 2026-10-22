@@ -42,6 +42,7 @@ WHAT THIS DELIBERATELY DOES NOT DO
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -53,6 +54,7 @@ from pathlib import Path
 from typing import Iterable
 
 SCHEMA_VERSION = 1
+CACHE_SCHEMA = 2  # on-disk cache layout: entries carry an HMAC
 
 # Source extensions worth scanning. Anything else is discovery noise.
 CODE_EXT = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".rb", ".java", ".sh"}
@@ -210,42 +212,103 @@ def discover(root: str, diff_base: str = "") -> list:
 
 # --- Content-addressed cache -------------------------------------------------
 
+def cache_dir() -> str:
+    """User-owned cache root, outside every repo the agent works in
+    (LOKI_FAST_VERIFY_CACHE_DIR overrides it, for tests and sandboxes)."""
+    return os.environ.get("LOKI_FAST_VERIFY_CACHE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".loki", "cache", "fast-verify")
+
+
+def cache_path(root: str) -> str:
+    tag = hashlib.blake2b(os.path.realpath(root).encode("utf-8", "replace"), digest_size=8).hexdigest()
+    return os.path.join(cache_dir(), tag + ".json")
+
+
+def _cache_secret() -> bytes | None:
+    """Per-user HMAC key kept beside the cache, never inside the repo. None when
+    it can be neither read nor created, in which case the cache is off."""
+    path = os.path.join(cache_dir(), "key")
+    try:
+        with open(path, "rb") as fh:
+            key = fh.read()
+        if len(key) >= 32:
+            return key
+    except OSError:
+        pass
+    try:
+        os.makedirs(cache_dir(), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(os.urandom(32))
+    except FileExistsError:
+        pass
+    except OSError:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            key = fh.read()
+        return key if len(key) >= 32 else None
+    except OSError:
+        return None
+
+
 class Cache:
     """Findings keyed by content hash, so unchanged files are never re-read.
 
-    Correctness note: the key is the file's CONTENT, not its path or mtime. A
-    file that moves keeps its result; a file that changes gets a new key. There
-    is no staleness window to reason about, which is what makes it safe to trust
-    a cache hit as if the scan had just run.
+    The key is the file's CONTENT, not its path or mtime, so there is no
+    staleness window. Content addressing does not make an entry trustworthy
+    on its own: the key is computable by anyone, so an entry written by the
+    agent under review could suppress a finding. Each entry therefore carries
+    an HMAC under a per-user secret held outside the repo, and an entry whose
+    MAC does not verify is a miss: the file is rescanned. Without a secret
+    the cache is disabled.
     """
 
     def __init__(self, path: str):
         self.path = path
         self.data = {}
         self.hits = 0
+        self.secret = _cache_secret()
+        if self.secret is None:
+            return
         try:
             with open(path, encoding="utf-8") as fh:
                 blob = json.load(fh)
-            if isinstance(blob, dict) and blob.get("schema") == SCHEMA_VERSION:
-                self.data = blob.get("entries", {})
+            if isinstance(blob, dict) and blob.get("schema") == CACHE_SCHEMA:
+                entries = blob.get("entries", {})
+                if isinstance(entries, dict):
+                    self.data = entries
         except (OSError, ValueError):
             self.data = {}
 
+    def _mac(self, key: str, findings: list) -> str:
+        body = json.dumps([CACHE_SCHEMA, key, findings], sort_keys=True, separators=(",", ":"))
+        return hmac.new(self.secret, body.encode("utf-8"), "sha256").hexdigest()
+
     def get(self, key: str):
-        v = self.data.get(key)
-        if v is not None:
-            self.hits += 1
-        return v
+        entry = self.data.get(key)
+        if self.secret is None or not isinstance(entry, dict):
+            return None
+        findings, mac = entry.get("findings"), entry.get("mac")
+        if not isinstance(findings, list) or not isinstance(mac, str):
+            return None
+        if not hmac.compare_digest(mac, self._mac(key, findings)):
+            return None
+        self.hits += 1
+        return findings
 
     def put(self, key: str, findings: list) -> None:
-        self.data[key] = findings
+        if self.secret is not None:
+            self.data[key] = {"findings": findings, "mac": self._mac(key, findings)}
 
     def save(self) -> None:
+        if self.secret is None:
+            return
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"schema": SCHEMA_VERSION, "entries": self.data}, fh)
+                json.dump({"schema": CACHE_SCHEMA, "entries": self.data}, fh)
             os.replace(tmp, self.path)
         except OSError:
             pass  # a cache that cannot be written must never break a verdict
@@ -256,7 +319,7 @@ class Cache:
 def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Result:
     t0 = time.perf_counter()
     root = os.path.abspath(root)
-    cache = Cache(os.path.join(root, ".loki", "cache", "fast-verify.json")) if use_cache else None
+    cache = Cache(cache_path(root)) if use_cache else None
 
     findings = []
     scanned = 0
