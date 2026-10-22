@@ -11,6 +11,12 @@
 // at runtime. Detection uses `which` (or PATH walk fallback); absence is a
 // normal state, not an error. Bash mirror in autonomy/lib/mcp-config.sh.
 //
+// Outbound remote servers: LOKI_MCP_<NAME>_URL declares an HTTP server named
+// <name> (lowercase, "_" to "-"); LOKI_MCP_<NAME>_AUTH, when set, becomes its
+// Authorization header ("Bearer " is added unless the value names a scheme).
+// A plain-http URL is accepted only for loopback. A bundle that holds a header
+// value is written 0600, and no header value is ever logged.
+//
 // Public API:
 //   mcpConfigPath(targetDir) -> absolute path to Loki bundle (idempotent write)
 //   userMcpConfigPath() -> absolute path to ~/.claude/mcp.json if readable, else null
@@ -35,7 +41,7 @@
 //   and short-circuits before fs.writeFileSync when equal, preserving mtime.
 // - Variadic emission: separate argv elements per Commander `<configs...>` syntax
 //   verified via `claude --help` (v2.1.34).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, chmodSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tokenFreeEnv } from "../util/safe_git.ts";
 import { resolve as resolvePath, join, delimiter } from "node:path";
@@ -66,7 +72,43 @@ function detectLsp(): boolean {
 
 // Build the bundle, optionally with the Phase G lsp-proxy entry.
 // Pure function; takes lsp_detected so tests can drive the conditional path.
-function buildBundle(lspDetected: boolean): Record<string, unknown> {
+function isLoopbackHost(h: string): boolean {
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+}
+
+// Collect LOKI_MCP_<NAME>_URL servers from env. Returns the server map and
+// whether any carries a header value. Warns by variable name only.
+function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<string, unknown>; hasSecret: boolean } {
+  const servers: Record<string, unknown> = {};
+  let hasSecret = false;
+  for (const key of Object.keys(env).sort()) {
+    const m = /^LOKI_MCP_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/.exec(key);
+    const raw = env[key];
+    if (!m || !raw) continue;
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      console.warn(`[mcp_config] ignoring ${key}: not a valid URL.`);
+      continue;
+    }
+    const secure = url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHost(url.hostname));
+    if (!secure) {
+      console.warn(`[mcp_config] ignoring ${key}: remote MCP servers must use https (plain http is loopback only).`);
+      continue;
+    }
+    const entry: Record<string, unknown> = { type: "http", url: raw };
+    const auth = env[`LOKI_MCP_${m[1]}_AUTH`];
+    if (auth) {
+      entry["headers"] = { Authorization: /^[A-Za-z][A-Za-z0-9-]*\s+\S/.test(auth) ? auth : `Bearer ${auth}` };
+      hasSecret = true;
+    }
+    servers[m[1]!.toLowerCase().replace(/_/g, "-")] = entry;
+  }
+  return { servers, hasSecret };
+}
+
+function buildBundle(lspDetected: boolean, remote: Record<string, unknown> = {}): Record<string, unknown> {
   const servers: Record<string, unknown> = {
     "loki-mode": {
       command: "python3",
@@ -78,6 +120,9 @@ function buildBundle(lspDetected: boolean): Record<string, unknown> {
       command: "python3",
       args: ["-m", "mcp.lsp_proxy"],
     };
+  }
+  for (const [name, entry] of Object.entries(remote)) {
+    if (!(name in servers)) servers[name] = entry;
   }
   return { mcpServers: servers };
 }
@@ -94,7 +139,8 @@ function stableStringify(obj: unknown): string {
 export function mcpConfigPath(targetDir: string): string {
   const lokiDir = resolvePath(targetDir, ".loki");
   const cfgPath = join(lokiDir, "mcp-config.json");
-  const desired = stableStringify(buildBundle(detectLsp()));
+  const remote = remoteServersFromEnv(process.env);
+  const desired = stableStringify(buildBundle(detectLsp(), remote.servers));
 
   let existing: string | null = null;
   if (existsSync(cfgPath)) {
@@ -107,11 +153,13 @@ export function mcpConfigPath(targetDir: string): string {
 
   if (existing === desired) {
     // Idempotent: identical bytes already on disk, skip write to preserve mtime.
+    if (remote.hasSecret) chmodSync(cfgPath, 0o600);
     return cfgPath;
   }
 
   mkdirSync(lokiDir, { recursive: true });
-  writeFileSync(cfgPath, desired, "utf8");
+  writeFileSync(cfgPath, desired, { encoding: "utf8", mode: remote.hasSecret ? 0o600 : 0o666 });
+  if (remote.hasSecret) chmodSync(cfgPath, 0o600);
   return cfgPath;
 }
 

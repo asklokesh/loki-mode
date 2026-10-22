@@ -90,6 +90,12 @@ Loki Mode ships an MCP server (`npx -y loki-mode mcp`, stdio). Register it in yo
 - VS Code: [install link](vscode:mcp/install?%7B%22name%22%3A%22loki-mode%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22loki-mode%22%2C%22mcp%22%5D%7D)
 - Command line, any supported client: `loki mcp install --client claude`, `--client cursor`, `--client vscode` or `--client windsurf`. Add `--project` or `--global` to pick the config scope, or `--print` to show the config and write nothing.
 
+### Remote MCP hosting and outbound auth
+
+- Serving: `loki mcp --transport http` binds to loopback only. To reach it from another machine, put an HTTPS reverse proxy in front of it and set `LOKI_MCP_AUTH_TOKEN` so the server rejects any request without the matching bearer token. Never expose the plain HTTP port directly.
+- Consuming a remote MCP server from a Loki run: set `LOKI_MCP_<NAME>_URL` (an `https://` URL; plain `http://` is accepted only for loopback) and optionally `LOKI_MCP_<NAME>_AUTH`. The server is added to `.loki/mcp-config.json` as `<name>` (lowercase, underscores become hyphens) with an `Authorization` header. A bare token is sent as `Bearer <token>`; a value that already starts with a scheme such as `Basic` is sent as is. When an auth value is present the file is written with mode 0600, and header values are never printed in logs or warnings.
+- Drift: `loki doctor` records a hash of the served tool list on first run and prints a warning row if the list later changes. Delete `.loki/state/mcp-tools.sha256` to accept the new list.
+
 ---
 
 ## First run

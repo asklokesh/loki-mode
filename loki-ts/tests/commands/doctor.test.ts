@@ -24,7 +24,10 @@ import {
   checkModelCapabilities,
   compareModelCapabilities,
   parseModelCapabilities,
+
+  _setMcpToolHashForTest,
   _setPythonImportOkForTest,
+  checkMcpToolDrift,
   probeIntegrations,
   cmpVersion,
   evaluateClaudeCliCompat,
@@ -1787,5 +1790,69 @@ describe("CW-14: provider_auth rows", () => {
     const j = await buildDoctorJson();
     expect(j.provider_auth).toHaveLength(5);
     expect(JSON.stringify(j.provider_auth)).not.toMatch(/sk-/);
+  }, 60000);
+});
+
+// g05-61: the served MCP tool list is hashed and compared with the recorded hash.
+describe("doctor MCP tool-list drift", () => {
+  let lokiDir: string;
+  const recordFile = (): string => join(lokiDir, "state", "mcp-tools.sha256");
+  beforeEach(() => {
+    lokiDir = mkdtempSync(join(tmpdir(), "loki-mcp-drift-"));
+  });
+  afterEach(() => {
+    rmSync(lokiDir, { recursive: true, force: true });
+    _setMcpToolHashForTest(null);
+    _setPythonImportOkForTest(null);
+    _setIntegrationProbesForTest(null);
+    delete process.env["LOKI_DIR"];
+  });
+
+  it("first sight records the hash and prints nothing", () => {
+    expect(checkMcpToolDrift(lokiDir, "aaa").status).toBe("recorded");
+    expect(readFileSync(recordFile(), "utf8").trim()).toBe("aaa");
+  });
+
+  it("an unchanged hash passes and leaves the record alone", () => {
+    checkMcpToolDrift(lokiDir, "aaa");
+    expect(checkMcpToolDrift(lokiDir, "aaa").status).toBe("pass");
+  });
+
+  it("a changed hash is a warn that says drift and does not overwrite the record", () => {
+    checkMcpToolDrift(lokiDir, "aaa");
+    const r = checkMcpToolDrift(lokiDir, "bbb");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("drift");
+    expect(readFileSync(recordFile(), "utf8").trim()).toBe("aaa");
+  });
+
+  it("an unavailable served hash or a missing .loki dir skips without writing", () => {
+    expect(checkMcpToolDrift(lokiDir, null).status).toBe("skip");
+    expect(checkMcpToolDrift(join(lokiDir, "absent"), "aaa").status).toBe("skip");
+    expect(existsSync(recordFile())).toBe(false);
+  });
+
+  it("runDoctor prints one drift warn row when the served hash differs from the recorded one", async () => {
+    mkdirSync(join(lokiDir, "state"), { recursive: true });
+    writeFileSync(recordFile(), "aaa\n");
+    process.env["LOKI_DIR"] = lokiDir;
+    _setPythonImportOkForTest(async () => true);
+    _setIntegrationProbesForTest({ http: async () => false, command: async () => null, sentruxVersion: async () => "1" });
+    _setMcpToolHashForTest(async () => "bbb");
+    const { cap } = await captureStdio(() => runDoctor([]));
+    const rows = cap.out.split("\n").filter((l) => l.includes("MCP tool list drift"));
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toContain("WARN");
+  }, 60000);
+
+  it("runDoctor prints no drift row when the hash matches", async () => {
+    mkdirSync(join(lokiDir, "state"), { recursive: true });
+    writeFileSync(recordFile(), "aaa\n");
+    process.env["LOKI_DIR"] = lokiDir;
+    _setPythonImportOkForTest(async () => true);
+    _setIntegrationProbesForTest({ http: async () => false, command: async () => null, sentruxVersion: async () => "1" });
+    _setMcpToolHashForTest(async () => "aaa");
+    const { cap } = await captureStdio(() => runDoctor([]));
+    expect(cap.out.includes("MCP tool list drift")).toBe(false);
   }, 60000);
 });
