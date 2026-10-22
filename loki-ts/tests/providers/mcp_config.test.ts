@@ -7,11 +7,12 @@
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync, symlinkSync, lstatSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync, readdirSync, symlinkSync, lstatSync, utimesSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SECRET_TMP_GRACE_MS } from "../../src/util/atomic.ts";
 import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv, mcpLaunchFor } from "../../src/providers/mcp_config.ts";
 
 describe("mcp_config.mcpConfigPath", () => {
@@ -466,6 +467,71 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     expect(lstatSync(join(td, ".loki", "mcp-config.json")).isDirectory()).toBe(true);
     expect(readdirSync(join(td, ".loki")).filter((f) => f.includes(".tmp"))).toEqual([]);
     expect(readdirSync(join(td, ".loki", "mcp-config.json"))).toEqual([]);
+  });
+
+  // FC-STALE-SECRET-TMP-NEVER-SWEPT: a writer SIGKILLed between creating its 0600 tmp and the rename.
+  const killedWriter = (dir: string): string => {
+    const script = `import{writeFileSync,mkdirSync}from"node:fs";mkdirSync(${JSON.stringify(dir)},{recursive:true});` +
+      `writeFileSync(${JSON.stringify(dir)}+"/mcp-config.json.tmp."+process.pid,${JSON.stringify(TOKEN)},{mode:0o600,flag:"wx"});process.kill(process.pid,"SIGKILL")`;
+    const r = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+    expect(r.signal).toBe("SIGKILL");
+    const left = readdirSync(dir).filter((f) => f.startsWith("mcp-config.json.tmp."));
+    expect(left.length).toBe(1);
+    return left[0]!;
+  };
+
+  it("the next write sweeps the tmp a killed writer left behind", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    const dir = join(td, ".loki");
+    killedWriter(dir);
+    mcpConfigPath(td);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+    expect(statSync(join(dir, "mcp-config.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it("sweeps a stale bash-route tmp, keeps a fresh one, a live writer's and a directory", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    const dir = join(td, ".loki");
+    mkdirSync(dir, { recursive: true });
+    const old = new Date(Date.now() - 3600_000);
+    const stale = join(dir, ".mcp-config.abcd1234.tmp");
+    const fresh = join(dir, ".mcp-config.efgh5678.tmp");
+    const live = join(dir, `mcp-config.json.tmp.${process.ppid}`);
+    const unrelated = join(dir, ".mcp-config.keep.json");
+    for (const f of [stale, fresh, live, unrelated]) writeFileSync(f, TOKEN, { mode: 0o600 });
+    utimesSync(stale, old, old);
+    utimesSync(live, old, old);
+    mkdirSync(join(dir, ".mcp-config.dir00000.tmp"));
+    mcpConfigPath(td);
+    const left = readdirSync(dir).sort();
+    expect(left).toContain(".mcp-config.efgh5678.tmp");
+    expect(left).toContain(`mcp-config.json.tmp.${process.ppid}`);
+    expect(left).toContain(".mcp-config.keep.json");
+    expect(left).toContain(".mcp-config.dir00000.tmp");
+    expect(left).not.toContain(".mcp-config.abcd1234.tmp");
+  });
+
+  it("the signing key writer sweeps its own killed tmp on the next key creation", () => {
+    const home = join(td, "home");
+    const keys = join(home, ".loki", "keys");
+    mkdirSync(keys, { recursive: true, mode: 0o700 });
+    const stale = join(keys, "receipt-ed25519.pem.0123456789ab.tmp");
+    writeFileSync(stale, "PRIVATE", { mode: 0o600 });
+    const old = new Date(Date.now() - 3600_000);
+    utimesSync(stale, old, old);
+    const r = spawnSync(process.execPath, ["-e", `import{loadSigningKey}from${JSON.stringify(join(import.meta.dir, "../../src/util/receipt_signer.ts"))};process.exit(loadSigningKey(true)?0:1)`],
+      { encoding: "utf8", env: { ...process.env, HOME: home, LOKI_RECEIPT_SIGNING_KEY: "", LOKI_RECEIPT_SIGNING_KEY_FILE: "" } });
+    expect(r.status).toBe(0);
+    expect(readdirSync(keys)).toEqual(["receipt-ed25519.pem"]);
+  });
+
+  it("the one python sweep carries the same grace constant as the TS sweep", () => {
+    const root = join(import.meta.dir, "../../..");
+    for (const f of ["autonomy/lib/secret_tmp.py"]) {
+      expect(readFileSync(join(root, f), "utf8")).toContain(`SECRET_TMP_GRACE_SECONDS = ${SECRET_TMP_GRACE_MS / 1000}`);
+    }
   });
 
   it("an unchanged bundle holding a secret that was left at 644 is tightened to 0600", () => {
