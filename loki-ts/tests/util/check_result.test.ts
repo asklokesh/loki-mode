@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { deepGaps, classifyCheck, isExitCodedScript, EXIT_CODED_COUNT, UNMEASURED_REASON, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
+import { deepGaps, deepRecord, DEEP_STAGE_MISSING, classifyCheck, isExitCodedScript, EXIT_CODED_COUNT, UNMEASURED_REASON, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -169,6 +169,32 @@ describe("FC-SEAL-NA-AS-UNPROVEN deepGaps", () => {
   test("an executed deep check is dropped", () => {
     const g = deepGaps(r("high", [...base, "full test command", "full suite", "council", "security scan"], ["council", "security scan"]), [], [{ name: "security scan", result: "pass" }]);
     expect(g.notProven).toEqual(["council"]);
+  });
+});
+
+describe("FC-DEEP-REQUIRED-CHECK-UNRECORDED deepRecord", () => {
+  const base = ["targeted tests", "lint of changed files"], high = { tier: "high", checks_selected: [...base, "full test command", "full suite", "council", "security scan"], checks_deferred: ["full suite", "council", "security scan"] };
+  test("high tier with the deep stage removed: every required check is not ran and the run is not proven", () => {
+    const g = deepRecord(high, []);
+    expect(g.required).toEqual([{ check: "full suite", ran: false, reason: DEEP_STAGE_MISSING }, { check: "council", ran: false, reason: DEEP_STAGE_MISSING }, { check: "security scan", ran: false, reason: DEEP_STAGE_MISSING }]);
+    expect(g.proven).toBe(false);
+  });
+  test("a skipped check carries the deep stage's own reason; the others are recorded as ran", () => {
+    const g = deepRecord(high, [], [{ name: "full suite: bun", result: "pass" }, { name: "council", result: "pass" }, { name: "security scan", result: "not_run", reason: "secure-scan.py missing" }]);
+    expect(g.required.find((q) => q.check === "security scan")).toEqual({ check: "security scan", ran: false, reason: "secure-scan.py missing" });
+    expect(g.required.filter((q) => q.ran).map((q) => q.check)).toEqual(["full suite", "council"]);
+    expect(g.proven).toBe(false);
+  });
+  test("a check the deep stage explained only in a note takes that reason", () => {
+    const g = deepRecord(high, [], [], ["council (not wired: x)", "not run: security scan (scanner missing)"]);
+    expect(g.required.map((q) => q.reason)).toEqual([DEEP_STAGE_MISSING, "not wired: x", "scanner missing"]);
+  });
+  test("all required ran: proven; a full suite verify already ran counts", () => {
+    expect(deepRecord(high, [{ name: "full suite: bun", result: "pass" }], [{ name: "council", result: "fail" }, { name: "security scan", result: "pass" }]).proven).toBe(true);
+  });
+  test("low tier and an unusable record require nothing (deepGaps owns the fail-safe)", () => {
+    expect(deepRecord({ tier: "low", checks_selected: base, checks_deferred: [] }, [])).toEqual({ required: [], proven: true });
+    expect(deepRecord(undefined, []).required).toEqual([]);
   });
 });
 

@@ -290,6 +290,35 @@ describe("engine10 deep: app boot via util/app_probe.ts (TEN-GATES-06)", () => {
     expect(r.data.not_applicable as string[]).toContain("app boot (app-runner detected no app)");
   });
 
+  test("FC-DEEP-REQUIRED-CHECK-UNRECORDED: a high-tier run whose required check was skipped is recorded not ran and is never success", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const risk = { tier: "high", checks_selected: ["targeted tests", "lint of changed files", "full test command", "full suite", "council", "security scan"], checks_deferred: ["full suite", "council", "security scan"] };
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { verify: { risk, checks: [] } } });
+    const r = await runDeep(ctx, sig(), baseOpts());
+    const req = r.data.required_checks as { check: string; ran: boolean; reason?: string }[];
+    expect(req.find((q) => q.check === "council")).toMatchObject({ ran: false, reason: "not wired: see the contract-gap note in stages/deep.ts" });
+    expect(req.find((q) => q.check === "security scan")?.ran).toBe(true);
+    expect(r.data.status_state).toBe("pending");
+    expect(r.data.not_proven as string[]).toContain("council (not wired: see the contract-gap note in stages/deep.ts)");
+    const add = JSON.parse(readFileSync(join(dir, ".loki", "runs", "e10-deep-test", "receipt-addendum-1.json"), "utf8"));
+    expect(add.required_checks).toEqual(req); expect(add.status_state).toBe("pending");
+  });
+
+  test("FC-DEEP-REQUIRED-CHECK-UNRECORDED: every required check ran gives success; a low-tier record requires nothing", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const sel = ["targeted tests", "lint of changed files", "full test command", "full suite", "council", "security scan"];
+    const done = { name: "full suite: bun", cmd: "x", result: "pass", duration_s: 0 };
+    const hi = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { verify: { risk: { tier: "high", checks_selected: sel, checks_deferred: ["council"] }, checks: [done] } } });
+    const okCouncil = await runDeep(hi.ctx, sig(), baseOpts({ council: { run: async () => ({ findings: [] }) } }));
+    expect(okCouncil.data.status_state).toBe("success");
+    expect((okCouncil.data.required_checks as { ran: boolean }[]).every((q) => q.ran)).toBe(true);
+    const lo = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { verify: { risk: { tier: "low", checks_selected: sel.slice(0, 2), checks_deferred: [] }, checks: [] } } });
+    const low = await runDeep(lo.ctx, sig(), baseOpts());
+    expect(low.data.required_checks).toEqual([]); expect(low.data.status_state).toBe("success");
+  });
+
   test("a throwing or empty probe is NOT PROVEN, never a pass", async () => {
     const { dir, base } = mkRepo();
     commitChange(dir, "a.txt", "hi\n");
