@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.28.0 (2026-10-22)
+
+### Added
+- The Claude stream parser records `model_refusal_fallback`, `model_refusal_no_fallback` and `api_retry` events in .loki/events.jsonl. It drops retracted and superseded assistant text from the captured output. Refs #252.
+
+### Fixed
+- A turn refused with no fallback is no longer resumed; its stale session id is removed. A truncated turn now keeps the last session id seen on any frame, so it can resume. Refs #252.
+
 ## v11.27.0 (2026-10-22)
 
 ### Fixed
