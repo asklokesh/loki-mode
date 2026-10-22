@@ -1443,3 +1443,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: all 14 literals in loki-ts/tests, replaced in one change; per-test `, N)` timeouts are explicit single-test budgets and are not in this class.
 - Mechanism: loki-ts/tests/preload.ts exports `setLoadAwareTimeout(baseMs)`: baseMs times clamp(ceil(2 * loadavg1 / cpus), 1, 10). `LOKI_TEST_TIMEOUT_SCALE` (positive number, capped at 10) replaces the factor; `LOKI_TEST_TIMEOUT_MS` is a floor that wins when larger. A guard in loki-ts/tests/util fails on any direct `setDefaultTimeout(` call in tests.
 - Fixture: loki-ts/tests/util/test_timeout_guard.test.ts tests FC-TEST-TIMEOUT-OVERRIDES-CLI, including a subprocess run through the real setLoadAwareTimeout path (env knob lifts the budget, a real hang still times out).
+
+- Siblings swept: every registered MCP tool and resource, via the runtime-derived guard in tests/mcp/test_phase1_tools.py (seeds this cache with the marker; the observer now also sees os.scandir, os.stat, Path.iterdir and glob); the JS mirror declares its fields in src/protocols and counts them in tests/protocols/mcp-server.test.js.
+- Mechanism: part 1 (this change) moves loki_verify_fast findings under untrusted_content via _UNTRUSTED_FIELDS. The verdict-suppression half is open in #319 (cache entries must be authenticated or re-derived, then the row is closed).
+- Fixture: tests/mcp/test_phase1_tools.py test_stored_text_appears_only_inside_untrusted_content (red with loki_verify_fast trusted: leaks ['loki_verify_fast']; green after).
+
+## FC-STATE-MANAGER-ROOT-IGNORED A process-wide state manager singleton ignored its lokiDir after first use, and a per-root cache would grow without bound
+- User-visible vs raw: user-visible. getStateManager({ lokiDir }) for a second .loki directory returned the first directory's manager, so reads and writes for run B landed in run A's state; a long-lived process serving many roots would have leaked one open watcher per root once keyed naively.
+- Law: a keyed accessor honours its key on every call; a cache that holds OS resources is bounded and releases what it evicts.
+- Cause (measured): state/manager.ts kept one module-level defaultManager and created it from the first call's options only.
+- Siblings swept: state/manager.py get_state_manager has the same single-default shape and is to follow the same keying rule (separate branch); no other TS caller passes arguments to getStateManager.
+- Mechanism: one per-root cache in state/manager.ts keyed by the (st_dev, st_ino) of the .loki directory (symlinks and case spellings share a manager), capped by LOKI_STATE_MANAGER_MAX (default 8), least recently used evicted and stop()ped.
+- Fixture: state/manager.test.ts. Red on origin/main (2 fail), green after (5 pass or 4 pass and 1 skip on a case-sensitive volume); mutations: no eviction, eviction without stop, path-string key, constant key, no LRU touch each go red.
