@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.46.0 (2026-10-22)
+
+### Added
+- Embedding config accepts an optional `output_dimension` (also `LOKI_EMBEDDING_OUTPUT_DIMENSION` or the config file): vectors keep their leading components and are re-normalized. It also accepts `dtype` (float32 default, float16).
+- A VectorIndex built for a normalized provider (local, openai, voyage) ranks by plain dot product and skips the per-search normalized copy. Defaults and the saved index layout are unchanged.
+
+### Fixed
+- A normalized VectorIndex re-normalizes off-unit vectors on add, update and load, persists the flag, and casts to its dtype on load.
+- A zero vector is stored as zeros instead of NaN, and a non-finite vector is stored unnormalized.
+
 ## v11.45.1 (2026-10-22)
 
 ### Fixed
