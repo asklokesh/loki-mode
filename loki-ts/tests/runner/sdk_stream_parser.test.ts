@@ -691,4 +691,36 @@ describe("consumeSdkStream transcript fixtures", () => {
       expect(ev[0].payload).toMatchObject({ attempt: 2, max_retries: 5, retry_delay_ms: 1500, error_status: 529, error: "overloaded" });
     });
   });
+
+  test("S1-W2-26: tool-use and skill-navigation telemetry lands in result-cost", async () => {
+    const tu = (id: string, name: string, input: Record<string, unknown> = {}) => ({ type: "tool_use", name, id, input });
+    const msgs: StreamMsg[] = [
+      { type: "system", subtype: "init", model: "m", tools: ["Read", "Bash", "mcp__loki__a", "mcp__loki__b"] },
+      { type: "assistant", message: { id: "turn1", content: [tu("a", "Read", { file_path: "/repo/skills/testing.md" })] } },
+      { type: "assistant", message: { id: "turn1", content: [tu("b", "Bash"), tu("c", "Read", { file_path: "/repo/references/x.md" })] } },
+      { type: "assistant", message: { id: "turn2", content: [tu("d", "Read", { file_path: "/repo/skills/testing.md" }), tu("e", "Read", { file_path: "/repo/src/skills.ts" })] } },
+      { type: "user", message: { content: [
+        { type: "tool_result", tool_use_id: "a", content: "ok" },
+        { type: "tool_result", tool_use_id: "b", content: "boom", is_error: true },
+      ] } },
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 } },
+    ];
+    await consumeSdkStream(msgs, ctx("9"), clock);
+    const cost = readJson(costPath("9"));
+    expect(cost.tools_per_turn).toBe(3);
+    expect(cost.tool_turns).toBe(2);
+    expect(cost.tool_calls).toBe(5);
+    expect(cost.tool_results).toBe(2);
+    expect(cost.tool_errors).toBe(1);
+    expect(cost.tool_error_rate).toBe(0.5);
+    expect(cost.mcp_tool_count).toBe(2);
+    expect(cost.skill_module_read).toEqual(["skills/testing.md", "references/x.md"]);
+  });
+
+  test("S1-W2-26: no tool activity -> no telemetry keys (never fabricated)", async () => {
+    const msgs: StreamMsg[] = [{ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 } }];
+    await consumeSdkStream(msgs, ctx("10"), clock);
+    const cost = readJson(costPath("10"));
+    for (const k of ["tools_per_turn", "tool_error_rate", "mcp_tool_count", "skill_module_read"]) expect(k in cost).toBe(false);
+  });
 });

@@ -252,5 +252,53 @@ class TestPredicateIsNotRestated(unittest.TestCase):
         )
 
 
+class TestMetricsEfficiencyToolTelemetry(unittest.TestCase):
+    """S1-W2-26: loki_metrics_efficiency surfaces stream-parser tool telemetry."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="loki-eff-tele-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.metrics = pathlib.Path(self.tmp) / ".loki" / "metrics"
+        self.metrics.mkdir(parents=True)
+
+    def _call(self):
+        prev = os.getcwd()
+        try:
+            os.chdir(self.tmp)
+            return json.loads(asyncio.run(server.loki_metrics_efficiency()))
+        finally:
+            os.chdir(prev)
+
+    def test_aggregates_result_cost_telemetry(self):
+        (self.metrics / "result-cost-1.json").write_text(json.dumps({
+            "tools_per_turn": 3, "tool_calls": 5, "tool_results": 2, "tool_errors": 1,
+            "mcp_tool_count": 2, "skill_module_read": ["skills/testing.md"]}))
+        (self.metrics / "result-cost-2.json").write_text(json.dumps({
+            "tools_per_turn": 4, "tool_calls": 4, "tool_results": 2, "tool_errors": 0,
+            "skill_module_read": ["skills/testing.md", "references/x.md"]}))
+        (self.metrics / "result-cost-3.json").write_text(json.dumps({"total_cost_usd": 0.1}))
+        tele = self._call()["tool_telemetry"]
+        self.assertEqual(tele["iterations_measured"], 2)
+        self.assertEqual(tele["tools_per_turn_max"], 4)
+        self.assertEqual((tele["tool_results"], tele["tool_errors"]), (4, 1))
+        self.assertEqual(tele["tool_error_rate"], 0.25)
+        self.assertEqual(tele["mcp_tool_count"], 2)
+        self.assertEqual(tele["skill_modules_read"], ["skills/testing.md", "references/x.md"])
+
+    def test_unmeasured_stays_null_not_zero(self):
+        (self.metrics / "tool-usage.jsonl").write_text('{"tool": "Read"}\n')
+        out = self._call()
+        self.assertEqual(out["total_tool_calls"], 1)
+        tele = out["tool_telemetry"]
+        self.assertEqual(tele["iterations_measured"], 0)
+        for k in ("tools_per_turn_max", "tool_error_rate", "mcp_tool_count", "skill_modules_read"):
+            self.assertIsNone(tele[k])
+
+    def test_nothing_collected_keeps_legacy_message(self):
+        self.assertEqual(self._call(), {"message": "No metrics collected yet", "tool_calls": 0})
+
+
 if __name__ == "__main__":
     unittest.main()

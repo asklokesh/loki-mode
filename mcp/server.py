@@ -1040,13 +1040,46 @@ async def loki_metrics_efficiency() -> str:
     run state (use loki_state_get).
 
     Returns:
-        JSON object with token usage, tool calls, and efficiency ratios
+        JSON object with token usage, tool calls, efficiency ratios, and
+        tool_telemetry (tools per turn, tool error rate, MCP tool count,
+        skill/reference modules read)
     """
     _emit_tool_event_async('loki_metrics_efficiency', 'start', parameters={})
     try:
         metrics_path = safe_path_join('.loki', 'metrics', 'tool-usage.jsonl')
+        metrics_dir = safe_path_join('.loki', 'metrics')
 
-        if not os.path.exists(metrics_path):
+        # S1-W2-26: stream-parser telemetry from result-cost-<iteration>.json.
+        # Fields stay null when no record carries them (unmeasured, never 0).
+        tele = {"iterations_measured": 0, "tools_per_turn_max": None, "tool_results": None,
+                "tool_errors": None, "tool_error_rate": None, "mcp_tool_count": None,
+                "skill_modules_read": None}
+        if os.path.isdir(metrics_dir):
+            for fname in sorted(os.listdir(metrics_dir)):
+                if not (fname.startswith('result-cost-') and fname.endswith('.json')):
+                    continue
+                try:
+                    with safe_open(safe_path_join('.loki', 'metrics', fname), 'r') as f:
+                        rec = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if not isinstance(rec, dict) or "tool_calls" not in rec and "mcp_tool_count" not in rec:
+                    continue
+                tele["iterations_measured"] += 1
+                if isinstance(rec.get("tools_per_turn"), int):
+                    tele["tools_per_turn_max"] = max(tele["tools_per_turn_max"] or 0, rec["tools_per_turn"])
+                for k in ("tool_results", "tool_errors"):
+                    if isinstance(rec.get(k), int):
+                        tele[k] = (tele[k] or 0) + rec[k]
+                if isinstance(rec.get("mcp_tool_count"), int):
+                    tele["mcp_tool_count"] = max(tele["mcp_tool_count"] or 0, rec["mcp_tool_count"])
+                if isinstance(rec.get("skill_module_read"), list):
+                    seen = tele["skill_modules_read"] or []
+                    tele["skill_modules_read"] = seen + [m for m in rec["skill_module_read"] if m not in seen]
+            if tele["tool_results"]:
+                tele["tool_error_rate"] = tele["tool_errors"] / tele["tool_results"]
+
+        if not os.path.exists(metrics_path) and not tele["iterations_measured"]:
             result = json.dumps({"message": "No metrics collected yet", "tool_calls": 0})
             _emit_tool_event_async('loki_metrics_efficiency', 'complete', result_status='success')
             return result
@@ -1054,20 +1087,22 @@ async def loki_metrics_efficiency() -> str:
         tool_counts = {}
         total_calls = 0
 
-        with safe_open(metrics_path, 'r') as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                    tool = entry.get("tool", "unknown")
-                    tool_counts[tool] = tool_counts.get(tool, 0) + 1
-                    total_calls += 1
-                except json.JSONDecodeError:
-                    continue
+        if os.path.exists(metrics_path):
+            with safe_open(metrics_path, 'r') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        tool = entry.get("tool", "unknown")
+                        tool_counts[tool] = tool_counts.get(tool, 0) + 1
+                        total_calls += 1
+                    except json.JSONDecodeError:
+                        continue
 
         _emit_tool_event_async('loki_metrics_efficiency', 'complete', result_status='success')
         return json.dumps({
             "total_tool_calls": total_calls,
             "tool_breakdown": tool_counts,
+            "tool_telemetry": tele,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
     except PathTraversalError as e:

@@ -84,6 +84,7 @@ export interface StreamMsg {
   max_retries?: number;
   retry_delay_ms?: number;
   error_status?: number | null;
+  tools?: unknown; // system/init: the tool names the session was given (mcp__server__tool for MCP tools)
 }
 
 export interface ParserContext {
@@ -227,6 +228,20 @@ export async function consumeSdkStream(
   const advisorById = new Map<string, AdvisorUsage>();
   const advisorFaults = new Set<string>(); // #269: one key per distinct advisor error or truncation, so a growing snapshot counts once
 
+  // S1-W2-26: tool-use and skill-navigation telemetry, merged into the result-cost record. A turn is one assistant message id (the SDK may stream its blocks as several messages).
+  const toolsByTurn = new Map<string, Set<string>>();
+  const skillReads: string[] = [];
+  let toolResults = 0, toolErrors = 0, mcpToolCount: number | undefined, anonTurn = 0;
+  const toolTelemetry = (): Record<string, unknown> => {
+    const perTurn = [...toolsByTurn.values()].map((t) => t.size);
+    return {
+      ...(perTurn.length ? { tools_per_turn: Math.max(...perTurn), tool_turns: perTurn.length, tool_calls: perTurn.reduce((a, b) => a + b, 0) } : {}),
+      ...(toolResults ? { tool_results: toolResults, tool_errors: toolErrors, tool_error_rate: toolErrors / toolResults } : {}),
+      ...(mcpToolCount !== undefined ? { mcp_tool_count: mcpToolCount } : {}),
+      ...(skillReads.length ? { skill_module_read: skillReads } : {}),
+    };
+  };
+
   const guard = { truncated: false };
   for await (const data of asAsync(messages, guard)) {
     const msgType = data.type ?? "";
@@ -278,6 +293,7 @@ export async function consumeSdkStream(
         }
       }
       const content = data.message?.content ?? [];
+      const turnId = data.message?.id ?? `#t${anonTurn++}`;
       for (const item of content) {
         const itype = item["type"] as string | undefined;
         if (itype === "text") {
@@ -290,6 +306,11 @@ export async function consumeSdkStream(
           const tool = (item["name"] as string) ?? "unknown";
           const toolId = (item["id"] as string) ?? "";
           const input = (item["input"] as Record<string, unknown>) ?? {};
+          const turnTools = toolsByTurn.get(turnId) ?? new Set<string>();
+          turnTools.add(toolId || `anon${turnTools.size}`); toolsByTurn.set(turnId, turnTools);
+          const readPath = tool === "Read" ? input["file_path"] : undefined;
+          const mod = typeof readPath === "string" ? /(?:^|\/)((?:skills|references)\/[^/]+\.md)$/.exec(readPath)?.[1] : undefined;
+          if (mod && !skillReads.includes(mod)) skillReads.push(mod);
           bumpOrchestratorTool(agents, tool, toolDesc(tool, input));
 
           if (tool === "Task") {
@@ -340,6 +361,7 @@ export async function consumeSdkStream(
       const content = data.message?.content ?? [];
       for (const item of content) {
         if (item["type"] === "tool_result") {
+          toolResults++; if (item["is_error"] === true) toolErrors++;
           const toolId = (item["tool_use_id"] as string) ?? "";
           const a = agents[toolId];
           if (a) {
@@ -367,6 +389,7 @@ export async function consumeSdkStream(
     // --- system/init: the provider's own model report (E-59), captured for writeResultCost below.
     if (msgType === "system" && data.subtype === "init" && typeof data.model === "string" && data.model) {
       sessionModel = data.model;
+      if (Array.isArray(data.tools)) mcpToolCount = data.tools.filter((t) => typeof t === "string" && t.startsWith("mcp__")).length;
       continue;
     }
 
@@ -448,7 +471,7 @@ export async function consumeSdkStream(
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
       if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
-      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById, advisorFaults), ctx.requestedModel);
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, { ...routerTelemetry(reqById, advisorById, advisorFaults), ...toolTelemetry() }, ctx.requestedModel);
 
       exitCode = data.is_error ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
@@ -675,7 +698,7 @@ function writeResultCost(
   data: StreamMsg,
   model?: string,
   firstTurnPromptTokens?: number,
-  router?: Record<string, number>,
+  router?: Record<string, unknown>,
   requested?: string,
 ): void {
   try {
