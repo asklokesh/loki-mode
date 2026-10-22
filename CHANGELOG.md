@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.51.0 (2026-10-22)
+
+### Changed
+- MCP server (#257): every tool returns one result contract. A failure sets isError with a stable code (invalid_argument, not_found, unavailable, internal_error and the rest) and a hint, instead of ad-hoc `{"error": ...}` JSON. A source lint fails if any tool returns ad-hoc error JSON. mcp>=1.19.0 is pinned, and a LokiToolError no longer emits a second complete event.
+- MCP server (#257): every tool and resource is classified, and tools that return stored text are tagged untrusted, so a client treats that text as data.
+
+### Fixed
+- MCP server (#257): loki_start_project's PDF/DOCX spec extractor failure goes through the result contract (code invalid_argument, with a hint to convert the spec or pass prd_content).
+
 ## v11.50.4 (2026-10-22)
 
 ### Fixed
