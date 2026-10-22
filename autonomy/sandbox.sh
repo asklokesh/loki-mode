@@ -1255,8 +1255,16 @@ _sandbox_egress_proxy_args() {
 # Create the internal network and proxy sidecar. Echoes the internal network name.
 _sandbox_egress_up() {
     local hosts="$1" net="${CONTAINER_NAME}-internal" script
-    local dir="${LOKI_RUN_TMP:-${TMPDIR:-/tmp}/loki-egress-${CONTAINER_NAME}}"
-    mkdir -p "$dir" && chmod 700 "$dir" || return 1
+    local dir="${LOKI_RUN_TMP:-}" rec troot
+    if [[ -z "$dir" ]]; then
+        # Resolve the temp root first (macOS TMPDIR ends in a slash), so the dir is T/loki-egress.X and matches at teardown.
+        # mktemp -d picks an unpredictable name with mode 700, so a planted symlink in a shared temp dir is never followed.
+        troot="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 1
+        dir="$(mktemp -d "${troot}/loki-egress.XXXXXXXX")" || return 1
+        rec="$(_sandbox_egress_record)"
+        if ! { mkdir -p "$(dirname "$rec")" && chmod 700 "$(dirname "$rec")" && printf '%s\n' "$dir" > "$rec"; }; then rm -rf -- "$dir"; return 1; fi
+    fi
+    chmod 700 "$dir" || return 1
     script="$dir/egress-proxy.py"
     _sandbox_egress_proxy_source > "$script"
     docker rm -f "${CONTAINER_NAME}-egress" >/dev/null 2>&1 || true
@@ -1269,9 +1277,24 @@ _sandbox_egress_up() {
     printf '%s\n' "$net"
 }
 
+# Host-side state file naming the fallback egress dir for this container. It lives outside PROJECT_DIR on purpose:
+# the project is mounted rw at /workspace, so a record there could be forged by the agent.
+_sandbox_egress_record() { printf '%s\n' "${LOKI_SANDBOX_STATE_DIR:-${HOME}/.loki/sandbox-state}/egress-${CONTAINER_NAME}.dir"; }
+
 _sandbox_egress_down() {
-    local fb="${TMPDIR:-/tmp}/loki-egress-${CONTAINER_NAME}"
-    if [[ -z "${LOKI_RUN_TMP:-}" && -d "$fb" && ! -L "$fb" ]]; then rm -rf -- "$fb"; fi
+    local rec fb root
+    rec="$(_sandbox_egress_record)"
+    if [[ -f "$rec" && ! -L "$rec" ]]; then
+        IFS= read -r fb < "$rec" || fb=""
+        root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || root=""
+        # Remove only a real, own, unlinked loki-egress.XXXXXXXX directory that sits directly in the resolved temp root.
+        if [[ -n "$root" && "$(dirname -- "$fb")" == "$root" ]] \
+            && [[ "$(basename -- "$fb")" =~ ^loki-egress\.[A-Za-z0-9]{8}$ ]] \
+            && [[ -d "$fb" && ! -L "$fb" && -O "$fb" && "$(cd "$fb" 2>/dev/null && pwd -P)" == "$fb" ]]; then
+            rm -rf -- "$fb"
+        fi
+        rm -f -- "$rec"
+    fi
     docker rm -f "${CONTAINER_NAME}-egress" >/dev/null 2>&1 || true
     docker network rm "${CONTAINER_NAME}-internal" >/dev/null 2>&1 || true
 }

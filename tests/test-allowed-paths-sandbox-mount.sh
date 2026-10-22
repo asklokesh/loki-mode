@@ -58,6 +58,8 @@ mkdir -p "$WORK/allowed/project" "$WORK/outside/project"
 # run start_sandbox in a clean subshell with a fake docker on PATH.
 # $1 = PROJECT_DIR, $2 = LOKI_ALLOWED_PATHS (empty = unset)
 # Echoes: rc on first line, then the recorded docker argv.
+export LOKI_SANDBOX_STATE_DIR="$WORK/state"
+
 run_start() {
     local proj="$1" allow="$2"
     local logf="$WORK/docker.log"
@@ -181,7 +183,10 @@ echo "$out" | sed -n '/----LOG----/,$p' | grep -qx "run"; ck "$?" "1" "(g) IP li
 #         loopback, v6 link-local, unlisted host and rebinding are refused.
 #         Resolver is injected, so no network is touched. A live egress probe
 #         needs real docker + network and is not run here.
-py_out="$(cd "$WORK" && source <(grep -v '^main "\$@"$' "$SBX") >/dev/null 2>&1; _sandbox_egress_proxy_source > "$WORK/proxy.py"
+# bash 3.2 cannot source a process substitution, so the filtered script goes through a file.
+grep -v '^main "\$@"$' "$SBX" > "$WORK/sbx-lib.sh"
+# shellcheck disable=SC1090,SC1091
+py_out="$(cd "$WORK" && source "$WORK/sbx-lib.sh" >/dev/null 2>&1; _sandbox_egress_proxy_source > "$WORK/proxy.py"
 ALLOW_HOSTS="ok.example.com,meta.example.com" BLOCKED_CIDRS="" python3 -I - <<PY
 import importlib.util
 sp = importlib.util.spec_from_file_location("p", "$WORK/proxy.py"); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
@@ -227,6 +232,42 @@ echo "$lg" | awk 'prev=="network"&&$0=="create"{c=1} prev=="network"&&$0=="rm"&&
 grep -qx -- "-internal" "$WORK/docker.log" 2>/dev/null; true
 grep -qE '^loki-sandbox-.*-internal$' "$WORK/docker.log"; ck "$?" "0" "(j) stop with nothing running -> internal network removed"
 grep -qE '^loki-sandbox-.*-egress$' "$WORK/docker.log"; ck "$?" "0" "(j) stop with nothing running -> sidecar removed"
+
+# --- (k) fallback egress dir: mktemp -d name (never the predictable loki-egress-<container>), recorded in
+#         sandbox state, and removed by teardown even though the dir name is unpredictable.
+mkdir -p "$WORK/tmpk"
+out="$(unset LOKI_RUN_TMP; TMPDIR="$WORK/tmpk" ALLOW_HOSTS_FOR_TEST="github.com" run_start "$WORK/outside/project" "$WORK/allowed")"
+echo "$out" | grep -q "$WORK/tmpk/loki-egress\\.[A-Za-z0-9]*/egress-proxy.py"; ck "$?" "0" "(k) proxy script mounted from a mktemp -d dir"
+! ls -d "$WORK"/tmpk/loki-egress-* >/dev/null 2>&1; ck "$?" "0" "(k) no predictable loki-egress-<container> dir"
+! ls "$WORK"/state/egress-*.dir >/dev/null 2>&1; ck "$?" "0" "(k) state record removed by teardown"
+! ls -d "$WORK"/tmpk/loki-egress.* >/dev/null 2>&1; ck "$?" "0" "(k) mktemp dir removed by teardown"
+
+# --- (l) teardown trusts only a record it can validate. The record lives outside the rw workspace; a forged,
+#         traversing or mislocated record never deletes anything, and a trailing-slash TMPDIR still cleans up.
+down_probe() {  # $1 = TMPDIR for the run, $2 = scenario
+    (
+        export PATH="$WORK/fakebin:$PATH" FAKE_DOCKER_LOG="$WORK/docker.log" LOKI_PROJECT_DIR="$WORK/outside/project" TMPDIR="$1"
+        source "$WORK/sandbox_src.sh" >/dev/null 2>&1
+        set +e
+        rec="$(_sandbox_egress_record)"; mkdir -p "$(dirname "$rec")"
+        case "$2" in
+            traversal) printf '%s\n' "$WORK/tmpl/loki-egress.ABCD1234/../../victim" > "$rec" ;;
+            forged)    mkdir -p "$PROJECT_DIR/.loki/sandbox"
+                       printf '%s\n' "$WORK/tmpl/loki-egress.FORGED12" > "$PROJECT_DIR/.loki/sandbox/egress-${CONTAINER_NAME}.dir" ;;
+        esac
+        _sandbox_egress_down >/dev/null 2>&1
+    )
+}
+mkdir -p "$WORK/tmpl/loki-egress.ABCD1234" "$WORK/victim" "$WORK/tmpl/loki-egress.FORGED12"
+: > "$WORK/victim/keep"
+down_probe "$WORK/tmpl" traversal
+v=0; [ -f "$WORK/victim/keep" ] || v=1; ck "$v" "0" "(l) a ../ traversal record does not delete the victim"
+down_probe "$WORK/tmpl" forged
+v=0; [ -d "$WORK/tmpl/loki-egress.FORGED12" ] || v=1; ck "$v" "0" "(l) a record forged inside the workspace is ignored"
+mkdir -p "$WORK/tmpl2"
+out="$(unset LOKI_RUN_TMP; TMPDIR="$WORK/tmpl2/" ALLOW_HOSTS_FOR_TEST="github.com" run_start "$WORK/outside/project" "$WORK/allowed")"
+echo "$out" | grep -q "loki-egress\.[A-Za-z0-9]*/egress-proxy.py"; ck "$?" "0" "(l) trailing-slash TMPDIR: proxy script mounted from the mktemp dir"
+! ls -d "$WORK"/tmpl2/loki-egress.* >/dev/null 2>&1; ck "$?" "0" "(l) trailing-slash TMPDIR: dir removed by teardown"
 
 echo
 echo "Results: $pass passed, $fail failed"
