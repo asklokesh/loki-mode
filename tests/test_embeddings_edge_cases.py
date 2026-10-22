@@ -425,6 +425,115 @@ def test_retrieval_query_path_passes_query_input_type():
     assert kwargs.get("input_type") == "query" or "query" in args, seen
 
 
+class _StubProvider:
+    """Deterministic non-unit provider of a given native dimension."""
+
+    normalized = False
+
+    def __init__(self, dim):
+        self.dim = dim
+
+    def embed(self, text, input_type="document"):
+        return self.embed_batch([text], input_type)[0]
+
+    def embed_batch(self, texts, input_type="document"):
+        rng = np.random.RandomState(7)
+        return (rng.rand(len(texts), self.dim).astype(np.float32) + 0.5) * 3.0
+
+    def get_dimension(self):
+        return self.dim
+
+    def get_name(self):
+        return "stub"
+
+    def is_available(self):
+        return True
+
+
+def _stub_engine(native_dim, **cfg):
+    config = EmbeddingConfig(
+        provider="local", cache_enabled=False, fallback_providers=["stub"], **cfg
+    )
+    engine = EmbeddingEngine(config=config)
+    engine._providers["stub"] = _StubProvider(native_dim)
+    engine._use_fallback()
+    return engine
+
+
+def test_output_dimension_truncates_stub_provider_to_256():
+    engine = _stub_engine(1024, output_dimension=256)
+    assert engine.dimension == 256, engine.dimension
+    vec = engine.embed("alpha beta")
+    assert vec.shape == (256,), vec.shape
+    assert abs(float(np.linalg.norm(vec)) - 1.0) < 1e-5, "truncated vector must be re-normalized"
+    mat = engine.embed_batch(["alpha", "beta", "gamma"])
+    assert mat.shape == (3, 256), mat.shape
+
+
+def test_default_config_keeps_native_dimension():
+    engine = _stub_engine(1024)
+    assert engine.config.output_dimension is None
+    assert engine.config.dtype == "float32"
+    assert engine.dimension == 1024, engine.dimension
+    assert engine.embed("alpha").shape == (1024,)
+
+
+def test_output_dimension_above_native_is_clamped_and_invalid_rejected():
+    engine = _stub_engine(1024, output_dimension=4096)
+    assert engine.dimension == 1024, engine.dimension
+    for bad in (0, -5):
+        try:
+            EmbeddingConfig(output_dimension=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"output_dimension={bad} should raise ValueError")
+    try:
+        EmbeddingConfig(dtype="int3")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown dtype should raise ValueError")
+
+
+def test_config_reads_output_dimension_and_dtype_from_env_and_file():
+    saved = _clean_env(["LOKI_EMBEDDING_PROVIDER", "LOKI_EMBEDDING_MODEL"])
+    os.environ["LOKI_EMBEDDING_OUTPUT_DIMENSION"] = "256"
+    os.environ["LOKI_EMBEDDING_DTYPE"] = "float16"
+    try:
+        config = EmbeddingConfig.from_env()
+        assert (config.output_dimension, config.dtype) == (256, "float16")
+        assert config.to_dict()["output_dimension"] == 256
+    finally:
+        os.environ.pop("LOKI_EMBEDDING_OUTPUT_DIMENSION", None)
+        os.environ.pop("LOKI_EMBEDDING_DTYPE", None)
+        _restore_env(saved)
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "cfg.json")
+        with open(path, "w") as f:
+            json.dump({"output_dimension": 128, "dtype": "float16"}, f)
+        config = EmbeddingConfig.from_file(path)
+    assert (config.output_dimension, config.dtype) == (128, "float16")
+
+
+def test_provider_normalized_declarations_and_index_kwargs():
+    import memory.embeddings as m
+
+    assert m.LocalEmbeddingProvider.normalized is True
+    assert m.VoyageEmbeddingProvider.normalized is True
+    assert m.BaseEmbeddingProvider.normalized is False
+    engine = _stub_engine(1024, output_dimension=256, dtype="float16")
+    # kwargs follow the active provider's declaration (the stub declares none)
+    assert engine.vector_index_kwargs() == {
+        "dimension": 256, "normalized": False, "dtype": "float16"
+    }
+    engine._primary_provider.normalized = True
+    assert engine.vector_index_kwargs() == {
+        "dimension": 256, "normalized": True, "dtype": "float16"
+    }
+
+
 def _run():
     tests = [
         test_similarity_search_single_1d_corpus,
@@ -442,6 +551,11 @@ def _run():
         test_local_and_openai_accept_and_ignore_input_type,
         test_engine_cache_separates_query_from_document,
         test_retrieval_query_path_passes_query_input_type,
+        test_output_dimension_truncates_stub_provider_to_256,
+        test_default_config_keeps_native_dimension,
+        test_output_dimension_above_native_is_clamped_and_invalid_rejected,
+        test_config_reads_output_dimension_and_dtype_from_env_and_file,
+        test_provider_normalized_declarations_and_index_kwargs,
     ]
     failed = 0
     for t in tests:

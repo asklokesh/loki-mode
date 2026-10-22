@@ -10,6 +10,7 @@ memory system's embedding-based search capabilities.
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -35,13 +36,26 @@ class VectorIndex:
         metadata: List of metadata dictionaries for each vector.
     """
 
-    def __init__(self, dimension: int = 384):
+    SUPPORTED_DTYPES = ("float32", "float16")
+
+    def __init__(
+        self,
+        dimension: int = 384,
+        normalized: bool = False,
+        dtype: str = "float32",
+    ):
         """
         Initialize a new vector index.
 
         Args:
             dimension: The dimensionality of vectors. Default is 384
                       which matches MiniLM embedding size.
+            normalized: True when every vector added is already unit length
+                      (a provider that declares ``normalized``). Search then
+                      ranks by plain dot product, which equals cosine for unit
+                      vectors, and skips the per-search normalized copy.
+            dtype: Storage dtype for vectors, "float32" (default) or
+                      "float16". Scoring always runs in float32.
 
         Raises:
             ImportError: If numpy is not installed. Every operation in this
@@ -56,12 +70,31 @@ class VectorIndex:
                 "numpy is required for the vector index. "
                 "Install it with: pip install numpy"
             )
+        if dtype not in self.SUPPORTED_DTYPES:
+            raise ValueError(
+                f"dtype must be one of {self.SUPPORTED_DTYPES}, got {dtype!r}"
+            )
         self.dimension = dimension
+        self.assume_normalized = normalized
+        self.dtype = dtype
         self.embeddings: List[np.ndarray] = []
         self.ids: List[str] = []
         self.metadata: List[Dict] = []
         self._normalized: bool = False
         self._id_to_index: Dict[str, int] = {}
+
+    def _store(self, embedding: np.ndarray) -> np.ndarray:
+        """Cast a vector to the storage dtype. A normalized index holds unit
+        vectors only: anything off unit length is re-normalized in float32
+        first, so a caller's non-unit vector can never inflate dot-product
+        scores. A zero or non-finite vector is stored as is, never divided."""
+        vec = np.asarray(embedding)
+        if self.assume_normalized:
+            vec = vec.astype(np.float32)
+            norm = float(np.linalg.norm(vec.astype(np.float64)))
+            if math.isfinite(norm) and norm > 0 and abs(norm - 1.0) > 1e-6:
+                vec = vec / norm
+        return vec.astype(self.dtype)
 
     def add(
         self,
@@ -95,7 +128,7 @@ class VectorIndex:
             return
 
         # Add new entry
-        self.embeddings.append(embedding.astype(np.float32))
+        self.embeddings.append(self._store(embedding))
         self.ids.append(id)
         self.metadata.append(metadata or {})
         self._id_to_index[id] = len(self.ids) - 1
@@ -154,7 +187,8 @@ class VectorIndex:
         """
         Find the top-k most similar vectors to the query.
 
-        Uses cosine similarity for ranking.
+        Uses cosine similarity for ranking (a plain dot product when the
+        index was created with normalized=True).
 
         Args:
             query: The query vector to search for.
@@ -179,15 +213,17 @@ class VectorIndex:
                 f"index dimension {self.dimension}"
             )
 
-        # Ensure vectors are normalized for cosine similarity
-        if not self._normalized:
-            self._normalize_vectors()
-
         # Normalize query
         query_norm = query / (np.linalg.norm(query) + 1e-10)
 
-        # Stack normalized embeddings into matrix for efficient computation
-        embeddings_matrix = np.vstack(self._normalized_embeddings)
+        if self.assume_normalized:
+            # Unit-length vectors: dot product equals cosine, no copy needed.
+            embeddings_matrix = np.vstack(self.embeddings).astype(np.float32)
+        else:
+            # Ensure vectors are normalized for cosine similarity
+            if not self._normalized:
+                self._normalize_vectors()
+            embeddings_matrix = np.vstack(self._normalized_embeddings).astype(np.float32)
 
         # Compute cosine similarities
         similarities = np.dot(embeddings_matrix, query_norm)
@@ -264,7 +300,7 @@ class VectorIndex:
                     f"Embedding dimension {embedding.shape[0]} does not match "
                     f"index dimension {self.dimension}"
                 )
-            self.embeddings[index] = embedding.astype(np.float32)
+            self.embeddings[index] = self._store(embedding)
             self._normalized = False
 
         if metadata is not None:
@@ -321,6 +357,9 @@ class VectorIndex:
             "metadata": self.metadata,
             "dimension": self.dimension
         }
+        if self.assume_normalized:
+            # Written only when set, so a default index keeps its byte layout.
+            sidecar_data["normalized"] = True
 
         import tempfile
         json_path = f"{path}.json"
@@ -371,9 +410,16 @@ class VectorIndex:
         self.ids = sidecar_data["ids"]
         self.metadata = sidecar_data["metadata"]
 
-        # Convert embeddings matrix to list
+        # A file saved by a normalized index, or an index that claims
+        # normalized, ranks by dot product: validate by re-normalizing.
+        if sidecar_data.get("normalized") is True:
+            self.assume_normalized = True
+
+        # Convert embeddings matrix to list, cast to this index's dtype
+        # (and unit length when normalized) so a float16 file does not leave
+        # a float32 index half precision and an old non-unit file scores right.
         if embeddings_matrix.shape[0] > 0:
-            self.embeddings = [embeddings_matrix[i] for i in range(embeddings_matrix.shape[0])]
+            self.embeddings = [self._store(embeddings_matrix[i]) for i in range(embeddings_matrix.shape[0])]
         else:
             self.embeddings = []
 

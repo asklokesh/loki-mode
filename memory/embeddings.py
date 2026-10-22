@@ -86,6 +86,11 @@ class EmbeddingConfig:
 
     # Dimension settings
     dimension: int = 384  # Default for MiniLM-L6-v2
+    # Matryoshka-style truncation: keep the leading N components, then
+    # re-normalize. None keeps the provider's native dimension.
+    output_dimension: Optional[int] = None
+    # Storage dtype for a VectorIndex built from this config.
+    dtype: str = "float32"
 
     # API keys (loaded from env if not provided)
     openai_api_key: Optional[str] = None
@@ -175,6 +180,13 @@ class EmbeddingConfig:
         if self.model in self.MODEL_DIMENSIONS:
             self.dimension = self.MODEL_DIMENSIONS[self.model]
 
+        if self.output_dimension is not None and self.output_dimension < 1:
+            raise ValueError(
+                f"output_dimension must be a positive integer, got {self.output_dimension!r}"
+            )
+        if self.dtype not in ("float32", "float16"):
+            raise ValueError(f"dtype must be float32 or float16, got {self.dtype!r}")
+
     @classmethod
     def from_env(cls) -> "EmbeddingConfig":
         """Create config from environment variables."""
@@ -184,6 +196,9 @@ class EmbeddingConfig:
             openai_api_key=os.environ.get("OPENAI_API_KEY"),
             cohere_api_key=os.environ.get("COHERE_API_KEY"),
             voyage_api_key=os.environ.get("VOYAGE_API_KEY"),
+            output_dimension=int(os.environ["LOKI_EMBEDDING_OUTPUT_DIMENSION"])
+            if os.environ.get("LOKI_EMBEDDING_OUTPUT_DIMENSION") else None,
+            dtype=os.environ.get("LOKI_EMBEDDING_DTYPE", "float32"),
             chunking_strategy=os.environ.get("LOKI_EMBEDDING_CHUNKING", "semantic"),
             include_context=os.environ.get("LOKI_EMBEDDING_CONTEXT", "true").lower() == "true",
         )
@@ -203,6 +218,8 @@ class EmbeddingConfig:
             model=data.get("model"),
             fallback_providers=data.get("fallback_providers", ["local"]),
             dimension=data.get("dimension", 384),
+            output_dimension=data.get("output_dimension"),
+            dtype=data.get("dtype", "float32"),
             chunking_strategy=data.get("chunking_strategy", "semantic"),
             max_chunk_size=data.get("max_chunk_size", 512),
             chunk_overlap=data.get("chunk_overlap", 50),
@@ -222,6 +239,8 @@ class EmbeddingConfig:
             "model": self.model,
             "fallback_providers": self.fallback_providers,
             "dimension": self.dimension,
+            "output_dimension": self.output_dimension,
+            "dtype": self.dtype,
             "chunking_strategy": self.chunking_strategy,
             "max_chunk_size": self.max_chunk_size,
             "chunk_overlap": self.chunk_overlap,
@@ -469,6 +488,10 @@ def _check_input_type(input_type: str) -> str:
 class BaseEmbeddingProvider(ABC):
     """Base class for embedding providers."""
 
+    # True when the provider returns unit-length vectors, so a VectorIndex can
+    # rank by dot product instead of cosine. Subclasses opt in explicitly.
+    normalized: bool = False
+
     @abstractmethod
     def embed(self, text: str, input_type: str = "document") -> np.ndarray:
         """Generate embedding for a single text.
@@ -506,6 +529,8 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
 
     Falls back to TF-IDF when sentence-transformers is not available.
     """
+
+    normalized = True
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", dimension: int = 384):
         self.model_name = model_name
@@ -646,6 +671,8 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     """OpenAI embedding provider using text-embedding-3 models."""
+
+    normalized = True
 
     def __init__(
         self,
@@ -809,6 +836,8 @@ class VoyageEmbeddingProvider(BaseEmbeddingProvider):
     names it via LOKI_EMBEDDING_PROVIDER=voyage; a VOYAGE_API_KEY alone
     never selects it.
     """
+
+    normalized = True
 
     def __init__(
         self,
@@ -1004,7 +1033,7 @@ class EmbeddingEngine:
             if provider.is_available():
                 self._primary_provider = provider
                 self._current_provider_name = self.config.provider
-                self.dimension = provider.get_dimension()
+                self.dimension = self._effective_dimension(provider.get_dimension())
                 logger.info(f"Using {self.config.provider} embedding provider")
             else:
                 logger.warning(f"{self.config.provider} provider not available, using fallback")
@@ -1022,7 +1051,7 @@ class EmbeddingEngine:
                     self._primary_provider = provider
                     self._current_provider_name = fallback
                     self._using_fallback = True
-                    self.dimension = provider.get_dimension()
+                    self.dimension = self._effective_dimension(provider.get_dimension())
                     self._metrics["fallback_count"] += 1
                     logger.info(f"Switched to fallback provider: {fallback}")
                     return
@@ -1031,7 +1060,7 @@ class EmbeddingEngine:
         self._primary_provider = self._providers["local"]
         self._current_provider_name = "local"
         self._using_fallback = True
-        self.dimension = self._primary_provider.get_dimension()
+        self.dimension = self._effective_dimension(self._primary_provider.get_dimension())
 
     def _get_cache_key(
         self, text: str, provider: Optional[str] = None, input_type: str = "document"
@@ -1042,6 +1071,31 @@ class EmbeddingEngine:
         suffix = "" if input_type == "document" else f":{input_type}"
         content = f"{provider_name}:{self.model_name}:{text}{suffix}"
         return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _effective_dimension(self, native: int) -> int:
+        """Provider dimension after optional output_dimension truncation."""
+        target = self.config.output_dimension
+        return native if target is None else min(native, target)
+
+    def _prepare(self, embedding: np.ndarray) -> np.ndarray:
+        """Truncate to output_dimension (if set), then L2 normalize."""
+        target = self.config.output_dimension
+        if target is not None and embedding.shape[-1] > target:
+            embedding = embedding[..., :target]
+        return self._normalize(embedding)
+
+    def vector_index_kwargs(self) -> Dict[str, Any]:
+        """Constructor kwargs for a VectorIndex matching this engine's output.
+
+        ``normalized`` follows the active provider's declaration; a provider
+        that does not declare it gets a cosine-ranking index. VectorIndex
+        re-normalizes anything off unit length when the flag is set.
+        """
+        return {
+            "dimension": self.dimension,
+            "normalized": bool(getattr(self._primary_provider, "normalized", False)),
+            "dtype": self.config.dtype,
+        }
 
     def _normalize(self, embedding: np.ndarray) -> np.ndarray:
         """L2 normalize an embedding vector."""
@@ -1130,7 +1184,7 @@ class EmbeddingEngine:
                 embedding = np.average(chunk_embeddings, axis=0, weights=weights)
 
             # Normalize
-            embedding = self._normalize(embedding)
+            embedding = self._prepare(embedding)
 
             # Track metrics
             provider_name = self._current_provider_name
@@ -1153,7 +1207,7 @@ class EmbeddingEngine:
                 weights = np.array([len(c) for c in chunks], dtype=np.float32)
                 weights = weights / weights.sum()
                 embedding = np.average(chunk_embeddings, axis=0, weights=weights)
-            embedding = self._normalize(embedding)
+            embedding = self._prepare(embedding)
             # The cache key computed above used the pre-fallback provider name.
             # _use_fallback() switched the provider, so recompute the key to
             # reflect the provider that actually produced this vector. Without
@@ -1248,7 +1302,7 @@ class EmbeddingEngine:
         if texts_to_compute:
             try:
                 new_embeddings = self._primary_provider.embed_batch(texts_to_compute)
-                new_embeddings = self._normalize(new_embeddings)
+                new_embeddings = self._prepare(new_embeddings)
 
                 # Track metrics
                 provider_name = self._current_provider_name
@@ -1260,7 +1314,7 @@ class EmbeddingEngine:
                 logger.warning(f"Primary provider failed: {e}, trying fallback")
                 self._use_fallback()
                 new_embeddings = self._primary_provider.embed_batch(texts_to_compute)
-                new_embeddings = self._normalize(new_embeddings)
+                new_embeddings = self._prepare(new_embeddings)
 
             # Update cache
             if self.config.cache_enabled:
