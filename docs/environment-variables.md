@@ -116,15 +116,21 @@ The same secret-path list also drives Bash deny rules (one list in
 `src/policies/claude_permissions.js`, so the Read and Bash sides cannot drift):
 `cat`, `head`, `tail`, `sed`, `grep`, `egrep`, `fgrep`, `rg`, `awk`, `less`, `more`, `nl`,
 `tac`, `strings`, `xxd`, `od`, `base64`, `cp`, `source` and `.` naming a denied path, and an
-input redirect (`< .env`), are refused under `--dangerously-skip-permissions`. The rules
+input redirect (`< .env`), are denied under `--dangerously-skip-permissions`. The rules
 reach every route (bash, TypeScript, Python, SDK) and go away with `LOKI_WEB_POLICY=off`.
+Measured on claude 2.1.308 against a stub API: the Read denies alone already refuse most
+plain reads (40 of 57 probes); the Bash rules newly deny exactly five more: `cat $PWD/.env`,
+`xargs cat <<< .env`, `cat *.pem`, `source .env` and `. ./.env`. Each denial is recorded as a
+`permission_denied` event in `.loki/events.jsonl` when the SDK route reports it.
 
-This is not complete secret-file protection. A shell cannot be sandboxed by pattern: an
-interpreter (`python -c`, `node -e`, `perl`, `ruby`), a variable or command substitution, a
-glob that avoids the literal name, or a copy to another name still reads the file. The
-residual path is closed only by the native sandbox (#291). The rules are enforced by Claude
-Code; Loki verifies that they reach the worker command line, and a live refusal has not been
-measured without a paid run.
+This is not complete secret-file protection. A shell cannot be sandboxed by pattern. These
+measured classes still read a denied file: a recursive grep (`grep -r SECRET .`), a
+path-qualified reader (`/bin/cat .env`), a case variant on a case-insensitive filesystem
+(`CAT .env`), a pipe to xargs (`echo .env | xargs cat`), `dd if=.env`, and shell re-entry
+(`bash -c`, `sh -c`, `eval`). An interpreter (`python -c`, `node -e`, `perl`, `ruby`), a
+variable or command substitution, a glob that avoids the literal name, or a copy to another
+name also read the file. These rules narrow the plain paths; they are not a boundary. The
+boundary is the native sandbox (#291).
 
 To turn web access back on:
 
