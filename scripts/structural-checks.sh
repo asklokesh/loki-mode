@@ -156,13 +156,22 @@ override = re.compile(r"ignore (all |any )?(previous|prior|above) (instructions|
 # filter stages between, optional sudo/env wrapper and flags), process
 # substitution (sh <(curl ...), source <(...)) or command substitution
 # (sh -c "$(curl ...)", eval "$(...)", backticks).
-SH = r"(?:/\S*/)?(?:ba|z|da|k|c)?sh(?![\w.-])"
+SH = r"(?:/\S*/)?(?:ba|z|da|k|c|fi|a|tc)?sh(?![\w.-])"
+# Interpreters read a script from stdin only when bare or given "-"; with -c, -e,
+# -p, -m or -r they take code from the argument, so python -c and node -e pass.
+INAME = r"(?:/\S*/)?(?:python[\d.]*|node(?:js)?|perl|ruby)(?![\w.-])"
+INTERP = INAME + r"(?:\s+-[^ceEpmrl\s]\S*)*(?=\s*(?:$|[|;&)}]|-(?:\s|$)))"
+RUN = "(?:" + SH + "|" + INTERP + ")"
 FETCH = r"(?:curl|wget|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)\b"
-WRAP = r"(?:(?:sudo|doas|env|exec|command)\b[^|;&\n]*?\s)?"
+WRAP = r"(?:(?:sudo|doas|env|exec|command|nohup|xargs|busybox|time|nice|setsid|stdbuf)\b[^|;&\n]*?\s)?"
 pipe = re.compile(
-    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|\s*" + WRAP + SH
+    r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + WRAP + RUN
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*(?:\$\(|`)\s*" + FETCH
+    # download then run: curl -o f ... && sh f / python f / ./f
+    + r"|\b(?:curl|wget)\b[^\n|]*?(?:-[A-Za-z]*[oO]|--output(?:-document)?)[ =]+(?:\./)?(?P<f>[^\s;&|]+)"
+    + r"[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?"
+    + r"(?:" + WRAP + "(?:" + SH + "|" + INAME + ")" + r"(?:\s+-\S+)*\s+(?:\./)?|\./)(?P=f)(?![\w.-])"
 )
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:
@@ -192,7 +201,19 @@ for f in sys.argv[1:]:
             bad.append("%s: duplicate name %s (also %s)" % (f, name, names[name]))
         else:
             names[name] = f
+    # Join backslash-newline continuations so a split command is one line.
+    logical, cur, start = [], "", 1
     for i, ln in enumerate(text.split("\n"), 1):
+        if not cur:
+            start = i
+        if ln.endswith("\\"):
+            cur += ln[:-1] + " "
+            continue
+        logical.append((start, cur + ln))
+        cur = ""
+    if cur:
+        logical.append((start, cur))
+    for i, ln in logical:
         if "skill-lint-ok" in ln:
             continue
         for what, rx in (("download piped into a shell", pipe), ("instruction-override phrase", override), ("inline key", key)):
