@@ -531,6 +531,39 @@ describe("#261 judge max_tokens by effort, thinking, streaming", () => {
     expect(seen[1]!.body["thinking"]).toEqual({ type: "adaptive" });
     expect("thinking" in seen[2]!.body).toBe(false);
   });
+  test("thinking clamp (#314): opus-5 disabled at max is sent as adaptive and the ledger line names the clamp; at high it is sent as asked", async () => {
+    const seen = mock();
+    const dir = mkdtempSync(join(tmpdir(), "sdkj314-"));
+    try {
+      const m = { prompt: "p", model: "claude-opus-5", schema: sc };
+      await judgeJson({ ...m, effort: "max", thinking: { type: "disabled" }, ledger: { lokiDir: dir, phase: "p" } });
+      await judgeJson({ ...m, effort: "high", thinking: { type: "disabled" }, ledger: { lokiDir: dir, phase: "p" } });
+      expect(seen[0]!.body["thinking"]).toEqual({ type: "adaptive" });
+      expect(seen[1]!.body["thinking"]).toEqual({ type: "disabled" });
+      const recs = readFileSync(join(dir, "metrics", "child-sessions.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(recs[0].thinking_clamp).toBe("disabled->adaptive@max (max high)");
+      expect("thinking_clamp" in recs[1]).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("thinking clamp (#314): judgeText clamps too, and the CLI accepts a clampable pair instead of exiting 2", async () => {
+    const seen = mock();
+    await judgeText({ prompt: "p", model: "claude-haiku-5-5", effort: "xhigh", thinking: { type: "disabled" } });
+    expect(seen[0]!.body["thinking"]).toEqual({ type: "adaptive" });
+    const d = mkdtempSync(join(tmpdir(), "sdkj314c-"));
+    const pf = join(d, "p.txt");
+    writeFileSync(pf, "p");
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (c: string) => boolean }).write = () => true;
+    try {
+      expect(await runInternalSdkText(["--prompt-file", pf, "--model", "claude-opus-5", "--effort", "max", "--thinking", "disabled"])).toBe(0);
+      expect(seen[1]!.body["thinking"]).toEqual({ type: "adaptive" });
+    } finally {
+      process.stderr.write = orig;
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
   test("the usage note carries output_tokens and max_tokens", async () => {
     mock();
     const dir = mkdtempSync(join(tmpdir(), "sdkj261-"));

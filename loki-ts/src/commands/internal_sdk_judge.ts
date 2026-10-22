@@ -18,6 +18,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "node:fs";
 import { type Effort, describeJudgeOutcome, judgeJsonOutcome, judgeTextOutcome } from "../runner/sdk_invoker.ts";
 import { lokiDir } from "../util/paths.ts";
+import { thinkingConflictsEffort } from "../providers/claude_flags.ts";
 import { isUnresolvedClaudeAlias, resolveClaudeModel } from "../util/claude_model.ts";
 
 function argVal(args: string[], flag: string): string | undefined {
@@ -47,9 +48,6 @@ export function parseThinking(v: string | undefined): Anthropic.ThinkingConfigPa
   if (v === undefined) return undefined;
   return v === "disabled" || v === "adaptive" ? { type: v } : null;
 }
-
-/** Disabled thinking contradicts an xhigh/max effort, which is sized for thinking; the pair is a caller bug, not a request to guess at. */
-export const thinkingConflictsEffort = (t: Anthropic.ThinkingConfigParam | undefined, e: Effort | undefined): boolean => t?.type === "disabled" && (e === "xhigh" || e === "max");
 
 export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const promptFile = argVal(args, "--prompt-file");
@@ -82,7 +80,7 @@ export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const effort = effortRaw && VALID_EFFORT.has(effortRaw) ? (effortRaw as Effort) : undefined;
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const thinking = parseThinking(argVal(args, "--thinking"));
-  if (thinking === null || thinkingConflictsEffort(thinking, effort)) {
+  if (thinking === null || thinkingConflictsEffort(model, thinking, effort)) {
     process.stderr.write("sdk-judge: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max\n");
     return 2;
   }
@@ -134,7 +132,7 @@ export async function runInternalSdkText(args: string[]): Promise<number> {
   const effort = effortRaw && VALID_EFFORT.has(effortRaw) ? (effortRaw as Effort) : undefined;
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const thinking = parseThinking(argVal(args, "--thinking"));
-  if (thinking === null || thinkingConflictsEffort(thinking, effort)) {
+  if (thinking === null || thinkingConflictsEffort(model, thinking, effort)) {
     process.stderr.write("sdk-text: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max\n");
     return 2;
   }

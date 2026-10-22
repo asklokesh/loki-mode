@@ -60,3 +60,21 @@ export function claudeEffortLevels(model: string): string[] | null {
     return null;
   }
 }
+
+/**
+ * Highest effort level at which the catalog records a model accepting a thinking type (providers.claude.models[].thinking.max_effort,
+ * keyed by type). Null when the model is unknown, the catalog is unreadable, or no limit is recorded for that type, so a caller never
+ * clamps on a guess. Example: claude-opus-5 accepts "disabled" only at "high" or below.
+ */
+export function claudeThinkingMaxEffort(model: string, type: string): string | null {
+  try {
+    const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+    const models = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models as Array<{ id: string; alias?: string; thinking?: { max_effort?: Record<string, string> } }> | undefined;
+    if (!Array.isArray(models)) return null;
+    const id = resolveClaudeModel(model);
+    const max = models.find((m) => m.id === id || m.alias === model)?.thinking?.max_effort?.[type];
+    return typeof max === "string" ? max : null;
+  } catch {
+    return null;
+  }
+}

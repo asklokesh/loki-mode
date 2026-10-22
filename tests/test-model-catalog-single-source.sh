@@ -194,6 +194,9 @@ fi
 # CAPABILITIES: every claude entry's thinking.types, effort.levels and effort.default are pinned to
 # the claude-api skill model table (thinking and effort rows). A shape-only check would pass a wrong
 # value, so the exact expected set is diffed. Empty levels (haiku-4-5) means no effort parameter.
+# thinking.max_effort (#314) is the highest effort at which a thinking type is accepted: opus-5 and haiku-5-5
+# take "disabled", and sonnet-5-5 takes "between_tools", only at high or below. A model absent from MAXEFF has no
+# recorded limit (the skill table states none), and the catalog must not invent one.
 capab_bad="$(python3 - "$CATALOG" <<'PY'
 import json, sys
 ALL = ["low", "medium", "high", "xhigh", "max"]
@@ -207,6 +210,11 @@ WANT = {
     "claude-haiku-5-5":  (["adaptive", "disabled"], ALL, "medium"),
     "claude-haiku-4-5":  (["enabled", "disabled"], [], None),
 }
+MAXEFF = {
+    "claude-opus-5":     {"disabled": "high"},
+    "claude-sonnet-5-5": {"between_tools": "high"},
+    "claude-haiku-5-5":  {"disabled": "high"},
+}
 got = {m["id"]: m for m in json.load(open(sys.argv[1]))["providers"]["claude"]["models"]}
 for mid in sorted(set(WANT) - set(got)):
     print("%s: pinned model missing from catalog" % mid)
@@ -219,6 +227,14 @@ for mid, (types, levels, default) in WANT.items():
     gt = m.get("thinking", {}).get("types")
     gl = m.get("effort", {}).get("levels")
     gd = m.get("effort", {}).get("default")
+    gm = m.get("thinking", {}).get("max_effort", {})
+    if gm != MAXEFF.get(mid, {}):
+        print("%s: thinking.max_effort %r != %r" % (mid, gm, MAXEFF.get(mid, {})))
+    for t, lvl in gm.items():
+        if t not in (gt or []):
+            print("%s: thinking.max_effort names type %r that is not in thinking.types" % (mid, t))
+        if lvl not in ALL:
+            print("%s: thinking.max_effort level %r is not an effort level" % (mid, lvl))
     if gt != types:
         print("%s: thinking.types %r != %r" % (mid, gt, types))
     if gl != levels:
@@ -228,7 +244,7 @@ for mid, (types, levels, default) in WANT.items():
 PY
 )"
 if [ -z "$capab_bad" ]; then
-    ok "every claude model matches its pinned thinking.types, effort.levels and effort.default"
+    ok "every claude model matches its pinned thinking.types, thinking.max_effort, effort.levels and effort.default"
 else
     bad "claude capability drift from pinned table:"
     printf '%s\n' "$capab_bad" | sed 's/^/        /'

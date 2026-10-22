@@ -18,6 +18,7 @@
 import { assertStaticSchema } from "../council/finding_schema.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { appendChildLedger, recordFromUsage, unmeasuredRecord } from "../util/child_ledger.ts";
+import { clampThinkingForEffort } from "../providers/claude_flags.ts";
 import { oauthDevEnabled, readFreshOauthToken, OAUTH_BETA_HEADER } from "./oauth_dev.js";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -68,7 +69,7 @@ export interface JudgeParams {
   thinking?: Anthropic.ThinkingConfigParam; // forwarded to the request unchanged; unset sends nothing
   timeoutMs?: number;
   system?: string;
-  ledger?: { lokiDir: string; phase: string }; // COST-WALL: append this call's usage to .loki/metrics/child-sessions.jsonl
+  ledger?: { lokiDir: string; phase: string; thinkingClamp?: string }; // COST-WALL: append this call's usage to .loki/metrics/child-sessions.jsonl
 }
 
 // Thinking tokens count against max_tokens, so a 4096 cap shared by adaptive thinking and the answer starves an xhigh/max judge.
@@ -87,7 +88,7 @@ async function sendJudge(c: Anthropic, body: Anthropic.MessageCreateParamsNonStr
 /** COST-WALL: a judge call that threw may still have spent (timeout after the request was accepted): record an unmeasured line, a lower bound never a zero. No-op without params.ledger. */
 export function noteJudgeFailure(ledger: JudgeParams["ledger"], model: string, outcome = "transport", maxTokens?: number): void {
   if (!ledger) return;
-  appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, model, "sdk-judge"), outcome, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }) });
+  appendChildLedger(ledger.lokiDir, { ...unmeasuredRecord(ledger.phase, model, "sdk-judge"), outcome, ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }), ...(ledger.thinkingClamp ? { thinking_clamp: ledger.thinkingClamp } : {}) });
 }
 
 /** COST-WALL: one ledger line per SDK judge call, priced from the response usage (the API returns tokens, not dollars). No-op without params.ledger. */
@@ -95,6 +96,7 @@ export function noteJudgeUsage(ledger: JudgeParams["ledger"], model: string, msg
   if (!ledger) return;
   const rec = recordFromUsage(ledger.phase, model, (msg?.usage ?? null) as Record<string, unknown> | null);
   if (outcome) rec.outcome = outcome;
+  if (ledger.thinkingClamp) rec.thinking_clamp = ledger.thinkingClamp;
   if (maxTokens !== undefined) rec.max_tokens = maxTokens; // output_tokens against max_tokens shows a cap that truncated the answer
   appendChildLedger(ledger.lokiDir, rec);
 }
@@ -285,7 +287,10 @@ function classifyStop(msg: Anthropic.Message): JudgeOutcome<string> {
 async function runJudge(params: JudgeParams | TextParams, schema: Record<string, unknown> | null): Promise<JudgeOutcome<string>> {
   const c = client();
   if (!c) return { kind: "transport" };
-  const { prompt, model, effort, thinking, timeoutMs = 120_000, system, ledger } = params;
+  const { prompt, model, effort, timeoutMs = 120_000, system } = params;
+  // The thinking type is effort-dependent per model: clamp it so the request is never a 400, and record the clamp on the ledger line.
+  const { thinking, clamp } = clampThinkingForEffort(model, params.thinking, effort);
+  const ledger = params.ledger && clamp ? { ...params.ledger, thinkingClamp: `${clamp.from}->${clamp.to}@${clamp.effort} (max ${clamp.max})` } : params.ledger;
 
   let max = judgeMaxTokens(effort, params.maxTokens);
   let retriedTruncation = false;

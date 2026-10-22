@@ -38,6 +38,8 @@ import {
   FIRST_PASS_EXCELLENCE_TEXT,
   reviewerModelForTier,
   leanReviewerFlags,
+  clampThinkingForEffort,
+  thinkingConflictsEffort,
 } from "../../src/providers/claude_flags.ts";
 
 describe("effortForTier model clamp", () => {
@@ -1341,4 +1343,53 @@ describe("claude_flags.effortForTier bash parity (w2-06)", () => {
       });
     }
   }
+});
+
+describe("clampThinkingForEffort (#314)", () => {
+  // The effort ceiling per thinking type, per model, from the claude-api skill model table. A model not listed has no recorded limit.
+  const LIMITS: Array<[string, string]> = [["claude-opus-5", "disabled"], ["claude-haiku-5-5", "disabled"], ["claude-sonnet-5-5", "between_tools"]];
+  beforeEach(() => { delete process.env["LOKI_MODEL_CATALOG"]; });
+  for (const [model, type] of LIMITS) {
+    it(`${model}: ${type} at xhigh and max clamps to adaptive and names the clamp`, () => {
+      for (const effort of ["xhigh", "max"]) {
+        const r = clampThinkingForEffort(model, { type }, effort);
+        expect(r.thinking).toEqual({ type: "adaptive" });
+        expect(r.clamp).toEqual({ from: type, to: "adaptive", effort, max: "high" });
+      }
+    });
+    it(`${model}: ${type} at high or below is sent unchanged`, () => {
+      for (const effort of ["low", "medium", "high"]) {
+        const r = clampThinkingForEffort(model, { type }, effort);
+        expect(r.thinking).toEqual({ type });
+        expect(r.clamp).toBeNull();
+      }
+    });
+    it(`${model}: adaptive is never clamped`, () => {
+      expect(clampThinkingForEffort(model, { type: "adaptive" }, "max")).toEqual({ thinking: { type: "adaptive" }, clamp: null });
+    });
+  }
+  it("a model with no recorded limit, an unknown model, and absent thinking or effort are left alone", () => {
+    expect(clampThinkingForEffort("claude-sonnet-5", { type: "disabled" }, "max").clamp).toBeNull();
+    expect(clampThinkingForEffort("m-unknown", { type: "disabled" }, "max").clamp).toBeNull();
+    expect(clampThinkingForEffort("claude-opus-5", undefined, "max")).toEqual({ thinking: undefined, clamp: null });
+    expect(clampThinkingForEffort("claude-opus-5", { type: "disabled" }, undefined).clamp).toBeNull();
+  });
+  it("resolves a cli alias", () => {
+    expect(clampThinkingForEffort("haiku", { type: "disabled" }, "xhigh").clamp?.to).toBe("adaptive");
+  });
+  it("a catalog test fixture drives the limit: no max_effort, no clamp", () => {
+    const cat = join(mkdtempSync(join(tmpdir(), "thinkcat-")), "cat.json");
+    writeFileSync(cat, JSON.stringify({ providers: { claude: { models: [{ id: "m-a", thinking: { types: ["adaptive", "disabled"], max_effort: { disabled: "medium" } } }, { id: "m-b", thinking: { types: ["adaptive", "disabled"] } }] } } }));
+    process.env["LOKI_MODEL_CATALOG"] = cat;
+    expect(clampThinkingForEffort("m-a", { type: "disabled" }, "high").clamp).toEqual({ from: "disabled", to: "adaptive", effort: "high", max: "medium" });
+    expect(clampThinkingForEffort("m-b", { type: "disabled" }, "high").clamp).toBeNull();
+    delete process.env["LOKI_MODEL_CATALOG"];
+  });
+  it("thinkingConflictsEffort: disabled at xhigh or max conflicts only where the catalog records no limit", () => {
+    expect(thinkingConflictsEffort("claude-sonnet-5", { type: "disabled" }, "max")).toBe(true);
+    expect(thinkingConflictsEffort("m-unknown", { type: "disabled" }, "xhigh")).toBe(true);
+    expect(thinkingConflictsEffort("claude-opus-5", { type: "disabled" }, "max")).toBe(false);
+    expect(thinkingConflictsEffort("m-unknown", { type: "disabled" }, "high")).toBe(false);
+    expect(thinkingConflictsEffort("m-unknown", { type: "adaptive" }, "max")).toBe(false);
+  });
 });

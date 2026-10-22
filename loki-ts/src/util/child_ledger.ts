@@ -22,6 +22,7 @@ export interface LedgerRecord {
   cost_status?: "unmeasured";
   outcome?: string; // judge calls: ok | truncated | refused:<category> | context_exceeded | malformed | transport
   max_tokens?: number; // judge calls only: the request cap, to read against output_tokens
+  thinking_clamp?: string; // judge calls only: "<from>-><to>@<effort> (max <level>)" when the thinking type was clamped for the effort
 }
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isInteger(v) ? v : 0);
