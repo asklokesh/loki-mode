@@ -451,14 +451,100 @@ else
 fi
 rm -rf "$bd" "$bu"
 
-# Guard (#316): a tool-owned setting must not live in the LOKI_MCP_<NAME>_URL namespace. Fixtures that SET
-# such a variable are fine; a READ ($VAR, ${VAR}, environ/env lookup) of a literal name is a setting.
-_ns="LOKI_MCP_"
-_reads="$(git -C "$REPO_ROOT" grep -nE "(\\$\\{?|environ(\\.get)?[(\\[]['\"]|env\\[['\"]|getenv[(]['\"])${_ns}[A-Z0-9_]+_URL" -- tests scripts autonomy providers loki-ts/src ':!tests/test-parity-mcp-config.sh' 2>/dev/null || true)"
-if [ -z "$_reads" ]; then
-    ok "guard: no tool-owned setting reads a ${_ns}<NAME>_URL variable"
+# Neither route may echo the URL host or the token for a reserved name (stderr and stdout).
+bd=$(mktemp -d -t loki-parity-bash-s-XXXX); bu=$(mktemp -d -t loki-parity-bun-s-XXXX)
+out_b=$(LOKI_MCP_REGISTRY_URL="https://registry.example.com/mcp" LOKI_MCP_REGISTRY_AUTH="$TOKEN_D" HOME="$TMP_HOME" TARGET_DIR="$bd" loki_mcp_config_path 2>&1)
+out_u=$(LOKI_MCP_REGISTRY_URL="https://registry.example.com/mcp" LOKI_MCP_REGISTRY_AUTH="$TOKEN_D" HOME="$TMP_HOME" bun run --cwd "$LOKI_TS_DIR" - 2>&1 <<BUNEOF
+import { mcpConfigPath } from "./src/providers/mcp_config.ts";
+mcpConfigPath("$bu");
+BUNEOF
+)
+if printf '%s\n' "$out_b" | grep -q 'LOKI_MCP_REGISTRY_URL' && printf '%s\n' "$out_u" | grep -q 'LOKI_MCP_REGISTRY_URL' \
+   && [ "$(printf '%s\n%s\n' "$out_b" "$out_u" | grep -c -e 'registry.example.com' -e "$TOKEN_D")" -eq 0 ]; then
+    ok "parity D: the reserved-name warning names the variable and echoes neither the URL nor the token on either route"
 else
-    bad "guard: a tool setting reads a ${_ns}<NAME>_URL variable (use LOKI_TEST_ or another namespace): $_reads"
+    bad "parity D reserved warning leak: bash=[$out_b] bun=[$out_u]"
+fi
+rm -rf "$bd" "$bu"
+
+# The reserved-name set is one name list; both routes must carry the same one.
+res_ts=$(sed -n 's/^const RESERVED_REMOTE_NAMES = new Set(\[\(.*\)\]);/\1/p' "$LOKI_TS_DIR/src/providers/mcp_config.ts" | tr -d ' "' )
+res_sh=$(sed -n "s/.*if m.group(1) in (\(.*\),):.*/\1/p" "$BASH_HELPER" | tr -d " '")
+if [ -n "$res_ts" ] && [ "$res_ts" = "$res_sh" ]; then
+    ok "parity D: both routes reserve the same names ($res_ts)"
+else
+    bad "parity D reserved sets differ: ts=[$res_ts] bash=[$res_sh]"
+fi
+
+# Guard (#316): a tool-owned setting must not live in the LOKI_MCP_<NAME>_URL namespace. Fixtures that SET
+# such a variable are fine; a READ of a literal name is a setting. The scanner is one function so the
+# self-test below exercises the exact code that guards the tree.
+scan_ns_reads() {
+    python3 -c '
+import re, sys
+N = r"LOKI_MCP_[A-Z0-9_]+_URL"
+Q = r"[\x27\"]"
+reads = [
+    r"\$\{?" + N,                                         # $VAR, ${VAR}
+    r"\b(?:env|environ)\." + N,                            # process.env.X, Bun.env.X
+    r"\b(?:env|environ)(?:\.get)?\s*[(\[]\s*" + Q + N,      # env["X"], environ.get( "X")
+    r"\bgetenv\s*\(\s*" + Q + N,                           # os.getenv("X")
+    r"\bprintenv\s+" + N,                                  # printenv X
+    r"\{[^}]*\b" + N + r"\b[^}]*\}\s*=\s*(?:process\.|Bun\.)?env\b",  # destructuring
+]
+assign = re.compile(r"\b(?:env|environ)\s*\[\s*" + Q + N + Q + r"\s*\]\s*=(?!=)")
+pat = re.compile("|".join("(?:%s)" % r for r in reads))
+hits = 0
+for path in sys.argv[1:]:
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for i, line in enumerate(lines, 1):
+        if pat.search(assign.sub("", line)):
+            print("%s:%d:%s" % (path, i, line.strip()[:160]))
+            hits += 1
+sys.exit(1 if hits else 0)
+' "$@"
+}
+_self=$(mktemp -d -t loki-parity-guard-XXXX)
+cat >"$_self/forms.txt" <<'FORMS'
+x="$LOKI_MCP_FOO_URL"
+x="${LOKI_MCP_FOO_URL:-}"
+const a = process.env.LOKI_MCP_FOO_URL;
+const b = Bun.env.LOKI_MCP_FOO_URL;
+const c = process.env["LOKI_MCP_FOO_URL"];
+const { LOKI_MCP_FOO_URL } = process.env;
+const { A, LOKI_MCP_FOO_URL: u } = Bun.env;
+v = os.environ.get( "LOKI_MCP_FOO_URL")
+v = os.environ["LOKI_MCP_FOO_URL"]
+v = os.getenv("LOKI_MCP_FOO_URL")
+FORMS
+cat >"$_self/assign.txt" <<'ASSIGN'
+process.env["LOKI_MCP_FOO_URL"] = "https://x.example.com";
+os.environ["LOKI_MCP_FOO_URL"] = "https://x.example.com"
+export LOKI_MCP_FOO_URL="https://x.example.com"
+ASSIGN
+_nform=$(wc -l <"$_self/forms.txt" | tr -d ' ')
+_caught=$(scan_ns_reads "$_self/forms.txt" | wc -l | tr -d ' ')
+_missed=""
+while IFS= read -r _line; do
+    printf '%s\n' "$_line" >"$_self/one.txt"
+    # The scanner exits 1 when it finds a read, so exit 0 here means the form was missed.
+    if scan_ns_reads "$_self/one.txt" >/dev/null; then _missed="$_missed [$_line]"; fi
+done <"$_self/forms.txt"
+if [ "$_caught" = "$_nform" ] && [ -z "$_missed" ] && scan_ns_reads "$_self/assign.txt" >/dev/null; then
+    ok "guard self-test: all $_nform read forms are caught and the assignment forms are not"
+else
+    bad "guard self-test: caught $_caught of $_nform; assignment flagged or forms missed"
+fi
+rm -rf "$_self"
+# shellcheck disable=SC2046
+_reads="$(cd "$REPO_ROOT" && scan_ns_reads $(git ls-files tests scripts autonomy providers loki-ts/src mcp bin dashboard 2>/dev/null | grep -v '^tests/test-parity-mcp-config.sh$') 2>/dev/null || true)"
+if [ -z "$_reads" ]; then
+    ok "guard: no tool-owned setting reads a LOKI_MCP_<NAME>_URL variable"
+else
+    bad "guard: a tool setting reads a LOKI_MCP_<NAME>_URL variable (use LOKI_TEST_ or another namespace): $_reads"
 fi
 
 unset LOKI_MCP_ACME_CO_URL LOKI_MCP_ACME_CO_AUTH
