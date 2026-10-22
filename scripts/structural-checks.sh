@@ -152,26 +152,38 @@ import re, sys
 bad = []
 names = {}
 override = re.compile(r"ignore (all |any )?(previous|prior|above) (instructions|rules)|disregard (all |any )?(previous|prior) instructions|you are now in (developer|dan) mode", re.I)
-# Fetch or decode output reaching a shell interpreter: through a pipe (tee or
-# filter stages between, optional sudo/env wrapper and flags), process
-# substitution (sh <(curl ...), source <(...)) or command substitution
-# (sh -c "$(curl ...)", eval "$(...)", backticks).
+# Fetch or decode output reaching an interpreter, deny by default.
+#  1. Pipe: any pipe into an interpreter (under any path prefix or sudo/env/exec
+#     style wrapper) fails unless that interpreter's OWN code flag comes next.
+#  2. Process or command substitution: sh <(curl ...), source <(...), sh -c
+#     "$(curl ...)", eval "$(...)", backticks.
+#  3. Download then run: a curl or wget followed, in the same joined snippet, by
+#     running a local file (sh f, python f, source f, . f, ./f); the name is free.
 SH = r"(?:/\S*/)?(?:ba|z|da|k|c|fi|a|tc)?sh(?![\w.-])"
-# Interpreters read a script from stdin only when bare or given "-"; with -c, -e,
-# -p, -m or -r they take code from the argument, so python -c and node -e pass.
-INAME = r"(?:/\S*/)?(?:python[\d.]*|node(?:js)?|perl|ruby)(?![\w.-])"
-INTERP = INAME + r"(?:\s+-[^ceEpmrl\s]\S*)*(?=\s*(?:$|[|;&)}]|-(?:\s|$)))"
-RUN = "(?:" + SH + "|" + INTERP + ")"
+# One table: interpreter name -> the flag that makes it read code from its
+# argument instead of stdin or a file. No flag class is shared across entries.
+SHELL = r"(?:ba|z|da|k|c|fi|a|tc)?sh"
+INTERPS = (
+    (SHELL, r"-[A-Za-z]*c"),
+    (r"python[\d.]*", r"-[A-Za-z]*c"),
+    (r"perl[\d.]*", r"-[A-Za-z]*[eE]"),
+    (r"ruby[\d.]*", r"-[A-Za-z]*e"),
+    (r"node(?:js)?", r"(?:-e|--eval)"),
+    (r"php[\d.]*", r"-r"),
+    (r"(?:pwsh|powershell)", r"-(?:[Cc]ommand|c)"),
+)
+# An interpreter that is NOT followed by its own code flag.
+RUN = "(?:" + "|".join(
+    r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s(?=\s|$))" % (n, f) for n, f in INTERPS) + ")"
 FETCH = r"(?:curl|wget|base64\s+(?:-d|--decode)|openssl\s+base64\s+-d)\b"
-WRAP = r"(?:(?:sudo|doas|env|exec|command|nohup|xargs|busybox|time|nice|setsid|stdbuf)\b[^|;&\n]*?\s)?"
+WRAP = r"(?:(?:/\S*/)?(?:sudo|doas|env|exec|command|nohup|xargs|busybox|time|nice|setsid|stdbuf)\b[^|;&\n]*?\s)?"
 pipe = re.compile(
     r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + WRAP + RUN
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*(?:\$\(|`)\s*" + FETCH
-    # download then run: curl -o f ... && sh f / python f / ./f
-    + r"|\b(?:curl|wget)\b[^\n|]*?(?:-[A-Za-z]*[oO]|--output(?:-document)?)[ =]+(?:\./)?(?P<f>[^\s;&|]+)"
-    + r"[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?"
-    + r"(?:" + WRAP + "(?:" + SH + "|" + INAME + ")" + r"(?:\s+-\S+)*\s+(?:\./)?|\./)(?P=f)(?![\w.-])"
+    + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?"
+    + r"(?:" + WRAP + RUN + r"(?:\s+-\S+)*\s+[^\s-]\S*"
+    + r"|(?:source|(?<![\w./-])\.)\s+\S+|\./\S+)"
 )
 key = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 for f in sys.argv[1:]:
