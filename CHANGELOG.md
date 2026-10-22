@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.38.0 (2026-10-22)
+
+### Added
+- Benchmark effort axis (#296): `loki bench` and `benchmarks/bench/runner.py run --effort high,medium` emit one result row per effort level with an `effort` field. Only adapters that declare an effort parameter receive it (claude_code passes `--effort`); an adapter that cannot apply an effort is refused rather than recorded. The default invocation passes no effort and produces a byte-identical row.
+
 ## v11.37.0 (2026-10-22)
 
 ### Added
