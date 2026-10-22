@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.29.0 (2026-10-22)
+
+### Removed
+- The `LOKI_JUDGE_BATCH` judge batch path and its three helper functions are gone. Judge calls always use the synchronous call with the same timeout, client and retry settings as before. Refs #243.
+
 ## v11.28.0 (2026-10-22)
 
 ### Added
