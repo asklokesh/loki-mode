@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.20.0 (2026-10-22)
+
+### Added
+- Skills modules over 100 lines now open with a generated contents map, so a partial read sees the whole scope (#247, part 1). `scripts/skill-toc.sh` writes it; `scripts/skill-toc.sh --check` reports any missing or stale map, and `tests/test-skill-doc-accuracy.sh` fails on one. 22 modules updated, including `skills/quality-gates.md` (1159 lines).
+
+### Tests
+- `tests/test-skill-doc-accuracy.sh` 60 passed, 0 failed (59/1 before the maps existed). Guard mutations (map removed, heading added without regeneration) both report STALE with rc=1; a second write run is idempotent.
+
+### Not yet done
+- #247 part 2 (SKILL.md links modules directly) is in progress; `skills/00-index.md` stays, since SKILL.md and seven tests and docs route through it.
+
 ## v11.19.0 (2026-10-22)
 
 ### Added
