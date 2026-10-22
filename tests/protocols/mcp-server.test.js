@@ -203,7 +203,9 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
     put(dir, 'state/orchestrator.json', orch);
     put(dir, 'state/session.json', { projectId: MARK, provider: MARK, status: sessionStatus, startedAt: MARK });
     put(dir, 'state/task-queue.json', { tasks: [{ status: 'pending', title: MARK, description: MARK }] });
-    put(dir, 'state/quality-gates.json', { results: [{ name: MARK, status: MARK, severity: MARK, message: MARK, details: MARK }] });
+    put(dir, 'state/quality-gates.json', { results: [
+      { name: MARK, status: MARK, severity: MARK, message: MARK, details: MARK },
+      { name: MARK, status: 'failed', severity: 'high', message: MARK }] });
     put(dir, 'state/blind-review.json', { reviewers: [MARK], averageScore: MARK, consensus: MARK, unanimous: MARK, comments: MARK });
     put(dir, 'state/council-votes.json', { votes: [MARK], decision: MARK, devilsAdvocateTriggered: MARK });
     put(dir, 'metrics/tool-usage.jsonl', JSON.stringify({ tool: MARK }) + '\n');
@@ -216,14 +218,17 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
     put(dir, 'learning/signals/s.jsonl', JSON.stringify({ type: 'error_pattern', m: MARK }) + '\n');
   }
 
-  // Every enum value of every enum property, so each action branch is called.
+  // Every enum value of every enum property, and for every optional property
+  // also the omitted case, so a filter argument never hides the unfiltered result.
   function argSets(schema) {
-    const props = (schema.inputSchema && schema.inputSchema.properties) || {};
+    const input = schema.inputSchema || {};
+    const required = new Set(input.required || []);
     let sets = [{}];
-    for (const [key, def] of Object.entries(props)) {
-      const values = def.enum || (key === 'checkpointId' ? [CKPT] : def.type === 'string' ? ['x'] : []);
+    for (const [key, def] of Object.entries(input.properties || {})) {
+      let values = def.enum || (key === 'checkpointId' ? [CKPT] : def.type === 'string' ? ['x'] : def.type === 'boolean' ? [true] : []);
       if (values.length === 0) continue;
-      sets = sets.flatMap((a) => values.map((v) => ({ ...a, [key]: v })));
+      if (!required.has(key)) values = [undefined, ...values];
+      sets = sets.flatMap((a) => values.map((v) => (v === undefined ? a : { ...a, [key]: v })));
     }
     return sets;
   }
@@ -236,11 +241,12 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
     return { inside: JSON.stringify(inside || ''), outside: JSON.stringify(outside) };
   };
 
-  it('returns stored text from every registered tool and resource only inside untrusted_content', () => {
+  // Calls every registered tool and resource against the seeded tree; returns
+  // the labels whose marker sat outside untrusted_content and the labels it reached.
+  function runGuard() {
     const tools = [...getTools().values()];
     const resources = [...getResources().values()];
-    assert.ok(tools.length >= 5 && resources.length >= 2);
-    const leaks = [];
+    const leaks = new Set();
     const surfaced = new Set();
     let id = 100;
 
@@ -259,15 +265,42 @@ describe('untrusted envelope partition (runtime-derived, mirrors the Python guar
         const text = req.method === 'tools/call' ? res.content[0].text : res.contents[0].text;
         const { inside, outside } = split(text);
         if (inside.includes(MARK) || outside.includes(MARK)) surfaced.add(label);
-        if (outside.includes(MARK)) leaks.push(label);
+        if (outside.includes(MARK)) leaks.add(label);
       }
     }
     fs.rmSync(lokiOf(testDir), { recursive: true, force: true });
+    return { leaks, surfaced };
+  }
 
-    assert.deepEqual([...new Set(leaks)].sort(), [], 'stored text returned outside untrusted_content');
+  it('returns stored text from every registered tool and resource only inside untrusted_content', () => {
+    const tools = [...getTools().values()];
+    const resources = [...getResources().values()];
+    assert.ok(tools.length >= 5 && resources.length >= 2);
+    const { leaks, surfaced } = runGuard();
+
+    assert.deepEqual([...leaks].sort(), [], 'stored text returned outside untrusted_content');
     // Control: the marker really reaches each of these, so the check above is not vacuous.
     for (const t of tools) assert.ok(surfaced.has(t.schema.name), 'marker never reached tool ' + t.schema.name);
     for (const r of resources) assert.ok(surfaced.has(r.schema.uri), 'marker never reached resource ' + r.schema.uri);
+  });
+
+  it('goes red when any single declared UNTRUSTED_FIELDS entry is removed', () => {
+    const survived = [];
+    let mutations = 0;
+    for (const mod of getTools().values()) {
+      const declared = mod.UNTRUSTED_FIELDS;
+      for (const field of declared) {
+        mutations++;
+        mod.UNTRUSTED_FIELDS = declared.filter((f) => f !== field);
+        try {
+          if (!runGuard().leaks.has(mod.schema.name)) survived.push(mod.schema.name + '.' + field);
+        } finally {
+          mod.UNTRUSTED_FIELDS = declared;
+        }
+      }
+    }
+    assert.ok(mutations >= 17, 'expected the declared fields to be mutated, got ' + mutations);
+    assert.deepEqual(survived, [], 'removing this field left the guard green (the seed or args never reach it)');
   });
 
   it('seeds every .loki file the tool and resource sources read', () => {
