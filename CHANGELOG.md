@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.33.0 (2026-10-22)
+
+### Changed
+- A resumed engine10 session keeps its starting effort when a stage resolves to the same or a lower effort, so the cached prompt prefix is not rewritten. A higher stage effort still applies and emits `effort_escalation_cache_reset`. An explicit `LOKI_E10_EFFORT` is never overridden. Refs #274.
+
 ## v11.32.0 (2026-10-22)
 
 ### Added
