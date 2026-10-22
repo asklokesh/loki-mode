@@ -59,7 +59,7 @@ run_vote() {
             else
                 v="$REV_VERDICT"
             fi
-            printf '{"verdict":"%s","reasoning":"%s saw %s","issues":[]}\n' "$v" "$1" "$RANDOM" >"$3"
+            printf '{"verdict":"%s","justification":"%s saw %s","issues":[]}\n' "$v" "$1" "$RANDOM" >"$3"
         }
         REV_VERDICT="$1" DA_VERDICT="$2" COUNCIL_SIZE=3
         council_v2_vote "" "$WORK/empty/evidence.md" "$WORK/proj/votes" 1 >/dev/null 2>&1

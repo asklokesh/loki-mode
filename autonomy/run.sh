@@ -16584,6 +16584,14 @@ _dispatch_reviewer() {
             if [ -n "$_cr_requirements_manifest" ]; then
                 _cr_schema="${LOKI_REVIEW_REQUIREMENTS_SCHEMA:-}"
             fi
+            # The SDK judge always gets a STATIC schema file: the API caches
+            # compiled schemas for 24h, so run-specific manifest content (hash,
+            # ids, count) must never enter one. The manifest rides in the prompt
+            # body and cr-rematerialize.py enforces it fail-closed.
+            local _cr_sdk_schema="$_cr_schema"
+            if [ -n "$_cr_requirements_manifest" ]; then
+                _cr_sdk_schema="${_cr_root}/loki-ts/data/requirements-verdict-schema.json"
+            fi
             local _cr_provider_env=(env)
             if [ -n "$_cr_requirements_manifest" ]; then
                 local _cr_secret_name
@@ -16638,30 +16646,21 @@ _dispatch_reviewer() {
             # Critical/High). Same schema the claude --json-schema path uses, so
             # verdict parity holds by construction.
             if [ "${LOKI_SDK_CODE_REVIEW:-0}" = "1" ] \
-               && [ -f "$_cr_schema" ] && [ -f "$_cr_remat" ]; then
-                local _crs_loki _crs_pf _crs_out _crs_rc _crs_schema_file=""
-                local _crs_schema_content="" _crs_manifest_content=""
+               && [ -f "$_cr_sdk_schema" ] && [ -f "$_cr_remat" ]; then
+                local _crs_loki _crs_pf _crs_out _crs_rc
+                local _crs_manifest_content=""
                 local _crs_invoked=false
                 _crs_loki="${_cr_root}/bin/loki"
                 if [ -x "$_crs_loki" ] && command -v bun >/dev/null 2>&1; then
                     _crs_pf="$(mktemp 2>/dev/null)" || _crs_pf=""
-                    _crs_schema_file="$_cr_schema"
-                    if [ -n "$_cr_requirements_manifest" ]; then
-                        _crs_schema_file="$(mktemp 2>/dev/null)" || _crs_schema_file=""
-                    fi
-                    if [ -n "$_crs_pf" ] && [ -n "$_crs_schema_file" ]; then
+                    if [ -n "$_crs_pf" ]; then
                         if [ -n "$_cr_requirements_manifest" ]; then
-                            _crs_schema_content="$(_loki_requirements_contract_emit schema 2>/dev/null)" || {
-                                rm -f "$_crs_pf" "$_crs_schema_file" 2>/dev/null || true
+                            # Contract integrity check only; its output is never
+                            # written into a schema.
+                            _loki_requirements_contract_emit schema >/dev/null 2>&1 || {
+                                rm -f "$_crs_pf" 2>/dev/null || true
                                 return 125
                             }
-                            printf '%s' "$_crs_schema_content" > "$_crs_schema_file"
-                            chmod 600 "$_crs_schema_file" 2>/dev/null || {
-                                rm -f "$_crs_pf" "$_crs_schema_file" 2>/dev/null || true
-                                return 125
-                            }
-                        else
-                            _crs_schema_file="$_cr_schema"
                         fi
                         printf '%s' "$prompt_text" > "$_crs_pf"
                         _crs_rc=0
@@ -16680,14 +16679,11 @@ _dispatch_reviewer() {
                         fi
                         _crs_out="$(_loki_with_deadline "$_crs_cap" \
                             "${_cr_provider_env[@]}" "$_crs_loki" internal sdk-judge \
-                            --prompt-file "$_crs_pf" --schema-file "$_crs_schema_file" \
+                            --prompt-file "$_crs_pf" --schema-file "$_cr_sdk_schema" \
                             --model "${LOKI_SDK_REVIEW_MODEL:-sonnet}" --effort high \
                             --timeout-ms "$(( _crs_to_s * 1000 ))")" || _crs_rc=$?
                         _crs_invoked=true
                         rm -f "$_crs_pf" 2>/dev/null || true
-                        if [ -n "$_cr_requirements_manifest" ]; then
-                            rm -f "$_crs_schema_file" 2>/dev/null || true
-                        fi
                         case "$_crs_rc" in
                             124|125) return "$_crs_rc" ;;
                         esac

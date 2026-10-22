@@ -31,7 +31,7 @@ def detect_sycophancy(votes):
     signals.append(unanimity_score * 0.3)  # Weight: 30%
 
     # Signal 2: Reasoning text similarity (Jaccard on word sets)
-    reasonings = [set(re.findall(r'\w+', v.get('reasoning', '').lower())) for v in votes]
+    reasonings = [set(re.findall(r'\w+', (v.get('justification') or v.get('reasoning') or '').lower())) for v in votes]
     if all(len(r) > 0 for r in reasonings):
         similarity_scores = []
         for i in range(len(reasonings)):

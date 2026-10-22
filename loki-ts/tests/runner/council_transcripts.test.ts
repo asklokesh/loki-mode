@@ -157,6 +157,26 @@ describe("councilEvaluate transcript writer", () => {
     expect(typeof t.reject_count).toBe("number");
     expect(typeof t.threshold).toBe("number");
     expect(typeof t.total_members).toBe("number");
+
+    // Transcripts are engine-written (not model output): the voter key must equal the one
+    // the bash writer and the VS Code panel use, or TS-route reasons vanish from the panel.
+    const v0 = (t.voters as Record<string, unknown>[])[0]!;
+    expect(v0["reasoning"]).toBe("all good");
+    const root = join(import.meta.dir, "..", "..", "..");
+    expect(readFileSync(join(root, "autonomy", "completion-council.sh"), "utf8")).toContain("'reasoning': v.get('reason', '')");
+    expect(readFileSync(join(root, "vscode-extension", "media", "loki-dashboard.js"), "utf8")).toContain("e.reasoning");
+  });
+
+  it("council-v2 schema and prompts request justification, never reasoning", () => {
+    const root = join(import.meta.dir, "..", "..", "..");
+    const schema = JSON.parse(
+      readFileSync(join(root, "loki-ts", "data", "council-v2-schema.json"), "utf8"),
+    ) as { required: string[]; properties: Record<string, unknown> };
+    expect(schema.required).toContain("justification");
+    expect(schema.required).not.toContain("reasoning");
+    expect(schema.properties["reasoning"]).toBeUndefined();
+    const sh = readFileSync(join(root, "autonomy", "council-v2.sh"), "utf8");
+    expect(sh.includes("reasoning (string)")).toBe(false);
   });
 
   // -------------------------------------------------------------------------

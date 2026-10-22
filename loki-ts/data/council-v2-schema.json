@@ -5,14 +5,14 @@
   "description": "Structured output contract for a council-v2 reviewer (requirements/test/quality/devils-advocate/general). Claude Code emits this when invoked with --json-schema (INLINE content, not a path) --output-format json. The council-v2 dispatch reads structured_output directly; a sed-carve of prose JSON remains the fail-closed fallback. verdict is the gating token; any parse miss defaults to REJECT (the safe direction).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["verdict", "reasoning", "issues"],
+  "required": ["verdict", "justification", "issues"],
   "properties": {
     "verdict": {
       "type": "string",
       "enum": ["APPROVE", "REJECT"],
       "description": "APPROVE if the evidence satisfies the requirements for this reviewer's lens; REJECT otherwise."
     },
-    "reasoning": {
+    "justification": {
       "type": "string",
       "minLength": 1,
       "maxLength": 4000,

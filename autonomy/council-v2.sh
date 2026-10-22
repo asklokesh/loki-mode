@@ -134,11 +134,11 @@ council_v2_vote() {
             votes_json="$votes_json$vote_content"
 
             local verdict
-            verdict=$(echo "$vote_content" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "UNKNOWN")
+            verdict=$(echo "$vote_content" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').strip().upper())" 2>/dev/null || echo "UNKNOWN")
             # TRUST: a reviewer that could not be REACHED did not vote REJECT.
             #
             # Every provider arm below used to substitute a literal
-            # {"verdict":"REJECT","reasoning":"review execution failed"} on any
+            # {"verdict":"REJECT","justification":"review execution failed"} on any
             # miss -- CLI absent, timeout, transient error, unparseable output --
             # and this tally counted "anything not APPROVE" as a rejection. The
             # engine therefore fabricated a reviewer vote the model never gave,
@@ -218,7 +218,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
                 # Same trust rule as the main tally: an unparseable devil's
                 # advocate did not vote REJECT. Defaulting to REJECT here would
                 # silently overturn a unanimous APPROVE on a transient failure.
-                da_verdict=$(cat "$da_vote" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "INCONCLUSIVE")
+                da_verdict=$(cat "$da_vote" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').strip().upper())" 2>/dev/null || echo "INCONCLUSIVE")
                 if [ "$da_verdict" = "INCONCLUSIVE" ]; then
                     log_warn "Devil's advocate produced no verdict -- unanimous approval left UNCHANGED (not overturned)"
                 elif [ "$da_verdict" = "REJECT" ]; then
@@ -323,19 +323,19 @@ council_v2_run_reviewer() {
     local prompt
     case "$role" in
         requirements_verifier)
-            prompt="You are a requirements verification reviewer. Review the evidence and PRD below. Check if all requirements are implemented. Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            prompt="You are a requirements verification reviewer. Review the evidence and PRD below. Check if all requirements are implemented. Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             ;;
         test_auditor)
-            prompt="You are a test auditor reviewer. Review the evidence below. Check test coverage, test quality, and assertion density. Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            prompt="You are a test auditor reviewer. Review the evidence below. Check test coverage, test quality, and assertion density. Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             ;;
         code_quality_reviewer)
-            prompt="You are a code quality reviewer. Review the evidence below. Check for SOLID violations, security issues, performance problems. Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            prompt="You are a code quality reviewer. Review the evidence below. Check for SOLID violations, security issues, performance problems. Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             ;;
         devils_advocate)
-            prompt="You are a devil's advocate reviewer. Your job is to find reasons this code should NOT be approved. Be skeptical and contrarian. Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            prompt="You are a devil's advocate reviewer. Your job is to find reasons this code should NOT be approved. Be skeptical and contrarian. Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             ;;
         *)
-            prompt="You are a general reviewer. Evaluate project completion. Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            prompt="You are a general reviewer. Evaluate project completion. Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             ;;
     esac
 
@@ -355,7 +355,7 @@ council_v2_run_reviewer() {
             if [ -n "$_c2_agent_prompt" ]; then
                 prompt="$_c2_agent_prompt
 
-Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+Output a JSON object with keys: verdict (APPROVE or REJECT), justification (string), issues (array of {severity, description})."
             fi
         fi
     fi
@@ -480,38 +480,38 @@ except Exception:
                 fi
                 # Fall through to the plain text call (+ sed-carve) on any miss.
                 if [ -z "$result" ]; then
-                    result=$(echo "$full_prompt" | CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","reasoning":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                    result=$(echo "$full_prompt" | CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
                 fi
             else
-                result='{"verdict":"INCONCLUSIVE","reasoning":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                result=$(codex exec -q "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","reasoning":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                result=$(codex exec -q "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
             else
-                result='{"verdict":"INCONCLUSIVE","reasoning":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
-                result=$(echo "$full_prompt" | gemini 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","reasoning":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                result=$(echo "$full_prompt" | gemini 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
             else
-                result='{"verdict":"INCONCLUSIVE","reasoning":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
-                result=$(cline -y "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","reasoning":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                result=$(cline -y "$full_prompt" 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
             else
-                result='{"verdict":"INCONCLUSIVE","reasoning":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
-                result=$(aider --message "$full_prompt" --yes-always --no-auto-commits --no-git 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","reasoning":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
+                result=$(aider --message "$full_prompt" --yes-always --no-auto-commits --no-git 2>/dev/null || echo '{"verdict":"INCONCLUSIVE","justification":"review execution failed (no verdict obtained; NOT a rejection)","issues":[]}')
             else
-                result='{"verdict":"INCONCLUSIVE","reasoning":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"reviewer CLI unavailable (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
         *)
@@ -536,7 +536,7 @@ except Exception:
                 [ "$_c2_seam_rc" -ne 0 ] && result=''
             fi
             if [ -z "$result" ]; then
-                result='{"verdict":"INCONCLUSIVE","reasoning":"review not supported for this provider (no verdict obtained; NOT a rejection)","issues":[]}'
+                result='{"verdict":"INCONCLUSIVE","justification":"review not supported for this provider (no verdict obtained; NOT a rejection)","issues":[]}'
             fi
             ;;
     esac
@@ -578,7 +578,7 @@ else:
     sys.exit(1)   # ambiguous or absent -> stay inconclusive
 print(json.dumps({
     "verdict": v,
-    "reasoning": "recovered from unstructured output (model stated %s in prose)" % v,
+    "justification": "recovered from unstructured output (model stated %s in prose)" % v,
     "issues": [],
     "recovered": True,
 }))
@@ -593,7 +593,7 @@ print(json.dumps({
         # prose could not be carved into JSON did not vote REJECT. Recording one
         # here would turn "your model formats poorly" into "your code was
         # rejected" -- a block the user cannot act on and did not earn.
-        extracted='{"verdict":"INCONCLUSIVE","reasoning":"failed to parse review output (no verdict obtained; NOT a rejection)","issues":[]}'
+        extracted='{"verdict":"INCONCLUSIVE","justification":"failed to parse review output (no verdict obtained; NOT a rejection)","issues":[]}'
     fi
 
     echo "$extracted" > "$output_file"

@@ -922,7 +922,7 @@ export type TranscriptVoter = {
   name: string;
   role_index: number;
   verdict: "APPROVE" | "REJECT" | "CANNOT_VALIDATE";
-  reasoning: string;
+  reasoning: string; // transcript key shared with completion-council.sh and the VS Code panel; engine-written, not model-facing
   issues: { severity: string; description: string }[];
   is_contrarian: boolean;
   // Only present when is_contrarian=true and triggered=true:

@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loki-mode.dev/schemas/requirements-verdict.json",
+  "title": "Loki Requirements Verdict (static)",
+  "description": "Static structural contract for the requirements-mode SDK judge. Run-specific values (spec_sha256, requirement ids and count) are NOT in this schema because the API caches compiled schemas for 24h; they travel in the prompt body and autonomy/lib/cr-rematerialize.py enforces them fail-closed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "spec_sha256", "verdict", "requirements", "findings"],
+  "properties": {
+    "schema": { "type": "string", "enum": ["loki-requirements-verdict/v1"] },
+    "spec_sha256": { "type": "string" },
+    "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+          "evidence": { "type": "string", "maxLength": 2000 }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "description": { "type": "string", "maxLength": 2000 }
+        }
+      }
+    }
+  }
+}

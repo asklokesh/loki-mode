@@ -3,7 +3,7 @@
 #
 # THE BUG (found 2026-07-29 while auditing provider coupling)
 #   Every provider arm in council-v2.sh substituted a literal
-#     {"verdict":"REJECT","reasoning":"review execution failed","issues":[]}
+#     {"verdict":"REJECT","justification":"review execution failed","issues":[]}
 #   on ANY miss -- CLI absent, timeout, transient error, unparseable output --
 #   and the tally counted "anything not APPROVE" as a rejection:
 #
@@ -236,7 +236,11 @@ c2_vote() { # <dir> <vote> [devil's advocate vote] -> "<rc>/<approve count in su
         council_v2_run_reviewer() {
             local v="$C2_STUB_VOTE"
             [ "$1" = devils_advocate ] && v="$C2_DA_VOTE"
-            printf '{"verdict":"%s","reasoning":"stub","issues":[]}\n' "$v" > "$3"
+            if [ -n "${C2_STUB_RAW:-}" ]; then
+                printf '%s\n' "$C2_STUB_RAW" > "$3"
+            else
+                printf '{"verdict":"%s","justification":"stub","issues":[]}\n' "$v" > "$3"
+            fi
         }
         export PYTHONPATH=":/nonexistent" C2_MARK="$D7/c2.mark" C2_STUB_VOTE="$2" C2_DA_VOTE="${3:-$2}" COUNCIL_SIZE=3
         council_v2_vote "" "$D7/evidence.md" "$1/.loki/council/v2" 1 >/dev/null 2>&1
@@ -279,6 +283,18 @@ if [ ! -s "$D7/c2.mark" ]; then
     ok "D7: no repo module ran in the council v2 tally, challenge, DA read or calibration"
 else
     bad "D7: repo module(s) ran: $(sort -u "$D7/c2.mark" | tr '\n' ' ')"
+fi
+# Key rename (reasoning -> justification) and verdict case: a legacy
+# {"verdict":"approve","reasoning":..} vote and a new {"verdict":"APPROVE",
+# "justification":..} vote must both count as APPROVE.
+export LOKI_COUNCIL_SYCOPHANCY_THRESHOLD=9
+legacy="$(C2_STUB_RAW='{"verdict":"approve","reasoning":"x","issues":[]}' c2_vote "$D7/plain" APPROVE)"
+current="$(C2_STUB_RAW='{"verdict":"APPROVE","justification":"x","issues":[]}' c2_vote "$D7/plain" APPROVE)"
+unset LOKI_COUNCIL_SYCOPHANCY_THRESHOLD
+if [ "$legacy" = "0/3" ] && [ "$current" = "0/3" ]; then
+    ok "legacy lowercase/reasoning vote and new justification vote both count as APPROVE"
+else
+    bad "legacy=$legacy current=$current (want 0/3 0/3)"
 fi
 rm -rf "$D7"
 
