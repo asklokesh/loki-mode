@@ -192,7 +192,7 @@ export function mcpConfigPath(targetDir: string): string {
   }
   // writeFileSync's mode applies only when it creates the file, so writing a
   // token into an existing 644 bundle would expose it. Write a sibling opened
-  // 0600 and rename it over the target (mirrors tmp + mv in the bash route).
+  // 0600 and rename it over the target (the bash route does the same with mkstemp + os.replace).
   const tmpPath = `${cfgPath}.tmp.${process.pid}`;
   try {
     rmSync(tmpPath, { force: true });
