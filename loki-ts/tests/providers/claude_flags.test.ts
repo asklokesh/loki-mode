@@ -1244,6 +1244,14 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
     expect(bashDenied(compiled, "cat .env")).toBe(true);
   });
 
+  it("pins the Bash rules measured live to newly deny five commands on claude 2.1.308 (#303)", () => {
+    const legacy = denied(permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {}));
+    // cat $PWD/.env, xargs cat <<< .env, cat *.pem, source .env, . ./.env
+    for (const rule of ["Bash(cat */.env*)", "Bash(* < .env*)", "Bash(cat *.pem*)", "Bash(source .env*)", "Bash(. */.env*)"]) {
+      expect(legacy).toContain(rule);
+    }
+  });
+
   it("LOKI_WEB_POLICY=off drops the Bash secret denies together with the Read ones (#303)", () => {
     const off = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_POLICY: "off" }), () => {});
     expect(off).toEqual(["--dangerously-skip-permissions"]);

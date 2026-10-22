@@ -39,10 +39,12 @@ function failClosed(why, warnings) {
 // the templates (.env.example, .env.sample, .env.template) without missing secret names such as .envrc,
 // .env.prod, .env.keys, .env.vault and .env.bak. The templates are blocked too.
 // One secret-path list drives BOTH the Read denies and the Bash denies, so the two cannot drift (#303).
-// Under the bypass flag a Read deny alone leaves `Bash(cat .env)` open, so each path glob is also turned into
-// Bash rules for the common file readers and for input redirects. A shell cannot be sandboxed by pattern: an
-// interpreter (python, node, perl, ruby), a variable or command substitution, or a copy under another name
-// still reads the file. The native sandbox (#291) is the stronger boundary; these rules close the plain cases.
+// Each path glob is also turned into Bash rules for common file readers and input redirects. Measured on
+// claude 2.1.308 (stub API): the Read denies alone refuse most plain reads, and these Bash rules newly deny
+// `cat $PWD/.env`, `xargs cat <<< .env`, `cat *.pem`, `source .env` and `. ./.env`. A shell cannot be sandboxed
+// by pattern. Still readable: `grep -r SECRET .`, `/bin/cat .env`, `CAT .env` on a case-insensitive filesystem,
+// `echo .env | xargs cat`, `dd if=.env`, `bash -c` / `sh -c` / `eval` re-entry, interpreters (python, node, perl,
+// ruby), substitutions and copies. These rules narrow the plain paths; the native sandbox (#291) is the boundary.
 // The list lives in autonomy/lib/secret-paths.json, shared with the OS sandbox (autonomy/lib/os_sandbox.py); nothing is hand-written here.
 var SECRET_RULES = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'autonomy', 'lib', 'secret-paths.json'), 'utf8')).rules;
 var SECRET_PATH_GLOBS = SECRET_RULES.map(function (r) { return r.kind === 'file' ? r.glob : r.name + '/**'; });
