@@ -154,3 +154,87 @@ describe("mcp_config.buildMcpConfigArgv", () => {
     expect(userMcpConfigPath()).toBeNull();
   });
 });
+
+describe("mcp_config outbound remote servers and auth headers", () => {
+  let td: string;
+  let savedPath: string | undefined;
+  const KEYS = ["LOKI_MCP_ACME_URL", "LOKI_MCP_ACME_AUTH", "LOKI_MCP_ACME_CO_URL", "LOKI_MCP_ACME_CO_AUTH", "LOKI_MCP_NOURL_AUTH"];
+  const TOKEN = "s3cr3t-token-value";
+  const bundle = (): any => JSON.parse(readFileSync(mcpConfigPath(td), "utf8"));
+  beforeEach(() => {
+    td = mkdtempSync(join(tmpdir(), "loki-mcp-auth-"));
+    savedPath = process.env["PATH"];
+    process.env["PATH"] = mkdtempSync(join(tmpdir(), "loki-mcp-empty-path-"));
+    for (const k of KEYS) delete process.env[k];
+  });
+  afterEach(() => {
+    rmSync(td, { recursive: true, force: true });
+    for (const k of KEYS) delete process.env[k];
+    if (savedPath === undefined) delete process.env["PATH"];
+    else process.env["PATH"] = savedPath;
+  });
+
+  it("an env auth var produces an Authorization header on its remote server", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    expect(bundle().mcpServers["acme"]).toEqual({
+      type: "http",
+      url: "https://mcp.example.com/mcp",
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+  });
+
+  it("a value that already names a scheme is used verbatim", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = "Basic abc123";
+    expect(bundle().mcpServers["acme"].headers).toEqual({ Authorization: "Basic abc123" });
+  });
+
+  it("multi-word server names map to lowercase hyphenated keys", () => {
+    process.env["LOKI_MCP_ACME_CO_URL"] = "https://co.example.com/mcp";
+    process.env["LOKI_MCP_ACME_CO_AUTH"] = TOKEN;
+    expect(Object.keys(bundle().mcpServers)).toContain("acme-co");
+  });
+
+  it("a remote server with no auth var has no headers", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    expect(bundle().mcpServers["acme"]).toEqual({ type: "http", url: "https://mcp.example.com/mcp" });
+  });
+
+  it("an auth var without a url declares no server", () => {
+    process.env["LOKI_MCP_NOURL_AUTH"] = TOKEN;
+    expect(Object.keys(bundle().mcpServers)).toEqual(["loki-mode"]);
+  });
+
+  it("refuses a plain-http non-loopback url and never logs the header value", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "http://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const logs = spyOn(console, "log").mockImplementation(() => {});
+    const b = bundle();
+    expect(b.mcpServers["acme"]).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("LOKI_MCP_ACME_URL"));
+    const seen = JSON.stringify([...warn.mock.calls, ...logs.mock.calls]);
+    expect(seen.includes(TOKEN)).toBe(false);
+    warn.mockRestore();
+    logs.mockRestore();
+  });
+
+  it("plain http is allowed for loopback", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "http://127.0.0.1:8765/mcp";
+    expect(bundle().mcpServers["acme"].url).toBe("http://127.0.0.1:8765/mcp");
+  });
+
+  it("a bundle that holds a header value is written owner-only (0600)", () => {
+    process.env["LOKI_MCP_ACME_URL"] = "https://mcp.example.com/mcp";
+    process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+    const p = mcpConfigPath(td);
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+
+  it("with no remote env the bundle is exactly the old one", () => {
+    expect(bundle()).toEqual({
+      mcpServers: { "loki-mode": { command: "python3", args: ["-m", "mcp.server"] } },
+    });
+  });
+});
