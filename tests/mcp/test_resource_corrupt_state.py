@@ -9,7 +9,7 @@ Regression tests for the MCP @mcp.resource handlers (Bug A):
 Before the fix, these three resource handlers caught ONLY PathTraversalError.
 In a degraded install (STATE_MANAGER_AVAILABLE=False) they do a bare json.load
 on .loki state files, so a corrupt JSON file raised an uncaught JSONDecodeError
-into the MCP runtime (tools return an {"error": ...} envelope; resources did
+into the MCP runtime (tools raise into the result contract; resources did
 not). get_memory_index additionally returned raw f.read() with no validation,
 serving corrupt bytes as a successful response.
 
@@ -57,12 +57,8 @@ class ResourceCorruptStateTests(unittest.TestCase):
     def test_pending_tasks_corrupt_queue_returns_error_envelope(self):
         self._write(".loki/state/task-queue.json", "{ this is : not valid json,,, }")
         with _ChdirToTmp(self.tmp):
-            raw = _run(self.server.get_pending_tasks())
-        body = json.loads(raw)
-        self.assertIn("error", body)
-        # Envelope shape is preserved so consumers do not crash on missing keys.
-        self.assertEqual(body.get("pending_tasks"), [])
-        self.assertEqual(body.get("count"), 0)
+            with self.assertRaises(Exception):
+                _run(self.server.get_pending_tasks())
 
     def test_pending_tasks_missing_file_is_not_an_error(self):
         # Negative control: absent file is the empty-queue success path.
@@ -77,12 +73,11 @@ class ResourceCorruptStateTests(unittest.TestCase):
     def test_memory_index_corrupt_returns_error_not_raw_bytes(self):
         self._write(".loki/memory/index.json", "{bad json not closed")
         with _ChdirToTmp(self.tmp):
-            raw = _run(self.server.get_memory_index())
-        # Must be valid JSON (parse-and-reserialize), and an error envelope,
-        # never the raw corrupt bytes served as a success.
-        body = json.loads(raw)
-        self.assertIn("error", body)
-        self.assertEqual(body.get("topics"), [])
+            # Resources have no isError channel: a corrupt index raises so the
+            # runtime returns an MCP error, never the raw bytes as a success.
+            with self.assertRaises(self.server.LokiToolError) as cm:
+                _run(self.server.get_memory_index())
+        self.assertEqual(cm.exception.code, "corrupt_state")
 
     def test_memory_index_valid_passes_through(self):
         # Negative control: a well-formed index reserializes cleanly.

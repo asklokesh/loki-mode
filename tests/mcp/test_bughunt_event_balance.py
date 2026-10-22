@@ -242,8 +242,9 @@ class EventBalanceTests(unittest.TestCase):
                 # Call each tool TWICE so a per-call leak accumulates and is
                 # unmistakable (1 leaked vs 0 expected, then 2 vs 0).
                 for _ in range(2):
-                    out = _run(fn(**kwargs))
-                    # Every tool must return a JSON string envelope, never raise.
+                    # Through the result contract every tool yields a JSON
+                    # string (success or isError payload), never an exception.
+                    _is_error, out = _run(srv._run_with_contract(name, fn, (), kwargs))
                     self.assertIsInstance(out, str)
                     json.loads(out)
 
@@ -266,8 +267,11 @@ class EventBalanceTests(unittest.TestCase):
             srv._tool_call_start_times.pop("loki_start_project", None)
         with _ChdirToTmp(self.tmp):
             for _ in range(3):
-                body = json.loads(_run(srv.loki_start_project(prd_content="", prd_path="")))
-                self.assertIn("error", body)  # confirms early-return path taken
+                is_error, text = _run(srv._run_with_contract(
+                    "loki_start_project", srv.loki_start_project, (),
+                    {"prd_content": "", "prd_path": ""}))
+                self.assertTrue(is_error)  # confirms early-exit path taken
+                self.assertEqual(json.loads(text)["code"], "invalid_argument")
         remaining = srv._tool_call_start_times.get("loki_start_project", [])
         self.assertEqual(
             len(remaining), 0,
@@ -293,8 +297,10 @@ class EventBalanceTests(unittest.TestCase):
             # mem_get returns early on no-ids only if base_path exists; seed it.
             os.makedirs(os.path.join(self.tmp, ".loki", "memory"), exist_ok=True)
             for _ in range(3):
-                body = json.loads(_run(srv.mem_get(ids="")))
-                self.assertEqual(body.get("error"), "No IDs provided")
+                is_error, text = _run(srv._run_with_contract(
+                    "mem_get", srv.mem_get, (), {"ids": ""}))
+                self.assertTrue(is_error)
+                self.assertEqual(json.loads(text).get("error"), "No IDs provided")
         remaining = srv._tool_call_start_times.get("mem_get", [])
         self.assertEqual(len(remaining), 0)
 
@@ -323,7 +329,9 @@ class EventBalanceTests(unittest.TestCase):
             return run_result
 
         with _ChdirToTmp(os.path.realpath(self.tmp)), mock.patch("subprocess.run", fake_run):
-            out = json.loads(_run(srv.loki_start_project(prd_path=spec)))
+            _is_error, text = _run(srv._run_with_contract(
+                "loki_start_project", srv.loki_start_project, (), {"prd_path": spec}))
+            out = json.loads(text)
         return out, calls
 
     def test_start_project_binary_spec_goes_through_cli_extractor(self):

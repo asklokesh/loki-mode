@@ -174,8 +174,10 @@ class BugHuntTests(unittest.TestCase):
         try:
             with _ChdirToTmp(self.tmp):
                 for _ in range(5):
-                    body = json.loads(_run(srv.loki_code_search("anything")))
-                    self.assertIn("error", body)  # confirms the early-return path
+                    is_error, text = _run(srv._run_with_contract(
+                        "loki_code_search", srv.loki_code_search, ("anything",), {}))
+                    self.assertTrue(is_error)  # confirms the early-exit path
+                    self.assertEqual(json.loads(text)["code"], "unavailable")
             # The 'start' events must be drained by matching 'complete' events.
             # _emit_tool_event_async runs the event-bus emit in a daemon thread,
             # but the start-time stack push/pop happens synchronously in the
