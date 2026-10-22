@@ -142,10 +142,12 @@ async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: strin
 }
 
 /** #283: a unit of an earlier group with the same card and base sha, whose receipt still verifies at its branch tip, is adopted into this group (receipt copied, branch ref pointed at the same tip) instead of dispatched. */
-async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, say: (s: string) => void): Promise<boolean> {
+async function adoptJournaled(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, dir: string, key: string, gid: string, n: number, id: string, task: string, say: (s: string) => void): Promise<boolean> {
   const e = readSliceJournal(dir, key);
   if (!e || e.id !== id || !GID_RE.test(e.gid) || e.gid === gid || !UNIT_ID_RE.test(id)) return false;
   if (!(await unitDone(verifyReceipt, repoDir, e.gid, e.n, id))) return false;
+  const signedTask = ((readJson(join(repoDir, ".loki", "groups", e.gid, "group", "units", id, "receipt.json"))?.["task"] as { sha256?: unknown } | undefined) ?? {}).sha256;
+  if (typeof signedTask === "string" && signedTask !== "" && signedTask !== sha256(task)) return false; // the journal is unsigned: the signed receipt must name this unit's task text
   const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/unit-${e.gid}-${e.n}`]);
   if (tip === "" || tip !== e.head) return false;
   const dst = join(repoDir, ".loki", "groups", gid, "group", "units", id);
@@ -255,7 +257,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   let doneCount = 0;
   for (const [i, u] of units.entries()) {
     u.done = resumable && !changed.has(u.id) ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
-    if (!u.done && !changed.has(u.id) && !(u as Partial<FixUnit>).fixKind) { try { u.done = await adoptJournaled(verifyReceipt, repoDir, jdir, keyOf(u), groupId, i + 1, u.id, say); } catch { u.done = false; } }
+    if (!u.done && !changed.has(u.id) && !(u as Partial<FixUnit>).fixKind) { try { u.done = await adoptJournaled(verifyReceipt, repoDir, jdir, keyOf(u), groupId, i + 1, u.id, (u.items ?? []).join("\n"), say); } catch { u.done = false; } }
     if (u.done) { doneCount++; if (revised) say(`loki: unit ${u.id} skipped-unchanged\n`); }
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }
