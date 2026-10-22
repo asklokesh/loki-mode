@@ -33,8 +33,11 @@ function callTool(name, args, id) {
 function parseToolResult(response) {
   assert.ok(response.result, 'Expected result in response');
   assert.ok(response.result.content, 'Expected content in result');
-  const text = response.result.content[0].text;
-  return JSON.parse(text);
+  const body = JSON.parse(response.result.content[0].text);
+  // Flatten the untrusted envelope so these tests read the same fields; the
+  // envelope itself is asserted in mcp-server.test.js.
+  const { untrusted_content: stored, untrusted, notice, ...rest } = body;
+  return { ...rest, ...stored };
 }
 
 // -------------------------------------------------------------------

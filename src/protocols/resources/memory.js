@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { UNTRUSTED_NOTICE } = require('../untrusted');
 
 /**
  * Memory resource provider
@@ -121,7 +122,7 @@ function read() {
     }
   }
 
-  result.text = JSON.stringify(data, null, 2);
+  result.text = JSON.stringify({ untrusted: true, notice: UNTRUSTED_NOTICE, untrusted_content: data }, null, 2);
   return result;
 }
 
