@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.30.0 (2026-10-22)
+
+### Changed
+- The parallel tool-call instruction now has one source, PARALLEL_TOOL_CALLS_INSTRUCTION in loki-ts/src/features/lean_prefix.ts. The engine10 cache-stable STAGE_PREFIX and the RARV build prompt both use it, and autonomy/run.sh carries a byte-identical copy. The supervised simple-web fast path's one-off wording is removed. Refs #245.
+
 ## v11.29.0 (2026-10-22)
 
 ### Removed
