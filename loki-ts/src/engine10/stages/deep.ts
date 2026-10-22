@@ -16,7 +16,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
-import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
+import { classifyCheck, DEEP_STAGE_MISSING, deepRecord, failureExcerpt, FULL_SUITE_CMD, goRunner, NO_TESTS_REASON, stripAnsi } from "../../util/check_result.ts"; import { failIds } from "../failures.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, SessionRunner, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 import { REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
@@ -170,14 +170,15 @@ async function runSecretScan(ctx: RunContext, changed: string[], opts: DeepOptio
   checks.push({ name, cmd, result, duration_s: (Date.now() - started) / 1000, ...(result === "pass" ? {} : { reason: (result === "fail" ? reasons : gaps).join("; ") }) });
   if (result === "not_run") notProven.add(`not run: ${name} (${gaps.join("; ")})`);
 }
-function buildCommentBody(checks: DeepCheck[], notProven: string[], statusState: "success" | "failure"): string {
+type DeepState = "success" | "failure" | "pending";
+function buildCommentBody(checks: DeepCheck[], notProven: string[], statusState: DeepState): string {
   const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
   lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
   lines.push("", "### NOT PROVEN", ...(notProven.length ? notProven.map((n) => `- ${n}`) : ["- none"]));
   return `${lines.join("\n")}\n`;
 }
 async function postResults(
-  ctx: DeepContext, opts: DeepOptions, checks: DeepCheck[], notProven: string[], statusState: "success" | "failure",
+  ctx: DeepContext, opts: DeepOptions, checks: DeepCheck[], notProven: string[], statusState: DeepState, unproven: string[] = [],
 ): Promise<string[]> {
   const out: string[] = [];
   const pinnedOrigin = ctx.pinnedOrigin;
@@ -201,7 +202,7 @@ async function postResults(
   }
   const headSha = (await safeGitRun(ctx.repoDir, ["rev-parse", "HEAD"], { timeoutMs: 10_000 })).stdout.trim();
   if (SHA_RE.test(headSha)) {
-    const statusArgs: PushArgs = { cmd: "status", sha: headSha, state: statusState, description: `Loki 10 deep verify: ${statusState}` };
+    const statusArgs: PushArgs = { cmd: "status", sha: headSha, state: statusState, description: statusState === "pending" && unproven.length ? `Loki 10 deep verify: NOT PROVEN (${unproven.join(", ")})` : `Loki 10 deep verify: ${statusState}` };
     const statusResult = await run(["bash", scriptPath, ...pushArgv(statusArgs)], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
     if (statusResult.exitCode !== 0) out.push(`loki/deep-verify status not set (engine10-push.sh exit ${statusResult.exitCode})`);
   } else {
@@ -220,7 +221,9 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   await runAppBoot(ctx, opts, checks, notProven);
   await runCouncilCheck(ctx, changed, ctx.baseSha, signal, opts, checks, notProven);
   await runSecretScan(ctx, changed, opts, checks, notProven);
-  const statusState: "success" | "failure" = checks.some((c) => c.result === "fail") ? "failure" : "success";
+  const vraw = ctx.outputs().verify, rec = deepRecord(vraw?.risk, Array.isArray(vraw?.checks) ? (vraw.checks as { name?: unknown; result?: unknown }[]) : [], checks, [...notProven]), unproven = rec.required.filter((q) => !q.ran).map((q) => q.check);
+  for (const q of rec.required) if (!q.ran && q.reason === DEEP_STAGE_MISSING) notProven.add(`not run: ${q.check} (${q.reason})`); // FC-DEEP-REQUIRED-CHECK-UNRECORDED: a check the tier required that the deep stage did not run is listed, whatever skipped it
+  const statusState: DeepState = checks.some((c) => c.result === "fail") ? "failure" : rec.proven ? "success" : "pending"; // pending is the honest in-between: never passed, never red (a skipped check is NOT PROVEN)
   const notProvenList = [...notProven].filter((n) => !naNote(n)), notApplicable = [...notProven].filter(naNote).map(naText);
   const seal = ctx.outputs().seal as { receipt_sha256?: string } | undefined;
   const addendumBody = {
@@ -228,7 +231,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
     run_id: ctx.runId,
     base_receipt_sha256: seal?.receipt_sha256 ?? null,
     checks,
-    not_proven: notProvenList, ...(notApplicable.length ? { not_applicable: notApplicable } : {}),
+    required_checks: rec.required, not_proven: notProvenList, ...(notApplicable.length ? { not_applicable: notApplicable } : {}),
     status_state: statusState,
   };
   const addendumSha256 = sha256(canonicalJson(addendumBody));
@@ -236,10 +239,10 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const addendum = { ...addendumBody, addendum_sha256: addendumSha256, verification: { jwt: sig.jwt, kid: sig.kid } };
   mkdirSync(ctx.runDir, { recursive: true });
   writeFileSync(join(ctx.runDir, "receipt-addendum-1.json"), JSON.stringify(addendum, null, 2) + "\n");
-  const pushNotProven = await postResults(ctx, opts, checks, notProvenList, statusState);
+  const pushNotProven = await postResults(ctx, opts, checks, notProvenList, statusState, unproven);
   const allNotProven = [...notProvenList, ...pushNotProven];
-  ctx.emit("deep.completed", "deep", { checks, status_state: statusState, addendum_sha256: addendumSha256 });
-  return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven, ...(notApplicable.length ? { not_applicable: notApplicable } : {}) } };
+  ctx.emit("deep.completed", "deep", { checks, required_checks: rec.required, status_state: statusState, addendum_sha256: addendumSha256 });
+  return { status: "completed", data: { checks, required_checks: rec.required, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven, ...(notApplicable.length ? { not_applicable: notApplicable } : {}) } };
 }
 export const deepStage: Stage = {
   name: "deep",
