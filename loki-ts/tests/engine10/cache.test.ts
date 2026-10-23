@@ -7,6 +7,7 @@ import {
   cacheStats,
   cachedRepoMap,
   cachedTestMap,
+  computeProducerFingerprint,
   producerFingerprint,
   pruneCache,
   readRepoMapCache,
@@ -336,5 +337,37 @@ describe("#331 producer-bound, private, atomic cache", () => {
     mkdirSync(join(dir, cacheFileName("testmap", "tree2", FP_A))); // rename onto a directory fails
     expect(() => writeTestMapCache(dir, "tree2", TESTMAP, FP_A)).toThrow();
     expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+});
+
+describe("FC-ENGINE10-CACHE-KEY-NOT-PRODUCER-BOUND: unbound fallback and injected value", () => {
+  const SRC_ROOT = resolve(import.meta.dir, "..", "..", "src");
+  const probe = (): string => {
+    const code = `import { computeProducerFingerprint } from ${JSON.stringify(resolve(SRC_ROOT, "engine10", "cache.ts"))}; process.stdout.write(computeProducerFingerprint(${JSON.stringify(join(SRC_ROOT, "no-such-dir"))}, undefined));`;
+    const r = Bun.spawnSync([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
+    expect(r.exitCode).toBe(0);
+    return r.stdout.toString();
+  };
+  test("when the source cannot be hashed, separate processes get different 64-hex keys and nothing crosses between them", () => {
+    const a = probe(), b = probe();
+    expect(a).toMatch(/^[0-9a-f]{64}$/); expect(b).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).not.toBe(b);
+    expect(a).not.toBe("0".repeat(64)); expect(b).not.toBe("0".repeat(64));
+    const dir = repoCacheDir("k", tmpRoot());
+    writeRepoMapCache(dir, "treeX", REPOMAP, a);
+    expect(readRepoMapCache(dir, "treeX", a)).not.toBeNull();
+    expect(readRepoMapCache(dir, "treeX", b)).toBeNull();
+  });
+  test("a malformed injected value is ignored in favor of the source hash; a valid one wins", () => {
+    const real = sourceFingerprint(SRC_ROOT);
+    for (const bad of ["", "x", "g".repeat(64), "a".repeat(63), 42, null, undefined]) expect(computeProducerFingerprint(SRC_ROOT, bad)).toBe(real);
+    expect(computeProducerFingerprint(SRC_ROOT, "b".repeat(64))).toBe("b".repeat(64));
+  });
+  test("writing a repomap removes legacy repomap2-* files", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    mkdirSync(dir, { recursive: true });
+    for (const n of ["repomap2-old1.json", "repomap2-old2.json"]) writeFileSync(resolve(dir, n), "{}");
+    writeRepoMapCache(dir, "treeY", REPOMAP, "c".repeat(64));
+    expect(readdirSync(dir).filter((f) => f.startsWith("repomap2-"))).toEqual([]);
   });
 });

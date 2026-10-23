@@ -59,12 +59,12 @@ let producerFp: string | null = null;
 /** The producer fingerprint stored maps are bound to. A bundle gets it generated in by scripts/build.ts (the bundle has no
  *  source path to hash); a source run hashes src/ itself. When neither is possible it is a per-process random value, so
  *  nothing stored can ever match: a cache that cannot name its producer misses, it never serves an unbound map. */
+export function computeProducerFingerprint(root: string = resolve(import.meta.dir, ".."), injected: unknown = globalThis.__LOKI_PRODUCER_FP__): string {
+  if (typeof injected === "string" && /^[0-9a-f]{64}$/.test(injected)) return injected;
+  try { return sourceFingerprint(root); } catch { return createHash("sha256").update(`unbound:${process.pid}:${Date.now()}:${Math.random()}`).digest("hex"); }
+}
 export function producerFingerprint(): string {
-  if (producerFp !== null) return producerFp;
-  const injected = globalThis.__LOKI_PRODUCER_FP__;
-  if (typeof injected === "string" && /^[0-9a-f]{64}$/.test(injected)) return (producerFp = injected);
-  try { producerFp = sourceFingerprint(resolve(import.meta.dir, "..")); } catch { producerFp = createHash("sha256").update(`unbound:${process.pid}:${Date.now()}:${Math.random()}`).digest("hex"); }
-  return producerFp;
+  return (producerFp ??= computeProducerFingerprint());
 }
 let tmpSeq = 0;
 /** Cache files are private (dir 0700, file 0600, re-applied when the dir pre-existed loose) and land through a temp file plus rename, so a reader never sees a partial file and no temp file outlives a failed write. */
@@ -86,7 +86,8 @@ export function pruneCache(dir: string, prefix: string, keepPath: string, keep =
   const mt = (f: string): number => { try { return statSync(resolve(dir, f)).mtimeMs; } catch { return 0; } };
   try { readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".json") && f !== basename(keepPath)).sort((x, y) => mt(y) - mt(x) || (x < y ? 1 : -1)).slice(keep - 1).forEach((f) => { try { unlinkSync(resolve(dir, f)); } catch { /* best effort */ } }); } catch { /* prune failure never fails a write */ }
 }
-const writeAndPrune = (path: string, dir: string, prefix: string, data: unknown): void => { writeJson(path, dir, data); pruneCache(dir, prefix, path); };
+const LEGACY_PREFIX: Record<string, string> = { "repomap-": "repomap2-" }; // the pre-producer-binding name; nothing reads it any more, so the first write removes them all
+const writeAndPrune = (path: string, dir: string, prefix: string, data: unknown): void => { writeJson(path, dir, data); pruneCache(dir, prefix, path); const old = LEGACY_PREFIX[prefix]; if (old) pruneCache(dir, old, path, 1); };
 // The producer fingerprint sits in the name next to the tree hash, so a builder change is a different key, not a bumped prefix.
 export const cacheFileName = (kind: "repomap" | "testmap", tree: string, fp: string = producerFingerprint()): string => `${kind}-${fp.slice(0, 16)}-${tree}.json`;
 export const readRepoMapCache = (dir: string, tree: string, fp: string = producerFingerprint()): RepoMap | null => readJson<RepoMap>(resolve(dir, cacheFileName("repomap", tree, fp)), isRepoMap);
