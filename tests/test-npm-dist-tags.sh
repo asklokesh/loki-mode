@@ -29,12 +29,6 @@ case "$1 $2 $3" in
         c=$(( $(cat "$ST/vcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/vcalls"
         if [ -n "${STUB_HIDE_VER:-}" ] && [ "$c" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then grep -vx "$STUB_HIDE_VER" "$ST/versions" > "$ST/visible"; else cp "$ST/versions" "$ST/visible"; fi
         printf '['; paste -sd, "$ST/visible" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
-    "view $PKGN@"*" version")
-        # The version document: empty while the registry has not materialized it.
-        v="${2#"$PKGN"@}"
-        c=$(( $(cat "$ST/dcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/dcalls"
-        if [ -n "${STUB_HIDE_VER:-}" ] && [ "$v" = "$STUB_HIDE_VER" ] && [ "$c" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then exit 0; fi
-        grep -qx "$v" "$ST/versions" && echo "$v" ;;
     "view $PKGN dist-tags."*)
         # The cached packument: frozen at its first snapshot, never current after a write.
         tag="${3#dist-tags.}"
@@ -65,6 +59,19 @@ case "$1 $2 $3" in
 esac
 STUB
 chmod +x "$WORK/bin/npm"
+# The version document is fetched with curl (uncached GET), not `npm view pkg@version`
+# (which reads the cached packument). The stub answers 200 or 404 from the state files.
+cat > "$WORK/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+ST="$STUB_STATE"; PKGN="${STUB_PKG:-loki-mode}"
+url="${*: -1}"; v="${url##*/}"; rest="${url%/*}"
+[ "${rest##*/}" = "$PKGN" ] || { echo 404; exit 0; }
+[ -z "${STUB_OUTAGE:-}" ] || { echo 503; exit 0; }
+c=$(( $(cat "$ST/dcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/dcalls"
+if [ -n "${STUB_HIDE_VER:-}" ] && [ "$v" = "$STUB_HIDE_VER" ] && [ "$c" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo 404; exit 0; fi
+grep -qx "$v" "$ST/versions" && echo 200 || echo 404
+STUB
+chmod +x "$WORK/bin/curl"
 
 # case NAME "versions" LATEST NEXT RUNVER [overtake]
 run_case() {
