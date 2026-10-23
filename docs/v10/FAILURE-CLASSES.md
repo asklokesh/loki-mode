@@ -1576,3 +1576,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
 - Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
 - Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.
+
+## FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER The deep-verify full pytest suite ran under bare `python`, not the project's own interpreter, so a repo with a working .venv and no `python` on PATH could never prove its suite
+- User-visible vs raw: user-visible. An uninterrupted run on a Python fixture with a working .venv and ruff ended PARTIAL because the full-suite check could not run (bare `python` missing or without pytest), while per-test runs under the same repo used the venv.
+- Law: every check that executes project code resolves its interpreter through one resolver (project venv first), and no stage hardcodes a bare interpreter name.
+- Cause (measured): `FULL_SUITE_CMD` in util/check_result.ts was a static table (`python -m pytest -q`); the per-test path used `resolveTool` but the full-suite path (engine10/stages/deep.ts, project_model/package_suite.ts) did not.
+- Siblings swept: deep.ts and package_suite.ts (both consumers moved), non-pytest runners (vitest, jest, bun, node, npm, go, cargo: no interpreter, stay static), per-test pytest (already resolveTool).
+- Mechanism: `fullSuiteCmd(runner, repoDir)` resolves pytest through `resolveTool(repoDir, "python", "python3", "python")`; both consumers call it.
+- Fixture: tests/engine10/deep.test.ts "pytest full suite runs under the project .venv python when no bare `python` is on PATH" (red on the static table, green after).
