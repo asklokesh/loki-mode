@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.8 (2026-10-23)
+
+### Fixed
+- The P12-12d bulk-file test fixture now sets an explicit timeout, so it no longer fails on slow machines at the default limit. Approval: "tl-324 approval line: ship range origin/main..29593679a9329eb94e9f2c4e5e57a5d220934d4e (pd/p12-12d-timeout, 1 commit, LOW, merge-tree rc 0)".
+
 ## v11.60.7 (2026-10-23)
 
 ### Fixed
