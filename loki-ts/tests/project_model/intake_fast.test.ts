@@ -15,7 +15,7 @@ import type { RunContext, SessionResult, SessionRunOptions } from "../../src/eng
 const FIX = join(import.meta.dir, "..", "fixtures", "project-model", "firelater-17");
 const RECORDED = JSON.parse(readFileSync(join(FIX, "response.json"), "utf8")) as Record<string, any>;
 const dirs: string[] = [];
-afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
+afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); }, 120_000); // fixture B leaves 20,050 files to remove; the hook has its own 5s default
 const git = (cwd: string, ...a: string[]): void => { execFileSync("git", a, { cwd, stdio: "pipe", env: process.env }); };
 function multiRepo(): string {
   const d = mkdtempSync(join(tmpdir(), "pm-fast-"));
