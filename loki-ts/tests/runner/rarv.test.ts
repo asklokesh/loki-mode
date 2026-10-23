@@ -128,6 +128,25 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
     } finally { delete process.env["PROVIDER_EFFORT_FAST"]; }
   });
 
+  it("codex PROVIDER_EFFORT_* env override: bash provider_get_tier_param equals TS per tier (#255 62b)", () => {
+    const sh = join(import.meta.dir, "../../../providers/codex.sh");
+    const vars: Record<string, string> = { planning: "PROVIDER_EFFORT_PLANNING", development: "PROVIDER_EFFORT_DEVELOPMENT", fast: "PROVIDER_EFFORT_FAST" };
+    for (const [tier, name] of Object.entries(vars)) {
+      const env = { ...process.env };
+      for (const k of Object.values(vars)) delete env[k];
+      env[name] = "medium";
+      const r = spawnSync("bash", ["-c", `source "${sh}"; provider_get_tier_param "${tier}"`], { env, encoding: "utf8" });
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe("medium");
+      process.env[name] = "medium";
+      try { expect(getProviderTierParam(tier, "codex")).toBe("medium"); } finally { delete process.env[name]; }
+    }
+    // unknown tier follows the development value in both routes
+    const env = { ...process.env, PROVIDER_EFFORT_DEVELOPMENT: "medium" };
+    const r = spawnSync("bash", ["-c", `source "${sh}"; provider_get_tier_param bogus`], { env, encoding: "utf8" });
+    expect(r.stdout.trim()).toBe("medium");
+  });
+
   it("rarv.ts holds no codex effort table or env read of its own (#255 criterion 2)", () => {
     const src = _rf(_join(import.meta.dir, "../../src/runner/rarv.ts"), "utf8");
     expect(src).not.toContain("PROVIDER_EFFORT_");

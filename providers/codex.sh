@@ -155,9 +155,9 @@ PROVIDER_MODEL_DEVELOPMENT="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_
 PROVIDER_MODEL_FAST="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_FAST:-$(_codex_tier_model fast)}")}"
 
 # Effort levels (Codex-specific: maps to reasoning time, not model capability)
-PROVIDER_EFFORT_PLANNING="xhigh"
-PROVIDER_EFFORT_DEVELOPMENT="high"
-PROVIDER_EFFORT_FAST="low"
+PROVIDER_EFFORT_PLANNING="${PROVIDER_EFFORT_PLANNING:-xhigh}"
+PROVIDER_EFFORT_DEVELOPMENT="${PROVIDER_EFFORT_DEVELOPMENT:-high}"
+PROVIDER_EFFORT_FAST="${PROVIDER_EFFORT_FAST:-low}"
 
 # No Task tool - effort is set via CLI flag
 PROVIDER_TASK_MODEL_PARAM=""
@@ -232,10 +232,10 @@ provider_invoke() {
 provider_get_tier_param() {
     local tier="$1"
     case "$tier" in
-        planning) echo "xhigh" ;;
-        development) echo "high" ;;
-        fast) echo "low" ;;
-        *) echo "high" ;;  # default to development tier
+        planning) echo "$PROVIDER_EFFORT_PLANNING" ;;
+        development) echo "$PROVIDER_EFFORT_DEVELOPMENT" ;;
+        fast) echo "$PROVIDER_EFFORT_FAST" ;;
+        *) echo "$PROVIDER_EFFORT_DEVELOPMENT" ;;  # default to development tier
     esac
 }
 
