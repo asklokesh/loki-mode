@@ -28,7 +28,6 @@ import hashlib
 import json
 import math
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -37,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_schema as schema  # noqa: E402
 import cost_claim  # noqa: E402
+from adapters._base import _kill_group  # noqa: E402
 
 DEFAULT_MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks", "trap-manifest.json")
 DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", "claim")
@@ -45,8 +45,15 @@ Z = 1.959964
 Z2 = Z * Z
 FACTOR = 100.0
 LOAD_MAX = 24.0
-# Above the longest task agent_timeout_s (1200) plus grading, so a slow but live trial is not cut short.
-TRIAL_TIMEOUT_S = 1800
+GRADING_SLACK_S = 120
+
+
+def trial_timeout_s(spec):
+    """Wall clock one trial may take: the task's agent_timeout_s (runner default 1800), up to four
+    acceptance-stage commands (setup, check, lint, tests) at acceptance.timeout_s (default 300), plus slack."""
+    agent = int(spec.get("agent_timeout_s", 1800))
+    acc = int((spec.get("acceptance") or {}).get("timeout_s", 300))
+    return agent + 4 * acc + GRADING_SLACK_S
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -344,24 +351,6 @@ def _file_sha(path):
     return h.hexdigest()
 
 
-def _kill_group(proc):
-    """TERM then KILL the whole process group led by proc (the runner and its agent children)."""
-    try:
-        pgid = os.getpgid(proc.pid)
-    except OSError:
-        return
-    for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 0.0)):
-        try:
-            os.killpg(pgid, sig)
-        except OSError:
-            return
-        deadline = time.time() + grace
-        while grace and time.time() < deadline:
-            if proc.poll() is not None:
-                return
-            time.sleep(0.1)
-
-
 def _move_workdir(stage, final, tool, task):
     """The runner names a single-trial workdir <stage>/<tool>/<task>/<trial index>; every call here is
     one trial, so each call gets its own staging root and the result is renamed to a per-trial path."""
@@ -383,10 +372,15 @@ def run_grid(manifest, tools, trials, out_dir, parallel=4, launch=None, load=Non
     def default_launch(task, tool, i, out, env):
         cmd = [sys.executable, os.path.join(_HERE, "runner.py"), "run",
                os.path.join(_HERE, "tasks", task + ".json"), "--adapter", tool, "--trials", "1", "--out", out]
+        try:
+            with open(os.path.join(_HERE, "tasks", task + ".json")) as fh:
+                timeout_s = trial_timeout_s(json.load(fh))
+        except (OSError, ValueError):
+            timeout_s = trial_timeout_s({})
         with open(out + ".log", "w") as lg:
             proc = subprocess.Popen(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env, start_new_session=True)
             try:
-                return proc.wait(timeout=TRIAL_TIMEOUT_S)
+                return proc.wait(timeout=timeout_s)
             except subprocess.TimeoutExpired:
                 _kill_group(proc)
                 proc.wait()
