@@ -64,7 +64,7 @@ export function claudeEffortLevels(model: string): string[] | null {
 /**
  * Highest effort level at which the catalog records a model accepting a thinking type (providers.claude.models[].thinking.max_effort,
  * keyed by type). Null when the model is unknown, the catalog is unreadable, or no limit is recorded for that type, so a caller never
- * clamps on a guess. Example: claude-opus-5 accepts "disabled" only at "high" or below.
+ * clamps on a guess. Example: the previous Opus generation accepts "disabled" only at "high" or below.
  */
 export function claudeThinkingMaxEffort(model: string, type: string): string | null {
   try {
