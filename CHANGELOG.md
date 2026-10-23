@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.61.0 (2026-10-23)
+
+
+
+### Added
+- Preflight reads the PR publish capability from the GitHub API at intake, names the fallback for collaborators-only and no-fork repositories, and records the publish plan without changing PreflightResult (R100-022, #231). Approval: "tl-324: APPROVE pd/231, a stack of two commits on origin/main; ship both in order: 70c6a399cf2f93ab7c8ce7e7ebeba1ee8f200ca8 then 31d866a55a73f26a54dff0523c186f49907f1978 (head)". The receipt criterion is a separate HIGH slice and is not covered.
+
+## v11.60.17 (2026-10-23)
+
+
+
+### Fixed
+- The engine10 repomap and testmap cache key is bound to its producer, cache files are private and written atomically, and the unbound-fallback and injected-fingerprint mutants are killed (pd/331). Approval: "SHIP pd/331: head 8066c01089fd1dd48c1a791590e3a8caaa0b5326 has rev-c opus HIGH APPROVE. The range is 006ef38ff..8066c0108, three commits: 5fc8c5d46, the merge d11335f4c and 8066c0108." Shipped by merging that head.
+
 ## v11.60.16 (2026-10-23)
 
 
