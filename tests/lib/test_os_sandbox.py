@@ -356,14 +356,18 @@ class KernelMixin:
             f'for f in "{self.run_dir}"/*.sb "{self.run_dir}/os-sandbox.sb"; do '
             f'printf "(version 1)\\n(allow default)\\n" > "$f"; done'
         )
+        # Check the original prefix BEFORE any rebuild: a rebuild would rewrite
+        # a profile file and hide the tamper.
+        res = self._sh(f'cat "{self.ws}/.env"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("SECRET", res.stdout)
         again = os_sandbox.build_confinement(
             self.ws, self.run_dir, "claude", mode="on", home=self.home)
-        for prefix in (self.status["argv_prefix"], again["argv_prefix"]):
-            res = subprocess.run(
-                [*prefix, "/bin/sh", "-c", f'cat "{self.ws}/.env"'],
-                capture_output=True, text=True, timeout=30, cwd=self.ws)
-            self.assertNotEqual(res.returncode, 0)
-            self.assertNotIn("SECRET", res.stdout)
+        res = subprocess.run(
+            [*again["argv_prefix"], "/bin/sh", "-c", f'cat "{self.ws}/.env"'],
+            capture_output=True, text=True, timeout=30, cwd=self.ws)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("SECRET", res.stdout)
 
     def _rebuild(self):
         self.status = os_sandbox.build_confinement(
