@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.16 (2026-10-23)
+
+
+
+### Fixed
+- The zsh completion in completions/_loki now offers the --resume flag (resume-completion3, rebased by its author onto current main). Approval: "APPROVE pd/p0-resume-completion3 ccb5ef9dc71742eddfb55498f692d5b86dd29623 (tl-2, LOW)".
+
 ## v11.60.15 (2026-10-23)
 
 ### Fixed
