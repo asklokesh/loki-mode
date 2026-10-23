@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.73.0 (2026-10-23)
+
+### Added
+- Company operating layer: a one-year retrospective (RETRO-2026.md), ten standing agent roles under .claude/agents, a condensed OPERATING-MODEL.md and a local-only CEO cockpit (tools/cockpit/server.py, bound to 127.0.0.1, no browser auto-open) with tests/test-cockpit.sh (87 passed, 0 failed per reviewer). Approval: "APPROVE e40e2cb7c16c071e7c372d7b1829a7dac129a889" (rev-company, opus), covering commits 7b5edfc52 (feat(company): one-year retrospective, ten standing agent roles, and a local CEO cockpit) and e40e2cb7c (docs(company): state the exact founder-message filter and restore the architects-never-implement rule), shipped in that order.
+
 ## v11.72.5 (2026-10-23)
 
 ### Changed
