@@ -1658,3 +1658,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the only other test file naming LOKI_INFERENCE_GEO under tests/dashboard is none (grep of tests/dashboard/*.py found no other reader); tests/test-pricing-parity.sh sets it explicitly per case.
 - Mechanism: ApiCostCacheTests.setUp pops the variable and registers a cleanup that restores the prior value (or removes it).
 - Fixture: with LOKI_INFERENCE_GEO=us the file gives 10 passed, 7 subtests passed (was 3 failed, 7 passed); an in-process run with the variable set to us leaves it set to us afterwards.
+
+## FC-FIXRESUME-LOOP-TEST-DEFAULT-TIMEOUT A test that runs five full resumes in a loop had no explicit timeout, so bun's 5000ms default failed it under load
+- User-visible vs raw: raw. No product behavior changes; a red test blocks the gate it runs in.
+- Law: a test that spawns a subprocess or runs a supervisor more than once carries an explicit timeout sized for load, never bun's 5000ms default (sibling of FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT, not yet on main).
+- Cause (measured): tests/engine10/fix_resume.test.ts "P12-07n: a garbage alive file is no heartbeat and never stops the resume" failed at 5002.38ms (reproduced 1 of 3 reruns at load 24) and at 5001.21ms alone at load 25; with the bound, three runs took 4.51s, 3.71s and 2.97s whole-process.
+- Siblings swept: every other test in fix_resume.test.ts that loops is pure (the P12-07j malformed-event loop at :382, the P12-07m cap loop at :560); the single-supervisor async tests run one resume and the only subprocess test (P12-07m main(), :576) already has 70000.
+- Mechanism: the P12-07n test takes an explicit 60000ms bound; no assertion changed.
+- Fixture: tests/engine10/fix_resume.test.ts P12-07n itself; it fails at 5000ms on origin/main debc7e843 under load and passes with the bound.
