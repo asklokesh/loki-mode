@@ -37,10 +37,8 @@ export type PrContext = RunContext & {
   draft?: boolean;
 };
 export interface PrOptions {
-  /** Injectable for tests: the gh login a fork_branch compare URL is built under. */
-  login?: () => string | null;
   /** Injectable for tests; defaults to the real script next to this checkout. */
-  pushScriptPath?: string; gitlabPushScriptPath?: string; // the GitLab twin (TEN-ADOPTION-09), same injection rule
+  pushScriptPath?: string; gitlabPushScriptPath?: string; login?: () => string | null; // the GitLab twin (TEN-ADOPTION-09), same injection rule; login: the gh login a fork_branch compare URL is built under
 }
 export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 export const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
