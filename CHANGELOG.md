@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.71.1 (2026-10-23)
+
+### Fixed
+- The Feature 100 roadmap now marks the 8 items whose base already ships, adds lanes and waves, and checks the wave-1 assignment table against live branches and issue comments. Approval: "tl-324 APPROVE (LOW, docs only) pd/roadmap100-r2, ship all four in order, each by full SHA: a1240fa27 41781defa ca608e08a d99efdcd7".
+
 ## v11.71.0 (2026-10-23)
 
 ### Added
