@@ -1,6 +1,7 @@
 // D50-F2-S1 Wall check: humanize-174-shaped fixture, naturaldelta floors encoded in parametrize rows.
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnalyzerError, classifyAssertDelta, classifyTestEdit, testEditWeakens, testFileWeakened } from "../../src/e10ext/assert_delta.ts";
@@ -605,5 +606,90 @@ describe("testEditWeakens ten reviewer-reported weakening edits are all flagged 
       [sh, sh.replace("test_validates() {", "fail() { :; }\ntest_validates() {")],
     ];
     bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+  });
+});
+
+describe("testEditWeakens python fixture shadowing and request reads (FC-WEAKENED-TEST-IMPORT-WIDENING r9)", () => {
+  const PY = `from app import sut\n\n\ndef test_validates():\n    assert sut.check("bad") is False\n`;
+  const T = (params: string, body = "assert sut.check('x') is False") => PY + `\n\ndef test_zz(${params}):\n    ${body}\n`;
+  const dirs: string[] = [];
+  afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+  const git = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d, encoding: "utf8" }).trim();
+  /** A repo whose base commit holds `base`; `work` is written on top (uncommitted) or committed when `commit` is set. */
+  function repo(base: Record<string, string>, work: Record<string, string>, commit = false): { dir: string; sha: string } {
+    const dir = mkdtempSync(join(tmpdir(), "loki-adr9-"));
+    dirs.push(dir);
+    git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
+    const put = (files: Record<string, string>): void => { for (const [f, c] of Object.entries(files)) { mkdirSync(join(dir, f, ".."), { recursive: true }); writeFileSync(join(dir, f), c); } };
+    put(base); git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
+    const sha = git(dir, ["rev-parse", "HEAD"]);
+    put(work);
+    if (commit) { git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "head"]); }
+    return { dir, sha };
+  }
+  const CAPLOG = "import pytest\n\n\n@pytest.fixture\ndef caplog():\n    import app.sut\n    app.sut.RULES.clear()\n    yield\n";
+  it("py12: a conftest.py fixture named like an auto-undo builtin shadows it, read at base and at head", () => {
+    const head = T("caplog");
+    const cases: Array<[string, Record<string, string>, Record<string, string>, boolean]> = [
+      ["root conftest at base", { "tests/test_a.py": PY, "conftest.py": CAPLOG }, { "tests/test_a.py": head }, false],
+      ["same-dir conftest at base", { "tests/test_a.py": PY, "tests/conftest.py": CAPLOG }, { "tests/test_a.py": head }, false],
+      ["mid-path conftest at base", { "tests/unit/test_a.py": PY, "tests/conftest.py": CAPLOG }, { "tests/unit/test_a.py": head }, false],
+      ["conftest added by the head worktree", { "tests/test_a.py": PY }, { "tests/test_a.py": head, "tests/conftest.py": CAPLOG }, false],
+      ["conftest added by the head commit", { "tests/test_a.py": PY }, { "tests/test_a.py": head, "tests/conftest.py": CAPLOG }, true],
+      ["fixture(name=) alias", { "tests/test_a.py": PY, "tests/conftest.py": "import pytest\n\n\n@pytest.fixture(name=\"caplog\")\ndef _c():\n    yield\n" }, { "tests/test_a.py": head }, false],
+      ["imported into the conftest", { "tests/test_a.py": PY, "tests/conftest.py": "from helpers import caplog\n" }, { "tests/test_a.py": head }, false],
+      ["pytest_plugins in the conftest", { "tests/test_a.py": PY, "tests/conftest.py": "pytest_plugins = ['helpers.plug']\n" }, { "tests/test_a.py": head }, false],
+    ];
+    for (const [name, base, work, commit] of cases) {
+      const { dir, sha } = repo(base, work, commit);
+      expect([name, testFileWeakened(dir, sha, commit ? "HEAD" : null, "tests/" + (name.startsWith("mid") ? "unit/" : "") + "test_a.py")]).toEqual([name, true]);
+    }
+  });
+  it("py12: the same edit stays unflagged when no conftest on the path rebinds the name", () => {
+    const head = T("caplog");
+    const ok: Array<[string, Record<string, string>]> = [
+      ["no conftest", {}],
+      ["sibling directory conftest", { "other/conftest.py": CAPLOG }],
+      ["unrelated fixture", { "tests/conftest.py": "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n" }],
+      ["conftest only takes caplog", { "tests/conftest.py": "import pytest\n\n\n@pytest.fixture\ndef tidy(caplog):\n    return caplog\n" }],
+    ];
+    for (const [name, extra] of ok) {
+      const { dir, sha } = repo({ "tests/test_a.py": PY, ...extra }, { "tests/test_a.py": head });
+      expect([name, testFileWeakened(dir, sha, null, "tests/test_a.py")]).toEqual([name, false]);
+    }
+  });
+  it("py12: a fixture of an auto-undo name defined or imported in the test file itself is not trusted by name", () => {
+    const PI = "import pytest\n" + PY, FIX = "\n\n@pytest.fixture(name=\"caplog\")\ndef _c():\n    yield\n";
+    const bad: Array<[string, string]> = [
+      [PI + FIX, PI + FIX + "\n\ndef test_zz(caplog):\n    assert sut.check('x') is False\n"],
+      [PI + "\n\n@pytest.fixture\ndef caplog():\n    yield\n", PI + "\n\n@pytest.fixture\ndef caplog():\n    yield\n" + "\n\ndef test_zz(caplog):\n    assert sut.check('x') is False\n"],
+      ["from helpers import caplog\n" + PY, T("caplog").replace(PY, "from helpers import caplog\n" + PY)],
+    ];
+    bad.forEach(([base, head], k) => expect([k, testEditWeakens(base, head)]).toEqual([k, true]));
+    expect(testEditWeakens(PY, T("caplog"))).toBe(false);
+  });
+  it("py13: any use of request beyond an allowlisted read is weakened, however the getfixturevalue name is spelled", () => {
+    const bad = [
+      "getattr(request, 'getfixture' + 'value')('strict_rules')\n    assert sut.check('x') is False",
+      "fn = getattr(request, 'get' + 'fixturevalue')\n    fn('strict_rules')\n    assert sut.check('x') is False",
+      "r = request\n    r.getfixturevalue('strict_rules')\n    assert sut.check('x') is False",
+      "helper(request)\n    assert sut.check('x') is False",
+      "request.config.cache.set('k', 1)\n    assert sut.check('x') is False",
+      "request.node.add_marker('xfail')\n    assert sut.check('x') is False",
+      "request.param = 3\n    assert sut.check('x') is False",
+      "request.param.append(1)\n    assert sut.check('x') is False",
+      "vars(request)['x'] = 1\n    assert sut.check('x') is False",
+      "request._fixturemanager.getfixturedefs\n    assert sut.check('x') is False",
+    ];
+    bad.forEach((body, k) => expect([k, testEditWeakens(PY, T("request", body))]).toEqual([k, true]));
+  });
+  it("py13: allowlisted reads of request stay unflagged", () => {
+    const ok = [
+      "assert request.node.name == 'test_zz'\n    assert sut.check('x') is False",
+      "assert sut.check(request.param) is False",
+      "name = request.node.name\n    assert sut.check(name) is False",
+      "assert request.scope in ('function', 'module')\n    assert sut.check('x') is False",
+    ];
+    ok.forEach((body, k) => expect([k, testEditWeakens(PY, T("request", body))]).toEqual([k, false]));
   });
 });
