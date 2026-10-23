@@ -9,6 +9,8 @@ import { sealedLog } from "./log_fixture.ts";
 import { createHash, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { computeReceiptHash, main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { unitSpecReceiptBlock } from "../../src/features/speed/unit_mode.ts";
+import { readSliceJournal, sliceKey, writeSliceJournal, repoCacheDir, repoKey } from "../../src/engine10/cache.ts";
 import { runGroup } from "../../src/features/speed/run_group.ts";
 import type { Dag } from "../../src/features/decompose.ts";
 import { capGroupVerdict, sealGroup } from "../../src/features/speed/seal_group.ts";
@@ -611,11 +613,11 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[]; originHead?: string }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean; badTask?: number[]; noTask?: number[]; noSpec?: number[]; originHead?: string }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
-    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; items?: string[]; done?: boolean; fixKind?: string; fixFor?: string; base?: string }[] };
+    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; items?: string[]; done?: boolean; fixKind?: string; fixFor?: string; base?: string; spec?: string }[] };
     let out = "";
     for (const [i, u] of dag.units.entries()) {
       const n = i + 1, br = `loki/unit-${g}-${n}`;
@@ -643,7 +645,7 @@ describe("group run: Group Seal and resume", () => {
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
       writeFileSync(join(d, "events.jsonl"), events);
-      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), ...(o.noTask?.includes(n) ? {} : { task: { source: "text", sha256: sha256(o.badTask?.includes(n) ? "forged task" : (u.items ?? []).join("\n")) } }), time: { wall_s: 0, stages: {} }, not_proven: [] };
+      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), ...(o.noSpec?.includes(n) ? {} : unitSpecReceiptBlock({ LOKI_UNIT_SPEC: u.spec ?? "", LOKI_SPEED: "1" } as NodeJS.ProcessEnv)), ...(o.noTask?.includes(n) ? {} : { task: { source: "text", sha256: sha256(o.badTask?.includes(n) ? "forged task" : (u.items ?? []).join("\n")) } }), time: { wall_s: 0, stages: {} }, not_proven: [] };
       const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
       const rec = { ...body, receipt_sha256: h, verification: sig };
       if (o.tamper?.includes(n)) rec.verdict = "FAILED";
@@ -790,6 +792,35 @@ describe("group run: Group Seal and resume", () => {
   test("#283 journal: a receipt with no task.sha256 is not adopted", async () => {
     const repo = mkRepo("gr-journal-notask"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-notask-cache") };
     expect((await go(repo, fake(repo, calls, { noTask: [1], fail: [2, 3] }), env)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    calls.length = 0;
+    const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    expect(err).not.toContain("unit u1 reused from the slice journal");
+  });
+
+  test("#317b journal: a colliding key whose signed unit spec has a different acceptance is not adopted", async () => {
+    const repo = mkRepo("gr-journal-specsha"), calls: string[] = [], cacheRoot = join(root, "gr-journal-specsha-cache"), env = { LOKI_CACHE_ROOT: cacheRoot };
+    const B = "## Acceptance criteria\n- add alpha\n- add beta\n- add gamma\n", R = "## Acceptance criteria\n- add alpha\n- add beta v2\n- add gamma\n";
+    expect((await go(repo, fake(repo, calls, { fail: [3] }), env, B)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    expect((await go(repo, fake(repo, calls, { fail: [1, 2, 3] }), { ...env, LOKI_GROUP_RESUME: "0" }, R)).code).toBe(1);
+    sh(["git", "checkout", "-q", "main"], repo);
+    const jdir = repoCacheDir(repoKey("git@github.com:acme/widgets.git", repo), cacheRoot);
+    const u2 = (g: string): { id: string; items: string[]; writeSet: string[]; acceptance: string[]; base: string } => JSON.parse(readFileSync(join(repo, ".loki", "groups", g, "unit_specs", "u2.json"), "utf8"));
+    const gs = groups(repo), a = gs.map(u2).find((x) => !x.acceptance.join().includes("v2"))!, b = gs.map(u2).find((x) => x.acceptance.join().includes("v2"))!;
+    const kOf = (x: typeof a): string => sliceKey(JSON.stringify({ id: x.id, items: x.items, writeSet: x.writeSet, acceptance: x.acceptance }), x.base);
+    const entry = readSliceJournal(jdir, kOf(a));
+    expect(entry).not.toBeNull();
+    writeSliceJournal(jdir, kOf(b), entry!);
+    calls.length = 0;
+    const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" }, R);
+    expect(calls).toContain("u2");
+    expect(err).not.toContain("unit u2 reused from the slice journal");
+  });
+  test("#317b journal: a receipt with no signed unit_spec is not adopted", async () => {
+    const repo = mkRepo("gr-journal-nospec"), calls: string[] = [], env = { LOKI_CACHE_ROOT: join(root, "gr-journal-nospec-cache") };
+    expect((await go(repo, fake(repo, calls, { noSpec: [1], fail: [2, 3] }), env)).code).toBe(1);
     sh(["git", "checkout", "-q", "main"], repo);
     calls.length = 0;
     const { err } = await go(repo, fake(repo, calls), { ...env, LOKI_GROUP_RESUME: "0" });

@@ -7,7 +7,8 @@
 // REAL providers.ts claude invoker with a fake claude binary that dumps its
 // environment, the same harness shape as e2e_fake_provider.test.ts.
 
-import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -19,7 +20,7 @@ import {
 } from "../../src/runner/github_token.ts";
 import type { CouncilHook, RunnerContext, RunnerOpts, SignalSource } from "../../src/runner/types.ts";
 
-setDefaultTimeout(30_000);
+setLoadAwareTimeout(30_000);
 
 const GH = "ghp_BUNCANARYgh";
 const GHA = "ghs_BUNCANARYgithub";

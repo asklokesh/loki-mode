@@ -243,8 +243,10 @@ jobs:
       # overtaken by an earlier version materializing late, leaving latest
       # below the max (latest=11.54.1 next=11.54.2 at 04:41Z on 2026-10-23).
       # Converge again now that this version is served. The script only ever
-      # moves tags to the max stable semver and never lower, so it is
-      # convergent and safe to run outside the release-npm lock.
+      # moves tags to the max stable semver of its fresh reads and re-reads
+      # instead of writing when a tag is already higher, so it is convergent and
+      # safe to run outside the release-npm lock. npm has no compare-and-set, so
+      # a window of milliseconds between its last read and a write remains.
       - name: Converge dist-tags after the version resolves
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
