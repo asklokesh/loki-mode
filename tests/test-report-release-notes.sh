@@ -51,6 +51,15 @@ ids="$(printf '%s' "$JSON" | python3 -c 'import json,sys; print(",".join(sorted(
 G commit -q --allow-empty -m "ghost" -m "Loki-Run: run-missing"
 RUN main~1..main 2>&1 | grep -q '^not sealed (1)$' && ok "trailer without a receipt is not sealed" || bad "trailer without a receipt is not sealed"
 
+# A receipt.json with the wrong schema, or not JSON at all, is not a seal.
+mkdir -p "$FIX/.loki/runs/run-wrong" "$FIX/.loki/runs/run-junk"
+printf '{"schema":"other.thing/1","verdict":"VERIFIED"}\n' > "$FIX/.loki/runs/run-wrong/receipt.json"
+printf 'not json' > "$FIX/.loki/runs/run-junk/receipt.json"
+G commit -q --allow-empty -m "wrongschema" -m "Loki-Run: run-wrong"
+RUN main~1..main 2>&1 | grep -q '^not sealed (1)$' && ok "wrong-schema receipt is not sealed" || bad "wrong-schema receipt is not sealed"
+G commit -q --allow-empty -m "junkreceipt" -m "Loki-Run: run-junk"
+RUN main~1..main 2>&1 | grep -q '^not sealed (1)$' && ok "unparseable receipt is not sealed" || bad "unparseable receipt is not sealed"
+
 RUN notarange >/dev/null 2>&1; [ $? -eq 2 ] && ok "malformed range exits 2" || bad "malformed range exits 2"
 RUN nope..main >/dev/null 2>"$T/err"; rc=$?
 [ "$rc" -eq 2 ] && grep -q 'Usage:' "$T/err" && ok "unresolvable range exits 2 with a usage line" || bad "unresolvable range exits 2 with usage" "rc=$rc"
