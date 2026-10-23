@@ -78,3 +78,17 @@ Mismatch == the result no longer corresponds to the inputs on disk.
 
 - `validate_result_row(row) -> [problems]`
 - `summarize_trials(trials) -> summary`
+
+## Resume-cost pair (100x axis D)
+
+`python3 benchmarks/bench/runner.py resume-cost <task> --adapter loki --interrupt <stage> --trials N`
+(for `claude_code`, `--interrupt` is seconds) runs, per trial, an uninterrupted
+control and the same task killed at a deterministic point then resumed (loki:
+`loki start --resume` after the `(<stage> done` line; claude_code: `--continue`).
+Output is `{pairs: [{control, interrupted, resume_cost}]}`, not a result-row.
+`resume_cost` holds `killed`, `reached_done` (held-out grader on the resumed
+run), `extra_s`, `extra_usd`, `extra_tokens` (interrupted minus control; null
+when either side did not record it) and `extra_usd_complete` (false when the
+killed leg's spend was not recorded, so the delta is a lower bound). A pair with
+`killed` false finished before the interrupt point and says nothing about resume
+cost. The trial metric `journal_reuse_wall_s` is the resumed leg's wall seconds.
