@@ -1708,3 +1708,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: runsRoot callers in run_status.ts (status, intent, pause/cancel) act on the current repo, where LOKI_DIR is correct; collectRuns is the only multi-project reader.
 - Mechanism: collectRuns reads join(proj.path, ".loki", "runs") for each registered project and ignores LOKI_DIR.
 - Fixture: loki-ts/tests/commands/run_status.test.ts "LOKI_DIR set across 2 projects lists each run once under its own repo"; a mutant restoring runsRoot(env, proj.path) turns it red.
+
+## FC-RUNSH-LINE-CITE-DRIFT Comments in loki-ts/src cite autonomy/run.sh by line number, and the numbers go stale on every run.sh edit
+- User-visible vs raw: raw (maintainer-facing). A reader following "run.sh:28272" lands on unrelated code and trusts a parity claim that no longer points at its subject. #212 criterion 2 failed twice for this (the PAUSED.md cite was refreshed and went stale again).
+- Law: a cross-file reference names a thing that survives edits (function, variable or literal string), never a position.
+- Cause (measured, eng-npm 2026-10-23, origin/main): `git grep -nE 'run\.sh[: (~]+[0-9]{4,}' loki-ts/src` returned 279 lines in 21 files; the cites were already wrong when written against older run.sh (the PAUSED.md cite ~28272 resolved to a different line on 5746a4550).
+- Siblings swept: the same pattern in loki-ts/src outside runner/ (providers/claude_flags.ts and others, same grep). Cites to other files (manager.ts:1770) and line cites in docs/ are out of scope; they drift the same way and are not guarded here.
+- Mechanism: one structural check, "no run.sh line cites in loki-ts/src", in scripts/structural-checks.sh (so pre-push and CI run it), scanning loki-ts/src for the pattern above.
+- Fixture: tests/test-structural-checks.sh T13 plants a `run.sh:12345` cite in a scratch tree (check goes red) and a plain "autonomy/run.sh" cite (stays green).
+- Remediation: the 281 cites were replaced with the plain file name. Original numbers were not recoverable to function anchors because they were already stale; the surrounding comment text names the behaviour.
