@@ -45,7 +45,7 @@ export type RetryClass = "transient" | "non_retryable";
 // rejecting the request, not a string an app can legitimately print. When in
 // doubt, leave it out -- omission costs one retry, inclusion can kill a build.
 const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|invalid[_ -]?x-api-key|authentication[_ -]?(?:failed|error))/i],
+  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|invalid[_ -]?x-api-key|authentication[_ -]?(?:failed|error))|^\W*(?:not logged in\b|oauth token has expired|please run \/login)/im],
   ["unknown_model", /\b(?:model[_ -]?not[_ -]?found|unknown[_ -]?model|does not exist.{0,20}model)/i],
   ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request)/i],
   // "quota"/"billing" = the account is out of funds; unlike a rate limit this
@@ -111,6 +111,25 @@ export function sessionKind(r: { exit: number | null; stderrTail?: string }): st
   if (r.exit === 0) return null;
   const t = r.stderrTail ?? "", sdk = SDK_ERR.exec(t);
   return sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason;
+}
+
+// CW-16: the one place a failed session's tail becomes a user-facing cause. Uses sessionKind (never a second regex
+// set), so the terminal Reason, HANDOFF.md and receipt all name the same class. Null when no known class matches.
+const CAUSE_FIX: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  claude: { auth: "run `claude /login`, or unset ANTHROPIC_API_KEY", quota_exhausted: "add credit at console.anthropic.com or wait for the plan reset" },
+  codex: { auth: "run `codex login`", quota_exhausted: "add credit to the OpenAI account or wait for the plan reset" },
+};
+const CAUSE_FIX_DEFAULT: Readonly<Record<string, string>> = { auth: "re-authenticate the provider CLI (see `loki doctor`)", quota_exhausted: "add credit to the provider account or wait for the plan reset" };
+const CAUSE_MAX = 200;
+export function providerCause(tail: string | undefined, provider = "claude"): string | null {
+  const t = tail ?? "";
+  if (t.trim() === "") return null;
+  const klass = sessionKind({ exit: 1, stderrTail: t });
+  if (klass !== "auth" && klass !== "quota_exhausted") return null;
+  const line = t.split("\n").find((l) => sessionKind({ exit: 1, stderrTail: l }) === klass) ?? t.split("\n")[0]!;
+  const clean = line.replace(/\[sdk-loop error: ?|\]\s*$/g, "").replace(/\b(?:sk|pk|key)-[A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").trim().slice(0, CAUSE_MAX);
+  const fix = (CAUSE_FIX[provider] ?? CAUSE_FIX_DEFAULT)[klass] ?? CAUSE_FIX_DEFAULT[klass]!;
+  return `${klass}: ${clean} (fix: ${fix})`;
 }
 
 export type WaitClock = { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void> };

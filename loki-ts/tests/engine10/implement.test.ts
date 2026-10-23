@@ -207,6 +207,26 @@ describe("engine10 implement stage", () => {
     expect(result.data.exit).toBe("killed");
   });
 
+  test("CW-16: a known provider auth line on the session tail names the cause and the fix in the stage reason", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw16-"));
+    const sessions = new FakeSessionRunner({
+      exit: 1,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 1,
+      killed: false,
+      stderrTail: "Invalid API key \u00b7 Fix external API key",
+    } as SessionResult);
+    const ctx = fakeCtx(sessions, {}, dir);
+
+    const result = await implementStage.run(ctx, new AbortController().signal);
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("auth: Invalid API key");
+    expect(result.reason).toContain("claude /login");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test("E-61: a non-killed error exit fails the stage and writes the stderr tail under runDir", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e08-rd-"));
     const sessions = new FakeSessionRunner({

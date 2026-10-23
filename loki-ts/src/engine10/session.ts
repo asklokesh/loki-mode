@@ -2,6 +2,7 @@
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
+import { providerCause } from "../runner/retry_class.ts";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -157,9 +158,11 @@ const EXIT_CAUSES: Readonly<Record<number, string>> = {
 };
 // E-68: a session child traps SIGTERM and exits 143, so classify from what the ENGINE knows (it sent the kill), never the child's code:
 // killed always wins. killCause names which kill fired; it defaults to "limit".
-export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled"): string {
+// CW-16: with the session tail, a known provider auth or credit line outranks the bare exit code (providerCause is the one classifier).
+export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted" | "stalled", tail?: string, provider?: string): string {
   if (killed) return killCause ?? "limit";
   if (exit === null) return "external kill";
+  if (exit !== 0) { const c = providerCause(tail, provider); if (c) return c; }
   return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
 }
 // SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.

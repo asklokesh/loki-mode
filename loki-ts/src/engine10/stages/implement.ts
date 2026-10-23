@@ -182,7 +182,7 @@ export const implementStage: Stage = {
     const stderrTail = session.stderrTail ?? ""; mkdirSync(ctx.runDir, { recursive: true }); const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`); writeFileSync(stderrPath, stderrTail, "utf8");
     data.stderr_path = stderrPath;
 
-    return { status: "failed", reason: classifyExitCause(session.exit, false), data };
+    return { status: "failed", reason: classifyExitCause(session.exit, false, undefined, stderrTail, ctx.provider), data };
   },
 };
 export const stage = implementStage;

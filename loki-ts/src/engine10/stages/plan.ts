@@ -100,7 +100,7 @@ export const planStage: Stage = {
       mkdirSync(ctx.runDir, { recursive: true });
       const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
       writeFileSync(stderrPath, session.stderrTail ?? "", "utf8");
-      return { status: "failed", reason: classifyExitCause(session.exit, false), data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath } };
+      return { status: "failed", reason: classifyExitCause(session.exit, false, undefined, session.stderrTail, ctx.provider), data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath } };
     }
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";

@@ -201,6 +201,25 @@ describe("engine10 session", () => {
     expect(HEARTBEAT_MS_DEFAULT).toBeLessThanOrEqual(30_000);
   });
 
+ test("CW-16: classifyExitCause names the provider cause and fix from the tail, and falls back to the exit table", () => {
+    const k = classifyExitCause(1, false, undefined, "Invalid API key \u00b7 Fix external API key");
+    expect(k).toStartWith("auth: Invalid API key");
+    expect(k).toContain("claude /login");
+    expect(classifyExitCause(1, false, undefined, "Credit balance is too low")).toStartWith("quota_exhausted: Credit balance is too low");
+    expect(classifyExitCause(1, false, undefined, "Not logged in \u00b7 Please run /login")).toStartWith("auth: Not logged in");
+    expect(classifyExitCause(1, false, undefined, "OAuth token has expired. Please run /login")).toStartWith("auth: OAuth token has expired");
+    expect(classifyExitCause(1, false, "codex" as never, "Invalid API key", "codex")).toContain("codex login");
+    expect(classifyExitCause(1, false, undefined, "segfault in tool")).toBe("exit 1 (general error)"); // positive control
+    expect(classifyExitCause(1, false)).toBe("exit 1 (general error)");
+    expect(classifyExitCause(1, true, "limit", "Invalid API key")).toBe("limit"); // a kill still wins
+  });
+  test("CW-16 canary: a credential-shaped token in the tail never reaches the reason", () => {
+    const secret = "sk-ant-" + "a1B2c3D4e5F6g7H8i9J0k1";
+    const r = classifyExitCause(1, false, undefined, `Invalid API key ${secret} \u00b7 Fix external API key`);
+    expect(r).toStartWith("auth:");
+    expect(r).not.toContain("sk-ant-");
+    expect(classifyExitCause(1, false, undefined, "Invalid API key " + "x".repeat(500)).length).toBeLessThan(400);
+  });
   test("E-68: classifyExitCause names every outcome; the string 'cause not classified' is never producible", () => {
     expect(classifyExitCause(0, false)).toBe("exit 0 (success)");
     expect(classifyExitCause(1, false)).toBe("exit 1 (general error)");

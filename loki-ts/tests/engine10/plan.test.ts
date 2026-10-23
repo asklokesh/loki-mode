@@ -297,6 +297,26 @@ describe("engine10 plan stage", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test("CW-16: a known provider auth line on the session tail names the cause and the fix in the stage reason", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-cw16-"));
+    const sessions = new FakeSessionRunner({
+      exit: 1,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 1,
+      killed: false,
+      stderrTail: "Invalid API key \u00b7 Fix external API key",
+    } as SessionResult);
+    const ctx = fakeCtx(dir, sessions, { intake: { task: "fix the bug" } });
+
+    const result = await planStage.run(ctx, new AbortController().signal);
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("auth: Invalid API key");
+    expect(result.reason).toContain("claude /login");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test("runs the session at fast tier with a unique iteration id", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e16-"));
     const sessions = new FakeSessionRunner(doneResult);
