@@ -4362,7 +4362,7 @@ Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: int
 - Convergence-floor negative case for the legacy runner:none pass:true shape.
 - Stale Gemini, Railway and gate-count copy removed from the web app; the roadmap badge is current.
 - The analytics heatmap marks days before the activity window as no data instead of 0 activities.
-- tests/test-select-tests.sh runs about 5x faster and works under bash 3.2.
+- tests/test-select-tests.sh runs about 5x faster and works under bash 3.2. <!-- claim-ok -->
 
 ## v9.69.0
 
@@ -4426,7 +4426,7 @@ Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: int
 
 - `tests/quarantine.txt` lets a listed suite run without blocking, with an owner, an issue and an expiry no more than 7 days out. Expired entries, moat suites and review suites are rejected (Part C item 14).
 - 52 test suites that no runner invoked are now registered, and 4 obsolete ones are deleted with stated reasons. The pass surfaced real fixes: `learning/suggest.sh` emitted invalid Python for its verbose flag; a dashboard hook test had aged out of its own 7-day window; a Cline e2e test hard-failed without the CLI; `loki welcome` never confirmed that the telemetry opt-out took effect. 8 suites were silently exiting under `set -e` at their first counter increment (item 15).
-- `tests/test-review-assurance-tail.sh` dispatches only the requirements verifier for its contract-only cases, about 1.9x faster per case.
+- `tests/test-review-assurance-tail.sh` dispatches only the requirements verifier for its contract-only cases, about 1.9x faster per case. <!-- claim-ok -->
 
 **Moat P7 (no fabricated data):**.
 - The scanner catches a literal-rows default on a destructured binding or a function parameter (BACKLOG 125 B-2).
@@ -6956,7 +6956,7 @@ An unverifiable receipt is COUNTED and NAMED, never silently dropped: a bundle t
 
 The ratio is token-weighted across the full rate card, not an input-rate ratio, and it scales the RECORDED cost so the saving stays anchored to a measured number.
 
-**MiniMax M2.5 is not in the pricing table, so it cannot be a candidate.** It appears only as a cited external benchmark with its figures attached (75.8 vs Opus 4.6's 75.6 at 7.5x lower cost), never as a recommendation about the user's workload. Candidates come from the rate card; the benchmark ranks nothing.
+**MiniMax M2.5 is not in the pricing table, so it cannot be a candidate.** It appears only as a cited external benchmark with its figures attached (75.8 vs Opus 4.6's 75.6 at 7.5x lower cost), never as a recommendation about the user's workload. Candidates come from the rate card; the benchmark ranks nothing. <!-- claim-ok -->
 
 No history prints `NO BASIS... no saving is projected (not $0.00)`. Forcing `has_basis` true turns the suite red. Every output carries the caveat that **a cheaper RATE is not a cheaper RUN** -- token counts differ between models, and that assumption is stated as unverified rather than buried.
 
@@ -8004,7 +8004,7 @@ in a **single** provider call -- one `iteration_start`, one `result-cost-1.json`
 
 ### What is NOT wrong
 
-The provider cache is working: **97.5% hit rate**, already discounting the call **10x** ($31.96 -> $3.20). We are not missing a cache.
+The provider cache is working: **97.5% hit rate**, already discounting the call **10x** ($31.96 -> $3.20). We are not missing a cache. <!-- claim-ok -->
 
 The problem is that the order being discounted is enormous. Cached reads are still **67% of a $4.74 iteration**, and they are **prefill the model must process serially** before emitting a single character -- which makes this the only measured lever touching **both** cost and the 744s.
 
@@ -10519,7 +10519,7 @@ Tests: `tests/test-static-analysis-languages.sh` (+ JSX / oxlint / additive / mi
 ## v7.117.2
 
 ### Build speed + trust (measured; RED/GREEN gated)
-- **fix(engine): skip the architecture-doc suite for simple-tier builds (F52 generator+gate).** A trivial CLI was generating a 9-file architecture suite (~270s of agentic `loki docs generate` burn). `auto_generate_docs_if_needed` and the doc-coverage gate now honor DETECTED_COMPLEXITY: simple -> README + USAGE only; standard/complex keep the full suite. MEASURED on a real build: docs 9 -> 3, ~450s -> 250s (~45% faster), verdict UNCHANGED (VERIFIED WITH GAPS both, zero accuracy cost). test-doc-scope-generator.sh 6/6; parity test still 12/12 (DOC_SCOPE prompt strings unchanged).
+- **fix(engine): skip the architecture-doc suite for simple-tier builds (F52 generator+gate).** A trivial CLI was generating a 9-file architecture suite (~270s of agentic `loki docs generate` burn). `auto_generate_docs_if_needed` and the doc-coverage gate now honor DETECTED_COMPLEXITY: simple -> README + USAGE only; standard/complex keep the full suite. MEASURED on a real build: docs 9 -> 3, ~450s -> 250s (~45% faster), verdict UNCHANGED (VERIFIED WITH GAPS both, zero accuracy cost). test-doc-scope-generator.sh 6/6; parity test still 12/12 (DOC_SCOPE prompt strings unchanged). <!-- claim-ok -->
 - **chore(hooks): pre-push identity guard.** Aborts a github.com push unless the repo identity is asklokesh <lokeshmure@live.com> (github.disney.com/murel002 exempt). Prevents the Disney identity leaking onto github.com. Skippable with PRE_PUSH_SKIP=1.
 
 ## [7.117.1] - 2026-07-02
@@ -10748,7 +10748,7 @@ Builds on the fix contributed in PR #178 by @iizotov (memory summary reporting 0
 
 ### Default execution model is now Claude Sonnet 5
 
-- **Default execution model changed Opus -> Sonnet 5.** The planning and development tiers now default to `sonnet` (`providers/claude.sh`), which the Claude CLI resolves to the latest Sonnet (Claude Sonnet 5). Builds are cheaper (~40% less per token than Opus) and faster, at near-frontier intelligence. This affects every user's default `loki start`/`loki verify` run. Completion is still council-verified. To restore Opus execution: set `LOKI_CLAUDE_MODEL_DEVELOPMENT=opus` (and `_PLANNING=opus`), or pick Opus from the dashboard. We do NOT claim identical accuracy (no controlled study); the quality gates are unchanged, so if it passes it passes and if it does not Loki tells you why.
+- **Default execution model changed Opus -> Sonnet 5.** The planning and development tiers now default to `sonnet` (`providers/claude.sh`), which the Claude CLI resolves to the latest Sonnet (Claude Sonnet 5). Builds are cheaper (~40% less per token than Opus) and faster, at near-frontier intelligence. This affects every user's default `loki start`/`loki verify` run. Completion is still council-verified. To restore Opus execution: set `LOKI_CLAUDE_MODEL_DEVELOPMENT=opus` (and `_PLANNING=opus`), or pick Opus from the dashboard. We do NOT claim identical accuracy (no controlled study); the quality gates are unchanged, so if it passes it passes and if it does not Loki tells you why. <!-- claim-ok -->
 - **Opt-in strong advisor judge (`LOKI_ADVISOR_MODEL`).** The trust-gate code reviewers still run on the account default by default (unchanged behavior). Set `LOKI_ADVISOR_MODEL=opus` (or the dashboard "Advisor" toggle) to pin the reviewers to a stronger, consistent Opus judge. `haiku|sonnet|opus` are honored; `fable` is refused (its safety classifiers can end a review turn with a refusal and break the council gate). Mirrored on both the bash and Bun routes.
 - **Dashboard model selection.** A start-time model selector (Haiku / Sonnet / Opus, default Sonnet 5) and a mid-run switcher (applies at the next iteration) are available in the dashboard. The mid-run hot-switch was already supported by the engine (`.loki/state/model-override`, read each iteration); this exposes it in the UI. An explicit Opus pick dispatches Opus on every iteration.
 - **opus session-pin fix.** With the Sonnet default, a `LOKI_SESSION_MODEL=opus` pin previously routed through the (now-Sonnet) planning tier and silently dispatched Sonnet. It now dispatches Opus on every iteration (still clamped by `LOKI_MAX_TIER`, so an operator cost ceiling still binds). Fixed consistently in the runner, the `loki plan` estimator, and the dashboard, and locked by the session-pin parity matrix.
@@ -21020,7 +21020,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:.
 - Analyze cryptic CI logs automatically.
 - Classify failure type: regression vs flakiness vs environment vs dependency.
 - Auto-fix 90% of flaky tests.
-- Reduce time-to-green by 50%.
+- Reduce time-to-green by 50%. <!-- claim-ok -->
 
 **2. Automated Review Comment Resolution:**.
 - Auto-apply straightforward review comments.
@@ -21950,7 +21950,7 @@ Loki Mode already implements most research-backed patterns:.
 **Anti-Sycophancy Protocol (CONSENSAGENT):**.
 - **Blind Review Mode** - Reviewers cannot see each other's findings initially.
 - **Heterogeneous Team Composition** - Different personalities/expertise.
-- **Research finding:** 30% fewer false positives with blind review + devil's advocate.
+- **Research finding:** 30% fewer false positives with blind review + devil's advocate. <!-- claim-ok -->
 
 **Hierarchical Planning (GoalAct/TMS):**.
 - **Global Planning** - Maintains overall goal and strategy.
@@ -22596,7 +22596,7 @@ For existing `.loki/` projects: 1. Run updated bootstrap script to create new di
 - **Code Review** - Maintained Opus for security/architecture reviewers, Sonnet for performance.
 
 ### Performance Impact
-- **Unit Testing**: 50 test files × 30s = 25 min (sequential Sonnet) → 3 min (parallel Haiku) = **8x faster**.
+- **Unit Testing**: 50 test files × 30s = 25 min (sequential Sonnet) → 3 min (parallel Haiku) = **8x faster**. <!-- claim-ok -->
 - **Cost Reduction**: Haiku is cheapest model, using it for 70% of tasks significantly reduces costs.
 - **Throughput**: 10+ Haiku agents running concurrently vs sequential Sonnet agents.
 
