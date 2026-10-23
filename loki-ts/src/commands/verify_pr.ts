@@ -189,7 +189,27 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   return { ...res, verdict: "VERIFIED" };
 }
 
-const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR] [--json]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\n--json prints the verify-pr-result.json verdict object on stdout instead of the text summary.\nExit: 0 verified, 2 usage or sandbox blocked, 3 no proof to run (no linked issue or no trusted runnable check), 4 proof ran and failed.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n";
+export const EXPLAIN_MAX_LINES = 60;
+/** The clause matrix for a PR comment: verdict, criteria, one line per check, then reasons, notes and issue trust, cut to EXPLAIN_MAX_LINES. */
+export function explainLines(res: VerifyPrResult): string[] {
+  const all = [`pr: ${res.pr.repo}#${res.pr.number}`, `verdict: ${res.verdict}`, `base: ${res.base ?? "-"}  head: ${res.head ?? "-"}`, `criteria in linked issues: ${res.criteria}`, `checks: ${res.checks.length}`,
+    ...res.checks.map((c, i) => `  ${i + 1}. ${c.replace(/\s+/g, " ").slice(0, 160)}`),
+    ...(res.reasons.length ? ["reasons:", ...res.reasons.map((r) => `  - ${r.replace(/\s+/g, " ").slice(0, 200)}`)] : []),
+    ...(res.notes.length ? ["notes:", ...res.notes.map((n) => `  - ${n.replace(/\s+/g, " ").slice(0, 200)}`)] : []),
+    ...(res.issues.length ? ["linked issues:", ...res.issues.map((i) => `  ${i.ref}: ${i.trusted ? "trusted" : "NOT trusted"} (${i.association ?? "unknown association"})`)] : [])];
+  if (all.length <= EXPLAIN_MAX_LINES) return all;
+  const keep = all.slice(0, EXPLAIN_MAX_LINES - 1);
+  return [...keep, `... ${all.length - keep.length} more line(s) cut`];
+}
+
+/** The loki/receipt commit status for a result: success only for VERIFIED; a blocked sandbox is error (no verdict), anything else failure. */
+export function receiptStatus(res: VerifyPrResult): { context: "loki/receipt"; state: "success" | "failure" | "error"; sha: string | null; description: string } {
+  const state = res.verdict === "VERIFIED" ? "success" : res.blocked ? "error" : "failure";
+  const why = res.reasons[0] ? `: ${res.reasons[0].replace(/\s+/g, " ")}` : "";
+  return { context: "loki/receipt", state, sha: res.head, description: `verify-pr ${res.verdict}${why}`.slice(0, 140) };
+}
+
+const USAGE = "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR] [--json]\nDerives a check from the PR's linked issue; VERIFIED only if it fails on base, passes on head, and package suites pass.\nPR code runs only in the VPR-1 container sandbox (set LOKI_VPR_IMAGE). Requires LOKI_VERIFY_PR=1.\n--json prints the verify-pr-result.json verdict object on stdout instead of the text summary.\nExit: 0 verified, 2 usage or sandbox blocked, 3 no proof to run (no linked issue or no trusted runnable check), 4 proof ran and failed.\n       loki verify-pr respond <o/r#N>  fix open review comments on the checked-out PR branch, one commit each, reply with the sha.\n       loki verify-pr explain <o/r#N>  print the clause matrix (verdict, criteria, checks, reasons) in at most 60 lines.\n       loki verify-pr reseal <o/r#N>   re-run the proof and write loki-receipt-status.json (the loki/receipt commit status for the PR head).\n";
 
 /** `loki verify-pr respond <o/r#N>`: fix open review comments on the checked-out PR branch, one commit each, push, reply with the sha. */
 async function runRespond(args: readonly string[], out: (s: string) => void, err: (s: string) => void): Promise<number> {
@@ -219,7 +239,8 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
   if (args.includes("--help") || args.includes("-h")) return (out(USAGE), 0);
   if (args[0] === "respond") return runRespond(args.slice(1), out, err);
   if (!verifyPrEnabled(env)) return (err("loki verify-pr: experimental, set LOKI_VERIFY_PR=1\n"), 2);
-  const rest = [...args];
+  const verb = args[0] === "explain" || args[0] === "reseal" ? args[0] : null;
+  const rest = verb ? args.slice(1) : [...args];
   let outDir = join(process.cwd(), ".loki", "verify-pr");
   const oi = rest.indexOf("--out");
   if (oi >= 0) {
@@ -228,7 +249,7 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
     outDir = v; rest.splice(oi, 2);
   }
   const ji = rest.indexOf("--json");
-  const asJson = ji >= 0;
+  const asJson = ji >= 0 && !verb;
   if (asJson) rest.splice(ji, 1);
   if (rest.length !== 1 || outDir === "") return (err(USAGE), 2);
   const ref = parsePrRef(rest[0]!);
@@ -248,7 +269,12 @@ export async function runVerifyPr(args: readonly string[], inject: Partial<Verif
   }
   mkdirSync(deps.outDir, { recursive: true });
   writeFileSync(join(deps.outDir, "verify-pr-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-  if (asJson) out(`${JSON.stringify(result, null, 2)}\n`);
+  if (verb === "explain") out(`${explainLines(result).join("\n")}\n`);
+  else if (verb === "reseal") {
+    const status = receiptStatus(result);
+    writeFileSync(join(deps.outDir, "loki-receipt-status.json"), `${JSON.stringify(status)}\n`);
+    out(`loki/receipt: ${status.state} (${status.description})\n`);
+  } else if (asJson) out(`${JSON.stringify(result, null, 2)}\n`);
   else {
     out(`pr: ${ref.repo}#${ref.number}\nverdict: ${result.verdict}\n`);
     for (const r of result.reasons) out(`  ${r}\n`);

@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir`, `config` and `config.worktree` files (and the linked gitdir, `worktrees` and common dir cannot be renamed away), and to hooks, config and `commondir` in a primary checkout (Seatbelt; bwrap cannot hold a path that does not exist), so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
 
+## v11.66.1 (2026-10-23)
+
+### Fixed
+- The release approval gate approves a range by exact SHA, fails closed on a bad range, reuses release.sh RELEASE_DIST_FILES and denies a rowless approval by name (FC-RELEASE-UNNAMED-STACKED-PARENT, #436). Approval: "ship pd/rag436-r3 ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. It is 3 commits over origin/main 69ea3491d, with an FC-only conflict. Pick in order: 525f46cb81d83a2e7da167bda33e9d0550443ece, 21910793e94f70129f689456d2252f324f96852e, ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. APPROVE ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803" (rev-b)
+
+## v11.66.0 (2026-10-23)
+
+### Added
+- /loki fix, /loki explain and /loki reseal PR comment commands (#360).
+
+### Fixed
+- The /loki fork refusal is guarded, the fix chain runs end to end, and comments no longer cancel queued commands; the verify-pr stub asserts its subcommand and the publish jobs get their own concurrency group (#360, FC-WORKFLOW-STUB-IGNORES-SUBCOMMAND-AND-SHARED-PUBLISH-GROUP). Approval: "ship pd/360-r3 1cf441b003593f7444c973a5dc070a2688a9da99. It is 3 commits over origin/main 89a8ce8c7, with an FC-only conflict. Pick in order: 976da0716ba7cc3ea3dcdd026e8842aae85f548e, 6252fe6257099370c9fb63ed6a4493ea83a778c0, 1cf441b003593f7444c973a5dc070a2688a9da99. APPROVE 1cf441b003593f7444c973a5dc070a2688a9da99" (rev-b)
+
 ## v11.65.6 (2026-10-23)
 
 ### Fixed

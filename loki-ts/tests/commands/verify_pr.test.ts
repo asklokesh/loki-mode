@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
+import { explainLines, defaultCheckout, defaultIssue, defaultPrMeta, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
 import { extractChecks } from "../../src/contrib/verify_pr_f2p.ts";
 
 let dir: string;
@@ -308,4 +308,62 @@ echo "unexpected: $*" >&2; exit 2
   test("the default sandbox is BLOCKED without an image", () => {
     expect(defaultSandbox(dir, "true", {}).status).toBe("BLOCKED");
   });
+
+  // R100-005: /loki explain and /loki reseal PR comment handlers.
+  test("explain prints the clause matrix for a VERIFIED PR in at most 60 lines", async () => {
+    const f = fixture("fix");
+    const e = await runExplain(f.meta);
+    expect(e.rc).toBe(0);
+    expect(e.out).toContain("verdict: VERIFIED");
+    expect(e.out).toContain("sh t.sh");
+    expect(e.out.trimEnd().split("\n").length).toBeLessThanOrEqual(60);
+  });
+
+  test("explain caps a huge result at 60 lines and says what was cut", () => {
+    const res = { verdict: "NOT PROVEN" as const, reasons: Array.from({ length: 200 }, (_, i) => `reason ${i}`), pr: { repo: "o/r", number: 7 }, base: "a", head: "b",
+      checks: Array.from({ length: 200 }, (_, i) => `check ${i}`), criteria: 200, blocked: false, issues: [], notes: [] };
+    const lines = explainLines(res);
+    expect(lines.length).toBeLessThanOrEqual(60);
+    expect(lines[lines.length - 1]).toMatch(/more line\(s\) cut/);
+  });
+
+  test("reseal writes the loki/receipt status: success for VERIFIED, failure for NOT PROVEN, error for blocked", async () => {
+    const st = (outDir: string) => JSON.parse(readFileSync(join(outDir, "loki-receipt-status.json"), "utf8"));
+    const fx = fixture("fix").meta;
+    const ok = await runReseal(fx, {});
+    expect(ok.rc).toBe(0);
+    expect(st(ok.outDir)).toMatchObject({ context: "loki/receipt", state: "success", sha: fx.headSha });
+    const np = await runReseal(fixture("noop").meta, {});
+    expect(np.rc).toBe(4);
+    expect(st(np.outDir).state).toBe("failure");
+    const bl = await runReseal(fx, { sandbox: () => ({ status: "BLOCKED", exit_code: null }) });
+    expect(bl.rc).toBe(2);
+    expect(st(bl.outDir).state).toBe("error");
+    expect(st(bl.outDir).description.length).toBeLessThanOrEqual(140);
+  });
+
+  test("explain and reseal are off without LOKI_VERIFY_PR and refuse bad refs", async () => {
+    for (const verb of ["explain", "reseal"]) {
+      const err: string[] = [];
+      expect(await runVerifyPr([verb, "o/r#7"], { env: {}, err: (s) => void err.push(s) })).toBe(2);
+      expect(err.join("")).toContain("LOKI_VERIFY_PR=1");
+      expect(await runVerifyPr([verb, "nonsense"], { env: { LOKI_VERIFY_PR: "1" }, err: () => {} })).toBe(2);
+    }
+  });
 });
+
+const handlerDeps = (meta: PrMeta, over: Partial<VerifyPrDeps>, out: string[]): Partial<VerifyPrDeps> => ({
+  env: { LOKI_VERIFY_PR: "1" }, out: (s) => void out.push(s), err: () => {}, prMeta: () => meta, issue: () => ({ body: ISSUE, ...TRUSTED }),
+  checkout: defaultCheckout, sandbox: hostSandbox, packageSuites: noSuites, ...over,
+});
+async function runExplain(meta: PrMeta) {
+  const out: string[] = [];
+  const rc = await runVerifyPr(["explain", "o/r#7", "--out", join(dir, "ex")], handlerDeps(meta, {}, out));
+  return { rc, out: out.join("") };
+}
+async function runReseal(meta: PrMeta, over: Partial<VerifyPrDeps>) {
+  const out: string[] = [];
+  const outDir = mkdtempSync(join(dir, "rs-"));
+  const rc = await runVerifyPr(["reseal", "o/r#7", "--out", outDir], handlerDeps(meta, over, out));
+  return { rc, out: out.join(""), outDir };
+}
