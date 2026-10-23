@@ -389,10 +389,13 @@ def _cache_tokens_by_phase(loki_dir, cost, eff):
         ph = str(rec.get("phase") or "unknown")
         slot = per.setdefault(ph, {"cache_read": 0, "cache_creation": 0})
         for key, src in (("cache_read", "cache_read_tokens"),
-                         ("cache_creation", "cache_creation_tokens")):
+                         ("cache_creation", "cache_creation_tokens"),
+                         ("input", "input_tokens")):
             v = rec.get(src)
             if isinstance(v, int) and not isinstance(v, bool):
-                slot[key] += v
+                # "input" appears only when the ledger recorded it, so the
+                # council cache share denominator is never guessed.
+                slot[key] = slot.get(key, 0) + v
     main = {"cache_read": max(0, (cr or 0) - sum(p["cache_read"] for p in per.values())),
             "cache_creation": max(0, (cc or 0) - sum(p["cache_creation"] for p in per.values()))}
     return {("main_session" if per else "total"): main, **per}
@@ -503,6 +506,8 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         tokens_in=cost.get("input_tokens"),
         tokens_out=cost.get("output_tokens"),
         cost_usd=cost.get("usd"),
+        cache_read_tokens=cost.get("cache_read_tokens"),
+        cache_creation_tokens=cost.get("cache_creation_tokens"),
         exit_status=status if rc == 0 else status,
         provenance={
             "kind": "automated",

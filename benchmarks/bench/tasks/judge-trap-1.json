@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "id": "judge-trap-1",
+  "source": "loki-bench-discriminator",
+  "source_ref": "benchmarks/bench/tasks/judge-trap-1.json",
+  "title": "URL slug function with a truncation boundary and a transliteration rule (judge trap)",
+  "fixture": "../fixtures/judge-trap-1",
+  "prompt": "Build a single Python file named `slugify.py` that defines one function:\n\n    def slugify(title: str, max_len: int = 40) -> str\n\nRules, applied in this order:\n1. Lowercase the text and transliterate accented Latin letters to plain ASCII (for example `\u00e9` becomes `e`). The sharp s `\u00df` becomes `ss`, and `\u00e6` becomes `ae`.\n2. Every run of characters outside `a-z` and `0-9` becomes a single `-`.\n3. Strip leading and trailing `-`.\n4. If the result is longer than `max_len`, cut it at the last `-` that sits at or before index `max_len`, so no word is split, and drop that `-`. If the first word alone is longer than `max_len`, cut it at `max_len` characters. The result never ends in `-`.\n5. If the final result is empty, raise `ValueError`.\n6. The function is idempotent: `slugify(slugify(x)) == slugify(x)` for every `x`.\n\nExamples: `slugify(\"Hello, World!\") == \"hello-world\"`, `slugify(\"Cr\u00e8me Br\u00fbl\u00e9e\") == \"creme-brulee\"`, `slugify(\"Python 3.12 Release\") == \"python-3-12-release\"`.\n\nKeep everything in the single `slugify.py` file. Pure function, no I/O.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 30,
+    "overlay": "../fixtures/simple-2-fizzbuzz-overlay"
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 600
+}
