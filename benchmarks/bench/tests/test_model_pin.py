@@ -37,7 +37,12 @@ def test_real_alias_pins_session_model():
 
 def test_full_claude_id_pins():
     env = _capture_env("claude-opus-4-8")
-    assert env.get("LOKI_SESSION_MODEL") == "claude-opus-4-8"
+    assert env.get("LOKI_SESSION_MODEL") == "opus"
+
+
+def test_sonnet_id_pins_family_alias():
+    # claude-sonnet-5 is the task-spec label; the engine refuses non-alias pins.
+    assert _capture_env("claude-sonnet-5").get("LOKI_SESSION_MODEL") == "sonnet"
 
 
 def test_provider_label_default_does_not_pin():

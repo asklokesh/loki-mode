@@ -494,7 +494,11 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         and _pin
         and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-"))
     ):
-        run_env["LOKI_SESSION_MODEL"] = _pin
+        # The engine accepts family aliases (haiku|sonnet|opus|fable) and tier names
+        # and refuses anything else, so a full id such as claude-sonnet-5 is pinned
+        # by its family. model_used still records the real model for the guard.
+        run_env["LOKI_SESSION_MODEL"] = next(
+            (f for f in _REAL_MODEL_ALIASES if f in _pin), _pin)
     stop = (r"\(%s done" % re.escape(interrupt_after_stage)
             if interrupt_after_stage else None)
     rc, out, err, status, duration = _base.run_cli(
