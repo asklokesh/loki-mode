@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.58.0 (2026-10-23)
+
+### Added
+- Four pre-registered false-done bench tasks with hash-attested oracles; the fd-1 duplicate-key check requires the key name, and the fd-2, fd-3 and fd-4 overlays reject near-misses that break a stated rule. Refs #355.
+
 ## v11.57.6 (2026-10-23)
 
 ### Fixed
