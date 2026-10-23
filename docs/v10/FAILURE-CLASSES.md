@@ -1717,3 +1717,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: loki-ts/src/engine10 neither writes nor reads the pointer (`git grep -n last-proof-id -- loki-ts/src/engine10` returns nothing). The readers (run.sh, loki, run-summary.sh, trigger-server.py) are route-agnostic and unchanged.
 - Mechanism: clearStaleProofPointer in runner/proof.ts, called once from runAutonomous right after makeContext.
 - Fixture: loki-ts/tests/runner/autonomous.test.ts "#211 Bun-route sibling" seeds run-A, stops the run before proof with LOKI_PROOF=0, expects the pointer absent. Mutant: remove the call in runAutonomous; the test goes red.
+
+## FC-MODEL-OVERRIDE-TEST-TOO-SLOW tests/test-model-override.sh took 445s at load 20-29 and exceeded the 300s shard budget, so a reviewer could not run it to completion
+- User-visible vs raw: raw (a guard nobody can finish running is a guard nobody trusts; no user message).
+- Law: a guard script finishes inside the shard budget at the documented load, or it is split; a slow guard is not a skipped guard.
+- Cause (measured, per-line $SECONDS stamps): two parity matrices took 181s and 249s of the 445s. Each of their 224 cells started a fresh python3 that imported dashboard.server (0.75s per import at load 28), so 448 imports cost about 340s.
+- Siblings swept: the resolver matrix (section 7) and the session-pin matrix (section 9) both used the per-cell python leg. The estimator leg (`loki plan`) and the bash legs are different processes by design and stay per cell. Other python3 -c calls in the file run once.
+- Mechanism: one `py_batch` helper resolves every cell in a single interpreter. Each cell runs against a fresh copy of the ambient environment plus its own exports, the same input the per-cell `env "$@" python3` gave. Cell counts stay at 224 and 224.
+- Fixture: after the change the file finishes in 103s with 71 passed, 0 failed (before: 445s, 71 passed). Mutant: dashboard/server.py `_clamp_to_max_tier` opus arm returning the alias unchanged makes the resolver matrix report PARITY MISMATCH on the fable cells; restored and re-run green.
