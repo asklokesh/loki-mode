@@ -1,9 +1,11 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
 // stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts";
+import { safeGit } from "../util/safe_git.ts";
 import { rerunOnQuota, sessionKind } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { runControlBoundary } from "../util/run_control.ts"; import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../util/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts"; import { removeHoldout } from "../util/holdout.ts"; import { distrustGreenBase } from "./stages/wall.ts";
@@ -67,6 +69,32 @@ const earlyExit = (d: Obj): boolean => d.already_satisfied === true;
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
+/** Stages that write to the working tree; only these journal a diff_stat. The concurrent wall (split) path runs beside implement and installs into a base copy, so a before/after delta would be implement's: it journals none (unmeasured). */
+const TREE_STAGES: ReadonlySet<string> = new Set(["wall", "implement", "fix"]);
+/** Tree hash of the working tree (tracked, modified and untracked, minus .loki) through a throwaway index, so the repo index is never touched. Null when unreadable. */
+function treeSnapshot(repoDir: string): string | null {
+  let dir: string | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "loki-snap-"));
+    const env = { ...process.env, GIT_INDEX_FILE: join(dir, "index") };
+    safeGit(repoDir, ["read-tree", "HEAD"], { env });
+    safeGit(repoDir, ["add", "-A", "--", ".", ":(exclude).loki"], { env });
+    return safeGit(repoDir, ["write-tree"], { env }).trim() || null;
+  } catch { return null; } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }
+}
+/** Files, added and removed lines between two tree hashes. Null when git cannot say; a binary file counts as 0 lines. */
+function treeDiffStat(repoDir: string, a: string | null, b: string | null): Obj | null {
+  if (!a || !b) return null;
+  try {
+    const paths: { path: string; added: number; removed: number }[] = [];
+    for (const line of safeGit(repoDir, ["diff", "--numstat", a, b]).split("\n")) {
+      const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line);
+      if (m) paths.push({ path: m[3]!, added: m[1] === "-" ? 0 : Number(m[1]), removed: m[2] === "-" ? 0 : Number(m[2]) });
+    }
+    return paths.length === 0 ? null : { files: paths.length, added: paths.reduce((n, p) => n + p.added, 0), removed: paths.reduce((n, p) => n + p.removed, 0), paths };
+  } catch { return null; }
+}
+
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
   const outputs: Partial<Record<StageName, Obj>> = {};
@@ -119,6 +147,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
+    const snapBefore = TREE_STAGES.has(name) ? treeSnapshot(ctx.repoDir) : null;
     const ctl = new AbortController();
     let why: "limit" | "cap" | null = null;
     const kill = (w: "limit" | "cap"): void => { if (!why) { why = w; ctl.abort(); } };
@@ -159,7 +188,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (res.status === "completed") {
       const durationS = dur();
       res.data.duration_s = durationS; outputs[name] = res.data; // RECEIPT-TRUTH: seal sums time.stages from outputs, so every stage records its own duration_s here; same object (not a copy) because intake mutates its own data after the stage ends (D61-04)
-      ctx.emit("stage.completed", name, { ...res.data, duration_s: durationS });
+      const diff_stat = snapBefore ? treeDiffStat(ctx.repoDir, snapBefore, treeSnapshot(ctx.repoDir)) : null; // absent = unmeasured or no change, never a fabricated zero
+      ctx.emit("stage.completed", name, { ...res.data, duration_s: durationS, ...(diff_stat ? { diff_stat } : {}) });
     } else if (res.status === "skipped") {
       if (Array.isArray(res.data.not_proven)) outputs[name] = res.data; // TEN-COST-09: a skip that disclosed what it left unproven reaches seal
       ctx.emit("stage.skipped", name, { ...res.data, reason: res.reason ?? "skipped by stage" });

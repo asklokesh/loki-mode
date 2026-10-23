@@ -1694,6 +1694,22 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the P12-07n test takes an explicit 60000ms bound; no assertion changed.
 - Fixture: tests/engine10/fix_resume.test.ts P12-07n itself; it fails at 5000ms on origin/main debc7e843 under load and passes with the bound.
 
+## FC-STAGE-DIFFSTAT-CONCURRENT-WALL-NOT-MET The per-stage diff_stat is journaled for wall, implement and fix through runStage, but the concurrent wall (split) path journals none
+- User-visible vs raw: user-visible in the run replay scrubber (#422): the wall stage of a concurrent run shows its line counts as unmeasured. NOT MET, deliberately not fixed in pd/stage-diffstat.
+- Law: a value the journal cannot measure is absent, never a fabricated zero (the diff_stat key is omitted, not 0).
+- Cause: the split wall author runs beside implement and installs into a base copy, so a before/after tree window around it would report implement's changes as wall's.
+- Siblings swept: the other tree-writing stages (implement, fix, non-split wall) all go through runStage and are covered; plan, verify, commit, seal, pr and deep write no tracked files by design.
+- Mechanism (open): measure the install itself (the diff of the base copy before and after install) inside installWallJob.
+- Fixture: none yet; tests/engine10/machine.test.ts covers the covered stages only.
+
+## FC-E2E-A130-DEFAULT-TIMEOUT-UNDER-LOAD Two e2e tests fail at bun's 5000ms default at load 30 and above, on origin/main as well
+- User-visible vs raw: raw. A red test blocks the gate it runs in.
+- Law: a test that spawns the engine carries a load-aware timeout, never bun's 5000ms default (sibling of FC-FIXRESUME-LOOP-TEST-DEFAULT-TIMEOUT).
+- Cause (measured): tests/engine10/e2e.test.ts "A-130 round 2: a tampered event log is TAMPERED..." and "A-130 quiet by default..." failed at 5.1 to 6.4s on a clean origin/main worktree (d7ee510e4) at load 29 to 43; the other 9 tests in the file pass.
+- Siblings swept: not yet; every test in tests/engine10 that spawns the CLI without an explicit timeout.
+- Open question: should these use setLoadAwareTimeout from tests/preload.ts instead of a fixed bound? Not fixed in this slice.
+- Fixture: bun test tests/engine10/e2e.test.ts at load 30 or higher.
+
 ## FC-P9-DYNAMIC-IMPORT-FALSE-POSITIVE Moat case P9.allowtoken-only-fetch-callers went red on main for a dynamic import of reviewerGitEnv in cli.ts, which is not an allowToken caller
 - User-visible vs raw: raw (a red moat case on main; no user-facing message).
 - Law: allowToken reaches safeGit only from the two fetch callers (FC-25c); the guard must fail closed on anything that can hide a caller, and must not fail on code that provably cannot reach the opt-in.
