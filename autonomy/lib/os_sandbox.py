@@ -323,8 +323,8 @@ def git_write_paths(workspace: Path) -> list[Path]:
 def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
     """(kind, path) write denies that keep confined code from repointing the
     git metadata the harness's next unconfined git reads (FC-SANDBOX-GIT-REDIRECT).
-    kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file) and
-    gitdir/{commondir,gitdir,config.worktree}. Primary checkout: ws/.git itself,
+    kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file), the gitdir entry
+    itself and gitdir/{commondir,gitdir,config,config.worktree}. Primary checkout: ws/.git itself,
     ws/.git/hooks, ws/.git/config{,.worktree} and ws/.git/{commondir,gitdir}. HEAD, index, logs/HEAD and
     ORIG_HEAD stay writable so a commit still works. Empty outside a git repo."""
     gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
@@ -343,14 +343,18 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
                    ("literal", gitdir / "config.worktree"),
                    ("literal", gitdir / "commondir"), ("literal", gitdir / "gitdir")]
     else:
+        # The gitdir entry itself stays un-renamable (a moved-away gitdir recreated with its own
+        # config and no commondir is read as a standalone repo, rev-b E11) and gitdir/config,
+        # normally absent here, cannot be planted. HEAD, index and logs stay writable.
+        denies += [("literal", gitdir), ("literal", gitdir / "config")]
         denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config.worktree")]
     return denies
 
 
 def git_pin(workspace: Path) -> dict[str, str] | None:
     """The git dir and common dir as they are NOW, before the confined process
-    runs. The harness passes these to safeGit (gitDir) so a repointed .git or
-    commondir is never followed. None when the workspace is not a git repo."""
+    runs. run.sh pins its own git() to them (the `pin` subcommand); TS safeGit accepts
+    them as gitPin but no engine10 caller passes one yet. None when the workspace is not a git repo."""
     gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
     if not gitdir or not common:
         return None
@@ -681,7 +685,8 @@ def bwrap_argv_prefix(
     for _kind, path in git_deny_paths(workspace):
         # A whole primary .git dir stays writable (commits); a mount on its hooks and config entries
         # already makes them, and so .git, impossible to rename away.
-        if path.exists() and not (path.name == ".git" and path.is_dir()):
+        # (also a linked gitdir directory: a bind on it would make HEAD and index read-only)
+        if path.exists() and not path.is_dir():
             argv += ["--ro-bind", str(path), str(path)]
     if confine_reads:
         # The synthetic root is a writable tmpfs; make it read-only so a write to an

@@ -777,6 +777,20 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
         self.assertEqual((self.ws / ".git").read_text(), dotgit)
         self.assertFalse((gitdir / "config.worktree").exists())
 
+    def test_linked_gitdir_cannot_be_renamed_or_given_a_config(self):
+        # rev-b E11: move the linked gitdir away, recreate it with its own config and no commondir
+        gitdir = self._linked()
+        status = self._status()
+        moved = self.ws / "gdmoved"
+        res = self._confined(status, f'mv "{gitdir}" "{moved}"')
+        self.assertNotEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(gitdir.is_dir())
+        self.assertFalse(moved.exists())
+        res = self._confined(status, f'printf "[core]\\n\\tfsmonitor = touch {self.pwn}\\n" > "{gitdir}/config"')
+        self.assertNotEqual(res.returncode, 0, res.stderr)
+        self.assertFalse((gitdir / "config").exists())
+        self.assertFalse(self._unconfined_status_pwned())
+
     def test_linked_worktree_still_commits(self):
         self._linked()
         res = self._confined(self._status(), "echo n > n.txt && git add n.txt && git commit -q -m c && git log --oneline | head -1")
@@ -802,8 +816,9 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
     def test_deny_paths_listed(self):
         gitdir = self._linked()
         got = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(self.ws)}
-        for name in ("commondir", "gitdir", "config.worktree"):
+        for name in ("commondir", "gitdir", "config", "config.worktree"):
             self.assertIn(("literal", str(gitdir.resolve() / name)), got)
+        self.assertIn(("literal", str(gitdir.resolve())), got)
         self.assertIn(("literal", str(self.ws / ".git")), got)
 
     def test_primary_deny_paths_include_commondir_and_gitdir(self):
