@@ -235,6 +235,10 @@ function _loki {
                         '--explain[List each gate as exogenous or agent-influenced with the evidence it read]' \
                         '--json[Print the verdict and gates as JSON on stdout]' \
                         '--seal-composite[Sign a workspace composite]:run dir:_directories' \
+                        '--fast[Deterministic checks only: no model call, no network]' \
+                        '--path[With --fast: repo root to check]:dir:_directories' \
+                        '--diff-base[With --fast: scope the checks to the diff against REF]:ref:' \
+                        '--no-cache[With --fast: ignore the result cache]' \
                         '--help[Show help]' \
                         '*:receipt or deploy record:_files'
                     ;;
@@ -343,6 +347,7 @@ function _loki_commands {
         'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
+        'runs:List runs across the projects registered with loki projects add'
         'undo:Show what undoing a run would do (read-only plan; --dry-run adds the diffstat; --list shows recent runs)'
         'chat:Interactive chat session (run, attach)'
         'route:Print the engine, provider and model route without running'
@@ -513,6 +518,7 @@ function _loki_memory {
         'vectors:Vector search'
         'lessons:List PR lessons (--json)'
         'learn:Learn from a merged PR'
+        'promote:Share a PR lesson with every repo'
         'forget:Delete a PR lesson'
         'help:Memory help'
     )

@@ -2487,6 +2487,19 @@ safeGitEnv(;' ;;
         [ -n "$CASE_FAILS" ] || { CASE_FAILS="$saved_fails"; nok "positive control '$name' was not flagged (allowToken guard is blind to it)"; continue; }
         CASE_FAILS="$saved_fails"
     done
+    # A shorthand helper binding in a dynamic-import destructuring ({ safeGitEnv }) must be
+    # flagged by the import rule AND the indirect rule: ident() alone also flags it, so the
+    # plainDestructure helper-name check is only pinned by requiring the import message.
+    t="$T_AT/dyn-destructure-shorthand"
+    mkdir -p "$t/util"
+    cp "$src/util/safe_git.ts" "$src/util/base_guard.ts" "$src/util/modernize_unit.ts" "$t/util/"
+    printf '%s\n' 'const { safeGitEnv } = await import("./util/safe_git.ts"); void safeGitEnv;' > "$t/offender.ts"
+    saved_fails="$CASE_FAILS"; CASE_FAILS=""
+    allowtoken_scan "$t"
+    case "$CASE_FAILS" in
+        *"safe_git imported by alias"*"used indirectly"*|*"used indirectly"*"safe_git imported by alias"*) CASE_FAILS="$saved_fails" ;;
+        *) CASE_FAILS="$saved_fails"; nok "positive control 'dyn-destructure-shorthand' must be flagged by both the import and the indirect rule" ;;
+    esac
     # A BOM-prefixed JSON module defeats node JSON.parse but loads in bun: an
     # unparseable *.json must fail closed, not be skipped.
     t="$T_AT/json-parse"

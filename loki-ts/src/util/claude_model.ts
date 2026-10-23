@@ -109,3 +109,27 @@ export function claudeThinkingHasAdaptive(model: string): boolean {
   const types = claudeThinkingSpec(model)?.types;
   return Array.isArray(types) && types.includes("adaptive");
 }
+
+/** Session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three tier names plus the Claude aliases (opus is the top-only setting; bash dispatches it as opus, not as the sonnet-defaulted planning tier). */
+export const VALID_TIERS = new Set(["planning", "development", "fast", "opus", "sonnet", "haiku", "fable"]);
+
+/** Generic capability tiers: small|medium|high -> the canonical tier names, so downstream consumers only ever see the names in VALID_TIERS. Mirrors loki_tier_alias() in providers/models.sh. */
+export const GENERIC_TIERS: Record<string, string> = {
+  small: "fast",
+  medium: "development",
+  high: "planning",
+};
+
+/**
+ * The canonical session pin for a raw LOKI_SESSION_MODEL: trim and lowercase (run.sh's session-pin rule), generic tiers translated.
+ * Undefined when unset or blank. Throws on any other value, naming the valid set, so a pin is run or refused and never replaced by the provider default.
+ */
+export function canonicalSessionPin(raw: string | undefined): string | undefined {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (!v) return undefined;
+  const pin = GENERIC_TIERS[v] ?? v;
+  if (!VALID_TIERS.has(pin)) {
+    throw new Error(`unknown LOKI_SESSION_MODEL '${(raw ?? "").trim()}' (small|medium|high, planning|development|fast, or opus|sonnet|haiku|fable)`);
+  }
+  return pin;
+}

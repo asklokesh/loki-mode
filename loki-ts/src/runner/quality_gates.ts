@@ -26,7 +26,7 @@
 // bash gates, INCLUDING the reviewer dispatcher. The default dispatcher
 // (claudeReviewer) shells out to `claude -p` with the same trust guards as the
 // bash _dispatch_reviewer (autonomy/run.sh:_dispatch_reviewer): no --model
-// (security-sentinel must never route to Fable), --disallowedTools tree-mutation
+// (security-sentinel keeps the account default), --disallowedTools tree-mutation
 // guard, CAVEMAN_DEFAULT_MODE=off so the parsed VERDICT line is not reworded.
 // The SELECTION + AGGREGATION orchestration around it is real, as is the
 // escalation ladder and failure-count persistence.
@@ -51,7 +51,7 @@ import {
   permissionArgv,
   reviewerModelForTier,
 } from "../providers/claude_flags.ts";
-import { judgeJson, sdkJudgeAvailable, type Effort } from "./sdk_invoker.ts";
+import { judgeJsonOutcome, judgeOutcomeNote, sdkJudgeAvailable, type Effort } from "./sdk_invoker.ts";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { withChildLedger } from "../util/child_ledger.ts";
@@ -1573,12 +1573,11 @@ export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 // autonomy/run.sh). The orchestrator hands a fully self-contained prompt (diff,
 // changed files, checks, strict VERDICT/FINDINGS contract) and expects raw text
 // back, which parseVerdict then parses. Trust guards mirrored from bash:
-//   - By DEFAULT no --model: reviewers run on the account default and are NEVER
-//     routed to Fable. Fable's safety classifiers refuse cybersecurity content
-//     and would end a security-sentinel turn with stop_reason "refusal" (no
-//     VERDICT line), silently breaking the council gate. The ONLY opt-in pin is
-//     LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) - the founder's
-//     "advisor opus if needed or user opted". See the long comment in bash
+//   - By DEFAULT no --model: reviewers run on the account default. The ONLY
+//     opt-in pin is LOKI_ADVISOR_MODEL (haiku|sonnet|opus; any other value is
+//     ignored) - the founder's "advisor opus if needed or user opted". A turn
+//     with no VERDICT is never a PASS, and a non-ok SDK judge outcome is named
+//     in the blocking finding (judgeOutcomeNote). See the comment in bash
 //     _dispatch_reviewer.
 //   - --disallowedTools tree-mutation guard (default ON; opt out
 //     LOKI_REVIEW_TOOL_GUARD=0): a reviewer must not casually mutate the tree.
@@ -1680,7 +1679,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
     ? async (...a) => { const r = await run(...a); return { ...r, stdout: streamFinalResult(r.stdout, format) }; }
     : run;
   const argv = ["claude", ...permissionArgv()];
-  // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
+  // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus) wins, else
   // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
   // HIGH-tier changes and moat reviewers keep the account default.
   await ensureClaudeHelpCache();
@@ -1701,17 +1700,22 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
   // in-process via the pure-HTTPS @anthropic-ai/sdk judge (no claude binary) and
   // re-materialize the SAME legacy VERDICT/FINDINGS text so parseVerdict et al are
   // untouched. Mirrors the bash _dispatch_reviewer SDK branch, which runs BEFORE
-  // the claude --json-schema block. Fail-closed: judgeJson returns null on any
-  // miss (no key/transport/refusal/malformed) and a bad rematerialize returns
-  // null -> fall through to the claude paths below (never a PASS on a miss;
-  // rematerialize forces FAIL on Critical/High). Calls judgeJson directly rather
-  // than spawning bin/loki -- we are already inside the loki-ts process.
+  // the claude --json-schema block. Fail-closed: any non-ok judge outcome
+  // (truncated/refused/context_exceeded/transport/malformed) and a bad
+  // rematerialize fall through to the claude paths below (never a PASS on a
+  // miss; rematerialize forces FAIL on Critical/High). The outcome name rides
+  // along (sdkNote) into any blocking finding those paths produce. Calls
+  // judgeJsonOutcome directly rather than spawning bin/loki -- we are already
+  // inside the loki-ts process.
+  let sdkNote = "";
+  const failFinding = (msg: string): string =>
+    `VERDICT: FAIL\nFINDINGS:\n- [Critical] ${msg}${sdkNote ? ` (${sdkNote})` : ""}`;
   if (process.env["LOKI_SDK_CODE_REVIEW"] === "1" && existsSync(CODE_REVIEW_SCHEMA_PATH)) {
     try {
       const schema = JSON.parse(readFileSync(CODE_REVIEW_SCHEMA_PATH, "utf8")) as Record<string, unknown>;
       const rawTo = Number(process.env["LOKI_SDK_REVIEW_TIMEOUT"]);
       const timeoutMs = (Number.isFinite(rawTo) && rawTo > 0 ? rawTo : 180) * 1000;
-      const obj = await judgeJson({
+      const sdkOutcome = await judgeJsonOutcome({
         prompt,
         schema,
         model: process.env["LOKI_SDK_REVIEW_MODEL"] || resolveClaudeModel("sonnet"),
@@ -1719,9 +1723,11 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
         timeoutMs,
         ledger: { lokiDir: lokiDir(), phase: "reviewer" }, // COST-WALL
       });
-      if (obj !== null) {
-        const legacy = rematerializeCodeReview(JSON.stringify(obj));
+      if (sdkOutcome.kind === "ok") {
+        const legacy = rematerializeCodeReview(JSON.stringify(sdkOutcome.value));
         if (legacy !== null) return legacy;
+      } else {
+        sdkNote = judgeOutcomeNote(sdkOutcome);
       }
     } catch {
       // fall through to the claude paths below (fail-closed)
@@ -1746,7 +1752,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
         if (legacy !== null) return legacy;
       }
       // fail-closed: structured path failed -> blocking synthetic (never a PASS).
-      return `VERDICT: FAIL\nFINDINGS:\n- [Critical] structured reviewer produced no valid verdict`;
+      return failFinding("structured reviewer produced no valid verdict");
     }
   }
 
@@ -1763,11 +1769,11 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
     // A failed dispatch must not silently pass. Surface a blocking Critical so a
     // broken reviewer cannot approve a change by accident (parity with the bash
     // arm where a non-zero claude leaves an empty file -> NO_VERDICT -> not a PASS).
-    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer dispatch failed (claude exit ${r.exitCode})`;
+    return failFinding(`reviewer dispatch failed (claude exit ${r.exitCode})`);
   }
   const out = r.stdout.trim();
   if (out.length === 0) {
-    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer produced no output`;
+    return failFinding("reviewer produced no output");
   }
   return r.stdout;
 };

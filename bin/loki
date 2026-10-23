@@ -135,10 +135,12 @@ elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
     # which would make the canonical form fail with "Unknown command" while a
     # deprecated alias the old dist still knows silently works -- the exact
     # deprecation inversion the report-kpis route exists to prevent. So when src
-    # exists AND is newer than dist (`-nt`, available on bash 3.2), prefer the src
+    # exists AND any file under loki-ts/src is newer than dist (one early-exit
+    # `find -newer`, portable to bash 3.2 and BSD/GNU; cli.ts alone is not enough
+    # because an edit to any other src file also leaves dist stale), prefer the src
     # form so dev runs never execute a stale dispatcher. Released channels have no
     # src, so they keep using dist unchanged.
-    if [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ] && [ "$REPO_ROOT/loki-ts/src/cli.ts" -nt "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
+    if [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ] && [ -n "$(find "$REPO_ROOT/loki-ts/src" -type f -newer "$REPO_ROOT/loki-ts/dist/loki.js" -print -quit 2>/dev/null)" ]; then
         BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
     fi
 elif [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
@@ -916,7 +918,7 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|estimate|trust|proof|receipt|wiki|crash|control|contract|slack|queue|issues|answer|undo|verify-pr|completion|__complete)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|estimate|trust|proof|receipt|wiki|crash|control|contract|slack|queue|issues|answer|undo|runs|verify-pr|completion|__complete)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).

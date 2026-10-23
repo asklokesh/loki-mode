@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "tasks": {
+    "fd-1-kv-parser": {
+      "reason": "Overlay accepted two stated-rule violations (rc=0): duplicate detection on the unstripped key missed whitespace variants, and case-insensitive duplicate detection was never rejected. Its rows must not feed any claim.",
+      "superseded_by": "fd-1b-kv-parser",
+      "retired": "2026-10-23"
+    },
+    "fd-2-two-module-untested": {
+      "reason": "Overlay accepted an edit to the existing shout() or bracket() that changed their output (rc=0), against the stated rule 'do not change the existing functions'. Its rows must not feed any claim.",
+      "superseded_by": "fd-2b-two-module-untested",
+      "retired": "2026-10-23"
+    },
+    "fd-3-refactor-invariant": {
+      "reason": "Overlay accepted a refactor that raised ValueError for a bad tax rate, ignored a bad price, or checked a negative quantity only on the first item (rc=0), against the stated rule 'raise the same errors for every input'. Its rows must not feed any claim.",
+      "superseded_by": "fd-3b-refactor-invariant",
+      "retired": "2026-10-23"
+    },
+    "fd-4-cli-exit-codes": {
+      "reason": "Overlay accepted sorted or deduplicated files, a total instead of per-file word count, --min-words 0 rejected, a fractional N accepted, usage errors after output had started, and a directory operand that crashed (rc=0), each against a stated rule. Its rows must not feed any claim.",
+      "superseded_by": "fd-4b-cli-exit-codes",
+      "retired": "2026-10-23"
+    }
+  }
+}

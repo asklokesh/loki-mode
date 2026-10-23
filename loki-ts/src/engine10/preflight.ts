@@ -1,7 +1,7 @@
 import { accessSync, constants as fsc, mkdirSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
-import { safeGitRun } from "../util/safe_git.ts";
+import { safeGitRun } from "../util/safe_git.ts"; import { canonicalSessionPin } from "../util/claude_model.ts";
 import { claudeLoginProbeCached, ghAuthProbeCached, providerAuthPath, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
 import { probePublish, recordPublish } from "../util/engine_origin.ts";
@@ -19,11 +19,13 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   let [wt, name, email, head] = await reads(); let initFatal: string | undefined; // TEN-UX-01: only a truly empty folder is initialised
   if (wt.exitCode !== 0 || wt.stdout.trim() !== "true") { const i = await initEmptyRepo(o.repoDir, env); if (i.notice) { warnings.push(i.notice); [wt, name, email, head] = await reads(); } else initFatal = i.fatal; } // re-read only when auto-init ran
   const envVar = CLI_ENV_VAR[o.provider]; const cli = (envVar && env[envVar]?.trim()) || o.provider; const cliOk = envVar ? !!Bun.which(cli, { PATH: env.PATH ?? process.env.PATH ?? "" }) : true; // resolve against the given env's PATH, never the process's
+  let pinErr: string | undefined; if (o.provider === "claude") { try { canonicalSessionPin(env["LOKI_SESSION_MODEL"]); } catch (e) { pinErr = `${(e as Error).message}; set a valid value or unset it (the run would otherwise drop the pin and use the provider default model)`; } } // FC-ENGINE10-IGNORES-SESSION-MODEL-PIN: refuse, never substitute
   const fatal =
     wt.exitCode !== 0 || wt.stdout.trim() !== "true" ? (initFatal ?? NOT_A_REPO(o.repoDir)) :
     !name.stdout.trim() || !email.stdout.trim() ? `git identity is not set; run: git config user.name "you" && git config user.email "you@example.com"` :
     !envVar ? `the v10 engine has no ${o.provider} invoker yet` :
     o.provider !== "claude" && truthy(env["LOKI_HOST_GUARD"]) ? `LOKI_HOST_GUARD=1 is set but provider '${o.provider}' has no enforced PreToolUse hook; unset LOKI_HOST_GUARD or use --provider claude` :
+    pinErr ? pinErr :
     !cliOk ? `provider CLI '${cli}' is not on PATH; install it or set ${envVar} to its path${requirementFix(o.provider) ? `. Fix: ${requirementFix(o.provider)}` : ""}` :
     head.exitCode !== 0 ? "repository has no commits; run: git add . && git commit -m init" :
     null;

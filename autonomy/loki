@@ -1856,7 +1856,7 @@ show_help_all() {
     echo "  steer \"<note>\"    Nudge a running build (Loki 10 engine; legacy loop needs LOKI_PROMPT_INJECTION=true)"
     echo ""
     echo "Verify / trust:"
-    echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
+    echo "  verify [base] [--fast]  Deterministic PR verification (CI-gate exit codes; --fast: no model, no network)"
     echo "  verify-pr <pr>   Verify a PR against its linked issue; 'verify-pr respond <pr>' fixes review comments"
     echo "  keys export     Print the public receipt-signing key (JWK) for third-party verify --pubkey"
     echo "  review [opts]    Standalone code review with quality gates"
@@ -15471,7 +15471,7 @@ _loki_bun_delegate() {
     elif [ -f "$root/loki-ts/dist/loki.js" ]; then
         cli="$root/loki-ts/dist/loki.js"
         # Dev checkout: a gitignored dist older than src is stale (same rule as bin/loki).
-        if [ -f "$root/loki-ts/src/cli.ts" ] && [ "$root/loki-ts/src/cli.ts" -nt "$cli" ]; then
+        if [ -f "$root/loki-ts/src/cli.ts" ] && [ -n "$(find "$root/loki-ts/src" -type f -newer "$cli" -print -quit 2>/dev/null)" ]; then
             cli="$root/loki-ts/src/cli.ts"
         fi
     elif [ -f "$root/loki-ts/src/cli.ts" ]; then
@@ -23124,6 +23124,11 @@ main() {
         mcp)
             cmd_mcp "$@"
             ;;
+        runs)
+            # R100-008: Bun-only; bin/loki routes here only when bun is absent.
+            echo "loki runs needs the Bun runtime (install bun, then re-run: loki runs)" >&2
+            exit 2
+            ;;
         undo)
             # UNDO-1: Bun-only (verifies the receipt with the Bun verifier); bin/loki routes here only when bun is absent.
             echo "loki undo needs the Bun runtime (install bun, then re-run: loki undo <run-id> --plan)" >&2
@@ -26304,7 +26309,8 @@ except Exception as e:
             echo "  clear [type]      Clear learnings (all or specific type)"
             echo "  compound [cmd]    Compound-solutions knowledge store (was: loki compound)"
             echo "  lessons [--json]  PR review lessons with their uses and outcomes"
-            echo "  learn <o/r#PR>    Learn lessons from a merged PR's review comments"
+            echo "  learn <o/r#PR>    Learn lessons from a merged PR's review comments and human commits"
+            echo "  promote <prl-id>  Share one lesson with every repo's briefs (undo with forget)"
             echo "  forget <prl-id>   Delete one PR lesson and print its text"
             echo "  brief [--task T]  Print the lessons and learnings block injected into a run"
             echo ""

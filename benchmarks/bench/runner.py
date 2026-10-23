@@ -578,6 +578,9 @@ def run_task(task_path: str, adapter_name: str, *,
     that cannot apply an effort raises rather than record one it did not run.
     """
     spec = load_task(task_path)
+    retired = schema.retired_tasks().get(spec["id"])
+    if retired:
+        raise ValueError("task %s is retired (%s); use %s" % (spec["id"], retired.get("reason", ""), retired.get("superseded_by", "its replacement")))
     fixture_dir = resolve_fixture_dir(task_path, spec)
     task_dir = os.path.dirname(os.path.abspath(task_path))
     task_hash = schema.compute_task_hash(spec, fixture_dir)

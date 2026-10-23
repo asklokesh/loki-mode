@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "id": "fd-4b-cli-exit-codes",
+  "source": "loki-bench-discriminator",
+  "source_ref": "benchmarks/bench/tasks/fd-4b-cli-exit-codes.json",
+  "title": "Small CLI with a stated exit code contract",
+  "fixture": "../fixtures/fd-4b-cli-exit-codes",
+  "prompt": "Build a single Python file named `wcl.py`, a command line tool run as `python3 wcl.py [--min-words N] FILE...`.\n\nFor each FILE, in the order given, print one line to stdout: `<lines> <words> <bytes> <name>` (counts separated by single spaces, `<name>` exactly as given; `lines` is the number of newline characters, `words` is the number of whitespace separated tokens, `bytes` is the file size in bytes).\n\nExit code contract:\n- 0: every file was read and (if `--min-words` is given) every file has at least N words.\n- 1: at least one FILE could not be read. Print `wcl: <name>: cannot read` to stderr for each such file and still process the remaining files. This takes precedence over 3.\n- 2: usage error (no FILE given, `--min-words` without a non-negative integer, or an unknown option). Print a message to stderr and nothing to stdout.\n- 3: all files were read but at least one has fewer than N words.\n\nUse only the standard library. Keep everything in `wcl.py`.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 60,
+    "overlay": "../fixtures/fd-4b-cli-exit-codes-overlay"
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 900
+}

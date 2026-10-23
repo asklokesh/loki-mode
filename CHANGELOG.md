@@ -5,6 +5,156 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.66.2 (2026-10-23)
+
+### Fixed
+- Go and cargo test ids are attributed to the base only when the change cannot own them (FC-FULLSUITE-GO-CARGO-IDS, rq02b-r6). Approval: "Ship rq02b-r6: one commit, de98e00583e0f0c5f48baf5c2e6fd7b9aa7e1b68, which is based on origin/main a7162f1f3, and merge-tree exits 0. rev-c is the sole HIGH reviewer and approves it. This supersedes the r5 SHA 5e51076f7, so do not merge r5." (rev-c)
+
+## v11.66.1 (2026-10-23)
+
+### Fixed
+- The release approval gate approves a range by exact SHA, fails closed on a bad range, reuses release.sh RELEASE_DIST_FILES and denies a rowless approval by name (FC-RELEASE-UNNAMED-STACKED-PARENT, #436). Approval: "ship pd/rag436-r3 ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. It is 3 commits over origin/main 69ea3491d, with an FC-only conflict. Pick in order: 525f46cb81d83a2e7da167bda33e9d0550443ece, 21910793e94f70129f689456d2252f324f96852e, ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. APPROVE ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803" (rev-b)
+
+## v11.66.0 (2026-10-23)
+
+### Added
+- /loki fix, /loki explain and /loki reseal PR comment commands (#360).
+
+### Fixed
+- The /loki fork refusal is guarded, the fix chain runs end to end, and comments no longer cancel queued commands; the verify-pr stub asserts its subcommand and the publish jobs get their own concurrency group (#360, FC-WORKFLOW-STUB-IGNORES-SUBCOMMAND-AND-SHARED-PUBLISH-GROUP). Approval: "ship pd/360-r3 1cf441b003593f7444c973a5dc070a2688a9da99. It is 3 commits over origin/main 89a8ce8c7, with an FC-only conflict. Pick in order: 976da0716ba7cc3ea3dcdd026e8842aae85f548e, 6252fe6257099370c9fb63ed6a4493ea83a778c0, 1cf441b003593f7444c973a5dc070a2688a9da99. APPROVE 1cf441b003593f7444c973a5dc070a2688a9da99" (rev-b)
+
+## v11.65.6 (2026-10-23)
+
+### Fixed
+- The python leg of the two model-override parity matrices is batched, 445s to 103s (FC-MODEL-OVERRIDE-TEST-TOO-SLOW). Approval: "rev-b APPROVE: ship pd/318r-r4 706028a9188c9f6337b1f4b05fe25292cccca77f. 5 commits over origin/main. Pick in order: 868a96c9f0e5ea87e26a3df971b0cd47465a0d20, 529d4f9d5de3329c34cb193753d48c2dba0693f8, 584689c0f8a867b7e4fcca03754db1e9f514c97f, bf99fa38b25e3ab91c37a01d7d71dd55dc59b812, 706028a9188c9f6337b1f4b05fe25292cccca77f. FC-only conflict. APPROVE 706028a9188c9f6337b1f4b05fe25292cccca77f"
+
+## v11.65.5 (2026-10-23)
+
+### Fixed
+- Proof-verify parity and MCP config tests use a load-aware time budget, with measured sibling sweep counts and the sibling mutant recorded for FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT. Approval: "rev-b APPROVE: ship pd/loadaware c471eda6168dcd3c30de627aa45a6c459bc7fcd1. 2 commits over origin/main. Pick in order: 11493942d4c4e253fc03a384c560a3407c878e75, c471eda6168dcd3c30de627aa45a6c459bc7fcd1. FC-only conflict. APPROVE c471eda6168dcd3c30de627aa45a6c459bc7fcd1"
+
+## v11.65.4 (2026-10-23)
+
+### Fixed
+- The first-run gate test now matches the real context trigger in loki-ts/src/e10ext/context.ts, so its stub gate no longer passes cases the real gate fails (357c3-r2). Approval: "tl-324: APPROVE pd/357c3-r2 46bf09fbe29754ff65f46e4cdc61d8748c865b6d. Single commit on origin/main (no stacked parents)".
+
+## v11.65.3 (2026-10-23)
+
+### Fixed
+- The stale-dist guard in bin/loki and autonomy/loki now compares every loki-ts/src file, not cli.ts alone, so an edited source file triggers a rebuild (dist-freshness-guard). Approval: "APPROVE pd/dist-freshness-guard b8c98f864e2df03898addd7682de73a7b8a42771 (tl-2, MEDIUM)".
+
+## v11.65.2 (2026-10-23)
+
+
+
+### Fixed
+- loki verify --fast and its flags appear in help and in the bash and zsh completions, pinned by the drift test (pd/fastcomp). Approval: "APPROVE pd/fastcomp d5798c76f (tl-2, LOW)", full SHA d5798c76fc4e4e21f4b5d9d81b8a1fa997a98bbe.
+
+## v11.65.1 (2026-10-23)
+
+
+
+### Fixed
+- The supervisor_backstop and route_matrix test bounds scale with machine load, the SIGTERM to SIGKILL gap is measured from the worker's own signal timestamp, and the fake repo dir is cleared at each stage boundary (pd/loadaware). Approval: "APPROVE (LOW, tl-324): pd/loadaware branch head at full SHA 00b2a89160fba583be733074a1f74b0ef1175b49 (merge commit; second parent d8fec54ac is origin/main)". Shipped by merging that head; it contains 2264accef, 7385f1da5, 8722d92ae and 28b795fd1.
+
+## v11.65.0 (2026-10-23)
+
+
+
+### Added
+- The engine10 machine journals a per-stage diff stat for stages that change the tree, and the wall stage journals its own diff stat (pd/stage-diffstat). Approval: "APPROVE (MEDIUM, tl-324): pd/stage-diffstat branch head at full SHA c7a5f00f7b869e227062afe4529a8f11be19409d (merge commit, parents f365f4e2a and origin/main 5cae48655)". Shipped by merging that head.
+
+## v11.64.0 (2026-10-23)
+
+
+
+### Added
+- The dashboard run replay scrubber shows one position per stage with the journal's diff, tests and cost (#422, R100-082). Approval: "APPROVE (LOW, tl-324): #422 / R100-082 run replay scrubber, pd/r422 at full SHA 6f10c92797677550c191e9bf115f5d1aa4f89ff7".
+
+## v11.63.10 (2026-10-23)
+
+### Fixed
+- The dashboard derives the child LOKI_* env allowlist from one data file and guards every runner env read (FC-CHILD-ENV-HAND-ALLOWLIST-DRIFT, #305). Approval: "APPROVE pd/rq51-child-env2 c38467306 (tl-2, MEDIUM). 41 passed, two mutants red and restored, FC row present, merge-tree rc=0, no dashes or emoji."
+
+## v11.63.9 (2026-10-23)
+
+### Fixed
+- A rejected API key ends the run naming its cause and the fix (FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG); engine markers are neutralized in child and CLI stderr as well as stdout (FC-AGENT-TEXT-FORGES-ENGINE-MARKER); a forged sdk-loop auth line on CLI stderr is not fatal:auth end to end. Approval: "SHIP keycause-final2: rev-c APPROVES 11a9fffe4, e0a417163, c939d0786 and e324c350c (head e324c350c). merge-tree against fresh origin/main gives rc=0. tsc rc=0. fatal_e2e, session_dispatch, providers, sdk_stream_parser and output give 196 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
+## v11.63.8 (2026-10-23)
+
+### Fixed
+- The full suite runs under the project interpreter and the repo-identity note names its fix (FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER); the full-suite baseline run line quotes each word so a spaced repo path still runs (FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH); a Python repo with no ruff and a repo with no UI no longer end PARTIAL (FC-LINT-TOOL-NEVER-USED-BY-PROJECT, FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN). Approval: "Ship approved for A-r5+C-r4 (pd/partial-harness-ac-r5), head e6bc96d84. The range over origin/main is 7e7a30f7e, e409e4b91, 8e5dc5028 and e6bc96d84, the merge of origin/main 1b36976dc. tsc gives rc=0, verify.test.ts plus visual_evidence.test.ts give 85 pass and 0 fail, and merge-tree against origin/main 5bc5f4dd0 gives rc=0. Merge by SHA e6bc96d84." (rev-c, only assigned HIGH reviewer per CoS ruling)
+
+## v11.63.7 (2026-10-23)
+
+### Fixed
+- The engine10 runner honors LOKI_SESSION_MODEL and refuses an unrecognized pin (FC-ENGINE10-IGNORES-SESSION-MODEL-PIN); the bash parity assertion is typechecked. Approval: "SHIP e10-session-model: rev-c APPROVES 8721d0612 and 3ab3843de (head 3ab3843de). merge-tree against fresh origin/main gives rc=0. tsc rc=0. session_l1_model, preflight and claude_model_bundle give 95 pass and 0 fail. start.test.ts gives 94 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
+## v11.63.6 (2026-10-23)
+
+### Fixed
+- The PAUSED.md parity comment in loki-ts anchors on the shared no-TTY wording, not run.sh line numbers (#212 criterion 2). Approval: "APPROVE pd/rq72 5a26e8f50 (tl-2, LOW): comment-only in intervention.ts; merge-tree clean; "PAUSED.md resume wording" tests 2/0; the anchor string exists at run.sh:28721, 28743 and intervention.ts:375."
+
+## v11.63.5 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test reads the full grouped help from loki help all and tracks its 32 entries (FC-TEST-ALIAS-FWD-HELP-PAGE-DRIFT). Approval: "APPROVE pd/alias-help-groups2 a1dcdf113 stacked on pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): 211/0 on bash and bun routes, 154 spawns; repoint-to-plain-help mutant red (202/9) and restored; only conflict is docs/v10/FAILURE-CLASSES.md (keep-both; both rows append at EOF); ships after rq53."
+
+## v11.63.4 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test shares one alias --json run between two assertions and prints the CLI spawn count (FC-TEST-ALIAS-FWD-REDUNDANT-SPAWN, #183). Approval: "APPROVE pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): merge-tree rc=0; alias-forwarding suite 154 spawns, 202/9 on both routes, same 9 failing rows as base 5cae48655; export keeps its second spawn; empty-alias-stdout mutant red (189/22) and restored."
+
+## v11.63.3 (2026-10-23)
+
+
+
+### Fixed
+- A sealed Wall path always runs, not only those test discovery lists; a sealed Rust Wall file under tests/ runs as cargo test --test <name>; a sealed Go Wall file runs only its own Test, Fuzz and Example functions via go test -run; and the real go test check gets an explicit 60s timeout (wallgo-r5). Approval: "ship pd/wallgo-r5 37127bc3d4ea913a214ad0c7ac0ad68027158e65 (HIGH, rev-b APPROVE). It is 5 commits over origin/main 5746a4550, linear with 0 merges". rev-c holds no open BLOCK on the wallfile or wallrust commits.
+
+## v11.63.2 (2026-10-23)
+
+
+
+### Fixed
+- get_state_manager caps its per-root cache with an LRU like the TypeScript side (rq35). Approval: "APPROVE pd/rq35 384aca714 (tl-2, LOW), ships after race-impl-hang e59771e33 and rq25 66de3ec0b".
+
+## v11.63.1 (2026-10-23)
+
+
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
+## v11.62.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 moat test pins the shorthand helper binding in a dynamic-import destructure to both the import and indirect rules (p9-shorthand, rebased onto main). Approval: "Ship: p9-shorthand. rev-c HIGH re-APPROVE on 61ca6c363, which replaces my earlier a060fbc15 + 518d2891e line. The range is the single commit 61ca6c363 on origin/main."
+
+## v11.62.0 (2026-10-23)
+
+
+
+### Added
+- PR lessons are learned only from human commits: bot authors and merge commits yield no lesson, at most MAX_HUMAN_COMMITS commits are read, commits without a patch are skipped, secrets are redacted before storage, and loki memory promote shares a lesson across repos (pd/364a-r2 and pd/364b-r2). Approval: "tl-324: APPROVE pd/364b-r2 a511d4159a0c06216a3744d77f2267fc968424f8, a stack of four commits on origin/main; ship all four in order: fee344a42cc0f3869c5cfa80f3c6213061203423, dba9b20f32a73ab9c99eb3f6db7fbe184795a480 (364a-r2), 8a7073c953bc92a6f04d4218e99168e334ab29b7, a511d4159a0c06216a3744d77f2267fc968424f8 (364b-r2)".
+
+## v11.61.2 (2026-10-23)
+
+
+
+### Fixed
+- The bench retires the fd-1 to fd-4 overlays that passed a stated-rule near-miss, adds fd-1b to fd-4b, and fd-3b checks a negative quantity before a bad tax rate (pd/fd1b). Approval: "tl-324: APPROVE pd/fd1b head b7d91e38382250c508bc09308ed8b63d2614fdf0. The branch holds a merge commit, so ship by fast-forwarding or merging this head". Shipped by merging that head.
+
 ## v11.61.1 (2026-10-23)
 
 
