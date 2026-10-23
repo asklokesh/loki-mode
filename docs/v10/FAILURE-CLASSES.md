@@ -549,6 +549,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the cold one-time init is warmed in a beforeAll with its own 60s budget, and every test that performs a real rasterize passes an explicit RENDER_TIMEOUT_MS (30s); a test that does real wasm work must not rely on the 5s default.
 - Fixture: loki-ts/tests/cockpit.test.ts. Red evidence: with RENDER_TIMEOUT_MS=1 and the warm disabled both render tests fail "timed out after 1ms"; with the fix 26 pass, 0 fail.
 
+## FC-TEST-BULK-FIXTURE-DEFAULT-TIMEOUT A test that writes thousands of files and runs git reddens on a loaded host at bun's 5s default (MAIN-RED P12-12d)
+- User saw: P12-12d "untracked growth is seen even with a very large tracked change list" red on origin/main 4b0bbb0ca and bc2e0a8ff. Raw: `(fail) ... [21552.81ms]` then `this test timed out after 5000ms` at 1-min load 27; no assertion failed.
+- Law: evidence or it did not happen; never weaken the assertion. The test and session.ts are unchanged since 2026-10-16/17 (git log -S2100), so this is a cost-versus-default-budget fault in the test, not a product regression.
+- Cause (measured): the test writes 2100 files twice plus git add/commit, about 20s under load; bun's default per-test timeout is 5000ms.
+- Siblings swept: same family as FC-50; the only other bulk-file git fixture in session.test.ts is the sibling test in the same describe, which is small.
+- Mechanism: the fixture size is a named SPILL=1100 (just over the 1000-file per-list budget it must exceed) and the test carries an explicit 60_000 timeout.
+- Fixture: loki-ts/tests/engine10/session.test.ts. Red: unmodified, `bun test tests/engine10/session.test.ts -t P12-12d` fails "timed out after 5000ms"; green: 2 pass, 0 fail. Mutant (one shared file budget across both lists in diffSignature) fails the test by assertion, 1 pass 1 fail.
+
 ## FC-51 A publish-path change silently dropped a field a later gate depends on (PROMOTE-GITHEAD)
 - User saw: 11.3.1 stuck on the npm `next` tag; Promote run 37784566223 failed "FATAL: loki-mode@11.3.1 has no gitHead on npm", so the release never reached latest, Docker latest or Homebrew. Every later release would stick the same way.
 - Law: evidence or it did not happen; a change to one stage must keep every field a downstream stage reads.
@@ -1601,3 +1609,27 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: effort rides in argv as `-c model_reasoning_effort=<e>` on all four sites; env vars kept for log and test visibility only.
 - Fixture: tests/test-codex-tier-models.sh (stub codex on PATH per tier; scanner fixture plus repo sweep), tests/test-codex-argv-model.sh T2, loki-ts/tests/runner/providers.test.ts. Executed mutation: comment line put back between the prefix and `codex` goes red.
 - Open: the zero-token header read is the evidence; no paid run completed (the local config model is rejected by the ChatGPT account).
+
+## FC-HELP-DRIFT-WINDOW-CAP The help-drift guard went red on main again because five consecutive slice releases named no command, so its fixed 5-section window held nothing and it called its own extraction broken
+- User-visible vs raw: raw (a red gate on a clean main). tests/test-help-changelog-drift.sh exits 1 with "no 'loki ...' invocations (backticked or plain) in the newest 5 CHANGELOG sections; extraction is broken" on origin/main 11ab1df18 (v11.60.6) and on a78f48031 (v11.60.8), after FC-HELP-DRIFT-PLAIN-PROSE-CHANGELOG shipped in v11.60.6.
+- Law: the same as FC-HELP-DRIFT-PLAIN-PROSE-CHANGELOG, a guard that reads nothing proves nothing and is not silenced by relaxing the assertion or by adding text to the CHANGELOG; and a window sized in sections is a rate assumption that slice-per-release cadence (3-10 per hour) breaks.
+- Cause (measured): sections v11.60.4 to v11.60.8 are plain prose naming no `loki <word>`; the plain-prose extractor is correct, the cap was the fault. The nearest section naming an invocation is within 10 sections (LOKI_HELP_DRIFT_SECTIONS=LOKI_HELP_DRIFT_WINDOW=10 gives a green real run), so a cap of 5 is red today and any larger fixed cap is red again after enough command-free releases.
+- Siblings swept: the only other section-count reader of CHANGELOG is the per-version release-notes extraction (scripts/release-notes.sh, tests/test-release-notes.sh), which selects one named version and has no window.
+- Mechanism: LOKI_HELP_DRIFT_WINDOW defaults to 1000 (the whole file). The window still widens one section at a time and stops at the nearest section that names an invocation, so only the newest invocation-bearing sections are checked. "Extraction is broken" now means no invocation anywhere in the CHANGELOG. The assertion text is unchanged.
+- Fixture: tests/test-help-changelog-drift.sh self-test: an invocation six sections down passes (red at the old cap, green now) and a CHANGELOG with no invocation anywhere still reports broken extraction.
+
+## FC-COMMIT-STAGES-USER-UNTRACKED A commit publishes the user's untracked files that were present before the run (FC-42 family)
+- Law: only what the run changed is published; a pre-run user file the run left untouched is never staged into a Loki commit (the same rule dropSet already applies to pre-run tracked dirt).
+- Cause (measured, #353 CW-18 test): intake records preexisting_untracked_blobs for every untracked file, but only discardIfSatisfied read it. The commit stage and the supervisor backstop run `git add -A` and dropSet excluded only untouched pre-run tracked dirt, so a normal VERIFIED run committed the user's untracked notes.
+- Siblings swept (every site that stages files): commit stage (seal.ts) and backstopCommit (commit_filter.ts, via supervisor) both go through dropSet and are fixed together; attempts.ts, modernize/scheduler.ts and verify.ts stage inside fresh worktrees that hold no user untracked files; check_result.ts and pr_lessons.ts add explicit run-owned paths only; discard.ts already protects them.
+- Mechanism: untouchedUntracked (e10ext/preexisting_dirty.ts) returns the intake-untracked files whose bytes and mode still match the snapshot; dropSet resets them from the staged set. A file the run edited stays the run's change. Crash-written files are not in the snapshot (see FC-CRASH-WORK-READ-AS-PREEXISTING).
+- Fixture: loki-ts/tests/e10ext/commit_filter_guard.test.ts (commit stage and backstop); red before the change, green after; mutants: ignore the snapshot, treat an edited file as untouched.
+
+## FC-PROVIDER-VERSION-PROBE-FULL-ENV The cline `--version` probe in providers/mcp_config.ts spawned with the full parent env, handing GH_TOKEN, GITHUB_TOKEN and SSH_AUTH_SOCK to an external binary, and main went red on full_env_spawn_guard from 35411094c (CW-10) on
+- User-visible vs raw: raw (a credential-exposure boundary and a red guard on main, not a user message).
+- Law: no child process receives the ambient GitHub credentials (FC-40); a spawn gets tokenFreeEnv or a listed reason.
+- Cause (measured): `clineVersion()` called `spawnSync("cline", ["--version"], { env: process.env })`. The version probe needs no credential, so no allowlist row is justified. tests/util/full_env_spawn_guard.test.ts reported `unlisted: loki-ts/src/providers/mcp_config.ts` alone, in `bun test tests/util` (524 tests, 1 fail) and in the full tests/providers run.
+- Order sensitivity: not reproduced. The guard is a pure static scan (walk SRC, regex per call window, compare with the allowlist file); it holds no state, mocks nothing and reads only files, so its result cannot depend on test order. "Passes in some batches" is explained by batches that never include the file (diff-selected shards run it through the walk-all-src marker only when selected). No change to the guard was needed; the behavioral test below fails independently of the guard.
+- Siblings swept: every other `process.env` spawn in providers/ is already listed with a reason (claude_flags.ts, runner/providers.ts) or token-free; mcp_config.ts is the only unlisted one (guard output).
+- Mechanism: spawn through `tokenFreeEnv(process.env)` (util/safe_git.ts), the shared scoped env builder.
+- Fixture: tests/providers/mcp_config.test.ts runs a fake `cline` that records GH_TOKEN, GITHUB_TOKEN and SSH_AUTH_SOCK with canary values set in the parent; red with `env: process.env` (restored in the mutant run), green with tokenFreeEnv. The full_env_spawn_guard goes red on the same mutant.

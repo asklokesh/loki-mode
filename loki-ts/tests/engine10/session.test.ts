@@ -579,6 +579,7 @@ describe("P12-12c diffSignature sees in-place growth of one modified file", () =
 describe("P12-12d diffSignature base path and per-list budget", () => {
   const g = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, encoding: "utf8" });
   const fixed = { files: 1, insertions: 1, deletions: 0 };
+  const SPILL = 1100; // just over the 1000-file per-list budget; each file is a real write plus a git add, so the count is the test's cost
   test("cwd in a repo subdirectory: an in-place edit of a tracked file moves the signature", () => {
     const d = mkdtempSync(join(tmpdir(), "p12-12d-"));
     try {
@@ -593,15 +594,15 @@ describe("P12-12d diffSignature base path and per-list budget", () => {
     const d = mkdtempSync(join(tmpdir(), "p12-12d-"));
     try {
       g(d, "init", "-q");
-      for (let i = 0; i < 2100; i++) writeFileSync(join(d, `t${i}.txt`), "x\n");
+      for (let i = 0; i < SPILL; i++) writeFileSync(join(d, `t${i}.txt`), "x\n");
       g(d, "add", "."); g(d, "commit", "-qm", "init");
-      for (let i = 0; i < 2100; i++) writeFileSync(join(d, `t${i}.txt`), "y\n");
+      for (let i = 0; i < SPILL; i++) writeFileSync(join(d, `t${i}.txt`), "y\n");
       writeFileSync(join(d, "new.txt"), "a\n");
       const before = diffSignature(d, fixed);
       writeFileSync(join(d, "new.txt"), "a\nbbbbbbbbbbbb\n");
       expect(diffSignature(d, fixed)).not.toBe(before);
     } finally { rmSync(d, { recursive: true, force: true }); }
-  });
+  }, 60_000); // two thousand-file writes and a git add/commit exceed bun's 5s default on a loaded host (FC-TEST-BULK-FIXTURE-DEFAULT-TIMEOUT)
 });
 
 describe("P12-12e diffSignature uses one scope from a repo subdirectory", () => {
