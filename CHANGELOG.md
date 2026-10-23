@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.0 (2026-10-23)
+
+### Added
+- RQ-49: opt-in LOKI_ULIMIT_VMEM_KB and LOKI_ULIMIT_NPROC limits on the engine10 worker spawn, and the detached deep-verify spawn runs under the same ulimit wrapper; an invalid knob records "deep verify not spawned: <reason>" in notProven and skips the spawn (FC-WORKER-NO-PROCESS-LIMITS). Approval: "APPROVE pd/rq49-ulimit-r2 4e18664caf9618e91193c1e02b488c6e7fdfa5e3 over c41353bbe (tl-2, MEDIUM; stack c41353bbe + 4e18664ca)". Picks c41353bbe and 4e18664ca. The invalid-knob branch has no test (reviewer nit, non-blocking).
+
 ## v11.71.3 (2026-10-23)
 
 ### Fixed
