@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.17 (2026-10-23)
+
+
+
+### Fixed
+- The engine10 repomap and testmap cache key is bound to its producer, cache files are private and written atomically, and the unbound-fallback and injected-fingerprint mutants are killed (pd/331). Approval: "SHIP pd/331: head 8066c01089fd1dd48c1a791590e3a8caaa0b5326 has rev-c opus HIGH APPROVE. The range is 006ef38ff..8066c0108, three commits: 5fc8c5d46, the merge d11335f4c and 8066c0108." Shipped by merging that head.
+
 ## v11.60.16 (2026-10-23)
 
 
