@@ -11,6 +11,7 @@ name: Release
 #   publish-python-sdk           PyPI loki-mode-sdk
 #   docker-build -> docker       Docker Hub asklokesh/loki-mode multi-arch, cosign keyless signature
 #   sanity                       seconds-long syntax/version check; nothing depends on it
+#   sandbox-linux                OS sandbox tests with real bubblewrap (CW-01); nothing depends on it
 # Tests, nightly, security audit, SBOM and smoke workflows were deleted: run
 # them locally (bash scripts/local-ci.sh). Every publish job is idempotent on
 # rerun; npm is never unpublished (npm deprecate is allowed).
@@ -49,6 +50,31 @@ jobs:
           python3 -m py_compile dashboard/__init__.py mcp/__init__.py
           bash tests/test-server-json-current.sh
           bash tests/test-plugin-json-current.sh
+
+  # Fix-forward signal only: no job needs this one. Runs the OS sandbox tests
+  # with real bubblewrap so the Linux cases stop skipping (CW-01, #334); a
+  # skipped test here is a failure, never a pass.
+  sandbox-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bubblewrap and pytest, allow unprivileged user namespaces
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap python3-pytest
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / true
+      - name: OS sandbox tests (no bwrap skips allowed)
+        run: |
+          set -euo pipefail
+          python3 -m pytest -q -p no:cacheprovider -rs tests/lib/test_os_sandbox.py | tee "$RUNNER_TEMP/os-sandbox.txt"
+          if grep -E '^SKIPPED' "$RUNNER_TEMP/os-sandbox.txt" | grep -qi bwrap; then
+            echo "bwrap tests skipped on Linux" >&2; exit 1
+          fi
 
   # The tarball is built ONCE here, with no secret and no write token.
   # publish-npm recomputes its sha256 and publishes exactly those bytes.
