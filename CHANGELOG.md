@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.7 (2026-10-23)
+
+### Fixed
+- The trap-task fixtures now keep judge-trap-1 pinned to its paid-trial hash and add judge-trap-1b as a new task id. Approval: "tl-324 APPROVE (MEDIUM) pd/traptasks3 single commit 10c94b836ae9006dd51bf09a8a6bda2fbe09d6d7".
+
 ## v11.67.6 (2026-10-23)
 
 ### Fixed
