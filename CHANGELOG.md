@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
+
 ## v11.60.12 (2026-10-23)
 
 ### Fixed
@@ -19,11 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The help-vs-changelog drift test now scans a 1000-section window by default, so a missing invocation can no longer hide below the old 5-section cap (FC-HELP-DRIFT-WINDOW-CAP). Approval: "tl-2 APPROVE pd/p0-helpdrift-empty-window 984a2d787 (LOW, P0)".
-## Unreleased
-
-### Changed
-- `loki verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (`loki internal wall-run`), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
-
 ## v11.60.9 (2026-10-23)
 
 ### Fixed
