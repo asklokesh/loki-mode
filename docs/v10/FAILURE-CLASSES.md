@@ -1642,6 +1642,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: currentBranch and restoreBranch (a git helper used by supervisor, base_guard and run_outputs) live in util/safe_git.ts, which owns git helpers and has no line budget; e10ext is 1492.
 - Fixture: scripts/structural-checks.sh "line budgets" PASS; loki-ts/tests/engine10/budget.test.ts and tests/util/fc25_safe_git.test.ts keep restoreBranch covered at its new path. Red on origin/main 5fa53fe11 (1513), green after.
 
+
 ## FC-TEST-SLICE-LOADER-DROPS-HELPER The cost-cache test exec'd a slice of dashboard/server.py that began at the calculator, so a helper defined just above it was dropped and 5 of 9 tests died with NameError
 - User-visible vs raw: raw (a red gate on a clean main). `python3 -m pytest -q tests/dashboard/test_api_cost_cache.py` on origin/main 11ab1df18 failed with `NameError: name '_inference_geo_multiplier' is not defined` at the calculator's return line.
 - Law: a test that execs a slice of a module must derive the slice from what the code under test calls; a hand-picked start marker silently goes stale the moment the code gains a helper above it.
