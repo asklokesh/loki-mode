@@ -221,6 +221,22 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     const c = await verifyStage.run(ctl.ctx, sig()); expect(c.data.wall_passed).toBe(true); expect((c.data.not_proven as string[]).some((n) => n.startsWith("Wall test not executed"))).toBe(false); // positive control: nothing dropped
   }, 40_000);
 
+  test("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: a sealed loki_wall_*.py the detected pytest never lists moves from the NOT PROVEN line to a real pass or fail", async () => {
+    const repoDir = mkRepo("bun-target");
+    mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repoDir, ".venv", "bin", "python"), '#!/bin/sh\nexec python3 "$@"\n'); chmodSync(join(repoDir, ".venv", "bin", "python"), 0o755); // project interpreter, so the result counts
+    const sha = baseSha(repoDir), NAMED = "Wall test not executed: loki_wall_mods.py: no runner of this repo runs this file";
+    writeFileSync(join(repoDir, "src.txt"), "changed\n"); writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 1\n");
+    const mk = (runners: TestMap["runners"]) => fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners, tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_mods.py") }] } } }).ctx;
+    const none = await verifyStage.run(mk([]), sig());
+    expect(none.data.not_proven as string[]).toContain(NAMED); expect(none.data.wall_passed).toBeUndefined(); // control: no pytest detected, still named
+    const res = await verifyStage.run(mk(["pytest"]), sig()), c = (res.data.checks as VerifyCheck[]).find((x) => x.name === "pytest:loki_wall_mods.py");
+    expect(c?.result).toBe("pass"); expect(res.data.not_proven as string[]).not.toContain(NAMED); expect(res.data.wall_passed).toBe(true);
+    writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 2\n");
+    const bad = await verifyStage.run(mk(["pytest"]), sig());
+    expect(bad.data.wall_passed).toBe(false); expect(bad.data.not_proven as string[]).not.toContain(NAMED); // a failing Wall file is a failure, never silently absent
+  }, 60_000);
+
   test("an absolute Wall path is normalized to repo-relative and still selected", async () => {
     const repoDir = mkRepo("bun-target");
     const sha = baseSha(repoDir);
