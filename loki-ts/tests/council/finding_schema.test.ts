@@ -24,6 +24,7 @@ import {
   SchemaLiteralError,
   resolveSchemaDataDir,
   CITATION_NOT_FOUND_TAG,
+  CITATION_NOT_PROVEN_TAG,
 } from "../../src/council/finding_schema.ts";
 
 describe("FINDING_SCHEMA", () => {
@@ -451,24 +452,74 @@ describe("citation existence check (positive evidence only)", () => {
       expect(cite("src/libfoo/x.ts:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM");
       expect(cite("src/lib:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM"); // the filename is not a directory component
     });
-    const diff = ["pkg/sub", "pkg/real.ts"];
+    // pkg/nco is never created on disk: the gitlink is not checked out, so these stay HIGH (labelled NOT PROVEN); the checked-out forms are in the #332 describe.
+    const diff = ["pkg/nco", "pkg/real.ts"];
     it("rule (i): a bare basename stays HIGH under a listed gitlink", () => {
-      expect(cite("s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+      expect(cite("n.ts:15", diff, ["pkg/nco"])).toBe("HIGH");
     });
     it("rule (ii): a path starting with the gitlink path plus a slash stays HIGH (it carries the final-segment component)", () => {
-      expect(cite("pkg/sub/deep/x.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+      expect(cite("pkg/nco/deep/x.ts:15", diff, ["pkg/nco"])).toBe("HIGH");
     });
     it("rule (ii): a component equal to the gitlink's final segment stays HIGH", () => {
-      expect(cite("sub/s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
-      expect(cite("a/sub/s.ts:15", diff, ["pkg/sub"])).toBe("HIGH");
+      expect(cite("nco/n.ts:15", diff, ["pkg/nco"])).toBe("HIGH");
+      expect(cite("a/nco/n.ts:15", diff, ["pkg/nco"])).toBe("HIGH");
     });
     it("a path sharing no component with any gitlink is refuted", () => {
-      expect(cite("pkg/other/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
+      expect(cite("pkg/other/x.ts:15", diff, ["pkg/nco"])).toBe("MEDIUM");
     });
     it("a substring-only near miss is refuted, never matched as a substring", () => {
       expect(cite("src/libfoo/x.ts:15", ["vendor/lib"], ["vendor/lib"])).toBe("MEDIUM");
-      expect(cite("src/sublime/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM");
-      expect(cite("pkg/subx/x.ts:15", diff, ["pkg/sub"])).toBe("MEDIUM"); // prefix without the slash boundary
+      expect(cite("src/ncolime/x.ts:15", diff, ["pkg/nco"])).toBe("MEDIUM");
+      expect(cite("pkg/ncox/x.ts:15", diff, ["pkg/nco"])).toBe("MEDIUM"); // prefix without the slash boundary
+    });
+  });
+
+  describe("submodule citation (#332)", () => {
+    const sub = (name: string, files: string[] = []) => {
+      mkdirSync(join(root, "vendor", name), { recursive: true });
+      for (const f of files) writeFileSync(join(root, "vendor", name, f), "1\n2\n");
+    };
+    const run = (cited: string, name: string, extra: Record<string, unknown> = {}) =>
+      issue(`deleted guard at ${cited} removes auth`, { root, cwd: root, diffFiles: [`vendor/${name}`], gitlinks: [`vendor/${name}`], ...extra } as never);
+
+    it("checked out: a path missing inside the submodule is downgraded with the note", () => {
+      sub("co", ["real.ts"]);
+      const i = run("vendor/co/ghost.ts:2", "co");
+      expect(i.severity).toBe("MEDIUM");
+      expect(i.description.startsWith(CITATION_NOT_FOUND_TAG)).toBe(true);
+      expect(run("vendor/co/real.ts:2", "co").severity).toBe("HIGH");
+    });
+    it("checked out: the final-segment and bare-basename forms are refuted too", () => {
+      sub("co2", ["real.ts"]);
+      expect(run("co2/ghost.ts:2", "co2").severity).toBe("MEDIUM");
+      expect(run("ghost.ts:2", "co2").severity).toBe("MEDIUM");
+    });
+    it("checked out: a file the diff deleted inside the submodule stays HIGH, recognized from the diff data", () => {
+      sub("co3", ["real.ts"]);
+      const i = run("vendor/co3/ghost.ts:2", "co3", { gitlinkDeleted: ["vendor/co3/ghost.ts"] });
+      expect(i.severity).toBe("HIGH");
+      expect(i.description).not.toContain("NOT PROVEN");
+      expect(run("vendor/co3/other.ts:2", "co3", { gitlinkDeleted: ["vendor/co3/ghost.ts"] }).severity).toBe("MEDIUM");
+    });
+    it("not checked out (absent or empty directory): stays HIGH and says NOT PROVEN", () => {
+      sub("empty");
+      for (const [name, cited] of [["absent", "vendor/absent/ghost.ts:2"], ["empty", "vendor/empty/ghost.ts:2"], ["empty", "empty/ghost.ts:2"], ["absent", "ghost.ts:2"]] as const) {
+        const i = run(cited, name);
+        expect(i.severity).toBe("HIGH");
+        expect(i.description.startsWith(CITATION_NOT_PROVEN_TAG)).toBe(true);
+        expect(i.description).toContain("NOT PROVEN");
+      }
+    });
+    it("not checked out: a record of the deleted file is still plain ok, with no label", () => {
+      const i = run("vendor/absent/ghost.ts:2", "absent", { gitlinkDeleted: ["vendor/absent/ghost.ts"] });
+      expect(i.severity).toBe("HIGH");
+      expect(i.description).not.toContain("NOT PROVEN");
+    });
+    it("one resolvable citation keeps the finding HIGH with no label", () => {
+      sub("co4", ["real.ts"]);
+      const i = issue("deleted guard at vendor/co4/ghost.ts:2 and src/real.ts:1 removes auth", { root, cwd: root, diffFiles: ["vendor/co4"], gitlinks: ["vendor/co4"] } as never);
+      expect(i.severity).toBe("HIGH");
+      expect(i.description).not.toContain("NOT PROVEN");
     });
   });
 

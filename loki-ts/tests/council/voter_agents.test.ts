@@ -673,6 +673,18 @@ describe("citationCtx from a monorepo subdirectory", () => {
       } finally { rmSync(dir, { recursive: true, force: true }); }
     });
 
+    it("gitlinkDeleted lists a file the bump deleted inside the checked-out submodule", () => {
+      const { dir, top } = fixture((run, top, sub) => {
+        writeFileSync(join(sub, "gone.ts"), "g\n"); run(sub, "add", "."); run(sub, "commit", "-q", "-m", "add gone");
+        run(top, "submodule", "add", "-q", sub, "pkg/sub"); run(top, "add", "."); run(top, "commit", "-q", "-m", "base");
+        run(top, "checkout", "-q", "-b", "work");
+        run(sub, "rm", "-q", "gone.ts"); run(sub, "commit", "-q", "-m", "drop gone");
+        run(join(top, "pkg", "sub"), "pull", "-q", "origin", "main");
+        run(top, "add", "."); run(top, "commit", "-q", "-m", "bump");
+      });
+      try { expect(citationCtx(top).gitlinkDeleted).toEqual(["pkg/sub/gone.ts"]); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
     it("a deleted gitlink (mode on the old side only) is listed", () => {
       const { dir, top } = fixture((run, top, sub) => {
         run(top, "submodule", "add", "-q", sub, "pkg/sub"); run(top, "add", "."); run(top, "commit", "-q", "-m", "base");
