@@ -176,6 +176,7 @@ export interface Receipt {
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on.
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
+  publish?: { mode: string; reason?: string; compare?: string }; // R100-022: set only when preflight found a PR cannot open here; absent on a full-access run, so its hash is unchanged
   toolchain?: import("../util/receipt_signer.ts").Toolchain; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
   mutation_proof?: string;

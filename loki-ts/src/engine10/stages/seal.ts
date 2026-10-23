@@ -8,7 +8,7 @@ import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
 import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
+import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts"; import { publishReceiptBlock } from "../../util/engine_origin.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
 import { RealBaseTestRunner } from "./wall.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
@@ -142,6 +142,7 @@ export function renderReceiptMd(r: Receipt): string {
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s (stages)  Total to seal: ${hooks.time?.reconciled(r.time) ?? "NOT RECORDED"}${(hooks.time?.reconciled(r.time) ?? null) === null ? "" : "s"}`,
     ...(r.cost.tokens_measured ? [`- Tokens: partial: ${r.cost.input_tokens} input / ${r.cost.output_tokens} output for ${r.cost.tokens_measured.k} of ${r.cost.tokens_measured.n} sessions`] : []),
     ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
+    ...(r.publish ? [`- Publish: ${r.publish.mode}${r.publish.reason ? ` (${r.publish.reason})` : ""}${r.publish.compare ? `, compare ${r.publish.compare}` : ""}`] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
     ...(r.checks.some((c) => c.provenance !== undefined) ? [...sec("### Agent-independent checks", r.checks.filter(indep)), "", ...sec("### Agent-authored / advisory checks", r.checks.filter((c) => !indep(c)))] : sec("### Checks", r.checks)),
@@ -288,6 +289,7 @@ export const sealStage: Stage = {
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true, toolchain: collectToolchain(), // TEN-GATES-22: tool versions that ran the checks, absent tools null; covered by receipt_sha256
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
+      ...publishReceiptBlock(ctx.runDir),
       ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
