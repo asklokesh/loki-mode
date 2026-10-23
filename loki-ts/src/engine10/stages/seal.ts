@@ -19,7 +19,7 @@ import { canonicalJson, collectToolchain, kidOf, loadSigningKey, signReceipt } f
 import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
-import { crossReview, minVerdict, reviewExtraLimitS, reviewReceipt } from "./xreview.ts";
+import { capVerdict, crossReview, minVerdict, reviewExtraLimitS, reviewReceipt } from "./xreview.ts"; import { cwReceiptBlocks, cwReceiptLines } from "../../util/run_outputs.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
@@ -147,6 +147,7 @@ export function renderReceiptMd(r: Receipt): string {
     ...(r.checks.some((c) => c.provenance !== undefined) ? [...sec("### Agent-independent checks", r.checks.filter(indep)), "", ...sec("### Agent-authored / advisory checks", r.checks.filter((c) => !indep(c)))] : sec("### Checks", r.checks)),
     "",
     ...(r.evidence.length ? ["### Evidence (already-satisfied)", ...r.evidence.map((e) => `- ${e}`), ""] : []),
+    ...cwReceiptLines(r), "",
     "### NOT PROVEN",
     ...collapseNotProven(r.not_proven).map((n) => `- ${sanitizeReason(n)}`), ...(r.not_applicable?.length ? ["", "### N/A (not applicable, or not selected by risk tier)", ...r.not_applicable.map((n) => `- ${sanitizeReason(n)}`)] : []),
     "",
@@ -191,7 +192,7 @@ export const sealStage: Stage = {
     const xr = await crossReview(ctx, verdict1, head, signal), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
     const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
-    const verdict: Verdict = (mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2; // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
+    const cw = cwReceiptBlocks(ctx.runDir), verdict: Verdict = capVerdict((mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true) ? "PARTIAL" : verdict2, cw.ceiling ?? "VERIFIED"); // CW-04: the ceiling is null unless LOKI_SPEC_STRICT=1 with an unproven clause, or a none sandbox under LOKI_OS_SANDBOX=on // FC-69: a Wall test that did not execute is disclosed (not_proven), never a verdict downgrade (CTO ruling; D95 THIN)
     const deepG = deepGaps(o.verify?.risk, vraw, Array.isArray(o.deep?.checks) ? (o.deep.checks as Obj[]) : [], !!xr && xr.level !== "not_run"), notProven = new Set<string>([...deepG.notProven, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
     const wp = verdict === "VERIFIED" ? publishableWall(ctx.repoDir, ctx.runDir, o) : { files: [], notes: [] }; for (const n of wp.notes) notProven.add(n); // FC-VERIFIED-PR-WITHOUT-ITS-TEST: only on VERIFIED, after the receipt's head, tree and diff are fixed
     const wallPub = wp.files.length > 0 ? await publishWall(g(ctx), ctx.runId, ctx.repoDir, wp.files, wallDone) : false; if (wp.files.length > 0 && !wallPub) notProven.add("Wall tests not published (child commit failed or committed bytes differ from the sealed copy)");
@@ -254,6 +255,7 @@ export const sealStage: Stage = {
     const routeBlock = buildRouteBlock(process.env, ctx.provider, (o.implement?.route ?? o.plan?.route_record ?? (routerEnabled(process.env) ? loadRouteRecord(ctx.runDir) : undefined)) as Record<string, unknown> | undefined,
       (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), liveArchivedCosts(join(ctx.repoDir, ".loki"), iterIds, UNMETERED)).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
+    for (const l of cw.notProven) notProven.add(l);
 
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
@@ -292,7 +294,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(),
+      ...specReceiptBlock(process.env), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(), ...cw.blocks,
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

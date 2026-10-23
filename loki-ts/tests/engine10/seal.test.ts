@@ -2000,3 +2000,96 @@ describe("FC-VERIFIED-PR-WITHOUT-ITS-TEST review block: hooks, sealed bytes, for
     expect(sealDrift(rp, r as unknown as Record<string, unknown>)?.verdict).toBe("UNCHECKED");
   });
 });
+
+// CW-04: the five optional receipt blocks, read from run-dir files written by their owning cards.
+describe("CW-04 receipt blocks", () => {
+  const CONF = { kind: "seatbelt", profile_sha256: "aa".repeat(32), kernel_probe_sha256: null, known_limitations: ["no network filter"], provider: "claude", unconfined_calls: [] };
+  const clause = (id: string, status: string) => ({ id, anchor: { file: "prd.md", page: null, line: 7 }, text_sha256: "bb".repeat(32), status, evidence: [] });
+  const TRACE = { clauses: [clause("C1", "proven"), clause("C2", "judged"), clause("C3", "unproven")] };
+  const MCP = { servers: [{ name: "fs", tool_list_sha256: "cc".repeat(32) }], calls: [{ server: "fs", tool: "read", count: 2, untrusted: true }] };
+  const PARAMS = { stages: { implement: { provider: "claude", model: "m", effort: "high", thinking: null, clamped_from: null } } };
+  const PRE = { provider: "claude", auth_path: "oauth", probe: "ok" };
+  const ENV_KEYS = ["LOKI_SPEC_STRICT", "LOKI_OS_SANDBOX"];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; } });
+  afterEach(() => { for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  const put = (dir: string, files: Record<string, unknown>) => { for (const [f, v] of Object.entries(files)) writeFileSync(join(dir, f), typeof v === "string" ? v : JSON.stringify(v)); };
+  const sealWith = async (name: string, files: Record<string, unknown>) => {
+    const { repo, base } = makeRepo(name);
+    const { ctx } = ctxFor(repo, base);
+    put(ctx.runDir, files);
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    return { ctx, s, r: receiptOf(s) as Receipt & Record<string, unknown> };
+  };
+  const ALL = { "confinement.json": CONF, "spec-trace.json": TRACE, "mcp-calls.json": MCP, "params.json": PARAMS, "preflight.json": PRE };
+
+  test("contract: each run-dir file lands in the signed body under its key", async () => {
+    const { r } = await sealWith("cw-contract", ALL);
+    expect(r.confinement).toEqual(CONF);
+    expect(r.spec_trace).toEqual(TRACE as never);
+    expect(r.mcp).toEqual(MCP);
+    expect(r.params).toEqual(PARAMS);
+    expect(r.preflight).toEqual(PRE as never);
+  });
+  test("absent files: no keys, verdict unchanged, receipt still verifies", async () => {
+    const { r, s } = await sealWith("cw-absent", {});
+    for (const k of ["confinement", "spec_trace", "mcp", "params", "preflight"]) expect(k in r).toBe(false);
+    expect(s.data.verdict).toBe("VERIFIED");
+    sealedLog(dirname(s.data.receipt_path as string), r.receipt_sha256);
+    expect((await verifyReceipt(s.data.receipt_path as string)).verdict).toBe("VERIFIED");
+  });
+  test("malformed file: block omitted, not_proven names the file, no crash", async () => {
+    const { r } = await sealWith("cw-malformed", { "confinement.json": "{not json", "params.json": { stages: "x" }, "preflight.json": PRE });
+    expect("confinement" in r).toBe(false);
+    expect("params" in r).toBe(false);
+    expect(r.preflight).toEqual(PRE as never);
+    expect(r.not_proven.some((l) => l.includes("confinement.json is malformed"))).toBe(true);
+    expect(r.not_proven.some((l) => l.includes("params.json is malformed"))).toBe(true);
+  });
+  test("unproven clause is a not_proven line with id and anchor; proven and judged are not", async () => {
+    const { r } = await sealWith("cw-unproven", { "spec-trace.json": TRACE });
+    const lines = r.not_proven.filter((l) => l.startsWith("spec clause"));
+    expect(lines).toEqual(["spec clause C3 (prd.md:7) is unproven"]);
+  });
+  test("LOKI_SPEC_STRICT unset: an unproven clause does not change the verdict (byte-identical default)", async () => {
+    const { s } = await sealWith("cw-strict-off", { "spec-trace.json": TRACE });
+    expect(s.data.verdict).toBe("VERIFIED");
+  });
+  test("LOKI_SPEC_STRICT=1: an unproven clause caps the verdict at PARTIAL; all proven or judged stays VERIFIED", async () => {
+    process.env["LOKI_SPEC_STRICT"] = "1";
+    expect((await sealWith("cw-strict-on", { "spec-trace.json": TRACE })).s.data.verdict).toBe("PARTIAL");
+    expect((await sealWith("cw-strict-ok", { "spec-trace.json": { clauses: [clause("C1", "proven"), clause("C2", "judged")] } })).s.data.verdict).toBe("VERIFIED");
+  });
+  test("a judged clause is never counted as proof: labelled judged in receipt.md and absent from not_proven", async () => {
+    const { ctx, r } = await sealWith("cw-judged", { "spec-trace.json": { clauses: [clause("C2", "judged")] } });
+    expect(r.not_proven.some((l) => l.includes("C2"))).toBe(false);
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    expect(md).toContain("| C2 | prd.md:7 | judged (judged, not executed proof) |");
+  });
+  test("confinement none under LOKI_OS_SANDBOX=on fails closed (FAILED); without the sandbox flag it does not", async () => {
+    const none = { ...CONF, kind: "none" };
+    expect((await sealWith("cw-none-off", { "confinement.json": none })).s.data.verdict).toBe("VERIFIED");
+    process.env["LOKI_OS_SANDBOX"] = "on";
+    const { s, r } = await sealWith("cw-none-on", { "confinement.json": none });
+    expect(s.data.verdict).toBe("FAILED");
+    expect(r.not_proven.some((l) => l.includes("confinement.kind is none"))).toBe(true);
+    expect((await sealWith("cw-seatbelt-on", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
+  });
+  test("receipt.md shows the confinement line and the clause table", async () => {
+    const { ctx } = await sealWith("cw-md", { "confinement.json": CONF, "spec-trace.json": TRACE });
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    expect(md).toContain("- Confinement: seatbelt (claude); 1 known limitation(s), 0 unconfined call(s)");
+    expect(md).toContain("| Clause | Anchor | Status |");
+    expect(md).toContain("| C3 | prd.md:7 | unproven |");
+  });
+  test("editing a block after sealing is TAMPERED", async () => {
+    const { s } = await sealWith("cw-tamper", ALL);
+    const path = s.data.receipt_path as string;
+    const j = JSON.parse(readFileSync(path, "utf8"));
+    sealedLog(dirname(path), j.receipt_sha256);
+    j.spec_trace.clauses[2].status = "proven";
+    writeFileSync(path, JSON.stringify(j, null, 2) + "\n");
+    expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
+  });
+});
