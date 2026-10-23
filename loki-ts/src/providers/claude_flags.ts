@@ -143,7 +143,7 @@ export function codexEffortForTier(tier: string | undefined): string {
     case "fast":
       return process.env["PROVIDER_EFFORT_FAST"] || "low";
     default:
-      return "high";
+      return process.env["PROVIDER_EFFORT_DEVELOPMENT"] || "high";
   }
 }
 

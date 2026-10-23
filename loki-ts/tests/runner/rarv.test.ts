@@ -145,6 +145,9 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
     const env = { ...process.env, PROVIDER_EFFORT_DEVELOPMENT: "medium" };
     const r = spawnSync("bash", ["-c", `source "${sh}"; provider_get_tier_param bogus`], { env, encoding: "utf8" });
     expect(r.stdout.trim()).toBe("medium");
+    process.env["PROVIDER_EFFORT_DEVELOPMENT"] = "medium";
+    try { expect(getProviderTierParam("bogus", "codex")).toBe("medium"); } finally { delete process.env["PROVIDER_EFFORT_DEVELOPMENT"]; }
+    expect(getProviderTierParam("bogus", "codex")).toBe("high");
   });
 
   it("codex empty PROVIDER_EFFORT_* counts as unset in bash and TS (#255 62b)", () => {
