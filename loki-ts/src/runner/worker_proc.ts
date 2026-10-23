@@ -2,9 +2,20 @@
 // spawn the worker in its own process group, drain its stdout, and kill the group on a backstop or stop.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { basename } from "node:path";
 
 const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
+// Every Loki child that runs under bun starts with no repo bunfig (a preload is code) and no repo .env, as
+// bin/loki does via autonomy/lib/bun-safe.sh (_LOKI_BUN_SAFE_FLAGS; a test pins the two lists together).
+// A child spawned with process.execPath does NOT inherit the parent's --config/--no-env-file.
+export const BUN_SAFE_FLAGS: readonly string[] = ["--config=/dev/null", "--no-env-file"];
+/** argv = [executable, ...args]; when the executable is bun, the safe flags go right after it. */
+export function bunSafeArgv(argv: readonly string[]): string[] {
+  const [cmd, ...rest] = argv;
+  if (cmd === undefined) return [];
+  return /^bun(\.exe)?$/i.test(basename(cmd)) ? [cmd, ...BUN_SAFE_FLAGS, ...rest] : [cmd, ...rest];
+}
 export function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
