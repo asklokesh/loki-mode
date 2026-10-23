@@ -105,6 +105,11 @@ _EXPECTED = {
     # first try, so a suite whose only failures were on fizzbuzz had no
     # discriminating power left.
     "hard-2-ledger": {"positive": 0, "adversarial": 1},
+    # CW-20 (#355): pre-registered false-done tasks. Each near-miss passes the obvious reading of the prompt and fails one stated requirement.
+    "fd-1-kv-parser": {"positive": 0, "adversarial": 1},
+    "fd-2-two-module-untested": {"positive": 0, "adversarial": 1},
+    "fd-3-refactor-invariant": {"positive": 0, "adversarial": 1},
+    "fd-4-cli-exit-codes": {"positive": 0, "adversarial": 1},
 }
 
 
