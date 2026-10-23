@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Move npm dist-tags latest and next to the highest published version of
-# loki-mode, never backwards (FC-DIST-TAG-MOVED-BACKWARDS).
+# loki-mode, re-reading instead of writing when a tag is already higher
+# (FC-DIST-TAG-MOVED-BACKWARDS). npm has no compare-and-set, so a window of
+# milliseconds between the last read and a write remains.
 #
 # The target is max(published versions, current latest, current next, VERSION),
 # so a lagging tag read can never pick a lower version, and a run for an older

@@ -139,7 +139,8 @@ jobs:
           retention-days: 14
 
   # Depends ONLY on pack-npm. Publishes under next, then moves latest and next
-  # only if VERSION is the highest (never backwards). Idempotent on rerun.
+  # only if VERSION is the highest (it re-reads instead of writing below a higher
+          # tag). Idempotent on rerun.
   publish-npm:
     needs: pack-npm
     runs-on: ubuntu-latest
@@ -549,7 +550,9 @@ jobs:
 
   # Same late-materialization converge as verify-npm-registry, for loki-mode-sdk
   # (FC-DIST-TAG-MOVED-BACKWARDS). Nothing waits on it and it holds no lock: the
-  # script only moves tags to the max stable semver, never lower.
+  # script moves tags to the max stable semver of its reads and re-reads instead
+  # of writing when a tag is already higher; npm has no compare-and-set, so a
+  # window of milliseconds remains.
   verify-sdk-registry:
     needs: publish-ts-sdk
     runs-on: ubuntu-latest
