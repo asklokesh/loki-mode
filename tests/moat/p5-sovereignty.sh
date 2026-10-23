@@ -104,7 +104,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p5.XXXXXX")" || { echo "p5: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route P5.airgap-audit-per-provider-model P5.airgap-audit-effective-provider P5.airgap-audit-telemetry-state P5.airgap-audit-ollama-cloud-not-local P5.local-provider-no-claude-sidecalls P5.claude-sidecall-opt-in-audited"
+MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route P5.airgap-audit-per-provider-model P5.airgap-audit-effective-provider P5.airgap-audit-telemetry-state P5.airgap-audit-ollama-cloud-not-local P5.local-provider-no-claude-sidecalls P5.claude-sidecall-opt-in-audited P5.airgap-no-update-check-egress"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -783,6 +783,48 @@ case_airgap_ollama_cloud() {
     done
 }
 
+# Air-gap on: `loki start` on an interactive host must make no outbound
+# connection attempt at all, update check included. LOKI_NO_UPDATE_CHECK is left
+# unset so only the air-gap setting can stop the check. A stub curl first on PATH
+# records every invocation; a pty (script) makes stdout a TTY so the check is
+# otherwise eligible to run. The control run (LOKI_AIRGAP unset) must record an
+# attempt, proving the stub sees the update check.
+case_airgap_no_update_check_egress() {
+    command -v script >/dev/null 2>&1 || { nok "prerequisite missing: script (pty for the TTY-gated update check)"; return; }
+    local d="$MOAT_TMP/ag-upd" mode log extra
+    mkdir -p "$d/bin" "$d/proj"
+    printf '# PRD: Greeter\n' > "$d/proj/prd.md"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$CURL_LOG"\nexit 7\n' > "$d/bin/curl"
+    chmod +x "$d/bin/curl"
+    cat > "$d/run.sh" <<'RUN'
+#!/bin/bash
+cd "$D/proj" || exit 1
+if [ "$(uname -s)" = "Darwin" ]; then
+    exec script -q /dev/null "$LOKI_BIN" start ./prd.md </dev/null
+else
+    exec script -qec "$LOKI_BIN start ./prd.md" /dev/null </dev/null
+fi
+RUN
+    for mode in airgap control; do
+        log="$d/curl-$mode.log"
+        : > "$log"
+        mkdir -p "$d/home-$mode/.loki"
+        touch "$d/home-$mode/.loki/.welcomed"
+        extra=""
+        [ "$mode" = "airgap" ] && extra="LOKI_AIRGAP=true"
+        # shellcheck disable=SC2086  # $extra is zero or one VAR=value word
+        env -i HOME="$d/home-$mode" PATH="$d/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin" TERM=xterm \
+            D="$d" LOKI_BIN="$LOKI_BIN" CURL_LOG="$log" LOKI_TTY_INTERACTIVE=1 LOKI_DASHBOARD=false \
+            LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_COMPLETIONS=1 LOKI_PROVIDER=claude LOKI_LEGACY_BASH=1 $extra \
+            $DEADLINE_CMD 60 bash "$d/run.sh" > "$d/out-$mode.txt" 2>&1 </dev/null
+        if [ "$mode" = "airgap" ]; then
+            [ ! -s "$log" ] || nok "air-gap on: loki start made $(wc -l < "$log" | tr -d ' ') outbound attempt(s): $(head -1 "$log")"
+        else
+            [ -s "$log" ] || nok "control: update check recorded no attempt without LOKI_AIRGAP, stub does not see the check"
+        fi
+    done
+}
+
 moat_run "P5.egress-blocked-start-seal-verify" \
     "start -> proof -> proof verify (both routes) completes with remote egress really blocked" \
     case_egress_pipeline
@@ -810,4 +852,7 @@ moat_run "P5.local-provider-no-claude-sidecalls" \
 moat_run "P5.claude-sidecall-opt-in-audited" \
     "LOKI_ALLOW_CLAUDE_SIDECALLS=1 (exact) restores the claude side-calls under opencode, and doctor --airgap (both routes) then reports them as required egress" \
     case_sidecall_opt_in
+moat_run "P5.airgap-no-update-check-egress" \
+    "with LOKI_AIRGAP=true, loki start makes zero outbound connection attempts, update check included" \
+    case_airgap_no_update_check_egress
 exit 0
