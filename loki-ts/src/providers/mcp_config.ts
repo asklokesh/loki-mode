@@ -37,6 +37,7 @@
 //   verified via `claude --help` (v2.1.34).
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 import { resolve as resolvePath, join, delimiter } from "node:path";
 
 // Phase G: supported LSP binaries. Match autonomy/lib/mcp-config.sh exactly so
@@ -237,7 +238,7 @@ function collectServers(targetDir: string): Record<string, McpServer> {
 
 function clineVersion(): string {
   try {
-    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: process.env });
+    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: tokenFreeEnv(process.env) });
     if (r.status === 0) {
       const line = (r.stdout ?? "").split("\n")[0]?.trim() ?? "";
       if (line) return line;

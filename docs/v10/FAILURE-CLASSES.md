@@ -1575,3 +1575,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
 - Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
 - Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.
+
+## FC-PROVIDER-VERSION-PROBE-FULL-ENV The cline `--version` probe in providers/mcp_config.ts spawned with the full parent env, handing GH_TOKEN, GITHUB_TOKEN and SSH_AUTH_SOCK to an external binary, and main went red on full_env_spawn_guard from 35411094c (CW-10) on
+- User-visible vs raw: raw (a credential-exposure boundary and a red guard on main, not a user message).
+- Law: no child process receives the ambient GitHub credentials (FC-40); a spawn gets tokenFreeEnv or a listed reason.
+- Cause (measured): `clineVersion()` called `spawnSync("cline", ["--version"], { env: process.env })`. The version probe needs no credential, so no allowlist row is justified. tests/util/full_env_spawn_guard.test.ts reported `unlisted: loki-ts/src/providers/mcp_config.ts` alone, in `bun test tests/util` (524 tests, 1 fail) and in the full tests/providers run.
+- Order sensitivity: not reproduced. The guard is a pure static scan (walk SRC, regex per call window, compare with the allowlist file); it holds no state, mocks nothing and reads only files, so its result cannot depend on test order. "Passes in some batches" is explained by batches that never include the file (diff-selected shards run it through the walk-all-src marker only when selected). No change to the guard was needed; the behavioral test below fails independently of the guard.
+- Siblings swept: every other `process.env` spawn in providers/ is already listed with a reason (claude_flags.ts, runner/providers.ts) or token-free; mcp_config.ts is the only unlisted one (guard output).
+- Mechanism: spawn through `tokenFreeEnv(process.env)` (util/safe_git.ts), the shared scoped env builder.
+- Fixture: tests/providers/mcp_config.test.ts runs a fake `cline` that records GH_TOKEN, GITHUB_TOKEN and SSH_AUTH_SOCK with canary values set in the parent; red with `env: process.env` (restored in the mutant run), green with tokenFreeEnv. The full_env_spawn_guard goes red on the same mutant.
