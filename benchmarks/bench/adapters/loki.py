@@ -15,6 +15,7 @@ only inside run(), and the loki/version probe accepts an injectable runner.
 import json
 import os
 import re
+import subprocess
 
 try:
     from . import _base
@@ -62,6 +63,20 @@ def version_mismatch_error(probed_text):
             "LOKI_BENCH_LOKI_BIN to a matching build or "
             "LOKI_BENCH_ALLOW_VERSION_MISMATCH=1 to override."
             % (loki_bin(), probed or "unknown", want or "unknown"))
+
+
+def engine_sha():
+    """HEAD SHA of the checkout that holds the loki binary the bench runs, so a
+    row names the exact engine even when the harness comes from another branch.
+    None when the binary is not inside a git checkout."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(loki_bin())))
+    try:
+        out = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = (out.stdout or "").strip()
+    return sha if out.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else None
 
 
 def _detect_loki_version(runner=None, cwd=None):
@@ -546,6 +561,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "kind": "automated",
             "verified": True,
             "harness": "loki.start",
+            "engine_sha": engine_sha(),
             "command": " ".join(cmd),
             # Why a terminal failure happened (from loki's own LAST_ERROR.json);
             # None on a clean run. Lets a failed trial be diagnosed and learned

@@ -335,5 +335,36 @@ class KeptWorkdirTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(base)), ["1", "control-1"])
 
 
+class EngineShaTest(unittest.TestCase):
+    """Each loki row names the engine checkout it ran, not the harness branch."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="loki-bench-engine-")
+        os.makedirs(os.path.join(self.d, "bin"))
+        open(os.path.join(self.d, "bin", "loki"), "w").close()
+        self._old = os.environ.get("LOKI_BENCH_LOKI_BIN")
+        os.environ["LOKI_BENCH_LOKI_BIN"] = os.path.join(self.d, "bin", "loki")
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("LOKI_BENCH_LOKI_BIN", None)
+        else:
+            os.environ["LOKI_BENCH_LOKI_BIN"] = self._old
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_sha_of_the_binarys_checkout(self):
+        g = ["git", "-C", self.d, "-c", "user.name=t", "-c", "user.email=t@l"]
+        subprocess.run(["git", "-C", self.d, "init", "-q"], check=True)
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["commit", "-q", "-m", "x"], check=True)
+        want = subprocess.run(["git", "-C", self.d, "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        self.assertEqual(loki.engine_sha(), want)
+
+    def test_none_outside_a_checkout(self):
+        # Negative control: a binary with no git checkout above it has no SHA.
+        self.assertIsNone(loki.engine_sha())
+
+
 if __name__ == "__main__":
     unittest.main()
