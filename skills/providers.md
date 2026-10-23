@@ -214,8 +214,8 @@ codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
 Note: Codex does not support `--effort` as a CLI flag. Reasoning effort must be configured via environment variable or config file.
 
 ```bash
-# Set effort via environment
-CODEX_MODEL_REASONING_EFFORT=high codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
+# Set effort via the config override (codex ignores a CODEX_MODEL_REASONING_EFFORT env var)
+codex exec -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox "$prompt"
 ```
 
 | Tier | Effort | Use Case |
@@ -375,7 +375,7 @@ When running with Codex or Aider (Tier 3):
 1. **RARV Cycle executes sequentially** - No parallel agents
 2. **Task tool calls are skipped** - Main thread handles all work
 3. **Model tier maps to provider configuration:**
-   - Codex: `CODEX_MODEL_REASONING_EFFORT` env var (xhigh/high/medium/low)
+   - Codex: `-c model_reasoning_effort=<e>` flag (xhigh/high/medium/low)
 4. **Quality gates run sequentially** - No 3-reviewer parallel review
 5. **Git worktree parallelism disabled** - `--parallel` flag has no effect
 

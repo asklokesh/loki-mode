@@ -2732,3 +2732,4 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - bun test survives SIGTERM: 3 engine10 runs under bare `timeout 590` lived 28-50 min. Rule now: `timeout -k 15 <s>`, at most 2 full engine10 runs company-wide.
 - Wall mechanism: a single one lands. eng-cw12 a1c07ce3c is the base. eng-314f splits bed40cfb4 into A (fullSuiteCmd plus seal wording) and B (rev-c rules B covered or delta).
 - Roadmap-100: lanes defined by arch-100, one live slice per hot-spot file. None of the 100 items has shipped yet.
+- 06:39Z: 11.60.1 tgz 200 (publish 06:30:51, so 4-8 min lag, variable). dist-tag ls latest=next=11.60.1. 11.59.0 version doc /loki-mode/11.59.0 returns 200, signed, shasum 71ae74c5; its tgz and `npm pack loki-mode@11.59.0` still 404. Not called lost. Interim rule: no VERSION push until the previous tgz is 200.

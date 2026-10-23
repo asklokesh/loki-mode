@@ -110,6 +110,51 @@ else
     ko "catalog latest_<tier> mirrors agree with models[]" "$mirror_ok"
 fi
 
+# --- effort reaches the codex process (FC-ENV-PREFIX-SEVERED-BY-COMMENT) -----
+# Codex ignores CODEX_MODEL_REASONING_EFFORT (measured, codex-cli 0.164.0); the
+# effort must arrive as `-c model_reasoning_effort=<e>`. A stub codex on PATH
+# records argv, so a regression that drops the flag, or severs an env prefix
+# from its command with a comment line, turns this red.
+stubdir="$(mktemp -d "${TMPDIR:-/tmp}/rq46-stub.XXXXXX")"
+trap 'rm -rf "$stubdir"' EXIT
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/argv"\nenv > "%s/env"\n' "$stubdir" "$stubdir" > "$stubdir/codex"
+chmod +x "$stubdir/codex"
+for pair in "planning:xhigh" "development:high" "fast:low"; do
+    tier="${pair%%:*}"; want="${pair##*:}"
+    rm -f "$stubdir/argv" "$stubdir/env"
+    env -u LOKI_MAX_TIER -u PROVIDER_EFFORT_PLANNING -u PROVIDER_EFFORT_DEVELOPMENT -u PROVIDER_EFFORT_FAST \
+        PATH="$stubdir:$PATH" bash -c 'source providers/models.sh 2>/dev/null; source providers/codex.sh 2>/dev/null
+        provider_invoke_with_tier "$1" "do a thing"' _ "$tier" >/dev/null 2>&1
+    if grep -qx -- "model_reasoning_effort=$want" "$stubdir/argv" 2>/dev/null \
+       && [ "$(grep -x -B1 -- "model_reasoning_effort=$want" "$stubdir/argv" | head -1)" = "-c" ]; then
+        ok "provider_invoke_with_tier $tier passes -c model_reasoning_effort=$want to codex"
+    else
+        ko "provider_invoke_with_tier $tier passes -c model_reasoning_effort=$want to codex" \
+           "argv: $(tr '\n' ' ' < "$stubdir/argv" 2>/dev/null)"
+    fi
+done
+
+# --- sibling sweep: no env prefix chain severed by a comment line ------------
+# `VAR=x \` followed by a comment-only line makes the assignments bind to no
+# command (unexported shell vars). Fixture proves the scanner flags the shape,
+# then the repo must hold none.
+sweep() {
+    awk '{ if (pend && $0 ~ /^[[:space:]]*#/) print FILENAME ":" FNR;
+           pend = ($0 ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|[^[:space:]\\]*)[[:space:]]*\\$/) }' "$@"
+}
+printf 'f() {\n  A=1 \\\n  # c\n  env\n}\n' > "$stubdir/severed.sh"
+if [[ -n "$(sweep "$stubdir/severed.sh")" ]]; then
+    ok "sweep scanner flags a synthetic severed env prefix"
+else
+    ko "sweep scanner flags a synthetic severed env prefix"
+fi
+hits="$(git ls-files '*.sh' bin/loki autonomy/loki | while read -r f; do sweep "$f"; done)"
+if [[ -z "$hits" ]]; then
+    ok "no tracked shell file severs an env prefix from its command with a comment"
+else
+    ko "no tracked shell file severs an env prefix from its command with a comment" "$hits"
+fi
+
 echo ""
 echo "  Passed:     $passed"
 echo "  Failed:     $failed"

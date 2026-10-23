@@ -4,7 +4,7 @@
 // and a remote, or an issue-comment call naming the exact reason on an issue run.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT } from "../../src/engine10/output.ts";
@@ -254,6 +254,29 @@ describe("E-67 rework: supervisor backstop", () => {
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["a.txt", "untracked.txt"]);
     expect(existsSync(join(workDir, "push-calls.log"))).toBe(false);
+  }, 10_000);
+
+  // FC-COMMIT-STAGES-USER-UNTRACKED: the supervisor hands the intake's preexisting_untracked_blobs to the backstop, so the user's untouched untracked file stays out of the commit.
+  test("hung worker: a pre-run untracked file listed in the intake blobs is left out of the backstop commit", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    writeFileSync(join(dir, "user-notes.txt"), "mine\n");
+    const blob = execFileSync("git", ["hash-object", "user-notes.txt"], { cwd: dir, encoding: "utf8" }).trim();
+    const mode = (statSync(join(dir, "user-notes.txt")).mode & 0o777).toString(8);
+    const intake = `console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { base_sha: ${JSON.stringify(baseSha)}, preexisting_untracked: ["user-notes.txt"], preexisting_untracked_blobs: { "user-notes.txt": ${JSON.stringify(`${blob} ${mode}`)} } } }));`;
+    const code = `
+      ${intake}
+      require("node:fs").writeFileSync("a.txt", "changed\\n");
+      setInterval(() => {}, 1000);
+    `;
+    const workDir = mkdtempSync(join(tmpdir(), "e10-bs-out-"));
+    roots.push(workDir);
+    const runDir = join(dir, ".loki", "runs", "e10-bs-untracked");
+    const pushScriptPath = writePushStub(workDir, join(workDir, "push-calls.log"));
+    const r = await runSupervisor({ runId: "e10-bs-untracked", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: realPr(pushScriptPath, runDir) });
+    expect(r.verdict).toBe("FAILED");
+    const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
+    expect(changed).toEqual(["a.txt"]);
+    expect(readFileSync(join(dir, "user-notes.txt"), "utf8")).toBe("mine\n");
   }, 10_000);
 
   // Finding 2 in isolation (no tracked change at all): on the pre-fix merge, hasPushableDiff's

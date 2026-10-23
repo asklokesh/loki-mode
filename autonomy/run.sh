@@ -26527,15 +26527,13 @@ if __name__ == "__main__":
             codex)
                 # Codex: Degraded mode - no stream-json, no agent tracking
                 # Uses positional prompt after exec subcommand
-                # Note: Effort is set via env var, not CLI flag
+                # Note: Effort is set via -c model_reasoning_effort (codex ignores the env var)
                 # Uses dynamic tier from RARV phase (tier_param already set above)
                 local _loki_codex_effort="$tier_param"
                 if loki_is_supervised_simple_web; then
                     _loki_codex_effort="${LOKI_DRAFT_EFFORT:-medium}"
                 fi
                 local -a _loki_codex_pipe_status=()
-                LOKI_CODEX_REASONING_EFFORT="$_loki_codex_effort" \
-                CODEX_MODEL_REASONING_EFFORT="$_loki_codex_effort" \
                 # Stamp BEFORE the call: the usage reader bounds its rollout
                 # search by mtime, so a stale session from an earlier iteration
                 # cannot be attributed to this one. Attributing the wrong
@@ -26544,6 +26542,7 @@ if __name__ == "__main__":
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
                 codex exec --sandbox workspace-write --skip-git-repo-check \
+                    -c "model_reasoning_effort=$_loki_codex_effort" \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"
                 _loki_codex_pipe_status=("${PIPESTATUS[@]}")
                 exit_code="$(_loki_provider_pipeline_exit_code \
