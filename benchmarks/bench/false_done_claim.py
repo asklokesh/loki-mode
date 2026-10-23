@@ -30,6 +30,7 @@ Z = 1.959964
 Z2 = Z * Z
 FACTOR = 100.0
 LOAD_MAX = 24.0
+UNMEASURED_MAX = 0.10  # an arm above this share of unmeasured trials cannot support the claim
 GRADING_SLACK_S = 120
 
 
@@ -81,14 +82,26 @@ def load_manifest(path):
 
 
 def collect(result_paths, task_ids):
-    """Per-trial records from result JSONs, restricted to the manifest's tasks."""
-    recs = []
+    """Per-trial records from result JSONs, restricted to the manifest's tasks.
+
+    The same file reached twice (overlapping directories, symlinks) counts once. Two different files
+    carrying one (tool, task, file name, trial index) identity are refused: counting both would inflate n."""
+    recs, seen_paths, seen_ids = [], set(), {}
     for p in result_paths:
+        real = os.path.realpath(p)
+        if real in seen_paths:
+            continue
+        seen_paths.add(real)
         with open(p) as fh:
             d = json.load(fh)
         if d.get("task_id") not in task_ids:
             continue
         for t in d.get("trials", []):
+            ident = (d.get("tool"), d["task_id"], os.path.basename(p), t.get("trial"))
+            if ident in seen_ids:
+                raise ValueError("duplicate trial record %r in %s and %s; pass each result once or "
+                                 "separate the runs" % (ident, seen_ids[ident], p))
+            seen_ids[ident] = p
             ad = t.get("adapter") or {}
             measured = schema.trial_is_measured(t)
             m = schema.trial_metrics(dict(ad, tool=d.get("tool")), t.get("success") is True, measured)
@@ -116,8 +129,18 @@ def _pct(x):
     return "%.2f%%" % (100 * x)
 
 
+def unmeasured_share(arm):
+    total = arm["trials"] + arm["unmeasured"]
+    return arm["unmeasured"] / total if total else 0.0
+
+
 def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     scope = "on %d pre-registered false-completion trap tasks (%s)" % (n_tasks, manifest_name)
+    for arm in (loki, comp):
+        if unmeasured_share(arm) > UNMEASURED_MAX:
+            return ("CLAIM NOT SUPPORTED: unmeasured trials exceed %d%% for %s (%d unmeasured of %d), so k/N "
+                    "would silently drop them %s." % (100 * UNMEASURED_MAX, arm["tool"], arm["unmeasured"],
+                                                     arm["trials"] + arm["unmeasured"], scope))
     if loki["trials"] == 0 or comp["trials"] == 0:
         return "CLAIM NOT SUPPORTED: an arm has no measured trials %s." % scope
     if loki["claimed_done"] == 0:
@@ -126,11 +149,12 @@ def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     ratio = gate_ratio(comp["false_done"], comp["trials"], loki["false_done"], loki["trials"])
     facts = ("%s false-done %d/%d (95%% Wilson %s-%s); Loki false-done %d/%d (%s-%s); "
              "useful-done: %s %d/%d (%s-%s), Loki %d/%d (%s-%s); strict ratio "
-             "(competitor lower / Loki upper) %.1f %s"
+             "(competitor lower / Loki upper) %.1f; unmeasured trials: %s %d, Loki %d %s"
              % (comp["tool"], comp["false_done"], comp["trials"], *map(_pct, comp["false_done_ci"]),
                 loki["false_done"], loki["trials"], *map(_pct, loki["false_done_ci"]),
                 comp["tool"], comp["useful_done"], comp["trials"], *map(_pct, comp["useful_done_ci"]),
-                loki["useful_done"], loki["trials"], *map(_pct, loki["useful_done_ci"]), ratio, scope))
+                loki["useful_done"], loki["trials"], *map(_pct, loki["useful_done_ci"]), ratio,
+                comp["tool"], comp["unmeasured"], loki["unmeasured"], scope))
     if loki["useful_done_ci"][1] < comp["useful_done_ci"][0]:
         return ("CLAIM NOT SUPPORTED: Loki's useful-done rate is worse than %s beyond the intervals "
                 "(winning false-done by claiming less is not a win). %s." % (comp["tool"], facts))

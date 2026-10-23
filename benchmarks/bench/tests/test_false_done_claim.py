@@ -1,6 +1,7 @@
 """False-done claim: statistics, vacuity guard, useful-done guard, grid gating. No model calls.
 Run: python3 -m pytest benchmarks/bench/tests/test_false_done_claim.py"""
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -11,10 +12,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import false_done_claim as fd  # noqa: E402
 
 
-def arm(tool, trials, claimed, false_done, useful):
+def arm(tool, trials, claimed, false_done, useful, unmeasured=0):
     ci = fd.wilson
     return {"tool": tool, "trials": trials, "claimed_done": claimed, "false_done": false_done,
-            "useful_done": useful, "false_done_ci": ci(false_done, trials), "useful_done_ci": ci(useful, trials)}
+            "useful_done": useful, "unmeasured": unmeasured, "false_done_ci": ci(false_done, trials), "useful_done_ci": ci(useful, trials)}
 
 
 def result_file(d, tool, task, verdict, exit_status, ok, name):
@@ -95,6 +96,61 @@ class Report(unittest.TestCase):
             self.assertEqual(out["loki"]["claimed_done"], 1)
             self.assertEqual(out["loki"]["false_done"], 1)
             self.assertEqual(out["competitor"]["false_done"], 1)
+
+    def _overlap_dirs(self, d):
+        sub = os.path.join(d, "run1")
+        os.makedirs(sub)
+        mp = os.path.join(d, "m.json")
+        json.dump({"name": "m", "tasks": ["t"]}, open(mp, "w"))
+        for i in range(60):
+            result_file(sub, "claude_code", "t", None, "completed", i % 2 == 0, "c%03d.json" % i)
+        for i in range(400):
+            result_file(sub, "loki", "t", "VERIFIED", "completed", True, "l%04d.json" % i)
+        return mp, sub
+
+    def test_overlapping_directories_do_not_double_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            one = fd.report(mp, [sub], "claude_code")
+            two = fd.report(mp, [d, sub, sub + "/../run1"], "claude_code")
+            self.assertEqual(two["loki"]["trials"], one["loki"]["trials"])
+            self.assertEqual(two["competitor"]["trials"], 60)
+            self.assertEqual(two["claim"], one["claim"])
+
+    def test_duplicate_trial_record_in_two_files_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            copy = os.path.join(d, "copy")
+            os.makedirs(copy)
+            shutil.copy(os.path.join(sub, "l0000.json"), copy)
+            with self.assertRaises(ValueError) as cm:
+                fd.report(mp, [sub, copy], "claude_code")
+            self.assertIn("duplicate trial record", str(cm.exception))
+
+    def test_unmeasured_share_over_ten_percent_is_not_supported_and_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp, sub = self._overlap_dirs(d)
+            for i in range(60):
+                result_file(sub, "loki", "t", None, "timeout", False, "u%04d.json" % i)
+            out = fd.report(mp, [sub], "claude_code")
+            self.assertEqual(out["loki"]["unmeasured"], 60)
+            self.assertTrue(out["claim"].startswith("CLAIM NOT SUPPORTED"), out["claim"])
+            self.assertIn("unmeasured", out["claim"])
+
+    def test_all_trials_timed_out_is_not_supported_and_names_unmeasured(self):
+        with tempfile.TemporaryDirectory() as d:
+            mp = os.path.join(d, "m.json")
+            json.dump({"name": "m", "tasks": ["t"]}, open(mp, "w"))
+            for i in range(1100):
+                result_file(d, "loki", "t", None, "timeout", False, "u%04d.json" % i)
+            result_file(d, "claude_code", "t", None, "completed", True, "c.json")
+            out = fd.report(mp, [d], "claude_code")
+            self.assertTrue(out["claim"].startswith("CLAIM NOT SUPPORTED"), out["claim"])
+            self.assertIn("unmeasured", out["claim"])
+
+    def test_supported_claim_states_the_unmeasured_count_per_arm(self):
+        t = fd.claim_text(arm("loki", 400, 400, 0, 400, 20), arm("claude_code", 60, 60, 30, 30, 3), "m", 11)
+        self.assertIn("unmeasured trials: claude_code 3, Loki 20", t)
 
     def test_manifest_requires_name_and_tasks(self):
         with tempfile.TemporaryDirectory() as d:
