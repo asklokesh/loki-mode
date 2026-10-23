@@ -37,6 +37,7 @@ import {
   type EvalDeps,
   type ReqTable,
   buildDoctorJson,
+  providerAutodetected,
   checkDisk,
   findOrphanRuns,
   lowestVolume,
@@ -1760,5 +1761,59 @@ describe("model capability row (models.retrieve vs the catalog)", () => {
     const out = chunks.join("");
     expect(out).toContain("Model capabilities:");
     expect(out).toContain("m-a: effort levels: catalog [low, medium, high], API [low]");
+  });
+});
+
+
+// R100-001: loki doctor --json reports provider_autodetected, true when an installed provider CLI is logged in.
+describe("doctor.providerAutodetected (R100-001)", () => {
+  const PROVIDERS = ["claude", "codex", "opencode", "cline", "aider"] as const;
+  function fixture(provider: (typeof PROVIDERS)[number], loggedIn: boolean) {
+    const root = mkdtempSync(join(tmpdir(), "r100-autodetect-"));
+    const bin = join(root, "bin");
+    const home = join(root, "home");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    const stubs: Record<string, string> = {
+      claude: `#!/bin/sh\n[ "$1" = auth ] && echo '{"loggedIn":${loggedIn}}'\nexit 0\n`,
+      codex: `#!/bin/sh\n[ "$1" = login ] && { ${loggedIn ? "echo 'Logged in'; exit 0" : "echo 'Not logged in'; exit 1"}; }\nexit 0\n`,
+      opencode: "#!/bin/sh\nexit 0\n",
+      cline: "#!/bin/sh\nexit 0\n",
+      aider: "#!/bin/sh\nexit 0\n",
+    };
+    const path = join(bin, provider);
+    writeFileSync(path, stubs[provider]!);
+    chmodSync(path, 0o755);
+    const env: NodeJS.ProcessEnv = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, XDG_DATA_HOME: join(home, "xdg") };
+    if (loggedIn && provider === "opencode") {
+      mkdirSync(join(home, "xdg", "opencode"), { recursive: true });
+      writeFileSync(join(home, "xdg", "opencode", "auth.json"), "{}");
+    }
+    if (loggedIn && provider === "cline") mkdirSync(join(home, ".cline"), { recursive: true });
+    if (loggedIn && provider === "aider") env["ANTHROPIC_API_KEY"] = "sk-ant-placeholder-for-the-fixture";
+    return { root, env, checks: [{ command: provider, found: true, path }] };
+  }
+
+  for (const p of PROVIDERS) {
+    it(`${p}: installed and logged in is autodetected, installed and logged out is not`, () => {
+      const on = fixture(p, true);
+      const off = fixture(p, false);
+      try {
+        expect(providerAutodetected(on.checks, on.env)).toBe(true);
+        expect(providerAutodetected(off.checks, off.env)).toBe(false);
+      } finally {
+        rmSync(on.root, { recursive: true, force: true });
+        rmSync(off.root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("a provider that is not installed is never autodetected, even with an API key in the env", () => {
+    expect(providerAutodetected([{ command: "claude", found: false, path: null }], { ANTHROPIC_API_KEY: "x" })).toBe(false);
+  });
+
+  it("buildDoctorJson carries the provider_autodetected boolean", async () => {
+    const j = await buildDoctorJson();
+    expect(typeof j.provider_autodetected).toBe("boolean");
   });
 });
