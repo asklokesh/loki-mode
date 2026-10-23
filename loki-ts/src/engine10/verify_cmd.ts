@@ -179,8 +179,10 @@ async function verifyMain(args: readonly string[], deps: VerifyDeps, rec: Explai
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
   if (!runId) return (process.stderr.write("loki verify: no runs found\n"), 66);
-  const receiptPath = existsSync(runId) && statSync(runId).isFile() ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
-  const byRunId = !(existsSync(runId) && statSync(runId).isFile()); rec.runId = runId; rec.receiptPath = receiptPath; // TEN-GATES-14
+  const isFile = existsSync(runId) && statSync(runId).isFile();
+  const isPath = isFile || /[\\/]/.test(runId) || runId.endsWith(".json"); // a path is reported as given, even when nothing is there
+  const receiptPath = isPath ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
+  const byRunId = !isPath; rec.runId = runId; rec.receiptPath = receiptPath; // TEN-GATES-14
   if (exportDsse) return exportDsseReceipt({ receiptPath, runId: byRunId ? runId : null, deps, verify: verifyReceipt, key: loadSigningKey(false), kidOf }); // INTEL-1 / INTEL-1b
   const bad =byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
   if (bad) return (rec.verdict = "TAMPERED", rec.reasons = [bad], process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);

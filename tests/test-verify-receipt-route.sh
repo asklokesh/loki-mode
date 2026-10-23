@@ -75,6 +75,10 @@ if grep -q "verdict: VERIFIED" "$T/out" && [ "$rc" = "0" ]; then ok "a receipt c
 rc="$(run_verify .loki/runs/e10-rr-2/receipt.json)"
 if grep -q "verdict: TAMPERED" "$T/out" && [ "$rc" != "0" ] && ! grep -q "CONCERNS" "$T/out" "$T/err"; then ok "a tampered receipt prints the engine10 TAMPERED verdict, never CONCERNS (rc $rc)"; else bad "tampered receipt rc=$rc: $(head -c 300 "$T/out") $(head -c 300 "$T/err")"; fi
 
+# A missing receipt at a run path is UNCHECKED (rc 2) and the path is printed as given, never re-rooted under .loki/runs.
+rc="$(run_verify .loki/runs/e10-nope/receipt.json)"
+if [ "$rc" = "2" ] && grep -q "UNCHECKED" "$T/out" && grep -qF ".loki/runs/e10-nope/receipt.json" "$T/out" "$T/err" && ! grep -qF "runs/.loki/runs" "$T/out" "$T/err"; then ok "a missing receipt at a run path is UNCHECKED rc 2 with the path as given"; else bad "missing receipt path rc=$rc: $(head -c 300 "$T/out") $(head -c 300 "$T/err")"; fi
+
 # Positive control: a git ref still runs the diff verifier, so the new route did not swallow every verify call.
 rc="$(run_verify main)"
 if grep -q "\[verify\] loki verify (deterministic" "$T/err" "$T/out" 2>/dev/null && ! grep -q "^run: " "$T/out"; then ok "control: loki verify main still runs the diff verifier"; else bad "diff verifier control rc=$rc: $(head -c 300 "$T/out") $(head -c 300 "$T/err")"; fi

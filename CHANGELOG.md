@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.68.0 (2026-10-23)
+
+### Added
+- loki report release-notes lists commits under changes (sealed receipt) or not sealed (#391), with the subcommand in report help and completions, and tests that a wrong-schema or unparseable receipt is not sealed (rq65 r2). Approval: "APPROVE pd/rq65r2 d26848e6b + e53c5eac5 + f4292c660 (tl-2, LOW). Supersedes my earlier rq-65 approval of a35b92a78 and 07c069382."
+
+## v11.67.12 (2026-10-23)
+
+### Fixed
+- Release verify jobs now converge npm dist-tags even when the publish tag settle step fails, and are gated with !cancelled() instead of always() (RQ-102, FC-DIST-TAG-MOVED-BACKWARDS recurrence). Approval: "ship pd/rq102 af4a35332a3c9eac67ffa642a8f720b867c49bcc ... APPROVE af4a35332a3c9eac67ffa642a8f720b867c49bcc" (rev-b, HIGH). Stack c186812e3, e7330ad64, 60281448a, af4a35332.
+
+## v11.67.11 (2026-10-23)
+
+### Fixed
+- verify now reports a missing receipt path as given, and start --resume exits 4 only when a measurement is actually missing (cw17b). Approval: "Ship line: pd/cw17b 686f52fb2 APPROVED by rev-c (HIGH). Range 42404106a..686f52fb2: 8c06913ff plus merge commit 686f52fb2". Shipped as the single non-merge commit 8c06913ff.
+
 ## v11.67.10 (2026-10-23)
 
 ### Fixed

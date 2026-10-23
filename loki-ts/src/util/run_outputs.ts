@@ -267,7 +267,10 @@ export function resumeMachineOpts<F extends string>(ctx: Parameters<typeof seedR
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase re-enters the machine at the resume
- *  point under a fresh supervisor (run.resumed, restored stages not rerun). Exit 2 on a refusal: unreadable state is never a success. */
+ *  point under a fresh supervisor (run.resumed, restored stages not rerun). Exit 2 on a refusal: unreadable state is never a success. Exit 4 when a measured property says the run cannot resume (branch or base commit gone, torn log, nothing settled, provider or model changed). */
+/** Exit 4: a measured property of the run says it cannot be resumed. Never a timer. The work stays on its branch; the user starts a new run. */
+const cannotResume = (out: (s: string) => void, id: string, reason: string): number => { out(`resume: run ${id} cannot be resumed (${reason}); its work is on branch loki/${id}. Start a new run: loki start <task>\n`); return 4; };
+
 export async function resumeFlag(runId: string | undefined, noPr = false, deps: ResumeDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => { process.stderr.write(s); });
   let repoDir: string;
@@ -276,11 +279,18 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   const it = findInterrupted(repoDir, id);
   if (!it) { out("engine10: --resume: no interrupted engine10 run\n"); return 3; }
   let raw = "";
-  try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { out(`engine10: --resume refused: run ${it.runId} event log unreadable\n`); return 2; }
+  try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { return cannotResume(out, it.runId, "its event log is unreadable"); }
   const rp = resumePoint(it.events, raw);
+  if (!rp.ok && /^event log (is torn|ends in a torn)/.test(rp.reason)) return cannotResume(out, it.runId, `its ${rp.reason}`);
   if (!rp.ok) { out(`engine10: --resume refused: ${rp.reason}\n`); return 2; }
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
+  const st1 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, wantProv = process.env["LOKI_PROVIDER"], wantModel = process.env["LOKI_MODEL_OVERRIDE"];
+  if (wantProv && typeof st1["provider"] === "string" && wantProv !== st1["provider"]) return cannotResume(out, it.runId, `the provider changed since the kill: the run used ${st1["provider"]}, LOKI_PROVIDER is ${wantProv}`);
+  if (wantModel && st1["model_override_applied"] !== true && typeof st1["model"] === "string" && wantModel !== st1["model"]) return cannotResume(out, it.runId, `the model changed since the kill: the run used ${st1["model"]}, LOKI_MODEL_OVERRIDE is ${wantModel}`);
+  if (rp.skip.length === 0) return cannotResume(out, it.runId, "no stage had settled, so there is nothing to resume from");
+  const baseSha = it.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+  if (typeof baseSha === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(baseSha)) { try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}^{commit}`]); } catch { return cannotResume(out, it.runId, `its base commit ${baseSha.slice(0, 12)} is gone from this repo`); } }
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
   const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), pc = partialCost(it.events), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
   if (it.events.some((e) => e.type === "cap.hit")) { out(`engine10: --resume refused: run ${it.runId} already hit its cost or time cap\n`); return 2; }
@@ -290,6 +300,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   if (rp.skip.includes("intake") && origBranch !== br) {
     const dirty = safeGit(repoDir, ["status", "--porcelain", "--", ".", ":(exclude).loki"]).split("\n").filter(Boolean);
     if (dirty.length) { out(`engine10: --resume refused: ${dirty.length} uncommitted or untracked file(s) in your working tree would ride onto ${br}; commit or stash them first\n`); return 2; }
+    try { safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${br}`]); } catch { return cannotResume(out, it.runId, `run branch ${br} is gone`); }
     try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; }
   }
   const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;

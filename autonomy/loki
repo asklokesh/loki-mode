@@ -1871,7 +1871,7 @@ show_help_all() {
     echo "  acp              Run Loki as an ACP agent over stdio (VS Code, JetBrains, Zed)"
     echo ""
     echo "Report:"
-    echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
+    echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood|release-notes"
     echo ""
     echo "Knowledge:"
     echo "  analyze [cmd]    Codebase intelligence: explain|onboard|code|context"
@@ -2614,10 +2614,11 @@ _loki_start_optval_consumes() { [[ -n "${1:-}" && "${1:-}" != --* ]]; }
 # Same message and exit code as the cmd_start parser's catch-all arm.
 _loki_start_unknown_flag() { echo -e "${RED}Unknown option: $1${NC}"; exit 64; }
 
-# One exit-code mapping for an engine10 resume, shared by cmd_resume and
-# `loki start --resume`. 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1.
+# Exit-code mapping for the engine10 resume REPORTER, used only by cmd_resume.
+# 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1. `loki start --resume`
+# runs the stage resume (engine10 --resume) and returns its code unchanged.
 # Sets _LOKI_E10_RC and returns 0 when handled; any other code returns 1 with
-# _LOKI_E10_RC set to the raw code (cmd_resume falls through, start returns it).
+# _LOKI_E10_RC set to the raw code (cmd_resume falls through).
 _loki_e10_resume_map() {
     case "$1" in
         0 | 4) _LOKI_E10_RC=0 ;;
@@ -37356,6 +37357,63 @@ cmd_report() {
         export)   shift; cmd_export "$@";  return $? ;;
         share)    shift; cmd_share "$@";   return $? ;;
         dogfood)  shift; cmd_dogfood "$@"; return $? ;;
+        release-notes)
+            shift
+            # User release notes (#391): every commit in <from>..<to> is listed under
+            # "changes" when its Loki-Run trailer names a run whose receipt.json
+            # (schema loki.v10.receipt/1) exists under .loki/runs, else under "not sealed".
+            local _rn_range="" _rn_fmt="text" _rn_a
+            while [ $# -gt 0 ]; do
+                _rn_a="$1"; shift
+                case "$_rn_a" in
+                    --format) _rn_fmt="${1:-}"; [ $# -gt 0 ] && shift ;;
+                    --format=*) _rn_fmt="${_rn_a#--format=}" ;;
+                    -*) _rn_range="!"; break ;;
+                    *) [ -z "$_rn_range" ] && _rn_range="$_rn_a" || _rn_range="!" ;;
+                esac
+            done
+            case "$_rn_fmt" in text|json) ;; *) _rn_range="!" ;; esac
+            case "$_rn_range" in
+                ?*..?*) ;;
+                *) echo "Usage: loki report release-notes <from>..<to> [--format text|json]" >&2; return 2 ;;
+            esac
+            local _rn_log
+            _rn_log="$(git log --format='%H%x1f%s%x1f%(trailers:key=Loki-Run,valueonly,separator=%x2c)%x1e' "$_rn_range" 2>/dev/null)" || {
+                echo "Usage: loki report release-notes <from>..<to> [--format text|json]" >&2
+                echo "release-notes: cannot resolve range: $_rn_range" >&2
+                return 2
+            }
+            _RN_LOG="$_rn_log" python3 - "$_rn_fmt" "${LOKI_DIR:-.loki}" <<'PYRN'
+import json, os, sys
+fmt, loki_dir = sys.argv[1], sys.argv[2]
+changes, unsealed = [], []
+for rec in os.environ.get("_RN_LOG", "").split("\x1e"):
+    rec = rec.strip("\n")
+    if not rec:
+        continue
+    sha, subject, run = (rec.split("\x1f") + ["", ""])[:3]
+    run = run.strip().split(",")[0].strip()
+    receipt = ""
+    if run and "/" not in run and ".." not in run:
+        try:
+            with open(os.path.join(loki_dir, "runs", run, "receipt.json")) as fh:
+                if json.load(fh).get("schema") == "loki.v10.receipt/1":
+                    receipt = run
+        except (OSError, ValueError, AttributeError):
+            pass
+    row = {"commit": sha[:12], "subject": subject}
+    (changes if receipt else unsealed).append(dict(row, receipt=receipt) if receipt else row)
+if fmt == "json":
+    print(json.dumps({"changes": changes, "not_sealed": unsealed}, indent=2))
+else:
+    print("changes (%d)" % len(changes))
+    for r in changes:
+        print("  %s  %s  [receipt %s]" % (r["commit"], r["subject"], r["receipt"]))
+    print("not sealed (%d)" % len(unsealed))
+    for r in unsealed:
+        print("  %s  %s" % (r["commit"], r["subject"]))
+PYRN
+            return $? ;;
     esac
     cmd_report_legacy "$@"
 }
@@ -37385,6 +37443,7 @@ cmd_report_legacy() {
                 echo "  export      Export session data (was: loki export) [json|markdown|csv|timeline]"
                 echo "  share       Share session assets (was: loki share)"
                 echo "  dogfood     Self-development stats (was: loki dogfood)"
+                echo "  release-notes <from>..<to> [--format text|json]  Changes in a range; \"sealed\" reads only local .loki/runs receipts"
                 echo "  (Run 'loki report <subcommand> --help' for each. The old"
                 echo "   top-level names still work; see 'loki help aliases'.)"
                 echo ""
