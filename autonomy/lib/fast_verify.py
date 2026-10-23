@@ -54,7 +54,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Source extensions worth scanning. Anything else is discovery noise.
 CODE_EXT = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".rb", ".java", ".sh"}
@@ -83,6 +83,12 @@ class Result:
     files_scanned: int = 0
     files_from_cache: int = 0
     elapsed_ms: float = 0.0
+    # FC-FAST-VERIFY-PASS-WITHOUT-DETECTION: a verdict names the signals behind it.
+    # PASS needs a behavioral signal (a Wall file that ran and passed); static rules
+    # alone cannot see a logic, spec, test-fitting or security defect, so a clean
+    # static scan is INCONCLUSIVE with static_clean=True, never a bare PASS.
+    signals: dict = field(default_factory=dict)
+    static_clean: bool = False
     schema_version: int = SCHEMA_VERSION
     exogenous: bool = True            # never set False; this path admits no LLM
 
@@ -163,7 +169,84 @@ def _rule_toothless_test(path: str, text: str) -> list:
     return out
 
 
-RULES = (_rule_mock_render, _rule_toothless_test)
+# --- Rule C: a Python test that patches the function it then calls -----------
+# `with mock.patch.object(src, 'discount', return_value=90.0): assert src.discount(100) == 90.0`
+# asserts the mock, not the code, so it can never fail. Flagged only when the patched
+# name is also called in the same test file; patching a dependency of the unit under
+# test does not call the patched name from the test and stays quiet.
+
+_PATCH_OBJECT = re.compile(r"""\bpatch\.object\(\s*[\w.]+\s*,\s*['"](\w+)['"]""")
+_PATCH_PATH = re.compile(r"""\bpatch\(\s*['"][\w.]*?\.(\w+)['"]""")
+
+
+def _rule_mock_target(path: str, text: str) -> list:
+    out = []
+    if not text or "patch" not in text:
+        return out
+    for rx in (_PATCH_OBJECT, _PATCH_PATH):
+        for m in rx.finditer(text):
+            name = m.group(1)
+            if re.search(r"(?<![\w'\"])(?:[\w.]+\.)?" + re.escape(name) + r"\s*\(", text[m.end():]):
+                out.append(Finding(
+                    rule="mock_target", path=path,
+                    line=text[:m.start()].count("\n") + 1,
+                    message=(f"test patches '{name}' and then calls it; the assertion checks the "
+                             "mock, not the code under test, so it cannot fail"),
+                ))
+    return out
+
+
+RULES = (_rule_mock_render, _rule_toothless_test, _rule_mock_target)
+
+
+# --- Behavioral signal: Wall files that already exist ------------------------
+# The Wall is authored per run by an LLM (engine10 stages/wall.ts) and cannot be
+# authored here. When loki_wall_* Python files are present in the working tree they
+# are deterministic checks, so run them: a failing one is a FAIL. Other runners
+# (ts/js) are counted as skipped, not as a pass.
+
+WALL_PREFIX = "loki_wall_"
+WALL_TIMEOUT_S = 20
+
+
+def _wall_files(root: str) -> list:
+    raw = _git(["ls-files", "-co", "--exclude-standard"], root)
+    if raw:
+        names = raw.splitlines()
+    else:
+        names = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if not EXCLUDE_RE.search(d) and not d.startswith(".")]
+            names.extend(os.path.relpath(os.path.join(dirpath, fn), root) for fn in filenames)
+    return [n for n in names
+            if os.path.basename(n).startswith(WALL_PREFIX) and not EXCLUDE_RE.search(n)]
+
+
+def _run_wall(root: str) -> tuple:
+    """Returns (findings, ran, skipped). Only .py Wall files are executed."""
+    findings, ran, skipped = [], 0, 0
+    for rel in _wall_files(root):
+        if not rel.endswith(".py"):
+            skipped += 1
+            continue
+        try:
+            p = subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", "--no-header", rel],
+                               cwd=root, capture_output=True, text=True, timeout=WALL_TIMEOUT_S)
+            out = p.stdout + p.stderr
+            # rc 0 pass, 1 test failure; anything else (no pytest, collection error)
+            # is not a result and must not be read as pass or fail.
+            if p.returncode == 0:
+                ran += 1
+            elif p.returncode == 1:
+                ran += 1
+                findings.append(Finding(rule="wall_failed", path=rel, line=1,
+                                        message="Wall test fails: " + (out.strip().splitlines() or [""])[-1][:160]))
+            else:
+                skipped += 1
+        except (OSError, subprocess.SubprocessError):
+            skipped += 1
+    return findings, ran, skipped
 
 
 # --- Discovery: one pass, from the git index ---------------------------------
@@ -417,6 +500,8 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
                 continue
             if rule is _rule_mock_render and is_test:
                 continue
+            if rule is _rule_mock_target and not (is_test and rel.endswith(".py")):
+                continue
             got.extend(rule(rel, text))
 
         if cache is not None:
@@ -426,8 +511,19 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
     if cache is not None:
         cache.save()
 
+    wall_findings, wall_ran, wall_skipped = _run_wall(root)
+    findings.extend(wall_findings)
+    behavioral = wall_ran > 0
     blocking = [f for f in findings if f.severity == "high"]
-    verdict = "FAIL" if blocking else ("PASS" if scanned else "INCONCLUSIVE")
+    if blocking:
+        verdict = "FAIL"
+    elif scanned and behavioral:
+        verdict = "PASS"
+    else:
+        verdict = "INCONCLUSIVE"
+    signals = {"rules": [r.__name__.replace("_rule_", "", 1) for r in RULES], "tests_run": 0,
+               "wall_files_run": wall_ran, "wall_files_skipped": wall_skipped,
+               "behavioral": behavioral}
 
     return Result(
         verdict=verdict,
@@ -435,6 +531,8 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
         files_scanned=scanned,
         files_from_cache=(cache.hits if cache else 0),
         elapsed_ms=round((time.perf_counter() - t0) * 1000, 2),
+        signals=signals,
+        static_clean=bool(scanned) and not blocking,
     )
 
 
@@ -475,6 +573,8 @@ def main(argv: list) -> int:
     else:
         print(f"{r.verdict} in {r.elapsed_ms}ms "
               f"({r.files_scanned} files, {r.files_from_cache} cached)")
+        if r.verdict == "INCONCLUSIVE" and r.static_clean:
+            print("  static checks clean; no behavioral signal ran (no Wall file), so this is not a pass")
         for f in r.findings[:20]:
             print(f"  [{f['severity']}] {f['rule']} {f['path']}:{f['line']} - {f['message']}")
         if len(r.findings) > 20:

@@ -3225,9 +3225,11 @@ async def loki_graph_query(question: str, budget: int = 1500, path: str = ".") -
 
 @mcp.tool()
 async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
-    """Verify code deterministically in milliseconds. No model call, no network.
+    """Run deterministic static checks (and existing Wall tests) in milliseconds. No model call, no network.
     Use it for an immediate, deterministic check of a repo or its diff against a git
-    ref. Do not use it to verify a finished run's receipt (use loki_v10_verify) or
+    ref. It detects mock-abuse tests, assertionless/skipped tests, hardcoded mock data
+    and failing loki_wall_* Python files; it does not detect logic, spec or security
+    defects. With no Wall file it returns INCONCLUSIVE (static_clean=true), never PASS. Do not use it to verify a finished run's receipt (use loki_v10_verify) or
     to review code quality (use loki_quality_report).
 
     This is the embeddable verification primitive: an IDE, another agent, a CI
@@ -3259,7 +3261,9 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
     Returns:
         JSON: verdict (PASS | FAIL | INCONCLUSIVE), findings[] with
         rule/path/line/message/severity, files_scanned, files_from_cache,
-        elapsed_ms, and exogenous=true.
+        elapsed_ms, signals (rules, wall_files_run, wall_files_skipped,
+        tests_run, behavioral), static_clean, and exogenous=true. PASS requires a
+        Wall file that ran and passed.
     """
     _emit_tool_event_async('loki_verify_fast', 'start',
                            parameters={'path': path, 'diff_base': diff_base})
