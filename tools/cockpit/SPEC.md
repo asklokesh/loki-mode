@@ -29,12 +29,19 @@ Non-goals:
    `ThreadingHTTPServer`, `json`, `subprocess`, `fcntl`, `secrets`). No pip
    dependency.
 2. Client: one static file `tools/cockpit/index.html` with inline CSS and JS.
-   No build step, no framework, no new asset files. One CDN exception: the 3D
-   seat avatars import `three@0.160.0` (exact pin) from
-   `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`, the
-   only external origin in the CSP. Offline, or when WebGL or the import
-   fails, every avatar falls back to an inline 2D SVG portrait; every number
-   still renders. All DOM writes go through one `add()` helper (the only
+   No build step, no framework, no CDN, no third-party origin in the CSP.
+   One vendored asset: `tools/cockpit/vendor/three.module.js` is
+   `three@0.160.0` `build/three.module.js` (MIT), taken from the npm registry
+   tarball after its sha512 matched the registry `dist.integrity`, and pinned
+   by sha256 `76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495`
+   (`THREE_SHA256` in server.py, asserted by tests/test-cockpit.sh). The
+   server reads it once at startup from that fixed path, serves it at
+   `/vendor/three.module.js` from 'self', and answers 500 if the hash does not
+   match. `vendor/` exists because no existing file owns third-party assets.
+   When WebGL or the import fails, every avatar falls back to an inline 2D
+   SVG portrait; every number still renders. One cached scene per seat; a
+   mood change disposes the old scene's geometries and materials; one shared
+   renderer. All DOM writes go through one `add()` helper (the only
    `appendChild` call) that turns non-Node values into text nodes, and each
    panel and the member drawer render inside their own try/catch, so one bad
    field shows "render error in <panel>" in that panel only.
@@ -138,6 +145,10 @@ panel (evidence rule, retro 3.1.1).
   file is tracked and clean, else its mtime; `freshness.basis` says which).
   Older than `COCKPIT_BOARD_STALE_HOURS` the board panel and every section
   that reads BOARD.md are STALE with the age; their numbers are still shown.
+  This covers every BOARD-derived number: board, work, agents slice owners,
+  health blocked, roi value, by_seat and company (and the roi panel when its
+  multiple uses BOARD rows), compare week_over_week, day_over_day and
+  seat_vs_seat.
 
 ### 5.4 Agents
 - Source: `.loki/company/status/<slug>.json` for the 10 slugs in
@@ -269,7 +280,8 @@ when all are.
   (mandate, decision rights, metrics, escalation, root causes), status file,
   last tick, tick history from `.loki/company/<slug>/log.jsonl` (bad lines
   skipped; counts 24 h and 7 d by outcome), last run from `last.out`
-  (MEASURED: duration, turns, cost, models), transcript cost (ESTIMATE),
+  (as reported by claude -p: duration, turns, models; cost is the claude -p
+  `total_cost_usd`, a list-price equivalent, not billed spend), transcript cost (ESTIMATE),
   BOARD slices owned by the slug, and the seat ROI row with its formula.
   Per-tick cost and per-seat commits have no source yet and are "no data:
   <reason>" strings, never numbers. Each part has its own source entry.
@@ -302,8 +314,9 @@ when all are.
 | GET | `/` | index.html |
 | GET | `/api/snapshot` | all panels |
 | GET | `/api/panel/<name>` | one panel (pulse, releases, board, agents, okrs, roi, queue, work, compare, health) |
-| GET | `/api/member/<slug>` | one seat's detail; slug must match `^[a-z0-9][a-z0-9-]{0,63}$` and a `.claude/agents/<slug>.md` file, else 404 |
-| GET | `/api/stream` | server-sent events: `retry: 3000`, `event: hello`, then `event: change` with `{changed: [panel names], at, seq}` when a watched source signature changes |
+| GET | `/api/member/<slug>` | one seat's detail; slug must match `^[a-z0-9][a-z0-9-]{0,63}$` and a `.claude/agents/<slug>.md` file (checked before any panel is read), else 404 |
+| GET | `/api/stream` | server-sent events: `retry: 3000`, `event: hello` (with `degraded`), then `event: change` with `{changed: [panel names], at, seq}` when a watched source signature changes, and `event: degraded` with `{degraded: {at, error} or null}` when a watcher step fails or recovers (the failure is also logged to stderr). Each write has a 10 s socket timeout |
+| GET | `/vendor/three.module.js` | the vendored three.js module, only when its sha256 matches `THREE_SHA256`, else 500 |
 | GET | `/healthz` | `{"ok": true, "pid": N}` |
 | POST | `/api/queue` | append result |
 Every other method or path returns 405 or 404.
@@ -315,10 +328,12 @@ Security:
   random token (`secrets.token_urlsafe(32)`), written to
   `.loki/cockpit/token` with mode 600 and injected into the served page; and
   an `Origin` equal to the served origin. Missing or wrong: 403.
+- `GET /api/stream` and `GET /api/member/<slug>` answer 403 when an `Origin`
+  header is present and is not the served origin; no `Origin` is allowed.
 - Request body capped at 8 KB. Responses set `Cache-Control: no-store`,
   `X-Content-Type-Options: nosniff` and a CSP of `default-src 'self';
-  script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src
-  'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`.
+  script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+  img-src 'self' data:; connect-src 'self'`. It names no third-party origin.
 - Subprocesses run with an argument list (never `shell=True`) and an env built
   deny-by-default (PATH, HOME, USER, LOGNAME, LANG, gh and npm config paths
   only), per security-lead rule 3.9.2.
@@ -328,7 +343,9 @@ Security:
 ## 7. Page behaviour
 - Subscribes to `/api/stream`; on a change event it refetches the named
   panels. The header shows Live, Polling every 15 s (stream lost; polls
-  `/api/snapshot`) or Offline. Panels update in place without layout shift;
+  `/api/snapshot`), Live stream degraded (watcher failing; polls) or
+  Offline. While Live it also refetches every 60 s as a safety refresh. A
+  malformed `#member/` hash is ignored. Panels update in place without layout shift;
   a "last refreshed" time and the age of each source are always visible.
 - Dark first with a light toggle; a KPI strip; SVG charts; the 10 seats as
   cards with persona, mandate, color and avatar. Clicking a seat opens the
@@ -369,6 +386,13 @@ recorded PID only, sets `LOKI_NO_BROWSER=1`. Fixtures under the run tmp dir:
   fake-DOM run of the page script (appendChild throws on non-Nodes) over
   null, empty, garbage and fixture inputs. Each has a mutation the suite
   kills.
+- Hardening: the vendored three.js sha256 pin (file, constant, served body;
+  a tampered copy answers 500), a CSP with no third-party origin (header and
+  constant), every BOARD-derived source STALE under a stale BOARD (with the
+  required reader set), watcher step failure degrading the stream, foreign
+  Origin 403 on stream and member, governor loaded from the server checkout,
+  a malformed `#member/` hash, and scene reuse with disposal on mood change.
+  Each has a mutation the suite kills.
 - Positive control for every absence assertion (retro 3.1.6): the same probe
   run on a fixture that does contain the value must find it.
 

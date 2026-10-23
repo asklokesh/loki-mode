@@ -515,13 +515,17 @@ for old, new in zip(pairs[::2], pairs[1::2]):
     t = t.replace(old, new)
 open(dst, "w", encoding="utf-8").write(t)
 PYEOF
-mkmut() { # mkmut <name> <old> <new> [<old> <new>...]: writes $FIX/m-<name>/server.py and prints its path
+mkmut() { # mkmut <name> [<old> <new>...]: writes $FIX/m-<name>/tools/cockpit/server.py and prints its path
+    # The copy keeps the repo layout (scripts/ linked) so HERE-relative loads resolve as in the checkout.
     local d="$FIX/m-$1"
     shift
-    mkdir -p "$d"
-    cp "$REPO_ROOT/tools/cockpit/index.html" "$REPO_ROOT/tools/cockpit/roi-basis.json" "$d/"
-    python3 "$FIX/mutate.py" "$SERVER" "$d/server.py" "$@" >&2 || return 1
-    printf '%s\n' "$d/server.py"
+    mkdir -p "$d/tools/cockpit"
+    [ -e "$d/scripts" ] || ln -s "$REPO_ROOT/scripts" "$d/scripts"
+    cp "$REPO_ROOT/tools/cockpit/index.html" "$REPO_ROOT/tools/cockpit/roi-basis.json" "$d/tools/cockpit/"
+    rm -rf "$d/tools/cockpit/vendor"
+    cp -R "$REPO_ROOT/tools/cockpit/vendor" "$d/tools/cockpit/vendor"
+    python3 "$FIX/mutate.py" "$SERVER" "$d/tools/cockpit/server.py" "$@" >&2 || return 1
+    printf '%s\n' "$d/tools/cockpit/server.py"
 }
 srvpy() { # srvpy <server.py> <python expr over module m>: import a server copy and print the expression
     python3 - "$1" "$2" 2>&1 <<'PYEOF'
@@ -630,6 +634,104 @@ else
     bad "mutation n5 did not apply (stale pattern)"
 fi
 
+echo "== B3: three.js is vendored, sha256-pinned, and the CSP names no third-party origin"
+THREE_PIN="76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495"
+sha256f() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+cspq() { # cspq: read a CSP on stdin, print every scheme-qualified or wildcard source in it
+    python3 -c 'import re,sys; print(re.findall(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s;]*|(?<![A-Za-z])\*", sys.stdin.read()))'
+}
+check "vendored three.module.js matches the pinned sha256" "$THREE_PIN" "$(sha256f "$REPO_ROOT/tools/cockpit/vendor/three.module.js")"
+check "server THREE_SHA256 is the same pin, and load_vendor accepts the file" "$THREE_PIN None" "$(srvpy "$SERVER" 'm.THREE_SHA256 + " " + str(m.load_vendor()[1])')"
+check "server CSP names no third-party origin" "[]" "$(srvpy "$SERVER" 'm.CSP' | cspq)"
+check "page imports three.js only from /vendor (no CDN, no absolute URL import)" "[True, 0]" \
+    "$(python3 -c 'import re,sys; t=open(sys.argv[1]).read(); print([chr(34)+"/vendor/three.module.js"+chr(34) in t, len(re.findall(r"import\(\s*.https?:", t)) + t.count("jsdelivr")])' "$REPO_ROOT/tools/cockpit/index.html")"
+if M="$(mkmut cdn "\"default-src 'self'; script-src 'self' 'unsafe-inline';" "\"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;")"; then
+    check "mutant (CDN back in the CSP) is caught" "['https://cdn.jsdelivr.net']" "$(srvpy "$M" 'm.CSP' | cspq)"
+    printf 'x' >>"$(dirname "$M")/vendor/three.module.js"
+    check "mutant (tampered vendored module) is refused by load_vendor" "True True" \
+        "$(srvpy "$M" '" ".join([str(m.load_vendor()[0] is None), str("sha256 mismatch" in m.load_vendor()[1])])')"
+else
+    bad "mutation cdn did not apply (stale pattern)"
+fi
+
+echo "== B1-sibling: every BOARD-derived source is STALE while BOARD.md is stale"
+cat >"$FIX/bsrc.py" <<'PYEOF'
+# Prints [offenders] [required sections missing from the BOARD-derived set] for a --once --json snapshot.
+import json, sys
+d = json.load(open(sys.argv[1]))
+board = sys.argv[2]
+need = {"work.slices", "agents.slice_owners", "health.blocked", "roi.value", "roi.by_seat", "roi.company",
+        "compare.week_over_week", "compare.day_over_day", "compare.seat_vs_seat"}
+seen, bad = set(), []
+for pname, p in d["panels"].items():
+    for key, srcent in ((p.get("data") or {}).get("sources") or {}).items():
+        text = str(srcent.get("source") or "")
+        if "BOARD" in text or board in text:
+            seen.add(pname + "." + key)
+            if srcent.get("status") == "OK":
+                bad.append(pname + "." + key)
+if (d["panels"]["roi"]["data"]["roi"] or {}).get("multiple") is not None and d["panels"]["roi"]["status"] == "OK":
+    bad.append("roi panel")
+print(sorted(bad), sorted(need - seen))
+PYEOF
+check "stale BOARD: no BOARD-derived source reads OK, and every known BOARD reader is covered" "[] []" \
+    "$(python3 "$FIX/bsrc.py" "$FIX/stale.json" "$FIX/stale/BOARD.md")"
+check "watcher invalidates roi and compare on a BOARD change" "True" "$(srvpy "$SERVER" 'all(p in m.Watcher.PANELS_FOR["board"] for p in ("board", "work", "agents", "roi", "compare"))')"
+if M="$(mkmut bsib '        board_mark(S, ctx, "by_seat", bfr)' '        pass' '            board_mark(S, ctx, "week_over_week")' '            pass')"; then
+    BOARD_MD="$FIX/stale/BOARD.md" python3 "$M" --repo-root "$REPO_ROOT" --once --json >"$FIX/bsib-mut.json" 2>/dev/null
+    check "mutant (by_seat and week_over_week skip the STALE mark) is caught" "['compare.week_over_week', 'roi.by_seat'] []" \
+        "$(python3 "$FIX/bsrc.py" "$FIX/bsib-mut.json" "$FIX/stale/BOARD.md")"
+else
+    bad "mutation bsib did not apply (stale pattern)"
+fi
+
+echo "== M1: a failing watcher step logs and degrades the stream, then recovers"
+cat >"$FIX/m1.py" <<'PYEOF'
+import importlib.util, io, sys
+spec = importlib.util.spec_from_file_location("cockpit_server_m1", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+w = m.Watcher(m.Ctx(sys.argv[2]), None, interval=1)
+err, sys.stderr = sys.stderr, io.StringIO()
+def boom():
+    raise RuntimeError("disk gone")
+w.groups = boom
+w.tick()
+logged = "step failed" in sys.stderr.getvalue()
+sys.stderr = err
+first = [w.degraded is not None and "disk gone" in w.degraded["error"], w.dseq, logged]
+w.groups = lambda: {"board": 1}
+w.tick()
+print(first, [w.degraded, w.dseq])
+PYEOF
+check "watcher step failure: degraded with the error, logged, then cleared on the next good step" "[True, 1, True] [None, 2]" "$(python3 "$FIX/m1.py" "$SERVER" "$REPO_ROOT" 2>&1)"
+check "stream emits event: degraded; page has a 60 s safety refresh and a degraded handler" "[True, True, True]" \
+    "$(python3 -c 'import sys; s=open(sys.argv[1]).read(); h=open(sys.argv[2]).read(); print(["event: degraded" in s, "if(liveMode===\"live\")refresh();},60000)" in h, "addEventListener(\"degraded\"" in h])' "$SERVER" "$REPO_ROOT/tools/cockpit/index.html")"
+if M="$(mkmut m1 '        except Exception as ex:
+            sys.stderr.write("cockpit watcher: step failed: %r\n" % (ex,))
+            with self.cond:
+                self.degraded = {"at": iso(self.ctx.now()), "error": repr(ex)[:300]}
+                self.dseq += 1
+                self.cond.notify_all()
+            return None' '        except Exception:
+            return None')"; then
+    check "mutant (silent swallow, as before) is caught" "[False, 0, False] [None, 0]" "$(python3 "$FIX/m1.py" "$M" "$REPO_ROOT" 2>&1)"
+else
+    bad "mutation m1 did not apply (stale pattern)"
+fi
+
+echo "== L2, L3: member slug checked before any panel read; governor loaded from the server checkout"
+check "member route checks the agent slug before store.get" "True" \
+    "$(python3 -c 'import sys; s=open(sys.argv[1]).read(); a=s.index("slug not in agent_slugs(ctx)[0]"); b=s.index("collect_member(ctx, slug, store.get("); print(a < b)' "$SERVER")"
+mkdir -p "$FIX/bare-root"
+L3X='(lambda r: [r[0] is not None, r[1]])(m.ds_tokens(m.Ctx("'"$FIX/bare-root"'")))'
+check "a --repo-root without scripts/ still reads transcripts via the server checkout's usage-governor.py" "[True, None]" "$(srvpy "$SERVER" "$L3X")"
+if M="$(mkmut l3 'os.path.join(HERE, "..", "..", "scripts", "usage-governor.py")' 'os.path.join(ctx.root, "scripts", "usage-governor.py")')"; then
+    check "mutant (governor from --repo-root) is caught: the load fails" "True" "$(srvpy "$M" '"cannot load usage-governor" in str(m.ds_tokens(m.Ctx("'"$FIX/bare-root"'"))[1])')"
+else
+    bad "mutation l3 did not apply (stale pattern)"
+fi
+
 echo "== LaunchAgent plist for the cockpit"
 if python3 - "$REPO_ROOT" <<'PYEOF'
 import importlib.util, os, plistlib, sys, tempfile
@@ -684,6 +786,13 @@ if grep -q "__COCKPIT_TOKEN__" "$FIX/body.out"; then bad "token placeholder not 
 if grep -q "$TOKEN" "$FIX/body.out"; then ok "page carries the per-process token"; else bad "token not injected"; fi
 curl -s -D "$HDRS" -o /dev/null "$BASE/healthz"
 if grep -qi '^x-content-type-options: nosniff' "$HDRS" && grep -qi '^cache-control: no-store' "$HDRS" && grep -qi "^content-security-policy: default-src 'self'" "$HDRS"; then ok "security headers set"; else bad "security headers missing"; fi
+CSPH="$(sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p' "$HDRS" | tr -d '\r')"
+check "served CSP header names no third-party origin" "[]" "$(printf '%s' "$CSPH" | cspq)"
+check "GET /vendor/three.module.js 200" 200 "$(code -D "$FIX/vendor-hdrs.txt" "$BASE/vendor/three.module.js")"
+check "served module matches the pinned sha256" "$THREE_PIN" "$(sha256f "$FIX/body.out")"
+if grep -qi '^content-type: text/javascript' "$FIX/vendor-hdrs.txt"; then ok "vendored module served as text/javascript"; else bad "vendor content type: $(cat "$FIX/vendor-hdrs.txt")"; fi
+check "POST /vendor/three.module.js 405" 405 "$(code -X POST "$BASE/vendor/three.module.js")"
+check "GET /vendor/other.js 404 (only the one pinned file)" 404 "$(code "$BASE/vendor/other.js")"
 check "GET /api/snapshot 200" 200 "$(code "$BASE/api/snapshot")"
 cp "$FIX/body.out" "$FIX/snap.json"
 check "snapshot has 10 panels" 10 "$(pj "$FIX/snap.json" 'len(d["panels"])')"
@@ -752,7 +861,8 @@ cp "$FIX/body.out" "$FIX/member.json"
 memq() { pj "$FIX/member.json" "$1"; }
 check "member: slug, status and last tick read from the seat files" "['cto', 'OK', 'dispatched 2 slices', 'x']" "$(memq '[d["data"]["slug"], d["data"]["sources"]["status"]["status"], d["data"]["last_tick"]["outcome"], d["data"]["status"]["doing"]]')"
 check "member: history from log.jsonl (bad line skipped), 24h and 7d counts, kinds" "[3, 2, 3, {'error': 1, 'ran': 1, 'skipped': 1}]" "$(memq '(lambda h: [h["total"], h["ticks_24h"], h["ticks_7d"], dict(sorted(h["outcomes_7d"].items()))])(d["data"]["history"])')"
-check "member: last run duration, turns and cost from last.out (MEASURED)" "[61000, 7, 0.42, ['claude-sonnet-4-6']]" "$(memq '(lambda r: [r["duration_ms"], r["num_turns"], r["total_cost_usd"], r["models"]])(d["data"]["last_run"])')"
+check "member: last run duration, turns and cost from last.out (as reported by claude -p)" "[61000, 7, 0.42, ['claude-sonnet-4-6']]" "$(memq '(lambda r: [r["duration_ms"], r["num_turns"], r["total_cost_usd"], r["models"]])(d["data"]["last_run"])')"
+check "member: last run cost is labelled a list-price equivalent, never MEASURED" "[True, False]" "$(memq '(lambda l: ["list-price equivalent" in l, "MEASURED" in l])(d["data"]["last_run"]["label"])')"
 check "member: cost from transcripts (cto opus 3.00, ESTIMATE)" "[3.0, True]" "$(memq '[d["data"]["cost"]["usd_24h"], d["data"]["cost"]["label"].startswith("ESTIMATE")]')"
 check "member: BOARD slices attributed by owner slug" "True" "$(memq 'isinstance(d["data"]["slices"]["total"], int)')"
 check "member: commits are a no-data reason, never a number" "True" "$(memq 'd["data"]["commits"].startswith("no data:")')"
@@ -770,6 +880,10 @@ check "GET /api/member/nope 404 (not a .claude/agents seat)" 404 "$(code "$BASE/
 check "GET /api/member/CTO 404 (slug pattern is lowercase)" 404 "$(code "$BASE/api/member/CTO")"
 check "GET /api/member/..%2Fcto 404 (no path tricks)" 404 "$(code "$BASE/api/member/..%2Fcto")"
 check "GET /api/member/ 404 (empty slug)" 404 "$(code "$BASE/api/member/")"
+check "L1: member with a foreign Origin is 403" 403 "$(code -H 'Origin: http://evil.example' "$BASE/api/member/cto")"
+check "L1: member with the served Origin is 200" 200 "$(code -H "Origin: $ORIGIN" "$BASE/api/member/cto")"
+check "L1: stream with a foreign Origin is 403" 403 "$(code --max-time 3 -H 'Origin: http://evil.example' "$BASE/api/stream")"
+check "L1: stream sockets carry a write timeout" "10" "$(srvpy "$SERVER" 'm.SSE_WRITE_TIMEOUT_S')"
 
 echo "== GET /api/stream (server-sent events)"
 cnt1() { if [ "${1:-0}" -gt 0 ] 2>/dev/null; then echo 1; else echo 0; fi; }
@@ -840,6 +954,21 @@ if M="$(mkmut sse 'diff = [k for k in new if new[k] != self.sigs.get(k)]' 'diff 
     fi
 else
     bad "mutation sse did not apply (stale pattern)"
+fi
+
+echo "== mutation: a tampered vendored module is never served"
+if M="$(mkmut tamper)"; then
+    printf 'x' >>"$(dirname "$M")/vendor/three.module.js"
+    if start_server "$M" tamper --repo-root "$REPO_ROOT"; then
+        check "tampered three.module.js: /vendor answers 500 with a sha256 mismatch" "500 True" \
+            "$(c="$(code "http://127.0.0.1:$PORT/vendor/three.module.js")"; printf '%s %s' "$c" "$(pj "$FIX/body.out" '"sha256 mismatch" in d["error"]')")"
+        kill "$SPID" 2>/dev/null
+        wait "$SPID" 2>/dev/null
+    else
+        bad "tamper mutant server did not start"
+    fi
+else
+    bad "mutation tamper did not apply"
 fi
 
 echo "== client null-safety: the page script under a strict fake DOM (node)"
@@ -921,6 +1050,25 @@ step("isolation", () => { const n = C.render(ex); if (n !== 9) fails.push("isola
 if (txt("p-board").indexOf("render error in board: boom") < 0) fails.push("isolation: board does not show its render error");
 if (txt("p-releases").indexOf("render error") >= 0) fails.push("isolation: releases caught the board error");
 C.R.board = realBoard;
+window.location = { hash: "#member/%E0%A4%A" };
+try { C.route(); } catch (e) { fails.push("route(malformed #member hash): threw " + e.message); }
+delete window.location;
+let disposed = 0;
+class G { constructor(a, b) { this.children = []; this.position = { x: 0, y: 0, z: 0, set() {} }; this.rotation = { x: 0, y: 0, z: 0 };
+    if (a && a.__geo) this.geometry = a; if (b && b.__mat) this.material = b; }
+  add(c) { this.children.push(c); } traverse(f) { f(this); this.children.forEach((c) => c.traverse && c.traverse(f)); }
+  lookAt() {} clone() { return this; } lerp() { return this; } getHex() { return 0; } dispose() { disposed++; } }
+class Geo extends G { constructor() { super(); this.__geo = 1; } }
+class Mat extends G { constructor() { super(); this.__mat = 1; } }
+C.AV.three = new Proxy({}, { get: (_t, k) => typeof k !== "string" ? undefined : (k.endsWith("Geometry") ? Geo : (k.endsWith("Material") ? Mat : G)) });
+try {
+  const a = C.sceneFor("cto", "active"), b = C.sceneFor("cto", "active");
+  if (a !== b) fails.push("sceneFor: same seat and mood rebuilt the scene instead of reusing it");
+  if (disposed !== 0) fails.push("sceneFor: disposed " + disposed + " before any mood change");
+  C.sceneFor("cto", "idle");
+  if (disposed === 0) fails.push("sceneFor: mood change leaked the old scene (nothing disposed)");
+} catch (e) { fails.push("sceneFor: threw " + e.message); }
+C.AV.three = null;
 console.log(fails.length ? fails.slice(0, 6).join(" | ") : "ok");
 JSEOF
 if command -v node >/dev/null 2>&1; then
@@ -944,6 +1092,19 @@ if command -v node >/dev/null 2>&1; then
         ok "mutant page (scalar seat list fed to .map) is caught by the member render"
     else
         bad "fake DOM missed a scalar evidence field breaking the member drawer"
+    fi
+    python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-nodecode.html" \
+        '{var sl=null;try{sl=decodeURIComponent(hs.slice(8));}catch(e){sl=null;}if(sl)loadMember(sl);else if(openSlug)closeMember();}' 'loadMember(decodeURIComponent(hs.slice(8)));'
+    if node "$FIX/shim.js" "$FIX/index-nodecode.html" "$FIX/ex.json" "$FIX/member.json" 2>&1 | grep -q 'route(malformed #member hash): threw'; then
+        ok "mutant page (unguarded decodeURIComponent) is caught"
+    else
+        bad "shim missed the unguarded decodeURIComponent"
+    fi
+    python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-nodispose.html" 'if(c)disposeScene(c);' ''
+    if node "$FIX/shim.js" "$FIX/index-nodispose.html" "$FIX/ex.json" "$FIX/member.json" 2>&1 | grep -q 'leaked the old scene'; then
+        ok "mutant page (old scene not disposed) is caught"
+    else
+        bad "shim missed the scene leak"
     fi
 else
     echo "SKIP: node not found; the client null-safety shim did not run (NOT a pass)"

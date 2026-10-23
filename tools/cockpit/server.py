@@ -11,6 +11,7 @@ import argparse
 import errno
 import fcntl
 import glob
+import hashlib
 import json
 import os
 import re
@@ -389,7 +390,7 @@ def ds_tokens(ctx):
         return None, "no transcript directory found (COCKPIT_TRANSCRIPT_ROOT or ~/.claude/projects) for " + ctx.root, as_of
     try:
         from pathlib import Path
-        gov = _load_module("usage_governor_cockpit", os.path.join(ctx.root, "scripts", "usage-governor.py"))
+        gov = _load_module("usage_governor_cockpit", os.path.join(HERE, "..", "..", "scripts", "usage-governor.py"))
     except Exception as ex:
         return None, "cannot load usage-governor.py: %r" % (ex,), as_of
     slugs, _ = agent_slugs(ctx)
@@ -769,15 +770,25 @@ def board_freshness(ctx):
             "stale": age_h is not None and age_h > thr}
 
 
+def board_stale_note(ctx, f):
+    return "STALE: %s last changed %s (%s), %sh ago, over %sh" % (
+        ctx.board, f["as_of"], f["basis"], f["age_h"], f["threshold_h"])
+
+
+def board_mark(S, ctx, key, f=None):
+    """Mark an already recorded section STALE when any of its numbers derive from a stale BOARD.md."""
+    f = f or board_freshness(ctx)
+    if f["stale"] and key in S.m and S.m[key]["status"] == "OK":
+        S.m[key]["status"] = "STALE"
+        S.m[key]["error"] = board_stale_note(ctx, f)
+    return f
+
+
 def board_source(S, ctx, key, keys=None):
     """Record a BOARD.md-backed section with the file's own as_of, STALE past the threshold."""
     f = board_freshness(ctx)
     S.ok(key, "read %s (as of %s: %s)" % (ctx.board, f["basis"], f["as_of"]), f["as_of"], keys=keys)
-    if f["stale"]:
-        S.m[key]["status"] = "STALE"
-        S.m[key]["error"] = "STALE: %s last changed %s (%s), %sh ago, over %sh" % (
-            ctx.board, f["as_of"], f["basis"], f["age_h"], f["threshold_h"])
-    return f
+    return board_mark(S, ctx, key, f)
 
 
 def collect_board(ctx):
@@ -958,7 +969,7 @@ def seat_activity(ctx, slug, now):
     o, _ = read_json(os.path.join(ctx.company_dir, slug, "last.out"))
     if isinstance(o, dict) and isinstance(o.get("total_cost_usd"), (int, float)):
         a["last_tick_cost_usd"] = round(o["total_cost_usd"], 4)
-        a["last_tick_cost_label"] = "MEASURED (claude -p total_cost_usd of the last tick)"
+        a["last_tick_cost_label"] = "as reported by claude -p (list-price equivalent), last tick"
     return a
 
 
@@ -1097,7 +1108,7 @@ def collect_member(ctx, slug, roi_panel=None):
         data["last_run"] = {"duration_ms": o.get("duration_ms"), "num_turns": o.get("num_turns"),
                             "total_cost_usd": o.get("total_cost_usd"), "is_error": o.get("is_error"),
                             "terminal_reason": o.get("terminal_reason"), "models": sorted(mu),
-                            "label": "MEASURED: claude -p result of the last tick only"}
+                            "label": "as reported by claude -p (list-price equivalent), last tick only"}
         S.ok("last_run", "read %s/last.out (claude -p --output-format json)" % seat_dir)
     else:
         data["last_run"] = None
@@ -1344,6 +1355,7 @@ def collect_roi(ctx):
          keys=["cost", "roi", "scoreboard"])
     S.ok("value", "read %s ; read %s (ASSUMPTION basis %s)" % (ctx.basis, ctx.board, basis.get("snapshot_date")),
          keys=["value", "basis"])
+    bfr = board_mark(S, ctx, "value")
     toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
     commits, cerr, cas = ctx.ds.get("git", 120, ds_git)
     npm, nerr, nas = ctx.ds.get("npm", 55, ds_npm)
@@ -1408,10 +1420,15 @@ def collect_roi(ctx):
                            "slices_unattributed_7d": sum(1 for r in rel if owner_group(r["owner"], slugs) not in slugs),
                            "label": "ESTIMATE cost; slices attributed by seat slug in the BOARD owner text (free text)"}
         S.ok("by_seat", "transcripts x price table ; read " + ctx.board, tas)
+        board_mark(S, ctx, "by_seat", bfr)
     else:
         S.bad("by_seat", "transcripts x price table ; read " + ctx.board, "; ".join(miss) or "unavailable")
     S.ok("company", "transcripts, git log, npm time, BOARD, gh issue list (per-input status in unknown_inputs)", tas)
+    if brows is not None:
+        board_mark(S, ctx, "company", bfr)
     data["sources"] = S.m
+    if measured and multiple is not None and bfr["stale"]:
+        return panel(ctx, "STALE", src, data, "ROI multiple uses BOARD released rows; " + board_stale_note(ctx, bfr))
     return panel(ctx, "OK" if (measured and multiple is not None) else "UNMEASURED", src, data,
                  None if multiple is not None else "ROI multiple withheld: " + (
                      "value side unmeasured" if value["state"] == "UNMEASURED" else "cost side unmeasured"))
@@ -1613,6 +1630,8 @@ def collect_compare(ctx):
         data["week_over_week"] = None
     else:
         S.ok("week_over_week", src)
+        if brows is not None:
+            board_mark(S, ctx, "week_over_week")
 
     days = day_buckets(ctx)
     series = []
@@ -1632,6 +1651,8 @@ def collect_compare(ctx):
                                                        for k in ("commits", "npm_releases", "slices_released", "token_cost_usd")},
                                 "note": "today is a partial UTC day (%d hours elapsed)" % now.hour}
         S.ok("day_over_day", src)
+        if brows is not None:
+            board_mark(S, ctx, "day_over_day")
 
     if toks is None:
         data["seat_vs_seat"] = data["model_mix"] = None
@@ -1650,7 +1671,10 @@ def collect_compare(ctx):
                                                       and owner_group(r["owner"], slugs) == n) if brows is not None and n in slugs else None)})
         seats.sort(key=lambda x: -x["usd_7d"])
         data["seat_vs_seat"] = {"seats": seats, "total_usd_7d": tot["usd"], "label": "ESTIMATE, list-price equivalent not billed spend (tokens x price table)"}
-        S.ok("seat_vs_seat", "Claude Code transcripts x " + ctx.pricing, tas)
+        S.ok("seat_vs_seat", "Claude Code transcripts x " + ctx.pricing + (
+            " ; read " + ctx.board if brows is not None else ""), tas)
+        if brows is not None:
+            board_mark(S, ctx, "seat_vs_seat")
         mix = {}
         for label, a in (("last_24h", d1), ("last_7d", d7)):
             t_all = tok_sum(toks["rows"], a, horizon)
@@ -1872,6 +1896,7 @@ class Store:
 # ------------------------------------------------------------ live push
 SSE_MAX_CLIENTS = 8
 SSE_HEARTBEAT_S = 15
+SSE_WRITE_TIMEOUT_S = 10  # a stalled reader cannot hold one of the SSE_MAX_CLIENTS slots
 
 
 def file_sig(path):
@@ -1894,6 +1919,7 @@ class Watcher:
         self.cond = threading.Condition()
         self.seq, self.changed, self.at = 0, [], None
         self.clients, self.thread, self.sigs = 0, None, None
+        self.degraded, self.dseq = None, 0
 
     def groups(self):
         c = self.ctx
@@ -1917,7 +1943,7 @@ class Watcher:
         d = e[1].get("data") or {}
         return json.dumps([d.get(k) for k in keys], sort_keys=True, default=str)
 
-    PANELS_FOR = {"agents": ["agents", "roi"], "board": ["board", "work", "agents"], "queue": ["queue"],
+    PANELS_FOR = {"agents": ["agents", "roi"], "board": ["board", "work", "agents", "roi", "compare"], "queue": ["queue"],
                   "usage": ["health", "roi"], "pause": ["health"], "releases": ["releases", "compare"],
                   "usage_cap": []}
 
@@ -1939,16 +1965,32 @@ class Watcher:
                 self.cond.notify_all()
         return diff
 
+    def tick(self):
+        """One watch step. A failure is logged and marks the stream degraded (clients fall back to
+        their safety refresh); the next good step clears it. Both transitions wake every stream."""
+        try:
+            diff = self.step()
+        except Exception as ex:
+            sys.stderr.write("cockpit watcher: step failed: %r\n" % (ex,))
+            with self.cond:
+                self.degraded = {"at": iso(self.ctx.now()), "error": repr(ex)[:300]}
+                self.dseq += 1
+                self.cond.notify_all()
+            return None
+        if self.degraded is not None:
+            with self.cond:
+                self.degraded = None
+                self.dseq += 1
+                self.cond.notify_all()
+        return diff
+
     def _loop(self):
         while True:
             with self.cond:
                 if self.clients <= 0:
                     self.thread, self.sigs = None, None
                     return
-            try:
-                self.step()
-            except Exception:
-                pass
+            self.tick()
             time.sleep(self.interval)
 
     def attach(self):
@@ -2033,15 +2075,33 @@ def append_queue(ctx, item, why):
 
 
 # ----------------------------------------------------------------- http
-THREE_CDN = "https://cdn.jsdelivr.net"
+# three@0.160.0 build/three.module.js, verified against the npm dist.integrity (SPEC.md section 3).
+THREE_VENDOR = os.path.join(HERE, "vendor", "three.module.js")
+THREE_SHA256 = "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495"
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; connect-src 'self'")
+
+
+def load_vendor(path=THREE_VENDOR, want=THREE_SHA256):
+    """(bytes, None) when the vendored module matches its pin, else (None, error). Read once at startup."""
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError as ex:
+        return None, "cannot read %s: %s" % (path, ex.strerror or ex)
+    got = hashlib.sha256(body).hexdigest()
+    if got != want:
+        return None, "sha256 mismatch for %s: got %s, pinned %s" % (path, got, want)
+    return body, None
 
 
 def make_handler(ctx, store, token, port, index_html, watcher=None):
     hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
     origins = {"http://" + h for h in hosts}
-    # The one external origin: the pinned three.js module for the seat avatars (SPEC.md section 3).
-    csp = ("default-src 'self'; script-src 'self' 'unsafe-inline' %s; style-src 'self' 'unsafe-inline'; "
-           "img-src 'self' data:; connect-src 'self'" % THREE_CDN)
+    csp = CSP
+    vendor_body, vendor_err = load_vendor()
+    if vendor_err:
+        sys.stderr.write("cockpit: avatars disabled: %s\n" % vendor_err)
     watcher = watcher or Watcher(ctx, store)
 
     class H(BaseHTTPRequestHandler):
@@ -2069,6 +2129,14 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
             self.send(403, {"error": "bad Host header"})
             return False
 
+        def origin_ok(self):
+            # A browser sends Origin on cross-origin reads; absent is a same-origin or non-browser client.
+            o = self.headers.get("Origin")
+            if o is None or o in origins:
+                return True
+            self.send(403, {"error": "origin not allowed"})
+            return False
+
         def do_GET(self):
             if not self.host_ok():
                 return
@@ -2078,6 +2146,10 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
                 return self.send(200, page.encode("utf-8"), "text/html")
             if path == "/healthz":
                 return self.send(200, {"ok": True, "pid": os.getpid()})
+            if path == "/vendor/three.module.js":
+                if vendor_body is None:
+                    return self.send(500, {"error": vendor_err})
+                return self.send(200, vendor_body, "text/javascript")
             if path == "/api/snapshot":
                 return self.send(200, store.snapshot(PANELS, ctx.first_wait))
             if path.startswith("/api/panel/"):
@@ -2086,14 +2158,18 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
                     return self.send(404, {"error": "unknown panel"})
                 return self.send(200, store.get(name, ctx.first_wait))
             if path.startswith("/api/member/"):
+                if not self.origin_ok():
+                    return
                 slug = path[len("/api/member/"):]
-                if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", slug):
+                if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", slug) or slug not in agent_slugs(ctx)[0]:
                     return self.send(404, {"error": "unknown member"})
                 res = collect_member(ctx, slug, store.get("roi", ctx.first_wait))
                 if res is None:
                     return self.send(404, {"error": "unknown member"})
                 return self.send(200, res)
             if path == "/api/stream":
+                if not self.origin_ok():
+                    return
                 return self.stream()
             if path == "/api/queue":
                 return self.send(405, {"error": "method not allowed"})
@@ -2111,9 +2187,10 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 self.close_connection = True
+                self.connection.settimeout(SSE_WRITE_TIMEOUT_S)
                 with watcher.cond:
-                    seen = watcher.seq
-                hello = {"at": iso(ctx.now()), "interval_s": watcher.interval}
+                    seen, dseen, deg = watcher.seq, watcher.dseq, watcher.degraded
+                hello = {"at": iso(ctx.now()), "interval_s": watcher.interval, "degraded": deg}
                 self.wfile.write(("retry: 3000\nevent: hello\ndata: %s\n\n" % json.dumps(hello)).encode())
                 self.wfile.flush()
                 last_beat = time.time()
@@ -2121,6 +2198,11 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
                     with watcher.cond:
                         watcher.cond.wait(1.0)
                         seq, changed, at = watcher.seq, list(watcher.changed), watcher.at
+                        dseq, deg = watcher.dseq, watcher.degraded
+                    if dseq != dseen:
+                        dseen = dseq
+                        self.wfile.write(("event: degraded\ndata: %s\n\n" % json.dumps({"degraded": deg})).encode())
+                        self.wfile.flush()
                     if seq != seen:
                         seen = seq
                         msg = json.dumps({"changed": changed, "at": at, "seq": seq})
@@ -2140,7 +2222,7 @@ def make_handler(ctx, store, token, port, index_html, watcher=None):
                 return
             path = self.path.split("?", 1)[0]
             if path != "/api/queue":
-                known = path in ("/", "/healthz", "/api/snapshot", "/api/stream") or \
+                known = path in ("/", "/healthz", "/api/snapshot", "/api/stream", "/vendor/three.module.js") or \
                     path.startswith(("/api/panel/", "/api/member/"))
                 return self.send(405 if known else 404, {"error": "method not allowed" if known else "not found"})
             tok = self.headers.get("X-Cockpit-Token") or ""
