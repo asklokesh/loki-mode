@@ -1,7 +1,7 @@
 // FC-69 CI guard (global guard, scripts/global-guards.tsv): the real engine from bin/loki with the stub claude CLI (no billed
 // calls) and FORCE_COLOR=1 in the user's env. The Wall author writes one test that is red on base; it must be kept and executed.
 import { afterAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -17,7 +17,7 @@ function git(cwd: string, ...args: string[]): void {
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
 }
 
-function runWallColor(color: Record<string, string>): { code: number; out: string; receipt: { verdict: string; not_proven: string[]; checks: { name: string; result: string }[]; wall: { files: unknown[] } } } {
+function runWallColor(color: Record<string, string>): { code: number; out: string; repo: string; receipt: { verdict: string; not_proven: string[]; checks: { name: string; result: string }[]; wall: { files: unknown[] } } } {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`);
   const tmp = mkdtempSync(join(tmpdir(), "loki-fc69-e2e-")); temps.push(tmp);
   const keyDir = mkdtempSync(join(tmpdir(), "loki-fc69-key-")); temps.push(keyDir);
@@ -34,7 +34,7 @@ function runWallColor(color: Record<string, string>): { code: number; out: strin
   const r = Bun.spawnSync(["bash", BIN_LOKI, "add a multiply(a, b) function to calc.ts", "--no-pr"], { cwd: repo, env, timeout: 60_000 });
   const marker = JSON.parse(readFileSync(join(repo, ".loki", "engine.json"), "utf8")) as { run_id: string };
   const receipt = JSON.parse(readFileSync(join(repo, ".loki", "runs", marker.run_id, "receipt.json"), "utf8"));
-  return { code: r.exitCode ?? -1, out: r.stdout.toString() + r.stderr.toString(), receipt };
+  return { code: r.exitCode ?? -1, out: r.stdout.toString() + r.stderr.toString(), repo, receipt };
 }
 
 describe("FC-69 a user's FORCE_COLOR never changes whether the Wall executes", () => {
@@ -48,4 +48,26 @@ describe("FC-69 a user's FORCE_COLOR never changes whether the Wall executes", (
       expect(r.receipt.checks.map((c) => c.name)).toContain("bun:loki_wall_multiply.test.ts");
     }, 90_000);
   }
+});
+
+// RQ-64: verify --fast runs the engine10-written .ts Wall file through the same runner (loki internal wall-run).
+describe("RQ-64 verify --fast runs a real engine10-written .ts Wall file", () => {
+  const FAST = resolve(LOKI_TS, "../autonomy/lib/fast_verify.py");
+  const fast = (repo: string): { verdict: string; wall: number; out: string } => {
+    const r = Bun.spawnSync(["python3", FAST, repo, "--json"], { cwd: repo, env: process.env, timeout: 120_000 }), out = r.stdout.toString();
+    const j = JSON.parse(out) as { verdict: string; signals: { wall_files_run: number } };
+    return { verdict: j.verdict, wall: j.signals.wall_files_run, out };
+  };
+  test("a failing engine-written Wall gives FAIL; the same file with the feature added gives PASS", () => {
+    const { repo } = runWallColor({});
+    const wall = join(repo, "loki_wall_multiply.test.ts");
+    expect(existsSync(wall)).toBe(true);
+    writeFileSync(join(repo, "calc.ts"), readFileSync(join(repo, "calc.ts"), "utf8").replace(/export function multiply[\s\S]*?\n}\n/, ""));
+    const red = fast(repo);
+    expect({ v: red.verdict, w: red.wall }).toEqual({ v: "FAIL", w: 1 });
+    expect(red.out).toContain("wall_failed");
+    appendFileSync(join(repo, "calc.ts"), "\nexport function multiply(a: number, b: number): number { return a * b; }\n");
+    const green = fast(repo);
+    expect({ v: green.verdict, w: green.wall }).toEqual({ v: "PASS", w: 1 });
+  }, 180_000);
 });
