@@ -3,6 +3,7 @@
 // only afterwards, no implement or fix session ever runs, and the receipt verifies.
 import { afterAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -21,7 +22,7 @@ function git(cwd: string, ...args: string[]): string {
   return r.stdout.toString();
 }
 
-interface Sealed { code: number; out: string; patch: string; prompts: { wall: string; other: string }; calls: string[]; receiptPath: string; receipt: { verdict: string; jwt?: string | null; signature?: { jwt?: string | null } | null; checks: { name: string; result: string }[]; not_proven: string[]; task: { source: string; sha256: string }; implement?: { exit?: string } }; keyFile: string; repo: string; }
+interface Sealed { code: number; out: string; patch: string; prompts: { wall: string; other: string }; calls: string[]; envLog: string; receiptPath: string; receipt: { verdict: string; jwt?: string | null; signature?: { jwt?: string | null } | null; checks: { name: string; result: string }[]; not_proven: string[]; task: { source: string; sha256: string }; implement?: { exit?: string } }; keyFile: string; repo: string; }
 
 /** body is the multiply() the external client wrote; the patch is its diff against the committed base. */
 function seal(body: string): Sealed {
@@ -37,10 +38,10 @@ function seal(body: string): Sealed {
   const patch = join(tmp, "external.patch");
   writeFileSync(patch, git(repo, "diff", "HEAD", "--binary"));
   git(repo, "checkout", "--", "calc.ts"); // the engine starts on the clean base, exactly as the MCP tool's scratch clone does
-  const prompts = join(tmp, "prompts"), stubLog = join(tmp, "stub.log");
+  const prompts = join(tmp, "prompts"), stubLog = join(tmp, "stub.log"), envLog = join(tmp, "stub-env.log");
   const env: Record<string, string | undefined> = {
     ...process.env, LOKI_TS_ENTRY: ENTRY, LOKI_E10_INVOKER: "cli", LOKI_CLAUDE_CLI: join(FIX, "bin", "claude"),
-    PATH: `${join(FIX, "bin")}:${process.env.PATH ?? ""}`, E2E_STUB_MODE: "wallcolor", E2E_STUB_LOG: stubLog, E2E_STUB_PROMPT_LOG: prompts,
+    PATH: `${join(FIX, "bin")}:${process.env.PATH ?? ""}`, E2E_STUB_MODE: "wallcolor", E2E_STUB_LOG: stubLog, E2E_STUB_PROMPT_LOG: prompts, E2E_STUB_ENV_LOG: envLog,
     LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: "1", LOKI_RECEIPT_SIGNING_KEY_FILE: join(keyDir, "k.pem"),
   };
   for (const k of ["LOKI_LEGACY_BASH", "LOKI_MODEL_OVERRIDE", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_E10_SEAL_EXISTING_PATCH"]) delete env[k];
@@ -51,7 +52,7 @@ function seal(body: string): Sealed {
   return {
     code: r.exitCode ?? -1, out: r.stdout.toString() + r.stderr.toString(), patch: readFileSync(patch, "utf8"),
     prompts: { wall: rd(`${prompts}.other1`), other: rd(`${prompts}.plan0`) + rd(`${prompts}.implement0`) },
-    calls: rd(stubLog).split("\n").filter(Boolean), receiptPath, receipt: JSON.parse(readFileSync(receiptPath, "utf8")), keyFile: join(keyDir, "k.pem"), repo,
+    envLog: rd(envLog), calls: rd(stubLog).split("\n").filter(Boolean), receiptPath, receipt: JSON.parse(readFileSync(receiptPath, "utf8")), keyFile: join(keyDir, "k.pem"), repo,
   };
 }
 
@@ -69,6 +70,21 @@ describe("CW-12 --seal-existing", () => {
     expect(JSON.stringify(s.receipt)).toMatch(/"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,}"/); // a signed JWT is on the receipt
     const prev = process.env.LOKI_RECEIPT_SIGNING_KEY_FILE; process.env.LOKI_RECEIPT_SIGNING_KEY_FILE = s.keyFile;
     try { expect((await verifyReceipt(s.receiptPath)).verdict).toBe("VERIFIED"); } finally { if (prev === undefined) delete process.env.LOKI_RECEIPT_SIGNING_KEY_FILE; else process.env.LOKI_RECEIPT_SIGNING_KEY_FILE = prev; }
+  }, 120_000);
+
+  test("B2: the patch path reaches no session env (the Wall author's child env has it empty), while the diff is still applied", () => {
+    const s = seal("a * b");
+    expect(s.envLog.trim().length).toBeGreaterThan(0); // positive control: the stub did log its env
+    for (const l of s.envLog.split("\n").filter(Boolean)) expect(l).toMatch(/SEAL_PATCH=$/);
+    expect(s.receipt.not_proven).toContain("Wall author not filesystem-isolated from the external diff");
+  }, 120_000);
+
+  test("B3: the receipt records implement exit external with the patch hash and names no implementing model", () => {
+    const s = seal("a * b");
+    const r = s.receipt as unknown as { implement?: { exit: string; patch_sha256: string }; model: string };
+    expect(r.implement).toEqual({ exit: "external", patch_sha256: createHash("sha256").update(s.patch).digest("hex") });
+    expect(r.model).toBe("external (no Loki implement session)");
+    expect(JSON.stringify(s.receipt)).not.toContain("claude (provider default)");
   }, 120_000);
 
   test("the Wall author prompt contains none of the diff bytes", () => {

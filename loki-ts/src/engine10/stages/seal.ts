@@ -41,6 +41,8 @@ export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signi
 const EXCLUDE_LOKI = ":(exclude).loki";
 export const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff"; // CW-12 B2/B3
+const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
 /** sha256 over the canonical receipt with `verification` AND `receipt_sha256` removed (the hash cannot contain itself). */
@@ -81,7 +83,7 @@ export const commitStage: Stage = {
     const notes = flagOutsideScope(ctx.outputs(), staged.filter(({ f }) => !dropped.has(f))); // D76: advisory, nothing is reverted
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
-    const c = await git(ctx, ["commit", "-q", "-m", `loki: ${title}`, "-m", [`Loki-Run: ${ctx.runId}`, ...aiTrailers({ runId: ctx.runId, provider: ctx.provider, model: ctx.model, receiptRel: receiptRel(ctx) })].join("\n")], { repoDrivers: true, userHooks: true });
+    const c = await git(ctx, ["commit", "-q", "-m", `loki: ${title}`, "-m", [`Loki-Run: ${ctx.runId}`, ...aiTrailers({ runId: ctx.runId, provider: ctx.provider, model: externalRun(ctx.outputs()) ? EXTERNAL_MODEL_LABEL : ctx.model, receiptRel: receiptRel(ctx) })].join("\n")], { repoDrivers: true, userHooks: true });
     if (c.code !== 0) return { status: "failed", data: {}, reason: "git commit failed" };
     return { status: "completed", data: { committed: true, head_sha: (await git(ctx, ["rev-parse", "HEAD"])).out.trim(), scope_notes: notes } };
   },
@@ -224,6 +226,7 @@ export const sealStage: Stage = {
     for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes)]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
+    if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
     // Section 7: model_override_applied lives on run.started, which outputs() never carries.
@@ -282,7 +285,8 @@ export const sealStage: Stage = {
       },
       time,
       provider: ctx.provider,
-      model: ctx.model,
+      model: externalRun(o) ? EXTERNAL_MODEL_LABEL : ctx.model, // CW-12 B3: no Loki session wrote this code, so no implementing model is named
+      ...(externalRun(o) ? { implement: { exit: "external" as const, patch_sha256: str(o.implement?.patch_sha256) ?? "" } } : {}),
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
