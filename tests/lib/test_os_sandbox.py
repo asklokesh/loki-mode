@@ -448,6 +448,10 @@ class SeatbeltConfineReadsTest(unittest.TestCase):
         self._sh(f'for f in "{self.run_dir}"/*.sb; do '
                  f'printf "(version 1)\\n(allow default)\\n" > "$f"; done; '
                  f'printf "(version 1)\\n(allow default)\\n" > "{self.run_dir}/os-sandbox.sb"')
+        # Original prefix first: a rebuild would rewrite a profile file and hide the tamper.
+        res = self._sh(f'cat "{self.ws}/.env"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("SECRET", res.stdout)
         again = os_sandbox.build_confinement(
             self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=True)
         res = subprocess.run([*again["argv_prefix"], "/bin/sh", "-c", f'cat "{self.ws}/.env"'],
