@@ -256,7 +256,12 @@ def _reset_client() -> None:
 
 
 def agent_model() -> str:
-    """Model id for managed agents: env override chain, else providers/model_catalog.json."""
+    """Model id for managed agents from providers/model_catalog.json.
+
+    LOKI_CLAUDE_MODEL_DEVELOPMENT or LOKI_MODEL_DEVELOPMENT is honoured only
+    when it resolves to a Claude model in the catalog (id or alias); anything
+    else, such as a non-Claude model name, falls back to latest_development.
+    """
     name = (
         os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT", "").strip()
         or os.environ.get("LOKI_MODEL_DEVELOPMENT", "").strip()
@@ -264,12 +269,15 @@ def agent_model() -> str:
     try:
         with open(Path(__file__).resolve().parent / "model_catalog.json", encoding="utf-8") as f:
             claude = json.load(f)["providers"]["claude"]
-    except (OSError, ValueError, KeyError) as e:
-        if name:
-            return name
+        known = {m["id"] for m in claude.get("models", [])}
+        aliases = claude.get("cli_aliases", {})
+        default = claude["latest_development"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
         raise ManagedUnavailable(f"managed agent model unresolved: {e}")
-    name = name or claude["latest_development"]
-    return claude.get("cli_aliases", {}).get(name, name)
+    resolved = aliases.get(name, name)
+    if name and (resolved in known or resolved in aliases.values()):
+        return resolved
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -430,20 +438,27 @@ class _RealMultiagentSession:
                     )
                 time.sleep(_SESSION_POLL_S)
                 status = getattr(sessions.retrieve(sid), "status", "running")
-            thread_agent = {}
+            # agent.message events carry no thread or agent field in 2.x, so
+            # attribute by reading each thread's own events: a reply from
+            # thread T belongs to T.agent.id.
+            attributed = []
             if len(self._agent_ids) > 1:
                 for th in sessions.threads.list(sid):
                     ref = getattr(th, "agent", None)
-                    thread_agent[getattr(th, "id", None)] = getattr(ref, "id", None)
+                    tid = getattr(th, "id", None)
+                    aid = getattr(ref, "id", None) or ""
+                    for ev in sessions.threads.events.list(tid, session_id=sid):
+                        attributed.append((aid, ev))
+            else:
+                attributed = [(self._agent_ids[0], ev) for ev in events]
         except (AttributeError, TypeError) as e:
             raise ManagedUnavailable(f"SDK session shape mismatch: {e}")
 
         messages = []
-        for ev in events:
+        for aid, ev in attributed:
             if getattr(ev, "type", None) != "agent.message":
                 continue
             text = "".join(getattr(b, "text", "") or "" for b in getattr(ev, "content", []))
-            aid = thread_agent.get(getattr(ev, "session_thread_id", None)) or ""
             messages.append({"agent_id": aid, "text": text})
         if len(self._agent_ids) > 1:
             # Never pass fewer, merged or duplicated votes off as a complete council.
@@ -456,7 +471,7 @@ class _RealMultiagentSession:
         elif not messages:
             raise ManagedUnavailable("session produced no agent message")
         else:
-            messages[0]["agent_id"] = self._agent_ids[0]
+            messages = messages[:1]
         return {"raw": messages or None, "session_id": sid}
 
 
