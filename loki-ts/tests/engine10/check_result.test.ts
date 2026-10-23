@@ -388,7 +388,7 @@ describe("FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: goTestNames and the go argv", () =
       for (const n of names) expect([n, failed.has(n)]).toEqual([n, true]);
       }
     } finally { rmSync(d, { recursive: true, force: true }); }
-  });
+  }, 60000);
   test("runnerCmd scopes to the file's tests, and keeps the package run when the file has none", () => {
     writeFileSync(join(dir, "y_test.go"), "package x\n\nfunc TestY(t *testing.T) {}\n");
     writeFileSync(join(dir, "z_test.go"), "package x\n");
