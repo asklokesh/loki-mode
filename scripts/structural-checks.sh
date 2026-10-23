@@ -168,7 +168,7 @@ SHELL = r"(?:ba|z|da|k|c|fi|a|tc)?sh"
 # file in the current shell (source and the dot command).
 INTERPS = (
     (SHELL, r"-[A-Za-z]*c(?=\s|$)"),
-    (r"python[\d.]*", r"-[A-Za-z]*c(?=\s|$)"),
+    (r"python[\d.]*", r"(?:-[A-Za-z]*c|-m)(?=\s|$)"),
     (r"perl[\d.]*", r"-[A-Za-z]*[eE](?=\s|$)"),
     (r"ruby[\d.]*", r"-[A-Za-z]*e(?=\s|$)"),
     (r"node(?:js)?", r"(?:-[ep]|--eval|--print)(?=\s|$)"),
@@ -184,8 +184,11 @@ INTERPS = (
     (r"(?<![\w./-])\.", None),
 )
 # An interpreter that is NOT followed by its own code flag.
+# Options may sit between the interpreter and its code flag (python3 -u -c),
+# except awk, whose own option prefix must keep seeing -f.
+OPTS = lambda n: "" if "awk" in n else r"(?:-\S+\s+)*?"
 RUN = "(?:" + "|".join(
-    r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s)" % (n, f) for n, f in INTERPS if f) + ")"
+    r"(?:/\S*/)?%s(?![\w.-])(?!\s+%s%s)" % (n, OPTS(n), f) for n, f in INTERPS if f) + ")"
 # A builtin that executes a file in the current shell. It is the command word
 # itself, never an argument: no sudo or xargs wrapper (a builtin cannot be run
 # through one), only a builtin-prefix keyword with flags.
@@ -219,11 +222,26 @@ SUBST_FLAG = "(?:" + "|".join(
 # the flag ends the command or takes {} as its argument.
 XARGS_C = (r"(?:(?:/\S*/)?(?:sudo|doas|env)\b[^|;&\n]*?\s)?xargs\b[^|;&\n]*?\s(?:" + "|".join(
     r"(?:/\S*/)?%s(?![\w.-])\s+%s\s*[\"']?(?:$|[|;&)}]|\{\})" % (n, f) for n, f in INTERPS if f) + ")")
+# An inline program (code flag) that re-reads stdin and executes it is the same
+# route as a piped shell: an exec-like sink and a stdin source in the same
+# program, in either order (exec(sys.stdin.read()), eval join("",<STDIN>),
+# source /dev/stdin, eval of a cat substitution), or the dot builtin sourcing
+# stdin (dot dash). A program that only parses stdin as data (json.load of
+# sys.stdin) has no sink and stays clean.
+STDIN_MARK = r"(?:/dev/stdin|/dev/fd/0|/proc/self/fd/0|\bsys\.stdin|<STDIN>|\bSTDIN\b|process\.stdin|readFileSync\(\s*0|\$\(\s*cat\s*\)|`\s*cat\s*`)"
+STDIN_SINK = r"(?:\b(?:exec|eval|compile|execfile|Function|instance_eval|class_eval)\b|(?:^|[\s;&|\"'(])(?:source|\.)\s)"
+STDIN_DOT = r"(?:^|[\s;&|\"'(])(?:source|\.)\s+-(?=[\s\"';)]|$)"
+STDIN_FLAG = ("(?:" + "|".join(
+    r"(?:/\S*/)?%s(?![\w.-])\s+%s%s" % (n, OPTS(n), f) for n, f in INTERPS if f) + ")"
+    + r"(?=[^\n]*?(?:" + STDIN_SINK + r"[^\n]*?" + STDIN_MARK + "|" + STDIN_MARK + r"[^\n]*?" + STDIN_SINK
+    + "|" + STDIN_DOT + "))")
 pipe = re.compile(
     r"\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + PIPE_RUN
     + r"|\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + XARGS_C
+    + r"|\b" + FETCH + r"[^\n|]*(?:\|[^\n|]*)*?\|&?\s*(?:[({]\s*)?" + ENV + WRAP + ENV + r"""["']?""" + STDIN_FLAG
     + r"|(?:(?<=\s)|^)" + SUBST_FLAG
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|source|eval|\.)\s[^\n]*<\(\s*" + FETCH
+    + r"|(?:(?<=\s)|^)" + ENV + WRAP + ENV + r"(?:" + RUN + "|" + SRC + r")(?:\s+run)?(?:\s+-\S+)*\s+(?:<\s+)?<\(\s*" + FETCH
     + r"|(?:(?<=\s)|^)(?:" + SH + r"|eval)\s[^\n]*" + SUBST
     + r"|\b(?:curl|wget)\b[^\n]*?(?:&&|;|\|\|)\s*(?:chmod\b[^\n;&]*(?:&&|;)\s*)?" + FILE_RUN
 )
