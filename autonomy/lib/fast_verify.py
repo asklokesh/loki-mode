@@ -421,7 +421,7 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
 
 def _git(args: list, cwd: str) -> str:
     try:
-        p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True,
+        p = subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"] + args, cwd=cwd, capture_output=True,
                            text=True, timeout=20)
         return p.stdout if p.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):

@@ -478,6 +478,31 @@ open(sys.argv[2], "w").write(s.replace(a, "if False:", 1))
 PY
 JDB="$(fvd "$DA" HEAD~1 "$NOHEADANC")"
 [ "$(verdict_trusted "$JDB")" = "('PASS', 1, 1)" ] && ok "mutant that drops the head-in-HEAD-history check trusts an amended-away head (guard bites)" || bad "head-ancestry mutant still INCONCLUSIVE; fixture does not depend on the check: $JDB"
+# A planted core.fsmonitor in the repo's own config must never execute during provenance checks (rev-a rq64j J3):
+# _git_strict runs with the same `-c core.fsmonitor= -c core.hooksPath=/dev/null` hardening as _git.
+DF="$TMP/diffbind-fsmon"; mkdir -p "$DF"; git -C "$DF" init -q; GF="git -C $DF -c user.name=t -c user.email=t@t.invalid"
+printf '# base\n' > "$DF/README.md"; git -C "$DF" add README.md; $GF commit -qm base
+F0="$(sha_of "$DF" HEAD)"
+printf 'def price(x):\n    return x * 2\n' > "$DF/price.py"; printf 'from price import price\ndef test_cover():\n    assert price(1) == 2\n' > "$DF/loki_wall_cover.py"
+git -C "$DF" add price.py loki_wall_cover.py; $GF commit -qm "run output"
+F1="$(sha_of "$DF" HEAD)"; seal_event "$DF" loki_wall_cover.py "$F0" "$F1"
+printf 'def price(x):\n    return x * 2  # tweak\n' > "$DF/price.py"; git -C "$DF" add price.py; $GF commit -qm change
+FSM_MARK="$TMP/fsmon-ran"; printf '#!/bin/sh\ntouch "%s"\nprintf "\\0"\n' "$FSM_MARK" > "$TMP/fsmon-hook.sh"; chmod +x "$TMP/fsmon-hook.sh"
+git -C "$DF" config core.fsmonitor "$TMP/fsmon-hook.sh"
+rm -f "$FSM_MARK"; git -C "$DF" diff --name-only HEAD~1 -- price.py >/dev/null 2>&1; git -C "$DF" ls-files --error-unmatch -- price.py >/dev/null 2>&1
+[ -e "$FSM_MARK" ] && ok "fsmonitor control: the planted hook fires on a plain git call in this repo" || bad "fsmonitor control: planted hook never fired on plain git; the fixture cannot detect the escape"
+rm -f "$FSM_MARK"; JDF="$(fvd "$DF" HEAD~1)"
+[ ! -e "$FSM_MARK" ] && ok "a planted core.fsmonitor does not execute during fast_verify provenance checks" || bad "planted core.fsmonitor executed during fast_verify"
+NOFSM="$TMP/fv-nofsm.py"
+python3 - "$FV" "$NOFSM" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+a = 'p = subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"] + args,\n'
+assert s.count(a) == 1
+open(sys.argv[2], "w").write(s.replace(a, 'p = subprocess.run(["git"] + args,\n', 1))
+PY
+rm -f "$FSM_MARK"; fvd "$DF" HEAD~1 "$NOFSM" >/dev/null
+[ -e "$FSM_MARK" ] && ok "mutant that drops the fsmonitor/hooksPath flags from _git_strict runs the planted hook (guard bites)" || bad "fsmonitor mutant did not fire the hook; fixture does not depend on the flags"
 # Positive control: Wall present at the base, sealed by a run that changed the verified file, naming it, earns PASS.
 D2="$TMP/diffbind2"; mkdir -p "$D2"; git -C "$D2" init -q; G2="git -C $D2 -c user.name=t -c user.email=t@t.invalid"
 printf '# base\n' > "$D2/README.md"; git -C "$D2" add README.md; $G2 commit -qm base
