@@ -207,6 +207,20 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(emitted.filter((e) => e.type === "test.result" && String(e.data["name"]).startsWith("bun:"))).toHaveLength(1);
   }, 20_000);
 
+  test("FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: a sealed Wall file no runner can run is named in not_proven and never lets wall_passed be true", async () => {
+    const repoDir = mkRepo("bun-target"), sha = baseSha(repoDir); writeFileSync(join(repoDir, "src.txt"), "changed\n");
+    const NAMED = (p: string) => `Wall test not executed: ${p}: no runner of this repo runs this file`;
+    const mixed = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["bun"], tests: [{ runner: "bun", path: "sample.test.ts" }] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }, { path: join(repoDir, "loki_wall_B.java") }] } } });
+    const m = await verifyStage.run(mixed.ctx, sig());
+    expect((m.data.checks as VerifyCheck[]).find((c) => c.name === "bun:sample.test.ts")?.result).toBe("pass");
+    expect(m.data.not_proven as string[]).toContain(NAMED("loki_wall_B.java")); expect(m.data.wall_passed).toBeUndefined(); // the runnable half passed; the dropped half stops a bare true
+    const only = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: [], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_B.java") }, { path: join(repoDir, "loki_wall_c.rs") }] } } });
+    const o = await verifyStage.run(only.ctx, sig());
+    expect(o.data.not_proven as string[]).toEqual(expect.arrayContaining([NAMED("loki_wall_B.java"), NAMED("loki_wall_c.rs")])); expect(o.data.wall_passed).toBeUndefined(); // every Wall file dropped: unset, never true
+    const ctl = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["bun"], tests: [{ runner: "bun", path: "sample.test.ts" }] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } } });
+    const c = await verifyStage.run(ctl.ctx, sig()); expect(c.data.wall_passed).toBe(true); expect((c.data.not_proven as string[]).some((n) => n.startsWith("Wall test not executed"))).toBe(false); // positive control: nothing dropped
+  }, 40_000);
+
   test("an absolute Wall path is normalized to repo-relative and still selected", async () => {
     const repoDir = mkRepo("bun-target");
     const sha = baseSha(repoDir);
