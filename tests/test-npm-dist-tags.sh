@@ -59,6 +59,7 @@ case "$1 $2 $3" in
         # A write for a version the registry has not materialized is accepted and dropped.
         if [ -n "${STUB_HIDE_VER:-}" ] && [ "$ver" = "$STUB_HIDE_VER" ] && [ "$(cat "$ST/dcalls" 2>/dev/null || echo 0)" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo "dropped $ver $tag" >> "$ST/log"; exit 0; fi
         # STUB_DROP_FIRST=1: the first accepted write of each tag is lost (never applies).
+        if [ -n "${STUB_REJECT_ADD:-}" ]; then echo "npm error E403" >&2; exit 1; fi
         if [ -n "${STUB_DROP_FIRST:-}" ] && [ ! -e "$ST/dropped.$tag" ]; then : > "$ST/dropped.$tag"; exit 0; fi
         if [ -n "${STUB_TAG_LAG:-}" ]; then echo "$ver $STUB_TAG_LAG" > "$ST/pend.$tag"; exit 0; fi
         printf '%s\n' "$ver" > "$ST/$tag"
@@ -87,7 +88,7 @@ chmod +x "$WORK/bin/curl"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" STUB_REJECT_ADD="${STUB_REJECT_ADD:-}" LOKI_DISTTAG_LAG_FATAL="${LAG_FATAL_T:-1}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -215,6 +216,64 @@ STUB_DROP_FIRST=1 run_case drop "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
     && grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" \
     && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 2 ]; } \
     && ok "a lost tag write is rewritten once with a named warning" || bad "drop: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+# Lock-holding mode (publish-npm): lag is a named warning with exit 0 and one write
+# per tag; a rejected write still fails; an unmaterialized version writes nothing.
+LAG_FATAL_T=0 STUB_TAG_LAG=999 run_case plag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && grep -q "DISTTAG-NOT-SETTLED-YET" <<<"$CASE_OUT" \
+    && [ "$(grep -c '^add ' "$CASE_ST/log")" = 2 ]; } \
+    && ok "publish mode: lag warns by name, exits 0, one write per tag" || bad "plag: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+LAG_FATAL_T=0 STUB_DROP_FIRST=1 run_case pdrop "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && ! grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" \
+    && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 1 ]; } \
+    && ok "publish mode: a lost write is not rewritten (verify does that)" || bad "pdrop: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+LAG_FATAL_T=0 STUB_REJECT_ADD=1 run_case prej "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -ne 0 ] && grep -q "was rejected" <<<"$CASE_OUT"; } \
+    && ok "publish mode: a rejected write fails the job" || bad "prej: rc=$CASE_RC $CASE_OUT"
+
+STUB_REJECT_ADD=1 run_case frej "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+[ $CASE_RC -ne 0 ] && ok "verify mode: a rejected write never settles and fails" || bad "frej: rc=$CASE_RC"
+
+ST="$WORK/pnever"; mkdir -p "$ST"; printf '%s\n' 11.55.0 11.55.1 > "$ST/versions"; echo 11.55.0 > "$ST/latest"; echo 11.55.0 > "$ST/next"; : > "$ST/log"
+pn_out="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_HIDE_VER=11.55.1 STUB_MATERIALIZE_AFTER=999999 LOKI_DISTTAG_LAG_FATAL=0 LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_MATERIALIZE_S=1 bash "$SCRIPT" 11.55.1 2>&1)"; pn_rc=$?
+{ [ $pn_rc -eq 0 ] && [ ! -s "$ST/log" ] && grep -q "DISTTAG-VERSION-NOT-MATERIALIZED" <<<"$pn_out"; } \
+    && ok "publish mode: an unmaterialized version warns, writes nothing, exits 0" || bad "pnever: rc=$pn_rc $pn_out"
+
+# Workflow shape: the lock-holding jobs poll at most 120 s in the non-fatal mode and
+# keep a 10 minute budget; the off-lock verify jobs keep the fatal long poll.
+# check_workflow <file> prints a reason and returns 1 on a violation.
+check_workflow() {
+    python3 - "$1" <<'PY'
+import re, sys
+s = open(sys.argv[1]).read()
+def job(name):
+    m = re.search(r'\n  %s:\n(.*?)(?=\n  [a-z0-9-]+:\n|\Z)' % re.escape(name), s, re.S)
+    return m.group(1) if m else ''
+bad = []
+for name in ('publish-npm', 'publish-ts-sdk'):
+    b = job(name)
+    calls = [l for l in b.splitlines() if 'npm-dist-tags.sh' in l and not l.lstrip().startswith('#')]
+    if not calls: bad.append(name + ': no dist-tags call')
+    blob = b
+    if 'LOKI_DISTTAG_LAG_FATAL=0' not in blob: bad.append(name + ': not warn-only')
+    m = re.search(r'LOKI_DISTTAG_SETTLE_S=(\d+)', blob)
+    if not m or int(m.group(1)) > 120: bad.append(name + ': publish poll bound over 120 s')
+    t = re.search(r'timeout-minutes: (\d+)', b)
+    if not t or int(t.group(1)) > 10: bad.append(name + ': timeout over 10')
+for name in ('verify-npm-registry', 'verify-sdk-registry'):
+    b = job(name)
+    if 'LAG_FATAL=0' in b or 'SETTLE_S=' in b: bad.append(name + ': verify must keep the default long fatal poll')
+    t = re.search(r'timeout-minutes: (\d+)', b)
+    if not t or int(t.group(1)) < 25: bad.append(name + ': timeout under 25')
+print('; '.join(bad)); sys.exit(1 if bad else 0)
+PY
+}
+WF="$(cd "$(dirname "$SCRIPT")/.." && pwd)/.github/workflows/release.yml"
+wf_out="$(check_workflow "$WF")" && ok "release.yml: publish jobs poll <= 120 s warn-only, verify jobs keep the long fatal poll" || bad "workflow shape: $wf_out"
+sed 's/LOKI_DISTTAG_SETTLE_S=120/LOKI_DISTTAG_SETTLE_S=840/' "$WF" > "$WORK/mut.yml"
+check_workflow "$WORK/mut.yml" >/dev/null && bad "mutant: long poll back in publish-npm not caught" || ok "mutant: the long poll back in publish-npm is caught"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
