@@ -221,6 +221,40 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     const c = await verifyStage.run(ctl.ctx, sig()); expect(c.data.wall_passed).toBe(true); expect((c.data.not_proven as string[]).some((n) => n.startsWith("Wall test not executed"))).toBe(false); // positive control: nothing dropped
   }, 40_000);
 
+  test("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: a sealed loki_wall_*.py the detected pytest never lists moves from the NOT PROVEN line to a real pass or fail", async () => {
+    const repoDir = mkRepo("bun-target");
+    mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repoDir, ".venv", "bin", "python"), '#!/bin/sh\nexec python3 "$@"\n'); chmodSync(join(repoDir, ".venv", "bin", "python"), 0o755); // project interpreter, so the result counts
+    const sha = baseSha(repoDir), NAMED = "Wall test not executed: loki_wall_mods.py: no runner of this repo runs this file";
+    writeFileSync(join(repoDir, "src.txt"), "changed\n"); writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 1\n");
+    const mk = (runners: TestMap["runners"]) => fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners, tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_mods.py") }] } } }).ctx;
+    const none = await verifyStage.run(mk([]), sig());
+    expect(none.data.not_proven as string[]).toContain(NAMED); expect(none.data.wall_passed).toBeUndefined(); // control: no pytest detected, still named
+    const res = await verifyStage.run(mk(["pytest"]), sig()), c = (res.data.checks as VerifyCheck[]).find((x) => x.name === "pytest:loki_wall_mods.py");
+    expect(c?.result).toBe("pass"); expect(res.data.not_proven as string[]).not.toContain(NAMED); expect(res.data.wall_passed).toBe(true);
+    writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 2\n");
+    const bad = await verifyStage.run(mk(["pytest"]), sig());
+    expect(bad.data.wall_passed).toBe(false); expect(bad.data.not_proven as string[]).not.toContain(NAMED); // a failing Wall file is a failure, never silently absent
+  }, 60_000);
+
+  test("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: a Wall file the runner's own discovery never selects stays on the NOT PROVEN line and is never charged another test's verdict", async () => {
+    const { guessRunner } = await import("../../src/engine10/stages/wall.ts");
+    expect(guessRunner("loki_wall_add.go", ["go"])).toBeNull(); // go test compiles only *_test.go
+    expect(guessRunner("loki_wall_add_test.go", ["go"])).toBe("go");
+    for (const r of ["vitest", "jest", "bun"] as const) { expect(guessRunner("loki_wall_x.ts", [r])).toBeNull(); expect(guessRunner("loki_wall_x.test.ts", [r])).toBe(r); } // name-selected: an explicit path outside .test/.spec is "no tests found"
+    expect(guessRunner("loki_wall_x.ts", ["bun", "node"])).toBe("node"); // node --test runs any named file
+    expect(guessRunner("loki_wall_mods.py", ["pytest"])).toBe("pytest"); // pytest runs an explicit path whatever its name
+    const repoDir = mkRepo("bun-target");
+    writeFileSync(join(repoDir, "go.mod"), "module m\n\ngo 1.21\n"); mkdirSync(join(repoDir, "foo"));
+    writeFileSync(join(repoDir, "foo", "a.go"), "package foo\n"); writeFileSync(join(repoDir, "foo", "old_test.go"), 'package foo\nimport "testing"\nfunc TestOld(t *testing.T) { t.Fatal("red") }\n');
+    writeFileSync(join(repoDir, "foo", "loki_wall_add.go"), 'package foo\nimport "testing"\nfunc TestWall(t *testing.T) {}\n');
+    const sha = baseSha(repoDir), NAMED = "Wall test not executed: foo/loki_wall_add.go: no runner of this repo runs this file";
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["go"], tests: [{ runner: "go", path: "foo/old_test.go" }] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "foo", "loki_wall_add.go") }] } } });
+    const res = await verifyStage.run(ctx, sig());
+    expect((res.data.checks as VerifyCheck[]).some((c) => c.name === "go:foo/loki_wall_add.go")).toBe(false); // never run as `go test ./foo`
+    expect(res.data.not_proven as string[]).toContain(NAMED); expect(res.data.wall_passed).toBeUndefined();
+  }, 60_000);
+
   test("an absolute Wall path is normalized to repo-relative and still selected", async () => {
     const repoDir = mkRepo("bun-target");
     const sha = baseSha(repoDir);

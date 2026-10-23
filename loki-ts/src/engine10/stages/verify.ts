@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { failedFirst } from "../../e10ext/select.ts"; import { harnessLoadReason } from "../../runner/load_owner.ts";
-import { loadRepoMap, namedFiles } from "../sizing.ts";
+import { loadRepoMap, namedFiles } from "../sizing.ts"; import { guessRunner } from "./wall.ts";
 import { harnessRunners, isTestFile } from "../testmap.ts";
 import { withoutStaleWall, failureExcerpt, truncateBytes, EXCERPT_TOTAL_CAP, changedFiles, classifyCheck, classifyRisk, mapPool, verifyJobs, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped, summaryPassFailCount } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"; import { isHoldoutCheck, recordHoldoutTriage, stageHoldout } from "../../util/holdout.ts";
@@ -256,7 +256,8 @@ export const verifyStage: Stage = {
     );
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
     const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string; deps_not_proven?: string[] } | undefined, repoMap = loadRepoMap(intake?.repomap_ref), relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", repoMap));
-    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallTests = [...map.tests.filter((t) => wallPaths.has(t.path)), ...(harness ? [...wallPaths].filter((p) => /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p) && !map.tests.some((t) => t.path === p)).map((path): TestRef => ({ runner: harness, path })) : [])]; // no project runner: a Wall-sealed file bun discovers as a test (*.test, *_test, *.spec, *_spec) runs with Loki's bun; `bun test <name>` skips any other name
+    // FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: the Wall names its files loki_wall_*, which a runner's own discovery (pytest test_*.py, go *_test.go) never lists; a sealed file the repo's detected runner can run is added by path, with the extension-to-runner table wall.ts already owns.
+    const harness = map.runners.length === 0 ? harnessRunners(map.runners, repoMap?.files ?? [])[0] : undefined, wallTests = [...map.tests.filter((t) => wallPaths.has(t.path)), ...[...wallPaths].filter((p) => !map.tests.some((t) => t.path === p)).flatMap((path): TestRef[] => { const runner = guessRunner(basename(path), map.runners); return runner && map.runners.includes(runner) ? [{ runner, path }] : []; }), ...(harness ? [...wallPaths].filter((p) => /[._](?:test|spec)\.[cm]?[jt]sx?$/.test(p) && !map.tests.some((t) => t.path === p)).map((path): TestRef => ({ runner: harness, path })) : [])]; // no project runner: a Wall-sealed file bun discovers as a test (*.test, *_test, *.spec, *_spec) runs with Loki's bun; `bun test <name>` skips any other name
     const tests = failedFirst(dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]), (ctx.outputs().verify as { checks?: Array<{ name?: unknown; result?: unknown }> } | undefined)?.checks); // TEN-SPEED-07
     const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
     if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
