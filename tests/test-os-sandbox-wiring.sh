@@ -38,18 +38,48 @@ _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=off _loki_os_confine_init
 if [ "${#_LOKI_CONFINE_PREFIX[@]}" = "0" ]; then ok "off leaves the argv bare"; else bad "off produced a prefix"; fi
 if grep -q 'none' "$WS/.loki/state/os-sandbox.json" 2>/dev/null; then ok "off recorded in the status file"; else bad "status file missing for off"; fi
 
+# off must not spawn python3 at all (status file still written)
+PYLOG="$TMPD/py-calls"; : >"$PYLOG"
+python3() { echo called >>"$PYLOG"; command python3 "$@"; }
+rm -f "$WS/.loki/state/os-sandbox.json"
+_LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=off _loki_os_confine_init
+if [ ! -s "$PYLOG" ]; then ok "off does not spawn python3"; else bad "off spawned python3"; fi
+if grep -q '"kind": "none"' "$WS/.loki/state/os-sandbox.json" 2>/dev/null; then ok "off short-circuit still writes kind none"; else bad "off short-circuit lost the status file"; fi
+
+# on + codex fails closed: init exits 2 (run in a subshell, init calls exit)
+rc=0; ( PROVIDER_NAME=codex; _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=on _loki_os_confine_init ) >/dev/null 2>&1 || rc=$?
+[ "$rc" = "2" ] && ok "on + codex exits 2 through _loki_os_confine_init" || bad "on + codex rc=$rc, want 2"
+rc=0; ( PROVIDER_NAME=codex; _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=auto _loki_os_confine_init ) >/dev/null 2>&1 || rc=$?
+[ "$rc" = "0" ] && ok "auto + codex stays unconfined (rc 0)" || bad "auto + codex rc=$rc, want 0"
+unset -f python3
+
+# with confinement active, git on the agent tree ignores a planted fsmonitor
+git_escape_check() {
+    local repo="$TMPD/gitws" marker="$TMPD/fsmonitor-fired"
+    rm -rf "$repo" "$marker"; mkdir -p "$repo"
+    command git -C "$repo" init -q . 2>/dev/null
+    command git -C "$repo" config core.fsmonitor "touch '$marker'; true"
+    ( cd "$repo" && command git status >/dev/null 2>&1 )
+    if [ -e "$marker" ]; then ok "positive control: a planted fsmonitor fires under plain git"; else bad "positive control did not fire (probe is blind)"; return; fi
+    rm -f "$marker"
+    ( cd "$repo" && git status >/dev/null 2>&1 )
+    if [ -e "$marker" ]; then bad "planted fsmonitor fired through the hardened git"; else ok "hardened git ignores a planted fsmonitor"; fi
+}
+
 if [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/sandbox-exec ]; then
     _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=auto _loki_os_confine_init
     if [ "${_LOKI_CONFINE_PREFIX[0]:-}" = "/usr/bin/sandbox-exec" ]; then ok "launch prefix is sandbox-exec"; else bad "prefix[0]=${_LOKI_CONFINE_PREFIX[0]:-none}"; fi
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/cat "$WS/link.txt" >/dev/null 2>&1; then bad "symlink read out of the workspace succeeded"; else ok "symlink read out of the workspace refused"; fi
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/sh -c "echo hi > '$WS/inside.txt'" 2>/dev/null; then ok "workspace write allowed"; else bad "workspace write refused"; fi
     if grep -q 'seatbelt' "$WS/.loki/state/os-sandbox.json"; then ok "status file records seatbelt"; else bad "status file lacks seatbelt"; fi
+    git_escape_check
 elif [ "$(uname)" = "Linux" ] && command -v bwrap >/dev/null 2>&1 && bwrap --ro-bind / / true >/dev/null 2>&1; then
     _LOKI_CONFINE_READY=""; LOKI_OS_SANDBOX=auto _loki_os_confine_init
     case "${_LOKI_CONFINE_PREFIX[0]:-}" in */bwrap) ok "launch prefix is bwrap" ;; *) bad "prefix[0]=${_LOKI_CONFINE_PREFIX[0]:-none}" ;; esac
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/cat "$WS/link.txt" >/dev/null 2>&1; then bad "symlink read out of the workspace succeeded"; else ok "symlink read out of the workspace refused"; fi
     if "${_LOKI_CONFINE_PREFIX[@]}" /bin/sh -c "echo hi > '$WS/inside.txt'" 2>/dev/null; then ok "workspace write allowed"; else bad "workspace write refused"; fi
     if grep -q 'bwrap' "$WS/.loki/state/os-sandbox.json"; then ok "status file records bwrap"; else bad "status file lacks bwrap"; fi
+    git_escape_check
 else
     echo "SKIP: kernel probes need macOS sandbox-exec or Linux bwrap"
 fi

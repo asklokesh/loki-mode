@@ -34,6 +34,18 @@ describe("confineSpawn", () => {
     expect([r.cmd, r.args, r.active, r.warning]).toEqual(["/bin/echo", ["hi"], false, null]);
     rmSync(ws, { recursive: true, force: true });
   });
+  test("on with codex fails closed because codex cannot be nested", () => {
+    const ws = mk(tmpdir()); const run = join(ws, ".loki"); mkdirSync(run);
+    expect(() => confineSpawn("/bin/echo", [], { workspace: ws, runDir: run, provider: "codex", env: { ...process.env, LOKI_OS_SANDBOX: "on" } })).toThrow(/LOKI_OS_SANDBOX=on/);
+    rmSync(ws, { recursive: true, force: true });
+  });
+  test("off writes kind none to the status file without spawning confinement", () => {
+    const ws = mk(tmpdir()); const run = join(ws, ".loki"); mkdirSync(run);
+    confineSpawn("/bin/echo", [], { workspace: ws, runDir: run, provider: "claude", env: { ...process.env, LOKI_OS_SANDBOX: "off" } });
+    const j = JSON.parse(readFileSync(join(run, "state", "os-sandbox.json"), "utf8"));
+    expect([j.kind, j.mode]).toEqual(["none", "off"]);
+    rmSync(ws, { recursive: true, force: true });
+  });
   test("codex applies its own sandbox and is reported unwrapped", () => {
     const ws = mk(tmpdir()); const run = join(ws, ".loki"); mkdirSync(run);
     const r = confineSpawn("/bin/echo", [], { workspace: ws, runDir: run, provider: "codex", env: { ...process.env, LOKI_OS_SANDBOX: "auto" } });

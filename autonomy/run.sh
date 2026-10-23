@@ -1140,6 +1140,8 @@ _loki_snapshot_workspace_tree() {
 # default stays off (issue #334). LOKI_OS_SANDBOX=auto confines when the kernel
 # probe passes, otherwise runs unconfined with a log line and the same fact in
 # .loki/state/os-sandbox.json (read by `loki status --json`); =on fails closed.
+# That status file is informational and forgeable (it lives in the agent-writable
+# tree): it is never evidence, and no Seal, verify or gate reader may consume it.
 _LOKI_CONFINE_READY=""
 _LOKI_CONFINE_PREFIX=()
 _loki_os_confine_init() {
@@ -1148,6 +1150,12 @@ _loki_os_confine_init() {
     _LOKI_CONFINE_PREFIX=()
     local work="${TARGET_DIR:-$PWD}" rundir="${TARGET_DIR:-$PWD}/.loki" lines line decoded rc=0
     mkdir -p "$rundir/state" 2>/dev/null || true
+    if [ "${LOKI_OS_SANDBOX:-off}" = "off" ]; then
+        # Default path: no python3 spawn, same status fact as os_sandbox.py would record.
+        printf '{"kind": "none", "mode": "off", "provider": "%s", "reason": "LOKI_OS_SANDBOX=off"}\n' \
+            "${PROVIDER_NAME:-claude}" >"$rundir/state/os-sandbox.json" 2>/dev/null || true
+        return 0
+    fi
     lines="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && python3 -m autonomy.lib.os_sandbox argv \
         --workspace "$work" --run-dir "$rundir" --provider "${PROVIDER_NAME:-claude}" \
         --status-file "$rundir/state/os-sandbox.json" --format b64)" || rc=$?
@@ -1165,6 +1173,10 @@ $lines
 EOF_CONFINE
     if [ "${#_LOKI_CONFINE_PREFIX[@]}" -gt 0 ]; then
         log_info "OS sandbox active for ${PROVIDER_NAME:-claude} (kernel-confined; see .loki/state/os-sandbox.json)"
+        # The confined agent can plant .git/config (fsmonitor, hooksPath) or repoint
+        # commondir; every git this script runs on that tree must ignore them
+        # (FC-SANDBOX-GIT-REDIRECT, same flags as the Python libs).
+        eval 'git() { command git -c core.fsmonitor= -c core.hooksPath=/dev/null "$@"; }'
     elif [ "${LOKI_OS_SANDBOX:-off}" != "off" ]; then
         log_warn "OS sandbox not active: provider runs unconfined (see .loki/state/os-sandbox.json)"
     fi

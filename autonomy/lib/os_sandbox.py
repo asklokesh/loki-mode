@@ -774,6 +774,11 @@ def build_confinement(
     if provider == "codex":
         # codex exec --sandbox workspace-write applies its own Seatbelt/Landlock; a second
         # sandbox_apply inside ours is refused by the kernel, so codex is not wrapped.
+        # Under =on that is a fail-open, so refuse instead of returning kind none.
+        if mode == "on":
+            raise SandboxUnavailable(
+                "LOKI_OS_SANDBOX=on cannot confine codex: it runs its own OS sandbox and nesting is refused by the kernel"
+            )
         return none("codex runs its own OS sandbox (--sandbox workspace-write); nesting is refused by the kernel")
     workspace = workspace.resolve(strict=True)
     run_dir = run_dir.resolve(strict=True)
@@ -867,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
     if status["kind"] == "none" and status.get("reason") != "LOKI_OS_SANDBOX=off":
         print(f"os_sandbox: running unconfined: {status['reason']}", file=sys.stderr)
     if args.status_file:
+        # Informational only: a workspace-writable file the agent can forge. Never read it as evidence (Seal, verify, gates).
         record = {k: v for k, v in status.items() if k != "argv_prefix"}
         record["provider"] = args.provider
         record["mode"] = resolve_mode()

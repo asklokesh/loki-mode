@@ -263,10 +263,15 @@ class ModeTest(unittest.TestCase):
         out = os_sandbox._outside_probe_dir(base / "ws", "darwin")
         self.assertTrue(out is None or not str(out.resolve()).startswith("/private/var/folders"), out)
 
-    def test_codex_is_not_wrapped_and_says_why(self):
-        status = os_sandbox.build_confinement(self.ws, self.run_dir, "codex", mode="on")
+    def test_codex_auto_is_not_wrapped_and_says_why(self):
+        status = os_sandbox.build_confinement(self.ws, self.run_dir, "codex", mode="auto")
         self.assertEqual(status["kind"], "none")
         self.assertIn("own OS sandbox", status["reason"])
+
+    def test_codex_on_fails_closed(self):
+        with self.assertRaises(os_sandbox.SandboxUnavailable) as cm:
+            os_sandbox.build_confinement(self.ws, self.run_dir, "codex", mode="on")
+        self.assertIn("codex", str(cm.exception))
 
     def test_status_file_is_written_without_the_profile(self):
         out = self.run_dir / "state" / "os-sandbox.json"

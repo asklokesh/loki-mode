@@ -17,7 +17,8 @@ export interface ConfineResult {
 
 interface ArgvJson { argv_prefix?: string[]; kind?: string; reason?: string; mode?: string }
 
-// Providers that apply their own sandbox; a nested sandbox_apply is refused, so they run unwrapped (kind none).
+// Providers that apply their own sandbox (codex) cannot be nested: auto runs them unwrapped (kind none),
+// on fails closed because os_sandbox.py exits 2 and the empty prefix throws below.
 export function confineSpawn(
   cmd: string,
   args: string[],
@@ -28,6 +29,16 @@ export function confineSpawn(
   const statusFile = opts.statusFile === undefined ? join(opts.runDir, "state", "os-sandbox.json") : opts.statusFile;
   const argv = ["-m", "autonomy.lib.os_sandbox", "argv", "--workspace", opts.workspace, "--run-dir", opts.runDir, "--provider", opts.provider, "--format", "json"];
   for (const p of opts.extraRead ?? []) argv.push("--extra-read", p);
+  if ((env["LOKI_OS_SANDBOX"] ?? "off") === "off") {
+    // Default path: no python3 spawn. The status file is informational and forgeable, never evidence.
+    if (statusFile) {
+      try {
+        mkdirSync(dirname(statusFile), { recursive: true });
+        writeFileSync(statusFile, JSON.stringify({ kind: "none", mode: "off", provider: opts.provider, reason: "LOKI_OS_SANDBOX=off" }) + "\n");
+      } catch { /* best effort */ }
+    }
+    return bare;
+  }
   if (statusFile) { mkdirSync(dirname(statusFile), { recursive: true }); argv.push("--status-file", statusFile); }
   const r = spawnSync("python3", argv, { cwd: REPO_ROOT, env: { ...env }, encoding: "utf8", timeout: 30_000 });
   let parsed: ArgvJson = {};
