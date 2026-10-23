@@ -374,6 +374,23 @@ describe("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL changedSymbols and symbolGap",
     expect(symbolGap(["multiply"], ["expect(multiply(3, 4)).toBe(12)"])).toEqual([]);
     expect(symbolGap(["add"], ["expect(multiply(3, 4)).toBe(12)", "const padded = 1"])).toEqual(["add"]);
   });
+  test("a local variable is not a changed symbol (rev-c repro 1 and 3)", () => {
+    const local = "@@ -3,0 +4,4 @@ export function add(a: number, b: number): number {\n+export function multiply(a: number, b: number): number {\n+  const result = a * b;\n+  return result;\n+}\n";
+    expect(changedSymbols(local)).toEqual(["multiply"]);
+    expect(symbolGap(changedSymbols(local), ["const result = add(1, 2); expect(result).toBe(3)"])).toEqual(["multiply"]);
+    const loop = "@@ -1,0 +2,5 @@\n+export function sum(xs: number[]): number {\n+  let t = 0;\n+  for (let i = 0; i < xs.length; i++) t += xs[i]!;\n+  return t;\n+}\n";
+    expect(changedSymbols(loop)).toEqual(["sum"]);
+    expect(symbolGap(changedSymbols(loop), ["let t = 0; for (let i = 0; i < 3; i++) t += i;"])).toEqual(["sum"]);
+  });
+  test("module-level and exported const, let, var still name a symbol", () => {
+    expect(changedSymbols("@@ -1,0 +2,3 @@\n+export const TAX = 0.2;\n+let cache = 1;\n+var legacy = 2;\n")).toEqual(["TAX", "cache", "legacy"]);
+  });
+  test("a word in a comment is neither a symbol nor a test reference (rev-c repro 2)", () => {
+    const cm = "@@ -3,0 +4,3 @@ export function add(a: number, b: number): number {\n+// let users multiply two numbers\n+/* class Widget */\n+  * function ghost() {\n";
+    expect(changedSymbols(cm)).toEqual(["add"]);
+    expect(symbolGap(["multiply"], ["// users multiply things\n/* multiply */\ntest('add', () => add(1, 2));"])).toEqual(["multiply"]);
+    expect(symbolGap(["multiply"], ["# multiply in a python comment\nassert add(1, 2) == 3"])).toEqual(["multiply"]);
+  });
   test("no declared symbol, or no passing test source, is a gap", () => {
     expect(symbolGap([], ["anything"])).toEqual(["(no declared symbol)"]);
     expect(symbolGap(["multiply"], [])).toEqual(["multiply"]);

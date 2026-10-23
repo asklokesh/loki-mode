@@ -41,7 +41,11 @@ if [ "$stage" = "implement" ]; then
     if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     if [ "${E2E_STUB_MODE:-}" = "scope" ] || [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo 'DEBUG = False' >> settings.py; fi
     if [ "${E2E_STUB_MODE:-}" = "unrelated" ]; then echo "LOKI_DONE"; exit 0; fi
+    if [ "${E2E_STUB_MODE:-}" = "localvar" ]; then # FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: multiply() with a local variable and a comment word a test could echo
+      printf '\n// let users multiply two numbers\nexport function multiply(a: number, b: number): number {\n  const result = a * b;\n  return result;\n}\n' >> calc.ts
+    else
     printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
+    fi
     echo "LOKI_DONE"
   fi
 fi

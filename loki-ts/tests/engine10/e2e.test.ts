@@ -32,7 +32,7 @@ interface Run {
   runDir: string; key: string; stubCalls: string[]; stubEnv: string; origin: string;
 }
 
-function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = false, extra: string[] = [], lean?: { testBody?: string }): Run {
+function runEngine(mode: "done" | "already" | "tamper" | "nochange" | "localvar", withPr = false, extra: string[] = [], lean?: { testBody?: string }): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-e2e-"));
   temps.push(tmp);
@@ -206,6 +206,17 @@ describe("engine10 e2e (stub claude)", () => {
   test("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: a lean-skip run whose only passing test never references the new function is PARTIAL, not VERIFIED", () => {
     const addOnly = 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\ntest("add", () => {\n  expect(add(2, 3)).toBe(5);\n});\n';
     const r = runEngine("done", false, [], { testBody: addOnly });
+    expect(r.events.some((e) => e.type === "stage.skipped" && e.stage === "wall")).toBe(true);
+    const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
+    expect(receipt.verdict).toBe("PARTIAL");
+    expect((receipt.not_proven as string[]).some((n) => n.includes("no passing check references a changed symbol") && n.includes("multiply"))).toBe(true);
+    expect(r.out).not.toContain("Outcome:    VERIFIED");
+  }, 90_000);
+
+  test("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: a local variable or comment word in the diff that a test echoes does not stand in for the new function", () => {
+    // testBody replaces the fixture test, so the fixture line `if ("multiply" in calc)` cannot supply the reference
+    const echo = 'import { expect, test } from "bun:test";\nimport { add } from "./calc";\n\n// users of add\ntest("add", () => {\n  const result = add(2, 3);\n  expect(result).toBe(5);\n});\n';
+    const r = runEngine("localvar", false, [], { testBody: echo });
     expect(r.events.some((e) => e.type === "stage.skipped" && e.stage === "wall")).toBe(true);
     const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
     expect(receipt.verdict).toBe("PARTIAL");
