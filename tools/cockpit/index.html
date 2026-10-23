@@ -182,7 +182,9 @@ R.health=function(b,d){
  if(!sectionNote(b,d,"usage")){var u=d.usage||{};b.appendChild(h("h3",null,"Usage and governor ("+show(u.cap_basis)+")"));
   b.appendChild(table([["weekly used",show(u.weekly_percent)+"% (resets "+show(u.weekly_resets)+")"],["5h window used",show(u.window_5h_percent)+"% (resets "+show(u.window_resets)+")"],
    ["max engineers next hour",show(u.max_engineers_next_hour)],["active engineers last hour",show(u.active_engineers_last_hour)],
-   ["paused by usage cap",show(u.paused_by_usage_cap)],["cap file",u.usage_cap_file&&u.usage_cap_file.present?"present":"absent ("+show(get(u,["usage_cap_file","reason"]))+")"]]));}
+   ]));}
+ if(!sectionNote(b,d,"usage_cap")){var uc=d.usage_cap||{};b.appendChild(h("h3",null,"Usage cap"));
+  b.appendChild(table([["state",show(uc.state)],["reason",show(uc.reason)],["week used",show(uc.week_pct)+"% of ceiling "+show(uc.ceiling)+"%"],["override",show(uc.override)],["reading at",show(uc.reading_at)],["message",show(uc.message)]]));}
  if(!sectionNote(b,d,"ci")){var c=d.ci||{},a=c.all||{};b.appendChild(h("h3",null,"CI green rate"));
   b.appendChild(table([["overall",show(a.green_rate_pct)+"% ("+show(a.success)+" ok, "+show(a.failure)+" failed, "+show(a.cancelled)+" cancelled)"]].concat(
    Object.keys(c.by_workflow||{}).map(function(k){var x=c.by_workflow[k];return [k,show(x.green_rate_pct)+"% ("+x.success+" ok, "+x.failure+" failed)"];}))));
@@ -240,6 +242,7 @@ function renderKpi(ps){var k=document.getElementById("kpi");var items=[
  kpi("Cost per release","roi",["company","usd_per_release"],usd,ps,function(d){return "per slice "+usd(get(d,["company","usd_per_slice"]));}),
  kpi("CI green rate","health",["ci","all","green_rate_pct"],function(v){return v+"%";},ps,function(d){return "last "+show(get(d,["ci","runs_considered"]))+" runs";},function(v){return v<80?"STALE":"OK";}),
  kpi("Open P0","health",["p0","open_p0_issues"],String,ps,null,function(v){return v>0?"VIOLATION":"OK";}),
+ kpi("Usage cap","health",["usage_cap"],function(v){return v.paused?"PAUSED":"OK";},ps,function(d){var c=d.usage_cap||{};return show(c.reason)+", "+show(c.week_pct)+"% of "+show(c.ceiling)+"%"+(c.override?", override":"");},function(v){return v.paused?"VIOLATION":"OK";}),
  kpi("Weekly usage","health",["usage","weekly_percent"],function(v){return v+"%";},ps,function(d){return "max engineers "+show(get(d,["usage","max_engineers_next_hour"]));},function(v){return v>=90?"VIOLATION":(v>=75?"STALE":"OK");}),
  kpi("Company","health",["system","company_paused"],function(v){return v?"PAUSED":"RUNNING";},ps,function(d){var l=get(d,["system","leader"])||{};return l.pid!==undefined?"leader pid "+l.pid+(l.alive?" alive":" dead"):"leader UNKNOWN";},function(v){return v?"VIOLATION":"OK";}),
  kpi("Seats reporting","agents",["reporting"],function(v){return v+" of 10";},ps,null)

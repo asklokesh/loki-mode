@@ -83,7 +83,8 @@ class Ctx:
         self.transcript_root = e("COCKPIT_TRANSCRIPT_ROOT")
         self.token_cache = e("COCKPIT_TOKEN_CACHE") or os.path.join(self.runtime, "token-cache.json")
         self.pricing = e("COCKPIT_PRICING_JSON") or os.path.join(root, "loki-ts/data/model-pricing.json")
-        self.usage_cap = e("COCKPIT_USAGE_CAP_JSON") or os.path.join(root, ".loki/company/USAGE-OVERRIDE.json")
+        self.usage_cap_cmd = shlex.split(e("COCKPIT_USAGE_CAP_CMD") or
+                                         "%s scripts/usage-cap.py check --json --no-refresh" % sys.executable)
         self.leader = e("COCKPIT_LEADER_FILE") or os.path.join(root, ".loki/v10-leader")
         self.ds = Datasets(self)
 
@@ -1489,7 +1490,6 @@ def collect_health(ctx):
         S.ok("blocked", "read " + ctx.board)
 
     g, gerr, gas = ctx.ds.get("governor", 55, ds_governor)
-    cap, cerr = read_json(ctx.usage_cap)
     pause_file = os.path.join(ctx.company_dir, "PAUSE")
     if gerr:
         data["usage"] = None
@@ -1503,16 +1503,21 @@ def collect_health(ctx):
                  "active_engineers_last_hour": gv.get("active_engineers_last_hour"),
                  "cap_basis": gv.get("cap_basis"), "measured_age_secs": (g.get("measured") or {}).get("age_secs"),
                  "paused_file_present": os.path.exists(pause_file)}
-        if isinstance(cap, dict):
-            usage["usage_cap_file"] = {"present": True, "path": ctx.usage_cap,
-                                       "fields": {k: v for k, v in cap.items() if isinstance(v, (str, int, float, bool))}}
-            usage["paused_by_usage_cap"] = cap.get("paused") if isinstance(cap.get("paused"), bool) else None
-        else:
-            usage["usage_cap_file"] = {"present": False, "path": ctx.usage_cap,
-                                       "reason": cerr or "not an object (no usage cap in force or not yet written)"}
-            usage["paused_by_usage_cap"] = None
         data["usage"] = usage
-        S.ok("usage", "%s ; read %s ; stat %s" % (" ".join(ctx.usage_cmd), ctx.usage_cap, pause_file), gas)
+        S.ok("usage", "%s ; stat %s" % (" ".join(ctx.usage_cmd), pause_file), gas)
+
+    cap, cerr, cas = ds_json_cmd(ctx, ctx.usage_cap_cmd, "usage cap", dict)
+    if cap is not None and cap.get("state") not in ("OK", "PAUSED"):
+        cap, cerr = None, "usage cap: state is %r, expected OK or PAUSED" % (cap.get("state"),)
+    if cerr:
+        data["usage_cap"] = None
+        S.bad("usage_cap", " ".join(ctx.usage_cap_cmd), cerr)
+    else:
+        data["usage_cap"] = {"paused": cap["state"] == "PAUSED", "state": cap["state"], "reason": cap.get("reason"),
+                             "week_pct": cap.get("week_pct"), "ceiling": cap.get("ceiling"),
+                             "override": cap.get("override"), "reading_at": cap.get("reading_at"),
+                             "cache_age_secs": cap.get("cache_age_secs"), "message": cap.get("message")}
+        S.ok("usage_cap", " ".join(ctx.usage_cap_cmd), cas)
 
     leader_txt, lerr = read_text(ctx.leader)
     holder = None

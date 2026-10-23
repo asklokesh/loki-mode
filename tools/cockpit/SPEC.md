@@ -67,7 +67,7 @@ python3 tools/cockpit/server.py [--port 8787] [--host 127.0.0.1]
   `COCKPIT_NOW` (ISO8601 UTC, for deterministic ages). Executive panels add
   `COCKPIT_GIT_ROOT`, `COCKPIT_GIT_DAYS` (default 15), `COCKPIT_GH_RUNS_CMD`,
   `COCKPIT_GH_ISSUES_CMD`, `COCKPIT_GH_PRS_CMD`, `COCKPIT_TRANSCRIPT_ROOT`,
-  `COCKPIT_TOKEN_CACHE`, `COCKPIT_PRICING_JSON`, `COCKPIT_USAGE_CAP_JSON`,
+  `COCKPIT_TOKEN_CACHE`, `COCKPIT_PRICING_JSON`, `COCKPIT_USAGE_CAP_CMD`,
   `COCKPIT_LEADER_FILE`, `COCKPIT_SCOREBOARD_DIR`.
 - On start the server prints `cockpit: http://127.0.0.1:<port>/` and its PID,
   and writes the PID to `.loki/cockpit/server.pid` so it is stopped by
@@ -220,9 +220,12 @@ when all are.
   verbatim, UNKNOWN with the path looked for if absent).
 - health: CI green rate overall and per workflow, open P0 issues (label p0),
   blocked, review-blocked and parked rows, usage percents and the governor
-  cap, PAUSED state, load, and the leader lock holder. The usage cap file
-  (`COCKPIT_USAGE_CAP_JSON`) is read defensively: unparseable or unknown shape
-  gives `paused_by_usage_cap` None, never False.
+  cap, PAUSED state, load, and the leader lock holder. The usage cap comes from
+  `COCKPIT_USAGE_CAP_CMD` (default `python3 scripts/usage-cap.py check --json
+  --no-refresh`), mapped to `usage_cap` {paused, state, reason, week_pct,
+  ceiling, override, reading_at}. A missing script, non-zero exit, bad JSON or
+  a state other than OK or PAUSED gives UNKNOWN with the error, never OK. The
+  KPI strip shows PAUSED in red with the reason and week_pct against ceiling.
 - roi: company cost 7d, cost per release, per released slice and per fix
   commit, per-seat cost, plan proration labelled ASSUMPTION. The ROI multiple
   stays withheld while `hours_per_outcome.verified_slice` is unset.
@@ -308,7 +311,7 @@ recorded PID only, sets `LOKI_NO_BROWSER=1`. Fixtures under the run tmp dir:
   Assert exact values (commit counts by window and type, lead time, CI per
   release SHA, cost, ROI ratios), the UNKNOWN path for each source (commits,
   gh, BOARD, transcripts, price table, usage, leader, scoreboard), the
-  defensive usage-cap read, and a walker that fails when any panel number
+  usage-cap command cases (OK, PAUSED cap, PAUSED stale, override, missing script, bad rc, bad JSON), and a walker that fails when any panel number
   lacks a source claim or an UNKNOWN source still carries numbers (with two
   mutation controls). `tests/test_trigger.py` covers the cockpit plist.
 - Positive control for every absence assertion (retro 3.1.6): the same probe

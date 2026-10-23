@@ -210,6 +210,13 @@ RSHA="$(git -C "$G" log -1 --format=%H --grep='^release:')"
 stub ghruns 0 "[{\"databaseId\":11,\"workflowName\":\"Release\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"$RSHA\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-23T11:26:00Z\",\"event\":\"push\"},{\"databaseId\":12,\"workflowName\":\"Tests\",\"status\":\"completed\",\"conclusion\":\"failure\",\"headSha\":\"$RSHA\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-23T11:26:00Z\",\"event\":\"push\"},{\"databaseId\":13,\"workflowName\":\"Tests\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"ffffffffffffffffffff\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-22T11:00:00Z\",\"event\":\"push\"},{\"databaseId\":14,\"workflowName\":\"Release\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"eeeeeeeeeeeeeeeeeeee\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-22T10:00:00Z\",\"event\":\"push\"}]"
 stub ghissues 0 '[{"number":1,"title":"p0 crash","state":"OPEN","createdAt":"2026-10-22T08:00:00Z","closedAt":null,"labels":[{"name":"P0"}]},{"number":2,"title":"bug fixed","state":"CLOSED","createdAt":"2026-10-01T08:00:00Z","closedAt":"2026-10-21T08:00:00Z","labels":[{"name":"bug"}]},{"number":3,"title":"old open","state":"OPEN","createdAt":"2026-09-01T08:00:00Z","closedAt":null,"labels":[]}]'
 stub ghprs 0 '[{"number":5,"title":"fix: x","mergedAt":"2026-10-22T08:00:00Z","author":{"login":"asklokesh"}},{"number":4,"title":"feat: y","mergedAt":"2026-10-10T08:00:00Z","author":{"login":"asklokesh"}}]'
+stub capok 0 '{"state": "OK", "reason": "ok", "week_pct": 42.5, "ceiling": 90, "override": false, "reading_at": "2026-10-23T11:00:00Z", "cache_age_secs": 120}'
+stub cappaused 0 '{"state": "PAUSED", "reason": "cap", "week_pct": 91.0, "ceiling": 90, "override": false, "reading_at": "2026-10-23T11:00:00Z", "cache_age_secs": 60, "message": "weekly cap reached"}'
+stub capstale 0 '{"state": "PAUSED", "reason": "stale", "week_pct": 40.0, "ceiling": 90, "override": false, "reading_at": "2026-10-23T09:00:00Z", "cache_age_secs": 7200, "message": "reading older than 30 min"}'
+stub capover 0 '{"state": "OK", "reason": "ok", "week_pct": 95.0, "ceiling": 90, "override": true, "reading_at": "2026-10-23T11:00:00Z", "cache_age_secs": 30}'
+stub capfail 3 'boom'
+stub capbad 0 'not json at all'
+stub capodd 0 '{"state": "MAYBE"}'
 printf '{"_updated":"2026-10-08","pricing":{"opus":{"input":4.0,"output":20.0,"cache_read":0.2,"cache_write":5},"sonnet":{"input":2.0,"output":10.0,"cache_read":0.1,"cache_write":2.5}}}\n' >"$FIX/pricing.json"
 TX="$FIX/tx"
 mkdir -p "$TX/sess1/subagents"
@@ -236,7 +243,7 @@ base_env() {
         COCKPIT_GIT_ROOT="$G" COCKPIT_GH_RUNS_CMD="bash $FIX/sb/ghruns.sh" \
         COCKPIT_GH_ISSUES_CMD="bash $FIX/sb/ghissues.sh" COCKPIT_GH_PRS_CMD="bash $FIX/sb/ghprs.sh" \
         COCKPIT_TRANSCRIPT_ROOT="$TX" COCKPIT_TOKEN_CACHE="$FIX/rt/token-cache.json" \
-        COCKPIT_PRICING_JSON="$FIX/pricing.json" COCKPIT_USAGE_CAP_JSON="$FIX/missing-cap.json" \
+        COCKPIT_PRICING_JSON="$FIX/pricing.json" COCKPIT_USAGE_CAP_CMD="bash $FIX/sb/capok.sh" \
         COCKPIT_LEADER_FILE="$FIX/leader"
 }
 base_env
@@ -340,7 +347,7 @@ check "health: per-workflow green rate (Tests 1 of 2)" "50.0" "$(exp 'd["panels"
 check "health: open P0 issue counted by label" "1" "$(exp 'd["panels"]["health"]["data"]["p0"]["open_p0_issues"]')"
 check "health: blocked/review-blocked/parked rows" "[1, 1, 1]" "$(exp '[d["panels"]["health"]["data"]["blocked"][k] for k in ("blocked","review_blocked","parked")]')"
 check "health: usage percents from the governor stub" "[10.0, 2.0]" "$(exp '[d["panels"]["health"]["data"]["usage"][k] for k in ("weekly_percent","window_5h_percent")]')"
-check "health: absent usage cap file is present=False, paused None" "[False, None]" "$(exp '[d["panels"]["health"]["data"]["usage"]["usage_cap_file"]["present"], d["panels"]["health"]["data"]["usage"]["paused_by_usage_cap"]]')"
+check "health: usage cap from the stub command" "[False, 42.5, 90]" "$(exp '[d["panels"]["health"]["data"]["usage_cap"][k] for k in ("paused","week_pct","ceiling")]')"
 check "health: leader pid read and alive" "[True]" "$(exp '[d["panels"]["health"]["data"]["system"]["leader"]["alive"]]')"
 check "releases: lead time is publish minus release commit" "5.0" "$(exp 'd["panels"]["releases"]["data"]["timeline"][0]["lead_time_min"]')"
 check "releases: lead time summary n and median" "[1, 5.0]" "$(exp '[d["panels"]["releases"]["data"]["lead_time"][k] for k in ("n","median_min")]')"
@@ -366,16 +373,27 @@ check "roi: plan proration is labelled ASSUMPTION" "True" "$(exp 'd["panels"]["r
 check "roi: per-seat cost for cto" "3.0" "$(exp '[s for s in d["panels"]["roi"]["data"]["by_seat"]["seats"] if s["seat"]=="cto"][0]["cost_7d_usd"]')"
 check "roi: ROI multiple still withheld" "None" "$(exp 'd["panels"]["roi"]["data"]["roi"]["multiple"]')"
 
-echo "== usage cap file is read defensively"
-printf '{"paused": true, "reason": "weekly 90 percent"}\n' >"$FIX/cap-paused.json"
-COCKPIT_USAGE_CAP_JSON="$FIX/cap-paused.json" python3 "$SERVER" --once --json --panel health >"$FIX/cap1.json" 2>/dev/null
-check "cap file paused:true surfaces as paused_by_usage_cap" "[True, True]" "$(pj "$FIX/cap1.json" '[d["panels"]["health"]["data"]["usage"]["usage_cap_file"]["present"], d["panels"]["health"]["data"]["usage"]["paused_by_usage_cap"]]')"
-printf 'not json at all' >"$FIX/cap-bad.json"
-COCKPIT_USAGE_CAP_JSON="$FIX/cap-bad.json" python3 "$SERVER" --once --json --panel health >"$FIX/cap2.json" 2>/dev/null
-check "unparseable cap file: present False with a reason, paused None" "[False, None, True]" "$(pj "$FIX/cap2.json" '[d["panels"]["health"]["data"]["usage"]["usage_cap_file"]["present"], d["panels"]["health"]["data"]["usage"]["paused_by_usage_cap"], bool(d["panels"]["health"]["data"]["usage"]["usage_cap_file"]["reason"])]')"
-printf '{"unexpected": [1,2]}\n' >"$FIX/cap-odd.json"
-COCKPIT_USAGE_CAP_JSON="$FIX/cap-odd.json" python3 "$SERVER" --once --json --panel health >"$FIX/cap3.json" 2>/dev/null
-check "cap file with unknown shape: paused None (not False)" "None" "$(pj "$FIX/cap3.json" 'd["panels"]["health"]["data"]["usage"]["paused_by_usage_cap"]')"
+echo "== usage cap command (scripts/usage-cap.py contract)"
+capq() { # capq <stub-or-missing> <python expr over d>
+    local cmd="bash $FIX/sb/$1.sh"
+    [ "$1" = "missing" ] && cmd="python3 $FIX/no-such-usage-cap.py check --json --no-refresh"
+    COCKPIT_USAGE_CAP_CMD="$cmd" python3 "$SERVER" --once --json --panel health >"$FIX/cap-$1.json" 2>/dev/null
+    pj "$FIX/cap-$1.json" "$2"
+}
+CAPX='[d["panels"]["health"]["data"]["usage_cap"][k] for k in ("paused","state","reason","week_pct","ceiling","override","reading_at")]'
+check "cap OK: mapped fields" "[False, 'OK', 'ok', 42.5, 90, False, '2026-10-23T11:00:00Z']" "$(capq capok "$CAPX")"
+check "cap PAUSED reason cap" "[True, 'PAUSED', 'cap', 91.0, 90, False, '2026-10-23T11:00:00Z']" "$(capq cappaused "$CAPX")"
+check "cap PAUSED reason stale" "[True, 'PAUSED', 'stale', 40.0, 90, False, '2026-10-23T09:00:00Z']" "$(capq capstale "$CAPX")"
+check "cap override: week over ceiling but state OK and override true" "[False, 'OK', 'ok', 95.0, 90, True, '2026-10-23T11:00:00Z']" "$(capq capover "$CAPX")"
+check "cap PAUSED carries the message" "weekly cap reached" "$(capq cappaused 'd["panels"]["health"]["data"]["usage_cap"]["message"]')"
+check "cap OK: section source OK" "OK" "$(capq capok 'd["panels"]["health"]["data"]["sources"]["usage_cap"]["status"]')"
+UNK='[d["panels"]["health"]["data"]["usage_cap"], d["panels"]["health"]["data"]["sources"]["usage_cap"]["status"], bool(d["panels"]["health"]["data"]["sources"]["usage_cap"]["error"])]'
+check "cap script missing: UNKNOWN with error, no value" "[None, 'UNKNOWN', True]" "$(capq missing "$UNK")"
+check "cap script non-zero rc: UNKNOWN with error" "[None, 'UNKNOWN', True]" "$(capq capfail "$UNK")"
+check "cap bad JSON: UNKNOWN with error" "[None, 'UNKNOWN', True]" "$(capq capbad "$UNK")"
+check "cap unknown state value: UNKNOWN, never OK" "[None, 'UNKNOWN', True]" "$(capq capodd "$UNK")"
+check "cap UNKNOWN does not hide the governor usage section" "OK" "$(capq capfail 'd["panels"]["health"]["data"]["sources"]["usage"]["status"]')"
+check "cap file concept removed (no USAGE-OVERRIDE read)" "False" "$(capq capok '"usage_cap_file" in d["panels"]["health"]["data"]["usage"]')"
 
 echo "== scoreboard positive control"
 COCKPIT_SCOREBOARD_DIR="$FIX/sb-good" python3 "$SERVER" --once --json --panel compare >"$FIX/sbg.json" 2>/dev/null
@@ -396,10 +414,10 @@ check "gh issues missing: work.issues None" "None" "$(pj "$FIX/d-gh.json" 'd["pa
 check "gh prs missing: work.pull_requests None" "None" "$(pj "$FIX/d-gh.json" 'd["panels"]["work"]["data"]["pull_requests"]')"
 dead work BOARD_MD="$FIX/no-board.md" >"$FIX/d-board.json"
 check "BOARD missing: work.slices None" "None" "$(pj "$FIX/d-board.json" 'd["panels"]["work"]["data"]["slices"]')"
-dead health COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false BOARD_MD="$FIX/no-board.md" COCKPIT_USAGE_CMD=false COCKPIT_LEADER_FILE="$FIX/no-leader" >"$FIX/d-health.json"
+dead health COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false BOARD_MD="$FIX/no-board.md" COCKPIT_USAGE_CMD=false COCKPIT_USAGE_CAP_CMD=false COCKPIT_LEADER_FILE="$FIX/no-leader" >"$FIX/d-health.json"
 check "health: ci, p0, blocked, usage all None" "[None, None, None, None]" "$(pj "$FIX/d-health.json" '[d["panels"]["health"]["data"][k] for k in ("ci","p0","blocked","usage")]')"
 check "health: leader file missing gives leader None and an error string" "[None, True]" "$(pj "$FIX/d-health.json" '[d["panels"]["health"]["data"]["system"]["leader"], bool(d["panels"]["health"]["data"]["system"]["leader_error"])]')"
-check "health: four sections UNKNOWN, panel PARTIAL" "[4, 'PARTIAL']" "$(pj "$FIX/d-health.json" '[sum(1 for v in d["panels"]["health"]["data"]["sources"].values() if v["status"]=="UNKNOWN"), d["panels"]["health"]["status"]]')"
+check "health: five sections UNKNOWN, panel PARTIAL" "[5, 'PARTIAL']" "$(pj "$FIX/d-health.json" '[sum(1 for v in d["panels"]["health"]["data"]["sources"].values() if v["status"]=="UNKNOWN"), d["panels"]["health"]["status"]]')"
 dead compare COCKPIT_TRANSCRIPT_ROOT="$FIX/no-transcripts" >"$FIX/d-tx.json"
 check "transcripts missing: seat_vs_seat and model_mix None (no zero cost)" "[None, None]" "$(pj "$FIX/d-tx.json" '[d["panels"]["compare"]["data"]["seat_vs_seat"], d["panels"]["compare"]["data"]["model_mix"]]')"
 check "transcripts missing: token cost metrics are None" "[None, None]" "$(pj "$FIX/d-tx.json" '[d["panels"]["compare"]["data"]["week_over_week"]["metrics"]["token_cost_usd"]["this_7d"], d["panels"]["compare"]["data"]["week_over_week"]["metrics"]["output_tokens"]["this_7d"]]')"
