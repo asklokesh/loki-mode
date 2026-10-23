@@ -212,7 +212,7 @@ M1="$(cd "$MW" && timeout 120 python3 "$FV" . --json 2>/dev/null | verdict_of)"
 git -C "$MW" mv src/Orders.test.tsx src/Orders.tsx
 M2="$(cd "$MW" && timeout 120 python3 "$FV" . --json 2>/dev/null | verdict_of)"
 M3="$(cd "$MW" && timeout 120 python3 "$FV" . --no-cache --json 2>/dev/null | verdict_of)"
-if [ "${M1%% *}" = "PASS" ] && [ "${M2%% *}" = "FAIL" ] && [ "${M2##* }" = "0" ] && [ "${M3%% *}" = "FAIL" ]; then
+if [ "${M1%% *}" = "INCONCLUSIVE" ] && [ "${M2%% *}" = "FAIL" ] && [ "${M2##* }" = "0" ] && [ "${M3%% *}" = "FAIL" ]; then
     ok "test-path content moved to a product path is rescanned and FAILs (cached == --no-cache)"
 else
     bad "a path move replayed a cached verdict: test-path='$M1' moved='$M2' no-cache='$M3'"
@@ -230,7 +230,7 @@ git -C "$RW" add -A >/dev/null 2>&1
 R1="$(cd "$RW" && timeout 120 python3 "$WEAK" . --json 2>/dev/null | verdict_of)"
 R1b="$(cd "$RW" && timeout 120 python3 "$WEAK" . --json 2>/dev/null | verdict_of)"
 R2="$(cd "$RW" && timeout 120 python3 "$FV" . --json 2>/dev/null | verdict_of)"
-if [ "${R1%% *}" = "PASS" ] && [ "${R1b##* }" != "0" ] && [ "${R2%% *}" = "FAIL" ] && [ "${R2##* }" = "0" ]; then
+if [ "${R1%% *}" = "INCONCLUSIVE" ] && [ "${R1b##* }" != "0" ] && [ "${R2%% *}" = "FAIL" ] && [ "${R2##* }" = "0" ]; then
     ok "a cache written under different rules is not replayed (fingerprint derived from fast_verify.py)"
 else
     bad "a rule change did not invalidate the cache: weak='$R1' weak-warm='$R1b' real='$R2'"
@@ -282,6 +282,55 @@ rc=0; python3 "$FV" --path "$TMP/absent-root" >/dev/null 2>&1 || rc=$?
 if [ "$rc" = "2" ]; then ok "--path to a missing dir exits 2"; else bad "--path missing exited $rc, expected 2"; fi
 rc=0; hout="$(python3 "$FV" --help 2>/dev/null)" || rc=$?
 if [ "$rc" = "0" ] && printf '%s' "$hout" | grep -q "usage:"; then ok "--help exits 0 with usage on stdout"; else bad "--help exited $rc"; fi
+
+# ---- FC-FAST-VERIFY-PASS-WITHOUT-DETECTION: a verdict names its signals ----
+# Seeded-defect cases (benchmarks/seeded-defects): the visible tests pass on the buggy src.
+SEED="$SCRIPT_DIR/../benchmarks/seeded-defects/cases"
+seed_repo() {  # $1=case id, $2=dest
+    mkdir -p "$2"; cp "$SEED/$1"/src.py "$SEED/$1"/spec.md "$SEED/$1"/test_visible.py "$2/"
+    git init -q "$2" 2>/dev/null; git -C "$2" add src.py spec.md test_visible.py >/dev/null 2>&1
+}
+jfield() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
+S1="$TMP/seed-logic"; seed_repo SD-0001 "$S1"
+J1="$(cd "$S1" && python3 "$FV" . --no-cache --json 2>/dev/null)"
+if [ "$(printf '%s' "$J1" | jfield "d['verdict']")" = "INCONCLUSIVE" ] \
+   && [ "$(printf '%s' "$J1" | jfield "d['static_clean'], d['signals']['behavioral'], d['signals']['wall_files_run'], d['signals']['tests_run']")" = "(True, False, 0, 0)" ] \
+   && printf '%s' "$J1" | jfield "d['signals']['rules']" | grep -q mock_target; then
+    ok "a seeded logic defect with no behavioral signal is INCONCLUSIVE (never PASS) and signals lists what ran"
+else
+    bad "no-behavioral-signal case did not return INCONCLUSIVE with signals: $J1"
+fi
+cat > "$S1/loki_wall_spec.py" <<'PY'
+from src import *
+def test_wall():
+    assert False, "wall says the change is wrong"
+PY
+J2="$(cd "$S1" && python3 "$FV" . --no-cache --json 2>/dev/null)"
+if [ "$(printf '%s' "$J2" | jfield "d['verdict']")" = "FAIL" ] && printf '%s' "$J2" | grep -q wall_failed; then
+    ok "a present loki_wall_* file that fails flips the verdict to FAIL"
+else
+    bad "failing Wall file did not FAIL: $J2"
+fi
+printf 'from src import *\ndef test_wall():\n    assert True\n' > "$S1/loki_wall_spec.py"
+J3="$(cd "$S1" && python3 "$FV" . --no-cache --json 2>/dev/null)"
+if [ "$(printf '%s' "$J3" | jfield "d['verdict']")" = "PASS" ] && [ "$(printf '%s' "$J3" | jfield "d['signals']['wall_files_run']")" = "1" ]; then
+    ok "a passing Wall file is the behavioral signal that earns PASS"
+else
+    bad "passing Wall file did not PASS: $J3"
+fi
+S2="$TMP/seed-mock"; seed_repo SD-0061 "$S2"
+J4="$(cd "$S2" && python3 "$FV" . --no-cache --json 2>/dev/null)"
+if [ "$(printf '%s' "$J4" | jfield "d['verdict']")" = "FAIL" ] && printf '%s' "$J4" | grep -q '"mock_target"'; then
+    ok "SD-0061 style mock.patch on the function under test is a blocking mock_target finding"
+else
+    bad "mock-abuse case not caught: $J4"
+fi
+NOMT="$TMP/fv-nomock.py"
+sed 's/^RULES = (_rule_mock_render, _rule_toothless_test, _rule_mock_target)/RULES = (_rule_mock_render, _rule_toothless_test)/' "$FV" > "$NOMT"
+J5="$(cd "$S2" && python3 "$NOMT" . --no-cache --json 2>/dev/null)"
+if cmp -s "$FV" "$NOMT"; then bad "mutant did not change fast_verify.py (sed pattern stale)"
+elif [ "$(printf '%s' "$J5" | jfield "d['verdict']")" != "FAIL" ]; then ok "mutant with the mock_target rule removed no longer FAILs the mock-abuse case (guard bites)"
+else bad "mutant still FAILs; the test does not depend on the rule"; fi
 
 # ---- EXOGENOUS: no model, no network -------------------------------------
 if grep -qE "anthropic|openai|requests\.|urllib\.request|httpx|provider_invoke" "$FV"; then
