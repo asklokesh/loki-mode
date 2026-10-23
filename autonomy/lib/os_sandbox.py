@@ -232,6 +232,14 @@ SYSTEM_READ_ROOTS = (
     "/private/var/db", "/private/var/select", "/dev", "/Applications",
     "/opt/homebrew", "/private/tmp", "/private/var/folders",
 )
+# Linux counterpart of SYSTEM_READ_ROOTS for confine_reads under bwrap: the only
+# system paths bound into the empty root. Anything not listed (the user's home,
+# /root, /srv, /mnt, /var) does not exist inside, so a symlink out of the
+# workspace to it cannot be read or written through.
+LINUX_READ_ROOTS = (
+    "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/etc", "/opt",
+    "/run/systemd/resolve",
+)
 HOME_TOOLCHAIN = (
     ".local", ".nvm", ".bun", ".cargo", ".npm", ".npmrc", ".config/git",
     ".cache", "Library/Caches",
@@ -592,6 +600,36 @@ def secret_symlink_targets(
     return sorted(targets, key=str)
 
 
+def _bwrap_root_binds(
+    workspace: Path, run_dir: Path, provider: str, home: Path, extra_read: Iterable[Path],
+) -> list[str]:
+    """Read-only binds for confine_reads: system roots, toolchain, provider paths,
+    git common dir and extra_read. A root that is itself a symlink (merged /usr:
+    /bin -> usr/bin) is recreated as a symlink, never followed."""
+    argv: list[str] = []
+    bound: list[Path] = []
+
+    def covered(path: Path) -> bool:
+        return any(path == b or b in path.parents for b in bound)
+
+    for raw in LINUX_READ_ROOTS:
+        root = Path(raw)
+        if root.is_symlink():
+            argv += ["--symlink", os.readlink(root), str(root)]
+        elif root.exists() and not covered(root):
+            argv += ["--ro-bind", str(root), str(root)]
+            bound.append(root)
+    extra = [Path(p).resolve() for p in extra_read if Path(p).exists()]
+    others = [*extra, *(home / rel for rel in HOME_TOOLCHAIN if (home / rel).exists()),
+              *git_read_paths(workspace)]
+    for path in others:
+        path = path.resolve()
+        if not covered(path):
+            argv += ["--ro-bind", str(path), str(path)]
+            bound.append(path)
+    return argv
+
+
 def bwrap_argv_prefix(
     workspace: Path,
     run_dir: Path,
@@ -599,10 +637,17 @@ def bwrap_argv_prefix(
     rules: list[dict[str, str]],
     home: Path | None = None,
     bwrap: str = "bwrap",
+    confine_reads: bool = False,
+    extra_read: Iterable[Path] = (),
 ) -> list[str]:
-    home = home or Path(os.path.expanduser("~"))
-    argv = [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-            "--tmpfs", "/tmp"]
+    home = (home or Path(os.path.expanduser("~"))).resolve()
+    if confine_reads:
+        # Empty root: only the listed paths exist inside, so reads outside them fail.
+        argv = [bwrap, *_bwrap_root_binds(workspace, run_dir, provider, home, extra_read),
+                "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
+    else:
+        argv = [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+                "--tmpfs", "/tmp"]
     writable = [workspace, run_dir, *provider_write_paths(provider, home)]
     seen: set[str] = set()
     for path in writable:
@@ -630,6 +675,10 @@ def bwrap_argv_prefix(
         # already makes them, and so .git, impossible to rename away.
         if path.exists() and not (path.name == ".git" and path.is_dir()):
             argv += ["--ro-bind", str(path), str(path)]
+    if confine_reads:
+        # The synthetic root is a writable tmpfs; make it read-only so a write to an
+        # unbound path fails instead of landing in a throwaway directory.
+        argv += ["--remount-ro", "/"]
     argv += ["--die-with-parent", "--"]
     return argv
 
@@ -640,7 +689,7 @@ _PROBE_SCRIPT = (
     'cat "$1/.env" >/dev/null 2>&1 && exit 41; '
     'cat "$1/plain.txt" >/dev/null 2>&1 || exit 42; '
     ': > "$1/w.txt" 2>/dev/null || exit 43; '
-    '[ -z "$2" ] || { : > "$2" 2>/dev/null && exit 44; }; '
+    '[ -z "$2" ] || { ( : > "$2" ) 2>/dev/null && exit 44; }; '
     'exit 0'
 )
 
@@ -735,12 +784,12 @@ def build_confinement(
         # without a flag. LOKI_OS_SANDBOX_CONFINE_READS=0 opts out for a provider whose
         # login needs a wider read set.
         confine_reads = os.environ.get("LOKI_OS_SANDBOX_CONFINE_READS", "1") != "0"
-    confine_reads = bool(confine_reads) and platform == "darwin"
+    confine_reads = bool(confine_reads) and (platform == "darwin" or platform.startswith("linux"))
     limitations = ["unrestricted-outbound-network",
                    "preexisting-cross-boundary-hardlinks"]
     if not confine_reads:
         limitations.append("reads-outside-workspace-allowed-except-secret-paths")
-    else:
+    elif platform == "darwin":
         limitations.append("keychain-db-readable-for-provider-login")
 
     def unavailable(reason: str) -> dict[str, Any]:
@@ -768,12 +817,12 @@ def build_confinement(
             return unavailable(f"bwrap not found; {INSTALL_HINT['linux']}")
         kind = "linux-bwrap"
         limitations += [
-            "bwrap path untested on Linux",
             "secret-files-created-after-launch-not-masked",
             "bwrap-masks-only-aws-ssh-and-secrets-under-workspace-and-run-dir",
             "bwrap-walk-skips-node_modules-venv-git-and-caps-at-200000-entries",
         ]
-        builder = lambda: bwrap_argv_prefix(workspace, run_dir, provider, rules, home, bwrap)
+        builder = lambda: bwrap_argv_prefix(workspace, run_dir, provider, rules, home, bwrap,
+                                            confine_reads, extra_read)
         profile = " ".join(builder()).encode("utf-8")
         prefix = None
     else:

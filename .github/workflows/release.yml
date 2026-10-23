@@ -77,6 +77,13 @@ jobs:
           if [ "${bwrap_skips:-0}" -gt 0 ]; then
             echo "bwrap tests skipped on Linux" >&2; exit 1
           fi
+      - name: OS sandbox wiring test (symlink-out read refused under bwrap)
+        run: |
+          set -euo pipefail
+          bash tests/test-os-sandbox-wiring.sh | tee "$RUNNER_TEMP/os-sandbox-wiring.txt"
+          if grep -q '^SKIP' "$RUNNER_TEMP/os-sandbox-wiring.txt"; then
+            echo "wiring kernel probes skipped on Linux" >&2; exit 1
+          fi
 
   # The tarball is built ONCE here, with no secret and no write token.
   # publish-npm recomputes its sha256 and publishes exactly those bytes.
