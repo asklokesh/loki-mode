@@ -795,6 +795,20 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
         expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
       });
+      test("FC-FULLSUITE-GO-CARGO-IDS: a go or cargo full suite red on base is excused for the same failing id, not for a new one", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const goOut = (...t: string[]) => t.map((x) => JSON.stringify({ Action: "output", Package: "m/p", Test: x, Output: `--- FAIL: ${x} (0.00s)\n` }) + "\n" + JSON.stringify({ Action: "fail", Package: "m/p", Test: x })).join("\n");
+        const cargoOut = (...t: string[]) => t.map((x) => `test ${x} ... FAILED`).join("\n") + `\ntest result: FAILED. 0 passed; ${t.length} failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`;
+        for (const [cmd, mk] of [["go test -json ./...", goOut], ["cargo test", cargoOut]] as const) {
+          const baseIds = failIds(mk("TestAdd"));
+          expect(baseIds.length).toBe(1);
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: baseIds, attributable: true } }));
+          const head = (out: string) => [{ name: "full suite: x", cmd, result: "fail", ids: failIds(out) }];
+          expect(attributeFullSuite(d, base, head(mk("TestAdd")), [], []).preExistingChecks).toEqual(["full suite: x"]);
+          expect(attributeFullSuite(d, base, head(mk("TestAdd", "TestNew")), [], []).preExistingChecks).toEqual([]);
+        }
+      });
       test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing only when its failing output is the same (paths and numbers aside); a new line, a changed script or a new command is introduced", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });
