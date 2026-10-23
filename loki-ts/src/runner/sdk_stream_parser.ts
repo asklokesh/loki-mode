@@ -97,6 +97,8 @@ export interface ParserContext {
   // Live-output sink. The caller tees the same text to the terminal +
   // iterationOutputPath + captured log (mirroring the bash `tee`). Default: stdout.
   write?: (s: string) => void;
+  // Called once, the first time a frame carries session_id, so a caller can make it durable before the stream ends.
+  onSessionId?: (id: string) => void;
 }
 
 interface AgentInfo {
@@ -249,7 +251,7 @@ export async function consumeSdkStream(
   const guard = { truncated: false };
   for await (const data of asAsync(messages, guard)) {
     const msgType = data.type ?? "";
-    if (typeof data.session_id === "string" && data.session_id) seenSessionId = data.session_id; // a truncated turn has no result frame but its session is still resumable
+    if (typeof data.session_id === "string" && data.session_id) { if (seenSessionId === undefined) { try { ctx.onSessionId?.(data.session_id); } catch { /* best-effort */ } } seenSessionId = data.session_id; } // a truncated turn has no result frame but its session is still resumable
 
     // --- stream_event: live incremental delta text (--include-partial-messages)
     if (msgType === "stream_event") {

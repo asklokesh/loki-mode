@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
+import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
+import { writeSessionId } from "../../src/runner/session_resume.ts";
 import type { FailureGroup } from "../../src/engine10/failures.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner, StageName } from "../../src/engine10/types.ts";
 
@@ -644,5 +646,58 @@ describe("resume review fixes (P12-07)", () => {
       expect(called).toBe(0);
       expect(say.join("")).toContain("--no-pr");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// rq-82 (#353 AC5): the provider session id is durable from the first stream frame and mirrored into the heartbeat.
+describe("session id durable at first sight (rq-82)", () => {
+  const initFrame = (id: string) => ({ type: "system", subtype: "init", session_id: id });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("consumeSdkStream calls onSessionId once, before the stream ends", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    async function* frames() { yield initFrame("s-1234abcd"); yield { type: "assistant", session_id: "s-1234abcd", message: { content: [] } }; await gate; }
+    const seen: string[] = [];
+    const done = consumeSdkStream(frames() as never, { cwd: repo, iteration: "1", hookEventsEnabled: false, write: () => {}, onSessionId: (id) => seen.push(id) });
+    await sleep(100);
+    expect(seen).toEqual(["s-1234abcd"]);
+    release();
+    await done;
+    expect(seen).toEqual(["s-1234abcd"]);
+  });
+
+  test("a heartbeat carries resume_id once the session file exists, before session.ended", async () => {
+    const file = join(repo, ".loki", "e10-session-it-hb.json");
+    const script = `mkdir -p "${repo}/.loki"; printf '{"session_id":"s-1234abcd"}' > "${file}"; sleep 30`;
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({ provider: "claude", heartbeatMs: 50, childCommand: ["sh", ["-c", script]], emit: (type: string, _stage: string, data: Record<string, unknown>) => { events.push({ type, data }); } } as never);
+    const ac = new AbortController();
+    const run = runner.run({ stage: "implement", brief: "b", tier: "development", iterationId: "it-hb", limitS: 20, signal: ac.signal, cwd: repo });
+    await sleep(700);
+    ac.abort();
+    await run;
+    const types = events.map((e) => e.type);
+    const hb = events.findIndex((e) => e.type === "heartbeat" && e.data["resume_id"] === "s-1234abcd");
+    expect(hb).toBeGreaterThanOrEqual(0);
+    expect(hb).toBeLessThan(types.lastIndexOf("session.ended"));
+  });
+
+  test("an id that is not 8 to 128 of [A-Za-z0-9-] is neither written nor emitted", async () => {
+    for (const bad of ["../x", "a".repeat(200), "short"]) {
+      writeSessionId(repo, "bad", { sessionId: bad });
+      expect(() => readFileSync(join(repo, ".loki", "e10-session-bad.json"))).toThrow();
+    }
+    const file = join(repo, ".loki", "e10-session-it-bad.json");
+    const script = `mkdir -p "${repo}/.loki"; printf '{"session_id":"../x"}' > "${file}"; sleep 30`;
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({ provider: "claude", heartbeatMs: 50, childCommand: ["sh", ["-c", script]], emit: (type: string, _stage: string, data: Record<string, unknown>) => { events.push({ type, data }); } } as never);
+    const ac = new AbortController();
+    const run = runner.run({ stage: "implement", brief: "b", tier: "development", iterationId: "it-bad", limitS: 20, signal: ac.signal, cwd: repo });
+    await sleep(500);
+    ac.abort();
+    await run;
+    expect(events.some((e) => e.type === "heartbeat")).toBe(true);
+    expect(events.some((e) => e.data && "resume_id" in e.data)).toBe(false);
   });
 });

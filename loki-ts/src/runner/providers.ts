@@ -943,6 +943,8 @@ export function sdkQueryProvider(): ProviderInvoker {
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
           requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : (extra.model ?? model), // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
+          // rq-82: durable at first sight (a SIGKILL mid-stream would otherwise lose it); the end-of-stream write below wins.
+          ...(process.env["LOKI_E10_STAGE"] ? { onSessionId: (id: string) => writeSessionId(call.cwd, process.env["LOKI_ITERATION"] ?? "0", { sessionId: id }) } : {}),
         });
         captured = res.capturedText;
         // MW-2: engine10 reads this id to resume the session later. Best-effort; a miss only means a fresh fix session.

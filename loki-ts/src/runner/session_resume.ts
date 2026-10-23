@@ -35,6 +35,9 @@ export function planChain(ctx: RunContext, implementModel: string, planModel: st
   return { id };
 }
 
+/** A provider session id is written to disk and mirrored into the event log only when it has this shape. */
+export const SESSION_ID_RE = /^[A-Za-z0-9-]{8,128}$/;
+
 /** The provider session id sdkQueryProvider wrote for this iteration, or null (CLI/other providers, missing file). */
 export function readSessionId(repoDir: string, iterationId: string): string | null {
   try {
@@ -50,6 +53,7 @@ export function writeSessionId(repoDir: string, iterationId: string, res: { sess
   const file = join(repoDir, ".loki", `e10-session-${iterationId}.json`);
   try {
     if (res.refusedNoFallback || !res.sessionId) { if (res.refusedNoFallback) rmSync(file, { force: true }); return; }
+    if (!SESSION_ID_RE.test(res.sessionId)) return;
     mkdirSync(join(repoDir, ".loki"), { recursive: true });
     writeFileSync(file, JSON.stringify({ session_id: res.sessionId }));
   } catch { /* best-effort */ }

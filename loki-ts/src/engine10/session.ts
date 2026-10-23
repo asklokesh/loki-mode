@@ -14,7 +14,7 @@ import { idleGapMs } from "../util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
-import { readSessionId } from "../runner/session_resume.ts";
+import { readSessionId, SESSION_ID_RE } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
@@ -243,9 +243,11 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
       const watchdog = createWatchdog(Date.now), stallKill = stallKillS(); // FC-17: 0 (default) never kills
+      let resumeId: string | null = null; // rq-82: the provider session id, mirrored into the first heartbeat after it is on disk
       const heartbeatTimer = setInterval(() => {
         const un = untrackedList(opts.cwd), diff = diffShortstat(opts.cwd, un), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff, un)); // one ls-files per tick, shared (TEN-SPEED-21)
-        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
+        if (resumeId === null) { const id = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId); if (id && SESSION_ID_RE.test(id)) resumeId = id; }
+        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls, ...(resumeId ? { resume_id: resumeId } : {}) });
         if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() }); if (stallKill > 0 && w.idleS >= stallKill) kill("stalled");
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
