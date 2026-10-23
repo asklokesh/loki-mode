@@ -154,6 +154,24 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     expect(r.capturedText).toContain("rate_limit");
   });
 
+  test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: an authentication_failed frame writes the classifiable sdk-loop line with the provider text", async () => {
+    const msgs = [
+      { type: "assistant", error: "authentication_failed", message: { content: [{ type: "text", text: "Invalid API key \u00b7 Fix external API key" }] } },
+      { type: "result", is_error: true, usage: {}, result: "Invalid API key \u00b7 Fix external API key" },
+    ] as unknown as StreamMsg[];
+    const r = await consumeSdkStream(msgs, ctx(), clock);
+    expect(r.capturedText).toMatch(/^\[sdk-loop error: Failed to authenticate \(authentication_failed\): Invalid API key \u00b7 Fix external API key\]$/m);
+  });
+
+  test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: agent prose naming an invalid key never writes the sdk-loop line", async () => {
+    const msgs = [
+      { type: "assistant", message: { content: [{ type: "text", text: "The test expects Invalid API key to be rejected." }] } },
+      { type: "result", is_error: false, usage: {}, result: "done" },
+    ] as unknown as StreamMsg[];
+    const r = await consumeSdkStream(msgs, ctx(), clock);
+    expect(r.capturedText).not.toContain("[sdk-loop error");
+  });
+
   test("rate_limit_event with status 'allowed' is a HEARTBEAT, NOT a rate limit (ignored)", async () => {
     // The SDK emits this on every call; treating it as a rate limit was a bug.
     const msgs = [

@@ -273,6 +273,10 @@ export async function consumeSdkStream(
         rateLimit = rateLimit ?? {};
         captured += `\n[${err}]\n`; // so the file-based rate-limit scanner fires
       }
+      if (err === "authentication_failed") { // FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the structural frame, never prose; retry_class SDK_ERR classifies this exact wording
+        const said = (data.message?.content ?? []).map((c) => (c["type"] === "text" ? String(c["text"] ?? "") : "")).join(" ").replace(/\s+/g, " ").trim().slice(0, 200);
+        captured += `\n[sdk-loop error: Failed to authenticate (authentication_failed)${said ? `: ${said}` : ""}]\n`;
+      }
       const u = data.message?.usage;
       if (u) {
         const id = data.message?.id ?? `#${anonUsageId++}`;

@@ -103,6 +103,11 @@ export function shouldStopRetrying(
 // P12-09: quota exhaustion is a bounded wait-then-rerun of the SAME provider call, not a fatal stop.
 // Only the call is repeated (never the stage), so no stage side effect runs twice. Auth stays fatal.
 const SDK_ERR = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/; // the SDK's real wording, matched only on its own error line
+/** The provider's own text from a `Failed to authenticate (...)` sdk-loop line, or null; the one reader of the line the stream parser writes. */
+export function sdkAuthCause(text: string): string | null {
+  const m = /^\[sdk-loop error: Failed to authenticate(?: \([a-z_]+\))?(?:: ([^\n]*))?\]$/m.exec(text);
+  return m ? (m[1] ?? "").trim() : null;
+}
 export const QUOTA_WAIT_BASE_MS = 30_000;
 export const QUOTA_WAIT_MAX_MS = 300_000;
 
