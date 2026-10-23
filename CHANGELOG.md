@@ -5,6 +5,81 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.4 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test shares one alias --json run between two assertions and prints the CLI spawn count (FC-TEST-ALIAS-FWD-REDUNDANT-SPAWN, #183). Approval: "APPROVE pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): merge-tree rc=0; alias-forwarding suite 154 spawns, 202/9 on both routes, same 9 failing rows as base 5cae48655; export keeps its second spawn; empty-alias-stdout mutant red (189/22) and restored."
+
+## v11.63.3 (2026-10-23)
+
+
+
+### Fixed
+- A sealed Wall path always runs, not only those test discovery lists; a sealed Rust Wall file under tests/ runs as cargo test --test <name>; a sealed Go Wall file runs only its own Test, Fuzz and Example functions via go test -run; and the real go test check gets an explicit 60s timeout (wallgo-r5). Approval: "ship pd/wallgo-r5 37127bc3d4ea913a214ad0c7ac0ad68027158e65 (HIGH, rev-b APPROVE). It is 5 commits over origin/main 5746a4550, linear with 0 merges". rev-c holds no open BLOCK on the wallfile or wallrust commits.
+
+## v11.63.2 (2026-10-23)
+
+
+
+### Fixed
+- get_state_manager caps its per-root cache with an LRU like the TypeScript side (rq35). Approval: "APPROVE pd/rq35 384aca714 (tl-2, LOW), ships after race-impl-hang e59771e33 and rq25 66de3ec0b".
+
+## v11.63.1 (2026-10-23)
+
+
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
+## v11.62.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 moat test pins the shorthand helper binding in a dynamic-import destructure to both the import and indirect rules (p9-shorthand, rebased onto main). Approval: "Ship: p9-shorthand. rev-c HIGH re-APPROVE on 61ca6c363, which replaces my earlier a060fbc15 + 518d2891e line. The range is the single commit 61ca6c363 on origin/main."
+
+## v11.62.0 (2026-10-23)
+
+
+
+### Added
+- PR lessons are learned only from human commits: bot authors and merge commits yield no lesson, at most MAX_HUMAN_COMMITS commits are read, commits without a patch are skipped, secrets are redacted before storage, and loki memory promote shares a lesson across repos (pd/364a-r2 and pd/364b-r2). Approval: "tl-324: APPROVE pd/364b-r2 a511d4159a0c06216a3744d77f2267fc968424f8, a stack of four commits on origin/main; ship all four in order: fee344a42cc0f3869c5cfa80f3c6213061203423, dba9b20f32a73ab9c99eb3f6db7fbe184795a480 (364a-r2), 8a7073c953bc92a6f04d4218e99168e334ab29b7, a511d4159a0c06216a3744d77f2267fc968424f8 (364b-r2)".
+
+## v11.61.2 (2026-10-23)
+
+
+
+### Fixed
+- The bench retires the fd-1 to fd-4 overlays that passed a stated-rule near-miss, adds fd-1b to fd-4b, and fd-3b checks a negative quantity before a bad tax rate (pd/fd1b). Approval: "tl-324: APPROVE pd/fd1b head b7d91e38382250c508bc09308ed8b63d2614fdf0. The branch holds a merge commit, so ship by fast-forwarding or merging this head". Shipped by merging that head.
+
+## v11.61.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 allowtoken moat scan accepts a plain destructured dynamic import of safe_git (FC-P9-DYNAMIC-IMPORT-FALSE-POSITIVE). Approval: "Ship line from rev-c: APPROVE pd/p0-p9-allowtoken a060fbc15. The range origin/main..a060fbc15 is one commit".
+
+## v11.61.0 (2026-10-23)
+
+
+
+### Added
+- Preflight reads the PR publish capability from the GitHub API at intake, names the fallback for collaborators-only and no-fork repositories, and records the publish plan without changing PreflightResult (R100-022, #231). Approval: "tl-324: APPROVE pd/231, a stack of two commits on origin/main; ship both in order: 70c6a399cf2f93ab7c8ce7e7ebeba1ee8f200ca8 then 31d866a55a73f26a54dff0523c186f49907f1978 (head)". The receipt criterion is a separate HIGH slice and is not covered.
+
+## v11.60.17 (2026-10-23)
+
+
+
+### Fixed
+- The engine10 repomap and testmap cache key is bound to its producer, cache files are private and written atomically, and the unbound-fallback and injected-fingerprint mutants are killed (pd/331). Approval: "SHIP pd/331: head 8066c01089fd1dd48c1a791590e3a8caaa0b5326 has rev-c opus HIGH APPROVE. The range is 006ef38ff..8066c0108, three commits: 5fc8c5d46, the merge d11335f4c and 8066c0108." Shipped by merging that head.
+
 ## v11.60.16 (2026-10-23)
 
 

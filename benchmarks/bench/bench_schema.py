@@ -43,6 +43,28 @@ from typing import Any, Dict, List, Optional, Tuple
 # Bump on ANY breaking schema change. Stamped into every result-row.
 SCHEMA_VERSION = "1.0"
 
+# Retired task ids. A pre-registered task or overlay cannot be edited after a paid trial has seen it (its sha is pinned),
+# so a defective one is retired HERE, by id, and replaced by a new id. A retired task never runs and its rows never feed a claim.
+RETIRED_TASKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "retired_tasks.json")
+
+
+def retired_tasks(path: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+    """{task_id: {reason, superseded_by, retired}} from retired_tasks.json. An unreadable manifest raises: a claim must not
+    silently include a retired task because the list could not be read."""
+    with open(path or RETIRED_TASKS_FILE, "r") as fh:
+        data = json.load(fh)
+    tasks = data.get("tasks") if isinstance(data, dict) else None
+    if not isinstance(tasks, dict):
+        raise ValueError("retired_tasks.json must be an object with a 'tasks' object")
+    return tasks
+
+
+def without_retired(rows: List[Dict[str, Any]], path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Rows whose task (task_id, or task for attribution rows) is not retired."""
+    gone = retired_tasks(path)
+    return [r for r in rows if (r.get("task_id") or r.get("task")) not in gone]
+
+
 # Directories never folded into the fixture hash (volatile / generated state).
 _FIXTURE_EXCLUDE_DIRS = {".git", ".loki", "node_modules", "__pycache__"}
 

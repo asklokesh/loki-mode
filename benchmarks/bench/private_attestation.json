@@ -12,6 +12,16 @@
         "expected_exit": 1
       }
     },
+    "fd-1b-kv-parser": {
+      "positive": {
+        "artifact_sha256": "86982b4e105f137be7f0e87204036aebc7e50e0e3cf2d262f8d1115c9b530f6e",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "f1290ba66854813d59650eacae58ca51635e7f1f6909932b281b26d94dc807bd",
+        "expected_exit": 1
+      }
+    },
     "fd-2-two-module-untested": {
       "positive": {
         "artifact_sha256": "59c5858826185f949f820ff576f7b59fa39b4af9e9e7cec56da351864e6b8ec2",
@@ -19,6 +29,16 @@
       },
       "adversarial": {
         "artifact_sha256": "a2d56274f74ea7075f6d0c28f1bc2b69aef90178d573f3b46f328692f9a1d042",
+        "expected_exit": 1
+      }
+    },
+    "fd-2b-two-module-untested": {
+      "positive": {
+        "artifact_sha256": "59c5858826185f949f820ff576f7b59fa39b4af9e9e7cec56da351864e6b8ec2",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "636f28b885d7f3e75114e2595fac08eaffdb858df7a11b6523449cdd89f8c925",
         "expected_exit": 1
       }
     },
@@ -32,6 +52,16 @@
         "expected_exit": 1
       }
     },
+    "fd-3b-refactor-invariant": {
+      "positive": {
+        "artifact_sha256": "c33868e16962974299ac5dfc30f5dc2ccddef8f19c3b170c09d2a53759f9b91f",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "d3cd3c6d56a36d1d4b90fa816390776002b62f35b948ed9ccec10418ec207dd8",
+        "expected_exit": 1
+      }
+    },
     "fd-4-cli-exit-codes": {
       "positive": {
         "artifact_sha256": "06bca441ff051116a2f929b1afed5a3ccc2431596aee98bde411058121772e25",
@@ -39,6 +69,16 @@
       },
       "adversarial": {
         "artifact_sha256": "cf155e66ec70a2508df1bc8d5ee90612ad820d961811554a655a74a0f74901ad",
+        "expected_exit": 1
+      }
+    },
+    "fd-4b-cli-exit-codes": {
+      "positive": {
+        "artifact_sha256": "06bca441ff051116a2f929b1afed5a3ccc2431596aee98bde411058121772e25",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "24c8ee65a1af4992c2509b434a14d284b64713d40d10842e66dbabac74ba695c",
         "expected_exit": 1
       }
     },

@@ -447,7 +447,7 @@ Time:       4m12s (intake 11s, plan+wall 38s, implement 2m41s, verify 29s, seal+
 
 **Cache (cache.ts):**
 - Location: `~/.loki/cache/v10/<repo-key>/`, where repo-key is sha256 of the pinned origin, or of the absolute path when there is no origin.
-- `repomap-<tree>.json` and `testmap-<tree>.json` are keyed by `HEAD^{tree}`.
+- `repomap-<fp>-<tree>.json` and `testmap-<fp>-<tree>.json` are keyed by `HEAD^{tree}` and `<fp>`, the first 16 hex of the producer fingerprint (sha256 of every `loki-ts/src` .ts file; generated into the bundle by scripts/build.ts). The cache dir is 0700, files are 0600, written through a temp file plus rename.
 - `flaky.json` and `failures.jsonl` (the top 3 past failure signatures go into the implementer brief) are per repo.
 - Reads are optional and O(1). Writes happen after the PR, so nothing slows the first run.
 

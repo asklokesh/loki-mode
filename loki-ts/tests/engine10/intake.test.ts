@@ -8,7 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utime
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { repoKey } from "../../src/engine10/cache.ts";
+import { cacheFileName, repoKey } from "../../src/engine10/cache.ts";
 import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
@@ -327,7 +327,7 @@ describe("engine10 intake: tree cache (TEN-SPEED-17)", () => {
       expect(detects).toBe(1);
       expect(r2.data.testmap).toEqual(r1.data.testmap);
       expect(readFileSync(join(run2, "repomap.json"), "utf8")).toBe(readFileSync(join(runDir, "repomap.json"), "utf8"));
-      expect(existsSync(join(homedir(), ".loki", "cache", "v10", repoKey(null, repoDir), `repomap2-${String(r1.data.tree)}.json`))).toBe(true);
+      expect(existsSync(join(homedir(), ".loki", "cache", "v10", repoKey(null, repoDir), cacheFileName("repomap", String(r1.data.tree))))).toBe(true);
     } finally { rmSync(run2, { recursive: true, force: true }); }
   });
   test("tree cache: a changed tree rebuilds", async () => {

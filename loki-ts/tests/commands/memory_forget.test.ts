@@ -71,3 +71,21 @@ describe("memory lessons --json", () => {
     expect(j[1].source.pr).toBe("o/r#1");
   });
 });
+
+describe("memory promote through the CLI", () => {
+  it("a promoted lesson reaches the brief of another repo, forget removes it, usage and unknown id fail", async () => {
+    const home = mkdtempSync(join(tmpdir(), "loki-promote-home-")), other = mkdtempSync(join(tmpdir(), "loki-promote-b-"));
+    try {
+      const env = { ...process.env, LOKI_NO_BROWSER: "1", LOKI_PROMOTED_DIR: home };
+      const at = (cwd: string, args: string[]) => run(["bun", CLI, ...args], { cwd, env });
+      expect((await at(other, ["memory", "brief", "--task", "first lesson"])).stdout).not.toContain("first lesson");
+      const p = await at(dir, ["memory", "promote", "prl-aaa"]);
+      expect(p.exitCode).toBe(0);
+      expect((await at(other, ["memory", "brief", "--task", "first lesson"])).stdout).toContain("first lesson");
+      expect((await at(dir, ["memory", "forget", "prl-aaa"])).exitCode).toBe(0);
+      expect((await at(other, ["memory", "brief", "--task", "first lesson"])).stdout).not.toContain("first lesson");
+      expect((await at(dir, ["memory", "promote", "prl-zzz"])).exitCode).toBe(1);
+      expect((await at(dir, ["memory", "promote"])).exitCode).toBe(2);
+    } finally { rmSync(home, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
+  });
+});

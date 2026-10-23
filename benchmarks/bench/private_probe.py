@@ -110,6 +110,12 @@ _EXPECTED = {
     "fd-2-two-module-untested": {"positive": 0, "adversarial": 1},
     "fd-3-refactor-invariant": {"positive": 0, "adversarial": 1},
     "fd-4-cli-exit-codes": {"positive": 0, "adversarial": 1},
+    # CW-20 follow-up: the fd-1 .. fd-4 overlays each passed a near-miss of a
+    # stated rule, so the b ids replace them. The old ids stay measurable but are retired.
+    "fd-1b-kv-parser": {"positive": 0, "adversarial": 1},
+    "fd-2b-two-module-untested": {"positive": 0, "adversarial": 1},
+    "fd-3b-refactor-invariant": {"positive": 0, "adversarial": 1},
+    "fd-4b-cli-exit-codes": {"positive": 0, "adversarial": 1},
 }
 
 
