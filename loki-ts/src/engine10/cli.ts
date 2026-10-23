@@ -6,8 +6,7 @@
 // "engine10: <module> not built yet" and exits 2.
 //
 // Module contract: each target exports `main(args: string[])` returning an
-// exit code (or void for 0); stages/deep.ts exports `deepSupervise` and
-// `deepWorker` instead.
+// exit code (or void for 0); stages/deep.ts exports `deepWorker` instead.
 const DEFAULT_MAX_COST_USD = (require("../e10ext/budget_cap.ts") as typeof import("../e10ext/budget_cap.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
 export interface Route {
   module: string; // path relative to this directory
@@ -26,7 +25,6 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
-  "deep-supervise": { module: "stages/deep.ts", fn: "deepSupervise" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
 };
 export const USAGE = `Usage:
@@ -51,6 +49,7 @@ export function route(args: string[]): Route | null {
   // Anything else is a run: a task, an issue ref, or flags plus either.
   return { module: "supervisor.ts", fn: "main", args };
 }
+export const ROUTE_NAMES: readonly string[] = Object.keys(TABLE);
 export type Loader = (specifier: string) => Promise<Record<string, unknown>>;
 // A non-literal specifier keeps `bun build` from trying to bundle modules
 // that do not exist yet. Production already switched to literal imports (registry.ts, E-32).
@@ -66,6 +65,15 @@ function isMissing(err: unknown, spec: string): boolean {
   // while a missing import inside it names that import plus the importer's
   // absolute path, which never contains "./<module>".
   return notFound && msg.includes(spec);
+}
+// FC-ENGINE10-ROUTE-NAMES-MISSING-EXPORT: null when the named route's module loads and exports its fn, else the reason it cannot run.
+export async function routeProblem(name: string, load: Loader = defaultLoader): Promise<string | null> {
+  const hit = TABLE[name];
+  if (!hit) return `no engine10 route named ${name}`;
+  const spec = `./${hit.module}`;
+  let mod: Record<string, unknown>;
+  try { mod = await load(spec); } catch (err) { return isMissing(err, spec) ? `${hit.module} not built yet` : `${hit.module} failed to load: ${(err as Error).message}`; }
+  return typeof mod[hit.fn] === "function" ? null : `${hit.module} does not export ${hit.fn}`;
 }
 export async function runEngine10(args: string[], load: Loader = defaultLoader): Promise<number> {
   const r = route(args);

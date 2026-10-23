@@ -204,7 +204,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
+      const deepRoute = opts.deepArgv?.[(opts.deepArgv.indexOf("engine10")) + 1]; // FC-ENGINE10-ROUTE-NAMES-MISSING-EXPORT: a route that cannot resolve is NOT PROVEN, never a child that dies unseen (stdio is ignored)
+      const deepProblem = deepRoute && opts.deepArgv?.includes("engine10") ? await (await import("./cli.ts")).routeProblem(deepRoute, (await import("./registry.ts")).registryLoader) : null;
+      if (deepProblem) notProven.push(`deep verify not spawned: ${deepProblem}`);
+      else if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null

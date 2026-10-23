@@ -262,7 +262,7 @@ The process that reads untrusted issue text into an LLM context never holds a pu
 | P2 worker (`engine10 worker`) | no: env is a COPY passed through `withholdGithubTokens` (`loki-ts/src/runner/github_token.ts:183`) | spawns sessions | yes |
 | P3 sessions (own process groups) | no (inherit P2 env) | yes | yes |
 | P4 push child (`autonomy/lib/engine10-push.sh`) | yes | no | no; inputs only from P0 memory via argv/env |
-| P5 deep supervisor (detached `engine10 deep-supervise`) | yes | no | no |
+| P5 deep supervisor (not built; the P0 supervisor spawns P6 directly, after `routeProblem` confirms the route resolves) | yes | no | no |
 | P6 deep worker | no | council | yes |
 
 Rules the implementation must keep:
@@ -375,7 +375,7 @@ Commands (all only with `LOKI_ENGINE=v10`):
 - `loki verify [run-id]` checks receipt hashes and the JWT (via `verify_attestation` with the JWKS).
 - `loki dashboard` serves the one-screen SSE dashboard.
 - Flags: `--deep`, `--provider <name>`, `--resume <run-id>`, `--no-pr` (seal only; useful for eval and fixtures).
-- Hidden subcommands: `engine10 worker|session|deep-supervise|deep-worker`.
+- Hidden subcommands: `engine10 worker|session|deep-worker`.
 
 **bin/loki hook.** One block inserted after the `LOKI_LEGACY_BASH` block (ends at line 244) and before the bun-presence check (line 248). `LOKI_LEGACY_BASH` still wins. When `LOKI_ENGINE` is unset, the block is a single skipped `if`:
 

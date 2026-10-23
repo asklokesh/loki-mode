@@ -12,7 +12,14 @@ import { appProbe, type AppProbeResult } from "../../util/app_probe.ts";
 import { runSecureScan, type SecureScanResult } from "../../util/secure_scan.ts";
 import { run } from "../../util/shell.ts";
 import { harnessLoadReason } from "../../runner/load_owner.ts";
-import { assertWorkerEnv } from "../worker.ts";
+import { assertWorkerEnv, runWorker, workerCapS } from "../worker.ts";
+import { costTotalsOf, liveArchivedCosts, sumResultCosts, UNMETERED } from "../cost.ts";
+import { capMeter } from "../../e10ext/budget_cap.ts";
+import { createSessionRunner, resolveModel, type EmitFn } from "../session.ts";
+import { RealTestMapProvider } from "../testmap.ts";
+import { readEvents } from "../events.ts";
+import { eventsRelPath } from "../../util/engine_origin.ts";
+import { outputsFromEvents } from "../../util/run_outputs.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { NA_PREFIX, naNote, naText, runPackageSuites, suiteEnv } from "../../project_model/package_suite.ts";
@@ -247,3 +254,31 @@ export const deepStage: Stage = {
   run: (ctx, signal) => runDeep(ctx as DeepContext, signal, { council: sessionCouncil(ctx.sessions) }),
 };
 export const stage = deepStage;
+/** `engine10 deep-worker <run-id> <provider> <model> <origin>`: the detached post-PR deep verify the supervisor spawns after pr.opened.
+ *  Rebuilds the run context from the durable log (base sha and Seal output), then exits by the stage's own verdict:
+ *  0 when every check ran and none failed, 1 when a check failed or the stage failed, 2 when the run cannot be found. */
+export async function deepWorker(args: string[]): Promise<number> {
+  const [runId, provider = "claude", model = resolveModel(provider), origin] = args;
+  if (!runId || !origin) { process.stderr.write("engine10 deep-worker: usage: deep-worker <run-id> <provider> <model> <origin>\n"); return 2; }
+  const repoDir = process.cwd(), lokiRoot = join(repoDir, ".loki"), eventsPath = join(repoDir, eventsRelPath(runId));
+  if (!existsSync(eventsPath)) { process.stderr.write(`engine10 deep-worker: no event log for run ${runId}\n`); return 2; }
+  const outputs = outputsFromEvents(readEvents(eventsPath)), baseSha = outputs["intake"]?.["base_sha"];
+  if (typeof baseSha !== "string" || baseSha === "") { process.stderr.write(`engine10 deep-worker: run ${runId} has no recorded base sha\n`); return 2; }
+  let result: StageResult = { status: "failed", data: {}, reason: "deep verify did not run" };
+  await runWorker(async (rawEmit) => {
+    const { emit, over, remaining } = capMeter(rawEmit, process.env);
+    const ctx: DeepContext = {
+      runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep: true, baseSha,
+      capS: workerCapS(true, process.env), emit, overCap: over,
+      sessions: createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot, remaining }),
+      tests: new RealTestMapProvider(),
+      cost: { read(dir, ids) { return costTotalsOf(sumResultCosts(join(dir, ".loki"), liveArchivedCosts(join(dir, ".loki"), ids, UNMETERED))); } },
+      clock: { now: () => Date.now() },
+      outputs: () => outputs,
+      pinnedOrigin: origin,
+    };
+    result = await runDeep(ctx, new AbortController().signal, { council: sessionCouncil(ctx.sessions) });
+  });
+  if (result.status !== "completed") { process.stderr.write(`engine10 deep-worker: ${result.reason ?? "deep verify failed"}\n`); return 1; }
+  return result.data["status_state"] === "failure" ? 1 : 0;
+}

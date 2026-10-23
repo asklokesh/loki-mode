@@ -97,6 +97,24 @@ describe("E-48 deep verify spawn", () => {
   }, 10_000);
 });
 
+describe("FC-ENGINE10-ROUTE-NAMES-MISSING-EXPORT supervisor preflight", () => {
+  test("a deep route that does not resolve is NOT PROVEN and never spawned", async () => {
+    const dir = repo();
+    const r = await runSupervisor({ runId: "e10-dw5", repoDir: dir, env: supEnv(), workerArgv: DONE_WORKER, deepArgv: [process.execPath, "cli.ts", "engine10", "no-such-route", "e10-dw5", "claude", "sonnet"], pr: prStep() });
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.notProven).toContain("deep verify not spawned: no engine10 route named no-such-route");
+    expect(readEvents(join(dir, ".loki/runs/e10-dw5/events.jsonl")).some((e) => e.type === "deep.started")).toBe(false);
+  }, 10_000);
+  test("the production deep route resolves, so it is spawned", async () => {
+    const dir = repo();
+    const r = await runSupervisor({ runId: "e10-dw6", repoDir: dir, env: supEnv(), workerArgv: DONE_WORKER, deepArgv: [process.execPath, "-e", "Bun.sleepSync(50)", "engine10", "deep-worker", "e10-dw6", "claude", "sonnet"], pr: prStep() });
+    const started = readEvents(join(dir, ".loki/runs/e10-dw6/events.jsonl")).find((e) => e.type === "deep.started");
+    expect(started).toBeTruthy();
+    pids.push(started!.data.pid as number);
+    expect(r.notProven.some((n) => n.startsWith("deep verify not spawned"))).toBe(false);
+  }, 10_000);
+});
+
 describe("E-48 adapters notify", () => {
   test("posts the run summary to Slack when a webhook is configured", async () => {
     const dir = repo();

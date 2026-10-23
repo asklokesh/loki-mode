@@ -1,8 +1,13 @@
 // E-12: engine10 router and the one cli.ts dispatch arm.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { route, runEngine10 } from "../../src/engine10/cli.ts";
+import { ROUTE_NAMES, route, routeProblem, runEngine10 } from "../../src/engine10/cli.ts";
+import { EventLog } from "../../src/engine10/events.ts";
+import { registryLoader } from "../../src/engine10/registry.ts";
+import { registerContrib } from "../../src/contrib/index.ts";
 
 const SRC = join(import.meta.dir, "..", "..", "src");
 
@@ -27,7 +32,6 @@ describe("route", () => {
     expect(route(["dashboard"])?.module).toBe("../runner/engine10_dashboard.ts");
     expect(route(["worker", "x"])).toEqual({ module: "worker.ts", fn: "main", args: ["x"] });
     expect(route(["session"])?.module).toBe("session.ts");
-    expect(route(["deep-supervise"])).toEqual({ module: "stages/deep.ts", fn: "deepSupervise", args: [] });
     expect(route(["deep-worker"])?.fn).toBe("deepWorker");
   });
   test("tasks, issue refs and flags go to the supervisor with every arg", () => {
@@ -127,4 +131,51 @@ describe("static shape", () => {
     expect(reg).toBeGreaterThan(-1);
     expect(reg).toBeLessThan(arm.indexOf("return runIssues(rest);"));
   });
+});
+
+describe("FC-ENGINE10-ROUTE-NAMES-MISSING-EXPORT", () => {
+  test("every route-table entry names an exported function", async () => {
+    registerContrib(); // the production loader: static registry plus the contrib modules (status, plan)
+    expect(ROUTE_NAMES.length).toBeGreaterThan(10); // the guard is not vacuous
+    const problems: string[] = [];
+    for (const name of ROUTE_NAMES) { const p = await routeProblem(name, registryLoader); if (p) problems.push(`${name}: ${p}`); }
+    expect(problems).toEqual([]);
+  });
+
+  test("routeProblem names a missing export, a missing module and an unknown route", async () => {
+    expect(await routeProblem("deep-worker", async () => ({}))).toBe("stages/deep.ts does not export deepWorker");
+    const missing = async () => { throw Object.assign(new Error("Cannot find module './stages/deep.ts'"), { code: "ERR_MODULE_NOT_FOUND" }); };
+    expect(await routeProblem("deep-worker", missing)).toBe("stages/deep.ts not built yet");
+    expect(await routeProblem("nope")).toBe("no engine10 route named nope");
+  });
+
+  test("deep-worker spawned the way supervisor.ts does reaches the deep stage and exits by its verdict", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-deeproute-"));
+    try {
+      execFileSync("git", ["init", "-q", dir]);
+      execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"]);
+      const base = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"]).toString().trim();
+      const log = new EventLog(join(dir, ".loki/runs/r1/events.jsonl"), "r1");
+      log.append("stage.completed", "intake", { base_sha: base });
+      const bin = join(dir, "bin");
+      execFileSync("mkdir", [bin]);
+      for (const n of ["gh", "claude"]) { writeFileSync(join(bin, n), "#!/bin/sh\nexit 0\n"); chmodSync(join(bin, n), 0o755); }
+      const r = spawnSync(process.execPath, [join(SRC, "cli.ts"), "engine10", "deep-worker", "r1", "claude", "sonnet", "https://github.com/acme/widget.git"], {
+        cwd: dir, encoding: "utf8", timeout: 120_000,
+        env: { PATH: `${bin}:${process.env.PATH}`, HOME: process.env.HOME, LOKI_CLAUDE_CLI: join(bin, "claude") },
+      });
+      expect(r.stderr).not.toContain("does not export");
+      expect(existsSync(join(dir, ".loki/runs/r1/receipt-addendum-1.json"))).toBe(true); // the stage ran and sealed its addendum
+      expect(r.status === 0 || r.status === 1).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 150_000);
+
+  test("deep-worker with no event log exits 2 with a reason, not a route error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-deeproute-"));
+    try {
+      const r = spawnSync(process.execPath, [join(SRC, "cli.ts"), "engine10", "deep-worker", "nope", "claude", "sonnet", "o"], { cwd: dir, encoding: "utf8", timeout: 60_000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("no event log for run nope");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 70_000);
 });
