@@ -148,7 +148,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
-  await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
+  await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env, runDir: join(opts.repoDir, ".loki", "runs", opts.runId) });
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); const rmRunPid = writeRunPid(join(opts.repoDir, ".loki", "runs", opts.runId), opts.runId); process.once("exit", rmRunPid); // origin pinned once, before any provider runs; CPE-09 run.pid for Control Plane Stop, removed on every exit path
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
