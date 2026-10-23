@@ -1,11 +1,11 @@
 // PRD-reuse resolution for the autonomous runner (Bun route).
 //
 // Mirrors the bash route in autonomy/run.sh so both routes behave identically:
-//   compute_codebase_signature()        autonomy/run.sh:4800
-//   _loki_hash_stdin()                   autonomy/run.sh:4768
-//   _loki_prd_file_hash()                autonomy/run.sh:4869
-//   decide_generated_prd_action()        autonomy/run.sh:4892
-//   persist_prd_signature_if_present()   autonomy/run.sh:4983
+//   compute_codebase_signature()        defined in autonomy/run.sh
+//   _loki_hash_stdin()                   defined in autonomy/run.sh
+//   _loki_prd_file_hash()                defined in autonomy/run.sh
+//   decide_generated_prd_action()        defined in autonomy/run.sh
+//   persist_prd_signature_if_present()   defined in autonomy/run.sh
 //   user-PRD persistence branch          autonomy/run.sh run_autonomous (Agent C, W4)
 //
 // Semantics (FEAT-PRD-REUSE, FEAT-PRDREUSE-DOCKER-PLAN):
@@ -63,11 +63,11 @@ import { safeGitSpawn } from "../util/safe_git.ts";
 export type PrdSource = "user" | "generated";
 
 // Decision returned by decideGeneratedPrdAction. Mirrors the bash echo values
-// of decide_generated_prd_action (autonomy/run.sh:4892).
+// of decide_generated_prd_action (autonomy/run.sh).
 export type GeneratedPrdAction = "reuse" | "update" | "user_owned" | "generate";
 
 // Schema of .loki/state/prd-signature.json. Field names are byte-locked to the
-// bash writer (persist_prd_signature_if_present, autonomy/run.sh:5046-5053) plus
+// bash writer (persist_prd_signature_if_present, autonomy/run.sh) plus
 // the two NEW provenance fields (source, origin_path) this feature adds on both
 // routes.
 export interface PrdSignature {
@@ -103,7 +103,7 @@ export interface ResolvePrdResult {
 // --- internal helpers (parity with bash) -----------------------------------
 
 // 16-char SHA-256 hex digest of a buffer/string. Byte-parity with bash
-// _loki_hash_stdin (autonomy/run.sh:4768): `shasum -a 256 | cut -c1-16`.
+// _loki_hash_stdin (autonomy/run.sh): `shasum -a 256 | cut -c1-16`.
 function hash16(data: Buffer | string): string {
   return createHash("sha256").update(data).digest("hex").slice(0, 16);
 }
@@ -136,7 +136,7 @@ function hasGeneratedPrd(lokiDir: string): boolean {
 }
 
 // Content hash of the generated PRD file itself (not the codebase). Mirrors
-// _loki_prd_file_hash (autonomy/run.sh:4869): prefers generated-prd.md, falls
+// _loki_prd_file_hash (autonomy/run.sh): prefers generated-prd.md, falls
 // back to generated-prd.json, "" when neither exists.
 function generatedPrdFileHash(lokiDir: string): string {
   const md = generatedPrdPath(lokiDir);
@@ -153,7 +153,7 @@ function generatedPrdFileHash(lokiDir: string): string {
 }
 
 // Codebase signature. Byte-parity with compute_codebase_signature's git branch
-// (autonomy/run.sh:4800-4862): "git:<HEAD>:<dirty>". For non-git trees we emit
+// (autonomy/run.sh compute_codebase_signature()): "git:<HEAD>:<dirty>". For non-git trees we emit
 // a documented "files-bun:<hash>" placeholder (see PARITY NOTES at the top of
 // this file). Never throws.
 function computeCodebaseSignature(dir: string): string {
@@ -204,7 +204,7 @@ export function readPrdSignature(lokiDir: string): PrdSignature | null {
 }
 
 // Whether a force-regen was requested. Mirrors bash precedence: --fresh-prd /
-// --regen-prd set LOKI_PRD_REGEN=1 (autonomy/run.sh:4894).
+// --regen-prd set LOKI_PRD_REGEN=1 (autonomy/run.sh decide_generated_prd_action()).
 function forceRegenRequested(): boolean {
   return process.env["LOKI_PRD_REGEN"] === "1";
 }
@@ -214,7 +214,7 @@ function forceRegenRequested(): boolean {
 // Decide what to do with a previously generated PRD on a no-PRD run. Returns
 // one of reuse | update | user_owned | generate. Never throws.
 //
-// Precedence (matches autonomy/run.sh:4892-4978 plus LOCK 2):
+// Precedence (matches autonomy/run.sh decide_generated_prd_action() plus LOCK 2):
 //   1. LOKI_PRD_REGEN=1 (--fresh-prd) -> generate.
 //   2. no generated PRD present       -> generate (first run).
 //   3. source === "user" (LOCK 2)     -> user_owned (use as-is, never update).
@@ -252,7 +252,7 @@ export function decideGeneratedPrdAction(opts: {
   if (stored === "") return "update";
 
   // 6. hand-edit detection: a recorded prd_sha that no longer matches the file
-  //    means the user edited it -> user_owned (bash run.sh:4923-4928).
+  //    means the user edited it -> user_owned (bash run.sh decide_generated_prd_action()).
   const storedPrdSha = typeof sig.prd_sha === "string" ? sig.prd_sha : "";
   if (storedPrdSha !== "") {
     const curPrdSha = generatedPrdFileHash(lokiDir);

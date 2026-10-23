@@ -1,4 +1,4 @@
-// Skeleton port of run_autonomous() (autonomy/run.sh:10168-11108).
+// Skeleton port of run_autonomous() (autonomy/run.sh run_autonomous()).
 //
 // Phase 4 Dev A1 deliverable. This file owns the control flow of the
 // autonomous loop. Helpers (build_prompt, state.save, council, providers,
@@ -126,9 +126,9 @@ export function envBlockFlagOn(v: string | undefined): boolean {
 // proceed to the council vote. Centralizes every fail-closed refusal arm so the
 // trust-critical logic is unit-testable without driving the whole loop.
 //
-// Bash parity: gatesThrew mirrors run.sh:18702-18708 (unverifiable gates ->
-// refuse, fail-closed); code_review mirrors run.sh:16868-16930; semantic_tests /
-// invariants mirror the opt-in _BLOCK arms at run.sh:17482/17499. A clean run is
+// Bash parity: gatesThrew mirrors run.sh "failing open is unsafe" (unverifiable gates ->
+// refuse, fail-closed); code_review mirrors run.sh run_code_review(); semantic_tests /
+// invariants mirror the opt-in _BLOCK arms at run.sh enforce_semantic_integrity() / enforce_invariant_integrity(). A clean run is
 // never over-blocked: every gate arm requires blocked AND the gate in failed[]
 // (and, for the opt-in gates, its _BLOCK toggle on).
 export function completionRefusalReason(
@@ -144,7 +144,7 @@ export function completionRefusalReason(
   //
   // `cleared` is read defensively; no producer emits it today. Bash
   // gate_failure_disposition returns pause|escalate|block and never removes a
-  // gate from the failed list (run.sh:1272-1274, "A blocking gate is never
+  // gate from the failed list (run.sh gate_failure_disposition(), "A blocking gate is never
   // cleared into a pass merely because it repeated"), and the TS ladder mirrors
   // that (quality_gates.ts:126-128). But a blocked outcome reporting code_review
   // as *cleared* rather than *failed* is precisely the CLEAR_LIMIT loophole this
@@ -459,8 +459,8 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   // Never throws (resolvePrdForRun falls back to the input on any error).
   //
   // PARITY (state vs prompt split): bash records state.prdPath from the GLOBAL
-  // PRD_PATH (run.sh:12141), which the PRD-reuse persistence logic NEVER
-  // repoints; it repoints only a LOCAL prd_path (run.sh:13938) used for the
+  // PRD_PATH (run.sh run_autonomous()), which the PRD-reuse persistence logic NEVER
+  // repoints; it repoints only a LOCAL prd_path (run.sh run_autonomous()) used for the
   // prompt anchor + reuse decision. So bash splits: original user path -> state,
   // resolved/persisted path -> prompt + reuse. Capture the ORIGINAL here before
   // resolvePrdForRun overwrites opts.prdPath, and thread it into ctx so the
@@ -535,10 +535,10 @@ async function runAutonomousCore(
   cavemanCaptureUserMode();
 
   // v7.4.9: refuse to start if a bash runner (or another Bun runner) is
-  // already holding the session lock. Mirrors autonomy/run.sh:3013-3060.
+  // already holding the session lock. Mirrors autonomy/run.sh init_loki_dir().
   acquireSessionSingleton(ctx);
 
-  // -- Initialization (run.sh:10231-10302) ---------------------------------
+  // -- Initialization (run.sh run_autonomous()) ---------------------------------
   // NOTE: required-key lists encode the contract this loop expects. Sibling
   // modules under loki-ts/src/runner/ that don't yet expose the listed
   // functions are treated as missing until they conform. See types.ts.
@@ -612,7 +612,7 @@ async function runAutonomousCore(
   const gatesModule: GatesMod =
     opts.gatesOverride ?? requireModule(gatesMod, "./quality_gates.ts");
 
-  // Pre-loop max-iterations gate (run.sh:10303-10306).
+  // Pre-loop max-iterations gate (run.sh check_max_iterations()).
   if (ctx.iterationCount >= ctx.maxIterations) {
     log(`[runner] max iterations already reached (${ctx.iterationCount}/${ctx.maxIterations})`);
     return 1;
@@ -655,7 +655,7 @@ async function runAutonomousCore(
     }
   }
 
-  // -- Main loop (run.sh:10308-11099) --------------------------------------
+  // -- Main loop (run.sh run_autonomous()) --------------------------------------
   // One-shot tier requested by recovery. Applied after the normal RARV/router
   // calculation on the next attempt so that calculation cannot erase failover.
   let recoveryTierOverride: SessionTier | undefined;
@@ -676,7 +676,7 @@ async function runAutonomousCore(
       return 0;
     }
 
-    // Budget check (run.sh:10316). When over-budget we sleep briefly before
+    // Budget check (run.sh check_budget_limit()). When over-budget we sleep briefly before
     // re-checking; without the sleep the loop spins on a stale signal until
     // the operator clears the PAUSE marker. (Reviewer A3 finding 2026-04-25.)
     //
@@ -690,11 +690,11 @@ async function runAutonomousCore(
     if (overBudget) {
       log("[runner] budget limit exceeded -- pausing");
       await persistState(stateMod, ctx, "budget_exceeded", 0);
-      await clock.sleep(60_000); // 60s backoff matches bash autonomy/run.sh:7910
+      await clock.sleep(60_000); // 60s backoff; bash continues to its PAUSE check, see run.sh "Session paused due to budget limit"
       continue;
     }
 
-    // Policy check (run.sh:10447 check_policy). Phase 4 ships the state
+    // Policy check (run.sh check_policy()). Phase 4 ships the state
     // transition; the actual policy engine port lives in Phase 5+.
     if (opts.policyCheck) {
       try {
@@ -712,8 +712,8 @@ async function runAutonomousCore(
 
     ctx.iterationCount += 1;
 
-    // Mirror bash check_max_iterations (run.sh:9895-9901): `-ge` (>=), evaluated
-    // AFTER the post-increment at run.sh:12889. The Bun increment above (post)
+    // Mirror bash check_max_iterations (run.sh check_max_iterations()): `-ge` (>=), evaluated
+    // AFTER the post-increment in run.sh run_autonomous(). The Bun increment above (post)
     // plus `>=` here matches bash's increment-then-`-ge` boundary exactly.
     // Previously this used strict `>`, so Bun ran exactly ONE extra iteration
     // past the cap relative to bash. With `>=` the message reports the count as
@@ -724,7 +724,7 @@ async function runAutonomousCore(
       return ent3ExitCode("max_iterations_reached", 0);
     }
 
-    // Build prompt (run.sh:10342). Wrap in try/catch -- a thrown buildPrompt
+    // Build prompt (run.sh build_prompt()). Wrap in try/catch -- a thrown buildPrompt
     // would otherwise abort the whole loop with no retry. (Reviewer A3 + DA
     // findings 2026-04-25.) This try/catch wraps only the RUNTIME execution
     // of an already-resolved builder; module ABSENCE was already made fatal at
@@ -740,7 +740,7 @@ async function runAutonomousCore(
     }
 
     // v7.5.2: wire rarv.ts so the RARV phase + tier is logged per iteration
-    // (matches autonomy/run.sh:10515 `RARV Phase: $rarv_phase -> Tier: ...`).
+    // (matches autonomy/run.sh run_autonomous() `RARV Phase: $rarv_phase -> Tier: ...`).
     // Pre-v7.5.2 the rarv module exported getRarvPhaseName/getRarvTier but
     // had zero production callers; the bash route logs the phase, the Bun
     // route silently swallowed it.
@@ -824,7 +824,7 @@ async function runAutonomousCore(
     log(`[runner] Attempt ${ctx.retryCount + 1}/${ctx.maxRetries} iteration=${ctx.iterationCount}`);
     await persistState(stateMod, ctx, "running", 0);
 
-    // Provider invocation (run.sh:10500-10800).
+    // Provider invocation (run.sh run_autonomous()).
     const startedAt = clock.now();
     const iterOutputPath = makeIterationOutputPath(ctx);
     let result: ProviderResult;
@@ -885,12 +885,12 @@ async function runAutonomousCore(
       }
     }
 
-    // Quality gates (run.sh:10845-10980).
+    // Quality gates (run.sh run_autonomous()).
     // v7.5.0: signature corrected -- runQualityGates(ctx) only. The exitCode
     // arg was never consumed by the real implementation; Phase 1 wiring
     // (findings injection, learnings, escalation handoff) hangs off this call.
     // Default to a non-blocking outcome so a gate runtime error never refuses
-    // completion (bash logs and continues at run.sh:10845-10980).
+    // completion (bash logs and continues in run.sh run_autonomous()).
     let gateOutcome: GateOutcomeShape = {
       passed: [],
       failed: [],
@@ -902,8 +902,8 @@ async function runAutonomousCore(
     // be indistinguishable from a real all-clear -- so a gate crash (detector
     // OOM, malformed artifact, transient tool error) fell through every refusal
     // arm below and let council.shouldStop declare the build complete UNGATED:
-    // a fake-PASS. The bash route fails CLOSED for the same class (run.sh:18702-
-    // 18708 refuses a completion claim when the gate functions are unverifiable,
+    // a fake-PASS. The bash route fails CLOSED for the same class (run.sh "failing open is unsafe"
+    // refuses a completion claim when the gate functions are unverifiable,
     // "exactly when failing open is unsafe"). Mirror that: on a throw, refuse
     // completion THIS iteration and continue iterating (the loop is not crashed;
     // the next iteration re-runs the gates).
@@ -927,7 +927,7 @@ async function runAutonomousCore(
       }
     }
 
-    // Success branch (run.sh:10989-11055) ---------------------------------
+    // Success branch (run.sh run_autonomous()) ---------------------------------
     if (outcome.exitCode === 0) {
       // Perpetual mode: never stop on success.
       if (ctx.autonomyMode === "perpetual") {
@@ -939,10 +939,10 @@ async function runAutonomousCore(
       // unit-tested). Runs BEFORE the council vote so no refusal arm can be
       // overridden into completion. Covers, in order:
       //   - gatesThrew: the gate battery crashed -> gate signal unverifiable ->
-      //     refuse (parity with bash run.sh:18702-18708, "fail open is unsafe").
-      //   - code_review BLOCK (parity run.sh:16868-16930): the one always-on
+      //     refuse (parity with bash run.sh "failing open is unsafe").
+      //   - code_review BLOCK (parity run.sh run_code_review()): the one always-on
       //     completion-refusing gate. Repeated blockers remain in failed[].
-      //   - semantic_tests / invariants: opt-in _BLOCK arms (run.sh:17482/17499),
+      //   - semantic_tests / invariants: opt-in _BLOCK arms (run.sh enforce_semantic_integrity() / enforce_invariant_integrity()),
       //     each requiring blocked + in failed[] + its _BLOCK toggle on, so a
       //     surfaced-but-advisory finding never over-blocks a clean run.
       const refusal = completionRefusalReason(gatesThrew, gateOutcome, process.env);
@@ -988,12 +988,12 @@ async function runAutonomousCore(
         return 0;
       }
 
-      // Default: continue immediately on success (run.sh:11041 BUG-RUN-010).
+      // Default: continue immediately on success (run.sh run_autonomous(), BUG-RUN-010).
       ctx.retryCount = 0;
       continue;
     }
 
-    // Failure branch (run.sh:11057-11096) ---------------------------------
+    // Failure branch (run.sh run_autonomous()) ---------------------------------
     let wait = computeBackoffSeconds(ctx);
 
     // v7.4.3 (BUG-19): integrate isRateLimited from budget.ts. When the
@@ -1176,8 +1176,8 @@ function makeContext(opts: RunnerOpts): RunnerContext {
     prdPath: opts.prdPath,
     provider: opts.provider ?? "claude",
     maxRetries: opts.maxRetries ?? 5,
-    // Default 1000 to match bash MAX_ITERATIONS (run.sh:619,
-    // `MAX_ITERATIONS=${LOKI_MAX_ITERATIONS:-1000}`) and build_prompt.ts:1160
+    // Default 1000 to match bash MAX_ITERATIONS (run.sh "MAX_ITERATIONS=${LOKI_MAX_ITERATIONS:-1000}"
+    // assignment) and build_prompt.ts:1160
     // (`envInt(env, "MAX_ITERATIONS", 1000)`). Was 100 -- an internal
     // inconsistency where the loop capped at 100 while the prompt advertised
     // 1000. We read the MAX_ITERATIONS env key to match build_prompt.ts; note
@@ -1209,7 +1209,7 @@ function ensureLokiDirs(ctx: RunnerContext): void {
   cleanStaleSignalFiles(ctx);
 }
 
-// v7.4.16: parity with autonomy/run.sh:3052 cleanup. Only invoked at
+// v7.4.16: parity with autonomy/run.sh init_loki_dir() startup cleanup. Only invoked at
 // runner startup (after singleton lock is acquired), so we know no other
 // runner is alive to need these files. Cleaning on startup prevents the
 // user-reported regression where a stale PAUSE_AT_CHECKPOINT from a
@@ -1245,7 +1245,7 @@ function cleanStaleSignalFiles(ctx: RunnerContext): void {
 }
 
 // v7.4.9: cross-runtime session singleton.
-// The bash runner (autonomy/run.sh:3013-3060) writes `.loki/loki.pid` and
+// The bash runner (autonomy/run.sh init_loki_dir()) writes `.loki/loki.pid` and
 // `.loki/session.lock` at startup and refuses to start if the existing PID
 // is alive. The Bun runner now uses the same convention so two runners
 // (one bash, one Bun) cannot race on `.loki/` state -- the second one to
@@ -1326,7 +1326,7 @@ function makeIterationOutputPath(ctx: RunnerContext): string {
   return path;
 }
 
-// ENT-3 process-exit contract, mirrored from autonomy/run.sh:24260-24299.
+// ENT-3 process-exit contract, mirrored from autonomy/run.sh "Durable-state exit contract".
 //
 // WHY THIS EXISTS ON THIS ROUTE. The bash runner translates a terminal run
 // STATUS into a stable process exit code so a k8s Job's podFailurePolicy can

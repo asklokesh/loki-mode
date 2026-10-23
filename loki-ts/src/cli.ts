@@ -205,7 +205,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // R1 (SLICE B): inspect/share proof-of-run artifacts. The Bun port
       // implements list/show/verify/open natively (share shells out to
       // `gh gist create` after a redaction-preview confirmation). The bin/loki
-      // shim allowlist (line ~119) DOES include "proof", so when bun is
+      // shim allowlist DOES include "proof", so when bun is
       // installed a real `loki proof` invocation routes here -- this is the
       // live route. The bash cmd_proof (autonomy/loki) is the fallback for
       // no-bun systems kept at parity

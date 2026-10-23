@@ -2,7 +2,7 @@
 //
 // Plan reference: /Users/lokesh/.claude/plans/polished-waddling-stardust.md
 // Part B "Phase 1". Replaces v1's invented `consolidateFromFailure` API with
-// a direct mirror of the bash bridge at autonomy/run.sh:8504-8553
+// a direct mirror of the bash bridge at autonomy/run.sh store_episode_trace()
 // `store_episode_trace()`. Reuses the existing `EpisodeTrace.create()`
 // constructor and `MemoryEngine.store_episode()` API.
 //
@@ -31,7 +31,7 @@ export type EpisodeBridgeResult = {
   reason: string;
 };
 
-// Mirrors autonomy/run.sh:8504-8553 store_episode_trace exactly:
+// Mirrors autonomy/run.sh store_episode_trace() exactly:
 //   - silently no-ops when <lokiDir>/memory/ does not exist
 //   - imports memory.engine + memory.schemas inside the subprocess
 //   - swallows all Python-side errors (memory writes are best-effort)
@@ -61,7 +61,7 @@ export async function storeEpisodeTrace(
     _LOKI_LOKI_DIR: lokiDir,
   };
 
-  // Match the bash heredoc in autonomy/run.sh:8520-8552. Stays best-effort:
+  // Match the bash heredoc in autonomy/run.sh store_episode_trace(). Stays best-effort:
   // if MemoryEngine import fails (memory/ not vendored, missing deps), the
   // caller still proceeds.
   const source = `

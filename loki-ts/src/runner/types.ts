@@ -1,5 +1,5 @@
 // Shared runner types for the autonomous loop port.
-// Bash source: autonomy/run.sh:10168-11108 (run_autonomous, 941 LOC).
+// Bash source: autonomy/run.sh run_autonomous().
 //
 // Other Phase 4 agents (C1-C3, B1) build the modules referenced here. This
 // file owns the contract surface so the loop in autonomous.ts compiles even

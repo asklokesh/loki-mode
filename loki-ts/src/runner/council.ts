@@ -1,16 +1,16 @@
 // Phase 5 Dev D2 -- second slice of completion-council.sh port.
 //
-// Bash source: autonomy/completion-council.sh (1771 LOC, 19 functions).
+// Bash source: autonomy/completion-council.sh (council_* functions).
 // Spec: loki-ts/docs/phase5-research/completion_council.md
 //
 // First slice (D1) ported councilInit + defaultCouncil.{shouldStop,trackIteration}.
 // Second slice (D2) replaces the four STUBs with real implementations:
 //
-//   - councilEvaluate(ctx)        -- bash council_evaluate (line ~1340)
-//   - councilAggregateVotes(votes)-- bash council_aggregate_votes (line ~1137)
+//   - councilEvaluate(ctx)        -- bash council_evaluate
+//   - councilAggregateVotes(votes)-- bash council_aggregate_votes
 //   - councilDevilsAdvocate(votes)-- bash council_devils_advocate +
-//                                     council_devils_advocate_review (~866, ~1236)
-//   - councilWriteReport(verdicts)-- bash council_write_report (line ~1714)
+//                                     council_devils_advocate_review
+//   - councilWriteReport(verdicts)-- bash council_write_report
 //
 // Voter dispatch is INJECTABLE: callers (and tests) supply the voter
 // implementations rather than this module shelling out to a real provider
@@ -88,7 +88,7 @@ function claudeFlagSupportedShim(flag: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// councilInit -- bash council_init() (completion-council.sh:111-145).
+// councilInit -- bash council_init() (completion-council.sh council_init()).
 // (unchanged from D1 slice -- DO NOT TOUCH per task brief.)
 // ---------------------------------------------------------------------------
 
@@ -574,7 +574,7 @@ const heuristicVoter = (role: string): Voter => async (cec) => {
 export const DEFAULT_VOTERS: readonly Voter[] = DEFAULT_VOTER_ROLES.map((r) => heuristicVoter(r));
 
 // ---------------------------------------------------------------------------
-// councilAggregateVotes -- bash council_aggregate_votes (line ~1137).
+// councilAggregateVotes -- bash council_aggregate_votes.
 //
 // Pure function: takes verdicts, computes 2/3 ceiling threshold, performs
 // severity-budget gate.
@@ -630,7 +630,7 @@ export async function councilAggregateVotes(
 
 // ---------------------------------------------------------------------------
 // councilDevilsAdvocate -- anti-sycophancy on unanimous APPROVE.
-// Bash sources: completion-council.sh:866 and :1236.
+// Bash sources: completion-council.sh council_devils_advocate() and council_devils_advocate_review().
 //
 // On unanimous APPROVE, runs a deterministic skeptical scan:
 //   1. failed.json present and non-empty
@@ -784,7 +784,7 @@ export async function councilDevilsAdvocate(
 }
 
 // ---------------------------------------------------------------------------
-// councilEvaluate -- bash council_evaluate (line ~1340).
+// councilEvaluate -- bash council_evaluate.
 //
 // Orchestrates the 3 voters in order, aggregates, and runs the devil's
 // advocate when the aggregate is unanimous APPROVE. The DA veto is
@@ -833,7 +833,7 @@ export async function councilEvaluate(cec: CouncilEvaluateContext): Promise<Aggr
     severityThreshold: cec.severityThreshold ?? "HIGH",
   });
 
-  // Anti-sycophancy gate. Mirrors bash completion-council.sh:723
+  // Anti-sycophancy gate. Mirrors bash completion-council.sh council_vote()
   //   if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
   // i.e. the devil's advocate only ADDS scrutiny on a unanimous APPROVE with at
   // least 2 members. It never blocks a non-unanimous result. The size>=2 guard
@@ -841,7 +841,7 @@ export async function councilEvaluate(cec: CouncilEvaluateContext): Promise<Aggr
   // definition) from triggering the contrarian re-review.
   if (aggregate.unanimous && aggregate.decision === "COMPLETE" && aggregate.totalMembers >= 2) {
     // Prefer the LLM devil's-advocate re-review (bash council_devils_advocate,
-    // completion-council.sh:2074-2170) when a provider is reachable, mirroring
+    // completion-council.sh council_devils_advocate()) when a provider is reachable, mirroring
     // the same gate used for the base-voter dispatch above:
     //   - caller injected a claudeRunner (test mode), OR
     //   - the installed claude CLI advertises both --agents and --json-schema.
@@ -1064,7 +1064,7 @@ export async function councilWriteTranscript(
 }
 
 // ---------------------------------------------------------------------------
-// councilWriteReport -- bash council_write_report (line ~1714).
+// councilWriteReport -- bash council_write_report.
 //
 // Writes .loki/council/report.md with convergence data, council config, and
 // vote history. The bash version pulls config from $COUNCIL_* env vars; we

@@ -1,4 +1,4 @@
-// Port of autonomy/loki:cmd_version (line 6632).
+// Port of autonomy/loki cmd_version().
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getVersion } from "../version.ts";

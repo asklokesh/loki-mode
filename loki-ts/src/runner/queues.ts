@@ -4,8 +4,8 @@
 // relying on them (last checked against run.sh on 2026-06-17):
 //   populate_bmad_queue()      autonomy/run.sh (search "populate_bmad_queue")
 //   populate_openspec_queue()  autonomy/run.sh (search "populate_openspec_queue")
-//   populate_mirofish_queue()  autonomy/run.sh:13207
-//   populate_prd_queue()       autonomy/run.sh:13294
+//   populate_mirofish_queue()  defined in autonomy/run.sh
+//   populate_prd_queue()       defined in autonomy/run.sh
 //
 // Scope:
 //   - populatePrdQueue: lean checklist/feature extraction from a markdown PRD,
@@ -34,7 +34,7 @@ import { atomicWriteText, withFileLock } from "../util/atomic.ts";
 
 // --- MiroFish queue (real) ------------------------------------------------
 //
-// Source: autonomy/run.sh:13207 (populate_mirofish_queue).
+// Source: autonomy/run.sh populate_mirofish_queue().
 // Reads .loki/mirofish-tasks.json (advisory data from the MiroFish market-
 // validation step), converts each entry into the shared queue task shape,
 // merges into pending.json (deduping by id), and drops a .mirofish-populated
@@ -129,7 +129,7 @@ interface PrdTask {
 }
 
 // Read existing pending.json, supporting both bare-list and {tasks: [...]}
-// wrapper shapes (run.sh:10078-10091). Returns the task list and the wrapper
+// wrapper shapes (run.sh populate_prd_queue()). Returns the task list and the wrapper
 // so we can write back in the original format.
 function readExisting(path: string): { tasks: PrdTask[]; wrapper: Record<string, unknown> | null } {
   if (!existsSync(path)) return { tasks: [], wrapper: null };
@@ -156,7 +156,7 @@ function extractTaskScope(md: string): string {
 // Extract feature titles from a markdown PRD. We look for top-level bullets
 // (`- foo`, `* foo`, `1. foo`) under non-meta `##` sections, plus `###`
 // sub-headings. This is a deliberately conservative subset of the bash
-// extractor (run.sh:9934-10023) -- enough to seed the queue, sufficient for
+// extractor (run.sh populate_prd_queue()) -- enough to seed the queue, sufficient for
 // a Phase 5 smoke test, and easy to extend.
 function extractFeatures(md: string): string[] {
   const skip = /^(table of contents|overview|introduction|summary|appendix|references|changelog|glossary|background|metrics|roadmap|tech stack|deployment|risks|timeline)\b/i;
@@ -169,7 +169,7 @@ function extractFeatures(md: string): string[] {
     if (headingMatch && headingMatch[1] && headingMatch[2] !== undefined) {
       const level = headingMatch[1].length;
       const titleRaw = headingMatch[2];
-      // Strip leading "1." or "1.2." numbering before skip-check (run.sh:9886).
+      // Strip leading "1." or "1.2." numbering before skip-check (run.sh populate_prd_queue()).
       const titleClean = titleRaw.replace(/^\d+(\.\d+)*\.?\s*/, "").trim();
       if (level <= 2) {
         inSkippedSection = skip.test(titleClean);
@@ -183,7 +183,7 @@ function extractFeatures(md: string): string[] {
       continue;
     }
     if (inSkippedSection) continue;
-    // Bullet at column 0 only (run.sh:9954 "skip indented sub-bullets").
+    // Bullet at column 0 only (run.sh "skip indented sub-bullets").
     if (rawLine.length > 0 && (rawLine[0] === " " || rawLine[0] === "\t")) continue;
     const bulletMatch = rawLine.match(/^(?:\d+[.)]\s*|-\s+|\*\s+)(.+)$/);
     if (bulletMatch && bulletMatch[1]) {
@@ -211,7 +211,7 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
 
   const queueDir = resolve(ctx.lokiDir, "queue");
   const sentinel = resolve(queueDir, ".prd-populated");
-  // Idempotency + adapter-precedence guards (run.sh:9823-9830). Cheap
+  // Idempotency + adapter-precedence guards (run.sh populate_prd_queue()). Cheap
   // pre-checks outside the lock; authoritative checks repeated inside.
   if (existsSync(sentinel)) return;
   for (const other of [".openspec-populated", ".bmad-populated", ".mirofish-populated"]) {

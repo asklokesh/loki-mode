@@ -1,11 +1,11 @@
 // State persistence for the autonomous runner.
 //
 // Source-of-truth (bash):
-//   save_state()             autonomy/run.sh:8731-8754  (atomic .tmp.$$ + mv)
-//   load_state()             autonomy/run.sh:8757-8818  (validation, corrupt-backup,
+//   save_state()             autonomy/run.sh  (atomic .tmp.$$ + mv)
+//   load_state()             autonomy/run.sh  (validation, corrupt-backup,
 //                                                       orphan tmp cleanup)
-//   orchestrator.json shape  autonomy/run.sh:3079-3092  (initial write)
-//   provider state file      autonomy/run.sh:3525-3528  (single-line provider name)
+//   orchestrator.json shape  autonomy/run.sh init_loki_dir()  (initial write)
+//   provider state file      autonomy/run.sh "Save provider for future runs"  (single-line provider name)
 //
 // Schema preservation contract: docs/phase4-research/dashboard_schema_contract.md.
 // The dashboard reads .loki/state/orchestrator.json (currentPhase, iteration,
@@ -66,7 +66,7 @@ export function __setFsForTesting(overrides: {
 
 // --- public types ----------------------------------------------------------
 
-// Mirrors the JSON written by save_state() in run.sh:8741-8753.
+// Mirrors the JSON written by save_state() in run.sh save_state().
 // Fields ordered to match bash output for diff-friendly review (the wire
 // representation uses 4-space indent like the bash heredoc).
 export interface AutonomyState {
@@ -148,7 +148,7 @@ function statusTxtPath(dir: string): string {
 // matching `mv -f` behavior. We swallow ENOENT on cleanup so a kill -9 mid-
 // write leaves only the tmp file, which load_state's orphan sweep collects.
 //
-// Source: autonomy/run.sh:8740 ("$$" -> process.pid here).
+// Source: autonomy/run.sh save_state() ("$$" -> process.pid here).
 //
 // Cross-device fallback (EXDEV): renameSync fails when tmpPath and targetPath
 // span different filesystems (bind mounts, tmpfs overlays in containers,
@@ -161,7 +161,7 @@ function statusTxtPath(dir: string): string {
 // target concurrently, one writer's `${path}.tmp.${pid}` could race with the
 // other's rename. We acquire a per-target lockfile via O_EXCL|O_CREAT before
 // the write and release it after the rename, mirroring the flock pattern in
-// autonomy/run.sh:11729-11748.
+// autonomy/run.sh "Portable lock helper (v7.5.12)".
 //
 // v7.5.10 (L5 BUG-3): the prior in-line lock used a 120s mtime threshold and
 // did `statSync(lockPath)` followed by `unlinkSync(lockPath)`, which gave a
@@ -270,7 +270,7 @@ export function atomicWriteFileSync(targetPath: string, contents: string): void 
 // --- save_state ------------------------------------------------------------
 
 // Format ISO-8601 UTC with second precision -- matches `date -u
-// +%Y-%m-%dT%H:%M:%SZ` (autonomy/run.sh:8747).
+// +%Y-%m-%dT%H:%M:%SZ` (autonomy/run.sh save_state()).
 function isoUtcSeconds(d: Date): string {
   // toISOString() emits e.g. 2026-04-25T12:34:56.789Z; trim millis to match
   // the bash format byte-for-byte.
@@ -279,14 +279,14 @@ function isoUtcSeconds(d: Date): string {
   return dot >= 0 ? `${s.slice(0, dot)}Z` : s;
 }
 
-// Bash escapes prdPath via `sed 's/\\/\\\\/g; s/"/\\"/g'` (run.sh:8748).
+// Bash escapes prdPath via `sed 's/\\/\\\\/g; s/"/\\"/g'` (run.sh save_state()).
 // JSON.stringify handles both backslash and quote escaping correctly, so we
 // rely on it for safety while still matching the resulting on-disk content.
 function jsonString(value: string): string {
   return JSON.stringify(value);
 }
 
-// Mirror save_state(retry_count, status, exit_code) at run.sh:8731.
+// Mirror save_state(retry_count, status, exit_code) at run.sh save_state().
 // Returns the path written (caller may want to log it).
 export function saveState(ctx: SaveStateContext): string {
   const dir = resolveLokiDir(ctx.lokiDirOverride);
@@ -298,7 +298,7 @@ export function saveState(ctx: SaveStateContext): string {
   const pid = ctx.pid ?? process.pid;
 
   // Build JSON with 4-space indent to match the bash heredoc layout
-  // (run.sh:8741-8753). The dashboard parses this with json.load, so the
+  // (run.sh save_state()). The dashboard parses this with json.load, so the
   // exact indent doesn't matter for it -- but our parity tests rely on it.
   const body =
     `{\n` +
@@ -333,8 +333,8 @@ export async function saveStateForRunner(
   exitCode: number,
 ): Promise<void> {
   // PARITY (state vs prompt split): bash writes state.prdPath from the GLOBAL
-  // PRD_PATH (run.sh:12141), never repointed by PRD-reuse persistence; only the
-  // LOCAL prd_path (run.sh:13938) is repointed for the prompt + reuse decision.
+  // PRD_PATH (run.sh run_autonomous()), never repointed by PRD-reuse persistence; only the
+  // LOCAL prd_path (run.sh run_autonomous()) is repointed for the prompt + reuse decision.
   // autonomous.ts threads the ORIGINAL user path onto ctx as `statePrdPath`
   // (set unconditionally to a string, possibly ""), while ctx.prdPath carries
   // the resolved/persisted path for the prompt builder. Record statePrdPath so
@@ -399,7 +399,7 @@ export interface LoadStateResult {
   resetForNewSession: boolean;
 }
 
-// Terminal-status set mirrored from the reset case at run.sh:10976
+// Terminal-status set mirrored from the reset case at run.sh load_state()
 // (`case "$prev_status" in failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled|running)`).
 // Bash resets RETRY_COUNT and ITERATION_COUNT to 0 for any of these statuses on
 // the next load_state. Previously this set omitted council_approved,
@@ -421,7 +421,7 @@ const TERMINAL_STATUSES = new Set([
   "running",
 ]);
 
-// Validate the parsed JSON the way the inline python at run.sh:8767-8784 does.
+// Validate the parsed JSON the way the inline python at run.sh load_state() does.
 function isValidAutonomyState(d: unknown): d is Partial<AutonomyState> {
   if (typeof d !== "object" || d === null) return false;
   const rec = d as Record<string, unknown>;
@@ -439,7 +439,7 @@ function isValidAutonomyState(d: unknown): d is Partial<AutonomyState> {
 // quality/, logs/, memory/, checkpoints/) would leak orphan tmp files.
 // v7.4.10 walks every subdirectory of `.loki/` recursively up to a depth
 // cap of 4 to bound runtime on huge .loki/ trees. Bash equivalent at
-// run.sh:8760-8761 uses `find -mmin +5` which is unbounded; we cap depth
+// run.sh load_state() uses `find -mmin +5` which is unbounded; we cap depth
 // for safety.
 function sweepOrphanTmpFiles(dir: string, now: Date): void {
   const cutoffMs = now.getTime() - 5 * 60 * 1000;
@@ -485,7 +485,7 @@ function sweepOrphanTmpFiles(dir: string, now: Date): void {
   visit(dir, 0);
 }
 
-// Mirror load_state() at run.sh:8757. Pure function -- never mutates
+// Mirror load_state() at run.sh load_state(). Pure function -- never mutates
 // globals; caller decides what to do with the returned counters.
 export function loadState(opts: { lokiDirOverride?: string; now?: Date } = {}): LoadStateResult {
   const dir = resolveLokiDir(opts.lokiDirOverride);
@@ -495,7 +495,7 @@ export function loadState(opts: { lokiDirOverride?: string; now?: Date } = {}): 
 
   const target = autonomyStatePath(dir);
   if (!existsSync(target)) {
-    // Bash sets RETRY_COUNT=0 (run.sh:8816). ITERATION_COUNT stays whatever
+    // Bash sets RETRY_COUNT=0 (run.sh load_state()). ITERATION_COUNT stays whatever
     // the caller initialized (usually 0). We surface both as 0 for clarity.
     return {
       retryCount: 0,
@@ -560,7 +560,7 @@ export function loadState(opts: { lokiDirOverride?: string; now?: Date } = {}): 
     baseWait: typeof rec.baseWait === "number" ? rec.baseWait : 0,
   };
 
-  // Apply the terminal-status reset (run.sh:8805-8811).
+  // Apply the terminal-status reset (run.sh load_state()).
   let retryCount = state.retryCount;
   let iterationCount = state.iterationCount;
   let resetForNewSession = false;
@@ -574,7 +574,7 @@ export function loadState(opts: { lokiDirOverride?: string; now?: Date } = {}): 
 }
 
 // Bash backs up corrupt state with a unix-epoch suffix
-// (run.sh:8792). We match that exactly so log scrapers continue to work.
+// (run.sh load_state()). We match that exactly so log scrapers continue to work.
 function backupCorruptState(target: string, now: Date): void {
   const epoch = Math.floor(now.getTime() / 1000);
   const backupPath = `${target}.corrupt.${epoch}`;
@@ -622,7 +622,7 @@ export function readOrchestratorState(opts: { lokiDirOverride?: string } = {}): 
 // passes in (forward-compat with future dashboard fields).
 //
 // We use 4-space indent to match the existing bash heredoc style at
-// run.sh:3080-3091, which keeps `git diff` output stable across runs.
+// run.sh init_loki_dir(), which keeps `git diff` output stable across runs.
 export function writeOrchestratorState(
   state: OrchestratorState,
   opts: { lokiDirOverride?: string } = {},
@@ -676,7 +676,7 @@ export function updateCurrentPhase(
 // --- provider --------------------------------------------------------------
 
 // Read the saved provider name (single line, trailing newline trimmed).
-// Source: autonomy/run.sh:3525-3528, mirrored by status.ts:96-101.
+// Source: autonomy/run.sh "Save provider for future runs", mirrored by status.ts:96-101.
 export function readProviderName(opts: { lokiDirOverride?: string } = {}): string | null {
   const dir = resolveLokiDir(opts.lokiDirOverride);
   const target = providerStatePath(dir);

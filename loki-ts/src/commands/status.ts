@@ -1,4 +1,4 @@
-// Port of autonomy/loki:1963 (cmd_status) and :2124 (cmd_status_json).
+// Port of autonomy/loki cmd_status() and cmd_status_json().
 // Reproduces text output byte-for-byte (modulo ANSI normalization in tests)
 // and JSON output field-for-field.
 //
@@ -84,8 +84,8 @@ function contextGauge(used: number, total: number, label: string): string | null
   return `  ${BOLD}${label}${NC} ${color}[${bar}]${NC} ${pct}% (${usedFmt} / ${totalFmt})`;
 }
 
-// Inline Python source -- copied verbatim from autonomy/loki:2131-2275
-// (cmd_status_json body). DO NOT modify without updating bash side too.
+// Inline Python source -- copied verbatim from autonomy/loki cmd_status_json()
+// (its inline python body). DO NOT modify without updating bash side too.
 const STATUS_JSON_PY = `
 import json, os, sys, time
 
@@ -362,7 +362,7 @@ result['phase1'] = phase1
 print(json.dumps(result, indent=2))
 `;
 
-// Mirror of require_jq (autonomy/loki:223). Returns true if jq is available;
+// Mirror of require_jq (autonomy/loki require_jq()). Returns true if jq is available;
 // otherwise prints the same error block to stdout (bash uses echo, not >&2).
 async function requireJq(): Promise<boolean> {
   const path = await commandExists("jq");
@@ -398,7 +398,7 @@ function readPidFile(path: string): number | null {
   }
 }
 
-// Mirror of list_running_sessions (autonomy/loki:1508).
+// Mirror of list_running_sessions (autonomy/loki list_running_sessions()).
 // Returns array of "sid:pid" strings; "global" sid for top-level loki.pid.
 function listRunningSessions(dir: string): string[] {
   const sessions: string[] = [];
@@ -642,7 +642,7 @@ async function runStatusText(): Promise<number> {
       }
     } else if (budgetLimit !== "0") {
       process.stdout.write(`${CYAN}Budget:${NC} \$${budgetUsed} / \$${budgetLimit}\n`);
-      // Budget gauge (autonomy/loki:2909-2919). Bash converts dollars to integer
+      // Budget gauge (autonomy/loki cmd_status(), the context_gauge "Budget" call). Bash converts dollars to integer
       // cents via `bc scale=0` (truncation) before calling context_gauge, with
       // empty-string guards falling back to 0 / 100. Replicate that exactly so
       // the bar/percent match byte-for-byte.
@@ -660,7 +660,7 @@ async function runStatusText(): Promise<number> {
   const stop = lastBudgetStop(resolve(dir, ".."));
   if (stop) process.stdout.write(`${YELLOW}Budget stop:${NC} run ${stop.runId} spent \$${stop.spent_usd.toFixed(2)} of \$${stop.cap_usd.toFixed(2)} (${stop.source}); ${budgetNext(stop.spent_usd, stop.cap_usd)}\n`);
 
-  // Context window. Bash (autonomy/loki:2930-2938) renders the visual gauge
+  // Context window. Bash (autonomy/loki cmd_status(), the context_gauge "Context" call) renders the visual gauge
   // because context_gauge is ALWAYS defined (tui.sh is sourced at startup), so
   // the `if type context_gauge` branch is always taken and the gauge REPLACES
   // the plain `Context:` line. The bash `else` plain-line branch is dead in the
@@ -1032,7 +1032,7 @@ async function runStatusJson(): Promise<number> {
 }
 
 export async function runStatus(argv: readonly string[]): Promise<number> {
-  // Flag parsing mirrors bash while-loop at autonomy/loki:1965.
+  // Flag parsing mirrors bash while-loop at the top of autonomy/loki cmd_status().
   const args = [...argv];
   // Validate every flag before dispatching: a valid flag must not mask a
   // later unknown one (`--json --bogus`). --help/-h wins when reached first.

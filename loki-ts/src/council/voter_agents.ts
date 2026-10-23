@@ -17,7 +17,7 @@
 // buildDevilsAdvocateAgent and is auto-wired as a SEPARATE conditional second
 // invocation when the first 3 reach unanimous APPROVE (council.ts fires it via
 // dispatchDevilsAdvocate, mirroring the bash trigger at
-// completion-council.sh:723). The DA is BLIND (it is not shown the base voters'
+// completion-council.sh council_vote(), the approve_count -eq COUNCIL_SIZE test). The DA is BLIND (it is not shown the base voters'
 // verdicts/reasoning). If the LLM DA dispatch fails, council.ts falls back to
 // the deterministic file-scan check (councilDevilsAdvocate) so anti-sycophancy
 // is never silently dropped and the loop never hangs.
@@ -258,7 +258,7 @@ export function buildVoterAgentsJson(cec: CouncilEvaluateContext): Record<string
 
 // Build the conditional 4th voter (anti-sycophancy).
 //
-// BLIND REVIEW (mirrors bash completion-council.sh:2090-2091, BUG-QG-009):
+// BLIND REVIEW (mirrors bash completion-council.sh "BUG-QG-009" in council_devils_advocate()):
 // the devil's-advocate is deliberately NOT shown the base voters' member
 // verdicts/reasons. Leaking the prior votes into the contrarian's prompt
 // biases it toward agreement and defeats the anti-sycophancy purpose -- the
@@ -497,7 +497,7 @@ export async function dispatchClaudeAgents(
 // dispatchDevilsAdvocate -- single-shot LLM anti-sycophancy re-review.
 //
 // Mirrors the bash council_devils_advocate provider call
-// (completion-council.sh:2074-2170): on a unanimous APPROVE, invoke ONE
+// (completion-council.sh council_devils_advocate()): on a unanimous APPROVE, invoke ONE
 // contrarian reviewer (model=opus, effort=xhigh) and parse a single
 // schema-validated finding. The reviewer is BLIND to the base votes (see
 // buildDevilsAdvocateAgent / BUG-QG-009) and inspects the repo directly.
