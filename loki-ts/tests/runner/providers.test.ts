@@ -9,13 +9,13 @@
 // Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
 const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { describe, expect, it, beforeEach, afterEach, test } from "bun:test";
-import { resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
+import { sandboxAllowedDomains, resolveProvider, claudeProvider, codexProvider, clineProvider, aiderProvider, PROVIDER_COMMIT_HYGIENE, buildSdkLoopOptions, providerCallTimeoutMs, mergeDisallowedTools, engine10CacheTtlEnv, SDK_BUNDLED_CLAUDE_CODE, truthy } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { readFileSync as _rf, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join as _join, join } from "node:path";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 let tmp: string;
 let stubPath: string;
@@ -915,7 +915,7 @@ describe("providers advisor", () => {
   const KEYS = [
     "LOKI_ROUTER", "LOKI_ROUTER_ADVISOR", "LOKI_E10_STAGE", "LOKI_ALLOW_HAIKU", "ANTHROPIC_BASE_URL",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "LOKI_CLAUDE_CLI",
-    "LOKI_SESSION_STAMP", "LOKI_DIR",
+    "LOKI_SESSION_STAMP", "LOKI_DIR", "LOKI_SANDBOX_ALLOW_HOSTS",
   ];
   let saved: Record<string, string | undefined>;
   let dir: string;
@@ -940,6 +940,53 @@ describe("providers advisor", () => {
       const manifest = join(import.meta.dir, "..", "..", "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json");
       const v = (JSON.parse(readFileSync(manifest, "utf8")) as { claudeCodeVersion: string }).claudeCodeVersion;
       expect(SDK_BUNDLED_CLAUDE_CODE).toBe(v);
+    });
+  });
+
+  describe("buildSdkLoopOptions sandbox allowlist (#258 slice B)", () => {
+    const bashHosts = (raw: string): { rc: number; hosts: string[] } => {
+      const sh = join(import.meta.dir, "..", "..", "..", "autonomy", "sandbox.sh");
+      // sandbox.sh runs main on source, so lift only the function body into a temp file and source that.
+      const fnFile = join(dir, "egress_fn.sh");
+      const src = readFileSync(sh, "utf8").split("\n");
+      const start = src.findIndex((l) => l.startsWith("_sandbox_egress_hosts() {"));
+      const end = src.findIndex((l, i) => i > start && l === "}");
+      writeFileSync(fnFile, `log_error() { :; }\n${src.slice(start, end + 1).join("\n")}\n`);
+      const r = spawnSync("bash", ["-c", `source "${fnFile}"; _sandbox_egress_hosts "$1"`, "_", raw], { encoding: "utf8" });
+      return { rc: r.status ?? -1, hosts: r.stdout.split("\n").filter(Boolean) };
+    };
+    test("carries the parsed, lowercased list as settings.sandbox.network.allowedDomains", () => {
+      process.env["LOKI_SANDBOX_ALLOW_HOSTS"] = "Api.GitHub.com, registry.npmjs.org";
+      expect(buildSdkLoopOptions(base()).settings).toEqual({ sandbox: { network: { allowedDomains: ["api.github.com", "registry.npmjs.org"] } } });
+    });
+    test("unset or blank emits no sandbox key (settings byte-identical to base)", () => {
+      expect(buildSdkLoopOptions(base()).settings).toBeUndefined();
+      process.env["LOKI_SANDBOX_ALLOW_HOSTS"] = "  ";
+      expect(buildSdkLoopOptions(base()).settings).toBeUndefined();
+      process.env["LOKI_ROUTER"] = "1";
+      expect(JSON.stringify(buildSdkLoopOptions(base()).settings)).not.toContain("sandbox");
+    });
+    test("merges with the router settings instead of replacing them", () => {
+      process.env["LOKI_ROUTER"] = "1";
+      process.env["LOKI_SANDBOX_ALLOW_HOSTS"] = "a.example.com";
+      expect(buildSdkLoopOptions(base()).settings).toEqual({
+        advisorModel: "opus", autoCompactWindow: 100000, sandbox: { network: { allowedDomains: ["a.example.com"] } },
+      });
+    });
+    test("IP literals and malformed hosts are refused (fail closed), as the bash resolver does", () => {
+      for (const bad of ["169.254.169.254", "good.example.com,10.0.0.1", "localhost", "bad_host.com", "-a.example.com", ","]) {
+        expect(() => sandboxAllowedDomains(bad)).toThrow(/LOKI_SANDBOX_ALLOW_HOSTS/);
+        expect(bashHosts(bad).rc).not.toBe(0);
+      }
+      process.env["LOKI_SANDBOX_ALLOW_HOSTS"] = "1.2.3.4";
+      expect(() => buildSdkLoopOptions(base())).toThrow(/no IPs/);
+    });
+    test("TS list equals the bash _sandbox_egress_hosts list on the same input", () => {
+      for (const raw of ["Api.GitHub.com, registry.npmjs.org", "A.B.C.example.com", " x.io ,, y-z.io", "a b.example.com"]) {
+        const b = bashHosts(raw);
+        expect(b.rc).toBe(0);
+        expect(sandboxAllowedDomains(raw)).toEqual(b.hosts);
+      }
     });
   });
 

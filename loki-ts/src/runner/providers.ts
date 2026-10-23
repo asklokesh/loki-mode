@@ -652,7 +652,7 @@ export interface SdkLoopExtraOptions {
   fallbackModel?: string;
   tools?: string[];
   model?: string;
-  settings?: { advisorModel: string; autoCompactWindow?: number };
+  settings?: { advisorModel?: string; autoCompactWindow?: number; sandbox?: { network: { allowedDomains: string[] } } };
   noAppend?: boolean;
   systemPrompt?: string;
   excludeDynamic?: boolean;
@@ -670,6 +670,24 @@ export function engine10StaticPrefix(env: Readonly<Record<string, string | undef
     ...(env["LOKI_E10_PREFIX"] === "lean" ? { systemPrompt: LEAN_PREFIX } : {}),
     excludeDynamic: env["LOKI_E10_STABLE_PREFIX"] !== "0",
   };
+}
+// #258 slice B: the validated LOKI_SANDBOX_ALLOW_HOSTS list, same rules as autonomy/sandbox.sh _sandbox_egress_hosts
+// (comma split, whitespace stripped inside an entry, hostnames only, IP literals refused, lowercased).
+// Unset or blank -> null (no sandbox key). Anything else invalid throws: a dropped allowlist would fail open.
+const SANDBOX_HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+export function sandboxAllowedDomains(raw: string | undefined): string[] | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const h = part.replace(/\s+/g, "");
+    if (h === "") continue;
+    if (!SANDBOX_HOST_RE.test(h) || /^[0-9.]+$/.test(h)) {
+      throw new Error(`LOKI_SANDBOX_ALLOW_HOSTS: invalid host (hostnames only, no IPs): ${h}`);
+    }
+    out.push(h.toLowerCase());
+  }
+  if (out.length === 0) throw new Error("LOKI_SANDBOX_ALLOW_HOSTS: no valid host in the list");
+  return out;
 }
 export function buildSdkLoopOptions(args: {
   tier: string | undefined;
@@ -692,6 +710,8 @@ export function buildSdkLoopOptions(args: {
     out.model = router.model;
     if (router.settings) out.settings = router.settings;
   }
+  const allowed = sandboxAllowedDomains(process.env["LOKI_SANDBOX_ALLOW_HOSTS"]);
+  if (allowed) out.settings = { ...out.settings, sandbox: { network: { allowedDomains: allowed } } };
   const engine10 = Boolean(process.env["LOKI_E10_STAGE"]);
   if (engine10) {
     const sp = engine10StaticPrefix(process.env);
