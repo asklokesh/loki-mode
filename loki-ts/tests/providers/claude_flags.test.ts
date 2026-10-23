@@ -40,6 +40,7 @@ import {
   leanReviewerFlags,
   clampThinkingForEffort,
   thinkingConflictsEffort,
+  thinkingUsageError,
 } from "../../src/providers/claude_flags.ts";
 
 describe("effortForTier model clamp", () => {
@@ -1391,5 +1392,86 @@ describe("clampThinkingForEffort (#314)", () => {
     expect(thinkingConflictsEffort("claude-opus-5", { type: "disabled" }, "max")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "disabled" }, "high")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "adaptive" }, "max")).toBe(false);
+  });
+});
+
+describe("thinking substitute and usage message (#314 follow-up)", () => {
+  beforeEach(() => { delete process.env["LOKI_MODEL_CATALOG"]; });
+  it("sonnet-5-5: disabled is sent as between_tools at every effort up to high, adaptive above", () => {
+    for (const effort of [undefined, "low", "medium", "high"]) {
+      const r = clampThinkingForEffort("claude-sonnet-5-5", { type: "disabled" }, effort);
+      expect(r.thinking).toEqual({ type: "between_tools" });
+      expect(r.clamp).toEqual({ from: "disabled", to: "between_tools", effort: effort ?? "default", max: "high" });
+    }
+    for (const effort of ["xhigh", "max"]) {
+      const r = clampThinkingForEffort("claude-sonnet-5-5", { type: "disabled" }, effort);
+      expect(r.thinking).toEqual({ type: "adaptive" });
+      expect(r.clamp).toEqual({ from: "disabled", to: "adaptive", effort, max: "high" });
+    }
+  });
+  it("the substitute comes from the catalog, not the model name", () => {
+    const cat = join(mkdtempSync(join(tmpdir(), "thinksub-")), "cat.json");
+    writeFileSync(cat, JSON.stringify({ providers: { claude: { models: [{ id: "m-s", thinking: { types: ["adaptive", "x"], substitute: { disabled: "x" } } }] } } }));
+    process.env["LOKI_MODEL_CATALOG"] = cat;
+    expect(clampThinkingForEffort("m-s", { type: "disabled" }, "max")).toEqual({ thinking: { type: "x" }, clamp: { from: "disabled", to: "x", effort: "max", max: "none" } });
+    delete process.env["LOKI_MODEL_CATALOG"];
+    expect(clampThinkingForEffort("claude-opus-5", { type: "disabled" }, "high").clamp).toBeNull();
+  });
+  it("thinkingConflictsEffort: a substituted model never conflicts", () => {
+    expect(thinkingConflictsEffort("claude-sonnet-5-5", { type: "disabled" }, "max")).toBe(false);
+  });
+  it("thinkingUsageError derives the sentence from the catalog limit", () => {
+    expect(thinkingUsageError("sdk-judge", "claude-opus-5")).toBe("sdk-judge: --thinking must be disabled or adaptive; for claude-opus-5 disabled is sent as adaptive above --effort high");
+    expect(thinkingUsageError("sdk-text", "claude-sonnet-5-5")).toBe("sdk-text: --thinking must be disabled or adaptive; for claude-sonnet-5-5 disabled is sent as between_tools, and as adaptive above --effort high");
+    expect(thinkingUsageError("sdk-judge", "claude-sonnet-5")).toBe("sdk-judge: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max for claude-sonnet-5");
+  });
+});
+
+describe("thinking types are derived from the catalog for every model (#314 review)", () => {
+  it("an adaptive-only model sent disabled at high is clamped to adaptive with the ledger record", () => {
+    expect(clampThinkingForEffort("claude-opus-5-5", { type: "disabled" }, "high")).toEqual({
+      thinking: { type: "adaptive" },
+      clamp: { from: "disabled", to: "adaptive", effort: "high", max: "none" },
+    });
+  });
+
+  type Spec = { types?: string[]; max_effort?: Record<string, string>; substitute?: Record<string, string> };
+  const catalog = JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8"));
+  const models = (catalog.providers.claude.models as Array<{ id: string; thinking?: Spec }>).filter((m) => m.thinking && Array.isArray(m.thinking.types));
+  const efforts = [undefined, "low", "medium", "high", "xhigh", "max"];
+  beforeEach(() => { delete process.env["LOKI_MODEL_CATALOG"]; });
+
+  it("the catalog has adaptive-only models, so the sweep is not vacuous", () => {
+    expect(models.length).toBeGreaterThan(3);
+    expect(models.some((m) => m.thinking!.types!.join() === "adaptive")).toBe(true);
+  });
+
+  it("no type the CLI accepts is sent to the API unless the catalog lists it for the model", () => {
+    const bad: string[] = [];
+    for (const m of models) for (const type of ["disabled", "adaptive"]) for (const effort of efforts) {
+      if (thinkingConflictsEffort(m.id, { type }, effort)) continue;
+      const sent = clampThinkingForEffort(m.id, { type }, effort).thinking?.type;
+      if (sent && !m.thinking!.types!.includes(sent)) bad.push(`${m.id} ${type}@${effort ?? "default"} -> ${sent}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the usage error never names a rule the model lacks", () => {
+    for (const m of models) {
+      const t = m.thinking!, msg = thinkingUsageError("sdk-judge", m.id), sub = t.substitute?.["disabled"];
+      const disabledOk = t.types!.includes("disabled") || sub !== undefined;
+      if (msg.includes("disabled or adaptive")) expect(disabledOk && t.types!.includes("adaptive")).toBe(true);
+      if (msg.includes("cannot combine with --effort xhigh or max")) expect(disabledOk && !sub && !t.max_effort?.["disabled"]).toBe(true);
+      if (msg.includes("above --effort")) expect(msg).toContain(`above --effort ${t.max_effort?.[sub ?? "disabled"]}`);
+      if (sub) expect(msg).toContain(`sent as ${sub}`);
+      if (!disabledOk) expect(msg).toContain(`disabled is not accepted by ${m.id}`);
+    }
+  });
+
+  it("an adaptive-only model refuses disabled at every effort, adaptive stays accepted", () => {
+    for (const m of models.filter((x) => x.thinking!.types!.join() === "adaptive")) for (const effort of efforts) {
+      expect(thinkingConflictsEffort(m.id, { type: "disabled" }, effort)).toBe(true);
+      expect(thinkingConflictsEffort(m.id, { type: "adaptive" }, effort)).toBe(false);
+    }
   });
 });

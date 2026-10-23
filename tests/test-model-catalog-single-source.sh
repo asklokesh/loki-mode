@@ -215,6 +215,9 @@ MAXEFF = {
     "claude-sonnet-5-5": {"between_tools": "high"},
     "claude-haiku-5-5":  {"disabled": "high"},
 }
+SUBST = {
+    "claude-sonnet-5-5": {"disabled": "between_tools"},
+}
 got = {m["id"]: m for m in json.load(open(sys.argv[1]))["providers"]["claude"]["models"]}
 for mid in sorted(set(WANT) - set(got)):
     print("%s: pinned model missing from catalog" % mid)
@@ -227,6 +230,12 @@ for mid, (types, levels, default) in WANT.items():
     gt = m.get("thinking", {}).get("types")
     gl = m.get("effort", {}).get("levels")
     gd = m.get("effort", {}).get("default")
+    gs = m.get("thinking", {}).get("substitute", {})
+    if gs != SUBST.get(mid, {}):
+        print("%s: thinking.substitute %r != %r" % (mid, gs, SUBST.get(mid, {})))
+    for t, to in gs.items():
+        if to not in (gt or []):
+            print("%s: thinking.substitute maps %r to %r which is not in thinking.types" % (mid, t, to))
     gm = m.get("thinking", {}).get("max_effort", {})
     if gm != MAXEFF.get(mid, {}):
         print("%s: thinking.max_effort %r != %r" % (mid, gm, MAXEFF.get(mid, {})))

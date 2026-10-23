@@ -2,9 +2,9 @@
 // file to a throwaway dir unless the caller already set one.
 // E-154b: bun test never fires process "exit", so cleanup hangs off a bun:test
 // afterAll; the dir is removed again (idempotent) after every file.
-import { afterAll, beforeAll } from "bun:test";
+import { afterAll, beforeAll, setDefaultTimeout } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerContrib } from "../src/contrib/index.ts";
 import { RECEIPT_SIGNER_BASENAME } from "../src/util/receipt_signer.ts";
@@ -56,3 +56,20 @@ if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
     rmSync(dir, { recursive: true, force: true });
   });
 }
+
+// FC-TEST-TIMEOUT-OVERRIDES-CLI: the one place a test file sets its time budget. A file-level setDefaultTimeout literal
+// beats the `bun test --timeout` flag (which bun does not expose to the process) and ignores load. This scales the base by
+// machine load: factor = clamp(ceil(2 * load1 / cpus), 1, 10). Operator knobs: LOKI_TEST_TIMEOUT_SCALE (positive number,
+// capped at 10) replaces the factor; LOKI_TEST_TIMEOUT_MS is a floor that wins when larger.
+export function loadAwareTimeoutMs(
+  baseMs: number,
+  env: { load1?: number; cpuCount?: number; scale?: string; floorMs?: string } = {},
+): number {
+  const load1 = env.load1 ?? loadavg()[0] ?? 0;
+  const cpuCount = Math.max(1, env.cpuCount ?? cpus().length);
+  const override = Number(env.scale ?? process.env["LOKI_TEST_TIMEOUT_SCALE"]);
+  const factor = Number.isFinite(override) && override > 0 ? Math.min(10, override) : Math.min(10, Math.max(1, Math.ceil((2 * load1) / cpuCount)));
+  const floor = Number(env.floorMs ?? process.env["LOKI_TEST_TIMEOUT_MS"]);
+  return Math.max(Math.round(baseMs * factor), Number.isFinite(floor) && floor > 0 ? floor : 0);
+}
+export const setLoadAwareTimeout = (baseMs: number): void => setDefaultTimeout(loadAwareTimeoutMs(baseMs));

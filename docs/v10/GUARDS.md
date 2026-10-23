@@ -877,3 +877,7 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
 - **Root cause:** each env builder deleted a subset of credential paths itself; only the worker env reset the rest.
 - **Guard:** `loki-ts/tests/util/fc90_credential_env.test.ts` plants a fake gh hosts.yml and a fake global git credential helper in a fake HOME, proves the raw env sees them, and proves an env from plainTestEnv does not; it also pins the one-dir-per-process GH_CONFIG_DIR lifecycle. It lives in loki-ts/tests/util, which `scripts/global-guards.tsv` already selects on every diff.
 - **The test that proves it fires:** removing the GH_CONFIG_DIR line, the credential.helper reset or the sentinel from `loki-ts/src/util/credential_env.ts` turns it red. Run: `cd loki-ts && bun test tests/util/fc90_credential_env.test.ts`.
+
+### 2026-10-23: release manager shipped unnamed stacked parents
+- **Incident:** rm-1 shipped unnamed stacked parents (cw20-r2 e4c445b73 13b46699d; cw15/ux350/roadmap100 parents 9bf08f534, dc2e16314, 64e9f1a09, cf177adf5). cw20-r2 shipped as v11.58.0 while a hold on that slice stood.
+- **Guard:** the approval line must name every shipped SHA and its reviewer; holds match by slice name, not SHA; a queue order is never an approval. A scripted check follows as a slice.

@@ -2,6 +2,46 @@
   "recorded": "2026-08-03",
   "schema_version": "1.0",
   "tasks": {
+    "fd-1-kv-parser": {
+      "positive": {
+        "artifact_sha256": "86982b4e105f137be7f0e87204036aebc7e50e0e3cf2d262f8d1115c9b530f6e",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "2fad9be1ea441dba1dafebbcc0c93969e0240216b0c5d6f263ec359410e8c96b",
+        "expected_exit": 1
+      }
+    },
+    "fd-2-two-module-untested": {
+      "positive": {
+        "artifact_sha256": "59c5858826185f949f820ff576f7b59fa39b4af9e9e7cec56da351864e6b8ec2",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "a2d56274f74ea7075f6d0c28f1bc2b69aef90178d573f3b46f328692f9a1d042",
+        "expected_exit": 1
+      }
+    },
+    "fd-3-refactor-invariant": {
+      "positive": {
+        "artifact_sha256": "c33868e16962974299ac5dfc30f5dc2ccddef8f19c3b170c09d2a53759f9b91f",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "903198a4946c983ec247784199ea7821cefc3a77d89b4f090cc8ac850478ab00",
+        "expected_exit": 1
+      }
+    },
+    "fd-4-cli-exit-codes": {
+      "positive": {
+        "artifact_sha256": "06bca441ff051116a2f929b1afed5a3ccc2431596aee98bde411058121772e25",
+        "expected_exit": 0
+      },
+      "adversarial": {
+        "artifact_sha256": "cf155e66ec70a2508df1bc8d5ee90612ad820d961811554a655a74a0f74901ad",
+        "expected_exit": 1
+      }
+    },
     "hard-1-order-api": {
       "adversarial": {
         "artifact_sha256": "486a62137c64167a0b567e7f8ebc048cd3bad1218f13be960f494928b7ea806b",

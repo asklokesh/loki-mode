@@ -38,6 +38,8 @@ TIMEOUT_SECS="${LOKI_BENCH_TIMEOUT:-3600}"   # hard wall-clock cap per task run
 # EXIST + are mock-tested but are NOT executed for paid runs in R2 unless the
 # operator opts in. manual.py records externally-supplied (unverified) numbers.
 VS_TOOLS="${LOKI_BENCH_VS_TOOLS:-loki}"
+# Commas are accepted as separators; the loop below splits on whitespace.
+VS_TOOLS="${VS_TOOLS//,/ }"
 
 usage() {
     cat <<'EOF'
@@ -58,8 +60,9 @@ Subcommands:
 Options:
   --trials N      Number of trials per tool (default 3)
   --model NAME    Override the model
-  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max); one
-                  result per level. Default: tier-derived effort, no effort axis
+  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max), or
+                  sweep for every level the catalog lists for --model (the
+                  effort_sweep axis); one result per level. Default: tier-derived effort, no effort axis
   --emit-proof    Emit an R1 proof-of-run for the Loki trial(s)
   --out-dir DIR   (report) output dir for results.json + RESULTS.md
 

@@ -54,7 +54,7 @@ echo "T2 -- it actually runs with the network blackholed"
 out=$(env -i PATH=/usr/bin:/bin:/usr/local/bin \
         http_proxy=http://127.0.0.1:1 https_proxy=http://127.0.0.1:1 \
         ALL_PROXY=http://127.0.0.1:1 no_proxy="" \
-        python3 "$VERIFY" --path "$WORK" 2>&1)
+        python3 "$VERIFY" --path "$WORK" --no-cache 2>&1)
 rc=$?
 
 if [ "$rc" -eq 0 ]; then

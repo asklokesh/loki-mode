@@ -184,6 +184,157 @@ describe('Resource registration', () => {
   });
 });
 
+describe('untrusted envelope partition (runtime-derived, mirrors the Python guard)', () => {
+  const MARK = 'ZZ-INJECTED-INSTRUCTION-ZZ';
+  const CKPT = 'chk-aaaaaaaa';
+  const lokiOf = (dir) => path.join(dir, '.loki');
+
+  function put(dir, rel, value) {
+    const full = path.join(lokiOf(dir), rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+
+  // sessionStatus 'running' lets start-project reach its stored-session branch.
+  function seed(dir, sessionStatus) {
+    put(dir, 'CONTINUITY.md', '# C\n' + MARK);
+    const orch = { projectId: MARK, currentPhase: MARK, rarvCycle: { count: MARK, lastCycle: MARK },
+      tasksCompleted: MARK, tasksFailed: MARK, startedAt: MARK };
+    put(dir, 'state/orchestrator.json', orch);
+    put(dir, 'state/session.json', { projectId: MARK, provider: MARK, status: sessionStatus, startedAt: MARK });
+    put(dir, 'state/task-queue.json', { tasks: [{ status: 'pending', title: MARK, description: MARK }] });
+    put(dir, 'state/quality-gates.json', { results: [
+      { name: MARK, status: MARK, severity: MARK, message: MARK, details: MARK },
+      { name: MARK, status: 'failed', severity: 'high', message: MARK }] });
+    put(dir, 'state/blind-review.json', { reviewers: [MARK], averageScore: MARK, consensus: MARK, unanimous: MARK, comments: MARK });
+    put(dir, 'state/council-votes.json', { votes: [MARK], decision: MARK, devilsAdvocateTriggered: MARK });
+    put(dir, 'metrics/tool-usage.jsonl', JSON.stringify({ tool: MARK }) + '\n');
+    put(dir, 'metrics/efficiency/token-usage.json', { totalTokens: MARK });
+    put(dir, 'checkpoints/' + CKPT + '.json', { id: CKPT, label: MARK, createdAt: MARK, phase: MARK,
+      tasksCompleted: MARK, state: { [MARK + '.json']: orch } });
+    put(dir, 'memory/index.json', { topics: [MARK] });
+    put(dir, 'memory/semantic/p.json', { id: MARK, pattern: MARK, category: MARK });
+    put(dir, 'learning/aggregate.json', { errorPatterns: [{ m: MARK }], toolEfficiency: [{ m: MARK }] });
+    put(dir, 'learning/signals/s.jsonl', JSON.stringify({ type: 'error_pattern', m: MARK }) + '\n');
+  }
+
+  // Every enum value of every enum property, and for every optional property
+  // also the omitted case, so a filter argument never hides the unfiltered result.
+  function argSets(schema) {
+    const input = schema.inputSchema || {};
+    const required = new Set(input.required || []);
+    let sets = [{}];
+    for (const [key, def] of Object.entries(input.properties || {})) {
+      let values = def.enum || (key === 'checkpointId' ? [CKPT] : def.type === 'string' ? ['x'] : def.type === 'boolean' ? [true] : []);
+      if (values.length === 0) continue;
+      if (!required.has(key)) values = [undefined, ...values];
+      sets = sets.flatMap((a) => values.map((v) => (v === undefined ? a : { ...a, [key]: v })));
+    }
+    return sets;
+  }
+
+  const split = (text) => {
+    let body = null;
+    try { body = JSON.parse(text); } catch (e) { /* plain text */ }
+    if (!body || typeof body !== 'object') return { inside: '', outside: text };
+    const { untrusted_content: inside, ...outside } = body;
+    return { inside: JSON.stringify(inside || ''), outside: JSON.stringify(outside) };
+  };
+
+  // Calls every registered tool and resource against the seeded tree; returns
+  // the labels whose marker sat outside untrusted_content and the labels it reached.
+  function runGuard() {
+    const tools = [...getTools().values()];
+    const resources = [...getResources().values()];
+    const leaks = new Set();
+    const surfaced = new Set();
+    let id = 100;
+
+    for (const status of ['running', MARK]) {
+      const calls = [];
+      for (const t of tools) for (const args of argSets(t.schema)) {
+        calls.push([t.schema.name, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name: t.schema.name, arguments: args } }]);
+      }
+      for (const r of resources) {
+        calls.push([r.schema.uri, { jsonrpc: '2.0', id: id++, method: 'resources/read', params: { uri: r.schema.uri } }]);
+      }
+      for (const [label, req] of calls) {
+        fs.rmSync(lokiOf(testDir), { recursive: true, force: true });
+        seed(testDir, status);
+        const res = handleRequest(req).result;
+        const text = req.method === 'tools/call' ? res.content[0].text : res.contents[0].text;
+        const { inside, outside } = split(text);
+        if (inside.includes(MARK) || outside.includes(MARK)) surfaced.add(label);
+        if (outside.includes(MARK)) leaks.add(label);
+      }
+    }
+    fs.rmSync(lokiOf(testDir), { recursive: true, force: true });
+    return { leaks, surfaced };
+  }
+
+  it('returns stored text from every registered tool and resource only inside untrusted_content', () => {
+    const tools = [...getTools().values()];
+    const resources = [...getResources().values()];
+    assert.ok(tools.length >= 5 && resources.length >= 2);
+    const { leaks, surfaced } = runGuard();
+
+    assert.deepEqual([...leaks].sort(), [], 'stored text returned outside untrusted_content');
+    // Control: the marker really reaches each of these, so the check above is not vacuous.
+    for (const t of tools) assert.ok(surfaced.has(t.schema.name), 'marker never reached tool ' + t.schema.name);
+    for (const r of resources) assert.ok(surfaced.has(r.schema.uri), 'marker never reached resource ' + r.schema.uri);
+  });
+
+  it('goes red when any single declared UNTRUSTED_FIELDS entry is removed', () => {
+    const survived = [];
+    let mutations = 0;
+    for (const mod of getTools().values()) {
+      const declared = mod.UNTRUSTED_FIELDS;
+      for (const field of declared) {
+        mutations++;
+        mod.UNTRUSTED_FIELDS = declared.filter((f) => f !== field);
+        try {
+          if (!runGuard().leaks.has(mod.schema.name)) survived.push(mod.schema.name + '.' + field);
+        } finally {
+          mod.UNTRUSTED_FIELDS = declared;
+        }
+      }
+    }
+    const declaredTotal = [...getTools().values()].reduce((n, mod) => n + mod.UNTRUSTED_FIELDS.length, 0);
+    assert.equal(mutations, declaredTotal, 'every declared field must be mutated exactly once');
+    assert.equal(declaredTotal, 18, 'declared UNTRUSTED_FIELDS total changed: update this count with the new field');
+    assert.deepEqual(survived, [], 'removing this field left the guard green (the seed or args never reach it)');
+  });
+
+  it('seeds every .loki file the tool and resource sources read', () => {
+    const seededFiles = new Set(['CONTINUITY.md', 'orchestrator.json', 'session.json', 'task-queue.json',
+      'quality-gates.json', 'blind-review.json', 'council-votes.json', 'tool-usage.jsonl', 'token-usage.json',
+      'index.json', 'aggregate.json']);
+    const dirs = ['tools', 'resources'].map((d) => path.join(origCwd, 'src', 'protocols', d));
+    const unseeded = [];
+    for (const dir of dirs) for (const f of fs.readdirSync(dir)) {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      for (const m of src.matchAll(/'([A-Za-z0-9_.-]+\.(?:json|jsonl|md))'/g)) {
+        if (!seededFiles.has(m[1])) unseeded.push(f + ': ' + m[1]);
+      }
+    }
+    assert.deepEqual(unseeded, [], 'a .loki file is read by the sources but not seeded by the guard');
+  });
+});
+
+describe('resource bodies match their declared mimeType', () => {
+  it('returns parseable application/json from every resource, including the not-found branch', () => {
+    fs.rmSync(path.join(testDir, '.loki'), { recursive: true, force: true });
+    for (const r of getResources().values()) {
+      const res = handleRequest({ jsonrpc: '2.0', method: 'resources/read', id: 7, params: { uri: r.schema.uri } });
+      const content = res.result.contents[0];
+      assert.equal(content.mimeType, r.schema.mimeType, r.schema.uri);
+      if (r.schema.mimeType === 'application/json') {
+        assert.doesNotThrow(() => JSON.parse(content.text), r.schema.uri);
+      }
+    }
+  });
+});
+
 describe('JSON-RPC 2.0 error handling', () => {
   it('should reject invalid JSON-RPC version', () => {
     const response = handleRequest({
@@ -260,6 +411,7 @@ describe('Async tool execution', () => {
     tools.set(fakeName, {
       TOOL_NAME: fakeName,
       schema: { name: fakeName, description: 'test', inputSchema: { type: 'object', properties: {}, required: [] } },
+      UNTRUSTED_FIELDS: [],
       execute: () => Promise.resolve({ asyncValue: 42 })
     });
 

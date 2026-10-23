@@ -875,3 +875,36 @@ FC-AGENT-PROOF: a run whose only executed passing check is a test file the same 
 6. The project's own install scripts (for example npm postinstall) run exactly as they do for a developer; opt-out is LOKI_E10_INSTALL=0 or loki.yaml `verify.install_deps: false`, documented in docs/environment-variables.md.
 - Amendment (D99): uv uses `uv sync --locked` (fails on an out-of-sync uv.lock; `--frozen` is replaced) and pipenv uses `pipenv install --deploy` (fails on an out-of-date Pipfile.lock; `pipenv sync` is replaced); pnpm-workspace.yaml is read in inline-list, block and unindented-block forms with `!` exclusions.
 - Reverse: founder call; the opt-out covers one-off needs.
+
+## D107 (2026-10-23, CoS records): #246 stays OFF by default (KEEP OFF)
+1. The #246 behavior ships disabled by default; it is enabled only by an explicit opt-in.
+2. Reversing this needs a new decision entry with field evidence.
+
+## D108 (2026-10-22, founder grant, CoS records on 2026-10-23): paid Claude and loki runs are pre-approved, each use is logged
+1. The founder pre-approved paid Claude runs and paid loki runs (LOKI_BENCH_SPEND_APPROVED) without a per-run question.
+2. Every use is logged (what ran, why, when) so the spend stays auditable. This extends D99.
+
+## D109 (2026-10-23, CoS records): weaktest and 246 are retired
+1. The weaktest and 246 work items are closed as retired; they are not reopened without a new decision entry.
+2. Related: D107 keeps the #246 behavior OFF by default.
+
+## D110 (2026-10-23, CoS under D99, slice pd/npmskip GO): npm dist-tag moves are fail-closed on any registry read failure
+1. scripts/npm-dist-tags.sh moves latest and next only to the highest published stable version, never backwards. It re-reads the tags after writing and restores an overtaken tag.
+2. Any failed or empty read of latest, next or the published versions refuses before ANY write (exit 1, "refusing to move latest (fail closed)"). The same script serves loki-mode and loki-mode-sdk. Class: FC-DIST-TAG-MOVED-BACKWARDS in FAILURE-CLASSES.md.
+3. Companion guards in the same slice: a verify-npm-registry job proves the registry serves the version, and release.sh --ship refuses notes that release-notes.sh rejects (not bypassable by LOKI_RELEASE_SKIP_GUARDS).
+
+## D111 (2026-10-23, CoS records, CW-04, #337): LOKI_SPEC_STRICT=1 is opt-in, default off
+1. Strict spec handling runs only when LOKI_SPEC_STRICT=1 is set; the default behavior is unchanged.
+2. Making it the default needs a new decision entry.
+
+## D112 (2026-10-23, founder mandate, CoS records): full autonomy and the 10/10 mandate
+1. The founder granted full decision authority and set 10/10 as the standing target; the CoS decides, ships and logs without per-step approval. This restates D99 and the 2026-10-22 grant.
+2. The never-do list in docs/LOKI-10-BUILD-PROMPT.md and the zero-mis-anything bar still bind.
+
+## D113 (2026-10-23, CoS records): test-only council changes are MEDIUM tier, not HIGH
+1. A change that touches only tests (no product code, gate, verifier, Seal, auth or release policy) is reviewed at MEDIUM by Tech Leads under D12, not by HIGH opus reviewers.
+2. Any change that also touches the moat, verifier, Seal, auth, security or release policy stays HIGH.
+
+## D114 (2026-10-23, CoS records, #343): Codex MCP secrets never go on argv
+1. Secret names are passed to Codex through env_vars; secret values travel only in the process environment.
+2. No secret value appears in a command line, where ps and shell history can read it.

@@ -10,6 +10,7 @@ afterAll(() => { for (const r of roots) execFileSync("rm", ["-rf", r]); });
 const git = (dir: string, ...a: string[]): string => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const SUP = join(import.meta.dir, "../../src/engine10/supervisor.ts");
+import { dropEmptyRunBranch } from "../../src/util/base_guard.ts";
 
 // Fake worker: creates the run branch (as intake does), starts a detached session-like sleeper, reports its pgid, then sleeps.
 const WORKER = (dirty: boolean): string => `
@@ -63,6 +64,72 @@ describe("supervisor stop signals", () => {
   test("SIGTERM with an uncommitted run edit stays on the run branch and keeps the edit", () => run("SIGTERM", true), 30000);
   test("sighup (terminal closed) returns to the starting branch and leaves no orphans", () => run("SIGHUP"), 30000);
   test("SIGTERM returns to the starting branch and leaves no orphans", () => run("SIGTERM"), 30000);
+});
+
+// FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: a terminal run that committed nothing restores the starting branch and drops its empty loki/ branch.
+type EmptyMode = "empty" | "commit" | "switch" | "dirty";
+const EMPTY_WORKER = (mode: EmptyMode): string => `
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const g = (...a) => execFileSync("git", a, { encoding: "utf8" }).trim();
+const base = g("rev-parse", "HEAD");
+g("checkout", "-b", "loki/e10-empty");
+${mode === "commit" ? 'fs.writeFileSync("w.txt", "wall\\n"); g("add", "w.txt"); g("-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "wall");' : ""}
+${mode === "switch" ? 'g("checkout", "-b", "user-branch");' : ""}
+${mode === "dirty" ? 'fs.writeFileSync("a.txt", "agent edit\\n");' : ""}
+console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { base_sha: base, branch: "loki/e10-empty" } }));
+process.exit(1);
+`;
+async function emptyRun(mode: EmptyMode): Promise<{ dir: string; err: string }> {
+  const base = mkdtempSync(join(tmpdir(), "e10-empty-"));
+  roots.push(base);
+  const dir = join(base, "repo");
+  execFileSync("git", ["init", "-q", "-b", "main", dir]);
+  git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+  writeFileSync(join(dir, "a.txt"), "base\n");
+  git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
+  writeFileSync(join(base, "worker.js"), EMPTY_WORKER(mode));
+  writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
+const r = await runSupervisor({ runId: "e10-empty", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
+process.exit(r.verdict === "FAILED" ? 0 : 3);`);
+  const sup = spawn(process.execPath, [join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, stdio: ["ignore", "ignore", "pipe"] });
+  let err = ""; sup.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
+  const code = await new Promise<number | null>((r) => sup.on("exit", (c) => r(c)));
+  expect(code).toBe(0);
+  return { dir, err };
+}
+describe("supervisor: a run that committed nothing", () => {
+  test("FAILED with 0 commits returns to main and leaves no loki/ branch", async () => {
+    const { dir } = await emptyRun("empty");
+    expect(git(dir, "branch", "--show-current")).toBe("main");
+    expect(git(dir, "branch", "--list", "loki/*")).toBe("");
+  }, 30000);
+  test("positive control: a run branch with a commit is kept, HEAD stays on it", async () => {
+    const { dir } = await emptyRun("commit");
+    expect(git(dir, "branch", "--list", "loki/e10-empty")).toContain("loki/e10-empty");
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-empty");
+  }, 30000);
+  test("the user switched branch mid-run: nothing is restored, the branch is kept, a note is printed", async () => {
+    const { dir, err } = await emptyRun("switch");
+    expect(git(dir, "branch", "--show-current")).toBe("user-branch");
+    expect(git(dir, "branch", "--list", "loki/e10-empty")).toContain("loki/e10-empty");
+    expect(err).toContain("git branch -D loki/e10-empty");
+  }, 30000);
+  test("an uncommitted run edit blocks the checkout: stays on the run branch, edit kept, branch kept", async () => {
+    const { dir } = await emptyRun("dirty");
+    expect(git(dir, "branch", "--show-current")).toBe("loki/e10-empty");
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("agent edit\n");
+  }, 30000);
+  test("a non-loki branch name in the intake event is never deleted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-nl-")); roots.push(dir);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    git(dir, "config", "user.name", "t"); git(dir, "config", "user.email", "t@example.com");
+    writeFileSync(join(dir, "a.txt"), "x\n"); git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "b");
+    git(dir, "branch", "mine");
+    const sha = git(dir, "rev-parse", "HEAD");
+    expect(dropEmptyRunBranch(dir, "main", "mine", sha)).toBeNull();
+    expect(git(dir, "branch", "--list", "mine")).toContain("mine");
+  });
 });
 
 // SIGINT e2e (LM-002): a stub claude records its pid and sleeps; SIGINT to the supervisor must leave the provider child dead,
