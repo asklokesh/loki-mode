@@ -44,17 +44,20 @@ on:
         description: 'Issue number to resolve'
         required: true
 
-# Serialize per issue. Two agents racing on one issue would open two PRs from
-# two branches and neither would see the other's work.
-concurrency:
-  group: loki-issue-${{ github.event.issue.number || inputs.issue }}
-  cancel-in-progress: false
+# Serialize per issue and per PR, on the jobs that do the work and not on the
+# workflow: a workflow-level group would let any comment (a "thanks" from a
+# non-collaborator) replace a queued collaborator command. Two agents racing
+# on one issue would open two PRs from two branches and neither would see the
+# other's work.
 
 # Nothing by default; each job asks for exactly what it needs.
 permissions: {}
 
 jobs:
   agent:
+    concurrency:
+      group: loki-issue-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
     # Gate on an explicit signal so the agent never fires on unrelated
     # activity. A label needs triage access; a `/loki` comment must come from
     # someone with write-level association, not any GitHub user.
@@ -165,6 +168,9 @@ jobs:
     # job is attacker-controllable data: no job outputs, no `${{ }}` of agent
     # values in a script, nothing from the artifact is executed.
     needs: agent
+    concurrency:
+      group: loki-issue-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -314,6 +320,9 @@ jobs:
   pr-fix:
     needs: pr-command
     if: needs.pr-command.outputs.allowed == 'true' && needs.pr-command.outputs.verb == 'fix'
+    concurrency:
+      group: loki-pr-fix-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -375,6 +384,9 @@ jobs:
   pr-publish:
     # Holds the write token and runs no agent. Everything from the artifact is data.
     needs: [pr-command, pr-fix]
+    concurrency:
+      group: loki-pr-fix-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -446,7 +458,8 @@ jobs:
           OUT="$RUNNER_TEMP/loki-vpr"
           mkdir -p "$OUT"
           SUB="$VERB"; [ "$VERB" = "fix" ] && SUB="reseal"
-          loki verify-pr "$SUB" "${REPO}#${PR}" --out "$OUT" > "$OUT/stdout.txt" 2>&1 || true
+          # stdout only: stderr is not part of the 60-line capped output and must not reach the comment.
+          loki verify-pr "$SUB" "${REPO}#${PR}" --out "$OUT" > "$OUT/stdout.txt" 2> "$OUT/stderr.txt" || true
           if [ "$SUB" = "explain" ]; then
             gh pr comment "$PR" --repo "$REPO" --body-file "$OUT/stdout.txt"
             exit 0
