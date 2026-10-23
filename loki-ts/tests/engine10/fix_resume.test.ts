@@ -732,6 +732,9 @@ process.exit(await main(${JSON.stringify(args)}));
   test("main(): a valid --max-cost typed on a same-task start reaches the auto-resumed worker", () => {
     expect(driveMain(["--no-pr", "--quiet", "--max-cost", "0.5", "t"], true).cap).toBe("0.5");
   }, 100000);
+  test("main(): a valid --max-cost typed with --resume reaches the resumed worker", () => {
+    expect(driveMain(["--no-pr", "--quiet", "--max-cost", "0.5", "--resume", RID], true).cap).toBe("0.5");
+  }, 100000);
   test("resumeCapUsd only tightens: given below recorded wins, given above recorded loses, no recorded cap takes the given one", () => {
     expect(resumeCapUsd(5, 0.5)).toBe(0.5);
     expect(resumeCapUsd(0.3, 2)).toBe(0.3);
