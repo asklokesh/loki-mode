@@ -1584,3 +1584,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: bench adapters register in SCOPED_OUT when added. The layout test copy set follows the compiler's declared dependencies (pd/303d, not this row).
 - Fixture: claude_flags.test.ts "P12-26b" goes red for any new unlisted benchmarks/ file carrying the flag.
 - Open: the dist-layout half (secret-paths.json copy) is owned by pd/303d 1be1e118d.
+
+## FC-SHARD-WATCHLIST-STALE The shard-coverage guard hardcoded which five suites are the heaviest; the table moved on, and one new registration shifted LPT tie rotation and turned main red
+- User-visible vs raw: raw (CI guard). tests/test-shard-coverage.sh T5 failed on main: "expected 5 watched suites in 5 distinct shards", with trust-core tests and E2e Features both in shard 1. It is also a misleading signal, because no shard was unbalanced.
+- Law: a guard asserts the property that holds by construction, over inputs derived from the live data, never over a name list that was true on one date.
+- Cause (measured): bisected across the four commits that touched the runner or the table. 54700a30b: 0 failures; 71b292af4 (registers npm-dist-tags.sh with no duration row): 1 failure; 4b880492b and 77f1196c5: 1 failure. The hardcoded watch list held "E2e Features" (20s in the table) and "Review deadline, ..." (45s), which stopped being among the five heaviest long ago (ShellCheck 140, trust-core 130, reachability 95, Quick receipt order 90, v10 ops 70). They only separated by tie rotation, and the new registration moved the rotation. LPT guarantees the heaviest n suites land in n distinct shards; light suites carry no such guarantee.
+- Siblings swept: test-shard-durations-drift.sh failed on the same commit for the same missing row (npm-dist-tags.sh); fixed with a measured row (8s). T1 to T4 do not name suites.
+- Mechanism: T5 derives its five suites from tests/shard-durations.tsv, restricted to registered names, sorted by seconds descending.
+- Fixture: tests/test-shard-coverage.sh T5. Executed mutation: replacing the runner's `shardof[idx] = pick` with `idx % 2` turns T5 red (and the empty-shard checks).
