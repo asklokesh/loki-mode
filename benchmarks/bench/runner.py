@@ -482,6 +482,14 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
         if isinstance(exit_status, str) and exit_status.strip().lower() in \
                 schema.UNMEASURED_EXIT_STATUSES:
             unmeasured_reasons.append("adapter exit_status=%s" % exit_status)
+        # MODEL HONESTY. A trial that ran a different model family than the one
+        # requested is not a measurement of the requested configuration (the
+        # engine10 route once dropped LOKI_SESSION_MODEL and ran the CLI default).
+        # Excluded from every ratio the same way an unmeasured run is.
+        want_fam, ran_fam = _model_family(model), _model_family(adapter_out.get("model_used"))
+        if want_fam and ran_fam and want_fam != ran_fam:
+            unmeasured_reasons.append("model mismatch: requested %s, ran %s"
+                                      % (model, adapter_out.get("model_used")))
 
         row = {
             "trial": trial_index,
@@ -534,6 +542,20 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
     finally:
         if not keep_workdir:
             shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _model_family(raw: Any) -> Optional[str]:
+    """opus|sonnet|haiku|fable when `raw` names one, else None (a provider label
+    such as "claude" or a "(provider default)" record names no family)."""
+    if not isinstance(raw, str):
+        return None
+    m = raw.strip().lower()
+    if "provider default" in m:
+        return None
+    for fam in ("opus", "sonnet", "haiku", "fable"):
+        if fam in m:
+            return fam
+    return None
 
 
 def _spend_gated_adapter(adapter_name: str) -> Callable[..., Dict[str, Any]]:

@@ -17,12 +17,12 @@ from adapters import _base, loki  # noqa: E402
 _SPEC = {"id": "t", "prompt": "make ok", "acceptance": {"cmd": "test -f ok", "timeout_s": 10}}
 
 
-def _fake(tool, *, writes, exit_status="completed", prov=None):
+def _fake(tool, *, writes, exit_status="completed", prov=None, model_used="m"):
     def adapter(workdir, prompt_path, **kw):
         if writes:
             open(os.path.join(workdir, "ok"), "w").close()
         return _base.build_output(
-            tool=tool, tool_version="1", model_used="m", duration_s=1.0,
+            tool=tool, tool_version="1", model_used=model_used, duration_s=1.0,
             iterations=1, tokens_in=1, tokens_out=1, cost_usd=0.01,
             exit_status=exit_status, provenance=prov or {})
     return adapter
@@ -38,6 +38,21 @@ class TrialMetricsTest(unittest.TestCase):
 
     def _row(self, adapter, tool):
         return runner.run_trial(adapter, _SPEC, self.fix, "m", tool, 1)
+
+    def test_model_mismatch_is_unmeasured(self):
+        # Requested sonnet, the engine ran opus: not a measurement of sonnet.
+        a = _fake("loki", writes=True, model_used="claude-opus-5-5")
+        row = runner.run_trial(a, _SPEC, self.fix, "claude-sonnet-5-5", "loki", 1)
+        self.assertIs(row["measured"], False)
+        self.assertTrue(any("model mismatch" in r for r in row["unmeasured_reasons"]))
+
+    def test_model_match_and_labels_stay_measured(self):
+        # Negative controls: same family, a provider label and a default record never trip it.
+        for want, ran in (("sonnet", "claude-sonnet-5-5"), ("claude", "claude-opus-5-5"),
+                          ("sonnet", "claude (provider default)")):
+            a = _fake("loki", writes=True, model_used=ran)
+            row = runner.run_trial(a, _SPEC, self.fix, want, "loki", 1)
+            self.assertIs(row["measured"], True, (want, ran))
 
     def test_schema_pin(self):
         row = self._row(_fake("claude_code", writes=True), "claude_code")
