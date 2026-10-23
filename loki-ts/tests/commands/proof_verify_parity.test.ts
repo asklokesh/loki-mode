@@ -594,7 +594,7 @@ describe("loki proof export --html: offline page parity with verifyReceipt", () 
     writeFileSync(join(d, "pubkey.jwk"), JSON.stringify(b.pubkey));
     return (await verifyReceipt(join(d, "receipt.json"), { pubkey: takePubkey(["--pubkey", join(d, "pubkey.jwk")]).pubkey })).verdict;
   }
-  // Changes a full 6-bit character inside the signature segment. The last base64url character of a 64-byte signature carries 2 unused bits, so swapping it for A or B can leave the decoded bytes identical and the receipt valid (a 1-in-16 flake).
+  // Changes a full 6-bit character inside the signature segment. The last base64url character of a 64-byte signature (86 characters) carries only 2 data bits and 4 unused ones, so swapping it for A or B leaves the decoded bytes identical whenever it is in A-P, and the receipt stays valid (about 1 run in 4).
   const flipSig = (t: string): string => {
     const i = t.lastIndexOf(".") + 9;
     return t.slice(0, i) + (t[i] === "A" ? "B" : "A") + t.slice(i + 1);
