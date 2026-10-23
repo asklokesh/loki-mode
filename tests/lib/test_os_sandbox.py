@@ -280,6 +280,18 @@ class KernelMixin:
         self.assertNotEqual(res.returncode, 0)
         self.assertEqual((self.base / "outside.txt").read_text(), "outside\n")
 
+    def test_secret_rename_bypass_denied(self):
+        res = self._sh(f'mv "{self.ws}/.env" "{self.ws}/notes" && cat "{self.ws}/notes"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("SECRET", res.stdout)
+        self.assertTrue((self.ws / ".env").exists())
+
+    def test_secret_hardlink_bypass_denied(self):
+        res = self._sh(f'ln "{self.ws}/.env" "{self.ws}/hl" && cat "{self.ws}/hl"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("SECRET", res.stdout)
+        self.assertFalse((self.ws / "hl").exists())
+
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
 class SeatbeltKernelTest(KernelMixin, unittest.TestCase):
@@ -289,6 +301,33 @@ class SeatbeltKernelTest(KernelMixin, unittest.TestCase):
 @unittest.skipUnless(HAVE_BWRAP, "bwrap is required and must work (not Linux, or bwrap missing or user namespaces blocked)")
 class BwrapKernelTest(KernelMixin, unittest.TestCase):
     kind = "linux-bwrap"
+
+
+@unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
+class SeatbeltSmokeProbeTest(unittest.TestCase):
+    def test_real_smoke_probe_passes(self):
+        # workspace_root must be short and outside tmp: an AF_UNIX path under $TMPDIR is too long.
+        raw = tempfile.mkdtemp(prefix="osb-", dir="/private/var/tmp")
+        self.addCleanup(shutil.rmtree, raw, True)
+        root = Path(raw).resolve()
+
+        def profile_for(workspace: Path, spec: Path) -> bytes:
+            return os_sandbox.seatbelt_profile({
+                "system_read_paths": tuple(Path(p) for p in (
+                    "/usr", "/bin", "/sbin", "/System", "/Library", "/private/etc",
+                    "/private/var/db", "/dev", "/Applications/Xcode.app", "/opt/homebrew")
+                    if Path(p).exists()),
+                "runtime_read_paths": (),
+                "runtime_write_paths": (),
+                "engine_source": workspace,
+                "workspace": workspace,
+                "spec": spec,
+                "ports": (5432, 8787),
+            })
+
+        digest = os_sandbox.seatbelt_smoke_probe(
+            root, profile_for, (5432, 8787), "/usr/bin:/bin:/usr/sbin:/sbin")
+        self.assertEqual(len(digest), 64)
 
 
 if __name__ == "__main__":
