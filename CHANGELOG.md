@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The zsh completion in completions/_loki now offers the --resume flag (resume-completion3, rebased by its author onto current main). Approval: "APPROVE pd/p0-resume-completion3 ccb5ef9dc71742eddfb55498f692d5b86dd29623 (tl-2, LOW)".
 
+## Unreleased
+
+### Added
+- `loki proof export <run-id> --html [--out <file>]` writes one self-contained page (receipt, event log and public key inline, under 1 MB) that re-checks the receipt in any modern browser with no install and no network: its content security policy sets `connect-src 'none'`. The page gives the same verdict as `loki verify` for a signed receipt (hash, event log, signature, signer key id, sealed log) and shows UNCHECKED, never VERIFIED, for shapes it cannot check alone (DSSE, composite, group, evidence screenshots) or when the browser lacks Ed25519. It refuses an unsigned or unverified run, as `loki proof bundle` does (R100-016, #368).
 ## v11.60.15 (2026-10-23)
 
 ### Fixed

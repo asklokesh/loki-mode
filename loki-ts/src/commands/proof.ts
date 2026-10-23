@@ -22,7 +22,7 @@
 // LOKI_LEGACY_BASH=1 escape hatch, so this port is kept parity-correct with
 // it (see loki-ts/tests/commands/proof.test.ts for the bash-vs-Bun gate).
 
-import { existsSync, readdirSync, realpathSync, statSync, readFileSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, readFileSync, mkdtempSync, copyFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -35,7 +35,7 @@ import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
-import { buildReceiptBundle } from "../util/receipt_bundle.ts";
+import { buildReceiptBundle, buildReceiptHtml } from "../util/receipt_bundle.ts";
 import { runSecureScan } from "../util/secure_scan.ts";
 
 const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
@@ -55,6 +55,10 @@ Subcommands:
   badge <id>           Print a copy-paste "Verified by Loki" markdown badge
   bundle <run-id>      Write a portable receipt bundle for offline verification
                        [--out <dir>] (default ./loki-bundle-<run-id>)
+  export <run-id> --html
+                       Write one self-contained page that re-checks the receipt
+                       in a browser, offline, with no install and no network
+                       [--out <file>] (default ./loki-receipt-<run-id>.html)
 
 For a 'loki start' run with no .loki/proofs/<id>, badge, bundle and share read
 .loki/runs/<id>/receipt.json. badge prints only when the signature verifies and
@@ -610,6 +614,49 @@ async function bundleProof(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+// `loki proof export <run-id> --html [--out <file>]`: one offline page that re-checks the receipt in a browser.
+async function exportProof(argv: readonly string[]): Promise<number> {
+  let id = "";
+  let out = "";
+  let html = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === "--html") html = true;
+    else if (a === "--out") {
+      out = argv[++i] ?? "";
+      if (!out) {
+        process.stderr.write(`${RED}--out needs a file path.${NC}\n`);
+        return 2;
+      }
+    } else if (a.startsWith("-")) {
+      process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
+      return 1;
+    } else id = a;
+  }
+  if (!id || !html) {
+    process.stderr.write(`${RED}Usage: loki proof export <run-id> --html [--out <file>]${NC}\n`);
+    return 2;
+  }
+  const rp = runReceiptPath(id);
+  if (!rp) {
+    process.stderr.write(`${RED}Run receipt not found: .loki/runs/${id}/receipt.json${NC}\n`);
+    return 1;
+  }
+  const outFile = resolve(out || join(process.cwd(), `loki-receipt-${id}.html`));
+  if (existsSync(outFile)) {
+    process.stderr.write(`${RED}Export refused:${NC} ${outFile} already exists; remove it or pass --out.\n`);
+    return 1;
+  }
+  const r = await buildReceiptHtml(dirname(rp));
+  if (!r.ok) {
+    process.stderr.write(`${RED}Export refused:${NC} ${r.error}\n`);
+    return 1;
+  }
+  writeFileSync(outFile, r.html);
+  process.stdout.write(`${GREEN}Page written: ${outFile}${NC}\nOpen it in a browser; it checks the receipt offline. Signer key id: ${r.kid}\n`);
+  return 0;
+}
+
 // gh present and authenticated, else print why and return false.
 async function ghReady(): Promise<boolean> {
   const ghCheck = await run(["gh", "--version"], { timeoutMs: 5000 });
@@ -962,6 +1009,8 @@ export async function runProof(argv: readonly string[]): Promise<number> {
       return badgeProof(rest[0]);
     case "bundle":
       return bundleProof(rest);
+    case "export":
+      return exportProof(rest);
     case "md":
       return mdProof(rest[0]);
     default:

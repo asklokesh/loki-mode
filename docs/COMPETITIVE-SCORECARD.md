@@ -474,6 +474,31 @@ prints. #350 stays open until its targets are met.
 Reproduce: the commands in the table, run inside a directory created with
 `loki_run_tmp_create`.
 
+### 3f. Verify a receipt in a browser with no install (R100-016, issue #368, 2026-10-23)
+
+Loki: `loki proof export <run-id> --html` writes one file, checked in
+`loki-ts/tests/commands/proof_verify_parity.test.ts` to be under 1,000,000
+bytes, with `connect-src 'none'` in its content security policy. Headless Chrome
+156 shows VERIFIED for a signed sample and TAMPERED for an edited copy (2 of 2),
+equal to `verifyReceipt` (the `loki verify` code path) on the sample and on five
+tampered copies; a local server saw 0 requests from the page, and 1 or more from
+a control page without the policy. The verifier source is 9141 bytes
+(`PAGE_VERIFIER_JS`). Limit: DSSE, composite, group and evidence-screen receipts
+show UNCHECKED on the page and need `npx loki-mode verify`.
+
+Competitors, probed on this machine 2026-10-23. An empty match in help text is
+not proof a feature is absent, so every cell is UNKNOWN.
+
+| Product | Probe | Output | Cell |
+|---|---|---|---|
+| Claude Code | `claude --help \| grep -iE 'sign\|receipt\|verify'` (313 help lines, the control) | no match, rc=1 | UNKNOWN |
+| Codex CLI | `codex --help \| grep -iE 'sign\|verify'` | `codex` not installed here (`command not found`) | UNKNOWN |
+| Droid | `droid --help \| grep -iE 'sign\|verify'` (43 help lines, the control) | no match, rc=1 | UNKNOWN |
+| Devin | docs search for "signature" and "attestation" | not run in this slice | UNKNOWN |
+
+#350 metric line: install steps to check a receipt on a machine with only a
+browser: 0 (the page), against 1 (`npx loki-mode verify`, which needs node).
+
 ### 3c. Deploy surface, measured 2026-08-08
 
 Ran on the four competitor CLIs installed on this machine. Method matters here:
