@@ -92,3 +92,10 @@ when either side did not record it) and `extra_usd_complete` (false when the
 killed leg's spend was not recorded, so the delta is a lower bound). A pair with
 `killed` false finished before the interrupt point and says nothing about resume
 cost. The trial metric `journal_reuse_wall_s` is the resumed leg's wall seconds.
+
+Kept workdirs: with `LOKI_BENCH_WORKDIRS=<root>` set, every trial (runner `run`,
+`vs` and `resume-cost`) keeps its graded workdir at
+`<root>/<tool>/<task>/<trial>/`, so a later measurement such as trust_time reads
+the same trials at no extra spend. In a resume-cost pair the control trial is
+kept at `<root>/<tool>/<task>/control-<trial>/` and the interrupted one at
+`<root>/<tool>/<task>/<trial>/`. An existing non-empty target is refused.
