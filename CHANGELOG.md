@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.54.2 (2026-10-23)
+
+### Fixed
+- loki_verify_fast MCP results are now tagged as untrusted content, and every stored-text read path goes through the envelope guard. Refs #319.
+
 ## v11.54.1 (2026-10-23)
 
 ### Fixed
