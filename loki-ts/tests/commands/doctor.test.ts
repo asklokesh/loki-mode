@@ -562,6 +562,48 @@ describe("doctor.runDoctor (end-to-end)", () => {
   }, 30_000);
 });
 
+// No doctor unit test may reach api.anthropic.com. Every test starts with the
+// models.retrieve probe stubbed and a fetch trap that records, rejects and (in
+// afterEach) fails the test on any real call to the API host.
+const apiFetchAttempts: string[] = [];
+const realFetch = globalThis.fetch;
+beforeEach(() => {
+  apiFetchAttempts.length = 0;
+  _setModelsRetrieveForTest(async () => null);
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (new URL(url).hostname === "api.anthropic.com") {
+      apiFetchAttempts.push(url);
+      return Promise.reject(new Error(`doctor test made a real fetch to ${url}`));
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+});
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  _setModelsRetrieveForTest(null);
+  const attempts = apiFetchAttempts.splice(0);
+  expect(attempts).toEqual([]);
+});
+
+describe("doctor tests never reach the network (guard)", () => {
+  it("the fetch trap records and rejects a real api.anthropic.com call", async () => {
+    await expect(fetch("https://api.anthropic.com/v1/models/x")).rejects.toThrow("real fetch");
+    expect(apiFetchAttempts).toHaveLength(1);
+    apiFetchAttempts.length = 0;
+  });
+  it("runDoctor with a key set makes no real API fetch", async () => {
+    const prev = process.env["ANTHROPIC_API_KEY"];
+    process.env["ANTHROPIC_API_KEY"] = "sk-guard-sentinel";
+    try {
+      await captureStdio(() => runDoctor([]));
+      expect(apiFetchAttempts).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env["ANTHROPIC_API_KEY"]; else process.env["ANTHROPIC_API_KEY"] = prev;
+    }
+  }, 30_000);
+});
+
 // ---- exit-code parity --------------------------------------------------------
 
 describe("doctor exit-code parity", () => {
@@ -1638,11 +1680,15 @@ describe("evaluateCloudAuth warn path", () => {
     delete process.env["AWS_REGION"];
     delete process.env["AWS_DEFAULT_REGION"];
     try {
-      const j = await buildDoctorJson();
+      const withFlag = await buildDoctorJson();
+      delete process.env["CLAUDE_CODE_USE_BEDROCK"];
+      const base = await buildDoctorJson();
+      process.env["CLAUDE_CODE_USE_BEDROCK"] = "1";
+      const j = withFlag;
+      expect(j.summary.warnings).toBe(base.summary.warnings + 1);
       expect(j.cloud_auth).toHaveLength(1);
       expect(j.cloud_auth[0]!.status).toBe("warn");
       expect(j.cloud_auth[0]!.line).toContain("AWS_REGION");
-      expect(j.summary.warnings).toBeGreaterThanOrEqual(1);
     } finally {
       if (saved === undefined) delete process.env["CLAUDE_CODE_USE_BEDROCK"]; else process.env["CLAUDE_CODE_USE_BEDROCK"] = saved;
       if (savedRegion !== undefined) process.env["AWS_REGION"] = savedRegion;
