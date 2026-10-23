@@ -485,6 +485,33 @@ class TestDefaultManagerCap:
         finally:
             reset_state_manager()
 
+    @pytest.mark.parametrize("raw,want", [
+        (None, 8), ("", 8), ("abc", 8), ("0", 8), ("-3", 8), ("2.5", 8), ("3", 3), (" 4 ", 4),
+    ])
+    def test_cap_value_falls_back_to_default_for_invalid_input(self, monkeypatch, raw, want):
+        from state.manager import _state_manager_cap
+        if raw is None:
+            monkeypatch.delenv("LOKI_STATE_MANAGER_MAX", raising=False)
+        else:
+            monkeypatch.setenv("LOKI_STATE_MANAGER_MAX", raw)
+        assert _state_manager_cap() == want
+
+    def test_evicted_manager_is_stopped_outside_the_lock(self, tmp_path, monkeypatch):
+        import state.manager as sm
+        monkeypatch.setenv("LOKI_STATE_MANAGER_MAX", "1")
+        reset_state_manager()
+        try:
+            a, b = self._roots(tmp_path, "ab")
+            kw = dict(enable_watch=False, enable_events=False)
+            mgr_a = get_state_manager(a, **kw)
+            held = []
+            orig = mgr_a.stop
+            mgr_a.stop = lambda: (held.append(sm._default_manager_lock.locked()), orig())[1]
+            get_state_manager(b, **kw)
+            assert held == [False]
+        finally:
+            reset_state_manager()
+
     def test_default_cap_unchanged_for_one_root(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LOKI_STATE_MANAGER_MAX", raising=False)
         reset_state_manager()
