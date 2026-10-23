@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.65.3 (2026-10-23)
+
+### Fixed
+- The stale-dist guard in bin/loki and autonomy/loki now compares every loki-ts/src file, not cli.ts alone, so an edited source file triggers a rebuild (dist-freshness-guard). Approval: "APPROVE pd/dist-freshness-guard b8c98f864e2df03898addd7682de73a7b8a42771 (tl-2, MEDIUM)".
+
 ## v11.65.2 (2026-10-23)
 
 
