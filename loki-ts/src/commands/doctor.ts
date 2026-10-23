@@ -1154,16 +1154,18 @@ export function providerProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.P
 
 // TEN-ADOPTION-34: non-claude login state for preflight. codex has `login status` (exit code; fatal only on "Not logged in"); cline, aider and opencode keep varied keys/files, so they only warn.
 const PROVIDER_API_KEY_VARS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"];
-export function providerLoginIssue(provider: string, cli: string, env: Record<string, string | undefined>): { fatal?: string; warn?: string } | null {
+// RQ-12: the return says whether a check ran (checked), so preflight records the real outcome; a provider with no login check is { checked: false, reason }.
+export type ProviderLoginCheck = { checked: boolean; fatal?: string; warn?: string; reason?: string };
+export function providerLoginIssue(provider: string, cli: string, env: Record<string, string | undefined>): ProviderLoginCheck {
   const home = env.HOME || homedir(); const key = (k: string) => !!env[k]?.trim();
   if (provider === "codex") {
-    if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return null;
+    if (key("OPENAI_API_KEY") || key("CODEX_API_KEY")) return { checked: true };
     const r = spawnSync(cli, ["login", "status"], { env: providerProbeEnv(env), encoding: "utf8", timeout: 5000, cwd: tmpdir() }) /* FC-TEST-LEAKS-INTO-REPO: a probe never runs in the caller checkout */;
-    if (r.status === 0) return null;
-    const said = `${r.stdout}${r.stderr}`; return /not logged in/i.test(said) || classifyFailure(said).reason === "auth" /* CW-14: the one auth pattern set, shared with the run-time classifier */ ? { fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
+    if (r.status === 0) return { checked: true };
+    const said = `${r.stdout}${r.stderr}`; return /not logged in/i.test(said) || classifyFailure(said).reason === "auth" /* CW-14: the one auth pattern set, shared with the run-time classifier */ ? { checked: true, fatal: "codex is not logged in; run: codex login (or set OPENAI_API_KEY)" } : { checked: true, warn: "could not confirm the Codex login (codex login status gave no answer); continuing" };
   }
-  if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) || (provider === "cline" && existsSync(join(home, ".cline")))) return null;
-  return provider === "aider" || provider === "opencode" || provider === "cline" ? { warn: `no ${provider} login or API key found (set a provider API key such as ANTHROPIC_API_KEY or OPENAI_API_KEY${provider === "opencode" ? ", or run: opencode auth login" : ""}); continuing` } : null;
+  if (PROVIDER_API_KEY_VARS.some(key) || (provider === "opencode" && existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"))) || (provider === "cline" && existsSync(join(home, ".cline")))) return { checked: true };
+  return provider === "aider" || provider === "opencode" || provider === "cline" ? { checked: true, warn: `no ${provider} login or API key found (set a provider API key such as ANTHROPIC_API_KEY or OPENAI_API_KEY${provider === "opencode" ? ", or run: opencode auth login" : ""}); continuing` } : { checked: false, reason: `no login check for provider ${provider}` };
 }
 
 // CW-14: which credential a provider would use, by NAME only (never a value). Zero spawns, zero network.

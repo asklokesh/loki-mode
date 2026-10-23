@@ -32,20 +32,21 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   if (free !== null && free < minMb) return { fatal: `only ${Math.floor(free)} MB free on the volume holding ${o.repoDir} (need ${minMb} MB); free disk space, or lower LOKI_MIN_FREE_MB`, warnings };
   if (free !== null && free < Math.max(2048, minMb)) warnings.push(`low disk: ${Math.floor(free)} MB free on the volume holding ${o.repoDir}; a long run may fail mid-way (warns under 2 GB)`);
   // CW-14: zero-token auth probe (a local CLI status command only, never a model endpoint); LOKI_PREFLIGHT_PROBE=0 skips it. The outcome is bound into <runDir>/preflight.json.
-  const auth_path = providerAuthPath(o.provider, env); let probe: "ok" | "failed" | "skipped" | "unknown" = "skipped"; let authFatal: string | undefined; const keyed = !auth_path.startsWith("cli_login") && auth_path !== "none";
+  const auth_path = providerAuthPath(o.provider, env); let probe: "ok" | "failed" | "skipped" | "unknown" = "skipped"; let probe_reason: string | undefined; let authFatal: string | undefined; const keyed = !auth_path.startsWith("cli_login") && auth_path !== "none";
   if (env["LOKI_PREFLIGHT_PROBE"] !== "0" && !keyed) {
     if (o.provider === "claude") { // TEN-UX-01: a logged-out CLI fails before any spend; unknown stays a warning
       const li = claudeLoginProbeCached(cli, env); // TEN-UX-12 retry + TEN-SPEED-05 10-min cache of a successful probe live in doctor.ts
       if (li === "no") { probe = "failed"; authFatal = "claude is not logged in; run: claude login (or set ANTHROPIC_API_KEY)"; }
-      else if (li === "") warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); else probe = "ok";
-    } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl?.fatal) { probe = "failed"; authFatal = pl.fatal; } else if (pl?.warn) warnings.push(pl.warn); else if (o.provider === "codex") probe = "ok"; } // TEN-ADOPTION-34
+      else if (li === "") { probe = "unknown"; warnings.push("could not confirm the Claude login (claude auth status gave no answer); continuing"); } else probe = "ok";
+    } else { const pl = providerLoginIssue(o.provider, cli, env); if (pl.fatal) { probe = "failed"; authFatal = pl.fatal; } else if (pl.warn) { probe = "unknown"; warnings.push(pl.warn); } else if (pl.checked) probe = "ok"; else probe_reason = pl.reason; } // TEN-ADOPTION-34
   }
   else if (env["LOKI_PREFLIGHT_PROBE"] !== "0" && o.provider === "claude" && auth_path === "api_key:ANTHROPIC_API_KEY" && !truthy(env["LOKI_AIRGAP"]) && !truthy(env["CLAUDE_CODE_USE_BEDROCK"]) && !truthy(env["CLAUDE_CODE_USE_VERTEX"])) { // RQ-11 (#351): a set key is checked once, with no tokens spent; the key is never printed
     const kp = await anthropicKeyProbeCached(env);
     if (kp.result === "rejected") { probe = "failed"; authFatal = `ANTHROPIC_API_KEY was rejected (HTTP ${kp.status}); fix the key or unset it to use claude login`; }
     else if (kp.result === "ok") probe = "ok"; else { probe = "unknown"; warnings.push("could not confirm the ANTHROPIC_API_KEY (the key probe got no usable answer); continuing"); }
   }
-  if (o.runDir) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
+  if (probe === "skipped" && !probe_reason) probe_reason = env["LOKI_PREFLIGHT_PROBE"] === "0" ? "LOKI_PREFLIGHT_PROBE=0" : keyed ? `credential is ${auth_path.split(":")[0]}; no zero-token check ran for it` : "no check ran";
+  if (o.runDir) { try { mkdirSync(o.runDir, { recursive: true }); writeFileSync(join(o.runDir, "preflight.json"), JSON.stringify({ provider: o.provider, auth_path, probe, ...(probe_reason ? { probe_reason } : {}) }) + "\n"); } catch { /* the record is evidence, never a gate */ } }
   if (authFatal) return { fatal: authFatal, warnings };
   if (o.pr && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {
     const ghOk = await ghAuthProbeCached(env, async () => (await sh(["gh", "--version"], { env, timeoutMs: 5000 })).exitCode === 0 && (await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 })).exitCode === 0); // TEN-SPEED-08: 10-min cache of a passing probe

@@ -13,7 +13,7 @@ import { providerProbeEnv, requirementFix } from "../../src/commands/doctor.ts";
 import { withholdGithubTokens } from "../../src/runner/github_token.ts";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../../src/util/credential_env.ts";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertPreflight, checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
@@ -647,7 +647,7 @@ describe("CW-14: zero-token auth probe bound into preflight.json", () => {
     const { r, runDir } = await go("codex", "LOKI_CODEX_CLI", k.cli, { OPENAI_API_KEY: CANARY });
     expect(r.fatal).toBeNull(); expect(existsSync(k.log)).toBe(false);
     const raw = readFileSync(join(runDir, "preflight.json"), "utf8");
-    expect(raw).not.toContain(CANARY); expect(rec(runDir)).toEqual({ provider: "codex", auth_path: "api_key:OPENAI_API_KEY", probe: "skipped" });
+    expect(raw).not.toContain(CANARY); expect(rec(runDir)).toEqual({ provider: "codex", auth_path: "api_key:OPENAI_API_KEY", probe: "skipped", probe_reason: "credential is api_key; no zero-token check ran for it" });
   });
   test("claude logged out records failed", async () => {
     const d = tmpRoot("e10-pf-cw14c-"); const cli = join(d, "claude");
@@ -727,5 +727,36 @@ describe("RQ-11 (#351): zero-token ANTHROPIC_API_KEY probe", () => {
     const target = stub(200); const srv = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 302, headers: { location: `${target.url}/v1/models` } }) });
     const { r, runDir } = await go(`http://127.0.0.1:${srv.port}`); srv.stop(true); target.stop();
     expect(target.seen.length).toBe(0); expect(r.fatal).toBeNull(); expect(rec(runDir).probe).toBe("unknown");
+  });
+});
+
+describe("RQ-12: preflight.json probe holds the outcome of the check that ran", () => {
+  const rec = (runDir: string) => JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8"));
+  const go = async (provider: string, envVar: string, extra: (home: string) => Record<string, string> = () => ({})) => {
+    const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1"); const home = env.HOME!;
+    const r = await checkPreflight({ repoDir: dir, provider, pr: false, runDir, env: { ...env, [envVar]: stubCli(), ...extra(home) } }); return { r, rec: rec(runDir) };
+  };
+  test("a check that ran is never recorded skipped, one case per provider", async () => {
+    const login = (cmd: string) => { const d = tmpRoot("e10-pf-rq12-"); const p = join(d, "cli"); writeFileSync(p, `#!/bin/sh\n${cmd}\n`); chmodSync(p, 0o755); return p; };
+    const c = identifiedRepo(); const cRun = join(c.dir, ".loki", "runs", "r1");
+    const claude = await checkPreflight({ repoDir: c.dir, provider: "claude", pr: false, runDir: cRun, env: { ...c.env, LOKI_CLAUDE_CLI: login(`echo '{"loggedIn":true}'`) } });
+    expect(claude.fatal).toBeNull(); expect(rec(cRun).probe).toBe("ok");
+    const codex = await go("codex", "LOKI_CODEX_CLI"); expect(codex.rec.probe).toBe("ok");
+    const cline = await go("cline", "LOKI_CLINE_CLI", (h) => { mkdirSync(join(h, ".cline")); return {}; }); expect(cline.rec.probe).toBe("ok");
+    const opencode = await go("opencode", "LOKI_OPENCODE_CLI", (h) => { mkdirSync(join(h, ".local", "share", "opencode"), { recursive: true }); writeFileSync(join(h, ".local", "share", "opencode", "auth.json"), "{}"); return {}; }); expect(opencode.rec.probe).toBe("ok");
+    const aider = await go("aider", "LOKI_AIDER_CLI"); expect(aider.rec.probe).toBe("unknown");
+  });
+  test("a warn result records unknown, not skipped", async () => {
+    for (const [p, v] of [["aider", "LOKI_AIDER_CLI"], ["cline", "LOKI_CLINE_CLI"], ["opencode", "LOKI_OPENCODE_CLI"]] as const) {
+      const x = await go(p, v); expect(x.r.warnings.join("\n")).toContain(`no ${p} login or API key found`); expect(x.rec.probe).toBe("unknown"); expect(x.rec.probe_reason).toBeUndefined();
+    }
+  });
+  test("LOKI_PREFLIGHT_PROBE=0 records skipped with its reason", async () => {
+    const x = await go("aider", "LOKI_AIDER_CLI", () => ({ LOKI_PREFLIGHT_PROBE: "0" }));
+    expect(x.rec.probe).toBe("skipped"); expect(x.rec.probe_reason).toBe("LOKI_PREFLIGHT_PROBE=0");
+  });
+  test("no provider-name branch sets the probe in preflight.ts", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "preflight.ts"), "utf8");
+    expect(src).not.toMatch(/o\.provider === "(?:codex|cline|aider|opencode)"/); // only the claude CLI-login and key branches are named; every other provider goes through providerLoginIssue
   });
 });
