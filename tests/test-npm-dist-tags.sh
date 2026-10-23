@@ -24,21 +24,39 @@ if [ "$1" = view ] && [ -n "${STUB_OUTAGE:-}" ]; then
 fi
 case "$1 $2 $3" in
     "view $PKGN versions")
-        printf '['; paste -sd, "$ST/versions" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
+        # STUB_HIDE_VER=<ver> STUB_MATERIALIZE_AFTER=<n>: the version is absent from
+        # the first <n> versions reads (the registry has not materialized it yet).
+        c=$(( $(cat "$ST/vcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/vcalls"
+        if [ -n "${STUB_HIDE_VER:-}" ] && [ "$c" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then grep -vx "$STUB_HIDE_VER" "$ST/versions" > "$ST/visible"; else cp "$ST/versions" "$ST/visible"; fi
+        printf '['; paste -sd, "$ST/visible" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
+    "view $PKGN@"*" version")
+        # The version document: empty while the registry has not materialized it.
+        v="${2#"$PKGN"@}"
+        c=$(( $(cat "$ST/dcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/dcalls"
+        if [ -n "${STUB_HIDE_VER:-}" ] && [ "$v" = "$STUB_HIDE_VER" ] && [ "$c" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then exit 0; fi
+        grep -qx "$v" "$ST/versions" && echo "$v" ;;
     "view $PKGN dist-tags."*)
+        # The cached packument: frozen at its first snapshot, never current after a write.
         tag="${3#dist-tags.}"
-        # STUB_FRESH=<ver>: the first read of each tag returns the state file, every
-        # later read returns <ver> (another run moved the tag in between).
-        if [ -n "${STUB_FRESH:-}" ]; then
-            n=$(( $(cat "$ST/reads.$tag" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$ST/reads.$tag"
-            # STUB_FRESH=EMPTY: later reads succeed with an empty answer.
-            if [ "$n" -gt 1 ] && [ "$STUB_FRESH" = EMPTY ]; then exit 0; fi
-            [ "$n" -gt 1 ] && printf '%s\n' "$STUB_FRESH" > "$ST/$tag"
-        fi
-        cat "$ST/$tag" ;;
+        [ -f "$ST/stale.$tag" ] || cp "$ST/$tag" "$ST/stale.$tag"
+        cat "$ST/stale.$tag" ;;
+    "dist-tag ls "*)
+        for tag in latest next; do
+            # STUB_FRESH=<ver>: the first read of each tag returns the state file, every
+            # later read returns <ver> (another run moved the tag in between).
+            if [ -n "${STUB_FRESH:-}" ]; then
+                n=$(( $(cat "$ST/reads.$tag" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$ST/reads.$tag"
+                # STUB_FRESH=EMPTY: later reads succeed with an empty answer.
+                if [ "$n" -gt 1 ] && [ "$STUB_FRESH" = EMPTY ]; then exit 0; fi
+                [ "$n" -gt 1 ] && printf '%s\n' "$STUB_FRESH" > "$ST/$tag"
+            fi
+            echo "$tag: $(cat "$ST/$tag")"
+        done ;;
     "dist-tag add $PKGN@"*)
         spec="$3"; tag="$4"; ver="${spec#"$PKGN"@}"
         echo "add $ver $tag" >> "$ST/log"
+        # A write for a version the registry has not materialized is accepted and dropped.
+        if [ -n "${STUB_HIDE_VER:-}" ] && [ "$ver" = "$STUB_HIDE_VER" ] && [ "$(cat "$ST/dcalls" 2>/dev/null || echo 0)" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo "dropped $ver $tag" >> "$ST/log"; exit 0; fi
         printf '%s\n' "$ver" > "$ST/$tag"
         if [ "$tag" = latest ] && [ -n "${STUB_OVERTAKE:-}" ] && [ ! -e "$ST/overtook" ]; then
             : > "$ST/overtook"; printf '%s\n' "$STUB_OVERTAKE" > "$ST/latest"
@@ -52,7 +70,7 @@ chmod +x "$WORK/bin/npm"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -103,7 +121,7 @@ STUB_PKG=loki-mode-sdk STUB_OUTAGE=error run_case sdk-out "1.0.1" 1.0.1 1.0.1 1.
 for mode in error empty; do
     STUB_OUTAGE=$mode run_case "out-$mode" "11.54.0" 11.54.0 11.54.0 11.53.1
     { [ $CASE_RC -ne 0 ] && [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.0 ] \
-        && grep -q "refusing to move latest (fail closed)" <<<"$CASE_OUT"; } \
+        && grep -q "(fail closed)" <<<"$CASE_OUT"; } \
         && ok "view outage ($mode) refuses with zero writes" || bad "outage $mode: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
 done
 
@@ -133,6 +151,28 @@ run_case idem "11.54.0 11.54.1" 11.54.1 11.54.1 11.54.1
 STUB_FRESH=11.54.3 run_case fresh "11.54.1 11.54.2" 11.54.2 11.54.2 11.54.2
 { [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.3 ] && [ "$(cat "$CASE_ST/next")" = 11.54.3 ]; } \
     && ok "a tag read fresh-higher than the target is never written backwards" || bad "fresh: rc=$CASE_RC log=$(cat "$CASE_ST/log") latest=$(cat "$CASE_ST/latest")"
+
+
+# FC-DIST-TAG-SETTLE-WINDOW-SHORTER-THAN-REGISTRY-DELAY: the registry lists the new
+# version only after several reads (measured 192s to 312s after publish) and drops a
+# tag write for a version it has not materialized. No tag may be written before the
+# version is listed with a time entry; the old script wrote at once and ran out of tries.
+STUB_MAT_S=60 STUB_HIDE_VER=11.55.1 STUB_MATERIALIZE_AFTER=6 run_case mat "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.55.1 ] && [ "$(cat "$CASE_ST/next")" = 11.55.1 ] && ! grep -q '^dropped' "$CASE_ST/log"; } \
+    && ok "no tag is written until the registry lists the version; then both tags settle" || bad "mat: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+# A version that never materializes: bounded wait, zero writes, non-zero exit.
+ST="$WORK/never"; mkdir -p "$ST"; printf '%s\n' 11.55.0 11.55.1 > "$ST/versions"; echo 11.55.0 > "$ST/latest"; echo 11.55.0 > "$ST/next"; : > "$ST/log"
+never_out="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_HIDE_VER=11.55.1 STUB_MATERIALIZE_AFTER=999999 LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_MATERIALIZE_S=1 bash "$SCRIPT" 11.55.1 2>&1)"; never_rc=$?
+{ [ $never_rc -ne 0 ] && [ ! -s "$ST/log" ] && [ "$(cat "$ST/latest")" = 11.55.0 ] && grep -q "refusing to write any tag" <<<"$never_out"; } \
+    && ok "a version the registry never lists fails closed with zero tag writes" || bad "never: rc=$never_rc log=$(cat "$ST/log") $never_out"
+
+# FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT: the cached packument (npm view dist-tags.*)
+# keeps the old tags after the writes land; only `npm dist-tag ls` is current. The settle
+# check must read the uncached endpoint, so a stale view never fails a converged run.
+run_case stale "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.55.1 ] && [ "$(cat "$CASE_ST/next")" = 11.55.1 ]; } \
+    && ok "settle reads dist-tag ls, not the stale cached packument" || bad "stale: rc=$CASE_RC $CASE_OUT"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
