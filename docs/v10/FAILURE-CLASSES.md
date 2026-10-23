@@ -1607,3 +1607,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept (every site that stages files): commit stage (seal.ts) and backstopCommit (commit_filter.ts, via supervisor) both go through dropSet and are fixed together; attempts.ts, modernize/scheduler.ts and verify.ts stage inside fresh worktrees that hold no user untracked files; check_result.ts and pr_lessons.ts add explicit run-owned paths only; discard.ts already protects them.
 - Mechanism: untouchedUntracked (e10ext/preexisting_dirty.ts) returns the intake-untracked files whose bytes and mode still match the snapshot; dropSet resets them from the staged set. A file the run edited stays the run's change. Crash-written files are not in the snapshot (see FC-CRASH-WORK-READ-AS-PREEXISTING).
 - Fixture: loki-ts/tests/e10ext/commit_filter_guard.test.ts (commit stage and backstop); red before the change, green after; mutants: ignore the snapshot, treat an edited file as untouched.
+
+## FC-E10EXT-LINE-BUDGET-CROSSED-BY-ACCUMULATION Slices that each fit the e10ext budget summed past it, so structural-checks "line budgets" went red on main (1513 >= 1500)
+- User-visible vs raw: raw. No user output changes; the structural-checks gate fails on main and blocks every release behind it.
+- Law: a budget is a ceiling on the directory, not on a slice; the slice that crosses it moves cohesive code to the module that already owns that concern, never raises the cap.
+- Cause (measured): `find loki-ts/src/e10ext -name '*.ts'` counted 1513 lines with scripts/structural-checks.sh's awk rule; e10ext holds 15 files and the cap is 1500.
+- Siblings swept: engine10 core is 4979 of 5000 (no headroom to move code into it), modernize and contrib budgets, the earlier e10ext 1509 of 1500 recorded under the 10.7.1 train row.
+- Mechanism: currentBranch and restoreBranch (a git helper used by supervisor, base_guard and run_outputs) live in util/safe_git.ts, which owns git helpers and has no line budget; e10ext is 1492.
+- Fixture: scripts/structural-checks.sh "line budgets" PASS; loki-ts/tests/engine10/budget.test.ts and tests/util/fc25_safe_git.test.ts keep restoreBranch covered at its new path. Red on origin/main 5fa53fe11 (1513), green after.
