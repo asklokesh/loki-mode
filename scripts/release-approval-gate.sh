@@ -63,7 +63,7 @@
 #      A held slice denies even an approved commit. Holds match by slice id.
 #   4. Exempt only: a merge with an empty `git diff-tree --cc`, and a
 #      `release: vX.Y.Z` commit whose files are all in release.sh
-#      RELEASE_COMMIT_FILES (or loki-ts/dist/loki.js and its .map).
+#      RELEASE_COMMIT_FILES (or RELEASE_DIST_FILES, read from release.sh).
 # LOKI_RELEASE_APPROVED and --approve cover only the VERSION check below.
 #
 # Usage:
@@ -109,6 +109,7 @@ TOP="$(git rev-parse --show-toplevel)"
 [ -n "$APPROVALS" ] || APPROVALS="$TOP/docs/v10/BOARD.md"
 APPROVAL_RE='(TL|HIGH|CTO|tl-[0-9a-z]+|rev-[0-9a-z]+)( r[0-9]+)? APPROVE [0-9a-f]{9,40}'
 EXEMPT_FILES="$(sed -n 's/^RELEASE_COMMIT_FILES="\(.*\)"$/\1/p' "$SELF_DIR/release.sh" 2>/dev/null)"
+DIST_FILES="$(sed -n 's/^RELEASE_DIST_FILES="\(.*\)"$/\1/p' "$SELF_DIR/release.sh" 2>/dev/null)"
 TAB="$(printf '\t')"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || { printf 'release-approval-gate: no temp dir\n' >&2; exit 70; }
@@ -136,7 +137,8 @@ if [ -f "$APPROVALS" ]; then
             full="$(git rev-parse --verify -q "${tok}^{commit}" 2>/dev/null || true)"
             pid=""
             [ -n "$full" ] && pid="$(patch_id_of "$full")"
-            printf '%s\t%s\t%s\t%s\n' "$tok" "$full" "$aslice" "$pid" >> "$WORK/approved.tsv"
+            # "-" stands for no slice id: read with a tab IFS would collapse an empty field
+            printf '%s\t%s\t%s\t%s\n' "$tok" "$full" "${aslice:--}" "$pid" >> "$WORK/approved.tsv"
         done
     done < "$WORK/approval-lines.txt"
 fi
@@ -150,7 +152,7 @@ is_release_exempt() {
     [ -n "$EXEMPT_FILES" ] || return 1
     for f in $(git diff-tree --no-commit-id --name-only -r --root "$sha"); do
         case " $EXEMPT_FILES " in *" $f "*) continue ;; esac
-        case "$f" in loki-ts/dist/loki.js|loki-ts/dist/loki.js.map) continue ;; esac
+        case " $DIST_FILES " in *" $f "*) continue ;; esac
         return 1
     done
     return 0
@@ -188,8 +190,12 @@ for sha in $range_shas; do
 
     short="$(git rev-parse --short=9 "$sha")"
     subj="$(git log -1 --format=%s "$sha")"
+    if [ "$matched" = 1 ] && [ "$matched_slice" = "-" ]; then
+        printf '  %s %s: approval line has no board row (slice id), holds cannot be checked\n' "$short" "$subj" >> "$WORK/denied.txt"
+        continue
+    fi
     if [ "$matched" = 1 ]; then
-        if [ -n "$matched_slice" ] && grep -qxF -- "$matched_slice" "$WORK/held.txt"; then
+        if grep -qxF -- "$matched_slice" "$WORK/held.txt"; then
             printf '  %s %s: hold on %s\n' "$short" "$subj" "$matched_slice" >> "$WORK/denied.txt"
         fi
         continue

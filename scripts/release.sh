@@ -412,6 +412,8 @@ bump_all_version_files() {
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
+# Dist files a release commit stages; release-approval-gate.sh reads this line to exempt them.
+RELEASE_DIST_FILES="loki-ts/dist/loki.js loki-ts/dist/loki.js.map"
 RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md CHANGELOG.md"
 
 # --- Release gate (RELEASE_ON_RED, S-108) --------------------------------
@@ -918,7 +920,7 @@ run_ship() {
     for f in $ship_gen_changed; do
         git -C "$ROOT_DIR" add -- "$f"
     done
-    for f in loki-ts/dist/loki.js loki-ts/dist/loki.js.map; do
+    for f in $RELEASE_DIST_FILES; do
         [ -f "$ROOT_DIR/$f" ] || ship_refuse SHIP_DIST_MISSING "$f does not exist after the build"
         git -C "$ROOT_DIR" add -f -- "$f"
     done

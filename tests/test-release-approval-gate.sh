@@ -183,6 +183,12 @@ REL4="$(git rev-parse HEAD)"
 run_gate "$GATE" "$BASE..$REL4" "$T/none.md" LOKI_RELEASE_APPROVED=1
 expect "release commit with dist/evil.js is not exempt" '[ "$RC" = 1 ] && line_has "${REL4:0:9}" "unnamed"'
 
+# Case 12 (rev-b N3): an approval on a prose line has no slice id, so holds
+# cannot be checked; it is denied by name, never silently allowed.
+printf 'rev-b APPROVE %s (prose, no table row)\n' "$A" > "$T/rowless.md"
+run_gate "$GATE" "$BASE..$A" "$T/rowless.md"
+expect "rowless approval: denied, names missing board row" '[ "$RC" = 1 ] && line_has "${A:0:9}" "no board row"'
+
 # Case 7: replay of the real incident range, when the commits are present.
 cd "$REPO_ROOT" || exit 1
 if git cat-file -e "9556d6f16^{commit}" 2>/dev/null && git cat-file -e "8aad0307f^{commit}" 2>/dev/null; then
@@ -230,9 +236,13 @@ if mutate holdcol 's/st=\$(NF-2)/st=$7/'; then
     run_gate "$M/gate.sh" "$BASE..$A" "$T/six.md"
     expect "mutant hold-column: 6-column case goes red" '[ "$RC" = 0 ]'
 fi
-if mutate distglob 's/loki-ts\/dist\/loki.js|loki-ts\/dist\/loki.js.map/loki-ts\/dist\/*/'; then
+if mutate distglob 's/case " \$DIST_FILES " in \*" \$f "\*)/case "$f" in loki-ts\/dist\/*)/'; then
     run_gate "$M/gate.sh" "$BASE..$REL4" "$T/none.md" LOKI_RELEASE_APPROVED=1
     expect "mutant dist-glob: evil.js case goes red" '[ "$RC" = 0 ]'
+fi
+if mutate rowless 's/ && \[ "\$matched_slice" = "-" \]; then/ \&\& false; then/'; then
+    run_gate "$M/gate.sh" "$BASE..$A" "$T/rowless.md"
+    expect "mutant rowless: prose approval case goes red" '[ "$RC" = 0 ]'
 fi
 
 echo "Passed: $PASS Failed: $FAIL"
