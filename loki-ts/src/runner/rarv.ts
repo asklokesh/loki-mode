@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { resolveClaudeModel } from "../util/claude_model.ts";
+import { codexEffortForTier } from "../providers/claude_flags.ts";
 
 // ---------------------------------------------------------------------------
 // RARV tier mapping
@@ -135,16 +136,7 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
           return "sonnet";
       }
     case "codex":
-      switch (tier) {
-        case "planning":
-          return process.env["PROVIDER_EFFORT_PLANNING"] ?? "xhigh";
-        case "development":
-          return process.env["PROVIDER_EFFORT_DEVELOPMENT"] ?? "high";
-        case "fast":
-          return process.env["PROVIDER_EFFORT_FAST"] ?? "low";
-        default:
-          return "high";
-      }
+      return codexEffortForTier(tier);
     case "cline":
       return process.env["CLINE_DEFAULT_MODEL"] ?? process.env["LOKI_CLINE_MODEL"] ?? "default";
     case "aider":
