@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Cost claim verdict: PROVEN_AT(target) or NOT PROVEN.
+"""Cost claim verdict: PROVEN_AT(target), NOT PROVEN or INVALID.
+
+INVALID means the run cannot be read at all (retro 3.8.7): the environment
+record shows an identity variable (USER, LOGNAME, HOME) unset, or the positive
+control task was not accepted on every row. The CLI never prints PROVEN_AT
+without both an --env-record and a --control-task.
 
 Pure function over per-row results for a Loki arm and a floor arm. The claim is
 about the cost-per-accepted ratio (loki / floor). A paired bootstrap over tasks
@@ -145,12 +150,29 @@ def _loki_cost_profile(loki):
     return next(iter(profiles))
 
 
+def _control_problems(control_rows):
+    rows = list(control_rows)
+    if not rows:
+        return ["control: positive control has no rows"]
+    bad = sum(1 for r in rows if r.get("unmeasured") or r.get("accepted") is not True)
+    if bad:
+        return ["control: positive control not accepted on %d of %d row(s)"
+                % (bad, len(rows))]
+    return []
+
+
 def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
-                       iters=BOOTSTRAP_ITERS):
+                       iters=BOOTSTRAP_ITERS, environment=None,
+                       control_rows=None):
     """Return {verdict, target, ratio, ci_low, ci_high, unmeasured, cost_profile,
     reasons, ...}. cost_profile is the loki arm's profile (lean, default, off),
     "mixed" when the arm mixes or partly lacks it, null when no row names one."""
     reasons = []
+    invalid = []
+    if environment is not None:
+        invalid += ["env: %s" % p for p in _schema.identity_env_problems(environment)]
+    if control_rows is not None:
+        invalid += _control_problems(control_rows)
     loki_rows, floor_rows = _schema.without_retired(list(loki_rows)), _schema.without_retired(list(floor_rows))  # a retired task never feeds a claim
     unmeasured = sum(1 for r in list(loki_rows) + list(floor_rows)
                      if r.get("unmeasured"))
@@ -236,8 +258,15 @@ def cost_claim_verdict(loki_rows, floor_rows, target, seed=DEFAULT_SEED,
     if reasons and unmeasured:
         reasons.append("unmeasured: %d row(s) excluded" % unmeasured)
 
+    reasons = invalid + reasons
+    if invalid:
+        verdict = "INVALID"
+    else:
+        verdict = ("PROVEN_AT(%s)" % target) if not reasons else "NOT PROVEN"
     return {
-        "verdict": ("PROVEN_AT(%s)" % target) if not reasons else "NOT PROVEN",
+        "verdict": verdict,
+        "identity_checked": environment is not None,
+        "control_checked": control_rows is not None,
         "target": target,
         "ratio": ratio,
         "ci_low": lo,
@@ -295,9 +324,16 @@ def main(argv=None):
     ap.add_argument("--floor-arm", required=True)
     ap.add_argument("--target", type=_finite_positive, required=True)
     ap.add_argument("--exclude-task", action="append", default=[])
+    ap.add_argument("--env-record", help="attribution JSON (or its environment object); required for PROVEN_AT")
+    ap.add_argument("--control-task", help="known-solvable task id; every row must be accepted; required for PROVEN_AT")
     try:
         a = ap.parse_args(argv)
         rows, skipped = _load_rows(a.rows)
+        environment = None
+        if a.env_record:
+            with open(a.env_record) as f:
+                rec = json.load(f)
+            environment = rec.get("environment", rec) if isinstance(rec, dict) else {}
     except SystemExit as e:
         return 2 if e.code else 0
     except (OSError, ValueError) as e:
@@ -317,13 +353,30 @@ def main(argv=None):
         print("warning: --exclude-task %r matches no row" % t,
               file=sys.stderr)
     rows = [_map_row(r) for r in rows if r.get("task") not in excl]
-    loki = [r for r in rows if r.get("arm") == a.loki_arm]
-    floor = [r for r in rows if r.get("arm") == a.floor_arm]
-    v = cost_claim_verdict(loki, floor, a.target)
+    arm_rows = [r for r in rows if r.get("arm") in (a.loki_arm, a.floor_arm)]
+    control = None
+    if a.control_task:
+        control = [r for r in arm_rows if r.get("task") == a.control_task]
+        arm_rows = [r for r in arm_rows if r.get("task") != a.control_task]
+    loki = [r for r in arm_rows if r.get("arm") == a.loki_arm]
+    floor = [r for r in arm_rows if r.get("arm") == a.floor_arm]
+    v = cost_claim_verdict(loki, floor, a.target, environment=environment,
+                           control_rows=control)
+    if v["verdict"].startswith("PROVEN_AT"):
+        missing = []
+        if environment is None:
+            missing.append("env: no identity record (pass --env-record)")
+        if control is None:
+            missing.append("control: no positive control (pass --control-task)")
+        if missing:
+            v["verdict"] = "NOT PROVEN"
+            v["reasons"] = missing + v["reasons"]
     v["excluded_tasks"] = sorted(excl)
     v["unmatched_exclusions"] = unmatched
     v["skipped_non_object_rows"] = skipped
     print(json.dumps(v, indent=2, sort_keys=True))
+    if v["verdict"] == "INVALID":
+        return 3
     return 0 if v["verdict"].startswith("PROVEN_AT") else 1
 
 
