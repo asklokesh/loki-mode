@@ -56,14 +56,14 @@
 # in the range must be approved by SHA, or the range is DENIED (exit 1):
 #   1. Named: an approvals line (default docs/v10/BOARD.md, --approvals FILE)
 #      matching `<TL|HIGH|CTO|tl-x|rev-x>[ rN] APPROVE <sha 9-40 hex>` names it.
-#   2. Rebase-equal: its `git patch-id --stable` equals that of an approved SHA.
+#   2. Rebase-equal: its `git patch-id --verbatim` equals that of an approved SHA.
 #      A rebase that changed content has a new patch-id and needs a new approval.
 #   3. Hold: the approving row's slice id (first column) is held when any row
 #      with that id has status blocked or parked, or notes containing HOLD.
 #      A held slice denies even an approved commit. Holds match by slice id.
 #   4. Exempt only: a merge with an empty `git diff-tree --cc`, and a
 #      `release: vX.Y.Z` commit whose files are all in release.sh
-#      RELEASE_COMMIT_FILES (or loki-ts/dist/).
+#      RELEASE_COMMIT_FILES (or loki-ts/dist/loki.js and its .map).
 # LOKI_RELEASE_APPROVED and --approve cover only the VERSION check below.
 #
 # Usage:
@@ -116,14 +116,14 @@ cleanup_work() { case "$WORK" in */loki-run.*) rm -rf -- "$WORK" ;; esac; }
 : > "$WORK/approved.tsv"; : > "$WORK/held.txt"; : > "$WORK/denied.txt"
 
 patch_id_of() {
-    git diff-tree -p --root "$1" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1
+    git diff-tree -p --root "$1" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1
 }
 
 if [ -f "$APPROVALS" ]; then
     # Held slice ids: any row with status blocked/parked, or notes with HOLD.
     awk -F'|' '/^\|/ {
-        id=$2; gsub(/^ +| +$/, "", id); st=$7; gsub(/^ +| +$/, "", st); sub(/[@ ].*/, "", st)
-        notes=""; for (i=8; i<=NF; i++) notes = notes " " $i
+        id=$2; gsub(/^ +| +$/, "", id); st=$(NF-2); gsub(/^ +| +$/, "", st); sub(/[@ ].*/, "", st)
+        notes=$(NF-1)
         if (id != "" && (st == "blocked" || st == "parked" || notes ~ /(^|[^A-Za-z])HOLD([^A-Za-z]|$)/)) print id
     }' "$APPROVALS" | sort -u > "$WORK/held.txt"
     grep -E "$APPROVAL_RE" "$APPROVALS" > "$WORK/approval-lines.txt" || true
@@ -150,14 +150,20 @@ is_release_exempt() {
     [ -n "$EXEMPT_FILES" ] || return 1
     for f in $(git diff-tree --no-commit-id --name-only -r --root "$sha"); do
         case " $EXEMPT_FILES " in *" $f "*) continue ;; esac
-        case "$f" in loki-ts/dist/*) continue ;; esac
+        case "$f" in loki-ts/dist/loki.js|loki-ts/dist/loki.js.map) continue ;; esac
         return 1
     done
     return 0
 }
 
 shipped_count=0
-for sha in $(git rev-list --reverse "$RANGE" 2>/dev/null); do
+# Fail closed: an unreadable range must never read as an empty (allowed) one.
+if ! range_shas="$(git rev-list --reverse "$RANGE" 2>/dev/null)"; then
+    printf 'DENIED: cannot list commits in %s (bad range or unknown ref)\n' "$RANGE"
+    cleanup_work
+    exit 1
+fi
+for sha in $range_shas; do
     shipped_count=$((shipped_count + 1))
     parents="$(git rev-list --parents -n 1 "$sha" | wc -w | tr -d ' ')"
     if [ "$parents" -gt 2 ] && [ -z "$(git diff-tree --cc --no-commit-id "$sha" 2>/dev/null)" ]; then
