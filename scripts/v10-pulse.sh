@@ -1696,6 +1696,14 @@ def check_unreleased_merge_age():
 
 
 unreleased = safe(check_unreleased_merge_age)
+
+
+def _unreleased_count_unknown():
+    """True when the unreleased count/tag is UNKNOWN: the check failed, or
+    the local tag disagrees with npm next (set below, before any caller runs)."""
+    return unreleased is None or _npm_tag_mismatch is not None
+
+
 # S-139 / BACKLOG 136: the "N commit(s) since <tag>" report below trusts
 # `unreleased["tag"]` (the newest local v* tag) as ground truth for "what was
 # last released". When npm's own latest published version (from the SAME
@@ -1704,8 +1712,8 @@ unreleased = safe(check_unreleased_merge_age)
 # something npm never got), and "N commits since v9.54.2" is a confident
 # answer built on a basis known to be wrong. Report UNKNOWN instead of
 # either sub-case (0 or >0 unreleased commits) -- `unreleased` itself is left
-# untouched so TRAIN_LATE (which only checks `unreleased is None`) is not
-# affected by this npm-only cross-check.
+# untouched; every verdict check gates on _unreleased_count_unknown() so none
+# emits a VIOLATION off this UNKNOWN input (FC-VERDICT-FROM-UNKNOWN-INPUT).
 _npm_tag_mismatch = None
 if unreleased is not None and npm_result is not None:
     _local_tag_version = unreleased["tag"][1:] if unreleased["tag"].startswith("v") else unreleased["tag"]
@@ -1819,7 +1827,10 @@ _TRAIN_LATE_THRESHOLD_MIN = 25
 
 
 def check_train_late():
-    if unreleased is None:
+    # FC-VERDICT-FROM-UNKNOWN-INPUT: one shared rule. A check whose input
+    # (the unreleased count) this run already marked UNKNOWN reports UNKNOWN,
+    # never a VIOLATION. `_unreleased_count_unknown()` is the shared test.
+    if _unreleased_count_unknown():
         return None
     if unreleased["unreleased_commits"] == 0:
         return {"applicable": False}
@@ -1834,7 +1845,7 @@ if train_late is None:
     # unreleased is itself UNKNOWN (already reported above) or this check
     # crashed -- either way, never silently skip without a trace.
     mark_unknown("train_late")
-    emit("Train push cadence: UNKNOWN (could not evaluate merged-unreleased state)")
+    emit("Train push cadence: UNKNOWN (merged-but-unreleased count is UNKNOWN or the check could not be evaluated)")
 elif not train_late["applicable"]:
     emit("Train push cadence: n/a (no merged-but-unreleased commits)")
 elif train_late["unknown"]:
@@ -1893,7 +1904,7 @@ def _docs_only_path(path):
 
 
 def check_release_cadence_d37():
-    if unreleased is None or npm_result is None or _npm_tag_mismatch is not None:
+    if _unreleased_count_unknown() or npm_result is None:
         return None
     tag = unreleased["tag"]
     rc, out, _ = git(["log", "--first-parent", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
@@ -1979,7 +1990,7 @@ def _head_version_only():
 
 
 def check_d44():
-    if main_sha is None or unreleased is None:
+    if main_sha is None or _unreleased_count_unknown():
         return None
     runs = _tier_b_push_runs()
     if runs is None:
@@ -2083,7 +2094,7 @@ def find_cited_merge_sha(row_text):
 
 
 def check_merged_not_released_stale():
-    if unreleased is None or _npm_tag_mismatch is not None:
+    if _unreleased_count_unknown():
         return None
     tag = unreleased["tag"]
     try:

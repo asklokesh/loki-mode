@@ -3706,6 +3706,22 @@ else
 fi
 PULSE_SH="$RQ98_SAVE_SH"
 
+echo "FC-VERDICT-FROM-UNKNOWN-INPUT -- TRAIN_LATE stays UNKNOWN when the unreleased count is UNKNOWN (tag disagrees with npm next)"
+# Reuses the T40 tag-mismatch repo (tag v9.54.2, npm next 9.55.0, one commit after the tag)
+# with a push time 26 min old: base fired TRAIN_LATE off the count the same run marked UNKNOWN.
+if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_MISMATCH_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_LAST_TRAIN_PUSH=1790472840" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE" \
+    && printf '%s\n' "$OUT" | grep -qF "Train push cadence: UNKNOWN (merged-but-unreleased count is UNKNOWN" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*train_late"; then
+    ok "TRAIN_LATE reports UNKNOWN, never a VIOLATION, when the unreleased count is UNKNOWN"
+else
+    bad "FC-VERDICT-FROM-UNKNOWN-INPUT TRAIN_LATE case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
 [ "$FAIL" -eq 0 ]

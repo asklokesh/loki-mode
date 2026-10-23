@@ -2016,3 +2016,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every MAIN_REF consumer (Main CI, unreleased-merge age, release cadence, moat baseline, unevidenced-claim scan, release-on-red) shares one resolved ref; the `gh --branch` streak call keeps the branch name `main`.
 - Mechanism: one resolution in scripts/v10-pulse.sh. PULSE_MAIN_REF unset and local main a strict ancestor of refs/remotes/origin/main: MAIN_REF becomes the remote-tracking ref and STALE_MAIN_REF fires with N. Diverged: STALE_MAIN_REF says diverged and the ref is unchanged. An explicit PULSE_MAIN_REF wins. No fetch.
 - Fixture: tests/test-v10-pulse.sh "RQ-98" (behind by 2, equal, diverged, explicit pin; two mutants).
+
+## FC-VERDICT-FROM-UNKNOWN-INPUT The pulse emitted `VIOLATION: TRAIN_LATE` at main 530b63296 off a merged-but-unreleased count (stale local tag v11.70.4) that the same run had already marked UNKNOWN against npm next 11.74.0
+- User-visible vs raw: user-visible. Main was fully released (`git log -1 main` = "release: v11.74.0"), yet the pulse told the operator to push a release train.
+- Law broken: a verdict is never computed from an input the same run already marked UNKNOWN; it reports UNKNOWN.
+- Siblings swept: every reader of `unreleased` in scripts/v10-pulse.sh: TRAIN_LATE (fixed, was gated only on `unreleased is None`), D44 green-unreleased RELEASE_CADENCE (fixed, same gap), release cadence D37 and merged-not-released stale (already gated, now via the shared helper).
+- Mechanism: one helper `_unreleased_count_unknown()` in scripts/v10-pulse.sh (check failed OR local tag disagrees with npm next); every check reading `unreleased` returns None (UNKNOWN) when it is true.
+- Fixture: tests/test-v10-pulse.sh "FC-VERDICT-FROM-UNKNOWN-INPUT" (tag v9.54.2 vs npm next 9.55.0, push 26 min old: UNKNOWN line, no TRAIN_LATE).
