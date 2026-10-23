@@ -751,11 +751,11 @@ launch_slot
 unit_init
     # Pattern starts with a non-dash char so it is never mis-parsed as a flag
     # (some environments alias grep to ugrep, which reads a leading '-nt' as the
-    # -t option). Matches the `src/cli.ts" -nt "..dist/loki.js"` freshness arm.
-    if grep -qF 'src/cli.ts" -nt "$REPO_ROOT/loki-ts/dist/loki.js"' "$REPO_ROOT/bin/loki"; then
+    # -t option). Matches the `find loki-ts/src -newer dist/loki.js` freshness arm.
+    if grep -qF 'find "$REPO_ROOT/loki-ts/src" -type f -newer "$REPO_ROOT/loki-ts/dist/loki.js"' "$REPO_ROOT/bin/loki"; then
         log_pass "bin/loki: stale-dist freshness guard present (src preferred when newer than dist)"
     else
-        log_fail "bin/loki freshness guard" "the '-nt' dist-vs-src check is missing from bin/loki"
+        log_fail "bin/loki freshness guard" "the 'find src -newer dist' check is missing from bin/loki"
     fi
 } > "$UO" 2>&1 &
 
