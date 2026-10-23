@@ -1,8 +1,8 @@
 // RARV cycle tier mapping + project complexity detection.
 // Mirrors bash autonomy/run.sh:
-//   - get_rarv_tier        (lines 1484-1505)
-//   - get_rarv_phase_name  (lines 1508-1519)
-//   - get_provider_tier_param (lines 1524-1571)
+//   - get_rarv_tier
+//   - get_rarv_phase_name
+//   - get_provider_tier_param
 //   - detect_complexity    (lines 1338-1428)
 //
 // Note: there is no rarv.md in docs/phase4-research/. This module follows
@@ -26,14 +26,14 @@ export type Provider = "claude" | "codex" | "cline" | "aider" | "opencode";
 
 export interface GetRarvTierOptions {
   // When set and `legacy` is false, the session-pinned model overrides the
-  // RARV cycle (matches run.sh).
+  // RARV cycle (matches run.sh get_rarv_tier()).
   sessionModel?: string;
   // When true, force RARV-driven rotation (LOKI_LEGACY_TIER_SWITCHING=true).
   legacy?: boolean;
 }
 
 // Pure RARV cycle (iteration % 4) -> tier. Always available regardless of
-// session-pinning behaviour. Mirrors run.sh.
+// session-pinning behaviour. Mirrors run.sh get_rarv_tier().
 function rarvCycleTier(iteration: number): RarvTier {
   // Bash is `(iteration % 4)` over a non-negative iteration counter.
   // Normalize negatives just in case (((n % 4) + 4) % 4).
@@ -88,7 +88,7 @@ export function getRarvTier(iteration: number, options: GetRarvTierOptions = {})
   return sessionModelToTier(sessionModel);
 }
 
-// Phase name for logging (mirrors run.sh). Always the RARV cycle
+// Phase name for logging (mirrors run.sh get_rarv_phase_name()). Always the RARV cycle
 // phase (independent of session pinning).
 export function getRarvPhaseName(iteration: number): RarvPhase {
   const step = ((Math.trunc(iteration) % 4) + 4) % 4;
@@ -108,7 +108,7 @@ export function getRarvPhaseName(iteration: number): RarvPhase {
 }
 
 // Provider-specific tier parameter (legacy fallback table from
-// run.sh). Production code prefers resolve_model_for_tier from
+// run.sh get_provider_tier_param()). Production code prefers resolve_model_for_tier from
 // providers/*.sh, but the static table is what dashboards/tests rely on.
 export function getProviderTierParam(tier: RarvTier | string, provider: Provider | string): string {
   switch (provider) {
@@ -180,7 +180,7 @@ export interface ComplexityDetails {
   hasMicroservices: boolean;
 }
 
-// Source-file extensions counted by run.sh.
+// Source-file extensions counted by run.sh detect_complexity().
 const SOURCE_EXTS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",
@@ -196,7 +196,7 @@ const SOURCE_EXTS: ReadonlySet<string> = new Set([
   ".kt",
 ]);
 
-// Directory components excluded by `! -path "*/X/*"` in run.sh.
+// Directory components excluded by `! -path "*/X/*"` in run.sh detect_complexity().
 const EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
@@ -206,9 +206,9 @@ const EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   "__pycache__",
 ]);
 
-// Substrings detected by `grep -rq` for external integrations (run.sh).
+// Substrings detected by `grep -rq` for external integrations (run.sh detect_complexity()).
 const EXTERNAL_PATTERN = /oauth|SAML|OIDC|stripe|twilio|aws-sdk|@google-cloud|azure/i;
-// File globs scanned for external integrations: *.json, *.ts, *.js (run.sh).
+// File globs scanned for external integrations: *.json, *.ts, *.js (run.sh detect_complexity()).
 const EXTERNAL_SCAN_EXTS: ReadonlySet<string> = new Set([".json", ".ts", ".js"]);
 
 interface WalkResult {
@@ -314,15 +314,15 @@ function analyzePrd(prdPath: string): PrdAnalysis {
         }
       }
     } catch {
-      // Fallback: count occurrences of key fields by regex (run.sh).
+      // Fallback: count occurrences of key fields by regex (run.sh detect_complexity()).
       const m = raw.match(/"title"|"name"|"feature"|"requirement"/g);
       featureCount = m ? m.length : 0;
     }
   } else {
-    // Markdown: count h2 headers and checklist items (run.sh).
+    // Markdown: count h2 headers and checklist items (run.sh detect_complexity()).
     const featMatches = raw.match(/^(##|- \[)/gm);
     featureCount = featMatches ? featMatches.length : 0;
-    // Section count uses h2 + h3 headers (run.sh).
+    // Section count uses h2 + h3 headers (run.sh detect_complexity()).
     const sectionMatches = raw.match(/^(##|###)/gm);
     sectionCount = sectionMatches ? sectionMatches.length : 0;
   }
@@ -339,7 +339,7 @@ function analyzePrd(prdPath: string): PrdAnalysis {
   return { prdComplexity };
 }
 
-// Detect project complexity. Mirrors detect_complexity (run.sh).
+// Detect project complexity. Mirrors detect_complexity (run.sh detect_complexity()).
 // Returns a structured details object so callers can log/debug; the primary
 // value is `details.complexity`.
 export function detectComplexity(opts: DetectComplexityOptions = {}): ComplexityDetails {
@@ -385,7 +385,7 @@ export function detectComplexity(opts: DetectComplexityOptions = {}): Complexity
     prdComplexity = analyzePrd(opts.prdPath).prdComplexity;
   }
 
-  // Final decision tree (run.sh).
+  // Final decision tree (run.sh detect_complexity()).
   let complexity: Complexity;
   if (fileCount <= 5 && prdComplexity === "simple" && !hasExternal && !hasMicroservices) {
     complexity = "simple";

@@ -154,7 +154,7 @@ function readLinesSafe(path: string, maxLines: number): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// SDLC phases list (run.sh)
+// SDLC phases list (run.sh "SDLC_PHASES_ENABLED:")
 // ---------------------------------------------------------------------------
 
 const PHASE_KEYS = [
@@ -181,11 +181,11 @@ function buildPhases(env: Readonly<Record<string, string | undefined>>): string 
 
 // ---------------------------------------------------------------------------
 // Static instruction generators (deterministic, byte-stable).
-// These literals MUST match autonomy/run.sh exactly.
+// These literals MUST match autonomy/run.sh build_prompt() exactly.
 // ---------------------------------------------------------------------------
 
 function rarvInstruction(maxParallel: number, perpetual: boolean): string {
-  // run.sh -- 7.114.0 (rank 8): mode-aware. The never-finished tail is
+  // run.sh build_prompt() -- 7.114.0 (rank 8): mode-aware. The never-finished tail is
   // gated on `perpetual` (which the caller resolves as AUTONOMY_MODE=perpetual ||
   // PERPETUAL_MODE || no COMPLETION_PROMISE, matching the bash split). Finite
   // runs get a "stop when verified-done, gates are the authority" directive.
@@ -202,7 +202,7 @@ function completionInstruction(
   iteration: number,
   maxIterations: number,
 ): string {
-  // run.sh -- v7.6.0 parity fix: bash includes FALLBACK clause in
+  // run.sh build_prompt() -- v7.6.0 parity fix: bash includes FALLBACK clause in
   // both branches (COMPLETION_PROMISE set and NO COMPLETION PROMISE SET).
   // TS previously omitted them, causing ~82 bytes of divergence per fixture.
   if (completionPromise.length > 0) {
@@ -212,7 +212,7 @@ function completionInstruction(
 }
 
 function autonomousSuffix(perpetual: boolean, completionPromise: string): string {
-  // run.sh
+  // run.sh build_prompt()
   if (perpetual) {
     return `CRITICAL AUTONOMY RULES: 1) NEVER ask questions - just decide. 2) NEVER wait for confirmation - just act. 3) NEVER say 'done' or 'complete' - there's always more to improve. 4) NEVER stop voluntarily - if out of tasks, create new ones (add tests, optimize, refactor, add features). 5) Work continues PERPETUALLY. Even if PRD is implemented, find bugs, add tests, improve UX, optimize performance.`;
   }
@@ -220,12 +220,12 @@ function autonomousSuffix(perpetual: boolean, completionPromise: string): string
 }
 
 function sdlcInstruction(phases: string): string {
-  // run.sh
+  // run.sh "SDLC_PHASES_ENABLED:"
   return `SDLC_PHASES_ENABLED: [${phases}]. Execute ALL enabled phases. Log results to .loki/logs/. See .loki/SKILL.md for phase details. Skill modules at .loki/skills/.`;
 }
 
 const ANALYSIS_INSTRUCTION =
-  // run.sh - kept byte-identical to the bash route (v7.8.1 three-pass analysis)
+  // run.sh "CODEBASE_ANALYSIS_MODE:" - kept byte-identical to the bash route (v7.8.1 three-pass analysis)
   `CODEBASE_ANALYSIS_MODE: No PRD provided. Reverse-engineer a precise PRD from the existing code in three passes, cheaply and without blind full scans. PASS 1 (orient): list the top two directory levels; read ONLY high-signal manifests that exist (package.json, requirements.txt, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, composer.json) to identify language, framework, and scripts; read README and any docs index. PASS 2 (locate): from the manifests and conventional layout, identify the entrypoints, the public API or CLI surface, the test directory and runner, and the config or env contract; read those first; skip generated, vendored, and lockfile content; prefer LSP workspace symbols when the lsp-proxy server is available. PASS 3 (write): write .loki/generated-prd.md with these sections: Overview, Detected Stack, Entrypoints and Components, Existing Behavior and Requirements (reverse-engineered, observable), Test and Build Setup, Gaps and TODOs, Out of Scope. Keep it under 200 lines, plain Markdown, no emojis, no em dashes. Do not invent features not evidenced by the code. THEN execute SDLC phases against that PRD.`;
 
 // v7.40.0 (#584): AUTONOMOUS complexity-gated Claude Code Dynamic Workflow
@@ -353,7 +353,7 @@ function analysisInstruction(
 }
 
 const MEMORY_INSTRUCTION =
-  // run.sh
+  // run.sh "MEMORY SYSTEM:"
   `MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory.`;
 
 // USAGE.md instruction (v7.6.0) -- always-on end-user handoff doc.
@@ -446,7 +446,7 @@ function docScopeInstruction(env: Readonly<Record<string, string | undefined>>):
 }
 
 // ---------------------------------------------------------------------------
-// load_ledger_context (run.sh) -- newest LEDGER-*.md, head -100 lines.
+// load_ledger_context (run.sh load_ledger_context()) -- newest LEDGER-*.md, head -100 lines.
 // ---------------------------------------------------------------------------
 
 function loadLedgerContext(cwd: string): string {
@@ -477,7 +477,7 @@ function loadLedgerContext(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// load_handoff_context (run.sh). Newest .json (within 1 day, bash uses
+// load_handoff_context (run.sh load_handoff_context()). Newest .json (within 1 day, bash uses
 // `find -mtime -1`); falls back to newest .md (head -80 lines).
 // We mirror the touch-on-load semantics by NOT enforcing the mtime filter --
 // the bash test harness touches files just before invocation, so it is
@@ -513,7 +513,7 @@ async function loadHandoffContext(cwd: string): Promise<string> {
 
   const json = pickNewest(".json");
   if (json !== null) {
-    // run.sh -- format JSON via Python. We replicate the format in TS
+    // run.sh load_handoff_context() -- format JSON via Python. We replicate the format in TS
     // since it is a stable schema (no need to shell out).
     const raw = readFileSafe(json);
     if (raw === null) return "";
@@ -554,7 +554,7 @@ async function loadHandoffContext(cwd: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// load_startup_learnings (run.sh). Reads .loki/state/memory-context.json,
+// load_startup_learnings (run.sh load_startup_learnings()). Reads .loki/state/memory-context.json,
 // emits "STARTUP LEARNINGS (pre-loaded):" header + top 5 memories formatted
 // as `- [source|score] summary[:100]`.
 // ---------------------------------------------------------------------------
@@ -598,7 +598,7 @@ function loadStartupLearnings(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// retrieve_memory_context (run.sh). Stub: returns empty unless
+// retrieve_memory_context (run.sh retrieve_memory_context()). Stub: returns empty unless
 // .loki/memory/index.json exists. The full implementation shells out to
 // Python with the in-tree memory package; for prompt-parity in fixtures
 // (which never include index.json) the empty-return path is sufficient.
@@ -615,7 +615,7 @@ function retrieveMemoryContext(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// load_queue_tasks (run.sh). Reads .loki/queue/in-progress.json (if
+// load_queue_tasks (run.sh load_queue_tasks()). Reads .loki/queue/in-progress.json (if
 // present) AND .loki/queue/pending.json. Each is parsed and the first 3
 // tasks are formatted in either rich (PRD-source) or legacy form. Combined
 // with "IN-PROGRESS TASKS (EXECUTE THESE):\n" / "PENDING:\n" headers and
@@ -729,7 +729,7 @@ function loadQueueTasks(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Gate failure context (run.sh).
+// Gate failure context (run.sh "QUALITY GATE FAILURES FROM PREVIOUS ITERATION").
 // ---------------------------------------------------------------------------
 
 async function buildGateFailureContext(
@@ -738,7 +738,7 @@ async function buildGateFailureContext(
 ): Promise<string> {
   let ctx = "";
 
-  // Gate-failure injection (run.sh). Guarded on
+  // Gate-failure injection (run.sh "QUALITY GATE FAILURES FROM PREVIOUS ITERATION"). Guarded on
   // gate-failures.txt presence: when absent, this whole block is skipped and
   // ctx stays "" (byte-identical to the prior early-return behavior).
   const gfPath = resolve(cwd, ".loki/quality/gate-failures.txt");
@@ -746,11 +746,11 @@ async function buildGateFailureContext(
   // (e.g. a prior-iteration stack-trace dump) cannot balloon the context window.
   // Every OTHER reader in this module caps (readBytesSafe 4000/8000/16000,
   // readLinesSafe 80/100, slice 200/300/500); this one was uncapped. The bash
-  // route still does an uncapped `cat` (autonomy/run.sh) -- this 8000-byte
+  // route still does an uncapped `cat` (autonomy/run.sh build_prompt()) -- this 8000-byte
   // cap matches the most-capping siblings and never triggers on the parity
   // fixtures (largest is fixture-36 at 2442 bytes), so the parity contract stays
   // green while the pathological case is bounded. FOLLOW-UP: apply the same cap
-  // to the bash route at run.sh (cannot edit that file here).
+  // to the bash route at run.sh build_prompt() (cannot edit that file here).
   const failures = readBytesSafe(gfPath, 8000);
   if (failures !== null) {
     // readBytesSafe already strips trailing newlines (parity with bash printf).
@@ -797,7 +797,7 @@ async function buildGateFailureContext(
     }
   }
 
-  // P1-3 semantic test-authenticity findings (run.sh). Surfaced
+  // P1-3 semantic test-authenticity findings (run.sh "SEMANTIC TEST-AUTHENTICITY FINDINGS"). Surfaced
   // INDEPENDENTLY of gate-failures.txt: the completion-promise arm writes
   // semantic-findings.txt without appending any gate token, so nesting this
   // under the gate-failures guard would silently drop exactly that case. The
@@ -807,10 +807,10 @@ async function buildGateFailureContext(
 
   // P1-4 invariant-violation findings. Surfaced INDEPENDENTLY of
   // gate-failures.txt, mirroring the semantic block above. The bash route's
-  // enforce_invariant_integrity (run.sh) WRITES
+  // enforce_invariant_integrity (run.sh enforce_invariant_integrity()) WRITES
   // .loki/quality/invariant-findings.txt -- the blocking write CRITICAL/HIGH
-  // (run.sh) and the advisory write MED/LOW (run.sh) -- but neither
-  // route had a prompt-reader: run.sh only logs the path (run.sh), and the
+  // (run.sh enforce_invariant_integrity()) and the advisory write MED/LOW (run.sh enforce_invariant_integrity()) -- but neither
+  // route had a prompt-reader: run.sh only logs the path (run.sh "Details under .loki/quality/invariant-findings.txt"), and the
   // Bun runInvariants (quality_gates.ts:810) deliberately does NOT persist the
   // file today, calling out a build_prompt.ts reader as the prerequisite
   // follow-up (quality_gates.ts:786-794). This is that reader: it surfaces the
@@ -887,7 +887,7 @@ function buildSelfHealContext(cwd: string): string {
     `SELF_HEAL_HINT: the previous iteration (#${it}) failed with error_class=${ec}. ` +
     `${brief} Address this specific failure FIRST before any new work.`;
   // Archive-then-clear so it injects once (LEARN-FORWARD parity with bash
-  // _loki_archive_last_error, run.sh): the record lands in
+  // _loki_archive_last_error, run.sh _loki_archive_last_error()): the record lands in
   // failure-history.jsonl before the single file is removed. Mirror bash EXACTLY:
   // read the existing history, append this record, keep only the most recent 50
   // entries (bounded -- never grows unbounded), and write atomically via a
@@ -925,7 +925,7 @@ function safeReadLocal(path: string): string | null {
 // P1-3 helper: surface the specific semantic test-authenticity findings
 // (which fake test, which line) that quality_gates.ts wrote to
 // .loki/quality/semantic-findings.txt. Byte-for-byte mirror of
-// run.sh -- grep severity-tagged lines, head -20, prepend the
+// run.sh "SEMANTIC TEST-AUTHENTICITY FINDINGS" -- grep severity-tagged lines, head -20, prepend the
 // exact bash prefix (including its leading space). Returns "" when the file
 // is absent or has no severity-tagged lines (e.g. only the header line).
 function buildSemanticFindingsBlock(cwd: string): string {
@@ -937,13 +937,13 @@ function buildSemanticFindingsBlock(cwd: string): string {
     .filter((l) => /\[(CRITICAL|HIGH|MEDIUM|LOW)\]/.test(l))
     .slice(0, 20);
   if (lines.length === 0) return "";
-  // Prefix copied verbatim from run.sh, including the leading space.
+  // Prefix copied verbatim from run.sh "SEMANTIC TEST-AUTHENTICITY FINDINGS", including the leading space.
   return ` SEMANTIC TEST-AUTHENTICITY FINDINGS (fix the fake tests; an assertion must verify a value that flows through the code under test, not echo a literal back): ${lines.join("\n")}`;
 }
 
 // P1-4 helper: surface the specific invariant-violation findings (which
 // invariant, which file/property) that enforce_invariant_integrity
-// (run.sh) wrote to .loki/quality/invariant-findings.txt. Structural
+// (run.sh enforce_invariant_integrity()) wrote to .loki/quality/invariant-findings.txt. Structural
 // mirror of buildSemanticFindingsBlock: read the file, keep only severity-tagged
 // lines, head -20 cap, prepend an actionable header (with a leading space,
 // matching the semantic block so concatenation reads cleanly). The two bash
@@ -1073,7 +1073,7 @@ async function buildStructuredFindingsBlock(cwd: string): Promise<string> {
 }
 
 async function readSummaryField(path: string): Promise<string> {
-  // Matches run.sh: `python3 -c "import json; d=json.load(...); print(d.get('summary',''))"`.
+  // Matches run.sh build_prompt(): `python3 -c "import json; d=json.load(...); print(d.get('summary',''))"`.
   const raw = readFileSafe(path);
   if (raw === null) return "";
   try {
@@ -1093,7 +1093,7 @@ async function readSummaryField(path: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// App runner info (run.sh).
+// App runner info (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildAppRunnerInfo(cwd: string): string {
@@ -1116,7 +1116,7 @@ function buildAppRunnerInfo(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Playwright info (run.sh).
+// Playwright info (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildPlaywrightInfo(cwd: string): string {
@@ -1145,7 +1145,7 @@ function buildPlaywrightInfo(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// BMAD context (run.sh).
+// BMAD context (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildBmadContext(cwd: string): string {
@@ -1289,7 +1289,7 @@ function pythonJsonDumps(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// OpenSpec delta context (run.sh).
+// OpenSpec delta context (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildOpenspecContext(cwd: string): string {
@@ -1326,7 +1326,7 @@ function buildOpenspecContext(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// MiroFish context (run.sh).
+// MiroFish context (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildMirofishContext(cwd: string): string {
@@ -1416,7 +1416,7 @@ function buildMirofishContext(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Magic Modules context (run.sh).
+// Magic Modules context (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildMagicContext(cwd: string, targetDir: string): string {
@@ -1446,7 +1446,7 @@ function buildMagicContext(cwd: string, targetDir: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Checklist status (run.sh).
+// Checklist status (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildChecklistStatus(
@@ -1494,7 +1494,7 @@ async function resolveDynamicSections(
   const { ctx, retry, prd, iteration } = opts;
   const env = ctx.env;
 
-  // context_injection (run.sh) -- ledger+handoff (resume only),
+  // context_injection (run.sh build_prompt()) -- ledger+handoff (resume only),
   // startup learnings (iteration==1 only), and retrieved memory.
   let contextInjection = "";
   if (retry > 0) {
@@ -1512,14 +1512,14 @@ async function resolveDynamicSections(
 
   const contextSection = contextInjection.length > 0 ? `CONTEXT: ${contextInjection}` : "";
 
-  // human_directive (run.sh).
+  // human_directive (run.sh build_prompt()).
   const humanInput = envStr(env, "LOKI_HUMAN_INPUT", "");
   const humanDirective =
     humanInput.length > 0
       ? `HUMAN_DIRECTIVE (PRIORITY): ${humanInput} Execute this directive BEFORE continuing normal tasks.`
       : "";
 
-  // queue_tasks (run.sh).
+  // queue_tasks (run.sh build_prompt()).
   const rawQueue = loadQueueTasks(ctx.cwd);
   const queueTasks =
     rawQueue.length > 0
@@ -1591,7 +1591,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   const sdlcText = sdlcInstruction(phases);
   const sections = await resolveDynamicSections(opts, targetDir);
 
-  // ----- Legacy single-line layout (run.sh) ----------------------
+  // ----- Legacy single-line layout (run.sh build_prompt()) ----------------------
   if (legacyOrdering) {
     if (providerDegraded) {
       return buildLegacyDegraded(opts, sections, prd, retry, iteration);
@@ -1619,12 +1619,12 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   // the degraded path and emitted inline below alongside USAGE_DOC_INSTRUCTION.
   const docScope = docScopeInstruction(env);
 
-  // ----- Degraded provider (run.sh) ------------------------------
+  // ----- Degraded provider (run.sh build_prompt()) ------------------------------
   if (providerDegraded) {
     return buildStaticFirstDegraded(opts, sections, docScope);
   }
 
-  // ----- Full static-first layout (run.sh) -----------------------
+  // ----- Full static-first layout (run.sh build_prompt()) -----------------------
   const lines: string[] = [];
   const prdAnchor = prd !== null && prd.length > 0 ? `Loki Mode with PRD at ${prd}` : "Loki Mode";
   lines.push("<loki_system>");
@@ -1761,7 +1761,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Static-first degraded (run.sh).
+// Static-first degraded (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 function buildStaticFirstDegraded(
@@ -1806,7 +1806,7 @@ function buildStaticFirstDegraded(
 }
 
 // ---------------------------------------------------------------------------
-// Legacy ordering -- single echo line (run.sh).
+// Legacy ordering -- single echo line (run.sh build_prompt()).
 // ---------------------------------------------------------------------------
 
 interface LegacyFullParts {
@@ -1826,7 +1826,7 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
   const combinedGateContext = [s.gateFailureContext, s.gateEscalationContext]
     .filter((part) => part.length > 0)
     .join(" ");
-  // Order from run.sh. Empty optional sections are emitted as empty
+  // Order from run.sh build_prompt(). Empty optional sections are emitted as empty
   // strings between two spaces, exactly as bash's "$var $var" expansion does.
   const tail = [
     s.humanDirective,

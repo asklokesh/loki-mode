@@ -1071,7 +1071,7 @@ function applyCodexMaxTier(effort: string): string {
 // `codex exec` is the non-interactive subcommand: it runs at approval "never"
 // with no --ask-for-approval flag, so --sandbox workspace-write alone keeps the
 // loop autonomous (verified against codex 0.132.0: no approval prompt). This
-// mirrors the bash route (run.sh + codex.sh provider_invoke_with_tier)
+// mirrors the bash route (run.sh run_autonomous() codex arm + codex.sh provider_invoke_with_tier)
 // exactly. workspace-write is also the safer default (scoped disk writes) over
 // the prior danger-full-access.
 //

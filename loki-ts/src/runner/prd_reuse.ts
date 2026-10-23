@@ -1,11 +1,11 @@
 // PRD-reuse resolution for the autonomous runner (Bun route).
 //
 // Mirrors the bash route in autonomy/run.sh so both routes behave identically:
-//   compute_codebase_signature()        autonomy/run.sh
-//   _loki_hash_stdin()                   autonomy/run.sh
-//   _loki_prd_file_hash()                autonomy/run.sh
-//   decide_generated_prd_action()        autonomy/run.sh
-//   persist_prd_signature_if_present()   autonomy/run.sh
+//   compute_codebase_signature()        defined in autonomy/run.sh
+//   _loki_hash_stdin()                   defined in autonomy/run.sh
+//   _loki_prd_file_hash()                defined in autonomy/run.sh
+//   decide_generated_prd_action()        defined in autonomy/run.sh
+//   persist_prd_signature_if_present()   defined in autonomy/run.sh
 //   user-PRD persistence branch          autonomy/run.sh run_autonomous (Agent C, W4)
 //
 // Semantics (FEAT-PRD-REUSE, FEAT-PRDREUSE-DOCKER-PLAN):
@@ -153,7 +153,7 @@ function generatedPrdFileHash(lokiDir: string): string {
 }
 
 // Codebase signature. Byte-parity with compute_codebase_signature's git branch
-// (autonomy/run.sh): "git:<HEAD>:<dirty>". For non-git trees we emit
+// (autonomy/run.sh compute_codebase_signature()): "git:<HEAD>:<dirty>". For non-git trees we emit
 // a documented "files-bun:<hash>" placeholder (see PARITY NOTES at the top of
 // this file). Never throws.
 function computeCodebaseSignature(dir: string): string {
@@ -204,7 +204,7 @@ export function readPrdSignature(lokiDir: string): PrdSignature | null {
 }
 
 // Whether a force-regen was requested. Mirrors bash precedence: --fresh-prd /
-// --regen-prd set LOKI_PRD_REGEN=1 (autonomy/run.sh).
+// --regen-prd set LOKI_PRD_REGEN=1 (autonomy/run.sh decide_generated_prd_action()).
 function forceRegenRequested(): boolean {
   return process.env["LOKI_PRD_REGEN"] === "1";
 }
@@ -214,7 +214,7 @@ function forceRegenRequested(): boolean {
 // Decide what to do with a previously generated PRD on a no-PRD run. Returns
 // one of reuse | update | user_owned | generate. Never throws.
 //
-// Precedence (matches autonomy/run.sh plus LOCK 2):
+// Precedence (matches autonomy/run.sh decide_generated_prd_action() plus LOCK 2):
 //   1. LOKI_PRD_REGEN=1 (--fresh-prd) -> generate.
 //   2. no generated PRD present       -> generate (first run).
 //   3. source === "user" (LOCK 2)     -> user_owned (use as-is, never update).
@@ -252,7 +252,7 @@ export function decideGeneratedPrdAction(opts: {
   if (stored === "") return "update";
 
   // 6. hand-edit detection: a recorded prd_sha that no longer matches the file
-  //    means the user edited it -> user_owned (bash run.sh).
+  //    means the user edited it -> user_owned (bash run.sh decide_generated_prd_action()).
   const storedPrdSha = typeof sig.prd_sha === "string" ? sig.prd_sha : "";
   if (storedPrdSha !== "") {
     const curPrdSha = generatedPrdFileHash(lokiDir);

@@ -78,11 +78,11 @@ export type CreateCheckpointResult =
   | { created: true; id: string; metadata: CheckpointMetadata; dir: string }
   | { created: false; reason: string };
 
-// Bash sources at autonomy/run.sh. Max checkpoints per session before
+// Bash sources at autonomy/run.sh create_checkpoint(). Max checkpoints per session before
 // retention prunes oldest. Keep in lockstep with bash.
 const RETENTION_LIMIT = 50;
 
-// Truncation matches bash autonomy/run.sh (`${task_desc:0:200}`).
+// Truncation matches bash autonomy/run.sh create_checkpoint() (`${task_desc:0:200}`).
 const TASK_DESC_MAX = 200;
 
 // In-process serialization for concurrent createCheckpoint() calls. The bash
@@ -110,21 +110,21 @@ function indexPath(base: string): string {
   return join(checkpointsRoot(base), "index.jsonl");
 }
 
-// Mirror bash autonomy/run.sh -- `git rev-parse HEAD || echo no-git`.
+// Mirror bash autonomy/run.sh create_checkpoint() -- `git rev-parse HEAD || echo no-git`.
 async function gitSha(cwd: string): Promise<string> {
   const r = await safeGitRun(cwd, ["rev-parse", "HEAD"], { timeoutMs: 5000 });
   if (r.exitCode !== 0) return "no-git";
   return r.stdout.trim() || "no-git";
 }
 
-// Mirror bash autonomy/run.sh -- `git branch --show-current || echo unknown`.
+// Mirror bash autonomy/run.sh create_checkpoint() -- `git branch --show-current || echo unknown`.
 async function gitBranch(cwd: string): Promise<string> {
   const r = await safeGitRun(cwd, ["branch", "--show-current"], { timeoutMs: 5000 });
   if (r.exitCode !== 0) return "unknown";
   return r.stdout.trim() || "unknown";
 }
 
-// Mirror bash autonomy/run.sh -- skip if no uncommitted changes.
+// Mirror bash autonomy/run.sh create_checkpoint() -- skip if no uncommitted changes.
 // Returns true if there is at least one uncommitted (worktree or staged) change.
 async function hasUncommittedChanges(cwd: string): Promise<boolean> {
   // `git diff --quiet` exits 1 if there are unstaged changes, 0 otherwise.
@@ -138,7 +138,7 @@ async function hasUncommittedChanges(cwd: string): Promise<boolean> {
   return wtChanged || idxChanged;
 }
 
-// Read currentPhase from .loki/state/orchestrator.json (autonomy/run.sh).
+// Read currentPhase from .loki/state/orchestrator.json (autonomy/run.sh create_checkpoint()).
 function readPhase(base: string): string {
   const p = join(base, "state", "orchestrator.json");
   if (!existsSync(p)) return "unknown";
@@ -151,7 +151,7 @@ function readPhase(base: string): string {
   }
 }
 
-// Files copied into the checkpoint directory (autonomy/run.sh).
+// Files copied into the checkpoint directory (autonomy/run.sh create_checkpoint()).
 // R6: CONTINUITY.md added so a rollback can also restore the iteration /
 // conversation handoff context, not just machine state. Additive -- metadata.json
 // keys are unchanged, so byte-for-byte parity (checkpoint.test.ts:62-91) holds.
@@ -180,7 +180,7 @@ function copyStateFiles(base: string, cpDir: string): void {
 }
 
 // metadata.json must match bash json.dump(indent=2) output exactly so cross-
-// runtime checkpoints are byte-identical (autonomy/run.sh).
+// runtime checkpoints are byte-identical (autonomy/run.sh create_checkpoint()).
 // Python's json.dump(indent=2) uses ", " item separator and ": " key
 // separator -- JSON.stringify(obj, null, 2) produces identical output for
 // flat objects of strings/numbers, which is what metadata.json is.
@@ -191,7 +191,7 @@ function serializeMetadata(m: CheckpointMetadata): string {
 // index.jsonl line format must match bash json.dumps() (no spaces, compact).
 // JSON.stringify(obj) with no indent produces the same output Python emits
 // with default separators (", ", ": ") -- BUT Python default is actually
-// (", ", ": ") with spaces. We need to match the bash code at line 6967
+// (", ", ": ") with spaces. We need to match the bash code that serializes this payload
 // which uses default json.dumps -> spaces. Verify: `json.dumps({"a":1,"b":2})`
 // produces `{"a": 1, "b": 2}`. JSON.stringify produces `{"a":1,"b":2}`.
 // To match bash exactly, we hand-format with the Python default separators.
@@ -303,7 +303,7 @@ function listCheckpointDirs(base: string): readonly string[] {
 }
 
 // Sort cp-{iter}-{epoch} by epoch (numeric, ascending). Mirrors bash:
-// `sort -t'-' -k3 -n` (autonomy/run.sh).
+// `sort -t'-' -k3 -n` (autonomy/run.sh create_checkpoint()).
 function sortByEpoch(ids: readonly string[]): string[] {
   return [...ids].sort((a, b) => {
     const ea = parseEpoch(a);
@@ -567,7 +567,7 @@ function validateCheckpointMetadataDetailed(
   };
 }
 
-// Validation: matches bash autonomy/run.sh regex.
+// Validation: matches bash autonomy/loki cmd_checkpoint() regex.
 const CHECKPOINT_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
 export class CheckpointNotFoundError extends Error {
@@ -607,7 +607,7 @@ export function readCheckpoint(
 }
 
 // Restore plan: list of (src in checkpoint, dst in .loki) file pairs that the
-// caller should copy to perform the rollback. Matches autonomy/run.sh.
+// caller should copy to perform the rollback. Matches autonomy/loki cmd_checkpoint() rollback.
 // We return a plan rather than performing the copy so that the caller can
 // orchestrate any extra steps (event emission, pre-rollback snapshot, audit
 // log). The bash function calls create_checkpoint("pre-rollback snapshot",
@@ -621,7 +621,7 @@ export type RollbackPlan = {
   restore: readonly RestorePlanEntry[];
 };
 
-// Files restored on rollback (autonomy/run.sh -- note: omits
+// Files restored on rollback (autonomy/loki cmd_checkpoint() rollback -- note: omits
 // autonomy-state.json, matching bash exactly).
 // R6: CONTINUITY.md restored too, so an undo also reverts the iteration /
 // conversation handoff context. Only present in checkpoints created after R6;

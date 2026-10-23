@@ -1,8 +1,8 @@
 // Completion-promise detection for the autonomous runner.
 //
 // Source-of-truth (bash):
-//   check_completion_promise()      autonomy/run.sh
-//   check_task_completion_signal()  autonomy/run.sh
+//   check_completion_promise()      defined in autonomy/run.sh
+//   check_task_completion_signal()  defined in autonomy/run.sh
 //
 // As of v6.82.0 the default detection path is the structured signal written
 // by the loki_complete_task MCP tool to .loki/signals/TASK_COMPLETION_CLAIMED.
@@ -31,7 +31,7 @@ export async function checkCompletionPromise(
   // (a) Default path: MCP tool signal file. Presence alone is sufficient --
   //     the structured payload is consumed elsewhere for observability.
   //     We delete the signal after detection so the next iteration does not
-  //     re-trigger on stale state (mirrors bash run.sh).
+  //     re-trigger on stale state (mirrors bash run.sh check_task_completion_signal()).
   const signalPath = resolve(ctx.lokiDir, "signals", "TASK_COMPLETION_CLAIMED");
   const fallbackPath = resolve(ctx.lokiDir, "signals", "COMPLETION_REQUESTED");
   if (existsSync(signalPath)) {
@@ -44,7 +44,7 @@ export async function checkCompletionPromise(
     // COMPLETION_REQUESTED are both valid, non-exclusive completion mechanisms,
     // so a belt-and-suspenders agent can leave both present. Removing only the
     // active one orphans the other, which then reads as a phantom claim on a
-    // later iteration. Consume both (mirrors bash run.sh, v7.109).
+    // later iteration. Consume both (mirrors bash run.sh check_task_completion_signal(), v7.109).
     try {
       unlinkSync(fallbackPath);
     } catch {
@@ -58,7 +58,7 @@ export async function checkCompletionPromise(
   //      by build_prompt.ts:188-190 to `touch` this file directly, so it is the
   //      ONLY completion signal available to them. Presence alone is sufficient;
   //      bash synthesizes a payload even when the file is empty
-  //      (run.sh). Consume on detect (mirrors run.sh).
+  //      (run.sh check_task_completion_signal()). Consume on detect (mirrors the same function).
   if (existsSync(fallbackPath)) {
     try {
       unlinkSync(fallbackPath);
@@ -69,7 +69,7 @@ export async function checkCompletionPromise(
   }
 
   // (b) Legacy grep fallback (opt-in). Search the captured iteration log for
-  //     the configured completion-promise text. Mirrors run.sh.
+  //     the configured completion-promise text. Mirrors run.sh check_completion_promise().
   if (process.env["LOKI_LEGACY_COMPLETION_MATCH"] !== "true") return false;
   if (!ctx.completionPromise) return false;
   if (!capturedOutputPath || !existsSync(capturedOutputPath)) return false;
