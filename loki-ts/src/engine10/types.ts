@@ -178,7 +178,7 @@ export interface Receipt {
   verdict: Verdict;
   toolchain?: import("../util/receipt_signer.ts").Toolchain; // TEN-GATES-22: absent on receipts sealed before it existed, which still verify
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
-  mutation_proof?: string;
+  mutation_proof?: string; publish?: { mode: string; reason?: string; compare?: string }; // R100-022: set only when preflight found a PR cannot open here; absent on a full-access run, so its hash is unchanged
   /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
   review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
