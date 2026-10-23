@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.64.0 (2026-10-23)
+
+
+
+### Added
+- The dashboard run replay scrubber shows one position per stage with the journal's diff, tests and cost (#422, R100-082). Approval: "APPROVE (LOW, tl-324): #422 / R100-082 run replay scrubber, pd/r422 at full SHA 6f10c92797677550c191e9bf115f5d1aa4f89ff7".
+
 ## v11.63.10 (2026-10-23)
 
 ### Fixed
