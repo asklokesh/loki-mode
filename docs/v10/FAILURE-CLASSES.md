@@ -1574,3 +1574,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: run id form (unchanged), absolute path, a receipt copied elsewhere, a non-receipt .json (diff verifier).
 - Mechanism: an argument containing a path separator or ending in .json is a path whether or not the file exists.
 - Fixture: tests/test-verify-receipt-route.sh "a missing receipt at a run path is UNCHECKED rc 2 with the path as given" (red before, green after).
+
+## FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS A committed change carried a symlink under tests/ (tests/kvparse.py, tests/wcl.py in 2 of 3 cw20 pilots), flagged only after the fact as NOT PROVEN by base_guard.ts (FC-WALL-PHANTOM-PATH)
+- User-visible vs raw: user-visible; the PR holds a link the task never asked for and the verdict degrades to NOT PROVEN.
+- Law broken: the change contains only what the task needs.
+- Cause (SUSPECTED, evidence status: code reading only, no transcript yet): no engine call creates a link under tests/ (engine links are node_modules, .venv, venv in throwaway worktrees: base_guard.ts, mutation_proof.ts, before_after.ts; treeswap.ts restores an attempt's own link). The implement agent most likely links `tests/<mod>.py` to a root module so a bare `pytest` import works; the commit stage's `git add -A` then stages it. The Wall brief already carried `python -m pytest <file>` (wall_hints.ts), the implement brief did not.
+- Siblings swept: fix.ts and other stages build on FIXED_RULES or a brief without a runner line; the Wall brief already states the invocation. Only the implement lead lacked it.
+- Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
+- Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
+- Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.

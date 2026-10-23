@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.1 (2026-10-23)
+
+### Fixed
+- The implement lead brief names python -m pytest and forbids files or symlinks in a test directory, so an agent no longer works around a bare pytest import error by committing a tests/<mod>.py symlink. Approval: "ship pd/pytesthint-r2 f0115bb7e (tl-324 APPROVE, MEDIUM)".
+
 ## v11.60.0 (2026-10-23)
 
 ### Added
