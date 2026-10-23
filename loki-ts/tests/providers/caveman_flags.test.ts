@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // tests/providers/caveman_flags.test.ts
 //
 // Bun-route unit + determinism coverage for the caveman output-token compressor

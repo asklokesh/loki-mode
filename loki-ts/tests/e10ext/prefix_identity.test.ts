@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61-02: LOKI_SPEED=1 gives every stage brief an identical cache-stable lead.
 import { afterEach, describe, expect, test } from "bun:test";
 import { PARALLEL_TOOL_CALLS_INSTRUCTION, STAGE_PREFIX } from "../../src/features/lean_prefix.ts";

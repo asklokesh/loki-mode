@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // ER-01: effort policy matrix, flag-off identity, user override precedence.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

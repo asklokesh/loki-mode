@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-67 rework r4: pins the backstop-vs-worker-cap relationship by calling the real supervisor.ts and
 // machine.ts functions (not a mirrored formula), so a future constant or formula change cannot silently
 // drift. Opus REJECT finding 1 (round 3): a fixed 30s grace made backstopMs 0 or negative for any capS <=

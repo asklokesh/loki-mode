@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for the status command port.
 // Source-of-truth: autonomy/loki:1963 (cmd_status), :2124 (cmd_status_json).
 //

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-69: a user's FORCE_COLOR=3 made node:test print ANSI, the Wall base run read no counts and recorded not_run.
 // Deterministic fixture: real `node --test` on an off-by-one sum, no model calls.
 import { afterEach, describe, expect, test } from "bun:test";

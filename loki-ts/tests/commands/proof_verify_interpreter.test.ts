@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // S-205: the Bun `loki proof verify` must not let a user-site .pth reach the
 // verdict. `python3 -E` ignores PYTHON* env vars but still runs site.py, which
 // processes ~/Library/Python/X.Y/.../site-packages (or ~/.local/...) and execs

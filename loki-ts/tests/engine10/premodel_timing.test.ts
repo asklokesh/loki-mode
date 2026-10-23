@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61 slice 1: pre-model stage timer (argv to first provider byte), recorded in run.completed, shown only under LOKI_SPEED=1.
 import { describe, expect, test } from "bun:test";
 import { formatPreModelLine, preModelTiming } from "../../src/engine10/output.ts";

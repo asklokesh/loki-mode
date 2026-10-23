@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-04: Java dependency graph via jdeps, with the import-scan fallback recorded when jdeps or
 // javac is unavailable. Both paths are exercised with fake tools on an isolated PATH, so neither
 // test depends on the host actually having a JDK installed.

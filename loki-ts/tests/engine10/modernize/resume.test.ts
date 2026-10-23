@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-22 wall: unit-level resume after a coordinator crash (docs/v10/MODERNIZE.md sections 3.7 and 5).
 import { describe, expect, it } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

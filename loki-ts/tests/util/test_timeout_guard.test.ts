@@ -2,9 +2,9 @@
 // fixed default timeout (a file-level literal beats the --timeout flag and ignores load).
 import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { defaultTimeoutMs, loadAwareTimeoutMs } from "../preload.ts";
 
 describe("loadAwareTimeoutMs", () => {
@@ -80,26 +80,46 @@ describe("setSpawnTimeout applies the default to the calling file", () => {
 // fixed 5s default flakes under load and a preload default reaches only the first file of a run (measured, bun 1.3.13).
 const SPAWNS = /Bun\.spawn|spawnSync|execFileSync|execSync|child_process/;
 const SETS_TIMEOUT = /\b(setSpawnTimeout|setLoadAwareTimeout)\(/;
-export const untimedSpawners = (files: { path: string; text: string }[]): string[] =>
-  files.filter((f) => SPAWNS.test(f.text) && !SETS_TIMEOUT.test(f.text)).map((f) => f.path);
+type TestFile = { path: string; text: string; imports: string[] };
+/** A test file spawns when its own text does or when it imports a src module whose text does (helpers such as util/shell.ts). */
+export const untimedSpawners = (files: TestFile[], spawnSrc: Set<string>): string[] =>
+  files.filter((f) => (SPAWNS.test(f.text) || f.imports.some((i) => spawnSrc.has(i))) && !SETS_TIMEOUT.test(f.text)).map((f) => f.path);
 
 describe("every spawning test file sets a load-aware timeout", () => {
   const root = join(import.meta.dir, "..");
-  const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+  const srcRoot = join(root, "..", "src");
+  const walkTs = (d: string, keep: (n: string) => boolean): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
     const p = join(d, e.name);
-    return e.isDirectory() ? (e.name === "node_modules" || e.name === "fixtures" ? [] : walk(p)) : e.name.endsWith(".test.ts") ? [p] : [];
+    return e.isDirectory() ? (e.name === "node_modules" || e.name === "fixtures" ? [] : walkTs(p, keep)) : keep(e.name) ? [p] : [];
   });
-  const files = walk(root)
+  const spawnSrc = new Set(walkTs(srcRoot, (n) => n.endsWith(".ts")).filter((p) => SPAWNS.test(readFileSync(p, "utf8"))));
+  // Resolves a relative import specifier to the absolute .ts path it names (".js" specifiers map to ".ts"), or null.
+  const resolveImport = (from: string, spec: string): string | null => {
+    if (!spec.startsWith(".")) return null;
+    const base = resolve(dirname(from), spec.replace(/\.js$/, ""));
+    return [`${base}.ts`, join(base, "index.ts"), base].find((c) => c.endsWith(".ts") && existsSync(c)) ?? null;
+  };
+  const importsOf = (p: string, text: string): string[] =>
+    [...text.matchAll(/(?:from|import\()\s*["']([^"']+)["']/g)].map((m) => resolveImport(p, m[1]!)).filter((x): x is string => x !== null);
+  const files: TestFile[] = walkTs(root, (n) => n.endsWith(".test.ts"))
     .filter((p) => !p.endsWith("test_timeout_guard.test.ts"))
-    .map((p) => ({ path: relative(root, p), text: readFileSync(p, "utf8") }));
-  it("no spawning file is left on bun's fixed default", () => {
-    expect(untimedSpawners(files)).toEqual([]);
+    .map((p) => { const text = readFileSync(p, "utf8"); return { path: relative(root, p), text, imports: importsOf(p, text) }; });
+  it("no spawning file, direct or through a src helper, is left on bun's fixed default", () => {
+    expect(spawnSrc.size).toBeGreaterThan(0);
+    expect(untimedSpawners(files, spawnSrc)).toEqual([]);
   });
-  it("mutant: removing one call is caught", () => {
+  it("mutant: removing the call from a helper-spawning file is caught and named", () => {
+    const victim = files.find((f) => f.path === join("util", "shell.test.ts"));
+    expect(victim).toBeDefined();
+    expect(victim!.imports.some((i) => spawnSrc.has(i))).toBe(true);
+    const mutated = files.map((f) => (f === victim ? { ...f, text: f.text.replace("setSpawnTimeout();", "") } : f));
+    expect(untimedSpawners(mutated, spawnSrc)).toEqual([victim!.path]);
+  });
+  it("mutant: removing the call from a text-spawning file is caught", () => {
     const victim = files.find((f) => SPAWNS.test(f.text) && f.text.includes("setSpawnTimeout();"));
     expect(victim).toBeDefined();
     const mutated = files.map((f) => (f === victim ? { ...f, text: f.text.replace("setSpawnTimeout();", "") } : f));
-    expect(untimedSpawners(mutated)).toEqual([victim!.path]);
+    expect(untimedSpawners(mutated, spawnSrc)).toEqual([victim!.path]);
   });
 });
 

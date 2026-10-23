@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/provider_opencode.ts -- argv shape and invoke path.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

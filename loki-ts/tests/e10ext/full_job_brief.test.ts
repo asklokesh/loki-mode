@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-19: the implement brief is the full job; only trust rules remain.
 import { describe, expect, test } from "bun:test";
 import { afterAll } from "bun:test";
