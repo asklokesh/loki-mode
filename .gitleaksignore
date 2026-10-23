@@ -206,3 +206,5 @@ c82f3beb4ee3a0a07b9e41ad040815a996a492cf:loki-ts/tests/util/redact.test.ts:gener
 d0795335816881b327f6dfaed2e634f81b03fa1d:loki-ts/tests/util/redact.test.ts:generic-api-key:130
 # Reviewed false positive (#306): line 40 is a list of env var names (MAX_THINKING_TOKENS, LOKI_E10_PREFIX), not a key.
 loki-ts/tests/engine10/session_router.test.ts:generic-api-key:40
+# Reviewed false positive (FC-STALE-SECRET-TMP): line 520 is a fixture file name (receipt-ed25519.pem.<hex>.tmp) with the literal text PRIVATE, not a key.
+03099711ad24326ca012f367095d1834d618ad90:loki-ts/tests/providers/mcp_config.test.ts:generic-api-key:520
