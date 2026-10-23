@@ -1271,6 +1271,15 @@ describe("claude_flags web and credential default deny (w2-07)", () => {
     for (const c of ["cat -A .env", "cat foo .env", "cat .env", "cat a/b/.env.prod"]) expect(bashDenied(legacy, c)).toBe(true);
   });
 
+  it("a cat/sed/cp write to .env is denied; echo and printf redirects are allowed (#303 write pin)", () => {
+    const legacy = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy" }), () => {});
+    const compiled = perms.compile(repo, baseEnv({ LOKI_PERMISSION_POLICY: "compiled" })).args;
+    for (const argv of [legacy, compiled]) {
+      for (const c of ["cat > .env <<EOF", "cat >> .env", "sed -i s/a/b/ .env", "cp .env.example .env"]) expect(bashDenied(argv, c)).toBe(true);
+      for (const c of ["echo X=1 > .env", "printf 'X=1\\n' > .env"]) expect(bashDenied(argv, c)).toBe(false);
+    }
+  });
+
   it("LOKI_WEB_POLICY=off drops the Bash secret denies together with the Read ones (#303)", () => {
     const off = permissionArgv(repo, baseEnv({ LOKI_PERMISSION_POLICY: "legacy", LOKI_WEB_POLICY: "off" }), () => {});
     expect(off).toEqual(["--dangerously-skip-permissions"]);

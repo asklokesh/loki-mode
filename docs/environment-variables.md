@@ -104,7 +104,7 @@ credentials to an outside site, so the default denies the tools that make that
 possible:
 
 - `WebFetch` and `WebSearch` are denied.
-- `Read` of anything matching `.env*` (so `.env`, `.env.local`, `.envrc`, `.env.prod`, `.env.keys`, and the templates `.env.example`, `.env.sample`, `.env.template`), `*.pem`, and anything under `.aws/` or `.ssh/` is denied, anywhere on disk. The templates are blocked too: a deny beats any allow, so they cannot be carved out of the glob without missing secret names.
+- `Read` of anything matching `.env*` (so `.env`, `.env.local`, `.envrc`, `.env.prod`, `.env.keys`, and the templates `.env.example`, `.env.sample`, `.env.template`), `*.pem`, and anything under `.aws/` or `.ssh/` is denied, anywhere on disk. The templates are blocked too: a deny beats any allow, so they cannot be carved out of the glob without missing secret names. A build creates `.env` with the Write tool, `echo` or `printf`, not a `cat` heredoc: `cat`, `sed` and `cp` naming `.env*` are denied.
 
 This applies to every Claude route (shell, TypeScript and Python launch sites),
 whether `LOKI_PERMISSION_POLICY` is `compiled` or `legacy`. If the policy cannot
