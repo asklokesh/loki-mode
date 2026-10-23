@@ -207,4 +207,4 @@ d0795335816881b327f6dfaed2e634f81b03fa1d:loki-ts/tests/util/redact.test.ts:gener
 # Reviewed false positive (#306): line 40 is a list of env var names (MAX_THINKING_TOKENS, LOKI_E10_PREFIX), not a key.
 loki-ts/tests/engine10/session_router.test.ts:generic-api-key:40
 # Reviewed false positive (FC-STALE-SECRET-TMP-NEVER-SWEPT): the finding is a test fixture file NAME (receipt-ed25519.pem.0123456789ab.tmp) whose content is the literal word PRIVATE; it is not key material.
-2c772fcc1f11168bad5a9c99ab5265fb115fea6c:loki-ts/tests/providers/mcp_config.test.ts:generic-api-key:520
+995a95fe034fa4f99cae4d6104e529df88621c00:loki-ts/tests/providers/mcp_config.test.ts:generic-api-key:533
