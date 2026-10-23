@@ -1174,8 +1174,8 @@ function makeContext(opts: RunnerOpts): RunnerContext {
     prdPath: opts.prdPath,
     provider: opts.provider ?? "claude",
     maxRetries: opts.maxRetries ?? 5,
-    // Default 1000 to match bash MAX_ITERATIONS (run.sh:619,
-    // `MAX_ITERATIONS=${LOKI_MAX_ITERATIONS:-1000}`) and build_prompt.ts:1160
+    // Default 1000 to match bash MAX_ITERATIONS (run.sh "MAX_ITERATIONS=${LOKI_MAX_ITERATIONS:-1000}"
+    // assignment) and build_prompt.ts:1160
     // (`envInt(env, "MAX_ITERATIONS", 1000)`). Was 100 -- an internal
     // inconsistency where the loop capped at 100 while the prompt advertised
     // 1000. We read the MAX_ITERATIONS env key to match build_prompt.ts; note

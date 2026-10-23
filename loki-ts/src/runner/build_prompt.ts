@@ -1021,7 +1021,7 @@ async function buildEfficiencyTrend(
   if (trendOptOut === "0" || trendOptOut === "false") return "";
   // Resolve the renderer from the ENGINE install dir, not from cwd. cwd is the
   // user's project, which has no autonomy/lib/ -- bash uses $SCRIPT_DIR
-  // (run.sh:204) for exactly this reason. Resolving from cwd would make the Bun
+  // (run.sh "LOKI_ORIGINAL_SCRIPT_DIR:-$SCRIPT_DIR") for exactly this reason. Resolving from cwd would make the Bun
   // route silently render nothing on every real run while still passing a test
   // whose fixture happens to sit inside this repo.
   //

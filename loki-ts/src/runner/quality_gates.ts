@@ -14,7 +14,7 @@
 //  v7.78.0; the live count is tracked by track/clear_gate_failure. This TS
 //  getCount() remains the canonical read view.)
 //
-// Escalation ladder (autonomy/run.sh:725-727 and :10894-10921, code_review only
+// Escalation ladder (autonomy/run.sh "Gate Escalation Ladder" (GATE_CLEAR_LIMIT) and run_code_review(), code_review only
 // in bash today; this module applies the ladder uniformly to every gate so the
 // TS port can extend coverage without diverging):
 //   count >= GATE_PAUSE_LIMIT     -> write .loki/PAUSE + signals/GATE_ESCALATION
@@ -130,7 +130,7 @@ export type GateResult = {
   duration_ms?: number;
 };
 
-// Escalation ladder limits, mirroring autonomy/run.sh:725-727. Read once at
+// Escalation ladder limits, mirroring autonomy/run.sh "Gate Escalation Ladder" (GATE_CLEAR_LIMIT). Read once at
 // gate-run time so tests can override via env without restarting the process.
 type EscalationLimits = {
   repeat: number;

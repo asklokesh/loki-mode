@@ -660,7 +660,7 @@ export function checkSkills(selected?: string | null): SkillStatus[] {
   const home = homedir();
   return SKILL_ENTRIES.map(({ name, dir, id }) => {
     const sdir = resolve(home, dir);
-    // Match bash autonomy/loki:6410 behavior under `set -euo pipefail`:
+    // Match the former bash cmd_doctor behavior (removed from autonomy/loki; doctor is Bun-only) under `set -euo pipefail`:
     // ${sdir/$HOME/~} does NOT substitute when set -e is active (bash quirk),
     // so the full path is shown. Mirror that.
     const shortPath = sdir;
@@ -736,8 +736,8 @@ export function skillsForJson(): SkillJson[] {
 
 // ---------- Tool list (single source of truth shared by text + JSON) ----------
 
-// Display name (text mode, with min-version suffix per bash autonomy/loki:6354)
-// vs JSON name (cmd_doctor_json bare name per bash :6580). They differ by design.
+// Display name (text mode, with min-version suffix per the former bash cmd_doctor, removed from autonomy/loki)
+// vs JSON name (cmd_doctor_json bare name in the former bash route). They differ by design.
 type ToolSpec = {
   displayName: string;
   jsonName: string;
@@ -1435,7 +1435,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
     process.stdout.write(formatToolLine(c) + "\n");
     bump(tally, c.status);
     // Blocker wording mirrors the bash route's _doctor_block calls exactly
-    // (autonomy/loki:10864 and :10930) so the two trailers stay byte-identical
+    // (the former bash route, removed from autonomy/loki) so the two trailers stay byte-identical
     // under the bun-parity gate.
     if (c.status === "fail") {
       if (!c.found) {
@@ -1451,7 +1451,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   process.stdout.write(`${CYAN}AI Providers:${NC}\n`);
   const providerCmds = ["claude", "codex", "cline", "aider", "opencode"];
   // Per-provider install hint, byte-matching the bash route's
-  // doctor_provider_install_cmd (autonomy/loki:8128). The bash route writes this
+  // doctor_provider_install_cmd (removed from autonomy/loki with the bash doctor). The bash route writes this
   // hint to STDERR (run.sh doctor_check_provider, `>&2`), so it must go to STDERR
   // here too: the canonical bun-parity gate (.github/workflows/bun-parity.yml)
   // captures STDOUT only (`>out 2>/dev/null`), so a stdout hint would appear on
@@ -2059,7 +2059,7 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   );
 
   if (tally.fail > 0) {
-    // Byte-identical to the bash route (autonomy/loki:11374-11379). This route
+    // Byte-identical to the bash route (removed from autonomy/loki with the bash doctor). This route
     // used to print "Some required prerequisites are missing / Install missing
     // dependencies", which names nothing and offers no way forward -- a
     // first-run user with no provider CLI hit a dead end. The bash route has
@@ -2070,8 +2070,8 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
       `${RED}Blocking (${tally.fail}). Everything else above is optional.${NC}\n`,
     );
     // Leading blank line: bash accumulates blockers into a string that already
-    // begins with "\n" and prints it with printf '%b\n' (autonomy/loki:10851,
-    // :11375), so its output carries one. bun-parity compares byte for byte,
+    // begins with "\n" and prints it with printf '%b\n' (former bash route, removed from
+    // autonomy/loki), so its output carries one. bun-parity compares byte for byte,
     // so this cosmetic newline is load-bearing.
     process.stdout.write(`\n`);
     for (const b of tally.blockers) {

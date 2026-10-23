@@ -558,7 +558,7 @@ export function claudeProvider(): ProviderInvoker {
       // bound on a provider call: a hung provider ran forever, and because
       // .loki/STOP is only read at the top of an iteration, a STOP file was
       // never observed either. The bash route has always honored
-      // LOKI_PROVIDER_CALL_TIMEOUT (autonomy/run.sh:880, default 7200s).
+      // LOKI_PROVIDER_CALL_TIMEOUT (autonomy/run.sh _loki_with_deadline(), default 7200s).
       // shellRun already implements SIGTERM then SIGKILL after a 2s grace;
       // it just was not being asked to. See docs/stop-latency.md.
       //
