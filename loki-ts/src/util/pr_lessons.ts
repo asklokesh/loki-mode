@@ -3,7 +3,7 @@
 // the comment body verbatim; nothing is paraphrased. Each lesson carries its source (PR + comment URL)
 // and use tags (run id + that run's final verdict) so the list can show whether a lesson helps.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { atomicWriteJson } from "./atomic.ts";
@@ -59,6 +59,27 @@ function save(repoDir: string, lessons: Lesson[]): void {
   const p = lessonsPath(repoDir);
   mkdirSync(dirname(p), { recursive: true });
   atomicWriteJson(p, { version: 2, lessons } satisfies LessonFile);
+}
+
+/** User-level store of lessons the user promoted out of one repo. Everything else stays in its own repo's .loki. */
+export const promotedPath = (): string => join(process.env["LOKI_PROMOTED_DIR"] || join(homedir(), ".loki"), "memory", "semantic", "promoted-lessons.json");
+function loadPromoted(): Lesson[] {
+  try {
+    const j = JSON.parse(readFileSync(promotedPath(), "utf-8")) as Partial<LessonFile>;
+    return Array.isArray(j.lessons) ? j.lessons : [];
+  } catch { return []; }
+}
+function savePromoted(lessons: Lesson[]): void {
+  mkdirSync(dirname(promotedPath()), { recursive: true });
+  atomicWriteJson(promotedPath(), { version: 2, lessons } satisfies LessonFile);
+}
+/** Copy one repo lesson into the user-level store so briefs in every repo can retrieve it. Null when the id is unknown here; promoting twice is a no-op. */
+export function promoteLesson(repoDir: string, id: string): Lesson | null {
+  const l = loadLessons(repoDir).find((x) => x.id === id);
+  if (!l) return null;
+  const all = loadPromoted();
+  if (!all.some((x) => x.id === id)) savePromoted([...all, { ...l, uses: [] }]);
+  return l;
 }
 
 export function parsePrRef(ref: string): { repo: string; num: number } | null {
@@ -254,7 +275,9 @@ export function retrieveLessons(repoDir: string, task: string, limit = 3): Lesso
   if (process.env["LOKI_NO_PR_LESSONS"] === "1") return [];
   const tw = words(task);
   if (tw.size === 0) return [];
-  return loadLessons(repoDir)
+  const local = loadLessons(repoDir);
+  const have = new Set(local.map((l) => l.id));
+  return [...local, ...loadPromoted().filter((l) => !have.has(l.id))]
     .filter((l) => !isDemoted(l))
     .map((l) => { let n = 0; for (const w of words(`${l.text} ${l.source.path ?? ""}`)) if (tw.has(w)) n++; return { l, n }; })
     .filter((x) => x.n > 0).sort((a, b) => b.n - a.n || lessonConfidence(b.l) - lessonConfidence(a.l)).slice(0, limit).map((x) => x.l);
@@ -304,6 +327,8 @@ export function recordRunVerdict(repoDir: string, runId: string, verdict: string
 export function removeLesson(repoDir: string, id: string): Lesson | null {
   const lessons = loadLessons(repoDir);
   const idx = lessons.findIndex((l) => l.id === id);
+  const promoted = loadPromoted();
+  if (promoted.some((l) => l.id === id)) savePromoted(promoted.filter((l) => l.id !== id));
   if (idx < 0) return null;
   const [gone] = lessons.splice(idx, 1);
   save(repoDir, lessons);
