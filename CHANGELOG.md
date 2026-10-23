@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.65.5 (2026-10-23)
+
+### Fixed
+- Proof-verify parity and MCP config tests use a load-aware time budget, with measured sibling sweep counts and the sibling mutant recorded for FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT. Approval: "rev-b APPROVE: ship pd/loadaware c471eda6168dcd3c30de627aa45a6c459bc7fcd1. 2 commits over origin/main. Pick in order: 11493942d4c4e253fc03a384c560a3407c878e75, c471eda6168dcd3c30de627aa45a6c459bc7fcd1. FC-only conflict. APPROVE c471eda6168dcd3c30de627aa45a6c459bc7fcd1"
+
 ## v11.65.4 (2026-10-23)
 
 ### Fixed
