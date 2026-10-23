@@ -134,6 +134,28 @@ STUB_FRESH=11.54.3 run_case fresh "11.54.1 11.54.2" 11.54.2 11.54.2 11.54.2
 { [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.3 ] && [ "$(cat "$CASE_ST/next")" = 11.54.3 ]; } \
     && ok "a tag read fresh-higher than the target is never written backwards" || bad "fresh: rc=$CASE_RC log=$(cat "$CASE_ST/log") latest=$(cat "$CASE_ST/latest")"
 
+# RQ-102 structural cases on release.yml: a settle failure in the publish job must
+# not skip the converge job, and the publish tag step must not be fatal.
+WF="${RELEASE_YML:-$ROOT/.github/workflows/release.yml}"
+job_block() { awk -v j="  $1:" '$0==j{f=1;print;next} f&&/^  [A-Za-z0-9_-]+:/{exit} f{print}' "$WF"; }
+for pair in "publish-npm verify-npm-registry" "publish-ts-sdk verify-sdk-registry"; do
+    pub="${pair%% *}"; ver="${pair##* }"
+    vb="$(job_block "$ver")"; pb="$(job_block "$pub")"
+    gate="$(printf '%s\n' "$vb" | grep -E '^    if:' || true)"
+    { printf '%s' "$gate" | grep -q 'always()' \
+        && printf '%s' "$gate" | grep -q "needs.$pub.result != 'cancelled'" \
+        && printf '%s' "$gate" | grep -q "needs.$pub.result != 'skipped'"; } \
+        && ok "$ver runs when $pub fails (always() unless cancelled or skipped)" || bad "$ver gate: '$gate'"
+    tries="$(printf '%s\n' "$vb" | sed -n "s/.*LOKI_DISTTAG_TRIES: '\([0-9]*\)'.*/\1/p")"
+    nap="$(printf '%s\n' "$vb" | sed -n "s/.*LOKI_DISTTAG_SLEEP: '\([0-9]*\)'.*/\1/p")"
+    tmo="$(printf '%s\n' "$vb" | sed -n 's/^    timeout-minutes: \([0-9]*\)$/\1/p')"
+    { [ -n "$tries" ] && [ -n "$nap" ] && [ $((tries * nap)) -ge 720 ] && [ "${tmo:-0}" -ge 40 ]; } \
+        && ok "$ver converge window ${tries}x${nap}s >= 720s within timeout ${tmo}m" || bad "$ver window tries='$tries' nap='$nap' timeout='$tmo'"
+    tagline="$(printf '%s\n' "$pb" | grep -E 'bash .*npm-dist-tags\.sh' | grep -v '^ *#' | head -1)"
+    { printf '%s' "$tagline" | grep -qE '^ *(if|elif) ' && printf '%s' "$tagline" | grep -q 'LOKI_DISTTAG_TRIES=2'; } \
+        && ok "$pub tag step is non-fatal (guarded, LOKI_DISTTAG_TRIES=2)" || bad "$pub tag step: '$tagline'"
+done
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

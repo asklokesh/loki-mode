@@ -196,8 +196,14 @@ jobs:
           fi
           # Highest-version guard, post-write re-read and overtaken-tag restore live in
           # scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS).
-          bash scripts/npm-dist-tags.sh "$VERSION"
-          echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
+          # Best-effort only (FC-DIST-TAG-MOVED-BACKWARDS, RQ-102): the registry lags 4 to 11
+          # min, so a short settle here fails every release. verify-npm-registry converges.
+          if LOKI_DISTTAG_TRIES=2 bash scripts/npm-dist-tags.sh "$VERSION"; then
+            echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::dist-tags not settled yet for loki-mode@${VERSION}; verify-npm-registry converges them"
+            echo "PUBLISHED loki-mode@${VERSION} (tags converge in verify-npm-registry)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF: "+ loki-mode@X" in the publish log is
   # not proof; the registry served 11.50.0 about 11 minutes later. Own job with no
@@ -206,8 +212,9 @@ jobs:
   # served the version.
   verify-npm-registry:
     needs: publish-npm
+    if: always() && needs.publish-npm.result != 'cancelled' && needs.publish-npm.result != 'skipped'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -252,6 +259,9 @@ jobs:
       - name: Converge dist-tags after the version resolves
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # 50 tries x 15 s sleep is at least 12.5 min, covering the measured 4 to 11 min lag.
+          LOKI_DISTTAG_TRIES: '50'
+          LOKI_DISTTAG_SLEEP: '15'
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
@@ -548,7 +558,10 @@ jobs:
           fi
           # Same highest-version guard, fail-closed reads and overtaken-tag restore as
           # loki-mode (FC-DIST-TAG-MOVED-BACKWARDS).
-          LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"
+          # Best-effort only (RQ-102); verify-sdk-registry converges.
+          if ! LOKI_DISTTAG_TRIES=2 LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"; then
+            echo "::warning::sdk dist-tags not settled yet for loki-mode-sdk@${VERSION}; verify-sdk-registry converges them"
+          fi
 
   # Same late-materialization converge as verify-npm-registry, for loki-mode-sdk
   # (FC-DIST-TAG-MOVED-BACKWARDS). Nothing waits on it and it holds no lock: the
@@ -557,8 +570,9 @@ jobs:
   # window of milliseconds remains.
   verify-sdk-registry:
     needs: publish-ts-sdk
+    if: always() && needs.publish-ts-sdk.result != 'cancelled' && needs.publish-ts-sdk.result != 'skipped'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -595,6 +609,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           LOKI_DISTTAG_PKG: loki-mode-sdk
+          LOKI_DISTTAG_TRIES: '50'
+          LOKI_DISTTAG_SLEEP: '15'
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
