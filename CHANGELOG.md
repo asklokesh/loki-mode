@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.70.2 (2026-10-23)
+
+### Fixed
+- The changelog names the deleted references twins in prose, so no references/<name> path remains for the link and path guards to trip on (#281). Approval: "APPROVE pd/rq63 d640b6987 (tl-2, MEDIUM; structural-checks shard-durations drift fails on base 04dfb3074 too, passes on origin/main 586938e32, so rebase before merge)".
+
 ## v11.70.1 (2026-10-23)
 
 ### Fixed
