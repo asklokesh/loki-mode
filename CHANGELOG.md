@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.3 (2026-10-23)
+
+### Added
+- RQ-106 (D115): an SDK freshness guard so the Anthropic SDK pins are never more than 7 days behind, run from its own scheduled workflow sdk-freshness.yml (release.yml stays push-only), with the actions/checkout row added to docs/v10/DEPS.md. Approval: "APPROVE pd/rq106 stack c385cfb0f + 7bfa574b6 + a0c99df24812315d5ec6679d4d714c5fde34c499 (tl-2, MEDIUM)". Picks c385cfb0f, 7bfa574b6 and a0c99df24. The remaining tests/test-dep-inventory.sh T5 failure is the pre-existing benchmarks/bench/fixtures entries.
+
 ## v11.72.2 (2026-10-23)
 
 ### Fixed
