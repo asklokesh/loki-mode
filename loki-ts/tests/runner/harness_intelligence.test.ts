@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Targeted tests for harness intelligence features 5-8.
 //
 // Coverage maps 1:1 to the acceptance list in docs/HARNESS-INTELLIGENCE-PLAN.md:

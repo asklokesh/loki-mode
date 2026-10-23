@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-90 (P9): a harness-run test command never carries the user's ambient GitHub credential. The credential here is PLANTED in a fake HOME
 // (a gh hosts.yml with a fake oauth_token, a fake global git credential helper), so the test never depends on the real user's login.
 // Each leg has a positive control (the raw env DOES see the planted credential) so a green result is not an absence-of-output artifact.

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // ROUTER-1 R1-01: the advisor tool needs a bundled Claude Code >= 2.1.293,
 // which ships in Agent SDK >= 0.3.293. Guard both the pin and the install.
 

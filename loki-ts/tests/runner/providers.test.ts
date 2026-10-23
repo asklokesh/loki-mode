@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/providers.ts.
 // Source-of-truth: providers/loader.sh, providers/claude.sh.
 //

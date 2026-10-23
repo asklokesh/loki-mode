@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for stats command port. See src/commands/stats.ts and the
 // fixture under tests/fixtures/stats/.loki.
 //

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/project_model/review_fixes.test.ts -- EL-W1-01 D12 round 1 fixes (B1, B2, B3, A1, A2, A5, A6).
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

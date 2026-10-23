@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // select: not-src-walker (its "src" is a tmp git fixture dir, not loki-ts/src)
 // M-07: `loki modernize` CLI and flag parsing; TABLE route in engine10/cli.ts.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

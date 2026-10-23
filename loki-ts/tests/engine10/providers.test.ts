@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/providers.test.ts
 //
 // E-37: non-claude provider paths through session.ts, with honest cost

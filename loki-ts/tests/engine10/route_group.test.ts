@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61-16: LOKI_SPEED routing of `loki "<task>"` / `loki <file>` through the decomposer.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/seal.test.ts
 //
 // E-10 wall check (docs/v10/ENGINE.md sections 9 and 16). Signing goes through

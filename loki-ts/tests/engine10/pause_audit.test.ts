@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/pause_audit.test.ts
 //
 // E-67 wall check (v10 never waits on a human): a provider session that

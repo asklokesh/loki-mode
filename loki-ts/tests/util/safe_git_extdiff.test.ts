@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // SAFEGIT-EXTDIFF: safeGit blanks diff.external, which made every patch-producing call die with "external diff died".
 // The fix injects --no-ext-diff/--no-textconv centrally; a user-configured external diff must still never run.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

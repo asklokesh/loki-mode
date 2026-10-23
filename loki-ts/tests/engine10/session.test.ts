@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // loki-ts/tests/engine10/session.test.ts
 //

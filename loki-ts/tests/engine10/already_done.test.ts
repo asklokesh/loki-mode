@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/already_done.test.ts -- E-66 unit + mutation-proof tests for the
 // deterministic evidence search and its confirmation gate.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

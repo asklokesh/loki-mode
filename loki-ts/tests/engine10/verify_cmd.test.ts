@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/verify_cmd.test.ts
 //
 // E-22 wall check (ENGINE.md section 16). Every receipt is built in a

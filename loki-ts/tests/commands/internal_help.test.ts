@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v7.5.5 (#204): `loki internal` and `loki internal --help` print a
 // discoverable subcommand listing instead of failing silently. Verified
 // by spawning the CLI as a subprocess so the dispatch path is exercised

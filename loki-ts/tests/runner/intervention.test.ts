@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/intervention.ts.
 // Source-of-truth: autonomy/run.sh:11120-11326 (check_human_intervention,
 // handle_pause).

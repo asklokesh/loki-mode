@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/wall.test.ts
 //
 // E-15 wall check (docs/v10/ENGINE.md sections 4 and 16). Depends on

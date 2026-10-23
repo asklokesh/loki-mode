@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v7.5.2 regression tests for learnings_writer concurrency fixes.
 //
 // Bug-hunt findings B1 + B4 (cross-confirmed by H2 + H3 + H6):

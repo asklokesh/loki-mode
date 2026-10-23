@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-09 Wall check (docs/v10/ENGINE.md section 16).
 //
 // testmap.ts (E-05) and machine.ts (E-02) are not on main: RunContext.tests

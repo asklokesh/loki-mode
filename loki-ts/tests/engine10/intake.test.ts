@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/intake.test.ts
 //
 // E-04 wall check. RunContext deps (sessions/tests/cost/clock) are fakes per

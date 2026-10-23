@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/runner/acceptance_sdk_binary_absent.test.ts
 //
 // ACCEPTANCE #1: SDK-full works with the `claude` binary absent.

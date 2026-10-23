@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/budget.ts -- pricing math, rate-limit detection,
 // backoff calculation, and circuit-breaker state-file writes.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

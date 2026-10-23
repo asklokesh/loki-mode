@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-51: regression test of the E-41 (local-origin push) plus E-42 (real
 // supervisor/worker entry) path used by the eval harness (eval/loki10). A v10
 // run with a pinned local bare origin and no --no-pr must push the branch to

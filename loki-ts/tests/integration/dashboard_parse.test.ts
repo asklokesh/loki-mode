@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Integration: dashboard FastAPI parses TS-written state files.
 //
 // Goal: verify that state files written by the new TypeScript runner

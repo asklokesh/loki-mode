@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/council/track_iteration_valves.test.ts
 //
 // Proves the stagnation + done-signal FORCE-STOP VALVES ARM on the SDK/TS

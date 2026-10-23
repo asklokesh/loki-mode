@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-01 (L4): in a multi-root monorepo every runner invocation runs in the owning package's directory with a
 // package-relative path (FireLater#17: backend/ and frontend/, no root package.json). A single-package repo is unchanged.
 // A stub `npx` on PATH records "<cwd>|<argv>" so the tests assert where a command ran, never whether the host has vitest.

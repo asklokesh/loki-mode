@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // loki-ts/tests/project_model/project_model.test.ts -- EL-W1-01 wall checks (L0, L4). The model call is
 // a mocked SessionRunner replaying recorded answers; no real model is called.

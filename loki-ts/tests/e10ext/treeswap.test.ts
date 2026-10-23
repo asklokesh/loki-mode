@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/e10ext/treeswap.test.ts
 //
 // S41-12 wall check (docs/v10/SCORECARD-PLAN.md, docs/v10/DECISIONS.md D42(1)).

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // select: not-src-walker (its "src" is a tmp git fixture repo, not loki-ts/src)
 // M-26: end-to-end `loki modernize` on a tracked py2 fixture repo with a deterministic stub provider
 // (docs/v10/MODERNIZE.md section 7). No network, no model. Two entry points are driven for real:

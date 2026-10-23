@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/checkpoint.ts.
 // Strategy: every test creates an isolated temp dir as the .loki override so
 // nothing leaks into the real .loki/. The `forceCreate` opt bypasses the

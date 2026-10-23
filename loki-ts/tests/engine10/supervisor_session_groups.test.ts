@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D62-VIS-F1 F1: a session group announced by session.started (the visual-evidence dev server) is reaped on every
 // supervisor exit path, not only on SIGINT/SIGTERM: the backstop kill and a worker that dies by SIGKILL.
 import { afterAll, describe, expect, test } from "bun:test";

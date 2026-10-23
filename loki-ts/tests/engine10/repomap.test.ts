@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/repomap.test.ts
 //
 // E-98d: buildRepoMap only matched JS `export` names, so every Python repo

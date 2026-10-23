@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // A-115: a relevant check with more skipped tests than base is neither a pass nor progress; test-config edits are NOT PROVEN.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
