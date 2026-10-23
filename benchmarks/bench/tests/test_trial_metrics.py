@@ -52,6 +52,12 @@ class TrialMetricsTest(unittest.TestCase):
         a = _fake("loki", writes=True, prov={"verify_verdict": "VERIFIED"})
         self.assertIs(self._row(a, "loki")["metrics"]["false_pass"], False)
 
+    def test_loki_already_satisfied_is_a_claim(self):
+        a = _fake("loki", writes=False, prov={"verify_verdict": "ALREADY_SATISFIED"})
+        m = self._row(a, "loki")["metrics"]
+        self.assertIs(m["claimed_done"], True)
+        self.assertIs(m["false_pass"], True)
+
     def test_loki_partial_is_not_a_claim(self):
         a = _fake("loki", writes=False, exit_status="error_rc_1",
                   prov={"verify_verdict": "PARTIAL"})
