@@ -809,6 +809,28 @@ describe("repo baseline profile (REPOMEM)", () => {
           expect(attributeFullSuite(d, base, head(mk("TestAdd", "TestNew")), [], []).preExistingChecks).toEqual([]);
         }
       });
+      test("FC-GO-PACKAGE-ID-CHANGED-FILE: a go package id (build failure or test id) in a package whose directory holds a changed .go file is never excused, with or without go.mod", () => {
+        const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]), cmd = "go test -json ./...";
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        const j = (o: object) => JSON.stringify(o);
+        const buildFail = [j({ Action: "start", Package: "example.com/m/foo" }), j({ Action: "output", Package: "example.com/m/foo", Output: "FAIL\texample.com/m/foo [build failed]\n" }), j({ Action: "fail", Package: "example.com/m/foo", Elapsed: 0, FailedBuild: "example.com/m/foo [example.com/m/foo.test]" })].join("\n");
+        const testFail = [j({ Action: "output", Package: "example.com/m/foo", Test: "TestAdd", Output: "--- FAIL: TestAdd (0.00s)\n" }), j({ Action: "fail", Package: "example.com/m/foo", Test: "TestAdd" })].join("\n");
+        for (const [out, name] of [[buildFail, "build failure"], [testFail, "test id"]] as const) {
+          const ids = failIds(out);
+          expect(ids.length).toBe(1);
+          writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: cmd, exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ids, attributable: true } }));
+          const head = [{ name: "full suite: x", cmd, result: "fail", ids }];
+          for (const mod of [false, true]) {
+            if (mod) writeFileSync(join(d, "go.mod"), "module example.com/m\n\ngo 1.22\n");
+            const touched = attributeFullSuite(d, base, head, [], ["foo/foo.go"]);
+            expect(`${name} mod=${mod} ${touched.preExistingChecks}`).toBe(`${name} mod=${mod} `);
+            if (name === "build failure") expect(touched.line).toContain("NOT PROVEN: package example.com/m/foo did not build on base or head; its tests ran on neither");
+            expect(attributeFullSuite(d, base, head, [], ["bar/bar.go"]).preExistingChecks).toEqual(["full suite: x"]);
+            expect(attributeFullSuite(d, base, head, [], ["README.md"]).preExistingChecks).toEqual(["full suite: x"]);
+          }
+          rmSync(join(d, "go.mod"));
+        }
+      });
       test("FC-FULL-SUITE-EXIT-CODED-SCRIPT: an exit-coded script failing on base and head is pre-existing only when its failing output is the same (paths and numbers aside); a new line, a changed script or a new command is introduced", () => {
         const d = repo(NODE), base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });
