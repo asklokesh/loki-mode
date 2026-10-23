@@ -170,7 +170,7 @@ Tier follows docs/v10/OPERATING-MODEL.md: HIGH touches the moat, verifier, Seal,
 | 41 | R100-041 | team | Team login for the shared Control Plane | L | HIGH | #188 (existing) |
 | 42 | R100-042 | team | Bitbucket and Azure DevOps pull requests | M | MEDIUM | #390 |
 | 43 | R100-043 | team | Release notes written from sealed receipts | S | LOW | #391 |
-| 44 | R100-044 | ide | VS Code extension: run panel and receipt viewer | L | MEDIUM | #392 |
+| 44 | R100-044 | ide | VS Code access through the shipped MCP server: config doc and tool-list smoke test | S | LOW | #392 |
 | 45 | R100-045 | ide | Ready-made ACP configs for Zed and JetBrains | S | LOW | #393 |
 | 46 | R100-046 | ide | Start, status and seal commands in the Claude Code plugin | S | LOW | #394 |
 | 47 | R100-047 | ide | Full-screen terminal UI with approve, steer and pause keys | M | LOW | #395 |
@@ -726,15 +726,15 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 - Metric and target: Teams using it per release; week-4 retention.
 - Competitor baseline: Claude Code: UNKNOWN. Codex CLI: UNKNOWN. Devin: UNKNOWN. Factory droid: UNKNOWN.
 
-#### R100-044 VS Code extension: run panel and receipt viewer
+#### R100-044 VS Code access through the shipped MCP server: config doc and tool-list smoke test
 
-- Issue: #392. Area: ide. Size: L. Tier: MEDIUM. Deps: R100-007.
+- Issue: #392. Area: ide. Size: S. Tier: LOW. Deps: none.
 - Problem: VS Code users must switch to a terminal to start, steer and read receipts.
-- Feature: An extension that starts runs, follows status, answers blocked questions and renders the receipt and clause matrix, talking to the CLI (no new engine).
+- Feature: Rescoped 2026-10-23 by team-lead ruling. The deprecated `vscode-extension/` is not revived. VS Code users reach Loki through the MCP server that already ships (`mcp/server.py`), registered by `loki mcp install --client vscode`. The work is a documented VS Code MCP config and one smoke test that lists the tools over that config.
 - Acceptance:
-  - The extension activates in VS Code and lists the current run from `loki status --json` within 2 s.
-  - Start, steer and answer buttons call the CLI; a fixture asserts 3 CLI invocations.
-  - Receipt view shows verdict and N of N clauses equal to `loki proof` output.
+  - docs/INSTALLATION.md shows the `.vscode/mcp.json` that `loki mcp install --client vscode --project` writes, and names `loki_v10_run`, `loki_v10_status` and `loki_v10_verify`.
+  - A smoke test launches the server from the written config and finds those 3 tools by name in `tools/list`.
+  - No file under `vscode-extension/` or `scripts/release.sh` changes.
 - Metric and target: Runs per user per week for VS Code users; week-2 return rate.
 - Competitor baseline: Claude Code: `--ide` connects to an IDE on startup (`claude --help`, Claude Code 2.1.309, run 2026-10-23). Codex CLI: Codex IDE extension (https://learn.chatgpt.com/docs/codex/cli (fetched 2026-10-23)). Devin: Embedded editor in Devin Session Tools; no VS Code page in the index (https://docs.devin.ai/work-with-devin/devin-session-tools.md, listed in https://docs.devin.ai/llms.txt, fetched 2026-10-23). Factory droid: IDE integrations page (https://docs.factory.com/cli/getting-started/overview (fetched 2026-10-23)).
 
@@ -1344,3 +1344,88 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 - Problem: Clauses from documents cannot point back to their source.
 - Metric and target: Clauses traced to source.
 - Competitor baseline: Claude Code: UNKNOWN. Codex CLI: UNKNOWN. Devin: UNKNOWN. Factory droid: UNKNOWN.
+
+## Lanes and waves
+
+This section is the dispatch source for Feature 100 (accepted by team-lead on 2026-10-23). It was built from the file set in every one of the 100 issue cards: the issue body for the 79 new issues, and the issue body plus comments for the 21 reused issues, all read on 2026-10-23. Test files are not counted as shared files.
+
+Where the "Parallel safety" line inside an issue card disagrees with this section, this section wins. Several of those lines were written before the file sets were narrowed. For example, #357, #339 and #396 name #359 and #362 as start.ts sharers, but neither #359 nor #362 edits start.ts.
+
+### Hot-spot lanes
+
+Rule: each hot-spot file has exactly one live writer. The next issue in a lane starts only after the previous one has merged to main, and it rebases on main before it starts. An issue that sits in two lanes waits until both lanes reach it.
+
+- `loki-ts/src/commands/start.ts`: #357, then #339, then #396, then #372.
+- `loki-ts/src/commands/status.ts`: #361, then #359, then #370, then #372, then #395, then #406.
+- `loki-ts/src/engine10/machine.ts`: #345, then #358, then #235. #358 also waits for branch pd/cw04d, which edits `blocked_answer.ts`.
+- `autonomy/loki` function `cmd_deploy`: #359, then #370, then #382, then #383, then #384, then #385, then #386.
+- `.github/actions/issue-to-pr/action.yml`: #360, then #365.
+
+19 issues edit at least one hot-spot file: #235, #339, #345, #357, #358, #359, #360, #361, #365, #370, #372, #382, #383, #384, #385, #386, #395, #396, #406.
+
+Three cards name a hot-spot file without editing it, so they are not in a lane. #351 says "do not touch machine.ts". #370 cites `start.ts` only as existing behavior; it is still in the status.ts and cmd_deploy lanes. #398 names `packages/control-plane/src/server/routes/start.ts`, which is a different file.
+
+### Parallel-safe with respect to the hot-spot files
+
+These 81 issues edit none of the five hot-spot files, in rank order: #342, #362, #363, #364, #249, #366, #367, #368, #369, #371, #351, #231, #373, #374, #375, #376, #377, #378, #379, #380, #279, #381, #387, #388, #389, #188, #390, #391, #392, #393, #394, #397, #398, #399, #248, #400, #401, #402, #403, #404, #405, #407, #408, #409, #410, #290, #411, #412, #413, #414, #267, #346, #347, #415, #416, #417, #418, #277, #278, #232, #419, #420, #421, #422, #423, #424, #425, #426, #427, #428, #429, #430, #431, #343, #432, #433, #434, #341, #340, #263, #435.
+
+Parallel-safe here means safe against the hot-spot lanes only. Two of these issues can still share another file. Before two of them run at the same time, check the other shared-file lanes below.
+
+### Other shared-file lanes
+
+One live writer per file, in the order given.
+
+- `loki-ts/src/commands/doctor.ts`: #357, #366, #290, #347, #390, #413, #414, #432.
+- `loki-ts/src/cli/registry.ts`: #362, #375, #379, #395, #400, #401, #430.
+- `loki-ts/src/engine10/events.ts`: #361, #358, #431.
+- `loki-ts/src/engine10/session.ts`: #358, #351, #406, #415. If pd/cw04d holds #358 up, #351 goes first.
+- `loki-ts/src/engine10/pr_body.ts`: #342, #359, #381, #387, #388.
+- `loki-ts/src/engine10/stages/pr.ts`: #231, #387, #390.
+- `loki-ts/src/engine10/verify_cmd.ts`: #380, #372, #434.
+- `loki-ts/src/engine10/supervisor.ts` and `loki-ts/src/util/slack_events.ts`: #427, #411, #406.
+- `loki-ts/src/runner/build_prompt.ts`: #366, #402, #432. New always-on text goes in the cache-stable prefix.
+- `.github/workflows/release.yml`: #369, #372.
+- `blocked_answer.ts`: branch pd/cw04d, #358, #363, #399, #412.
+- `loki-ts/src/commands/memory.ts`: #364, #389, #400, #401, #402.
+- `loki-ts/src/util/pr_lessons.ts`: #364, #389, #405.
+- `loki-ts/src/runner/router/cost_preview.ts`: #367, #374, #407, #412.
+- `loki-ts/src/commands/proof.ts`: #368, #434, #435.
+- `loki-ts/src/commands/kpis.ts` and `metrics/kpis.ts`: #371, #411, #424.
+- `loki-ts/src/features/visual_evidence.ts`: #249, #263, #383.
+- `loki-ts/src/util/redact.ts`: #384, #389, #421.
+- `loki-ts/src/runner/budget.ts`: #408, #411, #412.
+- `loki-ts/src/runner/providers.ts`: #279, #346, #277, #278.
+- `providers/model_routes.ts`: #267, #346, #414, #415.
+- `providers/model_catalog.json`: #267, #346, #416.
+- `providers/model_routes.sh`: #414, #415, #416.
+- `providers/price_table.ts`: #279, #411, #417.
+- `mcp/server.py`: #345, #290, #339.
+- Control Plane `App.tsx`: #363, #403, #423.
+- Control Plane `pages/run/index.tsx`: #422, #423, #425.
+- `autonomy/loki` dispatch rows: #367, #232, #379, #418, #419.
+- `autonomy/loki` `cmd_cost`: #407, #408, #409, #410.
+- `autonomy/loki` `cmd_next`: #374, #375.
+- `autonomy/loki` `cmd_template`: #404, #428.
+- `autonomy/loki` `cmd_notify`: #377, #424.
+- `autonomy/loki` `cmd_verify` and `fast_verify.py`: #380, #430.
+- `autonomy/notify.sh`: #377, #427, #406, #399, #424, #431.
+- Pairs, first one merges first: `decompose.ts` (#235, #419), `unit_mode.ts` (#235, #421), `slack_inbound.ts` (#358, #381), Control Plane `answer.ts` (#363, #399), `schemas/run-event.schema.json` (#431, #433).
+
+Different functions in `autonomy/loki` can be edited in parallel, because each lane above names its own function.
+
+### Waves
+
+Wave 1 can start now. No two of these issues share a file, and each one heads every lane it is in. Dispatch them in this order as seats free up: #357, #345, #361, #360, #342, #362, #364, #249, #367, #368, #369, #371.
+
+Wave 2 (top 20). Each issue starts after the merges named:
+
+- #358: after #345, #361 and branch pd/cw04d.
+- #359: after #361 and #342.
+- #365: after #360.
+- #366: after #357.
+- #370: after #359.
+- #235: after #358.
+- #363: after #358.
+- #372: after #369, #357 and #370.
+
+After wave 2, pull any issue whose lanes are free, following the lane orders above.
