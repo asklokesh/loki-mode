@@ -2,8 +2,9 @@
 // Stored in the existing per-repo memory tree (.loki/memory/semantic/pr-lessons.json). Lesson text is
 // the comment body verbatim; nothing is paraphrased. Each lesson carries its source (PR + comment URL)
 // and use tags (run id + that run's final verdict) so the list can show whether a lesson helps.
+import { redactSecrets } from "./redact.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { atomicWriteJson } from "./atomic.ts";
@@ -20,7 +21,7 @@ export interface LessonUse { run_id: string; verdict: string | null; at: string 
 export interface Lesson {
   id: string;
   text: string;
-  source: { pr: string; pr_url: string; comment_url: string; kind: "review_comment" | "review" | "receipt"; author: string; path?: string };
+  source: { pr: string; pr_url: string; comment_url: string; kind: "review_comment" | "review" | "receipt" | "human_edit"; author: string; path?: string; hunk?: string };
   learned_at: string;
   uses: LessonUse[];
   /** v2 (MC-1): the Loki run that produced the PR. Absent for non-Loki PRs. `unverified` means no local receipt that verifies. */
@@ -59,6 +60,27 @@ function save(repoDir: string, lessons: Lesson[]): void {
   const p = lessonsPath(repoDir);
   mkdirSync(dirname(p), { recursive: true });
   atomicWriteJson(p, { version: 2, lessons } satisfies LessonFile);
+}
+
+/** User-level store of lessons the user promoted out of one repo. Everything else stays in its own repo's .loki. */
+export const promotedPath = (): string => join(process.env["LOKI_PROMOTED_DIR"] || join(homedir(), ".loki"), "memory", "semantic", "promoted-lessons.json");
+function loadPromoted(): Lesson[] {
+  try {
+    const j = JSON.parse(readFileSync(promotedPath(), "utf-8")) as Partial<LessonFile>;
+    return Array.isArray(j.lessons) ? j.lessons : [];
+  } catch { return []; }
+}
+function savePromoted(lessons: Lesson[]): void {
+  mkdirSync(dirname(promotedPath()), { recursive: true });
+  atomicWriteJson(promotedPath(), { version: 2, lessons } satisfies LessonFile);
+}
+/** Copy one repo lesson into the user-level store so briefs in every repo can retrieve it. Null when the id is unknown here; promoting twice is a no-op. */
+export function promoteLesson(repoDir: string, id: string): Lesson | null {
+  const l = loadLessons(repoDir).find((x) => x.id === id);
+  if (!l) return null;
+  const all = loadPromoted();
+  if (!all.some((x) => x.id === id)) savePromoted([...all, { ...l, uses: [] }]);
+  return l;
 }
 
 export function parsePrRef(ref: string): { repo: string; num: number } | null {
@@ -115,6 +137,38 @@ async function cite(repoDir: string, runId: string, deps: CiteDeps): Promise<Cit
   } catch { return unverified; }
 }
 
+export const MAX_HUMAN_COMMITS = 10;
+const MAX_HUNKS_PER_EDIT = 3;
+const MAX_EDIT_TEXT = 1200;
+
+/** Human commits pushed onto a Loki PR (a Loki-Run or Review-Comment trailer marks the engine's own commits; merges and bots are not human edits). */
+function humanCommits(commits: Array<Record<string, any>>): Array<Record<string, any>> {
+  return commits.filter((c) => typeof c.sha === "string" && !/^(Loki-Run|Review-Comment):/m.test(String(c.commit?.message ?? ""))
+    && !(Array.isArray(c.parents) && c.parents.length > 1) && c.author?.type !== "Bot" && !/\[bot\]$/i.test(String(c.author?.login ?? ""))).slice(0, MAX_HUMAN_COMMITS);
+}
+
+/** The diff of one human commit as a lesson item: the patch lines verbatim, headed by the file and first hunk cited. Null when it has no textual patch. */
+async function humanEditItem(gh: GhClient, repo: string, c: Record<string, any>): Promise<{ url: string; body: string; author: string; path: string; hunk: string } | null> {
+  let detail: Record<string, any>;
+  try { detail = JSON.parse(await ghText(gh, ["api", `repos/${repo}/commits/${c.sha}`])); } catch (e) { if (e instanceof GhError && /gh CLI not found/.test(e.message)) throw e; return null; }
+  const parts: string[] = [];
+  let first: { path: string; hunk: string } | null = null;
+  for (const f of Array.isArray(detail.files) ? detail.files : []) {
+    const patch = typeof f.patch === "string" ? f.patch : "";
+    if (patch === "") continue;
+    for (const h of patch.split(/^(?=@@ )/m).filter((x: string) => x.startsWith("@@ ")).slice(0, MAX_HUNKS_PER_EDIT - parts.length)) {
+      const hunk = /^@@ [^@]+ @@/.exec(h)?.[0] ?? "@@";
+      first ??= { path: String(f.filename ?? ""), hunk };
+      parts.push(`${String(f.filename ?? "")} ${h.trimEnd()}`);
+    }
+    if (parts.length >= MAX_HUNKS_PER_EDIT) break;
+  }
+  if (!first) return null;
+  const subject = String(c.commit?.message ?? "").split("\n")[0]!.trim();
+  const body = redactSecrets(`A human edited this Loki PR in ${first.path} at ${first.hunk} (commit "${subject}"):\n${parts.join("\n")}`).slice(0, MAX_EDIT_TEXT); // patch text reaches future briefs: redact before the cap so a token is never cut in half
+  return { url: String(detail.html_url ?? c.html_url ?? ""), body, author: String(c.author?.login ?? c.commit?.author?.name ?? ""), ...first };
+}
+
 export async function learnFromPr(repoDir: string, ref: string, gh: GhClient = defaultGh, now: () => Date = () => new Date(), deps: CiteDeps = {}): Promise<LearnResult> {
   const pr = parsePrRef(ref);
   if (!pr) throw new GhError(`Invalid PR reference '${ref}'. Expected owner/repo#123.`);
@@ -142,7 +196,9 @@ export async function learnFromPr(repoDir: string, ref: string, gh: GhClient = d
   }
   for (const c of inline) items.push({ url: String(c.html_url ?? ""), body: String(c.body ?? ""), kind: "review_comment", author: String(c.user?.login ?? ""), ...(c.path ? { path: String(c.path) } : {}) });
   for (const r of reviews) items.push({ url: String(r.html_url ?? ""), body: String(r.body ?? ""), kind: "review", author: String(r.user?.login ?? "") });
-  if (rejected && !items.some((it) => it.url !== "" && it.body.trim() !== "")) return { added: 0, duplicates: 0, skipped: 0, reason: `${ref} was closed without merge and has no human comments; nothing to learn` };
+  const edits: NonNullable<Awaited<ReturnType<typeof humanEditItem>>>[] = [];
+  if (runId) for (const c of humanCommits(commits)) { const e = await humanEditItem(gh, pr.repo, c); if (e) edits.push(e); }
+  if (rejected && edits.length === 0 && !items.some((it) => it.url !== "" && it.body.trim() !== "")) return { added: 0, duplicates: 0, skipped: 0, reason: `${ref} was closed without merge and has no human comments; nothing to learn` };
   const lessons = loadLessons(repoDir);
   const have = new Set(lessons.map((l) => l.id));
   const res: LearnResult = { added: 0, duplicates: 0, skipped: 0 };
@@ -152,6 +208,13 @@ export async function learnFromPr(repoDir: string, ref: string, gh: GhClient = d
     if (have.has(id)) { res.duplicates++; continue; }
     have.add(id);
     lessons.push({ id, text: it.body.trim(), source: { pr: ref, pr_url: prUrl, comment_url: it.url, kind: it.kind, author: it.author, ...(it.path ? { path: it.path } : {}) }, learned_at: now().toISOString(), uses: [], ...(citation ? { justified_by: { ...citation } } : {}), ...(rejected ? { kind: "rejected" as const, ...(meta.closed_at ? { closed_at: meta.closed_at } : {}) } : {}) });
+    res.added++;
+  }
+  for (const e of edits) {
+    const id = idFor(e.url);
+    if (e.url === "" || have.has(id)) { if (e.url !== "") res.duplicates++; else res.skipped++; continue; }
+    have.add(id);
+    lessons.push({ id, text: e.body, source: { pr: ref, pr_url: prUrl, comment_url: e.url, kind: "human_edit", author: e.author, path: e.path, hunk: e.hunk }, learned_at: now().toISOString(), uses: [], ...(citation ? { justified_by: { ...citation } } : {}), ...(rejected ? { kind: "rejected" as const, ...(meta.closed_at ? { closed_at: meta.closed_at } : {}) } : {}) });
     res.added++;
   }
   if (res.added > 0) save(repoDir, lessons);
@@ -213,7 +276,9 @@ export function retrieveLessons(repoDir: string, task: string, limit = 3): Lesso
   if (process.env["LOKI_NO_PR_LESSONS"] === "1") return [];
   const tw = words(task);
   if (tw.size === 0) return [];
-  return loadLessons(repoDir)
+  const local = loadLessons(repoDir);
+  const have = new Set(local.map((l) => l.id));
+  return [...local, ...loadPromoted().filter((l) => !have.has(l.id))]
     .filter((l) => !isDemoted(l))
     .map((l) => { let n = 0; for (const w of words(`${l.text} ${l.source.path ?? ""}`)) if (tw.has(w)) n++; return { l, n }; })
     .filter((x) => x.n > 0).sort((a, b) => b.n - a.n || lessonConfidence(b.l) - lessonConfidence(a.l)).slice(0, limit).map((x) => x.l);
@@ -263,6 +328,8 @@ export function recordRunVerdict(repoDir: string, runId: string, verdict: string
 export function removeLesson(repoDir: string, id: string): Lesson | null {
   const lessons = loadLessons(repoDir);
   const idx = lessons.findIndex((l) => l.id === id);
+  const promoted = loadPromoted();
+  if (promoted.some((l) => l.id === id)) savePromoted(promoted.filter((l) => l.id !== id));
   if (idx < 0) return null;
   const [gone] = lessons.splice(idx, 1);
   save(repoDir, lessons);

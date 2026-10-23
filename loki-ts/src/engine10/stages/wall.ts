@@ -16,7 +16,7 @@ import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTa
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
 import { commandFor } from "./verify.ts"; import { harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { baseJobs, classify, classifyCheck, mapPool, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
+import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -193,6 +193,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
   ctx.wallSealed = true;
   ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }, notRunFiles: { file: string; reason: string }[] = []; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
+  for (const f of sealedFiles) { const rel = relative(ctx.repoDir, f.path); if (!wallTests.some((t) => t.path === rel)) notRunFiles.push({ file: rel, reason: NO_RUNNER_REASON }); } // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: a sealed file no runner can run is named, never dropped
   const each = yield { runner: baseRunner, tests: wallTests }; for (const [i, t] of wallTests.entries()) {
     const e = each?.[i], r = e ?? baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; notRunFiles.push(...(e ? e.notRunFiles : baseRunner.lastNotRunFiles ?? [])); if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }

@@ -19,6 +19,7 @@ import { resolve, dirname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { rm, stat, readFile, writeFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { sourceFingerprint } from "../src/engine10/cache.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");
@@ -167,6 +168,8 @@ async function main(): Promise<number> {
     // compiled binary (bun build --compile) doesn't print "unknown".
     define: {
       "globalThis.__LOKI_BUILD_VERSION__": JSON.stringify(version),
+      // #331: the engine10 repomap/testmap cache binds to the code that built the maps; the bundle cannot hash its own source at run time.
+      "globalThis.__LOKI_PRODUCER_FP__": JSON.stringify(sourceFingerprint(resolve(PKG_ROOT, "src"))),
     },
     // Bun automatically treats `node:*` and `bun:*` specifiers as externals
     // when target is "bun"; declaring them here is belt-and-suspenders so

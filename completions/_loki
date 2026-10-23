@@ -343,6 +343,7 @@ function _loki_commands {
         'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
+        'runs:List runs across the projects registered with loki projects add'
         'undo:Show what undoing a run would do (read-only plan; --dry-run adds the diffstat; --list shows recent runs)'
         'chat:Interactive chat session (run, attach)'
         'route:Print the engine, provider and model route without running'
@@ -419,6 +420,7 @@ function _loki_start {
         '--spec[Run against an edited spec file]:spec file:_files' \
         '--spec-first[Write an editable spec, then stop]' \
         '--dry-run[Validate flags and preflight, print provider, model and cap, spend nothing]' \
+        '--resume[Resume an interrupted run at the stage it stopped in]::run id:' \
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
@@ -512,6 +514,7 @@ function _loki_memory {
         'vectors:Vector search'
         'lessons:List PR lessons (--json)'
         'learn:Learn from a merged PR'
+        'promote:Share a PR lesson with every repo'
         'forget:Delete a PR lesson'
         'help:Memory help'
     )

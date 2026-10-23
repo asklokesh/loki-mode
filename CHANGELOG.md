@@ -9,6 +9,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
+## v11.62.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 moat test pins the shorthand helper binding in a dynamic-import destructure to both the import and indirect rules (p9-shorthand, rebased onto main). Approval: "Ship: p9-shorthand. rev-c HIGH re-APPROVE on 61ca6c363, which replaces my earlier a060fbc15 + 518d2891e line. The range is the single commit 61ca6c363 on origin/main."
+
+## v11.62.0 (2026-10-23)
+
+
+
+### Added
+- PR lessons are learned only from human commits: bot authors and merge commits yield no lesson, at most MAX_HUMAN_COMMITS commits are read, commits without a patch are skipped, secrets are redacted before storage, and loki memory promote shares a lesson across repos (pd/364a-r2 and pd/364b-r2). Approval: "tl-324: APPROVE pd/364b-r2 a511d4159a0c06216a3744d77f2267fc968424f8, a stack of four commits on origin/main; ship all four in order: fee344a42cc0f3869c5cfa80f3c6213061203423, dba9b20f32a73ab9c99eb3f6db7fbe184795a480 (364a-r2), 8a7073c953bc92a6f04d4218e99168e334ab29b7, a511d4159a0c06216a3744d77f2267fc968424f8 (364b-r2)".
+
+## v11.61.2 (2026-10-23)
+
+
+
+### Fixed
+- The bench retires the fd-1 to fd-4 overlays that passed a stated-rule near-miss, adds fd-1b to fd-4b, and fd-3b checks a negative quantity before a bad tax rate (pd/fd1b). Approval: "tl-324: APPROVE pd/fd1b head b7d91e38382250c508bc09308ed8b63d2614fdf0. The branch holds a merge commit, so ship by fast-forwarding or merging this head". Shipped by merging that head.
+
+## v11.61.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 allowtoken moat scan accepts a plain destructured dynamic import of safe_git (FC-P9-DYNAMIC-IMPORT-FALSE-POSITIVE). Approval: "Ship line from rev-c: APPROVE pd/p0-p9-allowtoken a060fbc15. The range origin/main..a060fbc15 is one commit".
+
+## v11.61.0 (2026-10-23)
+
+
+
+### Added
+- Preflight reads the PR publish capability from the GitHub API at intake, names the fallback for collaborators-only and no-fork repositories, and records the publish plan without changing PreflightResult (R100-022, #231). Approval: "tl-324: APPROVE pd/231, a stack of two commits on origin/main; ship both in order: 70c6a399cf2f93ab7c8ce7e7ebeba1ee8f200ca8 then 31d866a55a73f26a54dff0523c186f49907f1978 (head)". The receipt criterion is a separate HIGH slice and is not covered.
+
+## v11.60.17 (2026-10-23)
+
+
+
+### Fixed
+- The engine10 repomap and testmap cache key is bound to its producer, cache files are private and written atomically, and the unbound-fallback and injected-fingerprint mutants are killed (pd/331). Approval: "SHIP pd/331: head 8066c01089fd1dd48c1a791590e3a8caaa0b5326 has rev-c opus HIGH APPROVE. The range is 006ef38ff..8066c0108, three commits: 5fc8c5d46, the merge d11335f4c and 8066c0108." Shipped by merging that head.
+
+## v11.60.16 (2026-10-23)
+
+
+
+### Fixed
+- The zsh completion in completions/_loki now offers the --resume flag (resume-completion3, rebased by its author onto current main). Approval: "APPROVE pd/p0-resume-completion3 ccb5ef9dc71742eddfb55498f692d5b86dd29623 (tl-2, LOW)".
+
+## v11.60.15 (2026-10-23)
+
+### Fixed
+- The P12-07n resume test gets an explicit 60000 ms timeout so it no longer fails under load (fixresume-timeout). Approval: "APPROVE pd/p0-fixresume-timeout cc6432c9b (tl-2, LOW)".
+
+## v11.60.14 (2026-10-23)
+
+### Fixed
+- The cost-cache test now clears LOKI_INFERENCE_GEO and its cache state so it passes regardless of the environment (costcache3). Approval: "APPROVE pd/p0-costcache3 b75336e3b7c10cb9bfe5ab7704fb4b1a0010668d (tl-2, LOW), stacked on parent 9dc4242bf822ec70c85519639131a21fe5dec4d8 (costcache2, previously approved)".
+
+## v11.60.13 (2026-10-23)
+
+### Fixed
+- The cost-cache test loader keeps the helper functions the calculator calls, so cost-cache tests exercise the real calculator instead of a loader that drops its helpers. Approval: "ship pd/p0-costcache2 9dc4242bf822ec70c85519639131a21fe5dec4d8 ... rev-b HIGH reviewer verdict: APPROVE".
+
+## v11.60.12 (2026-10-23)
+
+### Fixed
+- The branch save and restore helpers now live in util/safe_git.ts, which brings the extension module back under its line budget (P0). Approval: "tl-2 APPROVE pd/p0-e10ext-budget debdfa677 (LOW, P0)".
+
+## v11.60.11 (2026-10-23)
+
+### Fixed
+- The Wall no longer depends on a separate runner and now runs through the single shared path (wallnorunner). Approval: "Ship line: pd/wallnorunner a1c07ce3c APPROVED by rev-c (HIGH). Range bc2e0a8ff..a1c07ce3c, a single commit a1c07ce3c".
+
+## v11.60.10 (2026-10-23)
+
+### Fixed
+- The help-vs-changelog drift test now scans a 1000-section window by default, so a missing invocation can no longer hide below the old 5-section cap (FC-HELP-DRIFT-WINDOW-CAP). Approval: "tl-2 APPROVE pd/p0-helpdrift-empty-window 984a2d787 (LOW, P0)".
+
+## v11.60.9 (2026-10-23)
+
+### Fixed
+- The cline version probe now spawns with a token-free environment instead of the full parent environment, so the provider version check no longer exposes secrets to the child process. Approval: "Ship line: pd/p0-envspawn-rc f5aee29de APPROVED by rev-c (HIGH). Range 42404106a..f5aee29de, a single commit f5aee29de".
 
 ## v11.60.8 (2026-10-23)
 
