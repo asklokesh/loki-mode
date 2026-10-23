@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.71.0 (2026-10-23)
+
+### Added
+- `loki doctor --json` reports provider_autodetected, and `loki setup` is optional on a machine that is already logged in; the claude check follows the same condition as preflight, so a foreign provider key no longer counts (R100-001, #357). Approval: "tl-324 APPROVE (MEDIUM) pd/r100-001-r2, ship both commits in order by full SHA: 00b183aa6653e49e196633037b0d1b659465c9cb then 49831a95cffe73a8000333693c067fdefb6698ad".
+
 ## v11.70.4 (2026-10-23)
 
 ### Fixed
