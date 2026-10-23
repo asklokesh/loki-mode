@@ -81,6 +81,19 @@ describe("E-48 deep verify spawn", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
   }, 15_000);
 
+  test("FC-WORKER-NO-PROCESS-LIMITS: the detached deep verify runs under the same LOKI_ULIMIT_NPROC wrapper as the worker", async () => {
+    const dir = repo();
+    const marker = join(dir, "deep-ulimit.txt");
+    const deepCode = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, require("node:child_process").execFileSync("/bin/sh", ["-c", "ulimit -u"], { encoding: "utf8" }));\nBun.sleepSync(300);`;
+    await runSupervisor({ runId: "e10-dw-ul", repoDir: dir, env: supEnv({ LOKI_ULIMIT_NPROC: "2000" }), workerArgv: DONE_WORKER, deepArgv: worker(deepCode), pr: prStep() });
+    const started = readEvents(join(dir, ".loki/runs/e10-dw-ul/events.jsonl")).find((e) => e.type === "deep.started");
+    expect(started).toBeTruthy();
+    pids.push(started!.data.pid as number);
+    const t1 = Date.now();
+    while (!existsSync(marker) && Date.now() - t1 < 4000) Bun.sleepSync(20);
+    expect(readFileSync(marker, "utf8").trim()).toBe("2000");
+  }, 15_000);
+
   test("no PR opened: deep verify is never spawned", async () => {
     const dir = repo();
     const r = await runSupervisor({ runId: "e10-dw2", repoDir: dir, env: supEnv(), workerArgv: DONE_WORKER, deepArgv: worker("Bun.sleepSync(50)") });

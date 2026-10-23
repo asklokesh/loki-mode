@@ -21,7 +21,7 @@ import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_in
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { renderProofCard } from "../util/receipt_surface.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
-import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
+import { killGroup, spawnWorker, ulimitArgv } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
@@ -200,7 +200,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       await opts.status?.({ prUrl: out.url }); await slackEvent(env, "pr_opened", { repo: githubRepoFromUrl(origin) ?? undefined, issue: String(opts.started?.["issue_ref"] ?? ""), prUrl: out.url, outcome: verdict }); // D51-A4
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
-      if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
+      if (opts.deepArgv) { let argv: string[] | null = null; try { argv = ulimitArgv([...opts.deepArgv, origin], workerEnv); } catch (e) { notProven.push(`deep verify not spawned: ${(e as Error).message}`); } const [cmd, ...dArgs] = argv ?? [], child = argv && cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else if (argv) notProven.push("deep verify not spawned"); }
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
