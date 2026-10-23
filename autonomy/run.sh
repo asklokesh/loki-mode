@@ -1144,7 +1144,7 @@ _loki_snapshot_workspace_tree() {
 # tree): it is never evidence, and no Seal, verify or gate reader may consume it.
 _LOKI_CONFINE_READY=""
 _LOKI_CONFINE_PREFIX=()
-_LOKI_GIT_PIN_WS=""; _LOKI_GIT_PIN_DIR=""; _LOKI_GIT_PIN_COMMON=""
+_LOKI_GIT_PIN_WS=""; _LOKI_GIT_PIN_DIR=""; _LOKI_GIT_PIN_COMMON=""; _LOKI_GIT_PIN_PRESENT=""
 _loki_os_confine_init() {
     [ -n "$_LOKI_CONFINE_READY" ] && return 0
     _LOKI_CONFINE_READY="1"
@@ -1192,6 +1192,10 @@ $pin_lines
 EOF_PIN
         _LOKI_GIT_PIN_WS="$(cd -P "$work" 2>/dev/null && pwd)" || _LOKI_GIT_PIN_WS=""
         _LOKI_GIT_PIN_DIR="$pin_dir"; _LOKI_GIT_PIN_COMMON="$pin_common"
+        local pf
+        for pf in commondir gitdir; do
+            { [ -e "$work/.git/$pf" ] || [ -L "$work/.git/$pf" ]; } && _LOKI_GIT_PIN_PRESENT="$_LOKI_GIT_PIN_PRESENT $pf"
+        done
         eval 'git() {
             local d="$PWD"
             [ "${1:-}" = "-C" ] && d="${2:-}"
@@ -1206,6 +1210,31 @@ EOF_PIN
     elif [ "${LOKI_OS_SANDBOX:-off}" != "off" ]; then
         log_warn "OS sandbox not active: provider runs unconfined (see .loki/state/os-sandbox.json)"
     fi
+}
+
+# After a confined provider returns, before any git or python reads the tree: bwrap
+# cannot deny CREATING a missing .git/commondir or .git/gitdir (it cannot bind a
+# nonexistent path), and unpinned git callers (preedit_snapshot.py, backlog.py,
+# fast_verify.py, workspace.py, proof-generator.py, TS safeGit) would follow it to a
+# git dir with clean filters. Remove any pointer that appeared since the pin and
+# return 1 so the caller fails the iteration closed (FC-SANDBOX-COMMONDIR-CREATE-REPOINT).
+_loki_git_pointer_guard() {
+    [ -n "$_LOKI_GIT_PIN_DIR" ] || return 0
+    [ "$_LOKI_GIT_PIN_DIR" = "$_LOKI_GIT_PIN_WS/.git" ] || return 0
+    local g="$_LOKI_GIT_PIN_WS/.git" f bad=0
+    if [ -L "$g" ] || [ ! -d "$g" ]; then
+        log_error "OS sandbox: workspace .git was replaced during the provider run; failing the iteration closed"
+        return 1
+    fi
+    for f in commondir gitdir; do
+        case " $_LOKI_GIT_PIN_PRESENT " in *" $f "*) continue ;; esac
+        if [ -e "$g/$f" ] || [ -L "$g/$f" ]; then
+            rm -f -- "$g/$f"
+            log_error "OS sandbox: confined provider created .git/$f (git redirect); removed, failing the iteration closed"
+            bad=1
+        fi
+    done
+    return "$bad"
 }
 
 _loki_provider_pipeline_exit_code() {
@@ -1247,6 +1276,7 @@ _loki_invoke_argv_provider() {
         ${_LOKI_CONFINE_PREFIX[@]+"${_LOKI_CONFINE_PREFIX[@]}"} "${_LOKI_INVOKE_ARGV[@]}" < /dev/null 2>&1 \
         | tee -a "$log_file" "$agent_log" "$iter_output"
     _loki_argv_pipe_status=("${PIPESTATUS[@]}")
+    _loki_git_pointer_guard || return 125
     return "$(_loki_provider_pipeline_exit_code \
         "${_loki_argv_pipe_status[0]:-125}" \
         "${_loki_argv_pipe_status[1]:-125}" 0)"
@@ -26597,6 +26627,7 @@ if __name__ == "__main__":
                 exit_code="$(_loki_provider_pipeline_exit_code \
                     "$_loki_provider_stage_rc" "$_loki_tee_stage_rc" \
                     "$_loki_parser_stage_rc")"
+                _loki_git_pointer_guard || exit_code=125
                 ;;
 
             codex)

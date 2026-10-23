@@ -18,6 +18,8 @@ n_init="$(grep -c '^ *_loki_os_confine_init$' "$RUN_SH")"
 [ "$n_claude" = "2" ] && ok "claude launch forms wrapped ($n_claude)" || bad "claude launch forms wrapped: $n_claude, want 2"
 [ "$n_argv" = "1" ] && ok "argv-provider launch wrapped" || bad "argv-provider launch wrapped: $n_argv, want 1"
 [ "$n_init" = "2" ] && ok "confinement initialised before both launch paths" || bad "init calls: $n_init, want 2"
+n_guard="$(grep -c '^ *_loki_git_pointer_guard ||' "$RUN_SH")"
+[ "$n_guard" = "2" ] && ok "git pointer guard runs after both confined provider returns" || bad "guard call sites: $n_guard, want 2"
 
 # 2. the real function, sourced
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.wiring.XXXXXX")"
@@ -29,6 +31,7 @@ echo outside > "$OUTD/outside.txt"
 ln -s "$OUTD/outside.txt" "$WS/link.txt"
 log_error() { echo "ERR $*" >&2; }; log_info() { :; }; log_warn() { :; }
 eval "$(awk '/^_LOKI_CONFINE_READY=/{f=1} f{print} f&&/^}$/{exit}' "$RUN_SH")"
+eval "$(awk '/^_loki_git_pointer_guard\(\)/{f=1} f{print} f&&/^}$/{exit}' "$RUN_SH")"
 export TARGET_DIR="$WS" SCRIPT_DIR="$ROOT/autonomy" PROVIDER_NAME=claude
 
 _LOKI_CONFINE_READY=""; unset LOKI_OS_SANDBOX
@@ -82,6 +85,28 @@ git_escape_check() {
     ( cd "$repo" && git add g.txt >/dev/null 2>&1 )
     ( cd "$repo" && git -C "$repo" add g.txt >/dev/null 2>&1 )
     if [ -e "$fmark" ]; then bad "repointed commondir filter fired through the pinned git"; else ok "pinned git ignores a repointed .git/commondir and its clean filter"; fi
+    # Linux gap: bwrap cannot deny CREATING a missing .git/commondir, and unpinned callers
+    # (preedit_snapshot.py runs right after the provider) would follow it. The guard removes
+    # the pointer and fails closed before any of them run.
+    python3 -c "import os,sys; os.path.exists(sys.argv[1]) and os.remove(sys.argv[1])" "$repo/.git/commondir"
+    rm -f "$fmark"
+    ( cd "$repo" && command git add -A >/dev/null 2>&1; command git -c user.name=t -c user.email=t@t commit -q -m init >/dev/null 2>&1 )
+    printf 'y\n' > "$repo/g.txt"
+    # the evil common dir must hold the committed objects for diff HEAD to resolve through it
+    python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)" "$repo/.evil"
+    cp -R "$repo/.git" "$repo/.evil"
+    command git config --file "$repo/.evil/config" filter.pwn.clean "touch '$fmark'; cat"
+    command git config --file "$repo/.evil/config" --unset core.fsmonitor
+    printf '../.evil\n' > "$repo/.git/commondir"
+    PYTHONPATH="$ROOT" python3 -c "import sys; from autonomy.lib.preedit_snapshot import _git; _git(['diff','HEAD','--'], sys.argv[1])" "$repo" >/dev/null 2>&1
+    if [ -e "$fmark" ]; then ok "positive control: preedit_snapshot._git fires the filter through a planted commondir"; else bad "preedit positive control did not fire (probe is blind)"; return; fi
+    rm -f "$fmark"; printf 'z\n' > "$repo/g.txt"
+    grc=0; _loki_git_pointer_guard 2>/dev/null || grc=$?
+    if [ "$grc" = "1" ] && [ ! -e "$repo/.git/commondir" ]; then ok "guard removes a commondir created during the run and fails closed"; else bad "guard rc=$grc, commondir present=$([ -e "$repo/.git/commondir" ] && echo yes || echo no)"; fi
+    PYTHONPATH="$ROOT" python3 -c "import sys; from autonomy.lib.preedit_snapshot import _git; _git(['diff','HEAD','--'], sys.argv[1])" "$repo" >/dev/null 2>&1
+    if [ -e "$fmark" ]; then bad "filter fired through preedit_snapshot after the guard"; else ok "no filter fires through preedit_snapshot after the guard"; fi
+    grc=0; _loki_git_pointer_guard 2>/dev/null || grc=$?
+    [ "$grc" = "0" ] && ok "guard is quiet on a clean .git" || bad "guard rc=$grc on a clean .git"
     export TARGET_DIR="$WS"
 }
 
