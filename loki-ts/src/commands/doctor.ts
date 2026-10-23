@@ -284,6 +284,9 @@ export type DoctorJson = {
   provider_availability: ProviderAvailability | null;
   disk: DiskCheck;
   ai_provider: AiProviderCheck;
+  // R100-001: true when an installed provider CLI is also logged in (or has an API key), so the first `loki start`
+  // needs no `loki setup`. Computed by the same login probes the preflight uses; never a second detector.
+  provider_autodetected: boolean;
   // CLAUDE_CODE_USE_* cloud rows; the same rows the text path prints and tallies.
   cloud_auth: CloudAuthRow[];
   // CW-14: advisory auth path per provider (names only); excluded from the summary tally.
@@ -1126,6 +1129,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     provider_availability: readProviderAvailability(),
     disk,
     ai_provider: aiProvider,
+    provider_autodetected: providerAutodetected(checks),
     cloud_auth: cloudAuth,
     provider_auth: providerAuthRows(),
     skills,
@@ -1204,6 +1208,20 @@ export function claudeAuthStatusLoggedIn(cli = "claude", env: NodeJS.ProcessEnv 
   } catch {
     return "";
   }
+}
+
+// R100-001: one answer to "can the first `loki start` run with no setup?". A provider counts when its CLI is installed
+// and its login is confirmed by the probe the preflight already uses: claude via `claude auth status` (or an API key),
+// codex via `codex login status`, opencode/cline via their auth files, and any of them via a provider API key.
+// providerLoginIssue returns null only when a login or key was found, so a warn-only result is not a login.
+export function providerAutodetected(checks: { command: string; found: boolean; path: string | null }[], env: NodeJS.ProcessEnv = process.env): boolean {
+  return ["claude", "codex", "cline", "aider", "opencode"].some((p) => {
+    const c = checks.find((x) => x.command === p);
+    if (!c?.found) return false;
+    const cli = c.path ?? p;
+    if (p === "claude") return PROVIDER_API_KEY_VARS.some((k) => !!env[k]?.trim()) || claudeAuthStatusLoggedIn(cli, env) === "yes";
+    return providerLoginIssue(p, cli, env) === null;
+  });
 }
 
 // TEN-SPEED-05: back-to-back `loki start` runs reuse a SUCCESSFUL login probe

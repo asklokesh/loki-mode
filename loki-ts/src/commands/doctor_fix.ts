@@ -158,7 +158,7 @@ export function applyDoctorFixes(cwd: string = process.cwd(), home: string = hom
     }
   }
   if (!providers.some((c) => has(c))) {
-    manual.push("No provider CLI found: install claude (above), or codex/cline/aider/opencode, or run: loki setup");
+    manual.push("No provider CLI found: install claude (above), or codex/cline/aider/opencode, then log in. `loki setup` is optional: loki start needs no setup once one provider is logged in.");
   }
   if (!has("bun")) {
     manual.push("bun (optional, bundled by the npm package): see https://bun.sh");
