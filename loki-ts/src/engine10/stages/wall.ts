@@ -98,10 +98,13 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
-function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
+export function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
-  if (fileName.endsWith(".go")) return "go";
-  return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
+  if (fileName.endsWith("_test.go")) return "go"; // go test compiles only *_test.go; a plain .go file is never run, so the package's own tests would be charged to it
+  if (!/\.[cm]?[jt]sx?$/.test(fileName)) return null; // a JS runner only ever runs a JS/TS file
+  // vitest, jest and bun select by name (.test/.spec; bun also _test/_spec): an explicit path outside it is "no tests found", not a verdict. node --test runs any named file.
+  const named = /(\.|_)(test|spec)\./.test(fileName);
+  return (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r) && (named || r === "node")) ?? null;
 }
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
