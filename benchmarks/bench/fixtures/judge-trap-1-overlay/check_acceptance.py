@@ -56,6 +56,7 @@ check("word-cut", slugify(words), "alpha-beta-gamma-delta-epsilon-zeta-eta")
 check("dash-at-39", slugify("x" * 39 + " yy"), "x" * 39)
 # '-' at index 40 exactly (the boundary): the cut keeps the first 40 chars.
 check("dash-at-40", slugify("x" * 40 + " yy"), "x" * 40)
+check("dash-at-40-with-earlier-dash", slugify("a" * 20 + " " + "b" * 19 + " c"), "a" * 20 + "-" + "b" * 19)
 check("custom-max", slugify("one two three four", max_len=9), "one-two")
 check("custom-max-fit", slugify("one two three", max_len=13), "one-two-three")
 
