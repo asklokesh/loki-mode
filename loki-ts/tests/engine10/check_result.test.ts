@@ -1,9 +1,10 @@
 // FC-16: a check that executed zero tests is NOT a pass. One shared classifier, every runner fixture, plus the verdict gate.
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, runnerCmd, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -356,5 +357,42 @@ describe("TEN-QUALITY-01 failureExcerpt", () => {
   test("unknown shape falls back to the last lines; empty stays empty", () => {
     expect(failureExcerpt("a\nb\nboom\n")).toContain("boom");
     expect(failureExcerpt("")).toBe("");
+  });
+});
+
+describe("FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: goTestNames and the go argv", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gotn-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  test("top-level Test functions only, TestMain excluded, deduplicated", () => {
+    const f = join(dir, "x_test.go");
+    writeFileSync(f, 'package x\n\nfunc TestMain(m *testing.M) {}\nfunc TestA(t *testing.T) {}\nfunc TestB_c(t *testing.T) {}\nfunc BenchmarkA(b *testing.B) {}\nfunc testHelper(t *testing.T) {}\nfunc (s *S) TestMethod(t *testing.T) {}\n');
+    expect(goTestNames(f)).toEqual(["TestA", "TestB_c"]);
+    expect(goTestNames(join(dir, "missing_test.go"))).toEqual([]);
+  });
+  // rev-b B1: every valid declaration form is named, so `-run` never drops a red test.
+  const FORMS = 'package x\n\nimport (\n\t"fmt"\n\ttt "testing"\n)\n\nfunc TestMulti(\n\tt *tt.T,\n) {\n\tt.Fatal("multi")\n}\n\nfunc TestAlias(t *tt.T) { t.Fatal("alias") }\n\nfunc TestÄ(t *tt.T) { t.Fatal("non-ascii") }\n\nfunc FuzzF(f *tt.F) { f.Fatal("fuzz") }\n\nfunc Example() {\n\tfmt.Println("a")\n\t// Output: b\n}\n';
+  const DOT = 'package x\n\nimport . "testing"\n\nfunc TestDot(t *T) { t.Fatal("dot") }\n\nfunc TestUnnamed(*T) { panic("unnamed") }\n';
+  test("multi-line, aliased, non-ASCII, unnamed, Fuzz and Example forms are all named", () => {
+    const f = join(dir, "forms_test.go"); writeFileSync(f, FORMS);
+    expect(goTestNames(f)).toEqual(["TestMulti", "TestAlias", "TestÄ", "FuzzF", "Example"]);
+  });
+  test.skipIf(!Bun.which("go"))("a red Go Wall file using those forms is fail under the scoped -run, never not_run", () => {
+    const d = mkdtempSync(join(tmpdir(), "gotn-run-")); try {
+      writeFileSync(join(d, "go.mod"), "module x\n\ngo 1.20\n"); writeFileSync(join(d, "loki_wall_x_test.go"), FORMS); writeFileSync(join(d, "loki_wall_dot_test.go"), DOT);
+      expect(goTestNames(join(d, "loki_wall_dot_test.go"))).toEqual(["TestDot", "TestUnnamed"]);
+      for (const [file, names] of [["loki_wall_x_test.go", ["TestMulti", "TestAlias", "TestÄ", "FuzzF", "Example"]], ["loki_wall_dot_test.go", ["TestDot", "TestUnnamed"]]] as const) {
+      const [cmd, args] = runnerCmd({ runner: "go", path: file }, d);
+      const r = spawnSync(cmd, args, { cwd: d, encoding: "utf8", env: { ...process.env, GOFLAGS: "-mod=mod" } });
+      expect(r.status).not.toBe(0);
+      const failed = new Set(r.stdout.split("\n").filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as { Action?: string; Test?: string }).filter((e) => e.Action === "fail" && e.Test).map((e) => e.Test));
+      for (const n of names) expect([n, failed.has(n)]).toEqual([n, true]);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 60000);
+  test("runnerCmd scopes to the file's tests, and keeps the package run when the file has none", () => {
+    writeFileSync(join(dir, "y_test.go"), "package x\n\nfunc TestY(t *testing.T) {}\n");
+    writeFileSync(join(dir, "z_test.go"), "package x\n");
+    expect(runnerCmd({ runner: "go", path: "y_test.go" }, dir)[1]).toEqual(["test", "-json", "-run", "^(TestY)$", "./."]);
+    expect(runnerCmd({ runner: "go", path: "z_test.go" }, dir)[1]).toEqual(["test", "-json", "./."]);
   });
 });

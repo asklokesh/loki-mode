@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.5 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test reads the full grouped help from loki help all and tracks its 32 entries (FC-TEST-ALIAS-FWD-HELP-PAGE-DRIFT). Approval: "APPROVE pd/alias-help-groups2 a1dcdf113 stacked on pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): 211/0 on bash and bun routes, 154 spawns; repoint-to-plain-help mutant red (202/9) and restored; only conflict is docs/v10/FAILURE-CLASSES.md (keep-both; both rows append at EOF); ships after rq53."
+
+## v11.63.4 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test shares one alias --json run between two assertions and prints the CLI spawn count (FC-TEST-ALIAS-FWD-REDUNDANT-SPAWN, #183). Approval: "APPROVE pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): merge-tree rc=0; alias-forwarding suite 154 spawns, 202/9 on both routes, same 9 failing rows as base 5cae48655; export keeps its second spawn; empty-alias-stdout mutant red (189/22) and restored."
+
+## v11.63.3 (2026-10-23)
+
+
+
+### Fixed
+- A sealed Wall path always runs, not only those test discovery lists; a sealed Rust Wall file under tests/ runs as cargo test --test <name>; a sealed Go Wall file runs only its own Test, Fuzz and Example functions via go test -run; and the real go test check gets an explicit 60s timeout (wallgo-r5). Approval: "ship pd/wallgo-r5 37127bc3d4ea913a214ad0c7ac0ad68027158e65 (HIGH, rev-b APPROVE). It is 5 commits over origin/main 5746a4550, linear with 0 merges". rev-c holds no open BLOCK on the wallfile or wallrust commits.
+
+## v11.63.2 (2026-10-23)
+
+
+
+### Fixed
+- get_state_manager caps its per-root cache with an LRU like the TypeScript side (rq35). Approval: "APPROVE pd/rq35 384aca714 (tl-2, LOW), ships after race-impl-hang e59771e33 and rq25 66de3ec0b".
+
+## v11.63.1 (2026-10-23)
+
+
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
 ## v11.62.1 (2026-10-23)
 
 
