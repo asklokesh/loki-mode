@@ -118,6 +118,13 @@ B
 # commit_file <dir> <subject> <path>: a commit touching one file
 commit_file() { mkdir -p "$(dirname "$1/$3")"; echo "$2" >>"$1/$3"; gitc "$1" add "$3"; gitc "$1" commit -q -m "$2"; }
 tc() { # tc [args]: run the script against the fixture
+    # The shipped-SHA gate (#436) needs an approval per commit: name every fixture commit,
+    # unless NO_APPROVE=1 (the unnamed-commit case below).
+    : >"$F/approvals.md"
+    if [ -z "${NO_APPROVE:-}" ]; then
+        git -C "$REPO" rev-list main | while read -r s; do echo "| X | e | b | f | HIGH | ready | TL APPROVE $s |" >>"$F/approvals.md"; done
+    fi
+    export LOKI_TC_APPROVALS="$F/approvals.md"
     LOKI_TC_REPO="$REPO" LOKI_RELEASE_WORKTREE="${WT_ENV-$WT}" bash "$TC" "$@" >"$F/out.txt" 2>&1
     RC=$?
 }
@@ -140,6 +147,15 @@ WT_ENV="" tc
 check "$(omain)" "$S1" "main promoted to the train SHA"
 has "$(LOG)" "PROMOTED train/1" "promotion logged"
 check "$(jq -r .last_train "$REPO/.loki/state/train-cycle.json")" "1" "state file records the train"
+
+echo "T1b -- an unnamed commit in the train is refused at phase B (#436)"
+commit_file "$REPO" "feat: unnamed" src/unnamed.txt
+U1="$(git -C "$REPO" rev-parse main)"
+NO_APPROVE=1 WT_ENV="" tc
+all_green "$U1"
+NO_APPROVE=1 WT_ENV="" tc
+check "$(omain)" "$S1" "unnamed train commit not promoted"
+has "$(LOG)" "GATE_DENIED" "gate denial logged"
 
 echo "T2 -- red train is not promoted"
 mkfix t2

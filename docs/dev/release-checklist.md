@@ -127,6 +127,8 @@ For a manual push (`git push origin main`), run `bash scripts/local-ci.sh` first
 npm, then creates the tag and GitHub Release, builds/pushes Docker (including `:latest`), and updates the Homebrew tap. Do not manually
 create tags.
 
+Before any release merge or push to main, run `bash scripts/release-approval-gate.sh --range origin/main..<sha>` (FC-RELEASE-UNNAMED-STACKED-PARENT): every commit in the range must be named by a `TL|HIGH|CTO|tl-x|rev-x APPROVE <sha>` line in docs/v10/BOARD.md, be rebase-equal by `git patch-id --stable`, or be an exempt clean merge or release commit; a held slice denies. Exit 1 lists each unapproved SHA with its reason, and `LOKI_RELEASE_APPROVED` does not bypass it.
+
 Before pushing the release commit, run `bash scripts/release.sh --check-clean` (E-151): it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 
 ### 5. Verify ALL Distribution Channels

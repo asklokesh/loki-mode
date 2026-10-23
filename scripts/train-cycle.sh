@@ -282,6 +282,9 @@ EOF
     if [ "$DRY_RUN" = 1 ]; then
         log B "$best_sha" "WOULD_PROMOTE train/$best_n -> main (LOKI_RELEASE_MANAGER=1 push by SHA)"; return 0
     fi
+    if ! (cd "$REPO" && bash "$SCRIPT_DIR/release-approval-gate.sh" --range "$main_sha..$best_sha" ${LOKI_TC_APPROVALS:+--approvals "$LOKI_TC_APPROVALS"} >/dev/null 2>&1); then
+        log B "$best_sha" "GATE_DENIED train/$best_n shipped-SHA check (release-approval-gate.sh --range $main_sha..$best_sha)"; return 0
+    fi
     if (cd "$REPO" && LOKI_RELEASE_MANAGER=1 net git push --quiet "$REMOTE" "$best_sha:refs/heads/main" 2>/dev/null); then
         state_set last_promoted_sha "$best_sha"
         log B "$best_sha" "PROMOTED train/$best_n -> main"
