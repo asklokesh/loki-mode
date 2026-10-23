@@ -1,6 +1,7 @@
 // E-02 wall check: state machine skeleton (docs/v10/ENGINE.md section 4).
 // Siblings are fakes injected through RunContext; stages come from an injected loader.
 import { afterEach, describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -682,5 +683,51 @@ describe("FC-OUT-OF-REPO machine", () => {
     const { ctx, events } = fakeCtx();
     await runMachine(ctx, { load: loaderOf(all()) });
     expect(ran(events)).toContain("implement"); expect(ran(events)).toContain("verify");
+  });
+});
+
+describe("engine10 machine: per-stage diff stat (pd/stage-diffstat)", () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  const gitRepo = (): string => {
+    const d = mkdtempSync(join(tmpdir(), "loki-ds-"));
+    dirs.push(d);
+    const g = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, stdio: "ignore" });
+    g("init", "-q");
+    writeFileSync(join(d, "a.txt"), "one\ntwo\nthree\n");
+    g("add", "a.txt"); g("commit", "-q", "-m", "base");
+    return d;
+  };
+
+  it("a stage that changes the tree journals files, added and removed lines; a stage that does not carries none", async () => {
+    const repo = gitRepo();
+    const { ctx, events } = fakeCtx();
+    ctx.repoDir = repo;
+    const edit = stage("implement", async () => {
+      writeFileSync(join(repo, "a.txt"), "one\nTWO\nthree\nfour\n"); // 2 added, 1 removed
+      writeFileSync(join(repo, "b.txt"), "x\ny\n"); // untracked, 2 added
+      mkdirSync(join(repo, ".loki"), { recursive: true }); writeFileSync(join(repo, ".loki", "state.json"), "{}\n"); // engine state is never part of the stat
+      return { status: "completed", data: {} };
+    });
+    await runMachine(ctx, { load: loaderOf(all({ implement: edit })) });
+    const done = (s: string) => events.find((e) => e.type === "stage.completed" && e.stage === s)!.data;
+    expect(done("implement").diff_stat).toEqual({ files: 2, added: 4, removed: 1, paths: [{ path: "a.txt", added: 2, removed: 1 }, { path: "b.txt", added: 2, removed: 0 }] });
+    expect(done("verify").diff_stat).toBeUndefined(); // verify changes nothing: no key, never a fabricated zero
+    expect(done("intake").diff_stat).toBeUndefined();
+  });
+
+  it("the wall stage journals its own diff_stat too", async () => {
+    const repo = gitRepo();
+    const { ctx, events } = fakeCtx();
+    ctx.repoDir = repo;
+    const wall = stage("wall", async () => { writeFileSync(join(repo, "w.test.ts"), "t\n"); return { status: "completed", data: {} }; });
+    await runMachine(ctx, { load: loaderOf(all({ wall })) });
+    expect(events.find((e) => e.type === "stage.completed" && e.stage === "wall")!.data.diff_stat).toEqual({ files: 1, added: 1, removed: 0, paths: [{ path: "w.test.ts", added: 1, removed: 0 }] });
+  });
+
+  it("an unreadable repo leaves diff_stat absent (unmeasured), never zero", async () => {
+    const { ctx, events } = fakeCtx(); // repoDir is /nonexistent
+    await runMachine(ctx, { load: loaderOf(all()) });
+    expect(events.find((e) => e.type === "stage.completed" && e.stage === "implement")!.data.diff_stat).toBeUndefined();
   });
 });

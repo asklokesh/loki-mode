@@ -84,5 +84,33 @@ mkbun "$T/root/node_modules/@oven/bun-windows-x64/bin/bun.exe" WINEXE 0
 run
 case "$out" in "WINEXE $T/entry.ts engine10 "*) ok "(g) @oven/bun-windows-x64 bun.exe routes to engine10" ;; *) bad "(g) got '$out'" ;; esac
 
+# (h)-(k) dev-machine stale-dist guard: no LOKI_TS_ENTRY, real dist/src layout under the copied root.
+S="$(cd "$T/root" && pwd -P)/loki-ts"
+mkbun "$T/fakebin/bun" PATHBUN 0
+rm -rf "$T/root/node_modules"
+mklayout() { rm -rf "$S"; mkdir -p "$S/dist" "$S/src/util"; : >"$S/src/cli.ts"; : >"$S/src/util/other.ts"; : >"$S/dist/loki.js"; }
+runnoentry() {
+    rm -f "$T/out" "$T/stderr"
+    (cd "$T/cwd" && env -i HOME="$T/home" PATH="$T/fakebin:/usr/bin:/bin" LOKI_TELEMETRY_DISABLED=1 \
+        ${TO[@]+"${TO[@]}"} bash "$T/root/bin/loki" "fix the login bug") >/dev/null 2>"$T/stderr"
+    out="$(cat "$T/out" 2>/dev/null || true)"
+}
+# (h) a non-cli src file newer than dist is stale
+mklayout; touch -t 202601010000 "$S/src/cli.ts" "$S/src/util/other.ts"; touch -t 202601020000 "$S/dist/loki.js"; touch -t 202601030000 "$S/src/util/other.ts"
+runnoentry
+case "$out" in "PATHBUN $S/src/cli.ts "*) ok "(h) non-cli src file newer than dist routes to src" ;; *) bad "(h) got '$out'" ;; esac
+# (i) dist newer than every src file is kept
+mklayout; touch -t 202601010000 "$S/src/cli.ts" "$S/src/util/other.ts"; touch -t 202601020000 "$S/dist/loki.js"
+runnoentry
+case "$out" in "PATHBUN $S/dist/loki.js "*) ok "(i) fresh dist is kept" ;; *) bad "(i) got '$out'" ;; esac
+# (j) tarball layout, no src at all: dist is kept
+mklayout; rm -rf "$S/src"
+runnoentry
+case "$out" in "PATHBUN $S/dist/loki.js "*) ok "(j) no src dir keeps dist" ;; *) bad "(j) got '$out'" ;; esac
+# (k) tarball layout, src present but older than dist: dist is kept
+mklayout; touch -t 202601010000 "$S/src/cli.ts" "$S/src/util/other.ts"; touch -t 202601050000 "$S/dist/loki.js"
+runnoentry
+case "$out" in "PATHBUN $S/dist/loki.js "*) ok "(k) src older than dist keeps dist" ;; *) bad "(k) got '$out'" ;; esac
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
