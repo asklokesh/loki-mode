@@ -1576,3 +1576,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one line in FIXED_RULES (cache-stable lead of the implement brief) naming the exact invocation and forbidding files or links under tests/ to satisfy imports.
 - Fixture: tests/e10ext/full_job_brief.test.ts "FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS" and the implement-brief golden.
 - Open: confirm by grepping the loki implement transcripts of the fd-1 and fd-4 grid trials for `ln -s` and bare `pytest` (eng-303c); update this row with the result. Not covered: an agent that links anyway is still only flagged, not blocked.
+
+## FC-GUARD-FIXTURE-MISSES-NEW-DEPENDENCY A change that added a guarded token (98a3c7a67 codex bench adapter) or a runtime file read (77f1196c5 secret-paths.json) did not update the guard fixture, so claude_flags.test.ts P12-26b and the dist-layout test went red on main
+- User-visible vs raw: raw only. P12-26b fired on docstring prose in benchmarks/bench/adapters/codex.py, not a launch. The layout test gap fails closed to plan, never to skip-permissions.
+- Law broken: a change that adds a guarded token or a runtime file read updates the guard's allowlist or fixture in the same slice.
+- Siblings swept: claude_flags.ts loadPermissionsModule (repo-root and dist paths); autonomy/lib/claude-flags.sh and tests/test-claude-flags.sh (bash route, does not load the compiler); os_sandbox.py and tests/lib/test_os_sandbox.py (repo-relative secret-paths.json reads, unaffected); SCOPED_OUT rows claude_code.py and attribution.py (bench arms, same rationale as codex.py).
+- Mechanism: bench adapters register in SCOPED_OUT when added. The layout test copy set follows the compiler's declared dependencies (pd/303d, not this row).
+- Fixture: claude_flags.test.ts "P12-26b" goes red for any new unlisted benchmarks/ file carrying the flag.
+- Open: the dist-layout half (secret-paths.json copy) is owned by pd/303d 1be1e118d.
