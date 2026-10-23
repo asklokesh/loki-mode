@@ -15193,6 +15193,104 @@ EOF
     return 0
 }
 
+# FC-EGRESS-AUDIT-HAND-LISTED: the registry of every env var that names an outbound
+# host. _loki_airgap_audit walks it, so a configured webhook, tracker, remote or model
+# gateway is named in the audit. tests/test-airgap-commands.sh greps autonomy/ and
+# loki-ts/src for LOKI_*_(URL|HOST|ENDPOINT|WEBHOOK) readers and fails on any name that
+# is in neither list. Entry: NAME|what it reaches.
+_LOKI_AIRGAP_EGRESS_ENV=(
+    "LOKI_WEBHOOK_URL|custom webhook notifications"
+    "LOKI_SLACK_WEBHOOK|Slack notifications"
+    "LOKI_SLACK_WEBHOOK_URL|Slack run events (loki-ts)"
+    "LOKI_DISCORD_WEBHOOK|Discord notifications"
+    "LOKI_OTEL_ENDPOINT|OpenTelemetry trace export"
+    "LOKI_QUEUE_URL|queue consumer broker (Redis)"
+    "LOKI_METADATA_URL|metadata store"
+    "LOKI_REMOTE_URL|remote build submission (loki start --remote)"
+    "LOKI_MIROFISH_URL|MiroFish market-simulation service"
+    "LOKI_HOSTED_ENDPOINT|loki proof share --hosted"
+    "LOKI_CONTROL_URL|control plane shipping"
+    "LOKI_CONTROL_PLANE_URL|control plane live line"
+    "LOKI_JIRA_URL|Jira write-back"
+    "JIRA_BASE_URL|Jira write-back (alias of LOKI_JIRA_URL)"
+    "LOKI_LINEAR_URL|Linear write-back"
+    "LOKI_MODEL_BASE_URL|model route base URL"
+)
+# Names the guard skips because they never name an outbound host. NAME|reason.
+_LOKI_AIRGAP_EGRESS_NOT=(
+    "LOKI_POSTHOG_HOST|audited as the telemetry row"
+    "LOKI_TELEMETRY_ENDPOINT|audited as the telemetry row"
+    "LOKI_SLACK_WEBHOOK_ENV|the name of another env var, not a host"
+    "LOKI_SENTRY_WEBHOOK_SECRET|a secret, not a host"
+    "LOKI_SANDBOX_ALLOW_HOSTS|the sandbox's own allowlist, not a destination"
+    "LOKI_PROOF_PUBLIC_URL|a link written into a proof page, never contacted"
+    "LOKI_DEPLOYED_URL|a link written into a proof page, never contacted"
+    "LOKI_PROOF_AUTHZ_DETAIL_URL_TEMPLATE|a path template for the app under test"
+    "LOKI_TELEM_ENDPOINT|internal copy of LOKI_OTEL_ENDPOINT"
+    "LOKI_BASE_URL|internal variable inside issue-providers.sh"
+    "LOKI_CS_PR_URL|internal variable carrying a PR link this run created"
+    "LOKI_DELEGATE_PR_URL|internal variable carrying a PR link this run created"
+    "LOKI_PR_URL|internal variable carrying a PR link this run created"
+    "LOKI_SENTRY_URL|internal variable carrying a Sentry permalink"
+    "LOKI_HOST_GUARD_HOOK|internal path of the host-guard hook"
+    "LOKI_HOST_GUARD_SETTINGS_JSON|internal settings blob of the host-guard hook"
+    "LOKI_DASHBOARD_HOST|the dashboard's own bind address"
+    "LOKI_HOST_GUARD|a boolean switch, not a host"
+    "LOKI_DEPLOY_HEALTH_URL|set per run by loki deploy --health-url, never configuration"
+    "LOKI_GIST_URL|internal variable carrying a gist link this run already created"
+    "LOKI_LAST_GIST_URL|internal variable carrying a gist link this run already created"
+    "LOKI_HOSTED_BODY|internal temp-file path"
+    "LOKI_HOSTED_EP|internal copy of LOKI_HOSTED_ENDPOINT"
+)
+
+# _loki_airgap_configured_egress -- one TSV line per configured outbound host that is
+# not part of the fixed rows: name, host (never the URL: webhook paths are secrets),
+# loopback yes|no, how to disable it. Reads configuration only, no network.
+# MCP servers with a url come from the three files an MCP launch can load
+# (autonomy/lib/mcp-config.sh norm() keeps only command servers, so it cannot list these).
+# Records are tab-separated lines, so no field may carry a control character: a crafted
+# MCP server name or env value would otherwise split or forge rows. Every field is cleaned
+# at the point it is emitted, and the JSON reader skips any line that is still malformed.
+_loki_airgap_clean() { printf '%s' "$1" | LC_ALL=C tr '\001-\037\177' '?'; }
+_loki_airgap_configured_egress() {
+    local entry name what val host local_flag
+    for entry in "${_LOKI_AIRGAP_EGRESS_ENV[@]}"; do
+        name="${entry%%|*}"; what="${entry#*|}"
+        val="${!name:-}"
+        [ -n "$val" ] || continue
+        host="$(loki_remote_host "$val")"
+        [ -n "$host" ] || host="(unparseable value of $name)"
+        local_flag="no"; loki_remote_is_local_host "$val" && local_flag="yes"
+        printf '%s\t%s\t%s\tunset %s\n' "$what ($name)" "$(_loki_airgap_clean "$host")" "$local_flag" "$name"
+    done
+    local f
+    for f in "${TARGET_DIR:-.}/.mcp.json" "$LOKI_DIR/mcp-config.json" "${HOME:-/nonexistent}/.claude/mcp.json"; do
+        [ -f "$f" ] || continue
+        python3 -I -c '
+import json, os, re, sys
+from urllib.parse import urlsplit
+def clean(s):
+    return re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029]", "?", str(s))
+p = sys.argv[1]
+try:
+    if os.path.getsize(p) > 1048576:
+        sys.exit(0)
+    v = json.load(open(p, encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(0)
+for name, e in (v.get("mcpServers") or {}).items() if isinstance(v, dict) and isinstance(v.get("mcpServers"), dict) else []:
+    u = e.get("url") if isinstance(e, dict) else None
+    if not isinstance(u, str) or not u:
+        continue
+    try:
+        h = urlsplit(u).hostname or ""
+    except ValueError:
+        h = ""
+    print("MCP server %s (%s)\t%s\t%s\tremove the server from %s" % (clean(name), clean(p), clean(h or "(unparseable url)"), "yes" if h in ("localhost", "127.0.0.1", "::1") else "no", clean(p)))
+' "$f" 2>/dev/null
+    done
+}
+
 # Check system prerequisites
 # _loki_airgap_audit <json?> -- enumerate every network egress this engine can
 # perform, classify each as REQUIRED or optional, and say how to disable it.
@@ -15316,14 +15414,18 @@ _loki_airgap_audit() {
     if declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled; then
         tel_state="on"
     fi
-    local tel_host="${LOKI_POSTHOG_HOST:-https://us.i.posthog.com}"
+    local tel_host
+    tel_host="$(loki_remote_host "${LOKI_POSTHOG_HOST:-https://us.i.posthog.com}")"
     local upd_state="on"
     [ "${LOKI_NO_UPDATE_CHECK:-0}" = "1" ] && upd_state="off"
+
+    local cfg_egress
+    cfg_egress="$(_loki_airgap_configured_egress)"
 
     if [ "$as_json" = "true" ]; then
         _AG_PROV="$provider" _AG_PSRC="$provider_src" _AG_HOST="$model_host" _AG_REQ="$model_required" \
         _AG_NOTE="$model_note" _AG_TEL="$tel_state" _AG_TELHOST="$tel_host" _AG_UPD="$upd_state" \
-        _AG_SC="$sidecall_required" _AG_SCHOST="$sidecall_host" \
+        _AG_SC="$sidecall_required" _AG_SCHOST="$sidecall_host" _AG_CFG="$cfg_egress" \
         python3 -c '
 import json, os
 req = os.environ["_AG_REQ"] == "yes"
@@ -15346,6 +15448,12 @@ egress = [{
     "enabled": os.environ["_AG_UPD"] == "on",
     "disable": "export LOKI_NO_UPDATE_CHECK=1",
 }]
+for line in os.environ["_AG_CFG"].split("\n"):  # never splitlines(): it also breaks on U+0085, U+2028 and U+2029
+    parts = line.split("\t")
+    if len(parts) != 4:
+        continue
+    n, h, loc, dis = parts
+    egress.append({"name": n, "host": h, "required": False, "enabled": True, "loopback": loc == "yes", "disable": dis})
 if os.environ["_AG_SC"] == "yes":
     egress.append({
         "name": "claude_sidecalls",
@@ -15394,6 +15502,18 @@ print(json.dumps({
     echo -e "  optional  telemetry           [$tel_state]  -> $tel_host"
     echo "            disable: loki telemetry off, DO_NOT_TRACK=1, or LOKI_AIRGAP=true (on by default for interactive installs)"
     echo -e "  optional  update check        [$upd_state]  disable: export LOKI_NO_UPDATE_CHECK=1"
+    if [ -n "$cfg_egress" ]; then
+        local c_name c_host c_loc c_dis
+        while IFS=$'\t' read -r c_name c_host c_loc c_dis; do
+            [ -n "$c_name" ] || continue
+            if [ "$c_loc" = "yes" ]; then
+                echo "  optional  $c_name -> $c_host (loopback)"
+            else
+                echo "  optional  $c_name -> $c_host"
+            fi
+            echo "            disable: $c_dis"
+        done <<< "$cfg_egress"
+    fi
     echo ""
     echo -e "${BOLD}Not audited here${NC} (depends on the project; see docs/air-gapped.md)"
     echo "  package installs  app runner (npm, pip, docker), dashboard venv (PyPI), quality-gate"
