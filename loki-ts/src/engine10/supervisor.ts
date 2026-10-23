@@ -259,6 +259,7 @@ export { partialCost }; // E-69: defined in events.ts, next to fold(); re-export
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
   let eoo = false, resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let providerExplicit = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -268,7 +269,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--quiet") quiet = true; // OC-OUTPUT: unified summary only
     else if (a === "--max-cost") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --max-cost needs a value\n"); return 2; } maxCost = v; i++; } // TEN-STABILITY-63: a missing or flag-shaped value exits 2 instead of becoming ""
     else if (a.startsWith("--max-cost=")) maxCost = a.slice(11); // TEN-STABILITY-38: exact flag only, so --max-costly is an unknown flag
-    else if (a === "--provider") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --provider needs a value\n"); return 2; } provider = v; i++; } // TEN-UX-33: a missing or flag-shaped value never silently keeps the env provider or eats the next flag
+    else if (a === "--provider") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --provider needs a value\n"); return 2; } provider = v; providerExplicit = true; i++; } // TEN-UX-33: a missing or flag-shaped value never silently keeps the env provider or eats the next flag
     else if (a === "--spec") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --spec needs a value\n"); return 2; } specFile = v; i++; } // TEN-STABILITY-63
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
@@ -276,7 +277,9 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
-  let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
+  const givenCap = maxCost === null ? null : parseCapUsd(maxCost); if (resume && maxCost !== null) { const c = resolveCap(maxCost, process.cwd()); if ("error" in c) { process.stderr.write(`engine10: ${c.error}\n`); return 2; } } // 0 stays valid (no cap); a bad value never silently drops on --resume
+  const flags = { maxCostUsd: givenCap, provider: providerExplicit ? provider : null, deep, spec: specFile !== null }; // FC-AUTORESUME-DROPS-START-FLAGS: both resume entries get the typed flags
+  let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr, { flags });
   let spec: LoadedSpec | null = null;
   if (specFile !== null) { // SPEC-FIRST-INTENT: refuse a spec that does not parse (exit 2, with the line) before any run state exists
     try { spec = loadSpecFile(resolve(specFile)); } catch (e) { process.stderr.write(`engine10: ${(e as Error).message}\n`); return 2; }
@@ -292,7 +295,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     process.stderr.write(`engine10: ${i.notice}\n`);
     try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
   }
-  { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes instead of starting over
+  { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr, { flags }); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes instead of starting over
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }

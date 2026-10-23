@@ -279,6 +279,7 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { out(`engine10: --resume refused: run ${it.runId} event log unreadable\n`); return 2; }
   const rp = resumePoint(it.events, raw);
   if (!rp.ok) { out(`engine10: --resume refused: ${rp.reason}\n`); return 2; }
+  { const fc = flagConflict(it.events, deps.flags ?? {}); if (fc) { out(`engine10: --resume refused: ${fc} differs from the crashed run ${it.runId}; drop the flag to resume it as it was\n`); return 2; } }
   if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
@@ -292,8 +293,8 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
     if (dirty.length) { out(`engine10: --resume refused: ${dirty.length} uncommitted or untracked file(s) in your working tree would ride onto ${br}; commit or stash them first\n`); return 2; }
     try { safeGit(repoDir, ["checkout", "-q", br]); } catch { out(`engine10: --resume refused: cannot switch to run branch ${br}\n`); return 2; }
   }
-  const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;
-  const env: NodeJS.ProcessEnv = { ...process.env, ...(capS !== undefined ? { LOKI_E10_CAP_S: String(Math.floor(capS)) } : {}), ...(pc.usd > 0 ? { LOKI_E10_SPENT_USD: String(pc.usd) } : {}), ...(Number(st["max_cost_usd"]) >= 0 && st["max_cost_usd"] !== undefined ? { LOKI_E10_MAX_COST_USD: String(st["max_cost_usd"]) } : {}) };
+  const st = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, capUsd = resumeCapUsd(st["max_cost_usd"], deps.flags?.maxCostUsd), provider = String(st["provider"] ?? "claude"), model = String(st["model"] ?? ""), deep = st["deep"] === true;
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(capS !== undefined ? { LOKI_E10_CAP_S: String(Math.floor(capS)) } : {}), ...(pc.usd > 0 ? { LOKI_E10_SPENT_USD: String(pc.usd) } : {}), ...(capUsd !== undefined ? { LOKI_E10_MAX_COST_USD: String(capUsd) } : {}) };
   const runDir = join(repoDir, ".loki", "runs", it.runId), eventsPath = join(repoDir, eventsRelPath(it.runId));
   const pr = noPr ? undefined : async ({ pushEnv, verdict, notProven }: { pushEnv: { _LOKI_PINNED_ORIGIN: string }; verdict: Verdict; notProven: string[] }) => {
     const gate = prGate(repoDir);
@@ -311,7 +312,22 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
 }
 
 export type RunPrFn = (ctx: Record<string, unknown>, signal: AbortSignal) => Promise<{ status: string; reason?: string; data: Record<string, unknown> }>;
-export interface ResumeDeps { runPr?: RunPrFn; out?: (s: string) => void; supervise?: (o: import("../engine10/supervisor.ts").SupervisorOptions) => Promise<{ outcome: Outcome }> }
+/** The start flags the user typed on this command line (FC-AUTORESUME-DROPS-START-FLAGS). provider is set only when --provider was explicit. */
+export interface StartFlags { maxCostUsd?: number | null; provider?: string | null; deep?: boolean; spec?: boolean }
+/** The first flag that differs from the crashed run, or null. --spec is not recorded on run.started, so any --spec cannot be shown to match. */
+export function flagConflict(events: readonly EventEnvelope[], f: StartFlags): string | null {
+  const st = (events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>, was = String(st["provider"] ?? "claude");
+  if (f.spec) return "--spec (the crashed run's spec is not recorded)";
+  if (f.provider && f.provider !== was) return `--provider ${f.provider} (the crashed run used ${was})`;
+  if (f.deep && st["deep"] !== true) return "--deep (the crashed run was not deep)";
+  return null;
+}
+/** A resumed run's cap: the crashed run's recorded cap, tightened to --max-cost when given; a given cap never loosens a recorded one. */
+export function resumeCapUsd(recorded: unknown, given: number | null | undefined): number | undefined {
+  const rec = recorded !== undefined && Number(recorded) >= 0 ? Number(recorded) : undefined;
+  return given !== null && given !== undefined && given > 0 ? (rec !== undefined && rec > 0 ? Math.min(rec, given) : given) : rec;
+}
+export interface ResumeDeps { flags?: StartFlags; runPr?: RunPrFn; out?: (s: string) => void; supervise?: (o: import("../engine10/supervisor.ts").SupervisorOptions) => Promise<{ outcome: Outcome }> }
 
 /** Resumes the publish phase. Reuses the sealed receipt; appends run.resumed, pr.opened and run.completed. */
 export async function resumePublish(repoDir: string, it: Interrupted, deps: ResumeDeps = {}): Promise<number> {
@@ -355,6 +371,8 @@ export async function startRecovery(repoDir: string, task: string, noPr: boolean
   if (!it) return null;
   if (it.phase === "publish" && !noPr && it.task !== null && it.task === task.trim()) return resumePublish(repoDir, it, deps);
   const note = deps.out ?? ((s: string) => { process.stderr.write(s); });
+  { const fc = it.phase !== "publish" && it.task !== null && it.task === task.trim() && deps.flags ? flagConflict(it.events, deps.flags) : null;
+    if (fc) { note(`not resuming interrupted run ${it.runId}: ${fc} differs from it; starting a new run (LOKI_NO_AUTO_RESUME=1 always starts a new run)\n`); return null; } } // FC-AUTORESUME-DROPS-START-FLAGS
   if (it.phase !== "publish" && it.task !== null && it.task === task.trim() && process.env["LOKI_NO_AUTO_RESUME"] !== "1") { // FC-CRASH-WORK-READ-AS-PREEXISTING: same task after a crash re-enters at the first unsettled stage
     let raw = ""; try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { /* resumePoint refuses an unreadable log below */ }
     const rp = resumePoint(it.events, raw);

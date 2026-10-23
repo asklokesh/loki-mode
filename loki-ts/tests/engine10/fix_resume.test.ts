@@ -173,7 +173,7 @@ import { execFileSync } from "node:child_process";
 import { makeEvent, readEvents } from "../../src/engine10/events.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { workerCapS } from "../../src/engine10/worker.ts";
-import { firstIncompleteStage, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints, startRecovery } from "../../src/util/run_outputs.ts";
+import { firstIncompleteStage, resumeCapUsd, resumeFlag, resumeMachineOpts, resumePoint, seedResumeCtx, stageCheckpoints, startRecovery } from "../../src/util/run_outputs.ts";
 import { applyCapEnv, runSupervisor, SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { readAliveBeat, writeAliveBeat } from "../../src/util/run_pid.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -684,5 +684,72 @@ describe("resume review fixes (P12-07)", () => {
       expect(called).toBe(0);
       expect(say.join("")).toContain("--no-pr");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("FC-AUTORESUME-DROPS-START-FLAGS: the typed start flags reach both resume entries", () => {
+  const crashed = (started: Record<string, unknown>) => mk([
+    ["run.started", null, started], ["stage.completed", "intake", { base_sha: "abc", task: "t" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"],
+  ]);
+  const withRun = async (started: Record<string, unknown>, body: (dir: string, seen: { env?: NodeJS.ProcessEnv }[], say: string[], deps: { out: (s: string) => void; supervise: never }) => Promise<void>): Promise<void> => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-flags-")), cwd = process.cwd(), keep = process.env["LOKI_NO_AUTO_RESUME"];
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: dir });
+      execFileSync("git", ["branch", `loki/${RID}`], { cwd: dir });
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      writeFileSync(join(dir, ".loki", "runs", RID, "events.jsonl"), text(crashed(started)));
+      const seen: { env?: NodeJS.ProcessEnv }[] = [], say: string[] = [];
+      const supervise = (async (o: { env?: NodeJS.ProcessEnv }) => { seen.push(o); return { outcome: "VERIFIED" }; }) as never;
+      process.chdir(dir); delete process.env["LOKI_NO_AUTO_RESUME"];
+      await body(dir, seen, say, { out: (x: string) => { say.push(x); }, supervise });
+    } finally { process.chdir(cwd); if (keep === undefined) delete process.env["LOKI_NO_AUTO_RESUME"]; else process.env["LOKI_NO_AUTO_RESUME"] = keep; rmSync(dir, { recursive: true, force: true }); }
+  };
+  test("resumeCapUsd only tightens: given below recorded wins, given above recorded loses, no recorded cap takes the given one", () => {
+    expect(resumeCapUsd(5, 0.5)).toBe(0.5);
+    expect(resumeCapUsd(0.3, 2)).toBe(0.3);
+    expect(resumeCapUsd(undefined, 1)).toBe(1);
+    expect(resumeCapUsd(5, null)).toBe(5);
+    expect(resumeCapUsd(0, 1)).toBe(1);
+    expect(resumeCapUsd(undefined, null)).toBeUndefined();
+  });
+  test("auto-resume: --max-cost tightens the recorded cap and never loosens it", async () => {
+    await withRun({ provider: "claude", model: "m", max_cost_usd: 5 }, async (dir, seen, _say, deps) => {
+      expect(await startRecovery(dir, "t", true, { ...deps, flags: { maxCostUsd: 0.5 } })).toBe(0);
+      expect(seen[0]?.env?.["LOKI_E10_MAX_COST_USD"]).toBe("0.5");
+      expect(await startRecovery(dir, "t", true, { ...deps, flags: { maxCostUsd: 20 } })).toBe(0);
+      expect(seen[1]?.env?.["LOKI_E10_MAX_COST_USD"]).toBe("5");
+    });
+  });
+  test("auto-resume: a --provider, --deep or --spec that differs starts a new run and names the flag plus LOKI_NO_AUTO_RESUME", async () => {
+    await withRun({ provider: "claude", model: "m", max_cost_usd: 5 }, async (dir, seen, say, deps) => {
+      for (const [flags, named] of [[{ provider: "codex" }, "--provider codex"], [{ deep: true }, "--deep"], [{ spec: true }, "--spec"]] as const) {
+        say.length = 0;
+        expect(await startRecovery(dir, "t", true, { ...deps, flags })).toBeNull();
+        expect(say.join("")).toContain(named);
+        expect(say.join("")).toContain("LOKI_NO_AUTO_RESUME");
+      }
+      expect(seen.length).toBe(0);
+      expect(await startRecovery(dir, "t", true, { ...deps, flags: { provider: "claude" } })).toBe(0);
+      expect(seen.length).toBe(1);
+    });
+  });
+  test("auto-resume: --deep matches a crashed deep run", async () => {
+    await withRun({ provider: "claude", model: "m", deep: true }, async (dir, seen, _say, deps) => {
+      expect(await startRecovery(dir, "t", true, { ...deps, flags: { deep: true } })).toBe(0);
+      expect(seen.length).toBe(1);
+    });
+  });
+  test("explicit --resume: the same cap-tighten rule and the same flag refusal", async () => {
+    await withRun({ provider: "claude", model: "m", max_cost_usd: 5 }, async (_dir, seen, say, deps) => {
+      expect(await resumeFlag(RID, true, { ...deps, flags: { maxCostUsd: 0.5 } })).toBe(0);
+      expect(seen[0]?.env?.["LOKI_E10_MAX_COST_USD"]).toBe("0.5");
+      expect(await resumeFlag(RID, true, { ...deps, flags: { maxCostUsd: 20 } })).toBe(0);
+      expect(seen[1]?.env?.["LOKI_E10_MAX_COST_USD"]).toBe("5");
+      say.length = 0;
+      expect(await resumeFlag(RID, true, { ...deps, flags: { provider: "codex" } })).toBe(2);
+      expect(say.join("")).toContain("--provider codex");
+      expect(seen.length).toBe(2);
+    });
   });
 });
