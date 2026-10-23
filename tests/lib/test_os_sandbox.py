@@ -207,6 +207,64 @@ class ModeTest(unittest.TestCase):
         self.assertEqual(res.returncode, 2, res.stderr)
         self.assertIn("install bubblewrap", res.stderr)
 
+    def test_failed_kernel_probe_under_on_raises(self):
+        with mock.patch.object(os_sandbox, "kernel_probe", return_value=(False, "boom")):
+            with self.assertRaisesRegex(os_sandbox.SandboxUnavailable, "kernel probe failed: boom"):
+                os_sandbox.build_confinement(
+                    self.ws, self.run_dir, "claude", mode="on", platform=sys.platform)
+
+    def test_failed_kernel_probe_under_auto_falls_back(self):
+        with mock.patch.object(os_sandbox, "kernel_probe", return_value=(False, "boom")):
+            status = os_sandbox.build_confinement(
+                self.ws, self.run_dir, "claude", mode="auto", platform=sys.platform)
+        self.assertEqual(status["kind"], "none")
+        self.assertIn("kernel probe failed", status["reason"])
+
+    def test_cli_exit_2_when_kernel_probe_fails_under_on(self):
+        code = (
+            "import sys; from autonomy.lib import os_sandbox as o;"
+            "o.kernel_probe=lambda *a, **k: (False, 'boom');"
+            "sys.exit(o.main(['argv','--workspace',sys.argv[1],"
+            "'--run-dir',sys.argv[2],'--provider','claude']))"
+        )
+        env = {**os.environ, "LOKI_OS_SANDBOX": "on"}
+        res = subprocess.run(
+            [sys.executable, "-c", code, str(self.ws), str(self.run_dir)],
+            cwd=REPO, env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("kernel probe failed: boom", res.stderr)
+
+    def test_empty_mode_is_off(self):
+        self.assertEqual(os_sandbox.resolve_mode(""), "off")
+        env = {**os.environ, "LOKI_OS_SANDBOX": ""}
+        res = subprocess.run(
+            [sys.executable, "-m", "autonomy.lib.os_sandbox", "argv", "--workspace",
+             str(self.ws), "--run-dir", str(self.run_dir), "--provider", "codex"],
+            cwd=REPO, env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(json.loads(res.stdout)["kind"], "none")
+
+    def test_limitations_and_distinct_probe_sha(self):
+        if not HAVE_SEATBELT:
+            self.skipTest("macOS sandbox-exec is required")
+        status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", platform="darwin")
+        self.assertIn("preexisting-cross-boundary-hardlinks", status["known_limitations"])
+        self.assertNotEqual(status["kernel_probe_sha256"], status["profile_sha256"])
+        self.assertNotIn("sysctl-write", " ".join(status["argv_prefix"]))
+        self.assertNotIn("-f", status["argv_prefix"])
+
+    def test_bwrap_limitations_listed(self):
+        with mock.patch.object(os_sandbox.shutil, "which", return_value="/usr/bin/bwrap"), \
+             mock.patch.object(os_sandbox, "kernel_probe", return_value=(True, "ok")):
+            status = os_sandbox.build_confinement(
+                self.ws, self.run_dir, "claude", mode="on", platform="linux")
+        text = " ".join(status["known_limitations"])
+        for needle in ("masks-only-aws-ssh", "skips-node_modules", "200000", "preexisting-cross-boundary-hardlinks"):
+            self.assertIn(needle, text)
+
     def test_cli_off_prints_json(self):
         env = {**os.environ, "LOKI_OS_SANDBOX": "off"}
         res = subprocess.run(
@@ -291,6 +349,48 @@ class KernelMixin:
         self.assertNotEqual(res.returncode, 0)
         self.assertNotIn("SECRET", res.stdout)
         self.assertFalse((self.ws / "hl").exists())
+
+    def test_sandbox_cannot_rewrite_its_own_profile(self):
+        # Rewrite every file a launch could read a profile from, then relaunch.
+        self._sh(
+            f'for f in "{self.run_dir}"/*.sb "{self.run_dir}/os-sandbox.sb"; do '
+            f'printf "(version 1)\\n(allow default)\\n" > "$f"; done'
+        )
+        again = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home)
+        for prefix in (self.status["argv_prefix"], again["argv_prefix"]):
+            res = subprocess.run(
+                [*prefix, "/bin/sh", "-c", f'cat "{self.ws}/.env"'],
+                capture_output=True, text=True, timeout=30, cwd=self.ws)
+            self.assertNotEqual(res.returncode, 0)
+            self.assertNotIn("SECRET", res.stdout)
+
+    def _rebuild(self):
+        self.status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home)
+
+    def test_home_ssh_symlinked_to_dotfiles_denied(self):
+        real = self.base / "dotfiles" / "ssh"
+        real.mkdir(parents=True)
+        (real / "id_y").write_text("dotkey\n")
+        shutil.rmtree(self.home / ".ssh")
+        os.symlink(real, self.home / ".ssh")
+        self._rebuild()
+        for path in (f"{self.home}/.ssh/id_y", f"{real}/id_y"):
+            res = self._sh(f'cat "{path}"')
+            self.assertNotEqual(res.returncode, 0, path)
+            self.assertNotIn("dotkey", res.stdout)
+
+    def test_workspace_ssh_symlinked_outside_denied(self):
+        real = self.base / "outside" / "keys"
+        real.mkdir(parents=True)
+        (real / "id_z").write_text("wskey\n")
+        os.symlink("../outside/keys", self.ws / ".ssh")
+        self._rebuild()
+        for path in (f"{self.ws}/.ssh/id_z", f"{real}/id_z"):
+            res = self._sh(f'cat "{path}"')
+            self.assertNotEqual(res.returncode, 0, path)
+            self.assertNotIn("wskey", res.stdout)
 
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
