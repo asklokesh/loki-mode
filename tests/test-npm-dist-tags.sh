@@ -156,6 +156,22 @@ for pair in "publish-npm verify-npm-registry" "publish-ts-sdk verify-sdk-registr
         && ok "$pub tag step is non-fatal (guarded, LOKI_DISTTAG_TRIES=2)" || bad "$pub tag step: '$tagline'"
 done
 
+# RQ-103: a late lower dist-tag write after the verify job exits is healed by a
+# scheduled converge of both packages that reuses npm-dist-tags.sh (no tag logic of its own).
+CW="${CONVERGE_YML:-$ROOT/.github/workflows/converge-dist-tags.yml}"
+if [ -f "$CW" ]; then
+    grep -qE "^    - cron: '\*/15 \* \* \* \*'" "$CW" && grep -q '^  schedule:' "$CW" \
+        && ok "converge workflow runs on a 15 minute schedule" || bad "converge workflow has no 15 minute schedule"
+    grep -qE 'pkg: \[loki-mode, loki-mode-sdk\]' "$CW" \
+        && ok "converge covers loki-mode and loki-mode-sdk" || bad "converge does not cover both packages"
+    grep -q 'bash scripts/npm-dist-tags.sh' "$CW" && ! grep -qE 'npm dist-tag (add|rm)' "$CW" \
+        && ok "converge calls npm-dist-tags.sh and writes no tags itself" || bad "converge does not reuse npm-dist-tags.sh alone"
+    grep -q 'npm view "${LOKI_DISTTAG_PKG}@${VERSION}"' "$CW" \
+        && ok "converge skips a VERSION the registry does not serve yet" || bad "converge lacks the on-registry guard"
+else
+    bad "converge workflow missing: $CW"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -38,7 +38,7 @@ import glob, itertools, os, re, sys, yaml
 wfdir = sys.argv[1]
 
 # (file, job, step name or None for the job itself) -> justification.
-# Empty since release.yml became the only workflow; add a row only with a
+# Empty since release.yml became the main workflow (converge-dist-tags.yml only schedules the dist-tag script); add a row only with a
 # written justification.
 COE_ALLOW = {}
 ALWAYS_ALLOW = {}
