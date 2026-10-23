@@ -1,0 +1,816 @@
+{
+  "schema_version": "1.0",
+  "generated_utc": "2026-10-23T04:19:49Z",
+  "plan": {
+    "model": "claude-sonnet-5-5",
+    "budget_usd": 5.0,
+    "timeout_s": 900,
+    "repeats": 2,
+    "arms": [
+      "raw-configured"
+    ],
+    "loki_env": {},
+    "tasks": [
+      {
+        "id": "bugfix-1-pagination",
+        "class": "bugfix",
+        "seed_sha256": "8bd6d65c6e24375089c571e4b325277ebcc6cc1f675563e4d9402bab65aaf707",
+        "acceptance_sha256": "08fec7f1df0ae94b6d89d72a0666918da27adaa2f5ee4598e298ed5d5355b5d0",
+        "prompt_sha256": "26604ef94a4a427789b2b7599274da70f76a023fdbe1094e22f411f66952e040"
+      },
+      {
+        "id": "bugfix-2-dedupe",
+        "class": "bugfix",
+        "seed_sha256": "de57c93bee716c34aeae2339298ce404a185d632ca8ba8613d247eccbde847de",
+        "acceptance_sha256": "4f610040821b1d2107cce7d70681ac5e18002fea31442c1f0933fbd3340419fe",
+        "prompt_sha256": "a7087204868e4c092f23348ddf50033d31e84c86e25dc1189c6f5b132cca7ca8"
+      },
+      {
+        "id": "coord-1-api-web",
+        "class": "integration",
+        "seed_sha256": "c67692813b6b55f382af27129a05cb0ade0e379c73af2e171ebaafcfb24003d1",
+        "acceptance_sha256": "7625d80f45e37c603511c53bbffe4b0d3d5a217890fb27773fe9b0e27f6c11f8",
+        "prompt_sha256": "5400a3b8d9d5d435c1747f993d34860a148daba3adc72b8b3a60d39fb9581a58"
+      },
+      {
+        "id": "feature-1-slugify",
+        "class": "feature",
+        "seed_sha256": "4679f9b356525d81465b409bf65b4885955dd901adc5b236636c07347eddc604",
+        "acceptance_sha256": "63d71dd26c688f859cdb32c468120a8cce929ecf24ca5b19e2db009f62c61706",
+        "prompt_sha256": "c75ca87f4233575695fd2beab94299ac7e44fd4f0e521f650d020cd06b63d3a7"
+      },
+      {
+        "id": "feature-2-top-flag",
+        "class": "feature",
+        "seed_sha256": "c5adab4e593b68f5ba34f476c8833c4bf8712978f2b36eecaeee6f8d270380e2",
+        "acceptance_sha256": "0f3b8350a6050c909fa17f91b6a1a8a7c7de9019de7eb4d9b35e4a81fc200f6d",
+        "prompt_sha256": "e71165f5488226a727b86af00fe0bd6f52295ac1da185fffe06cd5886bd4fd94"
+      },
+      {
+        "id": "integration-1-retry-client",
+        "class": "integration",
+        "seed_sha256": "68200044ca1a21d56ddbb503b6c7e5c0c158d4d88022c0c6ce64cc157bf2a37c",
+        "acceptance_sha256": "9599d6e603129325273d15838efeaee27d396b2e6c4cc6df292a0af083a4eaa1",
+        "prompt_sha256": "d7b7cbeee7e567a7de733057252f4ce10a8aacf081d509a53049d24d69918f2c"
+      },
+      {
+        "id": "longspec-1-three-units",
+        "class": "feature",
+        "seed_sha256": "63eab8a3ab0b7464bbac9e00f1b0870ef6bb52404c0c49ce2aeb7ecbe0d131cb",
+        "acceptance_sha256": "d0aef662423f0f36ca360722c12c6a4f20a7bba2a7a388f42cf32d6081281eb5",
+        "prompt_sha256": "7023c0df5d3c91acc55b71e2b10ac8eed1c1afe0b2f1a02fea8d398914ae3aca"
+      },
+      {
+        "id": "refactor-1-pricing",
+        "class": "refactor",
+        "seed_sha256": "c44f69588141cff7b476e8dce74321b14481358767297d89d8cb8e5c77ab2b8b",
+        "acceptance_sha256": "aec95229310d1a11850297730644e85ef8870802c88fc7b707d3a713e1285976",
+        "prompt_sha256": "6913aa0c96da54afdf49b8fecb88ebaffb0d7fa2d53684811ddba2eda5b7f3b9"
+      }
+    ],
+    "cells": [
+      {
+        "task": "bugfix-1-pagination",
+        "class": "bugfix",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "bugfix-2-dedupe",
+        "class": "bugfix",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "coord-1-api-web",
+        "class": "integration",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "feature-1-slugify",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "feature-2-top-flag",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "integration-1-retry-client",
+        "class": "integration",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "longspec-1-three-units",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "refactor-1-pricing",
+        "class": "refactor",
+        "arm": "raw-configured",
+        "repeat": 1
+      },
+      {
+        "task": "bugfix-1-pagination",
+        "class": "bugfix",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "bugfix-2-dedupe",
+        "class": "bugfix",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "coord-1-api-web",
+        "class": "integration",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "feature-1-slugify",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "feature-2-top-flag",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "integration-1-retry-client",
+        "class": "integration",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "longspec-1-three-units",
+        "class": "feature",
+        "arm": "raw-configured",
+        "repeat": 2
+      },
+      {
+        "task": "refactor-1-pricing",
+        "class": "refactor",
+        "arm": "raw-configured",
+        "repeat": 2
+      }
+    ],
+    "model_calls_planned": 16,
+    "droid_cells_planned": 0
+  },
+  "environment": {
+    "probed": true,
+    "claude_version": "2.1.309",
+    "loki_version": "Loki Mode v11.54.0",
+    "loki_bin": "/Users/lokesh/git/lm-wt/h2h-wt/bin/loki",
+    "loki_repo_sha": "0b0a211bdf39d8fd3c60c461bb5178b160409793",
+    "python_version": "3.14.6",
+    "loki_session_model_effective": "claude-sonnet-5-5",
+    "loki_session_model_parent_env": null,
+    "droid": null,
+    "raw_bare": null
+  },
+  "warnings": [],
+  "max_spend_usd": 7.0,
+  "true_spend_usd": 2.210183,
+  "true_spend_is_lower_bound": false,
+  "rows": [
+    {
+      "task": "bugfix-1-pagination",
+      "class": "bugfix",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 138.328,
+      "cost_usd": 0.1364681,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 8,
+      "tokens_out": 1115,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 126781,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28156,
+        "cache_creation_total": 28156,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "bugfix-2-dedupe",
+      "class": "bugfix",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 16.255,
+      "cost_usd": 0.12759,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 956,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 87860,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 27308,
+        "cache_creation_total": 27308,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "coord-1-api-web",
+      "class": "integration",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 19.404,
+      "cost_usd": 0.1416521,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 8,
+      "tokens_out": 1372,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 127921,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28781,
+        "cache_creation_total": 28781,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "feature-1-slugify",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 13.946,
+      "cost_usd": 0.128174,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 977,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 87880,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 27401,
+        "cache_creation_total": 27401,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "feature-2-top-flag",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 15.829,
+      "cost_usd": 0.1370662,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 8,
+      "tokens_out": 1162,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 127382,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28173,
+        "cache_creation_total": 28173,
+        "num_turns": 5,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.328s\n\nOK"
+      }
+    },
+    {
+      "task": "integration-1-retry-client",
+      "class": "integration",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 17.211,
+      "cost_usd": 0.1409471,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 10,
+      "tokens_out": 1225,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 166811,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 27999,
+        "cache_creation_total": 27999,
+        "num_turns": 5,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "longspec-1-three-units",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 22.998,
+      "cost_usd": 0.1518341,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 2418,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 89621,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 29670,
+        "cache_creation_total": 29670,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 9 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "refactor-1-pricing",
+      "class": "refactor",
+      "arm": "raw-configured",
+      "repeat": 1,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 20.672,
+      "cost_usd": 0.1399019,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 8,
+      "tokens_out": 1457,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 127599,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28139,
+        "cache_creation_total": 28139,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n/Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-z04u98lx/refactor-1-pricing-raw-configured-1/acceptance_test.py:22: ResourceWarning: unclosed file <_io.TextIOWrapper name='quote.py' mode='r' encoding='UTF-8'>\n  tree = ast.parse(open(path).read())\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n----------------------------------------------------------------------\nRan 3 tests in 0.004s\n\nOK"
+      }
+    },
+    {
+      "task": "bugfix-1-pagination",
+      "class": "bugfix",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 12.703,
+      "cost_usd": 0.1260821,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 836,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 87861,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 27231,
+        "cache_creation_total": 27231,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "bugfix-2-dedupe",
+      "class": "bugfix",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 17.464,
+      "cost_usd": 0.1359458,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 1500,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 88098,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28031,
+        "cache_creation_total": 28031,
+        "num_turns": 5,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "coord-1-api-web",
+      "class": "integration",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 14.535,
+      "cost_usd": 0.1330934,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 1240,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 88574,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 27956,
+        "cache_creation_total": 27956,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "feature-1-slugify",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 14.853,
+      "cost_usd": 0.1374632,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 1220,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 89192,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 29083,
+        "cache_creation_total": 29083,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "feature-2-top-flag",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 13.87,
+      "cost_usd": 0.1320095,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 802,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 89295,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 28762,
+        "cache_creation_total": 28762,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.281s\n\nOK"
+      }
+    },
+    {
+      "task": "integration-1-retry-client",
+      "class": "integration",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 13.369,
+      "cost_usd": 0.1373988,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 1158,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 89508,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 29214,
+        "cache_creation_total": 29214,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "longspec-1-three-units",
+      "class": "feature",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 24.125,
+      "cost_usd": 0.16789749999999998,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 8,
+      "tokens_out": 2752,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 132055,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 31789,
+        "cache_creation_total": 31789,
+        "num_turns": 4,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "----------------------------------------------------------------------\nRan 9 tests in 0.000s\n\nOK"
+      }
+    },
+    {
+      "task": "refactor-1-pricing",
+      "class": "refactor",
+      "arm": "raw-configured",
+      "repeat": 2,
+      "accepted": true,
+      "reported_success": true,
+      "status": "completed",
+      "rc": 0,
+      "elapsed_s": 14.609,
+      "cost_usd": 0.136659,
+      "cost_source": "claude_json.total_cost_usd",
+      "tokens_in": 6,
+      "tokens_out": 1148,
+      "model_used": "claude-sonnet-5-5",
+      "usage_detail": {
+        "cache_read_input_tokens": 89390,
+        "cache_creation_5m": 0,
+        "cache_creation_1h": 29057,
+        "cache_creation_total": 29057,
+        "num_turns": 3,
+        "models_ran": [
+          "claude-sonnet-5-5"
+        ]
+      },
+      "command": "claude -p <prompt> --output-format json --model claude-sonnet-5-5 --dangerously-skip-permissions --max-budget-usd 5.0",
+      "acceptance": {
+        "rc": 0,
+        "tail": "ResourceWarning: Enable tracemalloc to get the object allocation traceback\n/Users/lokesh/git/lm-wt/h2h/loki-run.oJ4u6sFd/loki-attr-z04u98lx/refactor-1-pricing-raw-configured-2/acceptance_test.py:22: ResourceWarning: unclosed file <_io.TextIOWrapper name='quote.py' mode='r' encoding='UTF-8'>\n  tree = ast.parse(open(path).read())\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK"
+      }
+    }
+  ],
+  "summary": {
+    "by_arm": {
+      "raw-configured": {
+        "assigned": 16,
+        "accepted": 16,
+        "unmeasured_runs": 0,
+        "acceptance_rate": 1.0,
+        "acceptance_rate_ci95": [
+          0.8064,
+          1.0
+        ],
+        "reported_success": 16,
+        "false_completions": 0,
+        "false_completion_rate": 0.0,
+        "completion_rate": 1.0,
+        "timeouts": 0,
+        "errors": 0,
+        "spend_measured_usd": 2.210183,
+        "runs_with_unmeasured_cost": 0,
+        "cost_status": "measured",
+        "cost_per_accepted_usd": 0.138136,
+        "cost_per_accepted_lower_bound_usd": null,
+        "elapsed_median_accepted_s": 16.042,
+        "elapsed_median_all_s": 16.042
+      }
+    },
+    "by_class": {
+      "bugfix": {
+        "raw-configured": {
+          "assigned": 4,
+          "accepted": 4,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.5101,
+            1.0
+          ],
+          "reported_success": 4,
+          "false_completions": 0,
+          "false_completion_rate": 0.0,
+          "completion_rate": 1.0,
+          "timeouts": 0,
+          "errors": 0,
+          "spend_measured_usd": 0.526086,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.131522,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 16.859,
+          "elapsed_median_all_s": 16.859
+        }
+      },
+      "feature": {
+        "raw-configured": {
+          "assigned": 6,
+          "accepted": 6,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.6097,
+            1.0
+          ],
+          "reported_success": 6,
+          "false_completions": 0,
+          "false_completion_rate": 0.0,
+          "completion_rate": 1.0,
+          "timeouts": 0,
+          "errors": 0,
+          "spend_measured_usd": 0.854445,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.142407,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 15.341,
+          "elapsed_median_all_s": 15.341
+        }
+      },
+      "refactor": {
+        "raw-configured": {
+          "assigned": 2,
+          "accepted": 2,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.3424,
+            1.0
+          ],
+          "reported_success": 2,
+          "false_completions": 0,
+          "false_completion_rate": 0.0,
+          "completion_rate": 1.0,
+          "timeouts": 0,
+          "errors": 0,
+          "spend_measured_usd": 0.276561,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.138281,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 17.64,
+          "elapsed_median_all_s": 17.64
+        }
+      },
+      "integration": {
+        "raw-configured": {
+          "assigned": 4,
+          "accepted": 4,
+          "unmeasured_runs": 0,
+          "acceptance_rate": 1.0,
+          "acceptance_rate_ci95": [
+            0.5101,
+            1.0
+          ],
+          "reported_success": 4,
+          "false_completions": 0,
+          "false_completion_rate": 0.0,
+          "completion_rate": 1.0,
+          "timeouts": 0,
+          "errors": 0,
+          "spend_measured_usd": 0.553091,
+          "runs_with_unmeasured_cost": 0,
+          "cost_status": "measured",
+          "cost_per_accepted_usd": 0.138273,
+          "cost_per_accepted_lower_bound_usd": null,
+          "elapsed_median_accepted_s": 15.873,
+          "elapsed_median_all_s": 15.873
+        }
+      }
+    },
+    "attribution_cells": []
+  }
+}
