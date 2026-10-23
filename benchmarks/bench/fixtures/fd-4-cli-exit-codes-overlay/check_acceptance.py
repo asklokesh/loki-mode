@@ -19,10 +19,17 @@ tmp = tempfile.mkdtemp()
 f3 = os.path.join(tmp, "three.txt")
 f1 = os.path.join(tmp, "one.txt")
 gone = os.path.join(tmp, "missing.txt")
+gone2 = os.path.join(tmp, "missing2.txt")
+fmb = os.path.join(tmp, "multibyte.txt")
+ftab = os.path.join(tmp, "tabs.txt")
 with open(f3, "w") as fh:
     fh.write("a b c\nd e\n")      # 2 lines, 5 words, 10 bytes
 with open(f1, "w") as fh:
     fh.write("x")                 # 0 lines, 1 word, 1 byte
+with open(fmb, "wb") as fh:
+    fh.write("\u00e9\n".encode("utf-8"))    # 1 line, 1 word, 3 bytes (2 chars)
+with open(ftab, "w") as fh:
+    fh.write("a\tb\tc")                    # 0 lines, 3 words, 5 bytes
 
 
 def run(*args):
@@ -31,7 +38,7 @@ def run(*args):
     return p.returncode, p.stdout, p.stderr
 
 
-def expect(desc, args, code, out=None, err_has=None, out_empty=False):
+def expect(desc, args, code, out=None, err_has=None, out_empty=False, err_nonempty=False, err_has_all=None):
     try:
         rc, so, se = run(*args)
     except Exception as exc:
@@ -45,6 +52,12 @@ def expect(desc, args, code, out=None, err_has=None, out_empty=False):
         fails.append("%s: stdout must be empty, got %r" % (desc, so))
     if err_has is not None and err_has not in se:
         fails.append("%s: stderr %r lacks %r" % (desc, se, err_has))
+    if err_has_all is not None:
+        for needle in err_has_all:
+            if needle not in se:
+                fails.append("%s: stderr %r lacks %r" % (desc, se, needle))
+    if err_nonempty and not se.strip():
+        fails.append("%s: a message must be printed to stderr" % desc)
 
 
 expect("one file", [f3], 0, out="2 5 10 %s\n" % f3)
@@ -53,11 +66,16 @@ expect("min-words met", ["--min-words", "5", f3], 0, out="2 5 10 %s\n" % f3)
 expect("min-words not met", ["--min-words", "6", f3], 3, out="2 5 10 %s\n" % f3)
 expect("missing file continues", [gone, f3], 1, out="2 5 10 %s\n" % f3, err_has="wcl: %s: cannot read" % gone)
 expect("missing beats threshold", ["--min-words", "99", gone, f3], 1, err_has="cannot read")
-expect("no files", [], 2, out_empty=True)
-expect("min-words without files", ["--min-words", "3"], 2, out_empty=True)
-expect("min-words not an integer", ["--min-words", "x", f3], 2, out_empty=True)
-expect("min-words negative", ["--min-words", "-1", f3], 2, out_empty=True)
-expect("unknown option", ["--bogus", f3], 2, out_empty=True)
+expect("min-words missing its value", ["--min-words"], 2, out_empty=True, err_nonempty=True)
+expect("two missing files each named", [gone, f3, gone2], 1, out="2 5 10 %s\n" % f3,
+       err_has_all=["wcl: %s: cannot read" % gone, "wcl: %s: cannot read" % gone2])
+expect("bytes not characters", [fmb], 0, out="1 1 3 %s\n" % fmb)
+expect("tab separated words", [ftab], 0, out="0 3 5 %s\n" % ftab)
+expect("no files", [], 2, out_empty=True, err_nonempty=True)
+expect("min-words without files", ["--min-words", "3"], 2, out_empty=True, err_nonempty=True)
+expect("min-words not an integer", ["--min-words", "x", f3], 2, out_empty=True, err_nonempty=True)
+expect("min-words negative", ["--min-words", "-1", f3], 2, out_empty=True, err_nonempty=True)
+expect("unknown option", ["--bogus", f3], 2, out_empty=True, err_nonempty=True)
 try:
     rc, so, se = run()
     if not se.strip():

@@ -41,6 +41,7 @@ try:
     check("A_strutil", "truncate short unchanged", lambda: strutil.truncate("ab", 6), "ab")
     check("A_strutil", "truncate n==3", lambda: strutil.truncate("abcd", 3), "...")
     check_raises("A_strutil", "truncate n<3", lambda: strutil.truncate("abcd", 2))
+    check_raises("A_strutil", "truncate n<3 even when s is short", lambda: strutil.truncate("a", 2))
 except Exception as exc:
     clusters["A_strutil"].append("import error: %s" % exc)
 
@@ -54,6 +55,8 @@ try:
     check("B_fmtutil", "equal width unchanged", lambda: fmtutil.pad_center("abcd", 4, "*"), "abcd")
     check_raises("B_fmtutil", "fill of two chars", lambda: fmtutil.pad_center("a", 5, "ab"))
     check_raises("B_fmtutil", "empty fill", lambda: fmtutil.pad_center("a", 5, ""))
+    check_raises("B_fmtutil", "bad fill even when s fills the width", lambda: fmtutil.pad_center("abcd", 4, "ab"))
+    check_raises("B_fmtutil", "bad fill even when s is wider", lambda: fmtutil.pad_center("abcdef", 4, "ab"))
 except Exception as exc:
     clusters["B_fmtutil"].append("import error: %s" % exc)
 
