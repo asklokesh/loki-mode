@@ -1,6 +1,7 @@
 // FC-25 / moat P9: the origin is pinned before any attempt runs. An attempt agent that rewrites origin in the shared
 // .git/config must not redirect the credentialed push. Real git, local bare repos, a gh PATH shim; no network.
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { productionDeps } from "../../src/runner/attempts.ts";
 
 // Each test spawns bin/loki with a 60-120s budget; bun's 5s default fails them under full-suite load (FC-38).
-setDefaultTimeout(130_000);
+setLoadAwareTimeout(130_000);
 
 let root = "";
 const savedPath = process.env.PATH;
