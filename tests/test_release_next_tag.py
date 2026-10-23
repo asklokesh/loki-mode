@@ -144,6 +144,24 @@ class PublishIsInstant(unittest.TestCase):
         for name, other in jobs.items():
             self.assertNotIn("verify-npm-registry", _needs(other), name)
 
+    def test_sdk_dist_tags_converge_after_the_version_resolves(self):
+        # FC-DIST-TAG-MOVED-BACKWARDS late materialization, loki-mode-sdk.
+        jobs = _doc()["jobs"]
+        job = jobs["verify-sdk-registry"]
+        self.assertEqual(_needs(job), ["publish-ts-sdk"])
+        self.assertNotIn("concurrency", job)
+        steps = job["steps"]
+        poll = next(i for i, s in enumerate(steps) if "seq 1 " in s.get("run", ""))
+        self.assertIn('npm view "loki-mode-sdk@${VERSION}" version --prefer-online', steps[poll]["run"])
+        conv = [i for i, s in enumerate(steps) if "npm-dist-tags.sh" in s.get("run", "")]
+        self.assertEqual(len(conv), 1)
+        self.assertGreater(conv[0], poll)
+        env = steps[conv[0]].get("env", {})
+        self.assertEqual(env.get("LOKI_DISTTAG_PKG"), "loki-mode-sdk")
+        self.assertIn("NPM_TOKEN", env.get("NODE_AUTH_TOKEN", ""))
+        for name, other in jobs.items():
+            self.assertNotIn("verify-sdk-registry", _needs(other), name)
+
     def test_dist_tags_converge_after_the_version_resolves(self):
         # FC-DIST-TAG-MOVED-BACKWARDS late materialization: the converge call
         # must follow the resolve poll and carry the publish token.
