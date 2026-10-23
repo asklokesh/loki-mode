@@ -8,9 +8,13 @@
 #   loki_bun_run <args...>          run bun (script path first) and return; safe in pipes,
 #                                   command substitution and background jobs
 # A project .env is OFF by default. LOKI_ALLOW_PROJECT_ENV=1 opts in: bash reads the cwd .env
-# itself and exports only plain names, never LOKI_*, BUN_*, NODE_*, loader, shell or PATH
-# names, nor endpoint, proxy, git-exec or interpreter-path names (ANTHROPIC_BASE_URL, HTTP(S)_PROXY, GIT_SSH_COMMAND,
-# GIT_EXEC_PATH, PYTHONPATH, PERL5OPT), and never over a variable already set (the real environment wins, as in bun).
+# itself and exports plain names only, never over a variable already set (the real environment
+# wins, as in bun). Names are denied by CLASS, not one by one, because each class gives code
+# execution or traffic redirection in a child: LOKI_*, BUN_*, NODE_*, npm config (NPM_*), loader
+# (LD_*, DYLD_*), shell (PATH, HOME, SHELL, IFS, ENV, BASH_*, ...), every git and ssh knob (GIT_*
+# includes GIT_CONFIG_COUNT/KEY_n/VALUE_n -> core.fsmonitor, GIT_ASKPASS; SSH_*), every proxy
+# (*_PROXY, *_proxy), every endpoint (*_BASE_URL), interpreter startup (PYTHON*, PERL*, RUBY*)
+# and EDITOR, VISUAL, PAGER.
 _LOKI_BUN_SAFE_FLAGS=(--config=/dev/null --no-env-file)
 _loki_apply_project_env() {
     [ "${LOKI_ALLOW_PROJECT_ENV:-}" = "1" ] && [ -f ./.env ] || return 0
@@ -24,8 +28,8 @@ _loki_apply_project_env() {
         _k="${_k%"${_k##*[![:space:]]}"}"
         case "$_k" in
             ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;;
-            LOKI_*|BUN_*|NODE_*|LD_*|DYLD_*|PATH|HOME|SHELL|IFS|ENV|BASH_ENV|BASH_*|PS4|CDPATH|GLOBIGNORE|SHELLOPTS|PROMPT_COMMAND) continue ;;
-            ANTHROPIC_BASE_URL|HTTPS_PROXY|HTTP_PROXY|https_proxy|http_proxy|GIT_SSH_COMMAND|GIT_EXEC_PATH|PYTHONPATH|PERL5OPT) continue ;;
+            LOKI_*|BUN_*|NODE_*|NPM_*|npm_*|LD_*|DYLD_*|PATH|HOME|SHELL|IFS|ENV|BASH_ENV|BASH_*|PS4|CDPATH|GLOBIGNORE|SHELLOPTS|PROMPT_COMMAND) continue ;;
+            GIT_*|SSH_*|*_PROXY|*_proxy|*_BASE_URL|PYTHON*|PERL*|RUBY*|EDITOR|VISUAL|PAGER) continue ;;
         esac
         [ -z "${!_k+x}" ] || continue
         case "$_v" in
