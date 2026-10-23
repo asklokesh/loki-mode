@@ -1599,3 +1599,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept (every site that stages files): commit stage (seal.ts) and backstopCommit (commit_filter.ts, via supervisor) both go through dropSet and are fixed together; attempts.ts, modernize/scheduler.ts and verify.ts stage inside fresh worktrees that hold no user untracked files; check_result.ts and pr_lessons.ts add explicit run-owned paths only; discard.ts already protects them.
 - Mechanism: untouchedUntracked (e10ext/preexisting_dirty.ts) returns the intake-untracked files whose bytes and mode still match the snapshot; dropSet resets them from the staged set. A file the run edited stays the run's change. Crash-written files are not in the snapshot (see FC-CRASH-WORK-READ-AS-PREEXISTING).
 - Fixture: loki-ts/tests/e10ext/commit_filter_guard.test.ts (commit stage and backstop); red before the change, green after; mutants: ignore the snapshot, treat an edited file as untouched.
+
+## FC-MCP-CLINE-PROBE-FULL-ENV A new provider helper spawned `cline --version` with the full parent env, turning the full-env spawn guard red on main
+- Law: a child process never receives the parent's GH_TOKEN, GITHUB_TOKEN or SSH_AUTH_SOCK unless an allowlist row gives a reason (FC-40).
+- Cause (measured): commit 35411094c (CW-10) added clineVersion in loki-ts/src/providers/mcp_config.ts with `env: process.env`. full_env_spawn_guard.test.ts failed with that file unlisted; the same test failed on a pure origin/main tree.
+- Siblings swept: the guard walks every spawn call site under loki-ts/src, so a green run covers every spawn added since it last passed; none other was unlisted. The probe needs only PATH and HOME, so no allowlist row was added.
+- Mechanism: the probe passes tokenFreeEnv(process.env) (util/safe_git.ts), which the guard already accepts as token-free.
+- Fixture: loki-ts/tests/util/full_env_spawn_guard.test.ts; red before the change, green after. Mutant: restore `env: process.env` on the probe, and the guard names mcp_config.ts as unlisted.

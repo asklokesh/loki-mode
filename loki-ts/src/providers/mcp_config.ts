@@ -38,6 +38,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve as resolvePath, join, delimiter } from "node:path";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 
 // Phase G: supported LSP binaries. Match autonomy/lib/mcp-config.sh exactly so
 // bash and Bun routes detect the same set.
@@ -237,7 +238,7 @@ function collectServers(targetDir: string): Record<string, McpServer> {
 
 function clineVersion(): string {
   try {
-    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: process.env });
+    const r = spawnSync("cline", ["--version"], { encoding: "utf8", timeout: 5000, env: tokenFreeEnv(process.env) });
     if (r.status === 0) {
       const line = (r.stdout ?? "").split("\n")[0]?.trim() ?? "";
       if (line) return line;
