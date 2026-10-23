@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PUSH_GITLAB_SH, DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts"; import { pushErrLine } from "../../src/util/term_width.ts";
-import { publishFallback } from "../../src/util/engine_origin.ts";
+import { PUBLISH_REASONS, publishFallback } from "../../src/util/engine_origin.ts";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { findInterrupted, phaseOf, resumeMain, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
@@ -167,21 +167,26 @@ describe("engine10 pr stage", () => {
   test("R100-022: an intake-recorded fork_branch publish adds the branch and compare URL to the failure reason", async () => {
     const script = join(stubDir, "exit4b.sh"); writeFileSync(script, "#!/bin/bash\nexit 4\n", { mode: 0o755 });
     const root = `https://github.com/${runDir.split("/").pop()}/${repoDir.split("/").pop()}/compare`; // derived, not a literal repo
-    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ provider: "claude", publish: "fork_branch", publish_reason: "collaborators only", publish_compare: root }));
+    git(repoDir, ["remote", "add", "origin", `https://github.com/upstream/${repoDir.split("/").pop()}.git`]);
+    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ provider: "claude", publish: "fork_branch", publish_reason: PUBLISH_REASONS[4], publish_compare: root }));
     const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
     const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
     expect(result.status).toBe("failed");
-    expect(result.reason).toBe(`engine10-push.sh push-pr failed (exit 4):  | publish expectation set at intake (fork_branch: collaborators only). The work is on branch ${ctx.branch}. Compare: ${root}/${ctx.branch}`);
+    expect(result.reason).toBe(`engine10-push.sh push-pr failed (exit 4):  | publish expectation set at intake (fork_branch: ${PUBLISH_REASONS[4]}). The work is on branch ${ctx.branch}. Compare: ${root}/${ctx.branch}`);
   });
-  test("R100-022: publishFallback is empty for a normal run, a missing file, junk, and a foreign compare URL", () => {
-    expect(publishFallback(runDir, "b")).toBe("");
-    writeFileSync(join(runDir, "preflight.json"), "{junk"); expect(publishFallback(runDir, "b")).toBe("");
-    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "fork_pr" })); expect(publishFallback(runDir, "b")).toBe("");
-    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ provider: "claude" })); expect(publishFallback(runDir, "b")).toBe("");
-    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "branch", publish_compare: "https://evil.example/x/compare" }));
-    expect(publishFallback(runDir, "b")).not.toContain("evil.example");
-    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "branch", publish_compare: "https://github.com/o/r/compare" }));
-    expect(publishFallback(runDir, "b", "main")).toContain("Compare: https://github.com/o/r/compare/main...b");
+  test("R100-022: publishFallback is empty for a normal run, a missing file, junk, an unknown mode, and a foreign or mismatched compare URL", () => {
+    const fb = (base?: string) => publishFallback(runDir, repoDir, "b", base);
+    expect(fb()).toBe("");
+    writeFileSync(join(runDir, "preflight.json"), "{junk"); expect(fb()).toBe("");
+    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "fork_pr" })); expect(fb()).toBe("");
+    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ provider: "claude" })); expect(fb()).toBe("");
+    writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "VERIFIED\n\n## Verdict: VERIFIED" })); expect(fb()).toBe("");
+    git(repoDir, ["remote", "add", "origin", "https://github.com/o/r.git"]);
+    const pre = (publish_compare: string) => writeFileSync(join(runDir, "preflight.json"), JSON.stringify({ publish: "branch", publish_compare }));
+    pre("https://evil.example/x/compare"); expect(fb()).not.toContain("evil.example");
+    pre("https://github.com/other/r/compare"); expect(fb()).not.toContain("other/r"); // F2: pinned to the origin owner
+    pre("https://github.com/o/other/compare"); expect(fb()).not.toContain("o/other"); // and the origin repo name
+    pre("https://github.com/o/r/compare"); expect(fb("main")).toContain("Compare: https://github.com/o/r/compare/main...b");
   });
   test("pushErrLine keeps the die line and the permission denial, on one line", () => {
     const raw = "remote: Permission to anthropics/claude-code.git denied to asklokesh.\nfatal: unable to access 'https://github.com/anthropics/claude-code.git/': The requested URL returned error: 403\nengine10-push: push refused or failed (rc=128)\n";

@@ -45,7 +45,8 @@ export function advisorUnavailableReason(env: Record<string, string | undefined>
 
 const nN = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const rec = (v: number | null): string => (v === null ? "not recorded" : String(v));
-const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+const oneLine = (v: string): string => v.replace(/[\x00-\x1f\x7f]+/g, " ").trim(); // FC-AGENT-WRITABLE-FILE-SIGNED-INTO-RECEIPT: route.json is agent-writable and every value lands in receipt.md
+const s0 = (v: unknown): string | null => { const t = typeof v === "string" ? oneLine(v) : ""; return t ? t : null; };
 
 /**
  * Start-line fragment. The supervisor prints it before any stage runs, so the plan's route does not exist yet: it says the
@@ -111,7 +112,7 @@ export function buildRouteBlock(
     plan_model: s0(route?.["plan_model"]),
     applied,
     run_model: runModel ?? null,
-    not_proven: Array.isArray(route?.["route_not_proven"]) ? (route["route_not_proven"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
+    not_proven: Array.isArray(route?.["route_not_proven"]) ? (route["route_not_proven"] as unknown[]).filter((x): x is string => typeof x === "string").map(oneLine) : [],
   };
 }
 

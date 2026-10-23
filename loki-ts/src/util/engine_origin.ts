@@ -28,6 +28,7 @@ export function githubRepoFromUrl(url: string | null): string | null {
 }
 async function sh(argv: readonly string[], opts: ShellOpts): Promise<ShellResult> { try { return await run(argv, opts); } catch { return { stdout: "", stderr: "", exitCode: 127 }; } } // run() throws when argv[0] does not resolve; treated as a failed read
 export type PublishMode = "pr" | "fork_pr" | "fork_branch" | "branch" | "local_branch";
+export const PUBLISH_REASONS = ["the repository is archived", "the repository is disabled", "pull requests are disabled on this repository", "you have no push access and the repository does not allow forks", "the repository accepts pull requests from collaborators only and you have no push access"] as const; // the closed set readPublish accepts back from the run dir
 export interface PublishPlan { mode: PublishMode; reason: string | null; warning: string | null; compare: string | null }
 /** R100-022: what the GitHub API says about publishing to this repo. Pure: `repo` is the parsed `gh api repos/<o>/<r>` body. Null when the body carries no permission data (unauthenticated or unreadable), so no claim is made. */
 export function classifyPublish(repoSlug: string, repo: Record<string, any>, login: string | null = null): PublishPlan | null {
@@ -35,11 +36,11 @@ export function classifyPublish(repoSlug: string, repo: Record<string, any>, log
   const name = repoSlug.split("/")[1] ?? ""; // compare root: the repo itself when we can push to it, else the caller's fork (default fork name = repo name); null when the fork owner is unknown
   const mk = (mode: PublishMode, reason: string | null, instead: string): PublishPlan => { const compare = mode === "branch" ? `https://github.com/${repoSlug}/compare` : mode === "fork_branch" && login ? `https://github.com/${login}/${name}/compare` : null; return { mode, reason, compare, warning: reason === null ? null : `publish: a PR cannot be opened on ${repoSlug}: ${reason}. The run still does the work and seals; it will ${instead}${compare ? ` (compare URL: ${compare}/<branch>)` : ""}.` }; };
   const push = perms.push === true;
-  if (repo["archived"] === true || repo["disabled"] === true) return mk("local_branch", `the repository is ${repo["archived"] === true ? "archived" : "disabled"}`, "keep the result on the local branch");
-  if (repo["has_pull_requests"] === false) return push ? mk("branch", "pull requests are disabled on this repository", "push the branch to the repository and print a compare URL") : mk("fork_branch", "pull requests are disabled on this repository", "push the branch to your fork and print a compare URL");
+  if (repo["archived"] === true || repo["disabled"] === true) return mk("local_branch", PUBLISH_REASONS[repo["archived"] === true ? 0 : 1], "keep the result on the local branch");
+  if (repo["has_pull_requests"] === false) return push ? mk("branch", PUBLISH_REASONS[2], "push the branch to the repository and print a compare URL") : mk("fork_branch", PUBLISH_REASONS[2], "push the branch to your fork and print a compare URL");
   if (push) return mk("pr", null, "");
-  if (repo["allow_forking"] === false) return mk("local_branch", "you have no push access and the repository does not allow forks", "keep the result on the local branch");
-  if (repo["pull_request_creation_policy"] === "collaborators_only") return mk("fork_branch", "the repository accepts pull requests from collaborators only and you have no push access", "push the branch to your fork and print a compare URL");
+  if (repo["allow_forking"] === false) return mk("local_branch", PUBLISH_REASONS[3], "keep the result on the local branch");
+  if (repo["pull_request_creation_policy"] === "collaborators_only") return mk("fork_branch", PUBLISH_REASONS[4], "push the branch to your fork and print a compare URL");
   return mk("fork_pr", null, "");
 }
 /** One bounded gh read of the repo (plus the login when a fork is needed); null when it cannot be read or parsed. */
@@ -56,19 +57,22 @@ export function recordPublish(runDir: string, plan: PublishPlan): void {
   if (plan.mode === "pr") return;
   try { const f = join(runDir, "preflight.json"); const j = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {}; writeFileSync(f, JSON.stringify({ ...j, publish: plan.mode, ...(plan.reason ? { publish_reason: plan.reason } : {}), ...(plan.compare ? { publish_compare: plan.compare } : {}) }) + "\n"); } catch { /* evidence, never a gate */ }
 }
-/** R100-022: what preflight recorded about publishing, read back from the one source (<runDir>/preflight.json). Null for a normal run (mode pr or fork_pr), a missing key or an unreadable file; the compare URL is kept only when it is a github.com compare base. */
-export function readPublish(runDir: string): { mode: string; reason?: string; compare?: string } | null {
+/** R100-022: what preflight recorded about publishing, read back from <runDir>/preflight.json. The file is agent-writable (FC-AGENT-WRITABLE-FILE-SIGNED-INTO-RECEIPT), so only closed-set values come back: the mode from PublishMode minus pr and fork_pr, the reason from PUBLISH_REASONS, the compare URL only when it is a github.com compare base for the origin repo name (and the origin owner for mode branch). Null for a normal run, a missing key, an unknown mode or an unreadable file. */
+export function readPublish(runDir: string, repoDir: string): { mode: PublishMode; reason?: string; compare?: string } | null {
   try {
     const j = JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8")) as { publish?: unknown; publish_reason?: unknown; publish_compare?: unknown };
-    if (typeof j.publish !== "string" || j.publish === "pr" || j.publish === "fork_pr") return null;
-    return { mode: j.publish, ...(typeof j.publish_reason === "string" ? { reason: j.publish_reason } : {}), ...(typeof j.publish_compare === "string" && /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/compare$/.test(j.publish_compare) ? { compare: j.publish_compare } : {}) };
+    const mode = (["branch", "fork_branch", "local_branch"] as const).find((m) => m === j.publish); if (!mode) return null;
+    const reason = PUBLISH_REASONS.find((r) => r === j.publish_reason);
+    const slug = githubRepoFromUrl(readOriginUrl(repoDir)), cm = typeof j.publish_compare === "string" ? j.publish_compare.match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([^/\s]+)\/compare$/) : null;
+    const compare = cm && slug && cm[2] === slug.split("/")[1] && (mode === "fork_branch" || cm[1] === slug.split("/")[0]) ? cm[0] : undefined;
+    return { mode, ...(reason ? { reason } : {}), ...(compare ? { compare } : {}) };
   } catch { return null; }
 }
 /** R100-022: the receipt body's additive `publish` block. Empty for a full-access run, so its receipt_sha256 is unchanged. */
-export const publishReceiptBlock = (runDir: string): { publish?: { mode: string; reason?: string; compare?: string } } => { const p = readPublish(runDir); return p ? { publish: p } : {}; };
+export const publishReceiptBlock = (runDir: string, repoDir: string): { publish?: { mode: string; reason?: string; compare?: string } } => { const p = readPublish(runDir, repoDir); return p ? { publish: p } : {}; };
 /** R100-022: when preflight recorded that a PR cannot open here, say what the run delivers instead (the branch, plus a compare URL when the owner is known). Empty for a normal run or an unreadable file. */
-export function publishFallback(runDir: string, branch: string, base?: string | null): string {
-  const p = readPublish(runDir);
+export function publishFallback(runDir: string, repoDir: string, branch: string, base?: string | null): string {
+  const p = readPublish(runDir, repoDir);
   if (!p) return "";
   const cmp = p.compare ? ` Compare: ${p.compare}/${base ? `${base}...` : ""}${branch}` : "";
   return ` | publish expectation set at intake (${p.mode}${p.reason ? `: ${p.reason}` : ""}). The work is on branch ${branch}.${cmp}`;
