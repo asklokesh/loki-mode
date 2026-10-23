@@ -26,7 +26,7 @@ TO=()
 # mkbun <path> <tag> <version-exit-code>: stub that answers --version, else records argv.
 mkbun() {
     mkdir -p "$(dirname "$1")"
-    printf '#!/usr/bin/env bash\n[ "${1:-}" = "--version" ] && { echo 1.4.2; exit %s; }\nprintf "%s %%s\\n" "$*" >"%s/out"\n' "$3" "$2" "$T" >"$1"
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = "--version" ] && { echo 1.4.2; exit %s; }\n[ "${1:-}" = --config=/dev/null ] && shift 2\nprintf "%s %%s\\n" "$*" >"%s/out"\n' "$3" "$2" "$T" >"$1"
     chmod +x "$1"
 }
 BUNDLED="$T/root/node_modules/@oven/bun-fake/bin/bun"
