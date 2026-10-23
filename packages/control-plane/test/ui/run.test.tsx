@@ -17,14 +17,14 @@ const detail = (o: Record<string, unknown> = {}) => ({
 });
 
 const posts: Array<{ url: string; body: string }> = [];
-function serve(d: unknown) {
+function serve(d: unknown, evs?: unknown[]) {
   posts.length = 0;
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const u = String(url);
     if (init?.method === "POST" && u.endsWith("/verify")) { posts.push({ url: u, body: String(init.body) }); return new Response(JSON.stringify({ run: "r1", verdict: "VERIFIED", reasons: [], receipt_sha256: "ab", verified_at: "t" })); }
     if (init?.method === "POST") { posts.push({ url: u, body: String(init.body) }); return new Response(JSON.stringify({ path: "p", resume: "r" })); }
     if (u.endsWith("/v1/runs/s1/r1")) return new Response(JSON.stringify(d));
-    if (u.includes("/events")) return new Response(JSON.stringify({ events: [{ seq: 1, ts: "2026-10-03T10:00:00Z", type: "stage.started", stage: "plan", data: { n: 1 } }] }));
+    if (u.includes("/events")) return new Response(JSON.stringify({ events: evs ?? [{ seq: 1, ts: "2026-10-03T10:00:00Z", type: "stage.started", stage: "plan", data: { n: 1 } }] }));
     if (u.includes("/stream")) return new Response("nope", { status: 404 });
     if (u.endsWith("/artifact/diff.patch")) return new Response("diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n+hello");
     if (u.endsWith("/artifact/receipt.md")) return new Response("# Receipt body");
@@ -130,4 +130,25 @@ test("cost labels and SSE frame parsing are honest", () => {
   expect(got).toEqual([4]);
   expect(rest).toBe("id: 5\nev");
   expect(page.id).toBe("run");
+});
+
+test("R100-082: the replay scrubber has one position per stage and shows that stage's journal values", async () => {
+  const stages = ["intake", "wall", "plan", "implement", "verify", "commit", "seal"];
+  const evs: unknown[] = [];
+  stages.forEach((st, i) => {
+    evs.push({ seq: i * 2, ts: "2026-10-03T10:00:00Z", type: "stage.started", stage: st, data: {} });
+    evs.push({ seq: i * 2 + 1, ts: "2026-10-03T10:00:01Z", type: "stage.completed", stage: st, data: st === "verify" ? { changed_files: ["calc.ts", "b.ts"], checks: [{ result: "pass" }, { result: "fail" }] } : {} });
+  });
+  serve(detail({ stages: stages.map((st) => ({ stage: st, started_at: null, ended_at: null, status: "completed" })) }), evs);
+  render(<RunThread source="s1" run="r1" slot={null} />);
+  await waitFor(() => expect((screen.getByTestId("run-scrubber") as HTMLInputElement).max).toBe("6"));
+  const scrub = screen.getByTestId("run-scrubber") as HTMLInputElement;
+  expect(scrub.min).toBe("0");
+  fireEvent.input(scrub, { target: { value: "4" } });
+  await waitFor(() => expect(screen.getByTestId("run-scrubber-step").textContent).toContain("verify"));
+  const step = screen.getByTestId("run-scrubber-step").textContent ?? "";
+  expect(step).toContain("calc.ts, b.ts");
+  expect(step).toContain("1 pass, 1 fail");
+  fireEvent.input(scrub, { target: { value: "2" } });
+  await waitFor(() => expect(screen.getByTestId("run-scrubber-step").textContent).toContain("files unmeasured"));
 });

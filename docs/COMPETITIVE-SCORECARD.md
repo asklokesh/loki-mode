@@ -460,6 +460,21 @@ Observed again on 11.55.3 without a new number:
   (`git log main..HEAD` printed 0 commits). Matches the 11.54.0 finding.
   Slice: CW-19 #354.
 
+PR comment commands baseline (issue #360, 2026-10-23). Factory `droid` 0.190.0:
+`droid --help | grep -ciE 'github|pull request|comment'` prints 0 and its
+command list has no GitHub verb, so the CLI itself offers none. Factory's
+published docs (searched 2026-10-23) describe a separate GitHub app and the
+`Factory-AI/droid-action` workflow driven by PR comments: `@droid review`,
+`@droid security`, `@droid security --full`, plus a custom automation that
+applies a requested change and pushes one commit
+([code review](https://docs.factory.ai/guides/droid-exec/code-review),
+[automations](https://docs.factory.ai/software-factory/automations)). No
+complete command list was found. Loki's comparable surface after #360:
+`/loki fix`, `/loki explain`, `/loki reseal` in the issue-to-PR example
+workflow; the fix path is gated on write access and the comment text never
+shares a step with a secret or token. Not measured: Factory's runtime behavior,
+which needs their app installed.
+
 NOT MEASURED on 11.55.3, so the #350 11.54.0 values stand unrefreshed: crash
 recovery and `loki start --resume` (M6), false-done rate (M5, the benchmark task
 did not discriminate), and the bare `claude -p` comparison column. Do not read
@@ -518,6 +533,20 @@ for c in claude aider opencode codex loki; do
 done
 bash autonomy/loki deploy --execute       # refuses, naming each failed check
 ```
+
+### 3f. Run replay baseline, measured 2026-10-23 (issue #422, R100-082)
+
+Question: can a user step through a finished run stage by stage and see the diff, tests and cost at each step?
+
+| Product | Replay or step-through | Evidence |
+|---|---|---|
+| Loki Mode | Yes: run page scrubber, one position per stage, values read from the run journal (`--` where the journal recorded none) | `[measured]` `cd packages/control-plane && bun test ./test/ui/timeline.test.ts ./test/ui/run.test.tsx` |
+| Claude Code 2.1.309 | None found in help; session resume only | `[measured]` `claude --help \| grep -iE 'resume\|history'` printed only `--resume <session-id>` and `--continue` lines |
+| Codex CLI | UNKNOWN: `codex` is not installed on the measuring machine, so no help output was read | probe not run |
+| Factory droid 0.190.0 | None found in help; session resume and fork only | `[measured]` `droid --help \| grep -iE 'resume\|history'` printed `-r, --resume [sessionId]` and `--fork <sessionId>` |
+| Devin | Session Insights page | `[sourced: https://docs.devin.ai/product-guides/session-insights.md]` not tested |
+
+"None found in help" is weaker than "does not exist"; see section 4.
 
 ## 4. What we do NOT know
 

@@ -205,6 +205,11 @@ export function describeJudgeOutcome(o: JudgeOutcome<unknown>): string {
   return o.kind === "refused" && o.category ? `refused:${o.category}` : o.kind;
 }
 
+/** The text an in-process caller appends to its gate record for a non-ok outcome, so the cause is named and never a bare miss. */
+export function judgeOutcomeNote(o: JudgeOutcome<unknown>): string {
+  return `sdk judge outcome: ${describeJudgeOutcome(o)}`;
+}
+
 // Server-side fallback (refusals-and-fallback): the API re-runs a refused turn
 // on a fallback model. Beta header plus "fallbacks": "default". Not available
 // on Batches (retries here are always synchronous). An allowlist: only the

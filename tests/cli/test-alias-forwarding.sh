@@ -108,6 +108,13 @@ normalize() {
 UNITS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loki-alias-units.XXXXXX")"
 trap 'rm -rf "$WORKDIR" "$UNITS_DIR" 2>/dev/null || true' EXIT
 FIXDIR="$WORKDIR"
+# Spawn counter: every CLI spawn goes through a wrapper that appends one byte to
+# SPAWN_LOG, then execs the real shim. The total is printed at the end so a
+# spawn-floor change is a measured number, not an estimate.
+SPAWN_LOG="$UNITS_DIR/spawns.log"
+: > "$SPAWN_LOG"
+printf '#!/bin/bash\nprintf . >> "%s"\nexec bash "%s" "$@"\n' "$SPAWN_LOG" "$LOKI_SHIM" > "$UNITS_DIR/loki-counted"
+LOKI_SHIM="$UNITS_DIR/loki-counted"
 MAX_UNITS="${LOKI_ALIAS_TEST_JOBS:-8}"
 U=0
 UO=""
@@ -222,7 +229,15 @@ assert_row() {
     local flag
     for flag in --json -q --quiet; do
         local m_err
-        run_loki "${alias_argv[@]}" "$flag" >/dev/null 2>"$WORKDIR/m.err" || true
+        # The --json run also feeds the 4b stdout parity check below, so its
+        # stdout is kept instead of spawning the same command a second time.
+        # export is the exception: it treats --json as an output filename, so
+        # the first run creates it and the canonical comparison depends on the
+        # second alias run seeing it already exist (see 4b).
+        run_loki "${alias_argv[@]}" "$flag" >"$WORKDIR/m.out" 2>"$WORKDIR/m.err" || true
+        if [ "$flag" = "--json" ] && [ "$alias_cmd" != "export" ]; then
+            cp "$WORKDIR/m.out" "$WORKDIR/aj.out"
+        fi
         m_err="$(cat "$WORKDIR/m.err")"
         if echo "$m_err" | grep -qF "$pat"; then
             log_fail "$label: $flag suppresses deprecation line" "line leaked under $flag"
@@ -235,7 +250,11 @@ assert_row() {
     # canonical supports --json. The reporting handlers accept --json; if a
     # handler ignores it the streams still match (both ignore identically).
     local aj cj
-    aj="$(run_loki "${alias_argv[@]}" --json 2>/dev/null | normalize)"
+    if [ "$alias_cmd" = "export" ]; then
+        aj="$(run_loki "${alias_argv[@]}" --json 2>/dev/null | normalize)"
+    else
+        aj="$(normalize < "$WORKDIR/aj.out")"
+    fi
     cj="$(run_loki "${canon_argv[@]}" --json 2>/dev/null | normalize)"
     if [ "$aj" = "$cj" ]; then
         log_pass "$label: --json stdout byte-identical"
@@ -449,7 +468,9 @@ launch_slot
 unit_init
 echo -e "${YELLOW}=== help-structure assertions (route: $ROUTE) ===${NC}"
 
-HELP_OUT="$(run_loki help 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+# Plain `loki help` is the core page (Start/Check/Configure, 826deafd2); the full
+# grouped table these assertions pin lives behind `loki help all`.
+HELP_OUT="$(run_loki help all 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
 
 # Usage contract line still present (test-cli-commands.sh pins on "Usage").
 if echo "$HELP_OUT" | grep -q "Usage:"; then
@@ -484,12 +505,16 @@ done
 # next, steer, verify, keys, ultracode, acp, plan, trust, undo); no decision caps the
 # page below its current 28 entries, so the bound tracks the shipped surface.
 # Growth past 28 still requires a deliberate edit here.
+# Measured on `loki help all` at b2fc64eca: 32 entry lines (30 distinct verbs;
+# start --workspace and undo --list are second-form lines).
+# Since 826deafd2 plain `loki help` is the core page with no Commands: block
+# (count 0), so the count is read from `help all`; the bound is 32 to match it.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 28 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,28] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 32 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,32] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,28]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,32]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
@@ -751,11 +776,11 @@ launch_slot
 unit_init
     # Pattern starts with a non-dash char so it is never mis-parsed as a flag
     # (some environments alias grep to ugrep, which reads a leading '-nt' as the
-    # -t option). Matches the `src/cli.ts" -nt "..dist/loki.js"` freshness arm.
-    if grep -qF 'src/cli.ts" -nt "$REPO_ROOT/loki-ts/dist/loki.js"' "$REPO_ROOT/bin/loki"; then
+    # -t option). Matches the `find loki-ts/src -newer dist/loki.js` freshness arm.
+    if grep -qF 'find "$REPO_ROOT/loki-ts/src" -type f -newer "$REPO_ROOT/loki-ts/dist/loki.js"' "$REPO_ROOT/bin/loki"; then
         log_pass "bin/loki: stale-dist freshness guard present (src preferred when newer than dist)"
     else
-        log_fail "bin/loki freshness guard" "the '-nt' dist-vs-src check is missing from bin/loki"
+        log_fail "bin/loki freshness guard" "the 'find src -newer dist' check is missing from bin/loki"
     fi
 } > "$UO" 2>&1 &
 
@@ -769,6 +794,7 @@ done
 PASS="$(cat "$UNITS_DIR"/out.* | grep -ac '\[PASS\]' || true)"
 FAIL="$(cat "$UNITS_DIR"/out.* | grep -ac '\[FAIL\]' || true)"
 FAIL=$((FAIL + _empty_units))
+echo "CLI spawns: $(wc -c < "$SPAWN_LOG" | tr -d ' ')"
 echo ""
 echo "===================================================="
 echo -e "Results (route $ROUTE): ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"

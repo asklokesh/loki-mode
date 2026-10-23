@@ -144,7 +144,7 @@ export function readHumanInput(opts: { lokiDirOverride?: string } = {}): string 
   const path = signalPaths(dir).humanInput;
   if (!existsSync(path)) return null;
 
-  // Reject symlinks (run.sh check_human_intervention() ! -L check, 11218 explicit reject).
+  // Reject symlinks (run.sh check_human_intervention() ! -L check and its explicit reject).
   let lst: ReturnType<typeof lstatSync>;
   try {
     lst = lstatSync(path);
@@ -365,9 +365,10 @@ export interface HandlePauseResult {
 }
 
 // Default contents of .loki/PAUSED.md. Mirrors the bash writer in
-// autonomy/run.sh handle_pause(): Press-Enter wording on a TTY, otherwise the
-// no-TTY wording shared with the console banner (run.sh handle_pause()), so a --bg / CI
-// operator is never promised a keypress.
+// autonomy/run.sh (the _resume_line assignment): Press-Enter wording on a TTY,
+// otherwise the no-TTY wording shared with the console banner. Both bash sites
+// and this file carry "(no TTY: keypress resume unavailable)", which is the
+// anchor to search for, so a --bg / CI operator is never promised a keypress.
 function defaultPausedMd(isTTY: boolean): string {
   const resumeLine = isTTY
     ? "1. **Resume**: Press Enter in terminal or `rm .loki/PAUSE`"

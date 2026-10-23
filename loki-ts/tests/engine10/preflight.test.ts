@@ -64,6 +64,16 @@ function pathWithOnlyGit(): string {
 }
 
 describe("checkPreflight", () => {
+  test("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN: an unrecognized LOKI_SESSION_MODEL is fatal for claude and names the valid set; a valid one is not", async () => {
+    const { dir, env: env0 } = bareRepo(true); const env = { ...env0, LOKI_PREFLIGHT_PROBE: "0" };
+    execFileSync("git", ["-C", dir, "config", "user.name", "t"]); execFileSync("git", ["-C", dir, "config", "user.email", "t@t.test"]);
+    const base = { repoDir: dir, provider: "claude", pr: false } as const;
+    const bad = await checkPreflight({ ...base, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), LOKI_SESSION_MODEL: "claude-sonnet-5" } });
+    expect(bad.fatal).toMatch(/unknown LOKI_SESSION_MODEL 'claude-sonnet-5'.*opus\|sonnet\|haiku\|fable/);
+    const ok = await checkPreflight({ ...base, env: { ...env, LOKI_CLAUDE_CLI: stubCli(), LOKI_SESSION_MODEL: "sonnet" } });
+    expect(ok.fatal).toBeNull();
+  });
+
   test("not a git work tree is fatal", async () => {
     const dir = tmpRoot("e10-pf-notrepo-"); writeFileSync(join(dir, "f.txt"), "x");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { PATH: process.env.PATH ?? "" } });

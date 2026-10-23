@@ -19,7 +19,7 @@ import { resolve, dirname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { rm, stat, readFile, writeFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { sourceFingerprint } from "../src/engine10/cache.ts";
+import { sourceFingerprint } from "../src/util/producer_fingerprint.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");

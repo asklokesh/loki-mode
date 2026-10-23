@@ -1,9 +1,10 @@
 // FC-16: a check that executed zero tests is NOT a pass. One shared classifier, every runner fixture, plus the verdict gate.
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { changedSymbols, checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, runnerCmd, symbolGap, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -356,5 +357,90 @@ describe("TEN-QUALITY-01 failureExcerpt", () => {
   test("unknown shape falls back to the last lines; empty stays empty", () => {
     expect(failureExcerpt("a\nb\nboom\n")).toContain("boom");
     expect(failureExcerpt("")).toBe("");
+  });
+});
+
+describe("FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL changedSymbols and symbolGap", () => {
+  const append = "@@ -3,0 +4,4 @@ export function add(a: number, b: number): number {\n+\n+export function multiply(a: number, b: number): number {\n+  return a * b;\n+}\n";
+  const edit = "@@ -2 +2 @@ export function add(a: number, b: number): number {\n-  return a + b;\n+  return a - b;\n";
+  const guard = "@@ -2,0 +3,3 @@ def total(items):\n+    if not items:\n+        return 0\n";
+  test("an appended function names itself, not the enclosing hunk context", () => expect(changedSymbols(append)).toEqual(["multiply"]));
+  test("a body edit names the enclosing declaration", () => expect(changedSymbols(edit)).toEqual(["add"]));
+  test("a pure addition with no declaration falls back to the hunk context", () => expect(changedSymbols(guard)).toEqual(["total"]));
+  test("class methods and Go receivers count; control flow does not", () => {
+    expect(changedSymbols("@@ -1,0 +2,3 @@\n+  async run(x) {\n+    if (x) {\n+func (s *Store) Put(k string) error {\n")).toEqual(["run", "Put"]);
+  });
+  test("a test source naming the symbol closes the gap; an unrelated one does not", () => {
+    expect(symbolGap(["multiply"], ['import { add } from "./calc"; test("add", () => add(1, 2));'])).toEqual(["multiply"]);
+    expect(symbolGap(["multiply"], ["expect(multiply(3, 4)).toBe(12)"])).toEqual([]);
+    expect(symbolGap(["add"], ["expect(multiply(3, 4)).toBe(12)", "const padded = 1"])).toEqual(["add"]);
+  });
+  test("a local variable is not a changed symbol (rev-c repro 1 and 3)", () => {
+    const local = "@@ -3,0 +4,4 @@ export function add(a: number, b: number): number {\n+export function multiply(a: number, b: number): number {\n+  const result = a * b;\n+  return result;\n+}\n";
+    expect(changedSymbols(local)).toEqual(["multiply"]);
+    expect(symbolGap(changedSymbols(local), ["const result = add(1, 2); expect(result).toBe(3)"])).toEqual(["multiply"]);
+    const loop = "@@ -1,0 +2,5 @@\n+export function sum(xs: number[]): number {\n+  let t = 0;\n+  for (let i = 0; i < xs.length; i++) t += xs[i]!;\n+  return t;\n+}\n";
+    expect(changedSymbols(loop)).toEqual(["sum"]);
+    expect(symbolGap(changedSymbols(loop), ["let t = 0; for (let i = 0; i < 3; i++) t += i;"])).toEqual(["sum"]);
+  });
+  test("a block comment spanning added lines hides the code inside it (rev-a B2)", () => {
+    const blk = "@@ -1,0 +2,6 @@\n+/*\n+function add(a, b) { return a + b; }\n+*/\n+export function multiply(a: number, b: number): number {\n+  return a * b;\n+}\n";
+    expect(changedSymbols(blk)).toEqual(["multiply"]);
+    expect(symbolGap(changedSymbols(blk), ["expect(add(1, 2)).toBe(3)"])).toEqual(["multiply"]);
+  });
+  test("module-level and exported const, let, var still name a symbol", () => {
+    expect(changedSymbols("@@ -1,0 +2,3 @@\n+export const TAX = 0.2;\n+let cache = 1;\n+var legacy = 2;\n")).toEqual(["TAX", "cache", "legacy"]);
+  });
+  test("a word in a comment is neither a symbol nor a test reference (rev-c repro 2)", () => {
+    const cm = "@@ -3,0 +4,3 @@ export function add(a: number, b: number): number {\n+// let users multiply two numbers\n+/* class Widget */\n+  * function ghost() {\n";
+    expect(changedSymbols(cm)).toEqual(["add"]);
+    expect(symbolGap(["multiply"], ["// users multiply things\n/* multiply */\ntest('add', () => add(1, 2));"])).toEqual(["multiply"]);
+    expect(symbolGap(["multiply"], ["# multiply in a python comment\nassert add(1, 2) == 3"])).toEqual(["multiply"]);
+  });
+  test("no declared symbol, or no passing test source, is a gap", () => {
+    expect(symbolGap([], ["anything"])).toEqual(["(no declared symbol)"]);
+    expect(symbolGap(["multiply"], [])).toEqual(["multiply"]);
+  });
+  test("verdictOf: a non-empty leanGap is PARTIAL even with a passing exogenous check", () => {
+    const checks = [{ name: "bun:calc.test.ts", cmd: "bun test", result: "pass" as const, duration_s: 1, n: 1 }];
+    expect(verdictOf({ implement: { exit: "ok" } } as never, checks as never, false, false, false, true, false, [], [])).toBe("VERIFIED");
+    expect(verdictOf({ implement: { exit: "ok" } } as never, checks as never, false, false, false, true, false, [], ["multiply"])).toBe("PARTIAL");
+  });
+});
+
+describe("FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: goTestNames and the go argv", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gotn-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  test("top-level Test functions only, TestMain excluded, deduplicated", () => {
+    const f = join(dir, "x_test.go");
+    writeFileSync(f, 'package x\n\nfunc TestMain(m *testing.M) {}\nfunc TestA(t *testing.T) {}\nfunc TestB_c(t *testing.T) {}\nfunc BenchmarkA(b *testing.B) {}\nfunc testHelper(t *testing.T) {}\nfunc (s *S) TestMethod(t *testing.T) {}\n');
+    expect(goTestNames(f)).toEqual(["TestA", "TestB_c"]);
+    expect(goTestNames(join(dir, "missing_test.go"))).toEqual([]);
+  });
+  // rev-b B1: every valid declaration form is named, so `-run` never drops a red test.
+  const FORMS = 'package x\n\nimport (\n\t"fmt"\n\ttt "testing"\n)\n\nfunc TestMulti(\n\tt *tt.T,\n) {\n\tt.Fatal("multi")\n}\n\nfunc TestAlias(t *tt.T) { t.Fatal("alias") }\n\nfunc TestÄ(t *tt.T) { t.Fatal("non-ascii") }\n\nfunc FuzzF(f *tt.F) { f.Fatal("fuzz") }\n\nfunc Example() {\n\tfmt.Println("a")\n\t// Output: b\n}\n';
+  const DOT = 'package x\n\nimport . "testing"\n\nfunc TestDot(t *T) { t.Fatal("dot") }\n\nfunc TestUnnamed(*T) { panic("unnamed") }\n';
+  test("multi-line, aliased, non-ASCII, unnamed, Fuzz and Example forms are all named", () => {
+    const f = join(dir, "forms_test.go"); writeFileSync(f, FORMS);
+    expect(goTestNames(f)).toEqual(["TestMulti", "TestAlias", "TestÄ", "FuzzF", "Example"]);
+  });
+  test.skipIf(!Bun.which("go"))("a red Go Wall file using those forms is fail under the scoped -run, never not_run", () => {
+    const d = mkdtempSync(join(tmpdir(), "gotn-run-")); try {
+      writeFileSync(join(d, "go.mod"), "module x\n\ngo 1.20\n"); writeFileSync(join(d, "loki_wall_x_test.go"), FORMS); writeFileSync(join(d, "loki_wall_dot_test.go"), DOT);
+      expect(goTestNames(join(d, "loki_wall_dot_test.go"))).toEqual(["TestDot", "TestUnnamed"]);
+      for (const [file, names] of [["loki_wall_x_test.go", ["TestMulti", "TestAlias", "TestÄ", "FuzzF", "Example"]], ["loki_wall_dot_test.go", ["TestDot", "TestUnnamed"]]] as const) {
+      const [cmd, args] = runnerCmd({ runner: "go", path: file }, d);
+      const r = spawnSync(cmd, args, { cwd: d, encoding: "utf8", env: { ...process.env, GOFLAGS: "-mod=mod" } });
+      expect(r.status).not.toBe(0);
+      const failed = new Set(r.stdout.split("\n").filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as { Action?: string; Test?: string }).filter((e) => e.Action === "fail" && e.Test).map((e) => e.Test));
+      for (const n of names) expect([n, failed.has(n)]).toEqual([n, true]);
+      }
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }, 60000);
+  test("runnerCmd scopes to the file's tests, and keeps the package run when the file has none", () => {
+    writeFileSync(join(dir, "y_test.go"), "package x\n\nfunc TestY(t *testing.T) {}\n");
+    writeFileSync(join(dir, "z_test.go"), "package x\n");
+    expect(runnerCmd({ runner: "go", path: "y_test.go" }, dir)[1]).toEqual(["test", "-json", "-run", "^(TestY)$", "./."]);
+    expect(runnerCmd({ runner: "go", path: "z_test.go" }, dir)[1]).toEqual(["test", "-json", "./."]);
   });
 });

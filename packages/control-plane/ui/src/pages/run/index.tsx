@@ -10,7 +10,7 @@ import { postControl } from "../run-controls";
 import { postRun } from "../compose/api";
 import { verifyRun, type VerifyResult } from "../receipts/api";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
-import { buildTimeline } from "./timeline";
+import { buildScrubber, buildTimeline } from "./timeline";
 import { changedFilesFor, clock, describeLine, elapsedLabel, notProvenItem, stageProgress, UNMEASURED } from "./model";
 import { evidenceFacts, factText, OWN_RULES_TEXT, rawWhy, runOutcome, whyForRun, type RunDetail } from "./facts";
 
@@ -95,10 +95,32 @@ function Stages({ d }: { d: RunDetailResponse }) {
   );
 }
 
+// Replay scrubber: one position per stage, showing the diff, tests and cost the journal recorded for that stage ("--" where it recorded none).
+function Scrubber({ events }: { events: RunEvent[] }) {
+  const steps = buildScrubber(events);
+  const [pos, setPos] = useState(0);
+  if (steps.length === 0) return null;
+  const at = Math.min(pos, steps.length - 1);
+  const s = steps[at]!;
+  const files = s.changed_files ? (s.changed_files.length ? s.changed_files.join(", ") : "none") : UNMEASURED;
+  const tests = s.tests ? `${s.tests.pass} pass, ${s.tests.fail} fail` : UNMEASURED;
+  const cost = s.cost_usd === "no-session" ? "-" : s.cost_usd === null ? UNMEASURED : fmtUsd(s.cost_usd);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+      <input data-testid="run-scrubber" type="range" min={0} max={steps.length - 1} step={1} value={at} aria-label="Replay stage" onChange={(e) => setPos(Number(e.target.value))} />
+      <div data-testid="run-scrubber-step" aria-live="polite" style={{ fontFamily: "var(--cp-font-mono)", fontSize: 12, color: "var(--cp-term-text)" }}>
+        {at + 1}/{steps.length} {s.stage} ({s.outcome}) | files {files} | tests {tests} | cost {cost}
+      </div>
+    </div>
+  );
+}
+
 function Timeline({ events, awaiting }: { events: RunEvent[]; awaiting: boolean }) {
   const tl = buildTimeline(events);
   if (tl.length === 0) return <div data-testid="run-timeline" style={{ color: "var(--cp-term-muted)", fontSize: 12 }}>{awaiting ? "Waiting for the first event" : "No events recorded for this run."}</div>;
   return (
+    <>
+    <Scrubber events={events} />
     <ol data-testid="run-timeline" aria-live="polite" style={{ listStyle: "none", margin: 0, padding: 0 }}>
       {tl.map((l) => {
         const isStage = l.kind === "stage";
@@ -121,6 +143,7 @@ function Timeline({ events, awaiting }: { events: RunEvent[]; awaiting: boolean 
         );
       })}
     </ol>
+    </>
   );
 }
 

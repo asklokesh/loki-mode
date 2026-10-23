@@ -3956,8 +3956,8 @@ class StartBuildRequest(BaseModel):
     # deliberate session-scope reset, run.sh:15623), which is why start-time uses
     # env, not the override file.
     model: Optional[str] = None
-    # Advisor / reviewer model (opt-in Opus judge). haiku|sonnet|opus; fable NOT
-    # accepted. Exported as LOKI_ADVISOR_MODEL into the run env; run.sh reads it at
+    # Advisor / reviewer model (opt-in Opus judge). haiku|sonnet|opus; any other
+    # value is rejected. Exported as LOKI_ADVISOR_MODEL into the run env; run.sh reads it at
     # the reviewer-dispatch site (run.sh:10199) to pin the code-review judge while
     # execution stays on the chosen/default execution model. Absent/invalid -> no
     # advisor pin (reviewers use the account default).

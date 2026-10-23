@@ -30,6 +30,7 @@ import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 import { recordAdvisorError } from "./router/advisor_probe.ts";
 import { lokiDirFor } from "../util/paths.ts";
+import { neutralizeEngineMarkers } from "./retry_class.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -191,7 +192,8 @@ export async function consumeSdkStream(
   // Blocks are newline-separated so a line-anchored marker never swallows the next block's prose.
   // Assistant text is remembered per frame uuid so a refusal-fallback retraction can evict exactly that text.
   const textByUuid = new Map<string, string[]>();
-  const capture = (t: string, uuid?: string) => {
+  const capture = (raw: string, uuid?: string) => {
+    const t = neutralizeEngineMarkers(raw); // FC-AGENT-TEXT-FORGES-ENGINE-MARKER: agent text never writes an engine marker
     captured += (captured && !captured.endsWith("\n") ? "\n" : "") + t;
     if (uuid) textByUuid.set(uuid, [...(textByUuid.get(uuid) ?? []), t]);
   };
@@ -272,6 +274,10 @@ export async function consumeSdkStream(
       if (err === "rate_limit" || err === "overloaded") {
         rateLimit = rateLimit ?? {};
         captured += `\n[${err}]\n`; // so the file-based rate-limit scanner fires
+      }
+      if (err === "authentication_failed") { // FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the structural frame, never prose; retry_class SDK_ERR classifies this exact wording
+        const said = neutralizeEngineMarkers((data.message?.content ?? []).map((c) => (c["type"] === "text" ? String(c["text"] ?? "") : "")).join(" ")).replace(/\s+/g, " ").trim().slice(0, 200);
+        captured += `\n[sdk-loop error: Failed to authenticate (authentication_failed)${said ? `: ${said}` : ""}]\n`;
       }
       const u = data.message?.usage;
       if (u) {

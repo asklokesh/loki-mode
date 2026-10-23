@@ -44,41 +44,21 @@ _CHILD_ENV_NAMES = {
     "TERM",
     "USER",
 }
-_CHILD_LOKI_ENV_NAMES = {
-    "LOKI_ADVISOR_MODEL",
-    "LOKI_APP_RUNNER",
-    "LOKI_AUTONOMY_OVERRIDE",
-    "LOKI_BUILD_PROFILE",
-    "LOKI_CLAUDE_MODEL_DEVELOPMENT",
-    "LOKI_CLAUDE_MODEL_FAST",
-    "LOKI_CLAUDE_MODEL_PLANNING",
-    "LOKI_CLAUDE_TASK_BUDGET",
-    "LOKI_CODEX_MODEL",
-    "LOKI_CODEX_REASONING_EFFORT",
-    "LOKI_CODEX_WEB_SEARCH",
-    "LOKI_COMPLEXITY",
-    "LOKI_COUNCIL_ENABLED",
-    "LOKI_COUNCIL_SIZE",
-    "LOKI_COUNCIL_TIMEOUT_MS",
-    "LOKI_ENTERPRISE_AUTH",
-    "LOKI_FIRST_PASS_EXCELLENCE",
-    "LOKI_GEMINI_MODEL",
-    "LOKI_HOST_GUARD",
-    "LOKI_HOST_GUARD_SETTINGS_JSON",
-    "LOKI_LEGACY_BASH",
-    "LOKI_MAX_ITERATIONS",
-    "LOKI_NO_SESSION_PERSIST",
-    "LOKI_PARTIAL_MESSAGES",
-    "LOKI_PROMPT_INJECTION",
-    "LOKI_SDK_LOOP",
-    "LOKI_SDK_MODE",
-    "LOKI_SESSION_MODEL",
-    "LOKI_SETTING_SOURCES",
-    "LOKI_SKILL_DIR",
-    "LOKI_SPEC_SHA256",
-    "LOKI_SPEC_CONTRADICTION_FASTFAIL",
-    "LOKI_WORKSPACE_ROOTS",
-}
+# The LOKI_* names forwarded to a supervised build come from one data file that
+# also lists every name loki-ts/src reads but deliberately does not forward; a
+# guard in tests/dashboard/test_build_supervisor.py fails on an unlisted read.
+_CHILD_ENV_DATA = Path(__file__).resolve().parent.parent / "loki-ts" / "data" / "child-env.json"
+
+
+def _load_child_loki_env_names() -> frozenset[str]:
+    """Read the forwarded LOKI_* names; a missing or empty list is a hard error."""
+    names = json.loads(_CHILD_ENV_DATA.read_text(encoding="utf-8"))["forwarded"]
+    if not names or not all(isinstance(n, str) and n.startswith("LOKI_") for n in names):
+        raise RuntimeError(f"{_CHILD_ENV_DATA} has no valid forwarded LOKI_* names")
+    return frozenset(names)
+
+
+_CHILD_LOKI_ENV_NAMES = _load_child_loki_env_names()
 _SYSTEM_RUNTIME_READ_PATHS = (
     "/System",
     "/usr",

@@ -3,16 +3,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import { claudeProvider } from "../../src/runner/providers.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
-import { PROVIDER_DEFAULT_MODEL, createSessionRunner, resolveModel } from "../../src/engine10/session.ts";
+import { PROVIDER_DEFAULT_MODEL, createSessionRunner, resolveModel, sessionPinModel } from "../../src/engine10/session.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
 import { modelDowngrades } from "../../src/runner/model_downgrades.ts";
 import type { RunContext, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const LOKI_TS = resolve(import.meta.dir, "../..");
 const E2E = join(import.meta.dir, "fixtures", "e2e");
-const KEYS = ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_PLANNING", "LOKI_MODEL_DEVELOPMENT", "LOKI_MODEL_FAST", "LOKI_MAX_TIER", "LOKI_TIER_ROUTING", "LOKI_E10_MODEL_DEFAULT", "LOKI_E10_EFFORT", "LOKI_CLAUDE_CLI", "LOKI_E10_INVOKER"];
+const KEYS = ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_PLANNING", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_PLANNING", "LOKI_MODEL_DEVELOPMENT", "LOKI_MODEL_FAST", "LOKI_MAX_TIER", "LOKI_TIER_ROUTING", "LOKI_E10_MODEL_DEFAULT", "LOKI_E10_EFFORT", "LOKI_CLAUDE_CLI", "LOKI_E10_INVOKER", "LOKI_SESSION_MODEL", "LOKI_ALLOW_HAIKU", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"];
 let tmp: string;
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "loki-e10-l1-")); for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; } });
@@ -171,4 +172,53 @@ describe("EL-W0-06 auxiliary pins are listed", () => {
     const onOpus = modelDowngrades("claude", both, "opus").filter((d) => d.reason.includes("HAIKU_FIRST"));
     expect(onOpus[0]?.reason).toContain("overridden by LOKI_E10_CASCADE");
   });
+});
+
+// FC-ENGINE10-IGNORES-SESSION-MODEL-PIN: a LOKI_SESSION_MODEL pin is run or refused, never replaced by the provider default.
+describe("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN", () => {
+  const PINS: Array<[string, string]> = [["sonnet", "sonnet"], ["opus", "opus"], ["haiku", "haiku"], ["fable", "opus"], ["small", "sonnet"], ["medium", "sonnet"], ["high", "sonnet"], ["planning", "sonnet"], ["development", "sonnet"], ["fast", "sonnet"], ["  OPUS ", "opus"]];
+  for (const [pin, want] of PINS) {
+    test(`LOKI_SESSION_MODEL=${JSON.stringify(pin)} -> ${want}: recorded, exported to every tier, --model not omitted`, async () => {
+      process.env["LOKI_SESSION_MODEL"] = pin;
+      expect(resolveModel("claude")).toBe(want);
+      const dumped = await childEnvDump();
+      expect(dumped).not.toContain("LOKI_E10_MODEL_DEFAULT=1");
+      for (const t of ["PLANNING", "DEVELOPMENT", "FAST"]) expect(dumped).toContain(`LOKI_CLAUDE_MODEL_${t}=${want}\n`);
+    }, 20_000);
+  }
+  test("a tier-name pin takes that tier's configured model", () => {
+    process.env["LOKI_SESSION_MODEL"] = "planning"; process.env["LOKI_CLAUDE_MODEL_PLANNING"] = "opus";
+    expect(resolveModel("claude")).toBe("opus");
+  });
+  test("an unrecognized pin throws and names the valid set, in resolveModel and childEnv", async () => {
+    process.env["LOKI_SESSION_MODEL"] = "claude-sonnet-5";
+    expect(() => resolveModel("claude")).toThrow(/unknown LOKI_SESSION_MODEL 'claude-sonnet-5'.*opus\|sonnet\|haiku\|fable/);
+    await expect(childEnvDump()).rejects.toThrow(/unknown LOKI_SESSION_MODEL/);
+  });
+  test("precedence: LOKI_MODEL_OVERRIDE beats the session pin, which beats the per-tier vars", async () => {
+    process.env["LOKI_SESSION_MODEL"] = "sonnet"; process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "haiku";
+    expect(resolveModel("claude")).toBe("sonnet");
+    expect(await childEnvDump()).toContain("LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet\n");
+    process.env["LOKI_MODEL_OVERRIDE"] = "opus";
+    expect(resolveModel("claude")).toBe("opus");
+    expect(await childEnvDump()).toContain("LOKI_CLAUDE_MODEL_DEVELOPMENT=opus\n");
+  }, 20_000);
+  test("unset or blank pin keeps the provider default (negative control)", async () => {
+    process.env["LOKI_SESSION_MODEL"] = "   ";
+    expect(sessionPinModel()).toBeUndefined();
+    expect(resolveModel("claude")).toBe(PROVIDER_DEFAULT_MODEL);
+    expect(await childEnvDump()).toContain("LOKI_E10_MODEL_DEFAULT=1");
+  }, 20_000);
+  test("a non-claude provider ignores the pin", () => {
+    process.env["LOKI_SESSION_MODEL"] = "sonnet";
+    expect(resolveModel("codex")).toBe("codex (model not recorded)");
+  });
+  // Parity with the bash route: run.sh maps sonnet -> development, planning|development|fast stay, then claude.sh resolves the tier.
+  for (const [pin, tier] of [["sonnet", "development"], ["planning", "planning"], ["development", "development"], ["fast", "fast"]] as const) {
+    test(`bash parity: ${pin} resolves to the model resolve_model_for_tier ${tier} gives`, () => {
+      process.env["LOKI_SESSION_MODEL"] = pin;
+      const bash = spawnSync("bash", ["-c", `. "${resolve(LOKI_TS, "..", "providers", "claude.sh")}" >/dev/null 2>&1; resolve_model_for_tier "${tier}"`], { env: { ...process.env }, encoding: "utf8" });
+      expect(bash.stdout.trim()).toBe(sessionPinModel() as string);
+    });
+  }
 });

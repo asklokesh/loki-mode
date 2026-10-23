@@ -1,0 +1,94 @@
+[
+  {
+    "case": "proto-key-merged-from-b",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "  for (const k of Object.keys(b)) {\n    if (k === \"__proto__\") continue;\n",
+        "new": "  for (const k of Object.keys(b)) {\n"
+      }
+    ],
+    "rules": [
+      4
+    ],
+    "file": "merge.js"
+  },
+  {
+    "case": "arrays-shared-with-input",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "if (Array.isArray(v)) return v.map(clone);",
+        "new": "if (Array.isArray(v)) return v;"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "merge.js"
+  },
+  {
+    "case": "null-from-b-ignored",
+    "kind": "empty-input",
+    "edits": [
+      {
+        "old": "else out[k] = clone(b[k]);",
+        "new": "else if (b[k] !== null) out[k] = clone(b[k]);"
+      }
+    ],
+    "rules": [
+      1
+    ],
+    "file": "merge.js"
+  },
+  {
+    "case": "result-is-input-a",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "const out = {};",
+        "new": "const out = a;"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "merge.js"
+  },
+  {
+    "case": "arrays-concatenated-below-top-level",
+    "kind": "ordering",
+    "edits": [
+      {
+        "old": "function deepMerge(a, b) {",
+        "new": "function deepMerge(a, b, depth = 0) {"
+      },
+      {
+        "old": "out[k] = deepMerge(out[k], b[k]);",
+        "new": "out[k] = deepMerge(out[k], b[k], depth + 1);"
+      },
+      {
+        "old": "else out[k] = clone(b[k]);",
+        "new": "else if (depth > 0 && Array.isArray(b[k]) && Array.isArray(out[k])) out[k] = out[k].concat(clone(b[k]));\n  else out[k] = clone(b[k]);"
+      }
+    ],
+    "rules": [
+      2
+    ],
+    "file": "merge.js"
+  },
+  {
+    "case": "nested-objects-shared",
+    "kind": "other",
+    "edits": [
+      {
+        "old": "if (isPlain(v)) return deepMerge({}, v);",
+        "new": "if (isPlain(v)) return v;"
+      }
+    ],
+    "rules": [
+      3
+    ],
+    "file": "merge.js"
+  }
+]

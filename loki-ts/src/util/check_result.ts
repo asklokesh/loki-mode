@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
-import { isTestFile } from "../engine10/testmap.ts";
+import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets } from "./redact.ts";
@@ -264,6 +264,51 @@ export function checkProvenance(name: string, ctx: ProvenanceCtx): CheckProvenan
 /** True when some executed check (pass, n>0) is not backed solely by agent-authored or LLM-judge evidence. */
 export const hasExogenousProof = (checks: ReadonlyArray<{ name?: string; result?: unknown; n?: unknown }>, ctx: ProvenanceCtx): boolean =>
   checks.some((c) => isExecutedProof(c) && ((p) => p !== "agent_authored" && p !== "llm_judge")(checkProvenance(c.name ?? "", ctx)));
+/** FC-LEAN-VERIFIED-WITHOUT-CHANGED-SYMBOL: the extensions testmap.ts maps (JS/TS, Python, Go); verify and seal share it. */
+export const CODE_FILE_EXT = /\.(?:[cm]?[jt]sx?|py|go)$/;
+const DECL_RE = /\b(?:function\*?|def|class|fn|func|fun|type|interface|struct|enum|trait|object)\s+([A-Za-z_$][\w$]*)/g;
+const VAR_DECL_RE = /^(?:export\s+(?:default\s+)?(?:declare\s+)?)?(?:const|let|var|val)\s+([A-Za-z_$][\w$]*)/; // only at column 0: an indented const/let/var is a local, not a changed symbol
+/** Drops comment text so a word in a comment is never a symbol or a test reference. Over-stripping only costs a false PARTIAL. */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, " ").split("\n").map((l) => (/^\s*\*/.test(l) ? "" : l.replace(/\/\/.*$/, "").replace(/(^|\s)#.*$/, "$1"))).join("\n");
+const GO_METHOD_RE = /\bfunc\s*\([^)]*\)\s*([A-Za-z_]\w*)/g;
+const METHOD_RE = /^\s*(?:(?:public|private|protected|static|async|export|override|final|abstract)\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{=]+)?\{\s*$/;
+const NOT_A_NAME = new Set(["if", "for", "while", "switch", "catch", "function", "return", "else", "with", "constructor"]);
+const declNames = (line: string): string[] => {
+  const out: string[] = [];
+  const code = stripComments(line);
+  for (const re of [DECL_RE, GO_METHOD_RE]) for (const m of code.matchAll(re)) out.push(m[1]!);
+  const v = VAR_DECL_RE.exec(code);
+  if (v) out.push(v[1]!);
+  const m = METHOD_RE.exec(code);
+  if (m) out.push(m[1]!);
+  return out.filter((n) => !NOT_A_NAME.has(n));
+};
+/** Names a `git diff -U0` declares or modifies: declarations on added lines, plus the hunk's enclosing declaration (the @@ context) when the hunk removes lines or declares nothing itself. */
+export function changedSymbols(diffU0: string): string[] {
+  const out = new Set<string>();
+  let ctx = "", added: string[] = [], removed = 0;
+  const flush = (): void => {
+    const own = stripComments(added.join("\n")).split("\n").flatMap(declNames); // strip over the whole hunk: a block comment can span added lines
+    for (const n of own) out.add(n);
+    if (removed > 0 || own.length === 0) for (const n of declNames(ctx)) out.add(n);
+    added = []; removed = 0;
+  };
+  for (const line of diffU0.split("\n")) {
+    if (line.startsWith("@@")) { flush(); ctx = line.replace(/^@@[^@]*@@\s?/, ""); }
+    else if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
+    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  flush();
+  return [...out];
+}
+/** Symbols that no test source references as a whole word; every symbol when none is referenced, or when the diff declared none (then "(no declared symbol)"). Empty means some passing test source mentions a changed symbol. */
+export function symbolGap(symbols: readonly string[], testSources: readonly string[]): string[] {
+  if (symbols.length === 0) return ["(no declared symbol)"];
+  const ref = (sym: string, src: string): boolean => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`).test(src);
+  const code = testSources.map(stripComments);
+  return code.some((src) => symbols.some((sym) => ref(sym, src))) ? [] : [...symbols];
+}
 /** TEN-GATES-14: per-gate legibility for `loki verify --explain`. exogenous/independent evidence is exogenous; agent_authored and llm_judge are agent-influenced; absent or unknown provenance is unrecorded, never exogenous. */
 export interface ExplainGate { name: string; class: "exogenous" | "agent-influenced" | "unrecorded"; provenance: string | null; result: string; n: number | null; evidence: string }
 export function explainGates(receiptPath: string): ExplainGate[] {
@@ -697,6 +742,10 @@ export function resolveTool(repoDir: string, bin: string, fallback: string, last
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
   return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
+/** FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: the Test, Fuzz and Example function names of one Go file, matched by name only. Over-inclusion is harmless for -run (a name that is no test matches nothing); a signature check would drop valid tests (multi-line, unnamed or aliased *testing.T, non-ASCII names) and turn a red Wall into no run. TestMain is excluded; [] when unreadable or none. */
+export function goTestNames(file: string): string[] {
+  try { return [...new Set([...readFileSync(file, "utf8").matchAll(/^func\s+((?:Test|Fuzz|Example)[\p{L}\p{N}_]*)\s*\(/gmu)].map((m) => m[1]!).filter((n) => n !== "TestMain"))]; } catch { return []; }
+}
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
 export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
@@ -710,13 +759,12 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", "-json", `./${dirname(t.path)}`]];
-    case "cargo": return ["cargo", ["test"]];
+    case "go": { const names = goTestNames(join(repoDir, t.path)); return ["go", ["test", "-json", ...(names.length ? ["-run", `^(${names.join("|")})$`] : []), `./${dirname(t.path)}`]]; } // one file: only its own Test functions
+    case "cargo": return CARGO_TEST_FILE_RE.test(t.path) ? ["cargo", ["test", "--test", basename(t.path, ".rs")]] : ["cargo", ["test"]]; // a Wall-sealed tests/<name>.rs runs by itself
   }
 }
 /** The legacy per-runner full suite (no multi-root model), one check per detected runner: run by deep.ts, baselined via package_suite.ts fullSuiteSpecs. */
-export const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
-  pytest: { cmd: "python", args: ["-m", "pytest", "-q"] },
+const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest">, { cmd: string; args: string[] }> = {
   vitest: { cmd: "npx", args: ["vitest", "run"] },
   jest: { cmd: "npx", args: ["jest"] },
   bun: { cmd: "bun", args: ["test"] },
@@ -725,6 +773,12 @@ export const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }>
   go: { cmd: "go", args: ["test", "-json", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
 };
+/** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
+export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
+  if (runner !== "pytest") return FULL_SUITE_STATIC[runner];
+  const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+  return { cmd, args: [...pre, "-m", "pytest", "-q"], interpreter };
+}
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
   const site = siteFor(api, repoDir, t.path);

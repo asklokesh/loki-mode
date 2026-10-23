@@ -63,7 +63,7 @@ Claude Fable 5 (alias `fable`, full id `claude-fable-5`) is Anthropic's most cap
 - Long-horizon tasks you would otherwise decompose.
 
 **When NOT to route to Fable:**
-- Security review. Fable's safety classifiers refuse cybersecurity content, and in non-interactive (`-p`) mode a flagged request ends the turn with a refusal instead of a transparent Opus re-run, which would break the unanimous-council gate. Security review stays on Opus, always. (Defensive-cyber capability lives in Mythos 5 via Project Glasswing, not Fable.)
+- Security review. The reviewer pin (`LOKI_ADVISOR_MODEL`) honors haiku, sonnet and opus only, and Fable is not measured on the `claude -p` reviewer path, so security review stays on Opus. A refusal on the raw-SDK judge path is not a missing verdict: the gate record names it (`refused:<category>`, `truncated`, `context_exceeded`).
 - Default planning/development/fast work. The 2x cost is only worth it for the cases above.
 
 ### Mid-flight model switching
@@ -291,11 +291,9 @@ Per-model API defaults (an explicit value equal to the default behaves like omit
 | Claude Sonnet 5.5, Claude Sonnet 5, Claude Opus 5, Claude Opus 4.8, Claude Opus 4.7 | `high` | yes | yes |
 | Claude Opus 4.6, Claude Sonnet 4.6 | `high` | no | yes |
 
-Loki's resolver (one function per engine, pinned equal by tests): `loki_effort_for_tier` in `autonomy/lib/claude-flags.sh` and `effortForTier` in `loki-ts/src/providers/claude_flags.ts`. Tiers: planning=xhigh, development=high, fast=medium, plus one notch up when complexity is `complex` (never auto-reaches `max`). Codex uses its own `PROVIDER_EFFORT_*` table in `providers/codex.sh` (fast=low).
+Loki's resolver (one function per engine, pinned equal by tests): `loki_effort_for_tier` in `autonomy/lib/claude-flags.sh` and `effortForTier` in `loki-ts/src/providers/claude_flags.ts`. Tiers: planning=xhigh, development=high, fast=medium, plus one notch up when complexity is `complex` (never auto-reaches `max`). Codex uses its own `PROVIDER_EFFORT_*` table in `providers/codex.sh` (fast=low), resolved in TS by `codexEffortForTier` in the same module.
 
 **Length:** on Claude Opus 5, effort controls thinking volume and does not reliably shorten visible responses. State the wanted length and verbosity in the prompt.
-
-**SDK code:** for Anthropic SDK or Claude API code (model ids, `effort`, `max_tokens`, caching), use the `claude-api` skill instead of guessing parameters.
 
 **Note:** The effort parameter and thinking prefixes serve different purposes. Effort controls the model's internal reasoning budget; thinking prefixes guide the structure of the response.
 

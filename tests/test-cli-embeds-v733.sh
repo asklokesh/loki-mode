@@ -307,7 +307,7 @@ fi
 # line (the argv line ends in `-p \`). Match either so the block stays bounded to
 # the reviewer site and never runs to EOF (which would silently swallow the whole
 # file and mask a real regression).
-rv_block=$(awk '/SECURITY-REVIEW MODEL GUARD/{f=1} f{print} /-p "\$prompt_text"/{if(f)exit} /claude "\$\{_rv_argv\[@\]\}" -p \\$/{if(f)exit}' "$RUN_SH")
+rv_block=$(awk '/REVIEWER MODEL PIN/{f=1} f{print} /-p "\$prompt_text"/{if(f)exit} /claude "\$\{_rv_argv\[@\]\}" -p \\$/{if(f)exit}' "$RUN_SH")
 if printf '%s' "$rv_block" | grep -q 'loki_subcall_bare_enabled' \
    && printf '%s' "$rv_block" | grep -q '_rv_argv+=("--bare")'; then
   ok "EMBED2: reviewer council site appends --bare via helper"

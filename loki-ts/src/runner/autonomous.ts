@@ -26,7 +26,7 @@ import {
   type TerminateReason,
 } from "./types.ts";
 import { run as shellRun } from "../util/shell.ts";
-import { maybeGenerateProof } from "./proof.ts";
+import { clearStaleProofPointer, maybeGenerateProof } from "./proof.ts";
 import { cavemanCaptureUserMode, permissionPolicyBanner } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
 import { withholdGithubTokens } from "./github_token.ts";
@@ -484,6 +484,8 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   // Build the context once so both the core loop and the post-completion
   // proof-of-run hook see the same iteration count / lokiDir / provider.
   const ctx = makeContext(opts);
+  // #211 parity with run.sh run init: a stale pointer must not outlive its run.
+  clearStaleProofPointer(ctx.lokiDir);
   // Stamp the ORIGINAL user-supplied PRD path onto ctx for the state writer.
   // Set unconditionally (string, possibly "") so every persistState call site
   // records bash's global-PRD_PATH value rather than the resolved/persisted

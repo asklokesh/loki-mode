@@ -172,6 +172,29 @@ describe("runAutonomous", () => {
     expect(provider.calls).toHaveLength(0);
   });
 
+  it("#211 Bun-route sibling: a run that stops before proof does not leave the previous run's proof pointer", async () => {
+    // Parity with run.sh:7665. Without the clear, every reader of
+    // state/last-proof-id.txt shows a receipt for different work. LOKI_PROOF=0
+    // keeps the finally-block generator from writing this run's own id, so
+    // "absent" is the only correct outcome.
+    const stateDir = resolve(lokiDir, "state");
+    mkdirSync(stateDir, { recursive: true });
+    const pointer = resolve(stateDir, "last-proof-id.txt");
+    writeFileSync(pointer, "run-A");
+    const signals = new FakeSignals();
+    signals.interventions = [2];
+    const prev = process.env["LOKI_PROOF"];
+    process.env["LOKI_PROOF"] = "0";
+    try {
+      const code = await runAutonomous(baseOpts({ signals, providerOverride: new FakeProvider([]) }));
+      expect(code).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_PROOF"];
+      else process.env["LOKI_PROOF"] = prev;
+    }
+    expect(existsSync(pointer)).toBe(false);
+  });
+
   it("re-checks loop on PAUSE signal then exits when STOP follows", async () => {
     const signals = new FakeSignals();
     signals.interventions = [1, 2];

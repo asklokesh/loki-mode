@@ -1014,6 +1014,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     "eval/loki10/harness.py": "eval harness raw-claude baseline arm, deliberately not policy-routed",
     "benchmarks/bench/attribution.py": "benchmark raw-claude baseline arm (and its recorded command string); a policy would skew the A/B against Loki",
     "benchmarks/bench/adapters/claude_code.py": "head-to-head adapter that runs stock Claude Code as the competitor arm, not a Loki launch",
+    "benchmarks/bench/adapters/codex.py": "head-to-head adapter; the flag appears only as a docstring noting parity with claude's bench arm (the workdir is a throwaway bench dir), not a Loki launch",
   };
   const rawLaunches = (rel: string, text: string): string[] =>
     text.split("\n").filter((l) => {
@@ -1281,7 +1282,7 @@ describe("claude_flags.reviewerModelForTier (S9)", () => {
     expect(reviewerModelForTier({ tier: "simple", reviewer: "devils-advocate", env: {} })).toBeNull();
     expect(reviewerModelForTier({ tier: "simple", reviewer: "a", highTier: true, env: {} })).toBeNull();
   });
-  it("LOKI_ADVISOR_MODEL keeps precedence; fable refused", () => {
+  it("LOKI_ADVISOR_MODEL keeps precedence; values outside haiku|sonnet|opus are ignored", () => {
     expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: { LOKI_ADVISOR_MODEL: "opus" } })).toBe("opus");
     expect(reviewerModelForTier({ tier: "simple", reviewer: "security-sentinel", env: { LOKI_ADVISOR_MODEL: "sonnet" } })).toBe("sonnet");
     expect(reviewerModelForTier({ tier: "simple", reviewer: "a", env: { LOKI_ADVISOR_MODEL: "fable" } })).toBe("haiku");

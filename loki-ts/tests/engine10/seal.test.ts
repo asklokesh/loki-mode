@@ -29,7 +29,7 @@ import { repoKey } from "../../src/engine10/cache.ts";
 import { readOriginUrl } from "../../src/util/engine_origin.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
-import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { addedSymlinkNotes } from "../../src/util/base_guard.ts"; import { commitStage, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage, EXTERNAL_NO_WALL } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -191,6 +191,36 @@ describe("engine10 seal", () => {
     const ev = events.find((e) => e.type === "receipt.sealed");
     expect(ev?.data.signed).toBe(true);
     expect(ev?.data.receipt_sha256).toBe(r.receipt_sha256);
+  }, 30000);
+
+  // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED (rev-a B7, CoS gaps 1 and 2): wall.files = [] is what the no_runner skip, the no_interpreter skip and an all-not_run Wall emit.
+  test("an external diff whose Wall emitted files [] with a passing pre-existing check is PARTIAL with the EXTERNAL_NO_WALL line", async () => {
+    noKey();
+    const { repo, base } = makeRepo("ext-empty-wall");
+    const { ctx } = ctxFor(repo, base, "claude", { implement: { exit: "external", tests_reverted: [], duration_s: 0 }, wall: { files: [], no_runner: true } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.not_proven).toContain(EXTERNAL_NO_WALL);
+  }, 30000);
+
+  test("an external diff whose every Wall file came back not_run is never VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("ext-all-not-run");
+    const { ctx } = ctxFor(repo, base, "claude", { implement: { exit: "external", tests_reverted: [], duration_s: 0 }, wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 2 } } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.verdict).not.toBe("VERIFIED");
+    expect(r.not_proven).toContain(EXTERNAL_NO_WALL);
+  }, 30000);
+
+  test("an external diff with a Wall file that ran carries no EXTERNAL_NO_WALL line", async () => {
+    noKey();
+    const { repo, base } = makeRepo("ext-wall-ran");
+    const { ctx } = ctxFor(repo, base, "claude", { implement: { exit: "external", tests_reverted: [], duration_s: 0 } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).not.toContain(EXTERNAL_NO_WALL);
   }, 30000);
 
   test("E-69: a partial ctx.cost.read() reaches the receipt's measured/total/partial fields", async () => {
@@ -466,6 +496,10 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     for (const n of ["repo not recorded by intake", "resume state not recorded by intake", "wall result not recorded by verify",
       "cost not measured (no iteration ids recorded)"]) expect(r.not_proven).toContain(n);
     expect(r.verdict).toBe("PARTIAL");
+    const noOrigin = ctxFor(repo, base, "claude", { intake: { source: "issue", repo: null, resumed: false, task_sha256: "ab".repeat(32) } });
+    const nr = receiptOf(await sealStage.run(noOrigin.ctx, new AbortController().signal)).not_proven;
+    expect(nr).toContain("repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)");
+    expect(nr).not.toContain("repo not recorded by intake");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
   }, 30000);
