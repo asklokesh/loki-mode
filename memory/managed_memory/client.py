@@ -93,6 +93,19 @@ class ManagedClient:
             raise ManagedDisabled("anthropic SDK missing `beta` namespace")
         return beta
 
+    def _memories(self):
+        """Return (namespace, id_kwarg) for the memories resource.
+
+        SDK 2.x nests it at `beta.memory_stores.memories` and names the store
+        argument `memory_store_id`. Older/preview shapes (and test fakes) expose
+        `beta.memories` with `store_id`.
+        """
+        beta = self._beta()
+        nested = getattr(getattr(beta, "memory_stores", None), "memories", None)
+        if nested is not None:
+            return nested, "memory_store_id"
+        return getattr(beta, "memories", None), "store_id"
+
     # ---------- stores --------------------------------------------------
 
     def stores_list(self) -> List[Dict[str, Any]]:
@@ -123,7 +136,15 @@ class ManagedClient:
         if stores is None or not hasattr(stores, "create"):
             raise ManagedDisabled("memory_stores.create not available in SDK")
         try:
-            created = stores.create(name=name, description=description, scope=scope)
+            if hasattr(stores, "memories"):
+                # SDK 2.x create() has no `scope` argument; carry it as metadata.
+                created = stores.create(
+                    name=name, description=description, metadata={"scope": scope}
+                )
+            else:
+                created = stores.create(
+                    name=name, description=description, scope=scope
+                )
         except ManagedDisabled:
             raise
         except Exception as e:
@@ -147,16 +168,15 @@ class ManagedClient:
         SDK is expected to surface a 409-shaped error. Callers handle the
         409 by re-reading, merging, and retrying once.
         """
-        beta = self._beta()
-        memories = getattr(beta, "memories", None)
+        memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "create"):
             raise ManagedDisabled("memories.create not available in SDK")
         kwargs: Dict[str, Any] = {
-            "store_id": store_id,
+            id_kw: store_id,
             "path": path,
             "content": content,
         }
-        if sha256_precondition:
+        if sha256_precondition and id_kw == "store_id":
             kwargs["if_match_sha256"] = sha256_precondition
         try:
             created = memories.create(**kwargs)
@@ -167,12 +187,11 @@ class ManagedClient:
         return self._to_dict(created)
 
     def memory_read(self, store_id: str, memory_id: str) -> Dict[str, Any]:
-        beta = self._beta()
-        memories = getattr(beta, "memories", None)
+        memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "retrieve"):
             raise ManagedDisabled("memories.retrieve not available in SDK")
         try:
-            got = memories.retrieve(store_id=store_id, memory_id=memory_id)
+            got = memories.retrieve(**{id_kw: store_id}, memory_id=memory_id)
         except ManagedDisabled:
             raise
         except Exception as e:
@@ -182,11 +201,10 @@ class ManagedClient:
     def memories_list(
         self, store_id: str, path_prefix: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        beta = self._beta()
-        memories = getattr(beta, "memories", None)
+        memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "list"):
             raise ManagedDisabled("memories.list not available in SDK")
-        kwargs: Dict[str, Any] = {"store_id": store_id}
+        kwargs: Dict[str, Any] = {id_kw: store_id}
         if path_prefix:
             kwargs["path_prefix"] = path_prefix
         try:
