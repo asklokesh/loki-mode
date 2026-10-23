@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.56.5 (2026-10-23)
+
+### Fixed
+- loki start --resume now reaches the stage resume, and loki verify with a receipt path reaches the engine10 verifier. Refs #352.
+
 ## v11.56.4 (2026-10-23)
 
 ### Fixed
