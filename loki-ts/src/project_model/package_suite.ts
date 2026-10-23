@@ -4,7 +4,7 @@
 // FC-BASELINE-PER-PACKAGE: fullSuiteSpecs is the one list of full-suite commands; verify runs it and the intake baseline records it.
 import { isAbsolute, join, relative } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
-import { classifyCheck, failureExcerpt, FULL_SUITE_CMD, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
+import { classifyCheck, failureExcerpt, fullSuiteCmd, goRunner, exitCodedId, isExitCodedScript, NO_TESTS_REASON, plainTestEnv, stripAnsi } from "../util/check_result.ts";
 import { run } from "../util/shell.ts";
 import { failIds } from "../engine10/failures.ts";
 import type { RunnerName } from "../engine10/types.ts";
@@ -25,7 +25,7 @@ export function packageSuiteSpecs(api: ProjectApi | null | undefined): SuiteSpec
 
 /** The full-suite commands verify will run: per package from the model, else per detected runner. */
 export function fullSuiteSpecs(repoDir: string, runners: RunnerName[]): SuiteSpec[] {
-  return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const c = [FULL_SUITE_CMD[r].cmd, ...FULL_SUITE_CMD[r].args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: c }; });
+  return packageSuiteSpecs(loadProjectApi(repoDir)) ?? runners.map((r) => { const f = fullSuiteCmd(r, repoDir), c = [f.cmd, ...f.args].join(" "); return { name: `full suite: ${r}`, cmd: c, cwd: ".", run: c }; });
 }
 
 /** FC-FULLSUITE-ANSI-IDS: the plain child env (FC-69) for a full-suite run, with the caller's PATH override when present. */
