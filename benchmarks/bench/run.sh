@@ -14,6 +14,9 @@
 #   report <files> Build results.json + RESULTS.md from per-tool result-rows.
 #   attribution    Same-model harness attribution: raw Claude Code vs Loki
 #                  (attribution.py; --dry-run prints the plan, no model call).
+#   claim          Per-axis 100x verdicts (A false done, B trust, C verify, D
+#                  resume) from recorded rows (false_done_claim.py; no spend
+#                  unless --run, which needs LOKI_BENCH_SPEND_APPROVED=1).
 #
 # CREDIBILITY: Loki NEVER grades itself. The grader runs the held-out acceptance
 # command OUTSIDE the agent and decides success by exit code. No council /
@@ -56,6 +59,9 @@ Subcommands:
   report <files>  Build results.json + RESULTS.md from per-tool result-rows
   attribution     Same-model harness attribution: raw Claude Code vs Loki
                   (--dry-run prints the plan; --execute runs and spends budget)
+  claim           Per-axis 100x verdicts from recorded rows, NO DATA when empty
+                  (--axis A|B|C|D, --all-axes, --json, --record, --require-proven;
+                  --run spends budget and needs LOKI_BENCH_SPEND_APPROVED=1)
 
 Options:
   --trials N      Number of trials per tool (default 3)
@@ -79,6 +85,11 @@ SUB="${1:-}"
 # before the shared option loop below.
 if [ "$SUB" = "attribution" ]; then
     exec "${LOKI_BENCH_PYTHON:-python3}" "$SCRIPT_DIR/attribution.py" "$@"
+fi
+
+# claim has its own option set (parsed by false_done_claim.py), same routing.
+if [ "$SUB" = "claim" ]; then
+    exec "${LOKI_BENCH_PYTHON:-python3}" "$SCRIPT_DIR/false_done_claim.py" claim "$@"
 fi
 
 # Parse options + positionals. POSITIONAL holds the first positional (run/vs/
