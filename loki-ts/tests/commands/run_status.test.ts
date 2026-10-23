@@ -258,6 +258,30 @@ describe("work-item state (one vocabulary)", () => {
     test("the existing 12 states are unchanged (11 in the table plus stalled)", () => {
       expect(new Set(cases.map(([, , w]) => w)).size).toBe(11);
     });
+    // status JSON: `state` is "running" for every live phase and passes every terminal or stalled value through; `phase` always carries the fine name.
+    const LIVE = new Set<WorkItemState>(["received", "prepared", "planned", "executing", "validating", "ready_to_ship", "delivering", "observing"]);
+    const soon = Date.parse("2026-10-15T00:01:00Z");
+    test("every live phase maps to state running and keeps its name in phase", () => {
+      const all = [...cases.map(([, ev, w]) => [ev, w] as const), ...seqs.map(([, ev, w]) => [ev, w] as const)].filter(([, w]) => LIVE.has(w));
+      expect(new Set(all.map(([, w]) => w)).size).toBe(LIVE.size);
+      for (const [ev, w] of all) {
+        const st = summarize("e10-x", ev, dir, soon);
+        expect(st.state).toBe("running");
+        expect(st.phase).toBe(w);
+      }
+    });
+    test("every terminal or stalled value passes through state unchanged", () => {
+      const all = [...cases.map(([, ev, w]) => [ev, w] as const), ...seqs.map(([, ev, w]) => [ev, w] as const)].filter(([, w]) => !LIVE.has(w));
+      expect(new Set(all.map(([, w]) => w))).toEqual(new Set(["completed", "waiting_for_input", "budget_stopped", "failed", "cancelled"]));
+      for (const [ev, w] of all) {
+        const st = summarize("e10-x", ev, dir, soon);
+        expect(st.state).toBe(w);
+        expect(st.phase).toBe(w);
+      }
+      const stalled = summarize("e10-x", mk(["run.started", null], ["stage.started", "implement"]), dir, Date.parse("2026-10-15T00:31:00Z"));
+      expect(stalled.state).toBe("stalled");
+      expect(stalled.phase).toBe("stalled");
+    });
   });
   test("text status renders the state; the verdict stays detail", () => {
     const first = (ev: EventEnvelope[]): string => render({ ...summarize("e10-x", ev, dir, Date.now()), control_plane_url: null } as never).split("\n")[0]!;

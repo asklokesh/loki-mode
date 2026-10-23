@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- `loki status --json`: `state` now reads `running` for every live run (received, prepared, planned, executing, validating, ready_to_ship, delivering, observing); the previous fine-grained value moved to a new `phase` field. Terminal values and `stalled` are unchanged in `state`. Scripts that matched `executing` or another live name in `state` must read `phase`.
+
+### Fixed
+- `loki status --follow` without a run id no longer replays an older finished run when the new run has not written its first event yet; it waits up to 2.5 s for a run created after the follower started.
+
 ## v11.60.1 (2026-10-23)
 
 ### Fixed
