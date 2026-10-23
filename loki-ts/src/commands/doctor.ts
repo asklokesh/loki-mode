@@ -575,7 +575,11 @@ export async function probeMcpToolHashes(
   const worker = async (): Promise<void> => {
     while (next < remote.length) {
       const [name, entry] = remote[next++]!;
-      out[name] = budget.aborted ? null : await fetchRemoteToolsHash(entry.url, entry.headers ?? {}, budget);
+      // The bundle holds "${LOKI_MCP_<NAME>_AUTH}" placeholders; the probe is the one reader that sends the value.
+      const headers = Object.fromEntries(
+        Object.entries(entry.headers ?? {}).map(([k, v]) => [k, v.replace(/\$\{(LOKI_MCP_[A-Z0-9_]+_AUTH)\}/g, (_m, n: string) => env[n] ?? "")]),
+      );
+      out[name] = budget.aborted ? null : await fetchRemoteToolsHash(entry.url, headers, budget);
     }
   };
   await Promise.all(Array.from({ length: Math.min(MCP_PROBE_CONCURRENCY, remote.length) }, worker));

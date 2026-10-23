@@ -13,9 +13,13 @@
 //
 // Outbound remote servers: LOKI_MCP_<NAME>_URL declares an HTTP server named
 // <name> (lowercase, "_" to "-"); LOKI_MCP_<NAME>_AUTH, when set, becomes its
-// Authorization header ("Bearer " is added unless the value names a scheme).
-// A plain-http URL is accepted only for loopback. A bundle that holds a header
-// value is written 0600, and no header value is ever logged.
+// Authorization header ("Bearer " is added unless the value names a scheme). The bundle
+// is written inside the workspace, so it carries the placeholder "${LOKI_MCP_<NAME>_AUTH}"
+// and never the token; Claude Code expands it from its environment. Only the claude bundle
+// carries remote servers (codex, opencode and cline get none), and the variable must reach
+// the claude process (#349 strips LOKI_MCP_*_AUTH from the agent env and must keep it there).
+// A plain-http URL is accepted only for loopback. A bundle with an auth header is written
+// 0600, and no header value is ever logged.
 //
 // Public API:
 //   mcpConfigPath(targetDir) -> absolute path to Loki bundle (idempotent write)
@@ -142,7 +146,10 @@ export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<
       continue;
     }
     if (auth) {
-      entry["headers"] = { Authorization: /^[A-Za-z][A-Za-z0-9-]*\s+\S/.test(auth) ? auth : `Bearer ${auth}` };
+      // The bundle lives in the agent's workspace, so it never holds the token: it names the variable and the
+      // CLI expands it from its environment (FC-MCP-AUTH-TOKEN-WRITTEN-INTO-WORKSPACE).
+      const ref = "${LOKI_MCP_" + m[1] + "_AUTH}";
+      entry["headers"] = { Authorization: /^[A-Za-z][A-Za-z0-9-]*\s+\S/.test(auth) ? ref : `Bearer ${ref}` };
       hasSecret = true;
     }
     servers[m[1]!.toLowerCase().replace(/_/g, "-")] = entry;
