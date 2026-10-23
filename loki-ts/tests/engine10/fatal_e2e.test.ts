@@ -68,6 +68,11 @@ describe("A-113b fatal classification through the CLI invoker", () => {
       expect(run({ STUB_OUT: text, STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
     }, 120_000);
   }
+  test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the SDK authentication_failed line in the iteration log is fatal and its provider text reaches session.ended", () => {
+    const r = run({ STUB_OUT: "[sdk-loop error: Failed to authenticate (authentication_failed): Invalid API key]", STUB_EXIT: "1" });
+    expect(r.json.stop).toBe("fatal:auth");
+    expect(readFileSync(join(r.repo, ".loki", "runs", r.json.run_id, "events.jsonl"), "utf8")).toContain('"provider_error":"Invalid API key"');
+  }, 120_000);
   test("a .stderr file the agent plants is overwritten, never classified (forgery guard)", () => {
     expect(run({ STUB_PLANT: "Your credit balance is too low", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
   }, 120_000);
