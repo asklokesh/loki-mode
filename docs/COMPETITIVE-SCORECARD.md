@@ -428,6 +428,52 @@ bash tests/test-fast-verify.sh               # prints the ms and the budget
 bash tests/test-helm-worker-scaling.sh       # renders 1, 2, 5 and 25 replicas
 ```
 
+### 3e. UX baselines re-measured on loki-mode@11.55.3, 2026-10-23 (issue #350)
+
+Tracking issue #350 recorded baselines on 11.54.0. This section re-measures what
+could be re-measured on the published 11.55.3 (main VERSION was 11.56.0). It
+extends the ledger above; it adds no parallel file. Setup: one macOS 27.0.1
+machine, node v26.5.0, npm 11.17.0, 1-minute load average about 20 (timings are
+pessimistic), loki installed with `npm i -g loki-mode@11.55.3 --prefix <run-owned
+tmp>/p2 --cache <tmp>/c2` so the user's global install was untouched. Fixtures
+were fresh one-commit git repos with `"test":"node --test"`. Every run's output
+was timestamped per line with
+`perl -MTime::HiRes=time -ne 'printf("%7.2f %s",time-$s,$_)'`. Paid spend
+(LOKI_BENCH_SPEND_APPROVED=1, founder pre-approval): one VERIFIED run, $0.05, as
+printed on its `Cost:` line.
+
+| Metric | Measured on 11.55.3 | Command or source | #350 value on 11.54.0 |
+|---|---|---|---|
+| Install | 7.65s, rc=0 | `npm i -g loki-mode@11.55.3 --prefix ... --cache ...` | 7.0s |
+| Install to first VERIFIED (trivial brief) | 7.65s install plus a 27s run (`Time: 27s`; intake 2s, wall 10s, implement 14s, verify 1s, seal 1s), $0.05 | `loki start "<brief>"` in the fixture | 31.8s total |
+| First output line | 0.71s | first timestamp of the same run | 0.56s |
+| First stage line (`[wall]`) | 6.72s | same run | 5.57s |
+| Missing provider CLI | actionable message with the fix command, rc=2, 1.40s | `PATH=/usr/bin:/bin:<dir with node and git> loki start "add x"` | rc=2 at 1.19s |
+| Flags on the core path | 0 required; `loki start --help` is 136 lines, 60 distinct `--flags`; `loki --help` lists 25 commands | `loki start --help \| wc -l`, `grep -oE -- '--[a-z][a-z0-9-]*' \| sort -u \| wc -l` | 135 lines, 60 flags, 25 commands |
+
+Observed again on 11.55.3 without a new number:
+
+- Invalid API key: the failed run ends with `Reason: exit 1 (general error)`; the
+  cause appears only in the implement log under `.loki/`, not on the terminal.
+  This matches the 11.54.0 finding. Slice: CW-16 #351.
+- A failed zero-change run leaves its empty `loki/e10-...` branch checked out
+  (`git log main..HEAD` printed 0 commits). Matches the 11.54.0 finding.
+  Slice: CW-19 #354.
+
+NOT MEASURED on 11.55.3, so the #350 11.54.0 values stand unrefreshed: crash
+recovery and `loki start --resume` (M6), false-done rate (M5, the benchmark task
+did not discriminate), and the bare `claude -p` comparison column. Do not read
+the 11.54.0 numbers as current for those rows.
+
+Honest limits on the 100x goal: install plus two model calls is the floor for
+time to first VERIFIED, so a 100x claim there is not available; 4.6x versus bare
+`claude -p` was recorded on 11.54.0 and was not re-run. The one case where the
+gap is unbounded is the invalid-key cause, which loki hides and `claude -p`
+prints. #350 stays open until its targets are met.
+
+Reproduce: the commands in the table, run inside a directory created with
+`loki_run_tmp_create`.
+
 ### 3c. Deploy surface, measured 2026-08-08
 
 Ran on the four competitor CLIs installed on this machine. Method matters here:
