@@ -21,9 +21,11 @@ provenance is a dict: {kind, verified, ...}. kind is one of
 """
 
 import os
+import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 # Required keys in every adapter output (the contract the grader/report rely on).
@@ -79,6 +81,7 @@ def load_efficiency_cost():
 
 def build_output(*, tool, tool_version, model_used, duration_s, iterations,
                  tokens_in, tokens_out, cost_usd, exit_status, provenance,
+                 cache_read_tokens=None, cache_creation_tokens=None,
                  **ignored):
     """Construct the canonical adapter-output dict.
 
@@ -97,6 +100,13 @@ def build_output(*, tool, tool_version, model_used, duration_s, iterations,
         "exit_status": str(exit_status),
         "provenance": provenance if isinstance(provenance, dict) else {},
     }
+    # Omitted (not zeroed) when unknown so normalize_adapter_output keeps its
+    # default; before this pass-through the keys were swallowed by **ignored and
+    # every adapter row recorded cache_read_tokens 0 whatever the run read.
+    for k, v in (("cache_read_tokens", cache_read_tokens),
+                 ("cache_creation_tokens", cache_creation_tokens)):
+        if isinstance(v, int) and not isinstance(v, bool):
+            out[k] = v
     # Defense in depth: never let a forbidden key survive into the output.
     for k in FORBIDDEN_ADAPTER_KEYS:
         out.pop(k, None)
@@ -137,6 +147,57 @@ def _run_reapable(cmd, cwd, timeout, full_env):
         raise
 
 
+def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s):
+    """Like _run_reapable, but stop the process group early at a deterministic
+    point: the first stdout line matching the regex `stop_marker`, or
+    `stop_after_s` seconds, whichever comes first. Returns
+    (rc, out, err, interrupted); out holds everything read up to the stop.
+    Raises TimeoutExpired past `timeout`, like _run_reapable."""
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=full_env, start_new_session=True,
+    )
+    lines, hit = [], threading.Event()
+    pat = re.compile(stop_marker) if stop_marker else None
+
+    def _read():
+        for line in proc.stdout:
+            lines.append(line)
+            if pat is not None and pat.search(line):
+                hit.set()
+                return
+    err_chunks = []
+
+    def _drain_err():
+        # A child that logs >64KB to stderr before the marker would otherwise
+        # block on the full pipe and never reach it (a false timeout).
+        try:
+            for chunk in proc.stderr:
+                err_chunks.append(chunk)
+        except Exception:  # noqa: BLE001
+            pass
+    reader = threading.Thread(target=_read, daemon=True)
+    err_reader = threading.Thread(target=_drain_err, daemon=True)
+    reader.start()
+    err_reader.start()
+    started = time.time()
+    interrupted = False
+    while proc.poll() is None:
+        if hit.is_set() or (stop_after_s is not None
+                            and time.time() - started >= stop_after_s):
+            interrupted = True
+            break
+        if time.time() - started >= timeout:
+            _kill_group(proc)
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        time.sleep(0.05)
+    if interrupted:
+        _kill_group(proc)
+    reader.join(timeout=5)
+    err_reader.join(timeout=5)
+    return proc.wait(), "".join(lines), "".join(err_chunks), interrupted
+
+
 def _kill_group(proc):
     """TERM then KILL the process group led by proc. Best-effort, never raises."""
     try:
@@ -156,7 +217,8 @@ def _kill_group(proc):
                 time.sleep(0.1)
 
 
-def run_cli(cmd, *, cwd, timeout, runner=None, env=None):
+def run_cli(cmd, *, cwd, timeout, runner=None, env=None,
+            stop_marker=None, stop_after_s=None):
     """Run a CLI command headless and return (rc, stdout, stderr, duration_s).
 
     runner is an injectable subprocess.run-compatible callable so tests can
@@ -167,6 +229,7 @@ def run_cli(cmd, *, cwd, timeout, runner=None, env=None):
     if env:
         full_env.update(env)
     start = time.time()
+    interrupted = False
     try:
         if runner is not None:
             # Injected fake (tests). Keep the subprocess.run contract exactly:
@@ -178,9 +241,21 @@ def run_cli(cmd, *, cwd, timeout, runner=None, env=None):
             rc = getattr(proc, "returncode", 1)
             out = getattr(proc, "stdout", "") or ""
             err = getattr(proc, "stderr", "") or ""
+            # The fake finished already; cut its output at the stop point so a
+            # test sees exactly what a live early stop would have produced.
+            if stop_marker:
+                m = re.search(stop_marker, out, re.M)
+                if m:
+                    out, rc, interrupted = out[:m.end()], -15, True
+            elif stop_after_s is not None:
+                rc, interrupted = -15, True
+        elif stop_marker or stop_after_s is not None:
+            rc, out, err, interrupted = _run_until(
+                cmd, cwd, timeout, full_env, stop_marker, stop_after_s)
         else:
             rc, out, err = _run_reapable(cmd, cwd, timeout, full_env)
-        status = "completed" if rc == 0 else ("error_rc_%d" % rc)
+        status = ("interrupted" if interrupted else
+                  "completed" if rc == 0 else ("error_rc_%d" % rc))
     except subprocess.TimeoutExpired:
         rc, out, err, status = 124, "", "timeout", "timeout"
     except FileNotFoundError:

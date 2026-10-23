@@ -14,14 +14,17 @@
 # Help for a command = `loki help` + `loki <cmd> --help` + `loki <cmd> help`.
 # Scope: the newest LOKI_HELP_DRIFT_SECTIONS (default 2) CHANGELOG sections. When those name no
 # invocation at all (a Security-only or docs-only release), the window widens one section at a
-# time up to LOKI_HELP_DRIFT_WINDOW (default 5). Extraction is "broken" only if the whole window is empty.
+# time up to LOKI_HELP_DRIFT_WINDOW (default 1000, i.e. the whole file). Release notes written as
+# plain prose with no command can run past any fixed cap at slice-per-release cadence, so the window
+# stops at the nearest section that names an invocation. Extraction is "broken" only if the whole
+# CHANGELOG names none (FC-HELP-DRIFT-WINDOW-CAP).
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOKI="$REPO_ROOT/autonomy/loki"
 CHANGELOG="${LOKI_HELP_DRIFT_CHANGELOG:-$REPO_ROOT/CHANGELOG.md}"
 SECTIONS="${LOKI_HELP_DRIFT_SECTIONS:-2}"
-WINDOW="${LOKI_HELP_DRIFT_WINDOW:-5}"
+WINDOW="${LOKI_HELP_DRIFT_WINDOW:-1000}"
 BASH_COMP="$REPO_ROOT/completions/loki.bash"
 ZSH_COMP="$REPO_ROOT/completions/_loki"
 export LOKI_NO_BROWSER=1
@@ -37,20 +40,55 @@ mkdir -p "$WORK/home" "$WORK/cwd"
 export HOME="$WORK/home"
 
 # Self-test of the window logic against fixture CHANGELOGs (skipped when this run is itself a fixture run).
-if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ]; then
+if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ] && [ -z "${LOKI_HELP_DRIFT_NESTED:-}" ]; then
     mkdir -p "$WORK/fx"
     printf '## v9.0.3\n- Security fix, no commands.\n## v9.0.2\n- Docs only.\n## v9.0.1\n- Adds `loki start --spec`.\n' > "$WORK/fx/late.md"
-    printf '## v9.0.3\n- a\n## v9.0.2\n- b\n## v9.0.1\n- c\n## v9.0.0\n- d\n## v8.9.9\n- e\n## v8.9.8\n- f `loki start --spec`\n' > "$WORK/fx/none.md"
+    printf '## v9.0.3\n- a\n## v9.0.2\n- b\n## v9.0.1\n- c\n## v9.0.0\n- d\n## v8.9.9\n- e\n## v8.9.8\n- f\n' > "$WORK/fx/none.md"
+    printf '## v9.0.3\n- a\n## v9.0.2\n- b\n## v9.0.1\n- c\n## v9.0.0\n- d\n## v8.9.9\n- e\n## v8.9.8\n- f `loki start --spec`\n' > "$WORK/fx/deep.md"
     if LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/late.md" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
         ok "fixture: two command-free newest sections, invocation in the third, passes"
     else
         bad "fixture: two command-free newest sections must widen the window and pass"
     fi
+    printf '## v9.0.3\n- Plain notes: loki start --spec now works.\n## v9.0.2\n- loki is faster.\n' > "$WORK/fx/plain-ok.md"
+    printf '## v9.0.3\n- Plain notes: loki start --nosuchflagzz now works.\n## v9.0.2\n- b\n' > "$WORK/fx/plain-bad.md"
+    printf '## v9.0.3\n- loki is faster and loki mode is great.\n## v9.0.2\n- b\n' > "$WORK/fx/plain-none.md"
+    if LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/plain-ok.md" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+        ok "fixture: unbackticked 'loki start --spec' is extracted and passes; bare prose 'loki is' is not a command"
+    else
+        bad "fixture: a plain-prose invocation of a real flag must pass and prose must not fail"
+    fi
+    out="$(LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/plain-bad.md" bash "${BASH_SOURCE[0]}" 2>&1)"
+    if [ $? -ne 0 ] && grep -q "nosuchflagzz" <<< "$out"; then
+        ok "fixture: an unbackticked unknown flag is reported by name"
+    else
+        bad "fixture: an unbackticked unknown flag must be reported by name (plain prose is read)"
+    fi
+    out="$(LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/plain-none.md" bash "${BASH_SOURCE[0]}" 2>&1)"
+    if [ $? -eq 0 ] && ! grep -q "extraction is broken" <<< "$out"; then
+        ok "fixture: bare prose naming no command passes without a false drift report"
+    else
+        bad "fixture: bare prose must not become a command"
+    fi
+    if LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/deep.md" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+        ok "fixture: the first invocation six sections down is still found and passes"
+    else
+        bad "fixture: command-free sections beyond five must not fail while a later one names an invocation"
+    fi
+    # The real CHANGELOG over a 30-section window: older notes name flags too (loki start --resume
+    # was missing from completions/_loki there, FC-ZSH-START-RESUME-COMPLETION).
+    if [ -z "${LOKI_HELP_DRIFT_NESTED:-}" ]; then
+        if LOKI_HELP_DRIFT_NESTED=1 LOKI_HELP_DRIFT_SECTIONS=30 bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+            ok "the real CHANGELOG is drift-free over a 30-section window"
+        else
+            bad "the real CHANGELOG has help or completion drift inside its newest 30 sections"
+        fi
+    fi
     out="$(LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/none.md" bash "${BASH_SOURCE[0]}" 2>&1)"
     if [ $? -ne 0 ] && grep -q "extraction is broken" <<< "$out"; then
-        ok "fixture: no invocation inside the 5-section window still reports broken extraction"
+        ok "fixture: a CHANGELOG naming no invocation anywhere still reports broken extraction"
     else
-        bad "fixture: an empty 5-section window must report broken extraction"
+        bad "fixture: a CHANGELOG naming no invocation anywhere must report broken extraction"
     fi
 fi
 
@@ -67,9 +105,20 @@ bash_arm() {
         inarm { print }' "$1"
 }
 
+# Backticked spans are read whole. Release notes since 11.53 are plain prose with no backticks, so
+# an unbackticked `loki <word> [--flag ...]` is read too, from the text left after the backticked
+# spans are removed. A plain-prose hit with a --flag is checked like a backticked one. A bare
+# `loki <word>` could be ordinary prose, so it is emitted as `loki.maybe` and checked only when the
+# word is already a command in `loki help` (FC-HELP-DRIFT-PLAIN-PROSE-CHANGELOG).
 extract_invocations() {
-    awk -v n="$1" '/^## v/{c++} c>=1 && c<=n' "$CHANGELOG" \
-        | grep -o '`loki [^`]*`' | tr -d '`' | sort -u
+    local sect
+    sect="$(awk -v n="$1" '/^## v/{c++} c>=1 && c<=n' "$CHANGELOG")"
+    {
+        printf '%s\n' "$sect" | grep -o '`loki [^`]*`' | tr -d '`'
+        printf '%s\n' "$sect" | sed 's/`[^`]*`//g' \
+            | grep -oE '(^|[^A-Za-z0-9_./`-])loki [a-z][a-z-]*( +--[a-z][a-z-]*)*' | sed -E 's/^[^l]*//' \
+            | awk '/ --/ { print; next } { sub(/^loki /, "loki.maybe "); print }'
+    } | sort -u
 }
 while :; do
     extract_invocations "$SECTIONS" > "$WORK/inv.txt"
@@ -78,7 +127,7 @@ while :; do
     SECTIONS=$((SECTIONS + 1))
 done
 if [ "$(wc -l < "$WORK/inv.txt" | tr -d ' ')" -lt 1 ]; then
-    bad "no backticked 'loki ...' invocations in the newest ${SECTIONS} CHANGELOG sections; extraction is broken"
+    bad "no 'loki ...' invocations (backticked or plain) in the newest ${SECTIONS} CHANGELOG sections; extraction is broken"
     printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
     exit 1
 fi
@@ -107,9 +156,11 @@ while IFS= read -r line; do
     # shellcheck disable=SC2086
     set -- $line
     set +f
+    maybe=0; [ "${1:-}" = "loki.maybe" ] && maybe=1
     shift
     cmd="${1:-}"
     case "$cmd" in ''|help|-*|'<'*|*'|'*) continue ;; esac
+    if [ "$maybe" = 1 ] && ! { grep -E '^    local main_commands=' "$BASH_COMP" | grep -qE "[ \"]${cmd}[ \"]"; }; then continue; fi # plain prose, not a command
     sub=""
     if [ -n "${2:-}" ]; then
         case "$2" in *[!a-z-]*|-*) ;; *) sub="$2" ;; esac

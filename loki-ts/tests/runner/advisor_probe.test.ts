@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, statSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,10 @@ import {
   probeAdvisor,
   recordAdvisorError,
   ADVISOR_ERROR_LIMIT,
+  advisorPair,
 } from "../../src/runner/router/advisor_probe.ts";
+import { planRoute } from "../../src/runner/router/plan_route.ts";
+import { advisorStatusLine } from "../../src/commands/doctor.ts";
 
 let runDir: string;
 beforeEach(() => {
@@ -122,5 +125,46 @@ describe("probeAdvisor valid executor/advisor pair (#269)", () => {
   });
   it("the error limit is 3", () => {
     expect(ADVISOR_ERROR_LIMIT).toBe(3);
+  });
+});
+
+describe("one advisor pair for every probeAdvisor caller (#304)", () => {
+  const WEAK = { LOKI_MODEL_OVERRIDE: "fable" }; // an executor stronger than the Opus advisor
+  it("advisorPair takes the caller model, else the override, else opus", () => {
+    expect(advisorPair({}, "sonnet")).toEqual({ executor: "sonnet", advisor: "opus" });
+    expect(advisorPair(WEAK)).toEqual({ executor: "fable", advisor: "opus" });
+    expect(advisorPair({})).toEqual({ executor: "opus", advisor: "opus" });
+  });
+  it("plan route: an advisor weaker than the executor is unavailable with invalid_pair", async () => {
+    const pr = await planRoute(runDir, "claude", { LOKI_ROUTER: "1", ...WEAK }, "");
+    expect(pr.advisor?.available).toBe(false);
+    expect(pr.advisor?.reason).toContain("invalid_pair");
+  });
+  it("doctor prints the same invalid_pair reason", () => {
+    expect(advisorStatusLine(WEAK, "claude", OK, runDir)).toContain("invalid_pair");
+  });
+  it("positive control: a valid pair is available on the plan route and in doctor", async () => {
+    const pr = await planRoute(runDir, "claude", { LOKI_ROUTER: "1" }, "");
+    expect(pr.advisor?.available).toBe(true);
+    expect(advisorStatusLine({}, "claude", OK, runDir)).toBe("advisor: available");
+  });
+  it("no probeAdvisor( call in loki-ts/src omits the pair argument", () => {
+    const src = join(import.meta.dir, "../../src");
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d)) {
+        const f = join(d, e);
+        if (statSync(f).isDirectory()) walk(f);
+        else if (f.endsWith(".ts")) files.push(f);
+      }
+    };
+    walk(src);
+    const bad: string[] = [];
+    for (const f of files) {
+      if (f.endsWith("router/advisor_probe.ts")) continue;
+      const text = readFileSync(f, "utf-8");
+      for (const m of text.matchAll(/probeAdvisor\(([^\n]*)/g)) if (!/advisorPair\(/.test(m[1] as string)) bad.push(`${f}: ${m[0]}`);
+    }
+    expect(bad).toEqual([]);
   });
 });

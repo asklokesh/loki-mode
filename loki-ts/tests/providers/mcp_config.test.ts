@@ -221,6 +221,19 @@ describe("mcp_config.mcpLaunchFor", () => {
     });
   });
 
+  it("FC-PROVIDER-VERSION-PROBE-FULL-ENV: the cline version probe never receives GH_TOKEN, GITHUB_TOKEN or SSH_AUTH_SOCK", () => {
+    const fake = join(emptyBin, "cline"), seen = join(td, "seen.txt");
+    writeFileSync(fake, `#!/bin/sh\nprintf '%s|%s|%s' "$GH_TOKEN" "$GITHUB_TOKEN" "$SSH_AUTH_SOCK" > '${seen}'\necho 3.1.4\n`);
+    chmodSync(fake, 0o755);
+    const saved = { a: process.env["GH_TOKEN"], b: process.env["GITHUB_TOKEN"], c: process.env["SSH_AUTH_SOCK"] };
+    process.env["GH_TOKEN"] = "canary-gh"; process.env["GITHUB_TOKEN"] = "canary-github"; process.env["SSH_AUTH_SOCK"] = "/canary/sock";
+    try { expect(mcpLaunchFor("cline", td).reason).toBe("mcp: unsupported (cline 3.1.4)"); } finally {
+      for (const [k, v] of [["GH_TOKEN", saved.a], ["GITHUB_TOKEN", saved.b], ["SSH_AUTH_SOCK", saved.c]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+    const got = readFileSync(seen, "utf8"); // tokenFreeEnv withholds the real values (a non-working sentinel stands in for the token family)
+    expect(got).not.toContain("canary"); expect(got.endsWith("|")).toBe(true);
+  });
+
   it("cline reports unsupported with the probed version; aider and unknown report a reason", () => {
     expect(mcpLaunchFor("cline", td)).toEqual({ argv: [], env: {}, reason: "mcp: unsupported (cline unknown)" });
     const fake = join(emptyBin, "cline");

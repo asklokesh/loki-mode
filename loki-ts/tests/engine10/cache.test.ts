@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  cacheFileName,
   cacheStats,
   cachedRepoMap,
   cachedTestMap,
+  computeProducerFingerprint,
+  producerFingerprint,
   pruneCache,
   readRepoMapCache,
   readTestMapCache,
@@ -13,6 +16,7 @@ import {
   readSliceJournal,
   repoKey,
   sliceKey,
+  sourceFingerprint,
   writeRepoMapCache,
   writeSliceJournal,
   writeTestMapCache,
@@ -85,7 +89,7 @@ describe("repomap/testmap cache, keyed by tree hash", () => {
   test("a corrupt cache file is a miss, not a crash", () => {
     const dir = repoCacheDir("k", tmpRoot());
     writeRepoMapCache(dir, "tree1", REPOMAP);
-    require("node:fs").writeFileSync(resolve(dir, "repomap2-tree1.json"), "{not json");
+    require("node:fs").writeFileSync(resolve(dir, cacheFileName("repomap", "tree1")), "{not json");
     expect(readRepoMapCache(dir, "tree1")).toBeNull();
   });
 
@@ -95,8 +99,8 @@ describe("repomap/testmap cache, keyed by tree hash", () => {
   test("valid JSON of the wrong shape is a miss, not a crash", () => {
     const dir = repoCacheDir("k", tmpRoot());
     require("node:fs").mkdirSync(dir, { recursive: true });
-    require("node:fs").writeFileSync(resolve(dir, "repomap2-tree1.json"), "42");
-    require("node:fs").writeFileSync(resolve(dir, "testmap-tree1.json"), "null");
+    require("node:fs").writeFileSync(resolve(dir, cacheFileName("repomap", "tree1")), "42");
+    require("node:fs").writeFileSync(resolve(dir, cacheFileName("testmap", "tree1")), "null");
     expect(readRepoMapCache(dir, "tree1")).toBeNull();
     expect(readTestMapCache(dir, "tree1")).toBeNull();
   });
@@ -222,7 +226,7 @@ describe("TEN-SPEED-04 tree-keyed reuse across fix rounds", () => {
   test("a corrupt entry rebuilds and heals; an unwritable cache dir still returns the built map", () => {
     const dir = repoCacheDir("k", tmpRoot());
     writeRepoMapCache(dir, "t1", REPOMAP);
-    require("node:fs").writeFileSync(resolve(dir, "repomap2-t1.json"), "42");
+    require("node:fs").writeFileSync(resolve(dir, cacheFileName("repomap", "t1")), "42");
     expect(cachedRepoMap(dir, "t1", () => REPOMAP)).toEqual(REPOMAP);
     expect(readRepoMapCache(dir, "t1")).toEqual(REPOMAP);
     const file = join(tmpRoot(), "afile");
@@ -239,7 +243,7 @@ describe("cache pruning (TEN-STABILITY-45)", () => {
       writeTestMapCache(dir, `tree${i}`, TESTMAP);
     }
     const files = readdirSync(dir);
-    expect(files.filter((f) => f.startsWith("repomap2-")).length).toBe(5);
+    expect(files.filter((f) => f.startsWith("repomap-")).length).toBe(5);
     expect(files.filter((f) => f.startsWith("testmap-")).length).toBe(5);
     expect(readRepoMapCache(dir, "tree7")).not.toBeNull();
     expect(readTestMapCache(dir, "tree7")).not.toBeNull();
@@ -248,7 +252,7 @@ describe("cache pruning (TEN-STABILITY-45)", () => {
   test("prune failure never throws", () => {
     const dir = repoCacheDir("k", tmpRoot());
     writeRepoMapCache(dir, "t1", REPOMAP);
-    expect(() => pruneCache(join(dir, "missing"), "repomap2-", join(dir, "x.json"))).not.toThrow();
+    expect(() => pruneCache(join(dir, "missing"), "repomap-", join(dir, "x.json"))).not.toThrow();
   });
 });
 
@@ -269,5 +273,101 @@ describe("slice journal (#283: sha256 of slice card plus base sha)", () => {
     writeSliceJournal(dir, k, entry);
     writeFileSync(resolve(dir, `slice-${k}.json`), '{"gid":1}');
     expect(readSliceJournal(dir, k)).toBeNull();
+  });
+});
+
+// #331 FC-ENGINE10-CACHE-KEY-NOT-PRODUCER-BOUND: the key covers the producer, and cache files are private and atomic.
+describe("#331 producer-bound, private, atomic cache", () => {
+  const SRC = resolve(import.meta.dir, "..", "..", "src");
+  const FP_A = "a".repeat(64), FP_B = "b".repeat(64);
+
+  test("changing one byte of a builder source changes the fingerprint", () => {
+    const copy = join(tmpRoot(), "src");
+    cpSync(SRC, copy, { recursive: true });
+    expect(sourceFingerprint(copy)).toBe(sourceFingerprint(SRC));
+    const builder = join(copy, "engine10", "repomap.ts");
+    writeFileSync(builder, readFileSync(builder, "utf8") + " ");
+    expect(sourceFingerprint(copy)).not.toBe(sourceFingerprint(SRC));
+  });
+
+  test("the default fingerprint is the hash of src and is stable in a process", () => {
+    expect(producerFingerprint()).toMatch(/^[0-9a-f]{64}$/);
+    expect(producerFingerprint()).toBe(sourceFingerprint(SRC));
+  });
+
+  test("a second build under a modified builder misses; the same builder hits", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    let builds = 0;
+    const rb = () => { builds++; return REPOMAP; };
+    cachedRepoMap(dir, "t1", rb, FP_A);
+    cachedRepoMap(dir, "t1", rb, FP_A);
+    expect(builds).toBe(1);
+    cachedRepoMap(dir, "t1", rb, FP_B);
+    expect(builds).toBe(2);
+    let tbuilds = 0;
+    const tb = () => { tbuilds++; return TESTMAP; };
+    cachedTestMap(dir, "t1", tb, FP_A); cachedTestMap(dir, "t1", tb, FP_B);
+    expect(tbuilds).toBe(2);
+  });
+
+  test("the key carries the fingerprint, with no hand-bumped version prefix", () => {
+    const name = cacheFileName("repomap", "tree1", FP_A);
+    expect(name).toBe(`repomap-${"a".repeat(16)}-tree1.json`);
+    expect(name).not.toMatch(/repomap\d/);
+    expect(cacheFileName("testmap", "tree1", FP_A)).not.toBe(cacheFileName("testmap", "tree1", FP_B));
+  });
+
+  test("dir is 0700 and files 0600, including when the dir pre-existed loose", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    mkdirSync(dir, { recursive: true, mode: 0o777 }); chmodSync(dir, 0o777);
+    writeRepoMapCache(dir, "tree1", REPOMAP, FP_A);
+    writeTestMapCache(dir, "tree1", TESTMAP, FP_A);
+    writeSliceJournal(dir, "k1", { gid: "g", n: 1, id: "i", head: "h" });
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    for (const f of readdirSync(dir)) expect(statSync(join(dir, f)).mode & 0o777).toBe(0o600);
+  });
+
+  test("writes go through a temp file plus rename: none remains after success or failure", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    writeRepoMapCache(dir, "tree1", REPOMAP, FP_A);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+    const target = join(dir, cacheFileName("repomap", "tree1", FP_A)), ino = statSync(target).ino;
+    writeRepoMapCache(dir, "tree1", REPOMAP, FP_A);
+    expect(statSync(target).ino).not.toBe(ino); // replaced by rename, never rewritten in place
+    mkdirSync(join(dir, cacheFileName("testmap", "tree2", FP_A))); // rename onto a directory fails
+    expect(() => writeTestMapCache(dir, "tree2", TESTMAP, FP_A)).toThrow();
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp"))).toEqual([]);
+  });
+});
+
+describe("FC-ENGINE10-CACHE-KEY-NOT-PRODUCER-BOUND: unbound fallback and injected value", () => {
+  const SRC_ROOT = resolve(import.meta.dir, "..", "..", "src");
+  const probe = (): string => {
+    const code = `import { computeProducerFingerprint } from ${JSON.stringify(resolve(SRC_ROOT, "engine10", "cache.ts"))}; process.stdout.write(computeProducerFingerprint(${JSON.stringify(join(SRC_ROOT, "no-such-dir"))}, undefined));`;
+    const r = Bun.spawnSync([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
+    expect(r.exitCode).toBe(0);
+    return r.stdout.toString();
+  };
+  test("when the source cannot be hashed, separate processes get different 64-hex keys and nothing crosses between them", () => {
+    const a = probe(), b = probe();
+    expect(a).toMatch(/^[0-9a-f]{64}$/); expect(b).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).not.toBe(b);
+    expect(a).not.toBe("0".repeat(64)); expect(b).not.toBe("0".repeat(64));
+    const dir = repoCacheDir("k", tmpRoot());
+    writeRepoMapCache(dir, "treeX", REPOMAP, a);
+    expect(readRepoMapCache(dir, "treeX", a)).not.toBeNull();
+    expect(readRepoMapCache(dir, "treeX", b)).toBeNull();
+  });
+  test("a malformed injected value is ignored in favor of the source hash; a valid one wins", () => {
+    const real = sourceFingerprint(SRC_ROOT);
+    for (const bad of ["", "x", "g".repeat(64), "a".repeat(63), 42, null, undefined]) expect(computeProducerFingerprint(SRC_ROOT, bad)).toBe(real);
+    expect(computeProducerFingerprint(SRC_ROOT, "b".repeat(64))).toBe("b".repeat(64));
+  });
+  test("writing a repomap removes legacy repomap2-* files", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    mkdirSync(dir, { recursive: true });
+    for (const n of ["repomap2-old1.json", "repomap2-old2.json"]) writeFileSync(resolve(dir, n), "{}");
+    writeRepoMapCache(dir, "treeY", REPOMAP, "c".repeat(64));
+    expect(readdirSync(dir).filter((f) => f.startsWith("repomap2-"))).toEqual([]);
   });
 });

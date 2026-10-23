@@ -549,7 +549,7 @@ describe("resume from stage (P12-07)", () => {
         expect(ev!.data["last_alive_ts"]).toBeUndefined();
       } finally { rmSync(dir, { recursive: true, force: true }); }
     }
-  });
+  }, 60000); // five full resumes, each a git init plus a supervisor run; the 5000ms default fails under load (FC-FIXRESUME-LOOP-TEST-DEFAULT-TIMEOUT)
   test("P12-07l: the deep worker honors LOKI_E10_CAP_S (remaining cap on resume) and falls back to its full cap", () => {
     expect(workerCapS(true, { LOKI_E10_CAP_S: "260" })).toBe(260);
     expect(workerCapS(true, {})).toBe(DEEP_CAP_S);

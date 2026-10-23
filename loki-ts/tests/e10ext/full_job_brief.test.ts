@@ -28,6 +28,11 @@ describe("FC-19 full-job brief", () => {
     expect(FIXED_RULES).toContain("Do not commit or push");
     expect(FIXED_RULES).toContain("The harness re-runs those checks after you stop");
   });
+  test("FC-PYTEST-IMPORT-SYMLINK-UNDER-TESTS: pytest invocation and the no-links-under-tests rule are in the cache-stable lead", () => {
+    expect(FIXED_RULES).toContain("python -m pytest <file>");
+    expect(FIXED_RULES).toContain("never create files or symlinks in a test directory to make an import work");
+    expect(brief.startsWith(STAGE_PREFIX) || brief.startsWith(FIXED_RULES)).toBe(true);
+  });
   test("states the full job and allows the full suite", () => {
     expect(FIXED_RULES).toContain("complete task");
     expect(FIXED_RULES).toContain("full suite");

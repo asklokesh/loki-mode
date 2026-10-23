@@ -16,6 +16,11 @@
 #   - the running install is durable (npm global root, bun global dir, Homebrew
 #     prefix); an npx cache, temp dir or arbitrary prefix is refused with one
 #     stderr line and the link is left untouched
+#   - (FC-SKILL-LINK-HIJACK) the running root is not under a temp root ($TMPDIR, /tmp,
+#     /var/folders ...), even when a scratch npm prefix makes it look durable
+#   - (FC-SKILL-LINK-HIJACK) a live link is never repointed to an older VERSION
+#   - (FC-SKILL-LINK-HIJACK) a plain run (the bin/loki shim) repairs only a dangling
+#     link; repointing a still-valid link is for the postinstall mode alone
 
 _loki_skill_is_install_path() {
     case "${1%/}" in
@@ -52,6 +57,47 @@ _loki_skill_npm_root() {
     [ "$rc" -eq 0 ] && head -n 1 "$out"
     rm -f "$out"
     return "$rc"
+}
+
+# FC-SKILL-LINK-HIJACK: a throwaway copy (a packed tarball extracted under $TMPDIR, a run-owned
+# temp dir) is never a link target, whatever npm prefix it was installed with. The root list is
+# overridable (LOKI_SKILL_LINK_TEMP_ROOTS, newline separated) so tests can model a non-temp host.
+_loki_skill_under_temp() {
+    local root_p="$1" t tp roots="${LOKI_SKILL_LINK_TEMP_ROOTS:-}"
+    [ -n "$roots" ] || roots="${TMPDIR:-}
+/tmp
+/private/tmp
+/var/tmp
+/var/folders
+/private/var/folders"
+    while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        tp="$(_loki_skill_dir_p "$t")" || tp="$t"
+        tp="${tp%/}"
+        [ -n "$tp" ] || continue
+        case "$root_p" in "$tp"/*) return 0 ;; esac
+    done <<EOT
+$roots
+EOT
+    return 1
+}
+
+# Dotted-numeric compare of two VERSION strings; returns 0 when $1 < $2. Unreadable input is "not older".
+_loki_skill_version_lt() {
+    local a="${1%%[-+]*}" b="${2%%[-+]*}" i x y
+    [ -n "$a" ] && [ -n "$b" ] || return 1
+    local IFS=.
+    # shellcheck disable=SC2086
+    set -- $a; local -a av=("$@")
+    # shellcheck disable=SC2086
+    set -- $b; local -a bv=("$@")
+    for i in 0 1 2; do
+        x="${av[$i]:-0}"; y="${bv[$i]:-0}"
+        case "$x$y" in *[!0-9]*) return 1 ;; esac
+        [ "$x" -lt "$y" ] && return 0
+        [ "$x" -gt "$y" ] && return 1
+    done
+    return 1
 }
 
 _loki_skill_root_durable() {
@@ -92,11 +138,17 @@ EOT
 
 loki_skill_link_heal() {
     [ "${LOKI_NO_SKILL_LINK_HEAL:-}" = "1" ] && return 0
-    local root="${1:-}" home="${HOME:-}" root_p rel link tgt live_p tmp durable="" why
+    local root="${1:-}" mode="${2:-run}" home="${HOME:-}" root_p rel link tgt live_p tmp durable="" why cur_v run_v
     [ -n "$root" ] && [ -n "$home" ] || return 0
     [ -f "$root/SKILL.md" ] || return 0
     root_p="$(cd "$root" 2>/dev/null && pwd -P)" || return 0
     _loki_skill_is_install_path "$root_p" || _loki_skill_is_install_path "$root" || return 0
+
+    if _loki_skill_under_temp "$root_p"; then
+        printf 'loki: not repointing skill links: running install %s is under a temp directory\n' "$root_p" >&2
+        return 0
+    fi
+    run_v="$(head -n 1 "$root_p/VERSION" 2>/dev/null | tr -d '[:space:]')"
 
     for rel in .claude .codex .cline .aider; do
         link="$home/$rel/skills/loki-mode"
@@ -107,6 +159,12 @@ loki_skill_link_heal() {
         if [ -e "$link" ]; then
             live_p="$(cd "$link" 2>/dev/null && pwd -P)" || live_p=""
             [ "$live_p" = "$root_p" ] && continue
+            [ "$mode" = "postinstall" ] || continue # a valid link is repointed only by an install, never by a plain run
+            cur_v="$(head -n 1 "$link/VERSION" 2>/dev/null | tr -d '[:space:]')"
+            if _loki_skill_version_lt "$run_v" "$cur_v"; then
+                printf 'loki: not repointing skill link %s: running %s is older than %s\n' "$link" "$run_v" "$cur_v" >&2
+                continue
+            fi
         fi
         if [ -z "$durable" ]; then
             if why="$(_loki_skill_root_durable "$root_p")"; then

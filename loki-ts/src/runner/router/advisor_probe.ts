@@ -6,11 +6,23 @@ import { join } from "node:path";
 
 import { claudeTierRank } from "../../util/claude_model.ts";
 import { isNewer } from "../../util/update_check.ts";
+import { envOverride } from "./decision.ts";
 
 export const ADVISOR_MIN_CLAUDE_CODE = "2.1.293";
 export const ADVISOR_ERROR_MARKER = "advisor-error.txt";
 /** Advisor errors in one session after which route_block stops attaching the advisor. */
 export const ADVISOR_ERROR_LIMIT = 3;
+
+/** The one advisor every router caller attaches. */
+export const ROUTER_ADVISOR_MODEL = "opus";
+
+/**
+ * The one executor/advisor pair every probeAdvisor caller passes, so the invalid_pair rule holds on every path. The executor is the
+ * caller's model, else the explicit model override, else Opus (the router-on plan session).
+ */
+export function advisorPair(env: Record<string, string | undefined>, executorModel?: string): { executor: string; advisor: string } {
+  return { executor: executorModel || envOverride(env) || "opus", advisor: ROUTER_ADVISOR_MODEL };
+}
 
 export interface AdvisorProbe {
   available: boolean;

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 import { processStartTime } from "../../src/util/run_pid.ts";
+import { providerAuthPath, providerAuthRows } from "../../src/commands/doctor.ts";
 import {
   _setClaudeVersionForTest,
   _setIntegrationProbesForTest,
@@ -1761,4 +1762,30 @@ describe("model capability row (models.retrieve vs the catalog)", () => {
     expect(out).toContain("Model capabilities:");
     expect(out).toContain("m-a: effort levels: catalog [low, medium, high], API [low]");
   });
+});
+
+describe("CW-14: provider_auth rows", () => {
+  const CANARY = "sk-canary-DO-NOT-LEAK-0123456789";
+  it("names the credential source for every provider and never the value", () => {
+    const env = { HOME: "/nonexistent-home", ANTHROPIC_API_KEY: CANARY, OPENAI_API_KEY: CANARY + "2" };
+    const rows = providerAuthRows(env);
+    expect(rows.map((r) => r.provider)).toEqual(["claude", "codex", "cline", "aider", "opencode"]);
+    expect(rows.find((r) => r.provider === "claude")!.auth_path).toBe("api_key:ANTHROPIC_API_KEY");
+    expect(rows.find((r) => r.provider === "codex")!.auth_path).toBe("api_key:OPENAI_API_KEY");
+    expect(JSON.stringify(rows)).not.toContain("canary");
+  });
+  it("no credential: claude and codex defer to their CLI login, others say none", () => {
+    const env = { HOME: "/nonexistent-home" };
+    expect(providerAuthPath("claude", env)).toBe("cli_login:claude");
+    expect(providerAuthPath("codex", env)).toBe("cli_login:codex");
+    expect(providerAuthPath("aider", env)).toBe("none");
+  });
+  it("an oauth token is named as oauth_token", () => {
+    expect(providerAuthPath("claude", { HOME: "/x", CLAUDE_CODE_OAUTH_TOKEN: CANARY })).toBe("oauth_token:CLAUDE_CODE_OAUTH_TOKEN");
+  });
+  it("buildDoctorJson carries provider_auth rows", async () => {
+    const j = await buildDoctorJson();
+    expect(j.provider_auth).toHaveLength(5);
+    expect(JSON.stringify(j.provider_auth)).not.toMatch(/sk-/);
+  }, 60000);
 });

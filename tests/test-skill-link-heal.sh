@@ -54,6 +54,7 @@ chmod +x "$STUB/npm"
 export PATH="$STUB:$PATH"
 export HOMEBREW_PREFIX="$T/brewprefix"
 unset BUN_INSTALL NPM_CONFIG_PREFIX
+export LOKI_SKILL_LINK_TEMP_ROOTS="$T/not-a-temp-root" # the fake hosts live under the run temp dir; FC-SKILL-LINK-HIJACK cases below name it a temp root
 
 RUN="$GROOT/loki-mode"
 mkdir -p "$RUN/autonomy"
@@ -64,8 +65,8 @@ mkdir -p "$OLD/autonomy"
 : >"$OLD/SKILL.md"
 : >"$OLD/autonomy/run.sh"
 
-heal() { # home -> stderr to $T/err, stdout to $T/out
-    HOME="$1" bash -c '. "$1"; loki_skill_link_heal "$2"' _ "$LIB" "$RUN" 2>"$T/err" >"$T/out"
+heal() { # home [mode] -> stderr to $T/err, stdout to $T/out
+    HOME="$1" bash -c '. "$1"; loki_skill_link_heal "$2" "$3"' _ "$LIB" "$RUN" "${2:-run}" 2>"$T/err" >"$T/out"
 }
 resolved() { (cd "$1" 2>/dev/null && pwd -P); }
 RUN_P="$(resolved "$RUN")"
@@ -85,7 +86,7 @@ if [ ! -s "$T/err" ]; then ok "second run is a no-op with no log line"; else bad
 # 2. link to a different Loki install is repointed
 H2="$T/h2"; mkdir -p "$H2/.codex/skills"
 ln -s "$OLD" "$H2/.codex/skills/loki-mode"
-heal "$H2"
+heal "$H2" postinstall
 if [ "$(resolved "$H2/.codex/skills/loki-mode")" = "$RUN_P" ] && [ "$(wc -l <"$T/err" | tr -d ' ')" = "1" ]; then
     ok "link to a different Loki install repointed"
 else
@@ -202,6 +203,35 @@ if [ "$E14" -le 5 ] && [ "$(readlink "$H14/.claude/skills/loki-mode")" = "$DANGL
     && [ "$(wc -l <"$T/err" | tr -d ' ')" = "1" ] && grep -q 'timed out' "$T/err"; then
     ok "hung npm bounded (${E14}s) and refused"
 else bad "hung npm bounded (${E14}s) and refused"; fi
+
+# 15-18. FC-SKILL-LINK-HIJACK: a throwaway copy, a plain run and an older version never take a link.
+# 15. a scratch npm prefix under a temp root looks durable to npm but is refused as temp.
+H15="$T/h15"; mkdir -p "$H15/.claude/skills"; ln -s "$DANGLE" "$H15/.claude/skills/loki-mode"
+TMPINST="$T/scratch/lib/node_modules/loki-mode"; mkinst "$TMPINST"
+LOKI_SKILL_LINK_TEMP_ROOTS="$T/scratch" NPM_CONFIG_PREFIX="$T/scratch" heal_from "$H15" "$TMPINST"
+if [ "$(readlink "$H15/.claude/skills/loki-mode")" = "$DANGLE" ] && grep -q 'temp directory' "$T/err"; then
+    ok "scratch-prefix install under a temp root refused"
+else bad "scratch-prefix install under a temp root refused"; fi
+# 16. a plain run never repoints a still-valid link to another install; the install (postinstall) mode does.
+H16="$T/h16"; mkdir -p "$H16/.claude/skills"; ln -s "$OLD" "$H16/.claude/skills/loki-mode"
+heal "$H16"
+if [ "$(readlink "$H16/.claude/skills/loki-mode")" = "$OLD" ] && [ ! -s "$T/err" ]; then
+    ok "plain run leaves a valid link to another install alone"
+else bad "plain run leaves a valid link to another install alone"; fi
+# 17. a live link is never repointed to an older VERSION, even by postinstall.
+printf '11.60.0\n' >"$OLD/VERSION"; printf '11.17.103\n' >"$RUN/VERSION"
+H17="$T/h17"; mkdir -p "$H17/.claude/skills"; ln -s "$OLD" "$H17/.claude/skills/loki-mode"
+heal "$H17" postinstall
+if [ "$(readlink "$H17/.claude/skills/loki-mode")" = "$OLD" ] && grep -q 'older than' "$T/err"; then
+    ok "downgrade of a live link refused"
+else bad "downgrade of a live link refused"; fi
+# 18. control: the same layout with a newer running version is repointed.
+printf '11.70.0\n' >"$RUN/VERSION"
+H18="$T/h18"; mkdir -p "$H18/.claude/skills"; ln -s "$OLD" "$H18/.claude/skills/loki-mode"
+heal "$H18" postinstall
+if [ "$(resolved "$H18/.claude/skills/loki-mode")" = "$RUN_P" ]; then
+    ok "upgrade of a live link by postinstall still repoints (positive control)"
+else bad "upgrade of a live link by postinstall still repoints (positive control)"; fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
