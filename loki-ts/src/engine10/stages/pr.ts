@@ -16,7 +16,7 @@ import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts"; import { collapseNotProven, pushErrLine } from "../../util/term_width.ts";
-import { stackBase, stackSection } from "../../util/run_outputs.ts";
+import { stackBase, stackSection } from "../../util/run_outputs.ts"; import { publishFallback } from "../../util/engine_origin.ts";
 import { postReceiptComment, renderReceiptComment } from "../../util/receipt_surface.ts";
 import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
@@ -121,7 +121,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
-  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
+  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason + publishFallback(ctx.runDir, ctx.branch, base) };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();

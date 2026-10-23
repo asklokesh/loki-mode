@@ -17,6 +17,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertPreflight, checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
+import { classifyPublish } from "../../src/util/engine_origin.ts";
 import { runSupervisor } from "../../src/engine10/supervisor.ts";
 
 const PREFLIGHT_TS = join(import.meta.dir, "..", "..", "src", "engine10", "preflight.ts");
@@ -655,5 +656,54 @@ describe("CW-14: zero-token auth probe bound into preflight.json", () => {
     const { dir, env } = identifiedRepo(); const runDir = join(dir, ".loki", "runs", "r1");
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, runDir, env: { ...env, LOKI_CLAUDE_CLI: cli } });
     expect(r.fatal).toContain("claude is not logged in"); expect(rec(runDir)).toEqual({ provider: "claude", auth_path: "cli_login:claude", probe: "failed" });
+  });
+});
+
+describe("R100-022: publish capability at intake", () => {
+  const sfx = Math.random().toString(36).slice(2, 8); const OWNER = `o${sfx}`, NAME = `r${sfx}`, LOGIN = `u${sfx}`; // generated per run, never a literal repo
+  // gh stub: auth passes, `gh api repos/...` prints the given body (empty body = unreadable).
+  function ghApi(body: string, apiExit = 0): string {
+    const d = tmpRoot("e10-pf-pub-"); // PATH holds only gh and git, so the body is printed with the printf builtin
+    writeFileSync(join(d, "gh"), `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = user ]; then printf '%s' '${LOGIN}'; exit 0; fi\nif [ "$1" = api ]; then printf '%s' '${body}'; exit ${apiExit}; fi\nexit 0\n`); chmodSync(join(d, "gh"), 0o755);
+    symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(d, "git"));
+    return d;
+  }
+  async function go(body: string, apiExit = 0) {
+    const { dir, env } = identifiedRepo(); execFileSync("git", ["-C", dir, "remote", "add", "origin", `https://github.com/${OWNER}/${NAME}.git`]);
+    const runDir = join(dir, ".loki", "runs", "r1");
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: true, runDir, env: { ...env, PATH: ghApi(body, apiExit), LOKI_CLAUDE_CLI: stubCli(), ANTHROPIC_API_KEY: "k" } });
+    return { r, file: readFileSync(join(runDir, "preflight.json"), "utf8") };
+  }
+  const repo = (extra: Record<string, unknown>) => JSON.stringify({ permissions: { push: false }, has_pull_requests: true, allow_forking: true, ...extra });
+  test("collaborators-only policy without push: warns at intake and records fork_branch", async () => {
+    const { r, file } = await go(repo({ pull_request_creation_policy: "collaborators_only" }));
+    expect(r.fatal).toBeNull(); expect(r.publish?.mode).toBe("fork_branch");
+    expect(r.warnings.join("\n")).toContain(`a PR cannot be opened on ${OWNER}/${NAME}`); expect(r.warnings.join("\n")).toContain("collaborators only");
+    expect(JSON.parse(file).publish).toBe("fork_branch"); expect(JSON.parse(file).publish_compare).toBe(`https://github.com/${LOGIN}/${NAME}/compare`);
+    expect(r.warnings.join("\n")).toContain(`${LOGIN}/${NAME}/compare`);
+  });
+  test("pull requests disabled: with push is branch, without push is fork_branch", async () => {
+    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).r.publish?.mode).toBe("branch");
+    expect((await go(repo({ has_pull_requests: false, permissions: { push: true } }))).r.publish?.compare).toBe(`https://github.com/${OWNER}/${NAME}/compare`);
+    expect((await go(repo({ has_pull_requests: false }))).r.publish?.mode).toBe("fork_branch");
+  });
+  test("archived repo and no-fork repo keep the result local", async () => {
+    expect((await go(repo({ archived: true }))).r.publish?.mode).toBe("local_branch");
+    expect((await go(repo({ allow_forking: false }))).r.publish?.mode).toBe("local_branch");
+  });
+  test("full access is silent and leaves preflight.json byte-identical to a no-API run", async () => {
+    const full = await go(repo({ permissions: { push: true }, pull_request_creation_policy: "all" }));
+    const none = await go("", 1);
+    expect(full.r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]); expect(full.r.publish?.mode).toBe("pr");
+    expect(full.file).toBe(none.file); expect(none.r.publish).toBeUndefined();
+  });
+  test("push-less repo that accepts all PRs is fork_pr with no warning (existing fork path)", async () => {
+    const { r } = await go(repo({ pull_request_creation_policy: "all" }));
+    expect(r.publish?.mode).toBe("fork_pr"); expect(r.warnings.filter((w) => w.startsWith("publish:"))).toEqual([]);
+  });
+  test("unreadable or permission-less API body makes no claim", async () => {
+    expect((await go("{not json")).r.publish).toBeUndefined();
+    expect((await go(JSON.stringify({ name: "widget" }))).r.publish).toBeUndefined();
+    expect(classifyPublish("a/b", {})).toBeNull();
   });
 });
