@@ -3,6 +3,7 @@
 // bash Python parser (autonomy/run.sh:17475-17829) writes. This is the parity
 // contract: whatever the loop ran on (bash claude binary or the Agent SDK), the
 // dashboard/efficiency/event-bus consumers see identical files.
+import { rerunOnQuota, sessionKind } from "../../src/runner/retry_class.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -164,6 +165,28 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
       expect(r.exitCode).toBe(1);
       expect(r.capturedText).toContain(`[sdk-loop error: ${text}]`);
     }
+  });
+  test("CW-16: a billing_error stream becomes quota_exhausted and rerunOnQuota waits then reruns; an auth stream is never rerun", async () => {
+    const tailOf = async (err: string, text: string) => {
+      const r = await consumeSdkStream([
+        { type: "assistant", error: err, message: { content: [{ type: "text", text }] } },
+        { type: "result", is_error: true, result: text, session_id: "s" },
+      ] as unknown as StreamMsg[], ctx(), clock);
+      return (r.capturedText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n");
+    };
+    const credit = await tailOf("billing_error", "Credit balance is too low"), auth = await tailOf("authentication_failed", "Invalid API key \u00b7 Fix external API key");
+    expect(sessionKind({ exit: 1, stderrTail: credit })).toBe("quota_exhausted");
+    expect(sessionKind({ exit: 1, stderrTail: auth })).toBe("auth");
+    let now = 0, slept = 0;
+    const clk = { now: () => now, sleep: async (ms: number) => { now += ms; slept += ms; } };
+    let calls = 0;
+    const out = await rerunOnQuota(async () => ({ exit: calls++ === 0 ? 1 : 0, stderrTail: calls === 1 ? credit : "" }), (r) => (r.exit === 0 ? null : sessionKind(r)), clk, undefined, 10_000_000);
+    expect(calls).toBe(2);
+    expect(slept).toBe(30_000);
+    expect(out.exit).toBe(0);
+    let authCalls = 0;
+    await rerunOnQuota(async () => { authCalls++; return { exit: 1, stderrTail: auth }; }, (r) => sessionKind(r), clk, undefined, 10_000_000);
+    expect(authCalls).toBe(1);
   });
   test("CW-16 control: an error result with no structural auth/billing error adds no [sdk-loop error] line (agent prose is never promoted)", async () => {
     const msgs = [{ type: "result", is_error: true, result: "Invalid API key in my test fixture", session_id: "s" }] as unknown as StreamMsg[];
