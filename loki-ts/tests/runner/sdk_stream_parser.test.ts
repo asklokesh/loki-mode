@@ -188,6 +188,18 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     await rerunOnQuota(async () => { authCalls++; return { exit: 1, stderrTail: auth }; }, (r) => sessionKind(r), clk, undefined, 10_000_000);
     expect(authCalls).toBe(1);
   });
+  test("CW-16 B1: a token straddling the 300 char cut in the error result is redacted before the cut", async () => {
+    for (const tok of ["ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "sk-ant-" + "zZ9yY8xX7wW6vV5uU4tT3sS2rR1qQ0pP9oO8"]) {
+      const text = `Invalid API key ${"x".repeat(300 - 16 - 12)} ${tok} end`;
+      const msgs = [
+        { type: "assistant", error: "authentication_failed", message: { content: [{ type: "text", text }] } },
+        { type: "result", is_error: true, result: text, session_id: "s" },
+      ] as unknown as StreamMsg[];
+      const r = await consumeSdkStream(msgs, ctx(), clock);
+      const line = r.capturedText.split("\n").find((l) => l.startsWith("[sdk-loop error:"))!;
+      expect(line).not.toContain(tok.slice(0, 10));
+    }
+  });
   test("CW-16 control: an error result with no structural auth/billing error adds no [sdk-loop error] line (agent prose is never promoted)", async () => {
     const msgs = [{ type: "result", is_error: true, result: "Invalid API key in my test fixture", session_id: "s" }] as unknown as StreamMsg[];
     expect((await consumeSdkStream(msgs, ctx(), clock)).capturedText).not.toContain("[sdk-loop error");

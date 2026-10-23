@@ -30,6 +30,7 @@ import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 import { recordAdvisorError } from "./router/advisor_probe.ts";
 import { lokiDirFor } from "../util/paths.ts";
+import { redactSecrets } from "../util/redact.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -460,7 +461,7 @@ export async function consumeSdkStream(
       sawResult = true;
       if (data.result) capture(data.result);
       // CW-16: the provider's own error line, promoted only on the SDK's structural error flag (never on agent prose), so the session tail can name the cause.
-      if (data.is_error && structuralProviderErr && data.result) captured += `\n[sdk-loop error: ${String(data.result).replace(/\s+/g, " ").trim().slice(0, 300)}]\n`;
+      if (data.is_error && structuralProviderErr && data.result) captured += `\n[sdk-loop error: ${redactSecrets(String(data.result).replace(/\s+/g, " ").trim()).slice(0, 300)}]\n`;
       const completedAt = nowIso(clock);
       for (const id of Object.keys(agents)) {
         if (agents[id]!.status === "active") {

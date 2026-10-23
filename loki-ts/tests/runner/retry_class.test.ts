@@ -19,8 +19,9 @@
 //
 // Pure functions over strings, so no fixtures and no tmpdir are needed.
 
-import { rerunOnQuota, sessionKind } from "../../src/runner/retry_class.ts";
+import { providerCause, rerunOnQuota, sessionKind } from "../../src/runner/retry_class.ts";
 import { describe, expect, it } from "bun:test";
+import { decideRecovery } from "../../src/runner/recovery_policy.ts";
 import { classifyFailure, shouldStopRetrying } from "../../src/runner/retry_class.ts";
 
 describe("classifyFailure: benign agent output stays transient", () => {
@@ -212,5 +213,33 @@ describe("P12-09b rerunOnQuota bounds", () => {
     const r = await rerunOnQuota(async () => { calls++; return quota; }, kindOf, clock, undefined, 10_000_000, () => over);
     expect(calls).toBe(1);
     expect(r.exit).toBe(1);
+  });
+});
+
+describe("CW-16 review fixes: prose never classifies as auth, redaction precedes the cut", () => {
+  it("B2: agent prose with login wording stays transient/unrecognized through classifyFailure and decideRecovery", () => {
+    for (const out of [
+      "Implemented the auth middleware.\nNot logged in users are now redirected to the sign-in page.\n",
+      "Please run /login to continue is shown on the sign-in page.\n",
+      "The OAuth token has expired banner is now dismissible.\n",
+    ]) {
+      expect(classifyFailure(out)).toEqual({ klass: "transient", reason: "unrecognized" });
+      expect(decideRecovery({ output: out }).action).not.toBe("stop");
+      expect(sessionKind({ exit: 1, stderrTail: out })).toBe("unrecognized");
+    }
+    // positive control: the CLI's exact lines still classify
+    expect(classifyFailure("Not logged in \u00b7 Please run /login").reason).toBe("auth");
+    expect(classifyFailure("OAuth token has expired. Please run /login").reason).toBe("auth");
+  });
+  it("B1: a token straddling the 200 char cut is redacted before the cut", () => {
+    for (const tok of ["ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "sk-ant-" + "zZ9yY8xX7wW6vV5uU4tT3sS2rR1qQ0pP9oO8"]) {
+      for (const at of [180, 190, 196]) {
+        const tail = `[sdk-loop error: Invalid API key ${"x".repeat(at - 33)} ${tok} tail]`;
+        const c = providerCause(tail)!;
+        expect(c).toStartWith("auth: Invalid API key");
+        expect(c).not.toContain(tok.slice(0, 10));
+        expect(c).not.toMatch(/ghp_|sk-ant-[A-Za-z0-9]/);
+      }
+    }
   });
 });
