@@ -255,6 +255,10 @@ def _reset_client() -> None:
         _cached_client = None
 
 
+def _event_text(ev: Any) -> str:
+    return "".join(getattr(b, "text", "") or "" for b in getattr(ev, "content", []) or [])
+
+
 def agent_model() -> str:
     """Model id for managed agents from providers/model_catalog.json.
 
@@ -394,6 +398,29 @@ class _RealMultiagentSession:
 
         return self._cache_get_or_create(key, _create)
 
+    def _thread_replies(self, sessions: Any, sid: str, events: List[Any]) -> List[Dict[str, Any]]:
+        """Replies the coordinator received from its subagent threads.
+
+        Each agent.thread_message_received event names the sending thread in
+        from_session_thread_id; sessions.threads.list maps that thread to the
+        agent that ran in it (only threads whose agent.type is "agent").
+        """
+        received = [e for e in events if getattr(e, "type", None) == "agent.thread_message_received"]
+        if not received:
+            return []
+        thread_agent = {}
+        for th in sessions.threads.list(sid):
+            ref = getattr(th, "agent", None)
+            if getattr(ref, "type", None) == "agent":
+                thread_agent[getattr(th, "id", None)] = getattr(ref, "id", None)
+        return [
+            {
+                "agent_id": thread_agent.get(getattr(e, "from_session_thread_id", None)) or "",
+                "text": _event_text(e),
+            }
+            for e in received
+        ]
+
     def run(self) -> Dict[str, Any]:
         """Execute the session (SDK 2.x Managed Agents). Returns a session payload."""
         beta = getattr(self._client, "beta", None)
@@ -422,12 +449,25 @@ class _RealMultiagentSession:
             sid = getattr(session, "id", None)
             deadline = time.monotonic() + float(self._timeout_s)
             status = getattr(session, "status", "running")
+            multi = len(self._agent_ids) > 1
             while True:
                 # An idle status read right after create can predate the work,
-                # so idle only counts once an agent message exists.
+                # so idle only counts once the expected replies exist: one
+                # agent.message (single agent) or one reply from every roster
+                # agent (coordinator).
                 if status == "idle":
                     events = list(sessions.events.list(sid))
-                    if any(getattr(e, "type", None) == "agent.message" for e in events):
+                    if multi:
+                        messages = self._thread_replies(sessions, sid, events)
+                        ready = {m["agent_id"] for m in messages} >= set(self._agent_ids)
+                    else:
+                        messages = [
+                            {"agent_id": self._agent_ids[0], "text": _event_text(ev)}
+                            for ev in events
+                            if getattr(ev, "type", None) == "agent.message"
+                        ]
+                        ready = bool(messages)
+                    if ready:
                         break
                 elif status == "terminated":
                     raise ManagedUnavailable(f"session {sid} terminated before replying")
@@ -438,28 +478,9 @@ class _RealMultiagentSession:
                     )
                 time.sleep(_SESSION_POLL_S)
                 status = getattr(sessions.retrieve(sid), "status", "running")
-            # agent.message events carry no thread or agent field in 2.x, so
-            # attribute by reading each thread's own events: a reply from
-            # thread T belongs to T.agent.id.
-            attributed = []
-            if len(self._agent_ids) > 1:
-                for th in sessions.threads.list(sid):
-                    ref = getattr(th, "agent", None)
-                    tid = getattr(th, "id", None)
-                    aid = getattr(ref, "id", None) or ""
-                    for ev in sessions.threads.events.list(tid, session_id=sid):
-                        attributed.append((aid, ev))
-            else:
-                attributed = [(self._agent_ids[0], ev) for ev in events]
         except (AttributeError, TypeError) as e:
             raise ManagedUnavailable(f"SDK session shape mismatch: {e}")
 
-        messages = []
-        for aid, ev in attributed:
-            if getattr(ev, "type", None) != "agent.message":
-                continue
-            text = "".join(getattr(b, "text", "") or "" for b in getattr(ev, "content", []))
-            messages.append({"agent_id": aid, "text": text})
         if len(self._agent_ids) > 1:
             # Never pass fewer, merged or duplicated votes off as a complete council.
             got = sorted(m["agent_id"] for m in messages if m["agent_id"] in self._agent_ids)
@@ -468,8 +489,6 @@ class _RealMultiagentSession:
                     f"council reply incomplete: expected one reply from each of "
                     f"{len(self._agent_ids)} agents, attributed {len(got)}"
                 )
-        elif not messages:
-            raise ManagedUnavailable("session produced no agent message")
         else:
             messages = messages[:1]
         return {"raw": messages or None, "session_id": sid}

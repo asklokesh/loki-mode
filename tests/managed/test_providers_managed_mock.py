@@ -294,23 +294,27 @@ class ProvidersManagedTests(unittest.TestCase):
                 calls[self._n] = kw
                 return self._r
 
-        msg = lambda text: NS(type="agent.message", content=[NS(text=text)])  # noqa: E731
-        per_thread = {"t1": [msg("APPROVE")], "t2": [msg("REJECT")]}
-        seen = {}
-
-        def _thread_events(tid, session_id=None):
-            seen[tid] = session_id
-            return per_thread[tid]
+        recv = lambda text, tid: NS(  # noqa: E731
+            type="agent.thread_message_received",
+            content=[NS(text=text)],
+            from_session_thread_id=tid,
+        )
 
         class _Sessions(_Ns):
-            # the coordinator's own reply; agent.message has no thread field
-            events = NS(list=lambda sid: [msg("coordinator summary")])
+            # the coordinator's own summary is an agent.message and is not a vote
+            events = NS(
+                list=lambda sid: [
+                    NS(type="agent.message", content=[NS(text="summary")]),
+                    recv("APPROVE", "t1"),
+                    recv("REJECT", "t2"),
+                ]
+            )
             threads = NS(
                 list=lambda sid: [
-                    NS(id="t1", agent=NS(id="agent_aaaa")),
-                    NS(id="t2", agent=NS(id="agent_bbbb")),
-                ],
-                events=NS(list=_thread_events),
+                    NS(id="t0", agent=NS(type="agent", id="agent_coord")),
+                    NS(id="t1", agent=NS(type="agent", id="agent_aaaa")),
+                    NS(id="t2", agent=NS(type="agent", id="agent_bbbb")),
+                ]
             )
             retrieve = staticmethod(lambda sid: NS(status="idle"))
 
@@ -339,7 +343,6 @@ class ProvidersManagedTests(unittest.TestCase):
             {m["agent_id"]: m["text"] for m in out["raw"]},
             {"agent_aaaa": "APPROVE", "agent_bbbb": "REJECT"},
         )
-        self.assertEqual(seen, {"t1": "sess_1", "t2": "sess_1"})
         self.assertEqual(calls["agents"]["model"], self.managed.agent_model())
         # ids cached: a second run creates no new agent or environment
         calls.clear()
@@ -362,8 +365,7 @@ class ProvidersManagedTests(unittest.TestCase):
             "multiagent": {"type": "coordinator", "agents": []},
         })
 
-    def _client_with_events(self, events, threads, thread_events=None):
-        """events: session-level events; thread_events: {thread_id: [events]}."""
+    def _client_with_events(self, events, threads):
         from types import SimpleNamespace as NS
 
         class _C:
@@ -373,14 +375,10 @@ class ProvidersManagedTests(unittest.TestCase):
             def create(self, **kw):
                 return self._r
 
-        thread_events = thread_events or {}
         sessions = _C(NS(id="s", status="idle"))
         sessions.retrieve = lambda sid: NS(status="idle")
         sessions.events = NS(list=lambda sid: events)
-        sessions.threads = NS(
-            list=lambda sid: threads,
-            events=NS(list=lambda tid, session_id=None: thread_events.get(tid, [])),
-        )
+        sessions.threads = NS(list=lambda sid: threads)
         return NS(
             beta=NS(
                 agents=_C(NS(id="agent_coord")),
@@ -392,46 +390,54 @@ class ProvidersManagedTests(unittest.TestCase):
     def test_incomplete_council_reply_is_unavailable_not_fewer_votes(self):
         from types import SimpleNamespace as NS
 
-        msg = lambda text: NS(type="agent.message", content=[NS(text=text)])  # noqa: E731
+        self._fast_poll()
+        recv = lambda text, tid: NS(  # noqa: E731
+            type="agent.thread_message_received",
+            content=[NS(text=text)],
+            from_session_thread_id=tid,
+        )
         threads = [
-            NS(id="t1", agent=NS(id="agent_aaaa")),
-            NS(id="t2", agent=NS(id="agent_bbbb")),
-            NS(id="t3", agent=NS(id="agent_cccc")),
+            NS(id="t1", agent=NS(type="agent", id="agent_aaaa")),
+            NS(id="t2", agent=NS(type="agent", id="agent_bbbb")),
+            NS(id="t3", agent=NS(type="agent", id="agent_cccc")),
         ]
-        top = [msg("coordinator summary")]
+        summary = NS(type="agent.message", content=[NS(text="a, b, c: APPROVE")])
         cases = {
-            "fewer": {"t1": [msg("APPROVE")], "t2": [msg("APPROVE")], "t3": []},
-            "merged_into_one_thread": {"t1": [msg("a: APPROVE, b: APPROVE, c: REJECT")]},
-            "duplicated": {
-                "t1": [msg("APPROVE"), msg("APPROVE")],
-                "t2": [msg("APPROVE")],
-                "t3": [],
-            },
-            "unknown_thread_agent": {
-                "t1": [msg("APPROVE")],
-                "t2": [msg("APPROVE")],
-                "t3": [msg("APPROVE")],
-            },
+            "fewer": [recv("APPROVE", "t1"), recv("APPROVE", "t2")],
+            "merged_into_coordinator_message": [summary],
+            "unknown_thread": [recv("APPROVE", "t1"), recv("APPROVE", "t2"), recv("APPROVE", "t9")],
+            "duplicated": [
+                recv("APPROVE", "t1"), recv("APPROVE", "t1"),
+                recv("APPROVE", "t2"), recv("APPROVE", "t2"),
+            ],
         }
-        # a thread whose agent is outside the roster must not count as a vote
-        unknown = [NS(id="t1", agent=NS(id="agent_aaaa")), NS(id="t2", agent=NS(id="agent_bbbb")),
-                   NS(id="t3", agent=NS(id="agent_zzzz"))]
-        for label, tev in cases.items():
+        for label, events in cases.items():
             sess = self.managed._RealMultiagentSession(
-                client=self._client_with_events(
-                    top, unknown if label == "unknown_thread_agent" else threads, tev
-                ),
+                client=self._client_with_events(events, threads),
                 agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
                 context={},
-                timeout_s=5,
+                timeout_s=0,
             )
             with self.assertRaises(self.managed.ManagedUnavailable, msg=label):
                 sess.run()
 
+        # a thread that is not an agent thread never counts as a vote
+        inline = [NS(id="t1", agent=NS(type="inline", id="agent_aaaa"))] + threads[1:]
+        with self.assertRaises(self.managed.ManagedUnavailable):
+            self.managed._RealMultiagentSession(
+                client=self._client_with_events(
+                    [recv("APPROVE", t) for t in ("t1", "t2", "t3")], inline
+                ),
+                agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
+                context={},
+                timeout_s=0,
+            ).run()
+
         # control: exactly one reply per rostered agent is accepted
-        ok = {t: [msg(f"V{t}")] for t in ("t1", "t2", "t3")}
         out = self.managed._RealMultiagentSession(
-            client=self._client_with_events(top, threads, ok),
+            client=self._client_with_events(
+                [summary] + [recv(f"V{t}", t) for t in ("t1", "t2", "t3")], threads
+            ),
             agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
             context={},
             timeout_s=5,
@@ -439,6 +445,48 @@ class ProvidersManagedTests(unittest.TestCase):
         self.assertEqual(
             {m["agent_id"]: m["text"] for m in out["raw"]},
             {"agent_aaaa": "Vt1", "agent_bbbb": "Vt2", "agent_cccc": "Vt3"},
+        )
+
+    def test_council_attribution_with_real_sdk_event_types(self):
+        try:
+            import anthropic.types.beta as bt
+            import anthropic.types.beta.sessions as bs
+            from anthropic.types.beta.sessions import (
+                beta_managed_agents_agent_thread_message_received_event as mod,
+            )
+        except ImportError:
+            self.skipTest("anthropic SDK not installed")
+        from types import SimpleNamespace as NS
+
+        Ev = mod.BetaManagedAgentsAgentThreadMessageReceivedEvent
+        Thread = bs.BetaManagedAgentsSessionThread
+        recv = lambda text, tid: Ev.model_validate(  # noqa: E731
+            {
+                "id": f"ev_{tid}",
+                "type": "agent.thread_message_received",
+                "content": [{"type": "text", "text": text}],
+                "from_session_thread_id": tid,
+                "processed_at": "2026-10-23T00:00:00Z",
+            }
+        )
+        agent = lambda aid: bt.BetaManagedAgentsSessionThreadAgent.model_construct(  # noqa: E731
+            type="agent", id=aid
+        )
+        threads = [
+            Thread.model_construct(id="sthr_1", agent=agent("agent_aaaa")),
+            Thread.model_construct(id="sthr_2", agent=agent("agent_bbbb")),
+        ]
+        out = self.managed._RealMultiagentSession(
+            client=self._client_with_events(
+                [recv("APPROVE", "sthr_1"), recv("REJECT", "sthr_2")], threads
+            ),
+            agent_ids=["agent_aaaa", "agent_bbbb"],
+            context={},
+            timeout_s=5,
+        ).run()
+        self.assertEqual(
+            {m["agent_id"]: m["text"] for m in out["raw"]},
+            {"agent_aaaa": "APPROVE", "agent_bbbb": "REJECT"},
         )
 
     def test_agent_model_rejects_non_claude_override(self):
