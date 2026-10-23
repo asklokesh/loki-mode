@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.1 (2026-10-23)
+
+### Fixed
+- RQ-107: the l0_guard red on main is cleared per hit: two comments reworded (repo_profile.ts, util/shell.ts, no code change), four reasoned allowlist rows added (failures.ts cargo test and go test; stages/verify.ts pyproject.toml and requirements.txt) and two stale rows removed (wall.ts jest and vitest), with the FC-L0-GUARD-RED-ON-MAIN row. Approval: "APPROVE pd/rq107 b8eda07193d004bc5a2c100193ad603d8e4eac06 (tl-2, MEDIUM)". Pick b8eda0719.
+
 ## v11.72.0 (2026-10-23)
 
 ### Added
