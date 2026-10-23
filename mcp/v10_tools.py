@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 
 LOKI_BIN = str(Path(__file__).resolve().parent.parent / "bin" / "loki")
 RUNS_REL = os.path.join(".loki", "runs")
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 V10_RUN_ID_WAIT_S = 2.0
 V10_VERIFY_TIMEOUT_S = 120
 SEAL_DIFF_TIMEOUT_S = int(os.environ.get("LOKI_SEAL_DIFF_TIMEOUT_S", "1800"))
@@ -246,6 +247,8 @@ def seal_diff(repo_path: str, intent: str, validate: Callable[[str], str]) -> di
         try:
             with open(os.path.join(clone, ".loki", "engine.json"), "r", encoding="utf-8") as f:
                 run_id = json.load(f)["run_id"]
+            if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id) or ".." in run_id:
+                return {"error": "refusing a run_id that is not a plain run id"}  # the clone is engine-written but agent-writable: never join it into a path unchecked
             src = os.path.join(clone, RUNS_REL, run_id)
             with open(os.path.join(src, "receipt.json"), "r", encoding="utf-8") as f:
                 receipt = json.load(f)
@@ -254,10 +257,21 @@ def seal_diff(repo_path: str, intent: str, validate: Callable[[str], str]) -> di
         dest = os.path.join(repo, RUNS_REL, run_id)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copytree(src, dest, dirs_exist_ok=True)
+        # B4: bring the sealed commit into the user repo under a non-branch ref so `loki verify <id>` resolves the sealed head
+        # without LOKI_VERIFY_ALLOW_HEAD_DRIFT. Never a branch: HEAD, the index and tracked files stay untouched.
+        ref = f"refs/loki/seal/{run_id}"
+        sealed_ref = None
+        head = receipt.get("head_sha")
+        if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40,64}", head):
+            if _git(clone, "update-ref", ref, head).returncode == 0 and \
+               _git(repo, "fetch", "--quiet", "--no-tags", clone, f"{ref}:{ref}").returncode == 0:
+                sealed_ref = ref
         verdict = receipt.get("verdict")
-        return {"run_id": run_id, "verdict": verdict, "verified": verdict == "VERIFIED",
-                "receipt_path": os.path.join(dest, "receipt.json"),
-                "not_proven": receipt.get("not_proven", []), "exit_code": p.returncode}
+        return {"run_id": run_id, "verdict": verdict,
+                "verdict_is_verified": verdict == "VERIFIED",  # the receipt's own verdict string; no signature is checked here, run loki_v10_verify for that
+                "receipt_path": os.path.join(dest, "receipt.json"), "sealed_ref": sealed_ref,
+                "not_proven": receipt.get("not_proven", []), "exit_code": p.returncode,
+                "note": "the new untracked .loki/ directory in the repo is expected (loki start creates it the same way); HEAD, the index and tracked files are unchanged"}
     except subprocess.TimeoutExpired:
         return {"error": "git timed out"}
     finally:

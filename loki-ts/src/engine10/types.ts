@@ -128,6 +128,7 @@ export interface CostReader { // implemented by cost.ts (E-06)
 }
 export interface Clock { now(): number; sleep?(ms: number, signal?: AbortSignal): Promise<void>; } // epoch ms; sleep is optional so tests can fake the quota wait
 export interface RunContext {
+  externalPatch?: string; // CW-12: path of the patch an external client made (--seal-existing); read only by the implement stage, absent from every child env
   timeline?: { stage: StageName; startMs: number; endMs: number }[]; // every stage the machine ran (any outcome), for the receipt's time buckets
   sessionIds?: () => string[]; // iteration ids of every session the machine started, recorded at launch; seal unions them into the cost read
   wallSealed?: boolean; // P12-13c: set when wall.sealed is emitted, so steer staleness holds even if outputs.wall never lands
@@ -169,6 +170,7 @@ export interface Receipt {
   diff_sha256: string;
   wall: { files: { path: string; sha256: string }[]; passed: boolean | null };
   checks: ReceiptCheck[];
+  implement?: { exit: "external"; patch_sha256: string }; // CW-12 B3: present only when no Loki session wrote the code; the receipt names no implementing model
   not_proven: string[]; not_applicable?: string[]; // FC-SEAL-NA-AS-UNPROVEN: informational notes (package without tests, no app to boot, not selected by risk tier); never part of any verdict
   unit_spec?: { sha256: string }; // #317b: present only for a unit run; the sha256 of its canonical spec (id, items, acceptance, writeSet, base)
   spec?: { path: string; sha256: string }; intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[]; // P12-02 (omitted when none); SPEC-FIRST-INTENT: present only when a user spec file drove the run

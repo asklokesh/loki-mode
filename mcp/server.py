@@ -1914,7 +1914,7 @@ async def loki_seal_diff(repo_path: str, intent: str) -> str:
         intent: What the changes are meant to do, in plain words
 
     Returns:
-        JSON with run_id, verdict, verified, receipt_path and not_proven
+        JSON with run_id, verdict, verdict_is_verified (the receipt verdict string, not a signature check), receipt_path, sealed_ref and not_proven
     """
     _emit_tool_event_async('loki_seal_diff', 'start', parameters={'repo_path': repo_path, 'intent': intent})
     try:
