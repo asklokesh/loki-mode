@@ -54,6 +54,28 @@ else:
     check("apply_tax half-up", lambda: pricing.apply_tax(Decimal("10.00"), "0.0125"), Decimal("10.13"))
     check("apply_tax zero", lambda: pricing.apply_tax(Decimal("5.00"), "0"), Decimal("5.00"))
 
+    # invoice_total must actually call the helpers (the prompt says so)
+    calls = {"line_total": 0, "apply_tax": 0}
+    orig_lt, orig_at = pricing.line_total, pricing.apply_tax
+
+    def counting(name, fn):
+        def wrapper(*a, **k):
+            calls[name] += 1
+            return fn(*a, **k)
+        return wrapper
+    pricing.line_total = counting("line_total", orig_lt)
+    pricing.apply_tax = counting("apply_tax", orig_at)
+    try:
+        pricing.invoice_total([("1.00", 1), ("2.00", 2)], "0.1")
+    except Exception as exc:
+        fails.append("invoice_total raised %s while helpers were wrapped" % type(exc).__name__)
+    finally:
+        pricing.line_total, pricing.apply_tax = orig_lt, orig_at
+    if calls["line_total"] < 2:
+        fails.append("invoice_total must call line_total once per item (called %d times for 2 items)" % calls["line_total"])
+    if calls["apply_tax"] < 1:
+        fails.append("invoice_total must call apply_tax (called %d times)" % calls["apply_tax"])
+
 if fails:
     print("FAIL pricing:")
     for m in fails:
