@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.7 (2026-10-23)
+
+### Fixed
+- The engine10 runner honors LOKI_SESSION_MODEL and refuses an unrecognized pin (FC-ENGINE10-IGNORES-SESSION-MODEL-PIN); the bash parity assertion is typechecked. Approval: "SHIP e10-session-model: rev-c APPROVES 8721d0612 and 3ab3843de (head 3ab3843de). merge-tree against fresh origin/main gives rc=0. tsc rc=0. session_l1_model, preflight and claude_model_bundle give 95 pass and 0 fail. start.test.ts gives 94 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
 ## v11.63.6 (2026-10-23)
 
 ### Fixed
