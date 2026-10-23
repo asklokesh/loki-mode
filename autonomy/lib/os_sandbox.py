@@ -310,6 +310,7 @@ def seatbelt_provider_profile(
     secret_regexes: Iterable[str],
     home: Path | None = None,
     confine_reads: bool = False,
+    secret_targets: Iterable[Path] = (),
 ) -> bytes:
     """Provider-CLI profile: writes confined, secrets denied.
 
@@ -317,6 +318,9 @@ def seatbelt_provider_profile(
     with an allow-list (system roots, workspace, run dir, provider and toolchain
     paths, git common dir, gitconfig) so a symlink out of the workspace to a
     non-secret file cannot be read.
+
+    secret_targets are the resolved targets of symlinked secret paths:
+    Seatbelt matches the resolved path, so a regex on the link name misses them.
     """
     home = (home or Path(os.path.expanduser("~"))).resolve()
     quote = lambda value: json.dumps(str(value), ensure_ascii=True)
@@ -327,7 +331,7 @@ def seatbelt_provider_profile(
         "(allow process-fork process-exec*)",
         "(allow signal (target same-sandbox))",
         "(allow process-info* (target same-sandbox))",
-        "(allow sysctl-read sysctl-write)",
+        "(allow sysctl-read)",
         "(allow mach-lookup)",
         "(allow ipc-posix-shm ipc-posix-sem)",
         "(allow network*)",
@@ -358,6 +362,9 @@ def seatbelt_provider_profile(
         # move it to a name the read-deny regex does not match.
         lines.append(f"(deny file-read-data {_seatbelt_regex(regex)})")
         lines.append(f"(deny file-write* {_seatbelt_regex(regex)})")
+    for target in sorted({*secret_targets}, key=str):
+        lines.append(f"(deny file-read-data {seatbelt_path_filter(target)})")
+        lines.append(f"(deny file-write* {seatbelt_path_filter(target)})")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -507,6 +514,28 @@ def _find_secret_files(roots: Iterable[Path], rules: list[dict[str, str]]) -> li
     return hits
 
 
+def secret_symlink_targets(
+    roots: Iterable[Path],
+    rules: list[dict[str, str]],
+    home: Path,
+) -> list[Path]:
+    """Resolved targets of secret paths that are reached through a symlink."""
+    candidates = [
+        *(home / r["name"] for r in rules if r["kind"] == "dir"),
+        *(p for r in rules if r["kind"] == "file" for p in home.glob(r["glob"])),
+        *_find_secret_files(roots, rules),
+    ]
+    targets: set[Path] = set()
+    for path in candidates:
+        if not path.is_symlink():
+            continue
+        try:
+            targets.add(path.resolve(strict=True))
+        except OSError:
+            continue
+    return sorted(targets, key=str)
+
+
 def bwrap_argv_prefix(
     workspace: Path,
     run_dir: Path,
@@ -529,6 +558,8 @@ def bwrap_argv_prefix(
         *(home / r["name"] for r in rules if r["kind"] == "dir"),
         *_find_secret_files([workspace, run_dir], rules),
     ]
+    # Mask the resolved target of a symlinked secret, never the link itself.
+    candidates = [p.resolve() if p.is_symlink() and p.exists() else p for p in candidates]
     for path in candidates:
         if str(path) in masked or not path.exists():
             continue
@@ -600,6 +631,7 @@ def kernel_probe(argv_builder: Any, workspace: Path, run_dir: Path,
 
 def resolve_mode(raw: str | None = None) -> str:
     mode = (raw if raw is not None else os.environ.get("LOKI_OS_SANDBOX", "off")).strip().lower()
+    mode = mode or "off"
     if mode not in {"off", "auto", "on"}:
         raise ValueError(f"LOKI_OS_SANDBOX must be off, auto or on (got {mode!r})")
     return mode
@@ -634,7 +666,8 @@ def build_confinement(
     if confine_reads is None:
         confine_reads = os.environ.get("LOKI_OS_SANDBOX_CONFINE_READS", "0") == "1"
     confine_reads = bool(confine_reads) and platform == "darwin"
-    limitations = ["unrestricted-outbound-network"]
+    limitations = ["unrestricted-outbound-network",
+                   "preexisting-cross-boundary-hardlinks"]
     if not confine_reads:
         limitations.append("reads-outside-workspace-allowed-except-secret-paths")
     else:
@@ -648,10 +681,13 @@ def build_confinement(
     if platform == "darwin":
         if not SANDBOX_EXEC.is_file() or not os.access(SANDBOX_EXEC, os.X_OK):
             return unavailable(f"/usr/bin/sandbox-exec missing; {INSTALL_HINT['darwin']}")
-        profile = seatbelt_provider_profile(workspace, run_dir, provider, regexes, home, confine_reads)
-        profile_path = run_dir / "os-sandbox.sb"
-        profile_path.write_bytes(profile)
-        prefix = [str(SANDBOX_EXEC), "-f", str(profile_path)]
+        targets = secret_symlink_targets(
+            [workspace, run_dir], rules, home or Path(os.path.expanduser("~")))
+        profile = seatbelt_provider_profile(workspace, run_dir, provider, regexes, home,
+                                          confine_reads, targets)
+        # Inline -p: a profile file under a writable path could be rewritten by
+        # the confined process and read by the next launch.
+        prefix = [str(SANDBOX_EXEC), "-p", profile.decode("utf-8")]
         kind = "macos-seatbelt"
         limitations.append("deprecated-macos-sandbox-exec")
         builder = lambda: prefix
@@ -660,7 +696,11 @@ def build_confinement(
         if not bwrap:
             return unavailable(f"bwrap not found; {INSTALL_HINT['linux']}")
         kind = "linux-bwrap"
-        limitations.append("secret-files-created-after-launch-not-masked")
+        limitations += [
+            "secret-files-created-after-launch-not-masked",
+            "bwrap-masks-only-aws-ssh-and-secrets-under-workspace-and-run-dir",
+            "bwrap-walk-skips-node_modules-venv-git-and-caps-at-200000-entries",
+        ]
         builder = lambda: bwrap_argv_prefix(workspace, run_dir, provider, rules, home, bwrap)
         profile = " ".join(builder()).encode("utf-8")
         prefix = None
@@ -674,9 +714,10 @@ def build_confinement(
         prefix = builder()
         profile = " ".join(prefix).encode("utf-8")
     sha = sha256_bytes(profile)
+    probe_sha = sha256_bytes(f"{sha}\n{_PROBE_SCRIPT}\nprobe-ok".encode("utf-8"))
     return {
         "kind": kind, "argv_prefix": prefix, "profile_sha256": sha,
-        "kernel_probe_sha256": sha, "known_limitations": limitations,
+        "kernel_probe_sha256": probe_sha, "known_limitations": limitations,
     }
 
 
