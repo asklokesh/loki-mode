@@ -13,8 +13,10 @@
 # execution or traffic redirection in a child: LOKI_*, BUN_*, NODE_*, npm config (NPM_*), loader
 # (LD_*, DYLD_*), shell (PATH, HOME, SHELL, IFS, ENV, BASH_*, ...), every git and ssh knob (GIT_*
 # includes GIT_CONFIG_COUNT/KEY_n/VALUE_n -> core.fsmonitor, GIT_ASKPASS; SSH_*), every proxy
-# (*_PROXY, *_proxy), every endpoint (*_BASE_URL), interpreter startup (PYTHON*, PERL*, RUBY*)
-# and EDITOR, VISUAL, PAGER.
+# (*PROXY*, *proxy*), every endpoint (*_BASE_URL), interpreter startup (PYTHON*, PERL*, RUBY*),
+# EDITOR, VISUAL, PAGER, XDG_* (git reads $XDG_CONFIG_HOME/git/config), LESS* (LESSOPEN),
+# provider and toolchain config (CLAUDE_*, CODEX_*, JAVA_*, GO*, CARGO_*, ...) and any name that
+# points at a location or option string (*_HOME, *_DIR, *_PATH, *_OPTIONS, *_OPTS, *_CONFIG, *_FILE, *_ROOT).
 _LOKI_BUN_SAFE_FLAGS=(--config=/dev/null --no-env-file)
 _loki_apply_project_env() {
     [ "${LOKI_ALLOW_PROJECT_ENV:-}" = "1" ] && [ -f ./.env ] || return 0
@@ -29,7 +31,9 @@ _loki_apply_project_env() {
         case "$_k" in
             ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;;
             LOKI_*|BUN_*|NODE_*|NPM_*|npm_*|LD_*|DYLD_*|PATH|HOME|SHELL|IFS|ENV|BASH_ENV|BASH_*|PS4|CDPATH|GLOBIGNORE|SHELLOPTS|PROMPT_COMMAND) continue ;;
-            GIT_*|SSH_*|*_PROXY|*_proxy|*_BASE_URL|PYTHON*|PERL*|RUBY*|EDITOR|VISUAL|PAGER) continue ;;
+            GIT_*|SSH_*|*PROXY*|*proxy*|*_BASE_URL|PYTHON*|PERL*|RUBY*|EDITOR|VISUAL|PAGER|MANPAGER) continue ;;
+            XDG_*|LESS*|TERMINFO*|TMPDIR|CLAUDE_*|ANTHROPIC_*|OPENAI_*|CODEX_*|GEMINI_*|JAVA_*|_JAVA_*|JDK_JAVA_OPTIONS|GO[A-Z]*|CARGO_*|RUSTUP_*|PIP_*|GEM_*|BUNDLE_*) continue ;;
+            *_HOME|*_DIR|*_DIRS|*_PATH|*_OPTIONS|*_OPTS|*_CONFIG|*_CONFIG_FILE|*_FILE|*_ROOT) continue ;;
         esac
         [ -z "${!_k+x}" ] || continue
         case "$_v" in
