@@ -85,17 +85,17 @@ done
 echo
 echo "T5 -- the five heaviest named suites land in five distinct n=8 shards"
 
-# S-81 requirement: these five must never share a shard at n=8. True today
-# because LPT places the 5 longest suites first, one per shard in rotation --
-# but assert it directly rather than trusting that property to hold forever
-# as durations drift.
-_watch_suites=(
-    "trust-core tests detect their regressions"
-    "Review deadline, requirements, and speculative assurance tail"
-    "E2e Features"
-    "ShellCheck Linting"
-    "shipped modules have a recorded reachability verdict"
-)
+# S-81 requirement: the five heaviest suites must never share a shard at n=8.
+# True by construction (LPT places the heaviest n suites first, one per empty
+# shard), but assert it directly. The five are DERIVED from the duration table,
+# restricted to registered suites: a hardcoded list went stale when heavier
+# suites were measured, and then a tie-rotation shift from one new registration
+# (FC-SHARD-WATCHLIST-STALE) put two of its light members in one shard.
+_watch_suites=()
+while IFS= read -r _w; do _watch_suites+=("$_w"); done < <(
+    awk -F'\t' 'NR==FNR { reg[$0]=1; next } !/^#/ && NF>=2 && ($1 in reg) { print $2 "\t" $1 }' \
+        "$_reg_names_file" "$SCRIPT_DIR/shard-durations.tsv" \
+        | sort -t"$(printf '\t')" -k1,1nr -k2,2 | head -5 | cut -f2)
 _watch_shards=()
 for i in $(seq 0 7); do
     shard_names="$(LOKI_TEST_SHARD="$i/8" LOKI_TEST_LIST=1 bash "$RUNNER" 2>/dev/null | grep -Fxf "$_reg_names_file" -)" || true

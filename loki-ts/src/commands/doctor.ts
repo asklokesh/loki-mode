@@ -27,7 +27,7 @@ import { runOwnerAlive } from "../util/run_pid.ts";
 import { getVersion } from "../version.ts";
 import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
-import { probeAdvisor } from "../runner/router/advisor_probe.ts";
+import { advisorPair, probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { withholdGithubTokens } from "../runner/github_token.ts";
@@ -598,7 +598,7 @@ export function advisorStatusLine(
   claudeCodeVersion: string,
   runDir: string,
 ): string {
-  const probe = probeAdvisor(env, provider, claudeCodeVersion, runDir);
+  const probe = probeAdvisor(env, provider, claudeCodeVersion, runDir, advisorPair(env));
   return probe.available ? "advisor: available" : `advisor: unavailable (${probe.reason})`;
 }
 
