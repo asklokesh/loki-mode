@@ -590,6 +590,7 @@ def build_confinement(
             return unavailable(f"bwrap not found; {INSTALL_HINT['linux']}")
         kind = "linux-bwrap"
         limitations += [
+            "bwrap path untested on Linux",
             "secret-files-created-after-launch-not-masked",
             "bwrap-masks-only-aws-ssh-and-secrets-under-workspace-and-run-dir",
             "bwrap-walk-skips-node_modules-venv-git-and-caps-at-200000-entries",
