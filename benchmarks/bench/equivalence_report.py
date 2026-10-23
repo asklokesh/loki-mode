@@ -567,6 +567,7 @@ def advisor_verdict(rows: List[Dict[str, Any]], model: str) -> Dict[str, Any]:
     must have attached (calls >= 1, no advisor errors) and every off-arm trial must have 0 calls.
     No other gate.
     """
+    rows = _schema.without_retired(rows)  # a retired task never feeds a claim
     off_rows = [r for r in rows if parse_cell(r) == (model, ADVISOR_OFF_CONFIG)]
     on_rows = [r for r in rows if parse_cell(r) == (model, ADVISOR_ON_CONFIG)]
     out: Dict[str, Any] = {"model": model, "flip_default": False}

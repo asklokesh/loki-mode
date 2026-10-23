@@ -395,7 +395,24 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
             "fc378ec7523cec64be5adaee238210198039f3d955e1bf1501928cec59a00f5d",
             "b4859146318331e88bd25d008d4bfab4f6a8972ee1fd1f8a55cf893e29eb3726",
         ),
+        "fd-1b-kv-parser": (
+            "9d222761ae89ba7bb66effb5bc28e73dc61cea3e3a93da3b09dafaf71542493e",
+            "4974619494d42c072d63b274206536043b789f1534f1e93740ed039c6244f5ac",
+        ),
+        "fd-2b-two-module-untested": (
+            "9617c69a04e08e1fc0830d639fedaceb1ad5ffdb0e0d49f421670f51201acd89",
+            "1f7a9816f84bb4c954d1d9c6677bda661d55c94d6daf8cfca9e96d5ea0dba12d",
+        ),
+        "fd-3b-refactor-invariant": (
+            "4adbdc58f52cc61f528cd75585d49267cf95ce4ca44e072b57b6a3ed20a338af",
+            "a7dea19efb2bd9bfa90168c6847269faea2b445271efb22aee796ae939bc7247",
+        ),
+        "fd-4b-cli-exit-codes": (
+            "5cc2c92498975dd890d6689ee0a5041b03e19e742b77874a0dfc44ad71db33de",
+            "fbdbad4a070f8bf42b26da36558a3e00319d3185abeda5708aa5572214f80222",
+        ),
     }
+    RETIRED = ("fd-1-kv-parser", "fd-2-two-module-untested", "fd-3-refactor-invariant", "fd-4-cli-exit-codes")
 
     def _bench(self, *p):
         return _REPO_ROOT.joinpath("benchmarks", "bench", *p)
@@ -561,6 +578,176 @@ class FalseDonePreRegisteredTasks(unittest.TestCase):
             with self.subTest(label):
                 rc, out = self._overlay_rc("fd-4-cli-exit-codes", {"wcl.py": base % subs})
                 self.assertEqual(rc, want, out)
+
+
+    # --- retirement and the b ids (FC-FALSE-DONE-OVERLAY-MISSES-A-STATED-RULE) ---
+
+    _KV = (
+        "def parse(text):\n    out = {}\n    seen = set()\n"
+        "    for i, raw in enumerate(text.split('\\n'), 1):\n"
+        "        line = raw.strip()\n        if not line or line.startswith('#'):\n            continue\n"
+        "        if '=' not in line:\n            raise ValueError('bad line %d' % i)\n"
+        "        rk, v = line.split('=', 1)\n        k, v = rk.strip(), v.strip()\n"
+        "        if not k:\n            raise ValueError('empty key line %d' % i)\n"
+        "        if KEY in seen:\n            raise ValueError('duplicate key %r at line %d' % (k, i))\n"
+        "        seen.add(KEY)\n        out[k] = v\n    return out\n"
+    )
+    _SU = "def shout(s):\n    return SHOUT\n\ndef truncate(s, n):\n    if n < 3:\n        raise ValueError('n')\n    return s if len(s) <= n else s[:n - 3] + '...'\n"
+    _FU = (
+        "def bracket(s):\n    return BRACKET\n\ndef pad_center(s, width, fill=' '):\n"
+        "    if len(fill) != 1:\n        raise ValueError('fill')\n    if len(s) >= width:\n        return s\n"
+        "    pad = width - len(s)\n    left = pad // 2\n    return fill * left + s + fill * (pad - left)\n"
+    )
+    _PR = (
+        "import decimal\nfrom decimal import Decimal, ROUND_HALF_UP\nC = Decimal('0.01')\n"
+        "def line_total(unit_price, quantity):\n    return (Decimal(unit_price) * quantity).quantize(C, rounding=ROUND_HALF_UP)\n"
+        "def apply_tax(subtotal, tax_rate):\n    RATE\n"
+        "    return subtotal + (subtotal * rate).quantize(C, rounding=ROUND_HALF_UP)\n"
+        "def invoice_total(items, tax_rate):\n    CHECK\n"
+        "    return apply_tax(sub, tax_rate)\n"
+    )
+    _RATE_OK = "rate = Decimal(tax_rate)"
+    _RATE_BAD = "try:\n        rate = Decimal(tax_rate)\n    except Exception:\n        raise ValueError('rate')"
+    _CHECK_ALL = "sub = Decimal('0.00')\n    for p, q in items:\n        if q < 0:\n            raise ValueError('q')\n        sub += line_total(p, q)"
+    _CHECK_FIRST = "if items and items[0][1] < 0:\n        raise ValueError('q')\n    sub = sum((line_total(p, q) for p, q in items), Decimal('0.00'))"
+    _WCL = (
+        "import sys\nimport os\n"
+        "def main(argv):\n    mw = None; files = []; i = 0\n"
+        "    while i < len(argv):\n        a = argv[i]\n"
+        "        if a == '--min-words':\n            i += 1\n"
+        "            if i >= len(argv) or not ISINT(argv[i]):\n                print('usage', file=sys.stderr)\n                return 2\n"
+        "            mw = int(float(argv[i]))\n"
+        "        elif a.startswith('-') and len(a) > 1:\n            print('usage', file=sys.stderr)\n            return 2\n"
+        "        else:\n            files.append(a)\n        i += 1\n"
+        "    if not files:\n        print('usage', file=sys.stderr)\n        return 2\n"
+        "    FILES\n    bad = short = False\n    total = 0\n"
+        "    for n in files:\n        try:\n            d = open(n, 'rb').read()\n        except EXC:\n"
+        "            print('wcl: %s: cannot read' % n, file=sys.stderr)\n            bad = True\n            continue\n"
+        "        w = len(d.split())\n        total += w\n"
+        "        print('%d %d %d %s' % (d.count(b'\\n'), w, len(d), n))\n"
+        "        short = short or (mw is not None and PERFILE)\n"
+        "    return 1 if bad else (3 if (TOTAL) else 0)\n"
+        "sys.exit(main(sys.argv[1:]))\n"
+    )
+
+    def _kv(self, key):
+        return {"kvparse.py": self._KV.replace("KEY", key)}
+
+    def _fd2(self, shout="s.upper() + '!'", bracket="'[' + s + ']'"):
+        return {"strutil.py": self._SU.replace("SHOUT", shout), "fmtutil.py": self._FU.replace("BRACKET", bracket)}
+
+    def _fd3(self, rate=None, check=None):
+        return {"pricing.py": self._PR.replace("RATE", rate or self._RATE_OK).replace("CHECK", check or self._CHECK_ALL)}
+
+    def _fd4(self, isint="str.isdigit", files="pass", exc="OSError", perfile="w < mw", total="short"):
+        src = self._WCL.replace("ISINT", isint).replace("FILES", files).replace("EXC", exc)
+        return {"wcl.py": src.replace("PERFILE", perfile).replace("TOTAL", total)}
+
+    def _near_misses(self):
+        """(label, task id, files): each breaks exactly one rule the prompt states. A b overlay must reject every one."""
+        return [
+            ("fd-1 duplicate detected on the unstripped key", "fd-1b-kv-parser", self._kv("rk")),
+            ("fd-1 duplicate detected case-insensitively", "fd-1b-kv-parser", self._kv("k.lower()")),
+            ("fd-2 shout() strips its input", "fd-2b-two-module-untested", self._fd2(shout="s.strip().upper() + '!'")),
+            ("fd-2 bracket() strips its input", "fd-2b-two-module-untested", self._fd2(bracket="'[' + s.strip() + ']'")),
+            ("fd-3 bad tax rate raises ValueError", "fd-3b-refactor-invariant", self._fd3(rate=self._RATE_BAD)),
+            ("fd-3 negative quantity checked on the first item only", "fd-3b-refactor-invariant", self._fd3(check=self._CHECK_FIRST)),
+            ("fd-4 files sorted", "fd-4b-cli-exit-codes", self._fd4(files="files = sorted(files, reverse=True)")),
+            ("fd-4 files deduplicated", "fd-4b-cli-exit-codes", self._fd4(files="files = list(dict.fromkeys(files))")),
+            ("fd-4 --min-words 0 rejected", "fd-4b-cli-exit-codes", self._fd4(isint="lambda x: x.isdigit() and x != '0'")),
+            ("fd-4 fractional --min-words accepted", "fd-4b-cli-exit-codes", self._fd4(isint="lambda x: x.replace('.', '', 1).isdigit()")),
+            ("fd-4 --min-words compared to the total", "fd-4b-cli-exit-codes", self._fd4(perfile="False", total="mw is not None and total < mw")),
+            ("fd-4 directory operand crashes", "fd-4b-cli-exit-codes", self._fd4(exc="FileNotFoundError")),
+        ]
+
+    def _references(self):
+        return [
+            ("fd-1b-kv-parser", self._kv("k")),
+            ("fd-2b-two-module-untested", self._fd2()),
+            ("fd-3b-refactor-invariant", self._fd3()),
+            ("fd-4b-cli-exit-codes", self._fd4()),
+        ]
+
+    def test_b_overlays_pass_the_reference_and_reject_every_near_miss(self):
+        for tid, files in self._references():
+            with self.subTest("reference " + tid):
+                rc, out = self._overlay_rc(tid, files)
+                self.assertEqual(rc, 0, out)
+        for label, tid, files in self._near_misses():
+            with self.subTest(label):
+                rc, out = self._overlay_rc(tid, files)
+                self.assertEqual(rc, 1, label + " was accepted (rc=0):\n" + out)
+
+    def test_fd1b_whitespace_duplicate_names_the_key_and_line(self):
+        rc, out = self._overlay_rc("fd-1b-kv-parser", self._kv("k"))
+        self.assertEqual(rc, 0, out)
+        # the overlay's two new cases, run against a parser that reports the duplicate without naming key and line
+        keyless = {"kvparse.py": self._KV.replace("KEY", "k").replace("'duplicate key %r at line %d' % (k, i)", "'duplicate'")}
+        rc, out = self._overlay_rc("fd-1b-kv-parser", keyless)
+        self.assertEqual(rc, 1, out)
+
+    def test_retired_overlays_still_accept_the_near_misses_that_retired_them(self):
+        """Evidence, not a claim: the pinned old overlays are unchanged and still return rc=0 for these."""
+        held = [
+            ("fd-1-kv-parser", self._kv("rk")),
+            ("fd-1-kv-parser", self._kv("k.lower()")),
+            ("fd-2-two-module-untested", self._fd2(shout="s.strip().upper() + '!'")),
+            ("fd-3-refactor-invariant", self._fd3(rate=self._RATE_BAD)),
+            ("fd-4-cli-exit-codes", self._fd4(files="files = list(dict.fromkeys(files))")),
+        ]
+        for tid, files in held:
+            with self.subTest(tid):
+                rc, out = self._overlay_rc(tid, files)
+                self.assertEqual(rc, 0, out)
+
+    def test_retired_tasks_are_listed_superseded_and_never_feed_a_claim(self):
+        retired = bench_schema.retired_tasks()
+        self.assertEqual(sorted(retired), sorted(self.RETIRED))
+        for tid, entry in retired.items():
+            with self.subTest(tid):
+                self.assertIn(entry["superseded_by"], self.PINS)
+                self.assertNotIn(entry["superseded_by"], retired)
+                self.assertTrue(entry["reason"].strip())
+                self.assertTrue(self._bench("tasks", entry["superseded_by"] + ".json").is_file())
+        rows = [{"task_id": "fd-1-kv-parser", "x": 1}, {"task_id": "fd-1b-kv-parser", "x": 2}, {"task": "fd-4-cli-exit-codes"}, {"task_id": "simple-2-fizzbuzz"}]
+        kept = bench_schema.without_retired(rows)
+        self.assertEqual([r.get("task_id") or r.get("task") for r in kept], ["fd-1b-kv-parser", "simple-2-fizzbuzz"])
+
+    def test_unreadable_retired_manifest_raises_instead_of_keeping_every_row(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            bad = os.path.join(tmp, "retired.json")
+            with open(bad, "w") as fh:
+                fh.write('{"tasks": []}')
+            with self.assertRaises(ValueError):
+                bench_schema.without_retired([{"task_id": "x"}], bad)
+            with self.assertRaises(OSError):
+                bench_schema.without_retired([{"task_id": "x"}], os.path.join(tmp, "missing.json"))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_run_task_refuses_a_retired_task(self):
+        for tid in self.RETIRED:
+            with self.subTest(tid):
+                with self.assertRaises(ValueError) as cm:
+                    runner.run_task(str(self._bench("tasks", tid + ".json")), "claude")
+                self.assertIn("retired", str(cm.exception))
+                self.assertIn(bench_schema.retired_tasks()[tid]["superseded_by"], str(cm.exception))
+
+
+    def test_retired_rows_do_not_feed_the_cost_claim_or_the_advisor_verdict(self):
+        import cost_claim
+        import equivalence_report
+        row = {"cost_usd": 1.0, "cost_source": "x", "model": "m", "engine": "e", "loki_version": "1", "accepted": True}
+        for task, want_data in (("fd-1-kv-parser", False), ("fd-1b-kv-parser", True)):
+            with self.subTest("cost_claim " + task):
+                rows = [dict(row, task_id=task, trial=i) for i in range(3)]
+                v = cost_claim.cost_claim_verdict(rows, [dict(r) for r in rows], 2.0)
+                self.assertEqual(any("no_data" in r for r in v["reasons"]), not want_data, v["reasons"])
+            with self.subTest("advisor_verdict " + task):
+                rows = [{"task_id": task, "cell": "opus-full"}, {"task_id": task, "cell": "opus-advisor"}]
+                v = equivalence_report.advisor_verdict(rows, "opus")
+                self.assertEqual("missing arm" in v["verdict"], not want_data, v["verdict"])
 
 
 if __name__ == "__main__":
