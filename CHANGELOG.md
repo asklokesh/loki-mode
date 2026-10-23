@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.61.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 allowtoken moat scan accepts a plain destructured dynamic import of safe_git (FC-P9-DYNAMIC-IMPORT-FALSE-POSITIVE). Approval: "Ship line from rev-c: APPROVE pd/p0-p9-allowtoken a060fbc15. The range origin/main..a060fbc15 is one commit".
+
 ## v11.61.0 (2026-10-23)
 
 
