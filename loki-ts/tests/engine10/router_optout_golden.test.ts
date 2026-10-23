@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // R1-21 (docs/v11/ROUTER-1.md section 6): the opt-out golden. Fixture pre_router_models.json was captured from the
 // 11.0.3 code BEFORE any router slice merged. LOKI_ROUTER=0 (and, until R1-19 flips the default, LOKI_ROUTER unset)
 // must reproduce it exactly: per stage the model passed to sessions.run, the child-env model variables, the SDK

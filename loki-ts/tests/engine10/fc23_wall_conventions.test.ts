@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-23: the Wall matches the package's module system, and a type error inside a Wall file is harness-owned (no fix round).
 // FireLater#17 on 10.10.5: a Wall test with import.meta failed the package's own tsc (TS1470) and burned fix round 1.
 import { afterEach, describe, expect, test } from "bun:test";

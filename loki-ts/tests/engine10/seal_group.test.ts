@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61-13: one Seal and a combined receipt with a per-unit sub-receipt, bound by hash.
 // Wall check: verify passes on the combined receipt; tampering one unit's events fails it.
 // The only spawn is git through the sh helper, which passes an explicit env.

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Test-gap follow-up for E-09 (docs/v10/ENGINE.md section 4 "Fast verify",
 // section 16 E-09): verify.test.ts's own "lint/typecheck matrix" describe
 // block only exercises the shell branch (bash -n / shellcheck). The TS/JS

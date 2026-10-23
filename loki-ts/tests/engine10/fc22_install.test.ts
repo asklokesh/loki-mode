@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-22 S3: the install pre-step library. Fake installers are tiny shell scripts (tests/fixtures/install-fc22); no network.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-48 Wall check (docs/v10/BOARD.md): after pr.opened the supervisor spawns deep verify
 // (stages/deep.ts) detached with the worker's token-withheld env, recording the pid so it is
 // never orphaned untracked and never waiting on it; after run.completed it calls adapters

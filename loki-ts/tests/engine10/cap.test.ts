@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/cap.test.ts
 //
 // E-19 wall check (docs/v10/ENGINE.md section 4 "Hard cap"; section 16 slice

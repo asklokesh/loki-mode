@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-DOCTOR-COUNT: the failure count must derive from the single list of check
 // results, and a flaky `claude auth status` probe must not change it.
 import { afterAll, describe, expect, it } from "bun:test";

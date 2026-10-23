@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { loadAwareTimeoutMs } from "../preload.ts";
+import { defaultTimeoutMs, loadAwareTimeoutMs } from "../preload.ts";
 
 describe("loadAwareTimeoutMs", () => {
   const at = (load1: number, scale?: string, floorMs?: string) =>
@@ -48,6 +48,59 @@ describe("the real setLoadAwareTimeout path under bun test", () => {
     expect(run({ ...base, LOKI_TEST_TIMEOUT_MS: "300" }, 5000).status).not.toBe(0);
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
+});
+
+describe("defaultTimeoutMs (FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT)", () => {
+  const at = (load1: number) => defaultTimeoutMs({ load1, cpuCount: 14 });
+  it("keeps bun's 5s at or below the load cap (2 x cpus) and scales above it", () => {
+    expect(at(0)).toBe(5000);
+    expect(at(28)).toBe(5000);
+    expect(at(28.5)).toBe(25_000);
+    expect(at(10_000)).toBe(50_000);
+  });
+});
+
+describe("setSpawnTimeout applies the default to the calling file", () => {
+  // The child imports setSpawnTimeout. Scale 0.02 makes the default 100ms; a 500ms sleep must time out, and the floor lifts it.
+  const dir = mkdtempSync(join(tmpdir(), "loki-tmo-def-"));
+  const file = join(dir, "a.test.ts");
+  const preload = join(import.meta.dir, "..", "preload.ts");
+  writeFileSync(file, `import { it } from "bun:test";\nimport { setSpawnTimeout } from ${JSON.stringify(preload)};\nsetSpawnTimeout();\nit("sleeps", async () => { await new Promise((r) => setTimeout(r, 500)); });\n`);
+  const run = (env: Record<string, string>) => spawnSync(process.execPath, ["test", file], { env: { ...process.env, ...env }, encoding: "utf8", timeout: 60_000 });
+  it("a scaled-down default fails a spawning-length test; the floor lifts it", () => {
+    const failed = run({ LOKI_TEST_TIMEOUT_SCALE: "0.02", LOKI_TEST_TIMEOUT_MS: "" });
+    expect(failed.status).not.toBe(0);
+    expect(failed.stderr + failed.stdout).toMatch(/timed out after/);
+    expect(run({ LOKI_TEST_TIMEOUT_SCALE: "0.02", LOKI_TEST_TIMEOUT_MS: "5000" }).status).toBe(0);
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+});
+
+// FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT: a test file that spawns subprocesses must call a load-aware setter, because bun's
+// fixed 5s default flakes under load and a preload default reaches only the first file of a run (measured, bun 1.3.13).
+const SPAWNS = /Bun\.spawn|spawnSync|execFileSync|execSync|child_process/;
+const SETS_TIMEOUT = /\b(setSpawnTimeout|setLoadAwareTimeout)\(/;
+export const untimedSpawners = (files: { path: string; text: string }[]): string[] =>
+  files.filter((f) => SPAWNS.test(f.text) && !SETS_TIMEOUT.test(f.text)).map((f) => f.path);
+
+describe("every spawning test file sets a load-aware timeout", () => {
+  const root = join(import.meta.dir, "..");
+  const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+    const p = join(d, e.name);
+    return e.isDirectory() ? (e.name === "node_modules" || e.name === "fixtures" ? [] : walk(p)) : e.name.endsWith(".test.ts") ? [p] : [];
+  });
+  const files = walk(root)
+    .filter((p) => !p.endsWith("test_timeout_guard.test.ts"))
+    .map((p) => ({ path: relative(root, p), text: readFileSync(p, "utf8") }));
+  it("no spawning file is left on bun's fixed default", () => {
+    expect(untimedSpawners(files)).toEqual([]);
+  });
+  it("mutant: removing one call is caught", () => {
+    const victim = files.find((f) => SPAWNS.test(f.text) && f.text.includes("setSpawnTimeout();"));
+    expect(victim).toBeDefined();
+    const mutated = files.map((f) => (f === victim ? { ...f, text: f.text.replace("setSpawnTimeout();", "") } : f));
+    expect(untimedSpawners(mutated)).toEqual([victim!.path]);
+  });
 });
 
 describe("no test sets its own fixed default timeout", () => {

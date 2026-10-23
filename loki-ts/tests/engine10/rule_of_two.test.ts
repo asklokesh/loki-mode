@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-03 Wall: supervisor/worker split, Rule of Two, tamper check, eval marker.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-10: coverage-guided input search (docs/v10/MODERNIZE.md section 3.2). The provider (propose)
 // and the capture executor (runCapture) are both stubbed, per section 13 "Tests deterministic
 // with a stub provider" -- no python or py_capture.py dependency here.

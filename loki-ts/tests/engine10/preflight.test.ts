@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-36 Wall (docs/v10/ENGINE.md): first-run preflight, fatal checks plus
 // non-fatal UNSIGNED warnings. checkPreflight is the pure, unit-tested core;
 // one spawned-child test proves the process-facing preflight() wrapper

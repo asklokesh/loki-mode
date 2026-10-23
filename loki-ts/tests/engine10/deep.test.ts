@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/deep.test.ts
 //
 // E-23 wall check (docs/v10/ENGINE.md sections 4, 6, 7, 9, 16). supervisor.ts

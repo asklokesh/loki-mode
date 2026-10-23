@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D86 FC-09r: runner-config changes cap the verdict; shared manifests are compared base vs head by section.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

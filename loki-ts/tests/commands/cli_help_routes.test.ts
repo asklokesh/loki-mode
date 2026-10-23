@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Guards that every user-facing command dispatch() routes is listed in HELP
 // and that the header comment does not carry a stale route count.
 

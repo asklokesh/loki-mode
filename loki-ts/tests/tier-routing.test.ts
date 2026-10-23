@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "./preload.ts";
+setSpawnTimeout();
 // SLICE 6a: complexity-aware MODEL routing (opt-in LOKI_TIER_ROUTING=1).
 //
 // Proves tierRouteModel (loki-ts/src/providers/claude_flags.ts) byte-mirrors the

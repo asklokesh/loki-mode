@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // MW-2 / CH-03: LOKI_E10_FIX_RESUME (default off; =1 opts in; CH-03 flips the default after RECEIPT-TRUTH). A fix round resumes the implement session; every failure path
 // starts fresh and records why. Mocked sessions only: no real model, no query().
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

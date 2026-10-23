@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // CPE-09: run.pid write, remove and the three-way verification that guards Stop against PID reuse.
 import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";

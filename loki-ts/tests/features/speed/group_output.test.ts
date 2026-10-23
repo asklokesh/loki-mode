@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // SPEED-TIMER-UNREF: the repaint interval must not keep the process alive when stop() is never called.
 import { expect, test } from "bun:test";

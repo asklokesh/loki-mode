@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Integration: MCP-through-shim contract test.
 //
 // Goal: verify that subprocess-style invocations of `loki <cmd>` (the pattern

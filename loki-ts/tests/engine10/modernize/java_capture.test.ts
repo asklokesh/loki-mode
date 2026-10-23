@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-11: Java 8 to 21 oracle capture (docs/v10/MODERNIZE.md sections 3.2, 7).
 // Two layers, tested separately:
 //   - autonomy/lib/modernize/java_capture.sh itself, invoked directly with a controlled PATH

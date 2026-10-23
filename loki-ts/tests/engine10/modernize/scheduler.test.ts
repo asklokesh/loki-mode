@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-17 wall: scheduler policy (cascade, best-of-2, workers, budget stop, id safety, single writer).
 import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";

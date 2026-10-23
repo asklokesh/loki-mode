@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-02 / Engine Law L5: a runner load or collection error is harness-owned (not_run, no fix rounds);
 // a genuine assertion failure stays a code failure. FC-17: a Wall that cannot write a runnable check skips fast.
 import { describe, expect, test } from "bun:test";

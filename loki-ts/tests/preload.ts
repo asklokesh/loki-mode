@@ -63,13 +63,24 @@ if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
 // capped at 10) replaces the factor; LOKI_TEST_TIMEOUT_MS is a floor that wins when larger.
 export function loadAwareTimeoutMs(
   baseMs: number,
-  env: { load1?: number; cpuCount?: number; scale?: string; floorMs?: string } = {},
+  env: { load1?: number; cpuCount?: number; scale?: string; floorMs?: string; freeLoad?: number } = {},
 ): number {
   const load1 = env.load1 ?? loadavg()[0] ?? 0;
   const cpuCount = Math.max(1, env.cpuCount ?? cpus().length);
   const override = Number(env.scale ?? process.env["LOKI_TEST_TIMEOUT_SCALE"]);
-  const factor = Number.isFinite(override) && override > 0 ? Math.min(10, override) : Math.min(10, Math.max(1, Math.ceil((2 * load1) / cpuCount)));
+  const loaded = load1 > (env.freeLoad ?? 0);
+  const factor = Number.isFinite(override) && override > 0 ? Math.min(10, override) : loaded ? Math.min(10, Math.max(1, Math.ceil((2 * load1) / cpuCount))) : 1;
   const floor = Number(env.floorMs ?? process.env["LOKI_TEST_TIMEOUT_MS"]);
   return Math.max(Math.round(baseMs * factor), Number.isFinite(floor) && floor > 0 ? floor : 0);
 }
 export const setLoadAwareTimeout = (baseMs: number): void => setDefaultTimeout(loadAwareTimeoutMs(baseMs));
+
+// FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT: the budget for a test file that spawns subprocesses. Measured on bun 1.3.13: a
+// setDefaultTimeout in the preload reaches only the first file of a run (and inside beforeAll it reaches none), so each
+// spawning file calls this once. At or below the load cap (2 x cpus, D28) it is bun's 5s, so idle-time slowness still
+// fails; above the cap it scales like setLoadAwareTimeout. Like it, the call beats the `bun test --timeout` flag.
+export const DEFAULT_TEST_TIMEOUT_MS = 5000;
+export function defaultTimeoutMs(env: { load1?: number; cpuCount?: number; scale?: string; floorMs?: string } = {}): number {
+  return loadAwareTimeoutMs(DEFAULT_TEST_TIMEOUT_MS, { ...env, freeLoad: 2 * Math.max(1, env.cpuCount ?? cpus().length) });
+}
+export const setSpawnTimeout = (): void => setDefaultTimeout(defaultTimeoutMs());
