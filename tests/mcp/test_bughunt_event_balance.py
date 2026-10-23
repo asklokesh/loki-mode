@@ -43,6 +43,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 _STUB_DIR: str | None = None
@@ -174,6 +175,11 @@ class EventBalanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="loki-mcp-balance-")
         os.makedirs(os.path.join(self.tmp, ".loki"), exist_ok=True)
+        # loki_verify_fast keeps its HMAC cache under the user's home by default;
+        # a test must never write there.
+        env = mock.patch.dict(os.environ, {"LOKI_FAST_VERIFY_CACHE_DIR": os.path.join(self.tmp, "fv-cache")})
+        env.start()
+        self.addCleanup(env.stop)
         # Force ChromaDB-unavailable so loki_code_search* take the known path.
         self._orig_chroma = self.server._get_chroma_collection
         self.server._get_chroma_collection = lambda: None

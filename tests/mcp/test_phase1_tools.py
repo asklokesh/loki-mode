@@ -852,16 +852,20 @@ class ResultContractTests(unittest.TestCase):
         from memory.schemas import EpisodeTrace, SemanticPattern
         from memory.storage import MemoryStorage
 
-        # fast_verify trusts a content-hash cache as if freshly scanned: a planted
-        # entry for app.py's content flows to the finding text it returns
-        import hashlib
+        # fast_verify replays authenticated cache entries as if freshly scanned: an
+        # entry for app.py's content must reach the finding text it returns
+        import importlib.util
 
         Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
-        digest = hashlib.blake2b(b"x = 1\n", digest_size=16).hexdigest()
-        cache = Path(root, ".loki", "cache", "fast-verify.json")
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"schema": 1, "entries": {digest: [
-            {"rule": self._MARK, "line": 1, "message": self._MARK, "severity": "high"}]}}), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(
+            "fv_seed", os.path.join(os.path.dirname(self.server.__file__), "..", "autonomy", "lib", "fast_verify.py"))
+        fv = importlib.util.module_from_spec(spec)
+        sys.modules["fv_seed"] = fv
+        spec.loader.exec_module(fv)
+        cache = fv.Cache(fv.cache_path(root))
+        cache.put(fv.cache_key("app.py", b"x = 1\n"),
+                  [{"rule": self._MARK, "line": 1, "message": self._MARK, "severity": "high"}])
+        cache.save()
 
         storage = MemoryStorage(os.path.join(root, ".loki", "memory"))
         storage.save_episode(EpisodeTrace.create(task_id="t1", agent=self._MARK, goal=self._MARK))
@@ -935,11 +939,13 @@ class ResultContractTests(unittest.TestCase):
         for name in tools + resources:
             tmp = tempfile.mkdtemp(prefix="loki-mcp-partition-")
             try:
-                self._seed(tmp)
+                with mock.patch.dict(os.environ, {"LOKI_FAST_VERIFY_CACHE_DIR": os.path.join(tmp, "fv-cache")}):
+                    self._seed(tmp)
                 # the learning collector is still bound to the previous tempdir
                 srv.cleanup_mcp_singletons()
                 fn = srv._REGISTERED_FNS[name]
                 with _ChdirToTmp(tmp), self._observe_loki_reads(tmp) as observed, \
+                        mock.patch.dict(os.environ, {"LOKI_FAST_VERIFY_CACHE_DIR": os.path.join(tmp, "fv-cache")}), \
                         mock.patch("subprocess.run", no_spawn), \
                         mock.patch("subprocess.Popen", no_spawn), \
                         mock.patch.object(srv, "_emit_tool_event_async", lambda *a, **k: None):
