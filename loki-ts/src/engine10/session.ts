@@ -18,7 +18,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-import { safeGit } from "../util/safe_git.ts"; import { claudeTierToModel } from "../runner/providers.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
+import { safeGit } from "../util/safe_git.ts"; import { claudeTierToModel } from "../runner/providers.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts"; import { bunSafeArgv } from "../runner/worker_proc.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
@@ -230,11 +230,11 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
       archivePriorCosts(cfg.lokiRoot, opts.cwd, opts.iterationId);
-      const [cmd, args] = cfg.childCommand ?? [
+      const [cmd, args] = cfg.childCommand ?? ((a) => [a[0]!, a.slice(1)] as [string, string[]])(bunSafeArgv([
         process.execPath,
         // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.
-        [import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
-      ];
+        import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session",
+      ]));
       const sessionId = opts.iterationId;
       // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained via the "data" listener below so a full pipe can never stall the child.
       const guardSnap = isGuarded(cfg.provider) && cfg.lokiRoot ? beginGuard(opts.cwd ?? process.cwd(), cfg.lokiRoot) : null; // PARITY-ENFORCE
