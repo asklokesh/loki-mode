@@ -3,7 +3,7 @@
 
 Why a new file: no file runs other tools' own checks on the seeded defects; speed-benchmark.sh times
 builds and tests/test-fast-verify.sh times only Loki. benchmarks/results/fast-verify.html reports a
-580x that is a self-baseline (our old path vs our new path), not a competitor ratio.
+578x that is a self-baseline (our old path vs our new path), not a competitor ratio.
 
 Every arm gets the same inputs: each seeded case (defect present) and its clean control (reference
 fix, via seeded-defects/generate.py). The correct verdict is the hidden check.py: FAIL on a seeded
@@ -40,6 +40,9 @@ REPO = os.path.dirname(os.path.dirname(_HERE))
 SEEDED = os.path.join(REPO, "benchmarks", "seeded-defects")
 AXIS = "C"
 UNIT = "ms"
+# Mock-abuse controls got a real assertion test, so they are new controls with new ids; the v1 ids
+# (SD-NNNN-control) carried the seeded vacuous test and are not clean controls.
+CONTROL_SUFFIX = {"mock-abuse": "-control-v2"}
 FREE_ARMS = ("loki-cli", "loki-mcp", "visible")
 PAID_ARMS = ("claude-review", "codex-review")
 STUB_ARMS = ("stub-pass", "stub-fail")
@@ -77,7 +80,7 @@ def build_inputs(ids=None):
         if ids is not None and did not in ids:
             continue
         for variant, src in (("seeded", case["buggy"]), ("control", case["fixed"])):
-            out.append((did, variant, category, gen.render(case, did, category, src)))
+            out.append((did, variant, category, gen.render(case, did, category, src, control=variant == "control")))
     return out
 
 
@@ -206,7 +209,7 @@ def run_arm(arm, inputs, trials, manifest, model, mcp, tmp, log=lambda *_: None,
         for trial in range(1, trials + 1):
             verdict, ms, spend, prov = fn(root, files, {"model": model, "mcp": mcp, "repo": repo})
             rows.append({"axis": AXIS, "tool": arm, "tool_version": version, "model": model if arm in ARM_BIN else None,
-                         "task_id": did if variant == "seeded" else did + "-control", "task_hash": task_hash(files),
+                         "task_id": did if variant == "seeded" else did + CONTROL_SUFFIX.get(category, "-control"), "task_hash": task_hash(files),
                          "trial": trial, "value": round(ms, 3), "unit": UNIT, "correct": verdict == truth, "verdict": verdict, "category": category,
                          "grader_verdict": truth, "provenance": "%s verdict=%s category=%s" % (prov, verdict, category),
                          "spend_usd": round(spend, 6), "manifest": manifest["name"]})

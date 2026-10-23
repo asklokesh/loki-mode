@@ -40,6 +40,39 @@ class Corpus(unittest.TestCase):
             self.assertEqual(truth[(did, "control")], "PASS")
 
 
+class MockAbuseControls(unittest.TestCase):
+    def setUp(self):
+        self.ids = {"SD-%04d" % i for i in range(61, 81)}
+        self.inputs = v.build_inputs(self.ids)
+
+    def test_control_has_a_real_assertion_and_no_mock(self):
+        ctrl = [f for _, var, _, f in self.inputs if var == "control"]
+        self.assertEqual(len(ctrl), 20)
+        for f in ctrl:
+            self.assertNotIn("mock.patch", f["test_visible.py"])
+            self.assertIn("src.", f["test_visible.py"])
+
+    def test_control_test_has_teeth_seeded_case_test_does_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gen = v._load_generate()
+            did = "SD-0061"
+            category, case = gen.build_cases()[60]
+            ctl = gen.render(case, did, category, case["buggy"], control=True)
+            root = os.path.join(tmp, "ctl_on_buggy")
+            v.materialize(root, ctl)
+            self.assertNotEqual(v._run(["python3", "-B", "test_visible.py"], root)[0], 0)
+            old = gen.render(case, did, category, case["buggy"])
+            root = os.path.join(tmp, "seeded_on_buggy")
+            v.materialize(root, old)
+            self.assertEqual(v._run(["python3", "-B", "test_visible.py"], root)[0], 0)
+
+    def test_control_task_ids_are_new(self):
+        rows = v.run_arm("stub-pass", self.inputs, 1, {"name": "m"}, "m", None, tempfile.mkdtemp())
+        ids = {r["task_id"] for r in rows if r["grader_verdict"] == "PASS"}
+        self.assertTrue(all(i.endswith("-control-v2") for i in ids))
+        self.assertEqual(len(ids), 20)
+
+
 class Gating(unittest.TestCase):
     def setUp(self):
         self.inputs = v.build_inputs(IDS)

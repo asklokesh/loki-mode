@@ -28,13 +28,13 @@ footer{color:var(--mut);font-size:.8rem;margin-top:2.5rem;border-top:1px solid v
 <div class=card><div class=k>Before</div><div class=v>11,040<span style="font-size:.9rem">ms</span></div></div>
 <div class=card><div class=k>Full repo, warm</div><div class="v ok">87<span style="font-size:.9rem">ms</span></div></div>
 <div class=card><div class=k>PR-scoped</div><div class="v ok">19<span style="font-size:.9rem">ms</span></div></div>
-<div class=card><div class=k>Speedup</div><div class="v ok">579x</div></div>
+<div class=card><div class=k>Speedup</div><div class="v ok">578x</div></div>
 </div>
 
 <h2>Latency by scope</h2>
 <table>
 <tr><th>Run</th><th class=n>Latency (ms)</th><th class=n>Files</th><th class=n>From cache</th><th class=n>vs baseline</th></tr>
-<tr><td>full repo, cold (no cache)</td><td class=n>298.1</td><td class=n>1,932</td><td class=n>0</td><td class=n><b>37x</b></td></tr><tr><td>full repo, cold (writes cache)</td><td class=n>285.8</td><td class=n>1,932</td><td class=n>14</td><td class=n><b>39x</b></td></tr><tr><td>full repo, warm</td><td class=n>87.2</td><td class=n>1,932</td><td class=n>1,932</td><td class=n><b>127x</b></td></tr><tr><td>PR-scoped (HEAD~1)</td><td class=n>19.1</td><td class=n>14</td><td class=n>14</td><td class=n><b>579x</b></td></tr>
+<tr><td>full repo, cold (no cache)</td><td class=n>298.1</td><td class=n>1,932</td><td class=n>0</td><td class=n><b>37x</b></td></tr><tr><td>full repo, cold (writes cache)</td><td class=n>285.8</td><td class=n>1,932</td><td class=n>14</td><td class=n><b>39x</b></td></tr><tr><td>full repo, warm</td><td class=n>87.2</td><td class=n>1,932</td><td class=n>1,932</td><td class=n><b>127x</b></td></tr><tr><td>PR-scoped (HEAD~1)</td><td class=n>19.1</td><td class=n>14</td><td class=n>14</td><td class=n><b>578x</b></td></tr>
 </table>
 
 <h2>Latency by embedding surface</h2>
@@ -61,10 +61,12 @@ agent cannot author or influence. A verdict you can re-derive is a <b>fact</b>; 
 produced is an <b>opinion</b>. That constraint is what lets this be embedded in someone else's
 product: they need to trust our arithmetic, not our model choices.</p>
 
-<p class=note>The 579x is a self-baseline (our old shell path against our new engine), not a competitor ratio. Cross-tool latency, counted over correct verdicts only, is in <code>benchmarks/bench/verify_h2h.py</code>.</p>
+<p class=note>The 578x (11,040 ms over 19.1 ms) is a self-baseline (our old shell path against our new engine), not a competitor ratio. Cross-tool latency, counted over correct verdicts only, is in <code>benchmarks/bench/verify_h2h.py</code>.</p>
+<p class=note>This speedup is latency, not defect detection. Measured on the 100-case seeded corpus with the current fast verifier (<code>loki verify --fast</code>): 20 of 100 seeded defects caught (95% interval 13.3% to 28.9%), all in the mock-abuse class; 0 of 40 logic-bug and spec-miss, 0 of 20 test-fitting, 0 of 20 security, because no seeded case ships a Wall file and the other 80 return INCONCLUSIVE. False alarms: 0 of 100 clean controls (95% interval 0.0% to 3.7%), with the mock-abuse controls rebuilt to carry a real assertion test. The 20 mock-abuse controls used in the earlier run carried the seeded vacuous test and are not valid controls.</p>
 
 <footer>Baseline: <code>tests/detect-mock-problems.sh</code> 11,040&nbsp;ms and
 <code>tests/detect-test-mutations.sh</code> 12,361&nbsp;ms on the same machine. Correctness is
 asserted alongside speed in <code>tests/test-fast-verify.sh</code> (10/10), including
-no-false-positive cases, because a fast verifier that passes broken code is worse than a slow one.</footer>
+no-false-positive cases. Passing those cases shows no false alarms on them; it does not show that
+broken code is detected (see the measured detection rate above).</footer>
 </div>
