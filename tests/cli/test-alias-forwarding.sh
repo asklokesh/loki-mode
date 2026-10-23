@@ -108,6 +108,13 @@ normalize() {
 UNITS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loki-alias-units.XXXXXX")"
 trap 'rm -rf "$WORKDIR" "$UNITS_DIR" 2>/dev/null || true' EXIT
 FIXDIR="$WORKDIR"
+# Spawn counter: every CLI spawn goes through a wrapper that appends one byte to
+# SPAWN_LOG, then execs the real shim. The total is printed at the end so a
+# spawn-floor change is a measured number, not an estimate.
+SPAWN_LOG="$UNITS_DIR/spawns.log"
+: > "$SPAWN_LOG"
+printf '#!/bin/bash\nprintf . >> "%s"\nexec bash "%s" "$@"\n' "$SPAWN_LOG" "$LOKI_SHIM" > "$UNITS_DIR/loki-counted"
+LOKI_SHIM="$UNITS_DIR/loki-counted"
 MAX_UNITS="${LOKI_ALIAS_TEST_JOBS:-8}"
 U=0
 UO=""
@@ -222,7 +229,15 @@ assert_row() {
     local flag
     for flag in --json -q --quiet; do
         local m_err
-        run_loki "${alias_argv[@]}" "$flag" >/dev/null 2>"$WORKDIR/m.err" || true
+        # The --json run also feeds the 4b stdout parity check below, so its
+        # stdout is kept instead of spawning the same command a second time.
+        # export is the exception: it treats --json as an output filename, so
+        # the first run creates it and the canonical comparison depends on the
+        # second alias run seeing it already exist (see 4b).
+        run_loki "${alias_argv[@]}" "$flag" >"$WORKDIR/m.out" 2>"$WORKDIR/m.err" || true
+        if [ "$flag" = "--json" ] && [ "$alias_cmd" != "export" ]; then
+            cp "$WORKDIR/m.out" "$WORKDIR/aj.out"
+        fi
         m_err="$(cat "$WORKDIR/m.err")"
         if echo "$m_err" | grep -qF "$pat"; then
             log_fail "$label: $flag suppresses deprecation line" "line leaked under $flag"
@@ -235,7 +250,11 @@ assert_row() {
     # canonical supports --json. The reporting handlers accept --json; if a
     # handler ignores it the streams still match (both ignore identically).
     local aj cj
-    aj="$(run_loki "${alias_argv[@]}" --json 2>/dev/null | normalize)"
+    if [ "$alias_cmd" = "export" ]; then
+        aj="$(run_loki "${alias_argv[@]}" --json 2>/dev/null | normalize)"
+    else
+        aj="$(normalize < "$WORKDIR/aj.out")"
+    fi
     cj="$(run_loki "${canon_argv[@]}" --json 2>/dev/null | normalize)"
     if [ "$aj" = "$cj" ]; then
         log_pass "$label: --json stdout byte-identical"
@@ -769,6 +788,7 @@ done
 PASS="$(cat "$UNITS_DIR"/out.* | grep -ac '\[PASS\]' || true)"
 FAIL="$(cat "$UNITS_DIR"/out.* | grep -ac '\[FAIL\]' || true)"
 FAIL=$((FAIL + _empty_units))
+echo "CLI spawns: $(wc -c < "$SPAWN_LOG" | tr -d ' ')"
 echo ""
 echo "===================================================="
 echo -e "Results (route $ROUTE): ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
