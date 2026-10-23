@@ -166,8 +166,20 @@ def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s):
             if pat is not None and pat.search(line):
                 hit.set()
                 return
+    err_chunks = []
+
+    def _drain_err():
+        # A child that logs >64KB to stderr before the marker would otherwise
+        # block on the full pipe and never reach it (a false timeout).
+        try:
+            for chunk in proc.stderr:
+                err_chunks.append(chunk)
+        except Exception:  # noqa: BLE001
+            pass
     reader = threading.Thread(target=_read, daemon=True)
+    err_reader = threading.Thread(target=_drain_err, daemon=True)
     reader.start()
+    err_reader.start()
     started = time.time()
     interrupted = False
     while proc.poll() is None:
@@ -182,11 +194,8 @@ def _run_until(cmd, cwd, timeout, full_env, stop_marker, stop_after_s):
     if interrupted:
         _kill_group(proc)
     reader.join(timeout=5)
-    try:
-        err = proc.stderr.read() or ""
-    except Exception:  # noqa: BLE001
-        err = ""
-    return proc.wait(), "".join(lines), err, interrupted
+    err_reader.join(timeout=5)
+    return proc.wait(), "".join(lines), "".join(err_chunks), interrupted
 
 
 def _kill_group(proc):

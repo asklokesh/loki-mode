@@ -158,7 +158,8 @@ def prepare_workdir(fixture_dir: str, tool: str, dest: Optional[str] = None) -> 
     Returns the workdir path."""
     if dest:
         if os.path.isdir(dest) and os.listdir(dest):
-            raise ValueError("kept workdir already exists and is not empty: %s" % dest)
+            raise ValueError("kept workdir already exists and is not empty: %s "
+                             "(use an empty LOKI_BENCH_WORKDIRS root per grid)" % dest)
         os.makedirs(dest, exist_ok=True)
         workdir = dest
     else:
