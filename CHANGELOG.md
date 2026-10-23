@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.54.1 (2026-10-23)
+
+### Fixed
+- The budget gate reads per-model prices from model-pricing.json, so its spend check can no longer drift from the pricing table. Refs #310.
+
 ## v11.54.0 (2026-10-22)
 
 ### Added
