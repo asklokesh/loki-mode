@@ -1820,6 +1820,17 @@ describe("doctor.providerAutodetected (R100-001)", () => {
     return { root, env, checks: [{ command: provider, found: true, path }] };
   }
 
+  it("claude logged out: only claude's own key or token counts, a foreign provider key does not (preflight parity)", () => {
+    const off = fixture("claude", false);
+    try {
+      expect(providerAutodetected(off.checks, { ...off.env, OPENAI_API_KEY: "x" })).toBe(false);
+      expect(providerAutodetected(off.checks, { ...off.env, CLAUDE_CODE_OAUTH_TOKEN: "x" })).toBe(true);
+      expect(providerAutodetected(off.checks, { ...off.env, ANTHROPIC_API_KEY: "x" })).toBe(true);
+    } finally {
+      rmSync(off.root, { recursive: true, force: true });
+    }
+  });
+
   for (const p of PROVIDERS) {
     it(`${p}: installed and logged in is autodetected, installed and logged out is not`, () => {
       const on = fixture(p, true);
