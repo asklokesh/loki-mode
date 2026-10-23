@@ -9,14 +9,33 @@ export function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
+export const ULIMIT_REFUSED_EXIT = 97;
+const ULIMIT_KNOBS = [["LOKI_ULIMIT_VMEM_KB", "-v"], ["LOKI_ULIMIT_NPROC", "-u"]] as const;
+// Opt-in process limits (#265 slice B). Node cannot set rlimits, so a set knob wraps argv in a shell that applies them
+// and execs the worker. Values are positional arguments, never script text. Unset knobs return argv unchanged.
+export function ulimitArgv(argv: string[], env: NodeJS.ProcessEnv): string[] {
+  const set = ULIMIT_KNOBS.filter(([name]) => env[name] !== undefined && env[name] !== "");
+  if (set.length === 0) return argv;
+  const values: string[] = [];
+  for (const [name] of set) {
+    const v = env[name]!;
+    if (!/^[1-9][0-9]*$/.test(v)) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(v)}; refusing to start the worker`);
+    values.push(v);
+  }
+  const why = `loki: the OS refused the requested process limit (${set.map(([name]) => name).join(", ")}); the worker was not started. macOS rejects ulimit -v, so use LOKI_ULIMIT_NPROC alone there.`;
+  const script = `${set.map(([, flag], i) => `ulimit ${flag} "$${i + 1}"`).join(" && ")} || { printf '%s\\n' '${why}' >&2; exit ${ULIMIT_REFUSED_EXIT}; }; shift ${set.length}; exec "$@"`;
+  return ["/bin/sh", "-c", script, "sh", ...values, ...argv];
+}
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 export function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: (stopped: boolean) => void = () => {},
 ): Promise<{ code: number | null; killed: boolean; cancelled?: NodeJS.Signals }> {
   return new Promise((resolve) => {
-    const [cmd, ...args] = argv;
-    if (!cmd) return resolve({ code: null, killed: false });
+    if (!argv[0]) return resolve({ code: null, killed: false });
+    let wrapped: string[];
+    try { wrapped = ulimitArgv(argv, env); } catch (e) { process.stderr.write(`${(e as Error).message}\n`); return resolve({ code: ULIMIT_REFUSED_EXIT, killed: false }); }
+    const [cmd, ...args] = wrapped as [string, ...string[]];
     const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "inherit"], detached: true });
     const rl = createInterface({ input: child.stdout! });
     rl.on("line", onLine);
