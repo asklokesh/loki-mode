@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.69.0 (2026-10-23)
+
+### Added
+- A scheduled 15-minute dist-tag converge job for loki-mode and loki-mode-sdk, so npm latest and next converge even when a publish settle step fails (RQ-103). Approval: "ship pd/rq103 e1a27e2c2dfd84d4494c0850b9f336cd870ee70f ... APPROVE e1a27e2c2dfd84d4494c0850b9f336cd870ee70f" (rev-b, HIGH). Picks 5ba7e0f6f and e1a27e2c2.
+
 ## v11.68.1 (2026-10-23)
 
 ### Fixed
