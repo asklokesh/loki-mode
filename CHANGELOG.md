@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.4 (2026-10-23)
+
+### Fixed
+- The FC-55 20,050-file test fixture and its cleanup now set explicit timeouts, so they no longer fail on slow machines at the default limit. Approval: "tl-324 approval line: ship range origin/main..6bff668ce2b277376d94b8e69a6875ba3d746338 (pd/fc55b-timeout, 2 commits: 7b9745530f28df2cc89efb89256e7d1c7a4447cd, 6bff668ce2b277376d94b8e69a6875ba3d746338, LOW, merge-tree rc 0)".
+
 ## v11.67.3 (2026-10-23)
 
 ### Fixed
