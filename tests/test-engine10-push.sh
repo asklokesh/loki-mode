@@ -32,7 +32,7 @@ git config --global init.defaultBranch main
 
 BARE="$W/gh/octocat/hello.git"
 git init -q --bare "$BARE"
-printf '#!/bin/sh\necho "remote token=${GH_TOKEN:-none}" >> "%s"\n' "$W/remote.log" > "$BARE/hooks/pre-receive"
+printf '#!/bin/sh\necho "remote token=${GH_TOKEN:-none}" >> "%s"\n[ -f "%s" ] && { cat "%s" >&2; exit 1; }\nexit 0\n' "$W/remote.log" "$W/push.reject" "$W/push.reject" > "$BARE/hooks/pre-receive"
 chmod +x "$BARE/hooks/pre-receive"
 
 # pr list stub: serves pr.url (same-repo PR by the pinned owner) and pr.fork (cross-repo PR by a stranger, same branch
@@ -61,8 +61,8 @@ case "\$1 \$2" in
     "repo view") cat "$W/default" ;;
     "api repos/octocat/hello/git/ref/heads/loki/e10-resume")
         git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-resume 2>/dev/null ;;
-    "pr list") W_PRURL="$W/pr.url" W_PRFORK="$W/pr.fork" W_PRCLOSED="$W/pr.closed" sh "$W/prlist.sh" "\$@" ;;
-    "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
+    "pr list") [ -f "$W/list.err" ] && { cat "$W/list.err" >&2; exit 1; }; W_PRURL="$W/pr.url" W_PRFORK="$W/pr.fork" W_PRCLOSED="$W/pr.closed" sh "$W/prlist.sh" "\$@" ;;
+    "pr create") [ -f "$W/create.err" ] && { cat "$W/create.err" >&2; exit 1; }; echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
     "api user") [ -f "$W/user.fail" ] && exit 1; echo "loki-bot" ;;
     # Fork mode: noperm makes the pinned repo report permissions.push false; fork.parent is the parent the fork reports.
     "api repos/octocat/hello") if [ -f "$W/noperm" ]; then echo false; elif [ -f "$W/garbage" ]; then echo "<html>rate limited"; else echo true; fi ;;
@@ -476,6 +476,33 @@ p4 "$LIB" issue-comment --update "octocat/hello#9" "$W/status.md" >/dev/null 2>"
 [ "$rc" -eq 0 ] && ! grep -q 'issue comment\|pr comment\|PATCH' "$GHLOG" \
     && ok "a garbage permission probe posts no status comment (fail closed)" || bad "garbage probe comment: rc=$rc gh=$(tr '\n' '|' < "$GHLOG")"
 rm -f "$W/garbage"
+
+
+# #230 slice 1 (RQ-55): every publish failure carries a named class and keeps the decisive stderr line. Fixtures are built
+# at run time from short phrases, each stub failing exactly one gh/git step.
+failclass() { # <label> <class> <decisive phrase> <kind: create|list|push>
+    local label="$1" want="$2" phrase="$3" kind="$4" br="loki/e10-fc-$1" rc line
+    git -C "$A" branch "$br" 2>/dev/null; rm -f "$W/pr.url" "$W/create.err" "$W/list.err" "$W/push.reject"
+    case "$kind" in create) printf '%s\n' "$phrase" > "$W/create.err" ;; list) printf '%s\n' "$phrase" > "$W/list.err" ;; push) printf '%s\n' "$phrase" > "$W/push.reject" ;; esac
+    p4 "$LIB" push-pr "$A" "$br" "E10 title" "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+    line="$(grep '^engine10-push: publish_failed' "$W/err" | tail -n 1)"
+    if [ "$rc" -eq 2 ] && printf '%s' "$line" | grep -q "^engine10-push: publish_failed class=$want: " && grep -qF "$phrase" "$W/err"; then
+        ok "publish failure $label is class $want, rc 2, decisive line kept"
+    else
+        bad "publish failure $label: rc=$rc want class=$want got: $line"
+    fi
+    rm -f "$W/create.err" "$W/list.err" "$W/push.reject"
+}
+failclass policy policy "GraphQL: Pull request creation is disabled for this repository" create
+failclass auth auth "HTTP 401: Bad credentials (https://api.github.com/graphql)" create
+failclass nodiff no-diff "GraphQL: No commits between main and the head branch" create
+failclass rate rate-limit "HTTP 403: API rate limit exceeded for user" create
+failclass net network "dial tcp: lookup api.github.com: could not resolve host" create
+failclass other other "something nobody classified" create
+failclass listauth auth "HTTP 401: Bad credentials" list
+failclass pushpol policy "remote: error: GH006: Protected branch update failed" push
+[ "$(ls "${TMPDIR:-/tmp}"/loki-push-err.* 2>/dev/null | wc -l | tr -d ' ')" = "0" ] \
+    && ok "no loki-push-err temp file is left behind by a failed publish" || bad "a loki-push-err temp file leaked"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

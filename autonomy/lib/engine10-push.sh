@@ -30,7 +30,53 @@ set -o pipefail
 
 log_warn() { printf 'WARN: %s\n' "$*" >&2; }
 log_info() { printf 'INFO: %s\n' "$*" >&2; }
-die() { printf 'engine10-push: %s\n' "$*" >&2; exit "${2:-2}"; }
+die() { [ -z "${_e10_err:-}" ] || rm -f "$_e10_err"; printf 'engine10-push: %s\n' "$*" >&2; exit "${2:-2}"; }
+
+# #230 slice 1: every publish failure carries a named class, read from the captured gh/git stderr. Order matters: a
+# rate-limited 403 is rate-limit, not policy. Unrecognised output is class other, never empty. The patterns are matched
+# against lowercased text; _e10_class_re is the one place a class is defined.
+_e10_class_re() {
+    case "$1" in
+        no-diff) printf '%s' 'no commits between' ;;
+        rate-limit) printf '%s' 'rate limit|http 429|abuse detection' ;;
+        auth) printf '%s' 'http 401|bad credentials|not logged in|gh auth login|authentication failed|could not read username|requires authentication' ;;
+        policy) printf '%s' 'protected branch|pull request creation is disabled|creation of pull requests|collaborators? only|gh013|repository rule violations|pre-receive hook declined|permission to .* denied|http 403' ;;
+        network) printf '%s' 'could not resolve|timed out|timeout|connection refused|connection reset|network is unreachable' ;;
+    esac
+}
+# _e10_classify <stderr-file>: sets _e10_cls and _e10_line (the first line that decided the class, else the last line).
+_e10_classify() {
+    local c re line
+    _e10_cls=other _e10_line=""
+    [ -s "$1" ] || return 0
+    for c in no-diff rate-limit auth policy network; do
+        re="$(_e10_class_re "$c")"
+        line="$(tr '[:upper:]' '[:lower:]' < "$1" | grep -n -m1 -E "$re" | cut -d: -f1)"
+        if [ -n "$line" ]; then
+            _e10_cls="$c"
+            _e10_line="$(sed -n "${line}p" "$1")"
+            break
+        fi
+    done
+    [ -n "$_e10_line" ] || _e10_line="$(grep -v '^[[:space:]]*$' "$1" | tail -n 1)"
+    _e10_line="$(printf '%s' "$_e10_line" | tr -d '\000-\037\177' | cut -c1-200)"
+}
+# _e10_cap <stderr-file> <command...>: run the command with its stderr captured, then replay it, so a caller sees exactly
+# what it saw before and a failure can still be classed from the file. Returns the command's status.
+_e10_cap() {
+    local f="$1" rc
+    shift
+    "$@" 2>"$f"
+    rc=$?
+    [ -s "$f" ] && cat "$f" >&2
+    return "$rc"
+}
+# _e10_publish_die <label> <stderr-file>: die with the class and the decisive stderr line.
+_e10_publish_die() {
+    _e10_classify "$2"
+    rm -f "$2"
+    die "publish_failed class=$_e10_cls: $1${_e10_line:+: $_e10_line}"
+}
 
 # Capture the pin before sourcing: the region resets both variables to "".
 _e10_pinned="${_LOKI_ORIGIN_PINNED:-}"
@@ -193,8 +239,10 @@ case "$mode" in
             esac
         done
         [ -f "$body" ] || die "body file not found: $body"
+        _e10_err="$(mktemp "${TMPDIR:-/tmp}/loki-push-err.XXXXXX")" || die "cannot create a temp file"
         if [ -n "$_e10_local" ]; then
-            _e10_local_push "$dir" "$branch" || die "push refused or failed (rc=$?)"
+            _e10_cap "$_e10_err" _e10_local_push "$dir" "$branch" || _e10_publish_die "push refused or failed (rc=$?)" "$_e10_err"
+            rm -f "$_e10_err"
             printf 'local://%s#%s\n' "$_LOKI_PINNED_ORIGIN" "$branch"
             exit 0
         fi
@@ -207,20 +255,22 @@ case "$mode" in
             _e10_fork_repo="$(_e10_fork "$_e10_me")" || { [ "$?" -eq 3 ] && die "no push access to $_e10_repo: the fork under $_e10_me is still being created on GitHub; rerun to push once it exists"
                 die "no push access to $_e10_repo and its fork under $_e10_me could not be created or verified"; }
             log_info "no push access to $_e10_repo: pushing to the fork $_e10_fork_repo"
-            _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" "$_e10_fork_repo" || die "push to fork $_e10_fork_repo refused or failed (rc=$?)"
+            _e10_cap "$_e10_err" _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" "$_e10_fork_repo" || _e10_publish_die "push to fork $_e10_fork_repo refused or failed (rc=$?)" "$_e10_err"
             if [ "${#draft[@]}" -gt 0 ]; then
                 printf 'fork-only: pushed %s to %s; no draft PR is opened on %s, which you cannot push to. Open one yourself: gh pr create --repo %s --head %s:%s\n' \
                     "$branch" "$_e10_fork_repo" "$_e10_repo" "$_e10_repo" "$_e10_me" "$branch" >&2
+                rm -f "$_e10_err"
                 exit 4
             fi
-            url="$(_e10_find_fork_pr "$_e10_me" "$branch")" || die "gh pr list failed"
+            url="$(_e10_cap "$_e10_err" _e10_find_fork_pr "$_e10_me" "$branch")" || _e10_publish_die "gh pr list failed" "$_e10_err"
             _e10_pr_state=reused
             if [ -z "$url" ]; then
                 _e10_pr_state=created
-                url="$(_e10_gh pr create --repo "$_e10_repo" --head "$_e10_me:$branch" --title "$title" --body-file "$body" "${base[@]}")" \
-                    || die "gh pr create failed"
+                url="$(_e10_cap "$_e10_err" _e10_gh pr create --repo "$_e10_repo" --head "$_e10_me:$branch" --title "$title" --body-file "$body" "${base[@]}")" \
+                    || _e10_publish_die "gh pr create failed" "$_e10_err"
                 url="$(printf '%s\n' "$url" | tail -n 1)"
             fi
+            rm -f "$_e10_err"
             printf '%s\n' "$_e10_pr_state"
             printf '%s\n' "$url"
             exit 0
@@ -234,16 +284,17 @@ case "$mode" in
         if [ -n "$_e10_want" ] && [ "$_e10_want" = "$_e10_have" ]; then
             log_info "push skipped: remote already has $branch at ${_e10_want:0:12}"
         else
-            _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || die "push refused or failed (rc=$?)"
+            _e10_cap "$_e10_err" _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || _e10_publish_die "push refused or failed (rc=$?)" "$_e10_err"
         fi
-        url="$(_e10_find_pr "$branch")" || die "gh pr list failed"
+        url="$(_e10_cap "$_e10_err" _e10_find_pr "$branch")" || _e10_publish_die "gh pr list failed" "$_e10_err"
         _e10_pr_state=reused
         if [ -z "$url" ]; then
             _e10_pr_state=created
-            url="$(_e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}" "${base[@]}")" \
-                || die "gh pr create failed"
+            url="$(_e10_cap "$_e10_err" _e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}" "${base[@]}")" \
+                || _e10_publish_die "gh pr create failed" "$_e10_err"
             url="$(printf '%s\n' "$url" | tail -n 1)"
         fi
+        rm -f "$_e10_err"
         printf '%s\n' "$_e10_pr_state"  # marker line before the URL: reused (open PR found) or created
         printf '%s\n' "$url"
         ;;

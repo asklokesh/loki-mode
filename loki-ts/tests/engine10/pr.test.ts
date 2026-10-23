@@ -163,6 +163,22 @@ describe("engine10 pr stage", () => {
     const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
     expect(result.reason).toBe("engine10-push.sh push-pr failed (exit 4): ");
   });
+  test("RQ-55: the class named in the die line reaches the failed outcome and data", async () => {
+    for (const cls of ["policy", "auth", "no-diff", "rate-limit", "network", "other"]) {
+      const script = join(stubDir, `cls-${cls}.sh`);
+      writeFileSync(script, `#!/bin/bash\necho "engine10-push: publish_failed class=${cls}: gh pr create failed: x" >&2\nexit 2\n`, { mode: 0o755 });
+      const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+      expect(result.reason).toContain(`publish_failed class=${cls}: gh pr create failed: x`);
+      expect(result.data).toEqual({ publish_class: cls });
+    }
+  });
+  test("RQ-55: a script that dies without a class reports class other", async () => {
+    const script = join(stubDir, "noclass.sh"); writeFileSync(script, "#!/bin/bash\necho 'engine10-push: something odd' >&2\nexit 2\n", { mode: 0o755 });
+    const { ctx } = makeCtx(repoDir, runDir, { verdict: "SPEC_CONFLICT" });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.data).toEqual({ publish_class: "other" });
+  });
   test("pushErrLine keeps the die line and the permission denial, on one line", () => {
     const raw = "remote: Permission to anthropics/claude-code.git denied to asklokesh.\nfatal: unable to access 'https://github.com/anthropics/claude-code.git/': The requested URL returned error: 403\nengine10-push: push refused or failed (rc=128)\n";
     expect(pushErrLine(raw)).toBe("engine10-push: push refused or failed (rc=128): Permission to anthropics/claude-code.git denied to asklokesh.");
@@ -199,6 +215,7 @@ describe("engine10 pr stage", () => {
       expect(Date.now() - t0).toBeLessThan(10_000);
       expect(result.status).toBe("failed");
       expect(result.reason).toContain("timed out after 500ms");
+      expect(result.reason).toContain("publish_failed class=network");
       expect(emitted.some((e) => e.type === "pr.opened")).toBe(false);
     } finally { if (prev === undefined) delete process.env.LOKI_PR_PUSH_TIMEOUT_MS; else process.env.LOKI_PR_PUSH_TIMEOUT_MS = prev; }
   });

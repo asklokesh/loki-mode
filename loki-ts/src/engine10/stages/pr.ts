@@ -56,7 +56,9 @@ export function toPushShellArgs(args: PushArgs): string[] {
 /** TEN-STABILITY-50: every push/pr-ready/status child is bounded so one hung script cannot block the run. LOKI_PR_PUSH_TIMEOUT_MS overrides (default 50s, inside the 60s stage limit). */
 export function prChildTimeoutMs(environ: NodeJS.ProcessEnv = process.env): number { const n = Number(environ.LOKI_PR_PUSH_TIMEOUT_MS); return Number.isFinite(n) && n >= 100 ? Math.floor(n) : 50_000; }
 function spawnBounded(args: string[], env: NodeJS.ProcessEnv) { return spawnSync("bash", args, { env, encoding: "utf8", timeout: prChildTimeoutMs(), killSignal: "SIGKILL" }); }
-function failReason(script: string, mode: string, r: ReturnType<typeof spawnBounded>): string { const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"; return timedOut ? `${script} ${mode} timed out after ${prChildTimeoutMs()}ms (hung script killed)` : r.status === 4 && mode === "push-pr" && pushErrLine(r.stderr ?? "").startsWith("fork-only: ") ? pushErrLine(r.stderr ?? "") : `${script} ${mode} failed (exit ${r.status}): ${pushErrLine(r.stderr ?? "")}`; }
+/** RQ-55: the publish failure class engine10-push.sh names in its die line (`publish_failed class=<c>: ...`); a killed hung script is a network class, anything unnamed is other. */
+export function publishClass(r: ReturnType<typeof spawnBounded>): string { return (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" ? "network" : /publish_failed class=([a-z-]+):/.exec(r.stderr ?? "")?.[1] ?? "other"; }
+function failReason(script: string, mode: string, r: ReturnType<typeof spawnBounded>): string { const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"; return timedOut ? `${script} ${mode} timed out after ${prChildTimeoutMs()}ms (hung script killed): publish_failed class=network` : r.status === 4 && mode === "push-pr" && pushErrLine(r.stderr ?? "").startsWith("fork-only: ") ? pushErrLine(r.stderr ?? "") : `${script} ${mode} failed (exit ${r.status}): ${pushErrLine(r.stderr ?? "")}`; }
 function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   if (resolvePrAuthor(repoDir) === "bot") {
@@ -66,12 +68,12 @@ function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
   return env;
 }
 /** The one credentialed push-pr call (env, bot token, spawn, URL check incl. E-41 local://); stage and modernize ship share it. */
-export type PushPrResult = { ok: true; url: string; existing: boolean | null; localOk: boolean } | { ok: false; reason: string };
+export type PushPrResult = { ok: true; url: string; existing: boolean | null; localOk: boolean } | { ok: false; reason: string; class?: string };
 export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string; gitlabScriptPath?: string; env?: NodeJS.ProcessEnv }): PushPrResult {
   if (isGitlabOrigin(a.pinnedOrigin)) return runPushMr(a); const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
   const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
   const r = spawnBounded([a.scriptPath ?? DEFAULT_PUSH_SH, ...args], env);
-  if (r.status !== 0) return { ok: false, reason: failReason("engine10-push.sh", "push-pr", r) };
+  if (r.status !== 0) return { ok: false, reason: failReason("engine10-push.sh", "push-pr", r), class: publishClass(r) };
   const url = lastNonEmptyLine(r.stdout ?? ""), markers = (r.stdout ?? "").split("\n").map((l) => l.trim());
   // E-41: for a local bare origin (the eval harness) push-pr prints exactly local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
   const localOk = a.pinnedOrigin.startsWith("/") && !a.pinnedOrigin.includes(":") && url === `local://${a.pinnedOrigin}#${a.branch}`;
@@ -121,7 +123,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
   const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, gitlabScriptPath: opts.gitlabPushScriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
-  if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
+  if (!pr.ok) return { status: "failed", data: pr.class ? { publish_class: pr.class } : {}, reason: pr.reason };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
   const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
