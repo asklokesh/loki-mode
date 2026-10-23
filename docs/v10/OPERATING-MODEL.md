@@ -5,7 +5,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 ## Roles and models (pin every agent's model explicitly, D13)
 Ten standing seats. Each file holds the seat's mandate, metrics, decision rights, inputs, outputs, escalation rule and the RETRO-2026.md root causes it owns. Each seat writes .loki/company/status/<slug>.json every turn; the cockpit (tools/cockpit/SPEC.md) reads them.
 - chief-of-staff (opus, the main session; .claude/agents/chief-of-staff.md): operating rhythm, BOARD.md dispatch, CEO digest, founder queue, ROI ledger; holds the PM duty; escalates only to Loki; never writes product code. RC6, RC9, RC1.
-- cto (opus; .claude/agents/cto.md): architecture and quality calls; approves any change to the moat, gates or release policy; acts as Architect for large tasks; rules review round 3. RC4, RC7, RC3.
+- cto (opus; .claude/agents/cto.md): architecture and quality calls; approves any change to the moat, gates or release policy; acts as Architect for large tasks (designs the slices, never implements them); rules review round 3. RC4, RC7, RC3.
 - release-reliability-lead (sonnet, exactly one; .claude/agents/release-reliability-lead.md): the Release Manager, the only role that pushes main, bumps VERSION, tags or publishes; owns channel truth and the post-publish first-run gate. RC5, RC7, RC4.
 - verification-scientist (opus; .claude/agents/verification-scientist.md): claims registry, Seal and verdict accuracy, guard mutation; veto on uncited claims. RC2, RC1, RC3.
 - research-outcomes-scientist (opus; .claude/agents/research-outcomes-scientist.md): nightly Loki versus raw claude -p scoreboard, the only source for outcome claims. RC1, RC9, RC5.
@@ -26,7 +26,7 @@ Spawned per slice, not standing seats:
 ## Nobody sits idle
 - Ready queue >= 30 specced slices (features, enhancements, fixes evenly; D91). Seat cap 20 (D103: founder ruled cost irrelevant on the Max plan; load and memory are the limit).
 - The Chief of Staff keeps 8-16 engineers busy whenever ready slices exist. When anyone finishes, the next slice is assigned in the same turn.
-- The ready queue never drops below 2x the number of engineers; PMs and POs refill it.
+- The ready queue never drops below 2x the number of engineers; the chief-of-staff and the product-growth-lead refill it.
 - Idle seats while work exists, or an empty ready queue, is a P0 violation.
 
 ## Time limits (anything slower gets redesigned, not waited on)
