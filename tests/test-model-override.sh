@@ -437,6 +437,41 @@ else
   [ "$rv_ok" = 1 ] && ok "reviewer pin: only haiku|sonnet|opus add --model; fable/other/unset add none" \
     || bad "reviewer pin: LOKI_ADVISOR_MODEL block builds a wrong argv"
 fi
+# Whole-argv replay: run the REAL _rv_argv build (declaration through the
+# allowlist append, every branch that touches the array) and assert the final
+# argv carries a --model token only for haiku|sonnet|opus, as a bare "--model"
+# or "--model=..." form alike. Helpers are undefined here, so their `type` guards
+# skip and loki_is_supervised_simple_web fails, leaving the model pin as the only
+# argv contributor under test.
+RV_FULL="$(printf '%s\n' "$RV_BLOCK" | awk '/local _rv_argv=\(/{f=1} f{print} f&&/_rv_argv\+=\("--allowedTools"/{a=1} a&&/^            fi$/{exit}')"
+rv_full_argv() {
+  ( _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    if [ "${1-__unset__}" = "__unset__" ]; then unset LOKI_ADVISOR_MODEL; else export LOKI_ADVISOR_MODEL="$1"; fi
+    f() { eval "$RV_FULL"; printf '%s\n' "${_rv_argv[@]}"; }
+    f 2>/dev/null )
+}
+if [ -z "$RV_FULL" ]; then
+  bad "reviewer pin: could not extract the whole _rv_argv build"
+else
+  rvf_ok=1
+  for rvf_v in __unset__ fable gpt-5 ""; do
+    rvf_out="$(rv_full_argv "$rvf_v")"
+    printf '%s\n' "$rvf_out" | grep -q -- '^--model' && rvf_ok=0
+    printf '%s\n' "$rvf_out" | grep -qx -- '--dangerously-skip-permissions' || rvf_ok=0
+  done
+  for rvf_v in haiku sonnet opus; do
+    rvf_out="$(rv_full_argv "$rvf_v" | tr '\n' ' ')"
+    [ "$rvf_out" = "--dangerously-skip-permissions --model $rvf_v " ] || rvf_ok=0
+  done
+  [ "$rvf_ok" = 1 ] && ok "reviewer pin: whole argv has no --model or --model= token for fable/other/unset" \
+    || bad "reviewer pin: whole _rv_argv replay leaks a --model token"
+fi
+# Any other _rv_argv append that names a model, anywhere in run.sh, is a leak
+# the replay window could miss.
+rv_any_model="$(grep -v '^[[:space:]]*#' "$RUN_SH" | grep -E '_rv_argv\+?=.*(-model|fable)' | wc -l | tr -d ' ')"
+[ "$rv_any_model" = 1 ] \
+  && ok "reviewer pin: exactly one _rv_argv assignment names a model, in the allowlist arm" \
+  || bad "reviewer pin: $rv_any_model _rv_argv lines name a model (want 1)"
 rv_model_lines="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -c -- '"--model"')"
 rv_model_arm="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -- '"--model"' | grep -c 'haiku|sonnet|opus)')"
 [ "$rv_model_lines" = 1 ] && [ "$rv_model_arm" = 1 ] \
