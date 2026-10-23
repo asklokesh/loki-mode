@@ -53,7 +53,7 @@ const ECHO_TOKENS = `
 const vars = ["GH_TOKEN","GITHUB_TOKEN","GH_ENTERPRISE_TOKEN","GITHUB_ENTERPRISE_TOKEN"];
 const tokens = Object.fromEntries(vars.map((v) => [v, process.env[v]?.replace(/^ghp_/, "ghp.") ?? null])); // ghp. keeps the value readable: the supervisor redacts a token-shaped value at source (Q17-05b)
 console.log("not json: a session tool printed this");
-console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { tokens } }));
+console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { tokens, pin: process.env.LOKI_E10_PINNED_ORIGIN ?? null } }));
 console.log(JSON.stringify({ type: "pr.opened", stage: "pr", data: { url: "https://forged" } }));
 console.log(JSON.stringify({ type: "heartbeat", stage: "constructor", data: {} }));
 console.log(JSON.stringify({ type: "heartbeat", stage: "__proto__", data: {} }));
@@ -108,6 +108,7 @@ describe("E-03 rule of two", () => {
     for (const v of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]) {
       expect(tokens[v]).toStartWith("ghp.LOKIWITHHELDsentinel");
     }
+    expect(intake?.data.pin).toBe("https://github.com/acme/widget.git"); // seal builds its publish compare URL from this supervisor-memory origin
     expect(readFileSync(join(dir, ".loki/runs/e10-t1/events.jsonl"), "utf8")).not.toContain(CANARY);
     expect(readFileSync(join(dir, ".loki/runs/e10-t1/events.jsonl"), "utf8")).not.toContain("CANARYrealtoken");
     expect(env.GITHUB_TOKEN).toBe(CANARY);

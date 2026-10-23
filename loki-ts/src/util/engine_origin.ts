@@ -43,39 +43,42 @@ export function classifyPublish(repoSlug: string, repo: Record<string, any>, log
   if (repo["pull_request_creation_policy"] === "collaborators_only") return mk("fork_branch", PUBLISH_REASONS[4], "push the branch to your fork and print a compare URL");
   return mk("fork_pr", null, "");
 }
+/** The caller's GitHub login, one bounded gh read; null when gh is missing, unauthenticated (the worker has its tokens withheld) or answers anything but a login. */
+export async function ghLogin(env: Record<string, string | undefined>): Promise<string | null> {
+  const u = await sh(["gh", "api", "user", "--jq", ".login"], { env: env as Record<string, string>, timeoutMs: 10000 }); return u.exitCode === 0 && /^[A-Za-z0-9-]+$/.test(u.stdout.trim()) ? u.stdout.trim() : null;
+}
 /** One bounded gh read of the repo (plus the login when a fork is needed); null when it cannot be read or parsed. */
 export async function probePublish(originUrl: string, env: Record<string, string>): Promise<PublishPlan | null> {
   const slug = githubRepoFromUrl(originUrl); if (!slug) return null;
   const r = await sh(["gh", "api", `repos/${slug}`], { env, timeoutMs: 10000 }); if (r.exitCode !== 0) return null;
   let repo: Record<string, any>; try { repo = JSON.parse(r.stdout) as Record<string, any>; } catch { return null; }
   const first = classifyPublish(slug, repo); if (first?.mode !== "fork_branch") return first;
-  const u = await sh(["gh", "api", "user", "--jq", ".login"], { env, timeoutMs: 10000 }); const login = u.exitCode === 0 && /^[A-Za-z0-9-]+$/.test(u.stdout.trim()) ? u.stdout.trim() : null; // fork owner, needed only for the compare URL
-  return classifyPublish(slug, repo, login);
+  return classifyPublish(slug, repo, await ghLogin(env)); // fork owner, needed only for the compare URL
 }
 /** Adds `publish` to <runDir>/preflight.json only when a PR will not open directly, so a full-access run's file is unchanged. */
 export function recordPublish(runDir: string, plan: PublishPlan): void {
   if (plan.mode === "pr") return;
   try { const f = join(runDir, "preflight.json"); const j = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {}; writeFileSync(f, JSON.stringify({ ...j, publish: plan.mode, ...(plan.reason ? { publish_reason: plan.reason } : {}), ...(plan.compare ? { publish_compare: plan.compare } : {}) }) + "\n"); } catch { /* evidence, never a gate */ }
 }
-/** The caller's GitHub login, one bounded gh read; null when gh is missing, unauthenticated (the worker has its tokens withheld) or answers anything but a login. */
-export function ghLogin(env: NodeJS.ProcessEnv = process.env): string | null {
-  try { const l = execFileSync("gh", ["api", "user", "--jq", ".login"], { env, encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"] }).trim(); return /^[A-Za-z0-9-]+$/.test(l) ? l : null; } catch { return null; }
-}
 /** R100-022: what preflight recorded about publishing, read back from <runDir>/preflight.json. The file is agent-writable (FC-AGENT-WRITABLE-FILE-SIGNED-INTO-RECEIPT), so nothing in it is rendered as text: the mode comes only from branch|fork_branch|local_branch, the reason only from PUBLISH_REASONS, and the compare URL is rebuilt from the run's PINNED origin (mode branch: that repo; mode fork_branch: the repo name under a live gh login, else none), never taken from the file or the live remote. Null for a normal run, a missing key, an unknown mode or an unreadable file. */
-export function readPublish(runDir: string, pinnedOrigin: string | null, login: () => string | null = ghLogin): { mode: PublishMode; reason?: string; compare?: string } | null {
+export function readPublish(runDir: string, pinnedOrigin: string | null, login: string | null = null): { mode: PublishMode; reason?: string; compare?: string } | null {
   try {
     const j = JSON.parse(readFileSync(join(runDir, "preflight.json"), "utf8")) as { publish?: unknown; publish_reason?: unknown };
     const mode = (["branch", "fork_branch", "local_branch"] as const).find((m) => m === j.publish); if (!mode) return null;
     const reason = PUBLISH_REASONS.find((r) => r === j.publish_reason), slug = githubRepoFromUrl(pinnedOrigin);
-    const who = mode === "fork_branch" && slug ? login() : null, compare = slug && mode === "branch" ? `https://github.com/${slug}/compare` : slug && who ? `https://github.com/${who}/${slug.split("/")[1]}/compare` : undefined;
+    const who = mode === "fork_branch" && slug ? login : null, compare = slug && mode === "branch" ? `https://github.com/${slug}/compare` : slug && who ? `https://github.com/${who}/${slug.split("/")[1]}/compare` : undefined;
     return { mode, ...(reason ? { reason } : {}), ...(compare ? { compare } : {}) };
   } catch { return null; }
 }
+/** readPublish with the live gh login resolved, but only when the recorded mode is fork_branch (every other mode costs no gh call). */
+export async function readPublishLive(runDir: string, pinnedOrigin: string | null, env: Record<string, string | undefined>, login: () => string | null | Promise<string | null> = () => ghLogin(env)): Promise<ReturnType<typeof readPublish>> {
+  const p = readPublish(runDir, pinnedOrigin); return p?.mode === "fork_branch" ? readPublish(runDir, pinnedOrigin, await login()) : p;
+}
 /** R100-022: the receipt body's additive `publish` block. Empty for a full-access run, so its receipt_sha256 is unchanged. */
-export const publishReceiptBlock = (runDir: string, pinnedOrigin: string | null, login?: () => string | null): { publish?: { mode: string; reason?: string; compare?: string } } => { const p = readPublish(runDir, pinnedOrigin, login); return p ? { publish: p } : {}; };
+export const publishReceiptBlock = async (runDir: string, pinnedOrigin: string | null, env: Record<string, string | undefined>, login?: () => string | null | Promise<string | null>): Promise<{ publish?: { mode: string; reason?: string; compare?: string } }> => { const p = await readPublishLive(runDir, pinnedOrigin, env, login); return p ? { publish: p } : {}; };
 /** R100-022: when preflight recorded that a PR cannot open here, say what the run delivers instead (the branch, plus a compare URL when the owner is known). Empty for a normal run or an unreadable file. */
-export function publishFallback(runDir: string, pinnedOrigin: string | null, branch: string, base?: string | null, login?: () => string | null): string {
-  const p = readPublish(runDir, pinnedOrigin, login);
+export async function publishFallback(runDir: string, pinnedOrigin: string | null, env: Record<string, string | undefined>, branch: string, base?: string | null, login?: () => string | null | Promise<string | null>): Promise<string> {
+  const p = await readPublishLive(runDir, pinnedOrigin, env, login);
   if (!p) return "";
   const cmp = p.compare ? ` Compare: ${p.compare}/${base ? `${base}...` : ""}${branch}` : "";
   return ` | publish expectation set at intake (${p.mode}${p.reason ? `: ${p.reason}` : ""}). The work is on branch ${branch}.${cmp}`;
