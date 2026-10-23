@@ -76,7 +76,17 @@ class ApiCostCacheTests(unittest.TestCase):
         self.assertEqual(self.calc("sonnet", 1_000_000, 0), 3.0)
 
     def setUp(self):
+        # _calculate_model_cost applies LOKI_INFERENCE_GEO; an ambient value would shift every price.
+        saved = os.environ.pop("LOKI_INFERENCE_GEO", None)
+        self.addCleanup(self._restore_geo, saved)
         self.calc = _load_calculator()
+
+    @staticmethod
+    def _restore_geo(saved):
+        if saved is None:
+            os.environ.pop("LOKI_INFERENCE_GEO", None)
+        else:
+            os.environ["LOKI_INFERENCE_GEO"] = saved
 
     def test_cache_tokens_are_not_free(self):
         without = self.calc("sonnet", INP, OUT)

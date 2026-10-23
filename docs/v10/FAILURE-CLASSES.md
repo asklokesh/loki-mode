@@ -1607,3 +1607,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: tests/test-pricing-parity.sh geo_dash already starts the slice at `def _inference_geo_multiplier` and passes; tests/dashboard/test_cost_timeline_endpoint.py does not slice server.py (23 pass); no other test indexes `def _calculate_model_cost`.
 - Mechanism: `_slice_start` in the test walks the AST, finds module-level helpers the calculator calls that are defined above it, and starts the slice at the earliest. The exec namespace also supplies os, json, _Path and __file__ that the helper reads.
 - Fixture: tests/dashboard/test_api_cost_cache.py `test_slice_includes_every_helper_the_calculator_calls`. Executed mutation: forcing `_slice_start` back to `def _calculate_model_cost` turns 6 tests red (10 pass otherwise).
+
+## FC-TEST-AMBIENT-INFERENCE-GEO The cost-cache test read the ambient LOKI_INFERENCE_GEO, so a developer shell with the variable set turned 3 tests red
+- User-visible vs raw: raw (a red test on a contributor machine, found by rev-b in the costcache2 review).
+- Law: a test of a function that reads an environment variable pins that variable itself and restores it; it never inherits the shell.
+- Cause (measured): `LOKI_INFERENCE_GEO=us python3 -m pytest -q tests/dashboard/test_api_cost_cache.py` gives "3 failed, 7 passed" on 9dc4242bf; unset or empty gives 10 passed. `_calculate_model_cost` multiplies by `_inference_geo_multiplier`, which reads `LOKI_INFERENCE_GEO` (dashboard/server.py:7837).
+- Siblings swept: the only other test file naming LOKI_INFERENCE_GEO under tests/dashboard is none (grep of tests/dashboard/*.py found no other reader); tests/test-pricing-parity.sh sets it explicitly per case.
+- Mechanism: ApiCostCacheTests.setUp pops the variable and registers a cleanup that restores the prior value (or removes it).
+- Fixture: with LOKI_INFERENCE_GEO=us the file gives 10 passed, 7 subtests passed (was 3 failed, 7 passed); an in-process run with the variable set to us leaves it set to us afterwards.
