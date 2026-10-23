@@ -133,5 +133,46 @@ else
     bad "the air-gapped doc omits the required-model limit -- that is the overclaim"
 fi
 
+# 6. FC-EGRESS-AUDIT-HAND-LISTED: the audit names every configured outbound host.
+# 6a. Each registry name, set to a host, makes the audit name that host. Env is cleared
+#     so nothing ambient leaks in; the registry is read from autonomy/loki itself.
+registry="$(awk '/^_LOKI_AIRGAP_EGRESS_ENV=\(/{f=1;next} f&&/^\)/{f=0} f{gsub(/^ *"|\|.*$/,"");print}' "$LOKI")"
+notegress="$(awk '/^_LOKI_AIRGAP_EGRESS_NOT=\(/{f=1;next} f&&/^\)/{f=0} f{gsub(/^ *"|\|.*$/,"");print}' "$LOKI")"
+[ -n "$registry" ] && ok "the egress registry is readable from autonomy/loki ($(printf '%s\n' "$registry" | wc -l | tr -d ' ') names)" || bad "the egress registry is empty or unreadable"
+miss=""
+for n in $registry; do
+    out="$(env -i PATH="$PATH" HOME="$WORK" "$n=https://${n}.example.invalid/secret-path" bash "$LOKI" doctor --airgap 2>&1 || true)"
+    case "$out" in *"${n}.example.invalid"*) ;; *) miss="$miss $n" ;; esac
+    case "$out" in *secret-path*) miss="$miss $n(leaks-path)" ;; esac
+done
+[ -z "$miss" ] && ok "every registry name set to a host is named in the audit, host only" || bad "audit does not name:$miss"
+
+# 6b. JSON carries the same rows, and nothing configured means no extra rows with exit 0 or 1 by the model only.
+json_out="$(env -i PATH="$PATH" HOME="$WORK" LOKI_WEBHOOK_URL=https://hooks.example.invalid/x bash "$LOKI" doctor --airgap --json 2>/dev/null || true)"
+case "$json_out" in *'"host": "hooks.example.invalid"'*) ok "doctor --airgap --json lists the webhook host" ;; *) bad "doctor --airgap --json omits the webhook host" ;; esac
+clean_out="$(env -i PATH="$PATH" HOME="$WORK" LOKI_PROVIDER=opencode LOKI_OPENCODE_MODEL=ollama/qwen2.5-coder LOKI_NO_UPDATE_CHECK=1 bash "$LOKI" doctor --airgap 2>&1)"; clean_rc=$?
+case "$clean_out" in *"(LOKI_"*"->"*|*"MCP server"*) bad "nothing set, yet the audit names a configured host" ;; *) [ "$clean_rc" -eq 0 ] && ok "positive control: nothing configured reports no configured egress, exit 0" || bad "positive control exit $clean_rc" ;; esac
+
+# 6c. MCP: a url server is named (host only), a stdio server is not.
+mkdir -p "$WORK/proj"
+printf '%s' '{"mcpServers":{"remote":{"url":"https://mcp.example.invalid/sse?token=abc"},"local":{"command":"python3","args":["-m","x"]}}}' > "$WORK/proj/.mcp.json"
+mcp_out="$(cd "$WORK/proj" && env -i PATH="$PATH" HOME="$WORK" bash "$LOKI" doctor --airgap 2>&1 || true)"
+case "$mcp_out" in *"MCP server remote"*"mcp.example.invalid"*) ok "an MCP server with a url is named by host" ;; *) bad "an MCP url server is not reported" ;; esac
+case "$mcp_out" in *"MCP server local"*|*token=abc*) bad "a stdio MCP server was reported, or a url query leaked" ;; *) ok "a stdio MCP server is not reported and no url query leaks" ;; esac
+
+# 6d. The guard: every LOKI_*_(URL|HOST|ENDPOINT|WEBHOOK) name read under a tree is in the
+#     registry or the non-egress list. A fixture copy with a new reader must make it red.
+guard_missing() {
+    local root="$1" n
+    for n in $(cd "$root" && grep -rhoE 'LOKI_[A-Z_]*(URL|HOST|ENDPOINT|WEBHOOK)[A-Z_]*' --exclude='*.md' --exclude-dir=node_modules --exclude-dir=dist autonomy loki-ts/src providers 2>/dev/null | sort -u); do
+        printf '%s\n%s\n' "$registry" "$notegress" | grep -qx "$n" || printf '%s ' "$n"
+    done
+}
+unlisted="$(guard_missing "$REPO_ROOT")"
+[ -z "$unlisted" ] && ok "guard: every egress-looking env reader is registered or marked non-egress" || bad "guard: unlisted egress-looking names: $unlisted"
+mkdir -p "$WORK/fx/autonomy" "$WORK/fx/loki-ts/src"
+printf 'const u = process.env.LOKI_FOO_URL;\n' > "$WORK/fx/loki-ts/src/foo.ts"
+[ "$(guard_missing "$WORK/fx")" = "LOKI_FOO_URL " ] && ok "guard mutation: a new LOKI_FOO_URL reader in a fixture goes red" || bad "guard mutation: the guard missed a new LOKI_FOO_URL reader"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
