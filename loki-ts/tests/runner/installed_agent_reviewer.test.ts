@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // R10 extension seam: an agent a user installs via `loki agent install`
 // (.loki/agents/installed.json) must actually reach the code-review reviewer
 // pool on the Bun route.

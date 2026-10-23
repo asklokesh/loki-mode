@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Phase 1 (v7.5.0) integration: end-to-end override-on-BLOCK flow.
 //
 // Council R1 + R3 finding: pre-fix, runOverrideCouncil was exported but

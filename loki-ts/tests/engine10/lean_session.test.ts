@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-65: engine10 provider sessions run lean (6 tools, no loki append, no MCP, project settings only); legacy is unchanged.
 // S41-09: LOKI_E10_PREFIX=lean gives engine10 sessions a fixed-string systemPrompt (D41 item 2, D42 item 1).
 import { afterEach, describe, expect, it } from "bun:test";

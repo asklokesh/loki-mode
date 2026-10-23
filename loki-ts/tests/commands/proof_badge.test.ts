@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // HLW-5: shareable "Verified by Loki" Evidence Receipt badge.
 //
 // These tests pin the anti-fake-green discipline of renderProofBadge: the badge

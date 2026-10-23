@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // MASS-2: `loki issues run` splits a too-large issue into stacked slices. Every external effect is a stub:
 // gh, the decomposition model reply (JSON text), the queue runner and the worktrees.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

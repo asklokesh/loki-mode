@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D50-F2-S1 Wall check: humanize-174-shaped fixture, naturaldelta floors encoded in parametrize rows.
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

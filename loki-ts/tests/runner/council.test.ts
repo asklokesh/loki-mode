@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for src/runner/council.ts (Phase 5 D1 first slice).
 //
 // Strategy: each test gets a fresh tmpdir; we point LOKI_DIR at it so

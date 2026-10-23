@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-02 wall check: state machine skeleton (docs/v10/ENGINE.md section 4).
 // Siblings are fakes injected through RunContext; stages come from an injected loader.
 import { afterEach, describe, expect, it } from "bun:test";

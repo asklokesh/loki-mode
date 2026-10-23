@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // Engine Law L1 "Never below raw" (supersedes the D31 sonnet-first cascade default).
 // Behavior tests plus a SECONDARY static guard: no stage may pass a model weaker than the run's model unless the

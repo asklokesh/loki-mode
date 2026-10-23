@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Bash-vs-Bun parity tests for `loki proof` (R1, SLICE B).
 //
 // The bin/loki shim allowlist includes "proof" (bin/loki line ~119), so when

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for v7.5.7 hardening of src/runner/council.ts:
 //   A) heuristic voter: validates failed.json items, logs+ignores parse errors
 //   B) devil's advocate: events.jsonl read wrapped in try/catch

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // R9 open-core seam tests: hosted proof-publish + tier/license gate.
 //
 // Covers the new seams added for R9 ("Hosted/paid open-core hooks"):

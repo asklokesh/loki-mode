@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for the councilWriteTranscript writer added in v7.5.16 (Dev D).
 //
 // Strategy: each test gets a fresh tmpdir with LOKI_DIR pointed at it so

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // MW-2: sdkQueryProvider passes `resume` only when engine10 sets LOKI_E10_RESUME_SESSION, and records the session id it saw.
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
