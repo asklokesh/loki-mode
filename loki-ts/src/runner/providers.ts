@@ -568,7 +568,7 @@ export function claudeProvider(): ProviderInvoker {
         env: { ...otelPassthroughEnv(process.env), ...cavemanEnv, ...modelRouteEnv(process.env), ...engine10CacheTtlEnv(process.env) },
         timeoutMs: _callTimeoutMs,
       });
-      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), neutralizeEngineMarkers(r.stderr));
 
       return {
         exitCode: r.exitCode,
@@ -1139,7 +1139,7 @@ export function codexProvider(): ProviderInvoker {
           CODEX_MODEL_REASONING_EFFORT: effort,
         },
       });
-      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), neutralizeEngineMarkers(r.stderr));
 
       return {
         exitCode: r.exitCode,
@@ -1184,7 +1184,7 @@ export function clineProvider(): ProviderInvoker {
       argv.push(withCommitHygiene(call.prompt));
 
       const r = await shellRun(argv, { cwd: call.cwd });
-      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), neutralizeEngineMarkers(r.stderr));
 
       return {
         exitCode: r.exitCode,
@@ -1245,7 +1245,7 @@ export function aiderProvider(): ProviderInvoker {
       }
 
       const r = await shellRun(argv, { cwd: call.cwd });
-      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), r.stderr);
+      await writeCaptured(call.iterationOutputPath, neutralizeEngineMarkers(r.stdout), neutralizeEngineMarkers(r.stderr));
 
       return {
         exitCode: r.exitCode,
