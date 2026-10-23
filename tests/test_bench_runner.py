@@ -540,6 +540,52 @@ class EffortAxisTest(unittest.TestCase):
                 got[lv] = json.load(fh)["effort"]
         self.assertEqual(got, {"high": "high", "medium": "medium"})
 
+    def _sweep_catalog(self):
+        cat = os.path.join(self.tmp, "cat.json")
+        with open(cat, "w") as fh:
+            json.dump({"providers": {"claude": {"cli_aliases": {"mini": "m-gap"}, "models": [
+                {"id": "m-gap", "alias": "mini", "effort": {"levels": ["high", "low", "max"]}},
+                {"id": "m-none", "effort": {"levels": []}}]}}}, fh)
+        return cat
+
+    def test_effort_sweep_expands_to_the_catalog_levels_low_to_max(self):
+        old = os.environ.get("LOKI_MODEL_CATALOG")
+        os.environ["LOKI_MODEL_CATALOG"] = self._sweep_catalog()
+        try:
+            self.assertEqual(runner.parse_efforts("sweep", "m-gap"), ["low", "high", "max"])
+            self.assertEqual(runner.parse_efforts("sweep", "mini"), ["low", "high", "max"])
+            for model in (None, "m-none", "unknown"):
+                with self.assertRaises(ValueError):
+                    runner.parse_efforts("sweep", model)
+        finally:
+            if old is None:
+                os.environ.pop("LOKI_MODEL_CATALOG", None)
+            else:
+                os.environ["LOKI_MODEL_CATALOG"] = old
+
+    def test_cli_effort_sweep_writes_one_row_per_listed_level(self):
+        out = os.path.join(self.tmp, "sw.json")
+        saved = {k: os.environ.get(k) for k in ("LOKI_MODEL_CATALOG", "LOKI_BENCH_SPEND_APPROVED")}
+        old_load = runner.load_adapter
+        runner.load_adapter = lambda name: mock_adapter_effort
+        os.environ["LOKI_MODEL_CATALOG"] = self._sweep_catalog()
+        os.environ["LOKI_BENCH_SPEND_APPROVED"] = "1"
+        try:
+            rc = runner._main(["run", self.spec_path, "--adapter", "mock", "--trials", "1",
+                               "--model", "m-gap", "--effort", "sweep", "--out", out])
+        finally:
+            runner.load_adapter = old_load
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual(rc, 0)
+        for lv in ("low", "high", "max"):
+            with open(os.path.join(self.tmp, "sw-effort-%s.json" % lv)) as fh:
+                self.assertEqual(json.load(fh)["effort"], lv)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "sw-effort-medium.json")))
+
     def test_default_run_has_no_effort_axis(self):
         # Golden: adapter called with no effort kwarg (strict adapter would
         # TypeError) and the row key set is exactly the pre-effort shape.
