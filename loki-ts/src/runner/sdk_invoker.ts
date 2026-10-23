@@ -301,7 +301,7 @@ async function runJudge(params: JudgeParams | TextParams, schema: Record<string,
       model,
       max_tokens: max,
       ...(system ? { system } : {}),
-      ...(thinking ? { thinking } : {}),
+      ...(thinking ? { thinking: thinking as Anthropic.ThinkingConfigParam } : {}),
       messages: [{ role: "user", content: buildUserContent(prompt) }],
       // messages.create with output_config.format = { type: 'json_schema', schema }
       // constrains the model to emit JSON matching the schema. Verified against

@@ -40,6 +40,7 @@ import {
   leanReviewerFlags,
   clampThinkingForEffort,
   thinkingConflictsEffort,
+  thinkingUsageError,
 } from "../../src/providers/claude_flags.ts";
 
 describe("effortForTier model clamp", () => {
@@ -1391,5 +1392,37 @@ describe("clampThinkingForEffort (#314)", () => {
     expect(thinkingConflictsEffort("claude-opus-5", { type: "disabled" }, "max")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "disabled" }, "high")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "adaptive" }, "max")).toBe(false);
+  });
+});
+
+describe("thinking substitute and usage message (#314 follow-up)", () => {
+  beforeEach(() => { delete process.env["LOKI_MODEL_CATALOG"]; });
+  it("sonnet-5-5: disabled is sent as between_tools at every effort up to high, adaptive above", () => {
+    for (const effort of [undefined, "low", "medium", "high"]) {
+      const r = clampThinkingForEffort("claude-sonnet-5-5", { type: "disabled" }, effort);
+      expect(r.thinking).toEqual({ type: "between_tools" });
+      expect(r.clamp).toEqual({ from: "disabled", to: "between_tools", effort: effort ?? "default", max: "high" });
+    }
+    for (const effort of ["xhigh", "max"]) {
+      const r = clampThinkingForEffort("claude-sonnet-5-5", { type: "disabled" }, effort);
+      expect(r.thinking).toEqual({ type: "adaptive" });
+      expect(r.clamp).toEqual({ from: "disabled", to: "adaptive", effort, max: "high" });
+    }
+  });
+  it("the substitute comes from the catalog, not the model name", () => {
+    const cat = join(mkdtempSync(join(tmpdir(), "thinksub-")), "cat.json");
+    writeFileSync(cat, JSON.stringify({ providers: { claude: { models: [{ id: "m-s", thinking: { types: ["adaptive", "x"], substitute: { disabled: "x" } } }] } } }));
+    process.env["LOKI_MODEL_CATALOG"] = cat;
+    expect(clampThinkingForEffort("m-s", { type: "disabled" }, "max")).toEqual({ thinking: { type: "x" }, clamp: { from: "disabled", to: "x", effort: "max", max: "none" } });
+    delete process.env["LOKI_MODEL_CATALOG"];
+    expect(clampThinkingForEffort("claude-opus-5", { type: "disabled" }, "high").clamp).toBeNull();
+  });
+  it("thinkingConflictsEffort: a substituted model never conflicts", () => {
+    expect(thinkingConflictsEffort("claude-sonnet-5-5", { type: "disabled" }, "max")).toBe(false);
+  });
+  it("thinkingUsageError derives the sentence from the catalog limit", () => {
+    expect(thinkingUsageError("sdk-judge", "claude-opus-5")).toBe("sdk-judge: --thinking must be disabled or adaptive; for claude-opus-5 disabled is sent as adaptive above --effort high");
+    expect(thinkingUsageError("sdk-text", "claude-sonnet-5-5")).toBe("sdk-text: --thinking must be disabled or adaptive; for claude-sonnet-5-5 disabled is sent as between_tools, and as adaptive above --effort high");
+    expect(thinkingUsageError("sdk-judge", "claude-sonnet-5")).toBe("sdk-judge: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max for claude-sonnet-5");
   });
 });
