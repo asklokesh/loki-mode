@@ -574,6 +574,32 @@ sys.stdout.write(s._clamp_to_max_tier(sys.argv[1]))
 }
 export LOKI_REPO_ROOT="$REPO_ROOT"
 
+# Batched python leg: importing dashboard.server costs ~0.75s, so the matrices
+# below collect cells and resolve them all in ONE interpreter. Input lines are
+# "ARG<US>VAR=val<US>VAR=val"; each cell runs against a fresh copy of the
+# ambient environment plus its own exports, exactly what `env "$@" python3`
+# gave per cell. Output is one result per line.
+py_batch() {
+    # $1=dashboard function name ; stdin = cell lines
+    python3 -c '
+import sys, os
+sys.path.insert(0, os.environ["LOKI_REPO_ROOT"])
+from dashboard import server as s
+fn = getattr(s, sys.argv[1])
+base = dict(os.environ)
+for line in sys.stdin.read().split("\n"):
+    if not line:
+        continue
+    parts = line.split("\x1f")
+    os.environ.clear()
+    os.environ.update(base)
+    for kv in parts[1:]:
+        k, _, v = kv.partition("=")
+        os.environ[k] = v
+    sys.stdout.write(fn(parts[0]) + "\n")
+' "$1"
+}
+
 parity_fail=0
 parity_cells=0
 # Council R1 round-2 (v7.31.0): include non-canonical cap spellings. A
@@ -581,6 +607,8 @@ parity_cells=0
 # and padded values must clamp identically on the bash and python legs
 # (both normalize trim+lowercase). Before the fix, the bash leg silently
 # ignored miscased caps while the python legs enforced them.
+parity_rows=()
+parity_in=""
 for cap in "" haiku sonnet opus Sonnet HAIKU " opus "; do
   for ah in "" LOKI_ALLOW_HAIKU=true; do
     for ovr in "" LOKI_CLAUDE_MODEL_FAST=opus LOKI_MODEL_DEVELOPMENT=haiku LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet; do
@@ -590,15 +618,24 @@ for cap in "" haiku sonnet opus Sonnet HAIKU " opus "; do
         [ -n "$ah" ]  && exports+=("$ah")
         [ -n "$ovr" ] && exports+=("$ovr")
         b="$(bash_clamp "$alias" "${exports[@]}")"
-        p="$(py_clamp "$alias" "${exports[@]}")"
-        parity_cells=$((parity_cells+1))
-        if [ "$b" != "$p" ]; then
-          parity_fail=$((parity_fail+1))
-          echo "  PARITY MISMATCH: alias=$alias cap='$cap' ah='$ah' ovr='$ovr' bash='$b' py='$p'"
-        fi
+        parity_rows+=("$alias|$cap|$ah|$ovr|$b")
+        line="$alias"
+        for kv in "${exports[@]}"; do line="$line"$'\x1f'"$kv"; done
+        parity_in="$parity_in$line"$'\n'
       done
     done
   done
+done
+parity_py=()
+while IFS= read -r p; do parity_py+=("$p"); done < <(printf '%s' "$parity_in" | py_batch _clamp_to_max_tier)
+for i in "${!parity_rows[@]}"; do
+  IFS='|' read -r alias cap ah ovr b <<<"${parity_rows[$i]}"
+  p="${parity_py[$i]-}"
+  parity_cells=$((parity_cells+1))
+  if [ "$b" != "$p" ]; then
+    parity_fail=$((parity_fail+1))
+    echo "  PARITY MISMATCH: alias=$alias cap='$cap' ah='$ah' ovr='$ovr' bash='$b' py='$p'"
+  fi
 done
 [ "$parity_fail" -eq 0 ] \
   && ok "resolver parity matrix: dashboard python clamp == claude.sh across $parity_cells cells" \
@@ -815,6 +852,8 @@ sp_r="$(resolve_session_iter sonnet 2)"    # runner-resolved (session-pin route)
 # quoted Opus while the runner dispatched Sonnet (the v7.32 cost-agreement HIGH).
 # The runner's passthrough arm (run.sh:12336) routes tier names to their own
 # tier; all three readers must now agree on those cells too.
+sp_rows=()
+sp_in=""
 for pin in sonnet opus haiku fable planning development fast; do
   for ah in "" LOKI_ALLOW_HAIKU=true; do
     for ovr in "" LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet LOKI_MODEL_FAST=haiku LOKI_CLAUDE_MODEL_PLANNING=sonnet; do
@@ -824,17 +863,26 @@ for pin in sonnet opus haiku fable planning development fast; do
         [ -n "$ovr" ] && exports+=("$ovr")
         [ -n "$cap" ] && exports+=("LOKI_MAX_TIER=$cap")
         e="$(est_quoted "${exports[@]}")"
-        d="$(dash_session_pin "$pin" "${exports[@]}")"
         r="$(resolve_session_iter "$pin" 2 "${exports[@]}")"
-        sp_cells=$((sp_cells+1))
-        # estimator quote is a pricing-table key lowercased; compare to runner alias.
-        if [ "$e" != "$r" ] || [ "$d" != "$r" ]; then
-          sp_fail=$((sp_fail+1))
-          echo "  SESSION-PIN MISMATCH: pin=$pin ah='$ah' ovr='$ovr' cap='$cap' est='$e' dash='$d' runner='$r'"
-        fi
+        sp_rows+=("$pin|$ah|$ovr|$cap|$e|$r")
+        line="$pin"
+        for kv in "${exports[@]}"; do line="$line"$'\x1f'"$kv"; done
+        sp_in="$sp_in$line"$'\n'
       done
     done
   done
+done
+sp_py=()
+while IFS= read -r p; do sp_py+=("$p"); done < <(printf '%s' "$sp_in" | py_batch _resolve_session_pin)
+for i in "${!sp_rows[@]}"; do
+  IFS='|' read -r pin ah ovr cap e r <<<"${sp_rows[$i]}"
+  d="${sp_py[$i]-}"
+  sp_cells=$((sp_cells+1))
+  # estimator quote is a pricing-table key lowercased; compare to runner alias.
+  if [ "$e" != "$r" ] || [ "$d" != "$r" ]; then
+    sp_fail=$((sp_fail+1))
+    echo "  SESSION-PIN MISMATCH: pin=$pin ah='$ah' ovr='$ovr' cap='$cap' est='$e' dash='$d' runner='$r'"
+  fi
 done
 [ "$sp_fail" -eq 0 ] \
   && ok "session-pin parity matrix: estimator == dashboard == runner across $sp_cells cells (no-override tier route)" \
