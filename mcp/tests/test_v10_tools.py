@@ -244,3 +244,96 @@ class VerifyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_FAKE_LOKI = """#!/bin/sh
+# stand-in engine: records what it was handed, writes a receipt with the verdict in $FAKE_VERDICT
+[ "$2" = "--seal-existing" ] || exit 9
+[ -z "$(git status --porcelain)" ] || exit 8
+cp "$3" "$FAKE_OUT/patch"
+printf '%s' "$1" > "$FAKE_OUT/intent"
+mkdir -p .loki/runs/e10-fake
+printf '{"run_id":"e10-fake"}' > .loki/engine.json
+printf '{"verdict":"%s","not_proven":["x"]}' "${FAKE_VERDICT:-VERIFIED}" > .loki/runs/e10-fake/receipt.json
+"""
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+class SealDiffTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-test-seal-")
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        _git(self.repo, "init", "-q", "-b", "main")
+        _git(self.repo, "config", "user.name", "t")
+        _git(self.repo, "config", "user.email", "t@example.invalid")
+        with open(os.path.join(self.repo, "a.txt"), "w") as f:
+            f.write("base\n")
+        _git(self.repo, "add", "a.txt")
+        _git(self.repo, "commit", "-q", "-m", "base")
+        self.out = os.path.join(self.tmp, "out")
+        os.makedirs(self.out)
+        self.fake = os.path.join(self.tmp, "loki")
+        with open(self.fake, "w") as f:
+            f.write(_FAKE_LOKI)
+        os.chmod(self.fake, 0o755)
+        env = mock.patch.dict(os.environ, {"FAKE_OUT": self.out})
+        env.start()
+        self.addCleanup(env.stop)
+        bin_patch = mock.patch.object(v10_tools, "LOKI_BIN", self.fake)
+        bin_patch.start()
+        self.addCleanup(bin_patch.stop)
+
+    def _edit(self):
+        with open(os.path.join(self.repo, "a.txt"), "a") as f:
+            f.write("changed line\n")
+        with open(os.path.join(self.repo, "new.txt"), "w") as f:
+            f.write("brand new\n")
+
+    def test_seals_working_tree_diff_and_leaves_user_repo_untouched(self):
+        self._edit()
+        before = (_git(self.repo, "status", "--porcelain"), _git(self.repo, "rev-parse", "HEAD"),
+                  _git(self.repo, "rev-parse", "--abbrev-ref", "HEAD"), _git(self.repo, "diff", "--cached"))
+        r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertNotIn("error", r)
+        self.assertEqual((r["verdict"], r["verified"], r["run_id"]), ("VERIFIED", True, "e10-fake"))
+        self.assertTrue(os.path.isfile(r["receipt_path"]))
+        patch = open(os.path.join(self.out, "patch")).read()
+        self.assertIn("+changed line", patch)
+        self.assertIn("+brand new", patch)
+        self.assertEqual(open(os.path.join(self.out, "intent")).read(), "add a line")
+        after = (_git(self.repo, "status", "--porcelain"), _git(self.repo, "rev-parse", "HEAD"),
+                 _git(self.repo, "rev-parse", "--abbrev-ref", "HEAD"), _git(self.repo, "diff", "--cached"))
+        self.assertEqual(before[1:], after[1:])
+        self.assertEqual(before[3], "")
+        self.assertEqual(after[0].replace("?? .loki/\n", ""), before[0])
+
+    def test_failed_wall_is_not_verified(self):
+        self._edit()
+        with mock.patch.dict(os.environ, {"FAKE_VERDICT": "FAILED"}):
+            r = v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertEqual((r["verdict"], r["verified"]), ("FAILED", False))
+
+    def test_rejects_bad_input_and_empty_diff(self):
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "", _ok))
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "--help", _ok))
+        self.assertIn("error", v10_tools.seal_diff(self.repo, "x", _deny))
+        r = v10_tools.seal_diff(self.repo, "x", _ok)
+        self.assertIn("no changes to seal", r["error"])
+
+    def test_scratch_dir_removed(self):
+        self._edit()
+        made = []
+        real = tempfile.mkdtemp
+        def spy(*a, **k):
+            d = real(*a, **k)
+            made.append(d)
+            return d
+        with mock.patch("tempfile.mkdtemp", spy):
+            v10_tools.seal_diff(self.repo, "add a line", _ok)
+        self.assertEqual(len(made), 1)
+        self.assertFalse(os.path.exists(made[0]))

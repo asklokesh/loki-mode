@@ -581,7 +581,7 @@ class ResultContractTests(unittest.TestCase):
         srv = self.server
         tools = [n for kind, n in srv._REGISTERED if kind == "tool"]
         resources = [n for kind, n in srv._REGISTERED if kind == "resource"]
-        self.assertGreaterEqual(len(tools), 47)
+        self.assertGreaterEqual(len(tools), 48)
         self.assertGreaterEqual(len(resources), 3)
         both = set(srv._UNTRUSTED_FIELDS) & set(srv._TRUSTED_TOOLS)
         self.assertEqual(both, set(), "a tool is both untrusted and trusted")
@@ -915,7 +915,7 @@ class ResultContractTests(unittest.TestCase):
         srv = self.server
         tools = [n for kind, n in srv._REGISTERED if kind == "tool"]
         resources = [n for kind, n in srv._REGISTERED if kind == "resource"]
-        self.assertGreaterEqual(len(tools), 47)
+        self.assertGreaterEqual(len(tools), 48)
         leaks, surfaced, unseeded = [], set(), set()
 
         def check(label, text):

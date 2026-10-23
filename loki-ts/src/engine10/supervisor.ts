@@ -257,7 +257,7 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let eoo = false, resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let eoo = false, resume = false, quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, sealPatch: string | null = null, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -271,8 +271,9 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--spec") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --spec needs a value\n"); return 2; } specFile = v; i++; } // TEN-STABILITY-63
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") resume = true;
+    else if (a === "--seal-existing") { const v = args[i + 1]; if (v === undefined || v === "" || v.startsWith("-")) { process.stderr.write("engine10: --seal-existing needs a patch file\n"); return 2; } sealPatch = resolve(v); noPr = true; i++; } // CW-12: the changes already exist as this patch; implement applies it instead of running a session, and no PR is ever opened
     else if (a === "--" && !eoo) eoo = true; // TEN-STABILITY-37: `--` ends options, the rest is task text
-    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
+    else if (!eoo && /^--?[A-Za-z][\w-]*(=\S*)?$/.test(a)) { process.stderr.write(`engine10: unknown flag ${a}\nusage: loki "<task>" [--no-pr] [--deep] [--json] [--verbose] [--quiet] [--max-cost N] [--provider P] [--spec F] [--seal-existing PATCH] [--resume] [-- <task>]\n`); return 2; } // flag-shaped only: a PRD body starting with "- item" or "---" has whitespace and stays task text
     else words.push(a);
   }
   let task = words.join(" ").trim(); if (resume) return (await import("../util/run_outputs.ts")).resumeFlag(words[0], noPr);
@@ -309,7 +310,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
     for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
   }
-  env.LOKI_E10_MAX_COST_USD = String(cap.usd); const seed = cap.usd > 0 ? priorSpend(repoDir, task) : 0; if (seed > 0) env.LOKI_E10_SPENT_USD = String(seed); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
+  env.LOKI_E10_MAX_COST_USD = String(cap.usd); const seed = cap.usd > 0 ? priorSpend(repoDir, task) : 0; if (seed > 0) env.LOKI_E10_SPENT_USD = String(seed); if (!isIssue) env.LOKI_E10_TASK_TEXT = task; if (sealPatch !== null) { if (!existsSync(sealPatch)) { process.stderr.write(`engine10: --seal-existing patch not found: ${sealPatch}\n`); return 2; } env.LOKI_E10_SEAL_EXISTING_PATCH = sealPatch; }
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { if (trackerRef) await fetchTrackerIssueToFile(trackerRef, join(runDir, "issue.json")); else fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM

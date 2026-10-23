@@ -40,7 +40,7 @@ export const USAGE = `Usage:
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
   loki plan <task> --spec         write the acceptance criteria to .loki/specs/<slug>.md for you to edit
   loki start --spec <file>        run against an edited spec as the authoritative intent (receipt records its sha256)
-Flags: --spec <file>, --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap; default $${DEFAULT_MAX_COST_USD} with an API key, none on a subscription; env LOKI_BUDGET_LIMIT or loki.yaml budgets.per_run override it)
+Flags: --spec <file>, --deep, --provider <name>, --no-pr, --seal-existing <patch> (seal changes already made, no implement session), --max-cost <usd> (per-run cap; default $${DEFAULT_MAX_COST_USD} with an API key, none on a subscription; env LOKI_BUDGET_LIMIT or loki.yaml budgets.per_run override it)
 `;
 // Returns null for an empty or help invocation.
 export function route(args: string[]): Route | null {
