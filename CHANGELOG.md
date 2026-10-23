@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.11 (2026-10-23)
+
+### Fixed
+- verify now reports a missing receipt path as given, and start --resume exits 4 only when a measurement is actually missing (cw17b). Approval: "Ship line: pd/cw17b 686f52fb2 APPROVED by rev-c (HIGH). Range 42404106a..686f52fb2: 8c06913ff plus merge commit 686f52fb2". Shipped as the single non-merge commit 8c06913ff.
+
 ## v11.67.10 (2026-10-23)
 
 ### Fixed
