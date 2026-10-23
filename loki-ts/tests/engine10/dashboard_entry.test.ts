@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-49: loki dashboard reachable through the real entry (docs/v10/ENGINE.md
 // section 12). E-24 already unit-tests startServer()/summarizeRun() directly
 // (dashboard.test.ts); this proves the CLI route actually reaches them: `cli.ts

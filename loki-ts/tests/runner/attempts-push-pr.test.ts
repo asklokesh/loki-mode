@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // T5-ATTEMPTS-PR: the --attempts winner reaches a remote ONLY through engine10-push.sh push-pr (_loki_trusted_push).
 // Real git, a local bare pinned origin, planted hostile repo config in the winner worktree; no network.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";

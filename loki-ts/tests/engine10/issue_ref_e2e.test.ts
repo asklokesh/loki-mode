@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-47: issue-ref end to end (docs/v10/ENGINE.md sections 4 and 6). Runs the
 // real engine from the real entry (bin/loki,
 // LOKI_TS_ENTRY=src/cli.ts, stub claude via LOKI_E10_INVOKER=cli) on a task

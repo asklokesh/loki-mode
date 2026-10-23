@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D65-SPEC: spec to contract parsing and trace mapping.
 import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { validateConstraints, assignCriteria, freezeGroupContract, groupContractPath, spawnWithContract, loadContract, repoRoot, sanitizeCriterion, parseContract, sealContract, snapshotContract, traceContract, untracedLines, MAX_CRITERIA, fromChecklist, fromPrdText, fromSpecText, mapRequirements, readRequirementsMap, renderRequirementsMap, writeFromChecklist, writeFromEngine10, type RanCheck } from "../../src/features/contract.ts";

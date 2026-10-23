@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Registry guard (CLI-MODERN-1). Lists are derived by parsing, never pinned:
 //  - every command the bash dispatcher (autonomy/loki main() case arms) or the
 //    loki-ts dispatcher (cli.ts) accepts must be in the registry, and every

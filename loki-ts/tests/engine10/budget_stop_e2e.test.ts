@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D62-FIX: end-to-end proof of the per-run cost cap through the real CLI entry.
 // bin/loki (LOKI_TS_ENTRY=src/cli.ts) runs a task with a stub claude that writes a priced
 // result-cost file for its session; the total crosses a tiny --max-cost, so the run must end BUDGET_STOP, exit 3.

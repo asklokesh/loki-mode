@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // FC-25 guard: every git spawn in loki-ts/src, bin/, autonomy/ and packages/control-plane/src (JS/TS) goes through util/safe_git.ts
 // (safeGit, safeGitSpawn, safeGitRun). There is NO allowlist: "this file only runs in the worker" was the

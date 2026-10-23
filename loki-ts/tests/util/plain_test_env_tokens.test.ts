@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-87 (P9): a test-command env never carries credentials, whatever the parent. Plant the token family and SSH_AUTH_SOCK in the
 // parent env, then check the child of plainTestEnv and a Wall base run (RealBaseTestRunner, real `node --test`) see none of them.
 import { afterEach, describe, expect, test } from "bun:test";

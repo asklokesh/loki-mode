@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-15: unit runner, card to v10 run with oracle Wall and equiv check (docs/v10/MODERNIZE.md
 // section 3.4). Binding requirements from BOARD.md M-15 notes / M-13 / M-14 opus reviews:
 // (1) sealOracle with the card's normalizers before any implementation exists, ordering tested.

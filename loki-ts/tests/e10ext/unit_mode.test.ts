@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61-11: unit run mode. Write set as scope fence (real git), pack-only brief, inert when off.
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, symlinkSync, truncateSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

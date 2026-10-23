@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // P12-05: Wall holdout. A deterministic subset of the Wall tests never reaches the repo, runDir or the implementer;
 // verify copies them in under neutral names, runs them as blocking holdout:N checks, and removes them.
 import { afterAll, afterEach, describe, expect, test } from "bun:test";

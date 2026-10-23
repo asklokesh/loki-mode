@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // P0 guard: a test-mode or throwaway run must never ship to a Control Plane discovered through HOME. A sandbox HOME holds an
 // instance.json pointing at a local stub; the stub must see ZERO requests (not even a /health probe) unless the run is a normal repo.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";

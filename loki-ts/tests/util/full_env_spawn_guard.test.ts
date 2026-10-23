@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: walk-all-src
 // FC-40 guard (D91 finding class 5): a child process spawned with the full parent env hands the real GH_TOKEN, GITHUB_TOKEN and
 // SSH_AUTH_SOCK to whatever the child runs. In loki-ts/src every spawn call site (Bun.spawn, spawn, spawnSync, execFile*,

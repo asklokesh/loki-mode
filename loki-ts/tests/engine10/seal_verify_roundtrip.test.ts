@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // A-101: seal and verify must share one canonicalizer. Non-ASCII in any string field
 // (model-written spec_conflict_reason, paths, keys) must round-trip through the real
 // JSON.stringify(receipt, null, 2) file path and verify OK.

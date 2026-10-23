@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // CH-03: warm chain plan -> implement -> fix 1..n over one SDK session (default OFF, LOKI_E10_FIX_RESUME=1 opts in).
 // Mocked sessions only. Wall, verify and seal never join the chain.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

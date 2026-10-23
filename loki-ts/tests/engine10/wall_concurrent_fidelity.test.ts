@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // WC-01b regression: real installWall + RealBaseTestRunner, flag off vs on must agree (B1 dropped test, B2/B3 false already_satisfied incl. absolute links) and the snapshot is bounded (B4).
 import { afterEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // P1-DISCARD-PROTO: prototype-named paths must not be mistaken for pre-existing dirt by discardIfSatisfied.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

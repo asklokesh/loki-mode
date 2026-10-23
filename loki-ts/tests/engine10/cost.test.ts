@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/cost.test.ts
 //
 // E-06 wall check. Fixtures under fixtures/cost/<case>/metrics/ use the exact

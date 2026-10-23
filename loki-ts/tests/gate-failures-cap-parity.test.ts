@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "./preload.ts";
+setSpawnTimeout();
 // Wave-4 L1 parity: the gate-failures.txt cap must read the FIRST 8000 bytes
 // on BOTH routes. Bun build_prompt.ts uses readBytesSafe(gfPath, 8000) which is
 // buf.subarray(0, 8000) (head). Bash autonomy/run.sh uses `head -c 8000`. This

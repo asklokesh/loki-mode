@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // FC-69 CI guard (global guard, scripts/global-guards.tsv): the real engine from bin/loki with the stub claude CLI (no billed
 // calls) and FORCE_COLOR=1 in the user's env. The Wall author writes one test that is red on base; it must be kept and executed.
 import { afterAll, describe, expect, test } from "bun:test";

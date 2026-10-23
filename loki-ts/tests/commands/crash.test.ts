@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // select: not-src-walker (tmp dir only)
 // Tests for the `loki crash` command port (Crash Reporting Phase 0,
 // local-only, ZERO network egress).

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // MARK-2: per-change AI-BOM (CycloneDX 1.7 ML-BOM block). Pure over receipt plus config.
 import { afterEach, describe, expect, test } from "bun:test";
 import { buildAiBom, mcpServerNames, AI_BOM_SPEC_VERSION, writeAiBom, AI_BOM_FILE } from "../../src/contrib/ai_bom.ts";

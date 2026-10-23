@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D61-04-F: the base-pinned tree copy (loki-already-done-*) must never outlive its check. Every TMPDIR here is a
 // test-owned dir, so the real TMPDIR is never counted or touched.
 import { describe, expect, test } from "bun:test";

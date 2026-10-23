@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // HANDOFF: render from fixture state. Unmeasured spend is never $0.00; a skipped check is never "passed".
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";

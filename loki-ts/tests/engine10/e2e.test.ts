@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-14/E-42: thin-path end to end (docs/v10/ENGINE.md section 16). Runs the real
 // engine from the real entry (bin/loki, LOKI_TS_ENTRY=src/cli.ts,
 // stub claude CLI via LOKI_E10_INVOKER=cli) on a fresh copy of a tiny bun repo:

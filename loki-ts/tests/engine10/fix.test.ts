@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/fix.test.ts
 //
 // E-17 wall check (docs/v10/ENGINE.md section 16): at most 2 rounds, then

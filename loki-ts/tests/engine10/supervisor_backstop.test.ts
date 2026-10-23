@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-67 rework: a hung worker must never end a run with no PR, no issue comment, and no reason.
 // The backstop must fire INSIDE the cap (worker cap = cap minus grace), and whatever kills the
 // worker (backstop, or a plain non-zero exit) must still leave a draft PR when there is a diff

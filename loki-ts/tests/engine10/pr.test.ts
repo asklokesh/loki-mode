@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/engine10/pr.test.ts
 //
 // E-11 (TS half) wall check. supervisor.ts/E-03 and machine.ts/E-02 are in
