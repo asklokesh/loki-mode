@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.2 (2026-10-23)
+
+### Fixed
+- The e10ext line budget guard is green again: code moved out of the over-budget e10ext file, with cache and full_job_brief tests unchanged (main-red-e10ext, merge head 3bc340b548bffdfcab977e232cc7f6393f93dc3e, stack 85979c3af806bca7a4680a60472c8413c024674f then 3bc340b548bffdfcab977e232cc7f6393f93dc3e). Approval: "APPROVE (MEDIUM, tl-324): pd/main-red-e10ext branch head 3bc340b548bffdfcab977e232cc7f6393f93dc3e (merge commit, second parent a0b492c2b is origin/main)".
+
 ## v11.67.1 (2026-10-23)
 
 ### Fixed
