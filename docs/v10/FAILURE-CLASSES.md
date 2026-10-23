@@ -1527,6 +1527,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: tests/test-next-resume-agree.sh drives the real Bun entry on a seeded interrupted run (asserts `engine10: resume from stage implement`, exit 2 not 0) and a stub that exits 4 (asserts 4); tests/test-verify-receipt-route.sh covers the path forms, a tampered receipt (TAMPERED, never CONCERNS) and the diff-verifier controls. Red on origin/main (17 and 4 failures), green after; mutants (delegate back to `resume`, schema route removed) turn them red.
 
 
+
 ## FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT A run that committed nothing left HEAD on its empty loki/ branch, the next run stacked on it, and the handoff offered to merge a 0-file change
 - User-visible vs raw: user-visible. After two FAILED runs with 0 commits, two empty `loki/e10-*` branches remained, HEAD sat on the last one (the next run printed `base: loki/e10-...`), and HANDOFF.md read `Accept: git merge --no-ff loki/e10-...` for 0 files.
 - Law: a run never leaves the user's checkout worse than it found it (Claude Code never moves your branch); only work that exists is offered for acceptance.
