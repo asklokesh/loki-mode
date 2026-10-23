@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileS
 import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
-import { PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
+import { canonicalSessionPin, PROVIDER_DEFAULT_MODEL } from "../util/claude_model.ts";
 import { stageMedianGapMs } from "../providers/provider_cost.ts";
 import { idleGapMs } from "../util/cost_breakdown.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
@@ -18,7 +18,7 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { confineSpawn } from "../util/os_confine.ts"; import { REPO_ROOT } from "../util/paths.ts";
-import { safeGit } from "../util/safe_git.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
+import { safeGit } from "../util/safe_git.ts"; import { claudeTierToModel } from "../runner/providers.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
@@ -41,12 +41,26 @@ export interface SessionRunnerConfig {
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export { PROVIDER_DEFAULT_MODEL }; // label lives in util/claude_model.ts (a leaf the runner can import without a cycle)
-/** The model a session really runs: the override, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
+/**
+ * The model a LOKI_SESSION_MODEL pin names for a claude run (undefined when unset). Throws on an unrecognized value (never the provider default).
+ * opus|sonnet|haiku are themselves, fable collapses to opus as the bash resolver does, and a tier name takes that tier's configured model.
+ * An explicit haiku pin is honored without LOKI_ALLOW_HAIKU: the user asked for it; bash would dispatch sonnet there.
+ */
+export function sessionPinModel(e: NodeJS.ProcessEnv = process.env): string | undefined {
+  const pin = canonicalSessionPin(e["LOKI_SESSION_MODEL"]);
+  if (!pin) return undefined;
+  if (pin === "fable") return "opus";
+  if (pin === "planning" || pin === "development" || pin === "fast") return claudeTierToModel(pin);
+  return pin;
+}
+/** The model a session really runs: the override, else the session pin, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
 export function resolveModel(provider: string): string {
   const e = process.env;
   if (e.LOKI_MODEL_OVERRIDE) return e.LOKI_MODEL_OVERRIDE;
   const routed = provider === "claude" ? modelRouteModel(e) : null; // OC-MODELS: a model route names the real model
   if (routed) return routed;
+  const pinned = provider === "claude" ? sessionPinModel(e) : undefined; // LOKI_SESSION_MODEL: the whole-run pin, ahead of the per-tier vars
+  if (pinned) return pinned;
   if (provider !== "claude") return `${provider} (model not recorded)`;
   return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
 }
@@ -87,6 +101,13 @@ export function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): Nod
       env["LOKI_CLAUDE_MODEL_PLANNING"] = override;
       env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = override;
       env["LOKI_CLAUDE_MODEL_FAST"] = override;
+    } else {
+      const sessionPin = sessionPinModel(process.env); // after the override, ahead of the per-tier vars; throws on an unrecognized pin
+      if (sessionPin) {
+        env["LOKI_CLAUDE_MODEL_PLANNING"] = sessionPin;
+        env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = sessionPin;
+        env["LOKI_CLAUDE_MODEL_FAST"] = sessionPin;
+      }
     }
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model

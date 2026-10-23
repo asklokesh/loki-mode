@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
 
+## v11.63.7 (2026-10-23)
+
+### Fixed
+- The engine10 runner honors LOKI_SESSION_MODEL and refuses an unrecognized pin (FC-ENGINE10-IGNORES-SESSION-MODEL-PIN); the bash parity assertion is typechecked. Approval: "SHIP e10-session-model: rev-c APPROVES 8721d0612 and 3ab3843de (head 3ab3843de). merge-tree against fresh origin/main gives rc=0. tsc rc=0. session_l1_model, preflight and claude_model_bundle give 95 pass and 0 fail. start.test.ts gives 94 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
+## v11.63.6 (2026-10-23)
+
+### Fixed
+- The PAUSED.md parity comment in loki-ts anchors on the shared no-TTY wording, not run.sh line numbers (#212 criterion 2). Approval: "APPROVE pd/rq72 5a26e8f50 (tl-2, LOW): comment-only in intervention.ts; merge-tree clean; "PAUSED.md resume wording" tests 2/0; the anchor string exists at run.sh:28721, 28743 and intervention.ts:375."
+
+## v11.63.5 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test reads the full grouped help from loki help all and tracks its 32 entries (FC-TEST-ALIAS-FWD-HELP-PAGE-DRIFT). Approval: "APPROVE pd/alias-help-groups2 a1dcdf113 stacked on pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): 211/0 on bash and bun routes, 154 spawns; repoint-to-plain-help mutant red (202/9) and restored; only conflict is docs/v10/FAILURE-CLASSES.md (keep-both; both rows append at EOF); ships after rq53."
+
+## v11.63.4 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test shares one alias --json run between two assertions and prints the CLI spawn count (FC-TEST-ALIAS-FWD-REDUNDANT-SPAWN, #183). Approval: "APPROVE pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): merge-tree rc=0; alias-forwarding suite 154 spawns, 202/9 on both routes, same 9 failing rows as base 5cae48655; export keeps its second spawn; empty-alias-stdout mutant red (189/22) and restored."
+
+## v11.63.3 (2026-10-23)
+
+
+
+### Fixed
+- A sealed Wall path always runs, not only those test discovery lists; a sealed Rust Wall file under tests/ runs as cargo test --test <name>; a sealed Go Wall file runs only its own Test, Fuzz and Example functions via go test -run; and the real go test check gets an explicit 60s timeout (wallgo-r5). Approval: "ship pd/wallgo-r5 37127bc3d4ea913a214ad0c7ac0ad68027158e65 (HIGH, rev-b APPROVE). It is 5 commits over origin/main 5746a4550, linear with 0 merges". rev-c holds no open BLOCK on the wallfile or wallrust commits.
+
 ## v11.63.2 (2026-10-23)
 
 
