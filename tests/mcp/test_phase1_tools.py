@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import shutil
 import site
 import sys
@@ -679,6 +680,30 @@ class ResultContractTests(unittest.TestCase):
         src = Path(self.server.__file__).read_text(encoding="utf-8")
         self.assertNotIn('return json.dumps({"error"', src)
         self.assertNotIn('return json.dumps({"success": False, "error"', src)
+        # Any quote style; the only builder allowed is the contract's own _error_payload.
+        ad_hoc = re.findall(r"""json\.dumps\(\{\s*['"]error['"]""", src)
+        self.assertEqual(len(ad_hoc), 1, "ad hoc error JSON bypasses the result contract")
+        self.assertEqual(re.findall(r"""['"]success['"]\s*:\s*False""", src), [])
+
+    def test_verify_fast_missing_engine_is_iserror_with_code_and_hint(self):
+        real_exists = os.path.exists
+        with mock.patch.object(
+            self.server.os.path, "exists",
+            side_effect=lambda p: False if str(p).endswith("fast_verify.py") else real_exists(p),
+        ):
+            is_error, body, _ = self._contract("loki_verify_fast", self.server.loki_verify_fast, ".")
+        self.assertTrue(is_error)
+        self.assertEqual(body["code"], "internal_error")
+        self.assertIn("fast_verify", body["error"])
+        self.assertTrue(body["hint"])
+
+    def test_verify_fast_engine_crash_is_iserror_with_code_and_hint(self):
+        with mock.patch.object(self.server.os.path, "abspath", side_effect=RuntimeError("boom")):
+            is_error, body, _ = self._contract("loki_verify_fast", self.server.loki_verify_fast, ".")
+        self.assertTrue(is_error)
+        self.assertEqual(body["code"], "internal_error")
+        self.assertIn("boom", body["error"])
+        self.assertIn("INCONCLUSIVE", body["hint"])
 
     # ---- partition guard: derived at runtime, not from the hand-kept tables ----
 

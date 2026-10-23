@@ -3298,10 +3298,11 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
         _fv_path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), 'autonomy', 'lib', 'fast_verify.py')
         if not os.path.exists(_fv_path):
-            result = json.dumps({'error': 'fast_verify not found', 'path': _fv_path})
             _emit_tool_event_async('loki_verify_fast', 'complete',
                                    result_status='error')
-            return result
+            raise LokiToolError(
+                'internal_error', 'fast_verify engine not found at ' + _fv_path,
+                'Reinstall loki-mode; autonomy/lib/fast_verify.py is missing.')
         _spec = _ilu.spec_from_file_location('loki_fast_verify', _fv_path)
         _mod = _ilu.module_from_spec(_spec)
         # Register BEFORE exec: @dataclass resolves its own module via
@@ -3320,10 +3321,14 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
         _emit_tool_event_async('loki_verify_fast', 'complete',
                                result_status='success')
         return json.dumps(payload, indent=2)
-    except Exception as exc:  # never let verification crash the caller
+    except LokiToolError:
+        raise
+    except Exception as exc:  # the contract turns this into an isError result
         _emit_tool_event_async('loki_verify_fast', 'complete',
                                result_status='error', error=str(exc))
-        return json.dumps({'error': str(exc), 'verdict': 'INCONCLUSIVE'})
+        raise LokiToolError(
+            'internal_error', str(exc) or type(exc).__name__,
+            'Verification did not run; treat the verdict as INCONCLUSIVE and retry.')
 
 
 @mcp.tool()
