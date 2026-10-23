@@ -17,6 +17,7 @@ import { readSessionId } from "../runner/session_resume.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
+import { confineSpawn } from "../util/os_confine.ts"; import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit } from "../util/safe_git.ts"; import { prefixParts, prefixSha } from "../util/cost_breakdown.ts"; import { engine10StaticPrefix } from "../runner/providers.ts";
 import { beginGuard, finishGuard, isGuarded, watchBudget } from "../providers/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { calculateCostFromRecords, readEfficiencyDir } from "../runner/budget.ts"; import { childBudgetLimit, parseCapUsd } from "../e10ext/budget_cap.ts";
@@ -33,6 +34,7 @@ export interface SessionRunnerConfig {
   emit?: EmitFn; // ENGINE.md section 5: heartbeat, session.started, session.ended
   heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
+  confineChildCommand?: boolean; // test-only: childCommand is normally left unwrapped; true wraps it like the real self-respawn (#334 AC6)
   lokiRoot?: string; remaining?: () => number | null; // lokiRoot: where efficiency records and result-cost files live (the repo's .loki); remaining: dollars left under the run cap, null or absent = no cap
   /** ROUTER-1 R1-09: advisor availability for this run (R1-06 probe). Only read under LOKI_ROUTER=1. */
   advisor?: { available: boolean; reason?: string };
@@ -216,7 +218,10 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const sessionId = opts.iterationId;
       // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained via the "data" listener below so a full pipe can never stall the child.
       const guardSnap = isGuarded(cfg.provider) && cfg.lokiRoot ? beginGuard(opts.cwd ?? process.cwd(), cfg.lokiRoot) : null; // PARITY-ENFORCE
-      const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      // #334 AC6: every provider invoker runs inside this child, so wrapping the one spawn confines them all (one profile builder: autonomy/lib/os_sandbox.py).
+      const conf = cfg.lokiRoot && (!cfg.childCommand || cfg.confineChildCommand) ? confineSpawn(cmd, args, { workspace: opts.cwd ?? process.cwd(), runDir: cfg.lokiRoot, provider: cfg.provider, extraRead: [dirname(process.execPath), REPO_ROOT] }) : null;
+      if (conf?.warning) process.stderr.write(`loki: ${conf.warning}\n`);
+      const child: ChildProcess = spawn(conf?.cmd ?? cmd, conf?.args ?? args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const pgid = child.pid;
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });

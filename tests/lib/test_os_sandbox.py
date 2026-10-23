@@ -253,6 +253,12 @@ class ModeTest(unittest.TestCase):
             self.assertEqual(opted["kind"], "macos-seatbelt")
             self.assertTrue(opted["argv_prefix"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS /var -> /private/var alias")
+    def test_probe_outside_dir_is_not_a_temp_root_through_the_var_alias(self):
+        # /var/folders is /private/var/folders: an unresolved compare picked a temp dir the sandbox allows writing.
+        out = os_sandbox._outside_probe_dir(Path("/var/folders/zz/ws"), "darwin")
+        self.assertTrue(out is None or "/var/folders" not in str(out.resolve()))
+
     def test_codex_is_not_wrapped_and_says_why(self):
         status = os_sandbox.build_confinement(self.ws, self.run_dir, "codex", mode="on")
         self.assertEqual(status["kind"], "none")
