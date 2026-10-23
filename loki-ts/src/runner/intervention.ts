@@ -365,9 +365,10 @@ export interface HandlePauseResult {
 }
 
 // Default contents of .loki/PAUSED.md. Mirrors the bash writer in
-// autonomy/run.sh (~28272-28275): Press-Enter wording on a TTY, otherwise the
-// no-TTY wording shared with the console banner (~28252), so a --bg / CI
-// operator is never promised a keypress.
+// autonomy/run.sh (the _resume_line assignment): Press-Enter wording on a TTY,
+// otherwise the no-TTY wording shared with the console banner. Both bash sites
+// and this file carry "(no TTY: keypress resume unavailable)", which is the
+// anchor to search for, so a --bg / CI operator is never promised a keypress.
 function defaultPausedMd(isTTY: boolean): string {
   const resumeLine = isTTY
     ? "1. **Resume**: Press Enter in terminal or `rm .loki/PAUSE`"
