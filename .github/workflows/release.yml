@@ -144,7 +144,7 @@ jobs:
   publish-npm:
     needs: pack-npm
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     concurrency:
       group: release-npm
       cancel-in-progress: false
@@ -514,7 +514,7 @@ jobs:
   # Idempotent, so it needs nothing and starts at t=0.
   publish-ts-sdk:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     concurrency:
       group: release-npm-sdk
       cancel-in-progress: false
