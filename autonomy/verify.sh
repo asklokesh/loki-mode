@@ -2564,6 +2564,13 @@ OPTIONS:
                        is still written to <out>/evidence.json. The human
                        VERDICT banner moves to stderr so stdout stays valid
                        JSON. The verdict and exit code are unchanged.
+    --fast             Run only the exogenous fast checks (no model call, no network)
+                       through fast_verify.py, in milliseconds. Takes [ROOT] and
+                       the three options below, plus --json. Exit 0 PASS, 1 FAIL,
+                       3 INCONCLUSIVE, 64 unknown option.
+    --path <dir>       With --fast: the repo root to check.
+    --diff-base <ref>  With --fast: scope the checks to the diff against ref.
+    --no-cache         With --fast: ignore the result cache.
     --explain          Print a one-screen, skeptic-legible trust proof: every
                        gate that ran, its status, the runner/scanner that
                        produced the evidence, whether it is reproducible, plus
