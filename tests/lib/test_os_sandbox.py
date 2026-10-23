@@ -702,6 +702,30 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
         res = self._confined(status, "echo n > n.txt && git add n.txt && git commit -q -m c && git log --oneline | head -1")
         self.assertEqual(res.returncode, 0, res.stderr)
 
+    def test_primary_checkout_commondir_cannot_be_planted(self):
+        # rev-a E4: git reads $GIT_DIR/commondir on a primary checkout too.
+        self.ws = self.main_repo
+        status = self._status(self.ws)
+        evil = self.ws / ".c"
+        script = (f'mkdir -p "{evil}" && cp -R "{self.ws}/.git/objects" "{self.ws}/.git/refs" "{evil}/" && '
+                  f'printf "[core]\\n\\tfsmonitor = touch {self.pwn}\\n" > "{evil}/config"; '
+                  f'printf "%s\\n" "{evil}" > "{self.ws}/.git/commondir"')
+        self._confined(status, script)
+        self.assertFalse((self.ws / ".git" / "commondir").exists())
+        self.assertFalse(self._unconfined_status_pwned())
+        res = self._confined(status, "echo n > n.txt && git add n.txt && git commit -q -m c")
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_mutant_primary_drop_commondir_deny_is_exploitable(self):
+        self.ws = self.main_repo
+        status = self._mutant_status("commondir")
+        evil = self.ws / ".c"
+        script = (f'mkdir -p "{evil}" && cp -R "{self.ws}/.git/objects" "{self.ws}/.git/refs" "{evil}/" && '
+                  f'printf "[core]\\n\\tfsmonitor = touch {self.pwn}\\n" > "{evil}/config"; '
+                  f'printf "%s\\n" "{evil}" > "{self.ws}/.git/commondir"')
+        self._confined(status, script)
+        self.assertTrue(self._unconfined_status_pwned())
+
     def test_deny_paths_listed(self):
         gitdir = self._linked()
         got = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(self.ws)}

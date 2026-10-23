@@ -313,7 +313,7 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
     git metadata the harness's next unconfined git reads (FC-SANDBOX-GIT-REDIRECT).
     kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file) and
     gitdir/{commondir,gitdir,config.worktree}. Primary checkout: ws/.git itself,
-    ws/.git/hooks and ws/.git/config{,.worktree}. HEAD, index, logs/HEAD and
+    ws/.git/hooks, ws/.git/config{,.worktree} and ws/.git/commondir (git reads it for any gitdir, and it does not exist on a primary checkout, so only the Seatbelt literal deny can hold it; bwrap skips absent paths). HEAD, index, logs/HEAD and
     ORIG_HEAD stay writable so a commit still works. Empty outside a git repo."""
     gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
     if not gitdir or not common:
@@ -324,7 +324,7 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
         if gitdir != dotgit.resolve():
             return denies
         denies += [("subpath", gitdir / "hooks"), ("literal", gitdir / "config"),
-                   ("literal", gitdir / "config.worktree")]
+                   ("literal", gitdir / "config.worktree"), ("literal", gitdir / "commondir")]
     else:
         denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config.worktree")]
     return denies
