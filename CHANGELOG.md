@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.70.0 (2026-10-23)
+
+### Added
+- Python anthropic is pinned to 2.2.0 and the managed-memory client and council session are migrated to the SDK 2.x namespaces and agent, environment and coordinator shape; the 2.x memory wire contract (absolute paths, full paged list, update precondition), council replies attributed per thread and model overrides limited to Claude models (RQ-105). Approval: "ship pd/rq105 7d9b5c64c6c3938d0e2c7231f867e2a90ca8d96a ... APPROVE 7d9b5c64c6c3938d0e2c7231f867e2a90ca8d96a" (rev-b, HIGH). Picks 6bd73d405, 7be4d4814, 9f839b397, 6d173cf81, 7d9b5c64c and fea22a8a6 (rev-b APPROVE fea22a8a6e05c6152c84be22c0ee5e3c95b46768, supersedes the 7d9b5c64c line). Managed council live reply shape NOT PROVEN (no API key).
+
 ## v11.69.2 (2026-10-23)
 
 
