@@ -14,9 +14,11 @@ import hmac
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -750,7 +752,7 @@ class TestCompanySeats(unittest.TestCase):
         self.assertEqual(os.path.realpath(cwd), os.path.realpath(self.root))
         self.assertTrue(os.path.exists(self.cdir("cto", "last.json")))
         self.assertTrue(os.path.exists(self.cdir("cto", "log.jsonl")))
-        self.assertFalse(os.path.exists(self.cdir("cto", "lock")))
+        self.assertEqual(open(self.cdir("cto", "lock")).read(), "")
 
     def test_unknown_seat_rejected(self):
         status, _ = tsc.tick_seat("../etc")
@@ -761,14 +763,16 @@ class TestCompanySeats(unittest.TestCase):
 
     def test_live_lock_blocks_overlap(self):
         os.makedirs(self.cdir("cto"))
-        with open(self.cdir("cto", "lock"), "w") as f:
-            f.write(str(os.getpid()))
-        status, why = tsc.tick_seat("cto")
+        held, _ = tsc.acquire_seat_lock(self.cdir("cto", "lock"))
+        try:
+            status, why = tsc.tick_seat("cto")
+        finally:
+            held.close()
         self.assertEqual(status, "skipped")
         self.assertIn("lock", why)
         self.assertEqual(self.argv(), [])
 
-    def test_stale_lock_is_replaced(self):
+    def test_dead_holder_lock_file_does_not_block(self):
         dead = subprocess.Popen(["true"])
         dead.wait()
         os.makedirs(self.cdir("cto"))
@@ -928,6 +932,44 @@ class TestCompanySeats(unittest.TestCase):
             tsc.run_daemon_loop(max_passes=1)
         finally:
             os.chdir(old)
+
+    def test_term_ignoring_grandchild_is_killed_on_timeout(self):
+        pidfile = os.path.join(self.tmp, "gc.pid")
+        with open(self.fake, "w") as f:
+            f.write("#!/bin/sh\n(trap '' TERM; exec sleep 300) &\necho $! > '%s'\nsleep 300\n" % pidfile)
+        gc = None
+        try:
+            with patch.dict(os.environ, {"LOKI_SEAT_TIMEOUT_SECS": "2"}), \
+                    patch.object(tsc, "TERM_GRACE_SECS", 1):
+                status, why = tsc.tick_seat("cto")
+            self.assertIn("timeout", why)
+            gc = int(open(pidfile).read().strip())
+            for _ in range(20):
+                try:
+                    os.kill(gc, 0)
+                except ProcessLookupError:
+                    gc = None
+                    break
+                time.sleep(0.1)
+            self.assertIsNone(gc, "TERM-ignoring grandchild survived the tick")
+        finally:
+            if gc is not None:
+                os.kill(gc, signal.SIGKILL)
+
+    def test_default_max_load_is_28(self):
+        self.assertEqual(tsc.DEFAULT_MAX_LOAD, 28)
+
+    def test_tick_spawn_is_detached(self):
+        with patch("trigger_schedule.subprocess.Popen") as popen:
+            popen.return_value.pid = 1
+            tsc.run_schedule({"name": "cto", "action": "seat cto"})
+        self.assertTrue(popen.call_args[1].get("start_new_session"))
+
+    def test_plist_is_private(self):
+        home = os.path.join(self.tmp, "home3")
+        os.makedirs(home)
+        path = tsc.write_launchagent(home, self.root, "/usr/local/bin/loki")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     def test_run_schedule_spawns_tick_not_loki(self):
         with patch("trigger_schedule.subprocess.Popen") as popen:

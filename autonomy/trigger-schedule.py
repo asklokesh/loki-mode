@@ -30,6 +30,7 @@ Usage:
 """
 
 import argparse
+import fcntl
 import json
 import logging
 import os
@@ -242,6 +243,7 @@ LEADER_SEATS = ("chief-of-staff", "release-reliability-lead")
 DEFAULT_MAX_LOAD = 28.0
 DEFAULT_SEAT_TIMEOUT_SECS = 1200
 GOVERNOR_CACHE_SECS = 300
+TERM_GRACE_SECS = 15
 LAUNCHAGENT_LABEL = "dev.autonomi.loki-company"
 
 SEAT_TICK_PROMPT = (
@@ -285,23 +287,24 @@ def _read_pid(path):
 
 
 def acquire_seat_lock(lock_path):
-    """Atomic per-seat lock holding our PID. Returns (ok, holder_pid)."""
-    for _ in range(3):
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            holder = _read_pid(lock_path)
-            if holder is not None and _pid_alive(holder):
-                return False, holder
-            try:
-                os.unlink(lock_path)  # stale (dead or unreadable PID)
-            except FileNotFoundError:
-                pass
-            continue
-        with os.fdopen(fd, "w") as f:
-            f.write("%d\n" % os.getpid())
-        return True, os.getpid()
-    return False, None
+    """Per-seat flock on the lockfile; our PID is written into it for the cockpit.
+
+    Returns (file, holder_pid). The lock dies with the process, so a crashed
+    tick never leaves a stale lock. Caller closes the file to release.
+    """
+    f = open(lock_path, "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.seek(0)
+        m = re.match(r"\s*(\d+)", f.readline())
+        f.close()
+        return None, int(m.group(1)) if m else None
+    f.seek(0)
+    f.truncate()
+    f.write("%d\n" % os.getpid())
+    f.flush()
+    return f, os.getpid()
 
 
 def governor_max_engineers():
@@ -379,18 +382,16 @@ def tick_seat(name):
         leader = _read_pid(os.path.join(root, ".loki", "v10-leader"))
         if leader is not None and leader != os.getpid() and _pid_alive(leader):
             return skip("live leader pid %d holds .loki/v10-leader" % leader)
-    ok, holder = acquire_seat_lock(os.path.join(seat_dir, "lock"))
-    if not ok:
+    lock, holder = acquire_seat_lock(os.path.join(seat_dir, "lock"))
+    if lock is None:
         return skip("lock held by pid %s" % holder)
     try:
         if governor_max_engineers() == 0:
             return skip("governor max engineers is 0")
         return _run_claude_tick(root, name, seat_dir)
     finally:
-        try:
-            os.unlink(os.path.join(seat_dir, "lock"))
-        except FileNotFoundError:
-            pass
+        lock.truncate(0)
+        lock.close()
 
 
 def _run_claude_tick(root, name, seat_dir):
@@ -415,15 +416,18 @@ def _run_claude_tick(root, name, seat_dir):
         if proc.returncode != 0:
             outcome, detail = "error", "claude rc=%d" % proc.returncode
     except subprocess.TimeoutExpired:
-        for sig, grace in ((signal.SIGTERM, 15), (signal.SIGKILL, 5)):
-            try:
-                os.killpg(proc.pid, sig)
-                proc.wait(timeout=grace)
-                break
-            except (ProcessLookupError, PermissionError):
-                break
-            except subprocess.TimeoutExpired:
-                continue
+        # TERM, grace, then ALWAYS KILL the group: a grandchild (bun test)
+        # can ignore TERM and outlive the leader.
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=TERM_GRACE_SECS)
+        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()  # not a group leader: at least stop the PID we started
+        proc.wait()
         outcome, detail = "timeout", "exceeded %ds" % int(timeout)
     fresh = os.path.exists(last) and os.path.getmtime(last) >= started - 1
     if outcome != "ok" or not fresh:
@@ -503,8 +507,9 @@ def write_launchagent(home, repo, loki_bin):
     }
     path = launchagent_path(home)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
         plistlib.dump(plist, f)
+    os.chmod(path, 0o600)
     return path
 
 
