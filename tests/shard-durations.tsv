@@ -763,3 +763,4 @@ loki self-update --check reports installed vs latest (TEN-ADOPTION-15)	5
 wow and factory onboarding	4
 cost capture: result-line cost, budget breaker, slug, context-window tracker	5
 loki verify <run receipt path> routes to the v10 verifier (CW-17 #352)	10
+npm-dist-tags.sh never moves a tag backwards and restores an overtaken one (FC-DIST-TAG-MOVED-BACKWARDS)	8
