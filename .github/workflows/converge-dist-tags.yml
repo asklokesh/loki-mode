@@ -11,7 +11,7 @@ on:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
-# One converge at a time per package; a queued run replaces a waiting one.
+# One converge run at a time (both packages together); a queued run replaces a waiting one.
 concurrency:
   group: converge-dist-tags
   cancel-in-progress: false
@@ -27,11 +27,10 @@ jobs:
       matrix:
         pkg: [loki-mode, loki-mode-sdk]
     steps:
-      - name: Checkout (VERSION and dist-tag script)
+      - name: Checkout (dist-tag script)
         uses: actions/checkout@v4
         with:
           sparse-checkout: |
-            VERSION
             scripts/npm-dist-tags.sh
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -42,8 +41,10 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      # npm-dist-tags.sh counts VERSION as a candidate for the max, so a release in flight
-      # (VERSION on main not yet served) must not be converged to an unpublished version.
+      # npm-dist-tags.sh targets the max of {argument, latest, next, every published version}.
+      # The argument is the version the registry serves under latest, never the VERSION file,
+      # so a release in flight (VERSION not yet published) cannot be the target, and the
+      # converge still runs while a release is in flight.
       - name: Converge dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -52,10 +53,9 @@ jobs:
           LOKI_DISTTAG_SLEEP: '15'
         run: |
           set -uo pipefail
-          VERSION="$(tr -d '\n' < VERSION)"
-          got="$(npm view "${LOKI_DISTTAG_PKG}@${VERSION}" version --prefer-online 2>/dev/null || true)"
-          if [ "$got" != "$VERSION" ]; then
-            echo "::notice::${LOKI_DISTTAG_PKG}@${VERSION} is not on the registry yet; the release verify job owns this converge"
-            exit 0
+          SERVED="$(npm view "$LOKI_DISTTAG_PKG" dist-tags.latest --prefer-online 2>/dev/null)" || SERVED=""
+          if [ -z "$SERVED" ]; then
+            echo "::error::cannot read dist-tags.latest for ${LOKI_DISTTAG_PKG}"
+            exit 1
           fi
-          bash scripts/npm-dist-tags.sh "$VERSION"
+          bash scripts/npm-dist-tags.sh "$SERVED"

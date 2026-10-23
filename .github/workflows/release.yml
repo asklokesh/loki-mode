@@ -1,7 +1,8 @@
 name: Release
 
 # MINIMAL RELEASE PIPELINE (founder directive 2026-10-19). This is the only
-# publishing workflow in the repo (converge-dist-tags.yml only re-runs the dist-tag script every 15 min). A push to main that changes VERSION publishes every
+# publishing workflow in the repo (converge-dist-tags.yml only re-runs the
+# dist-tag script every 15 min). A push to main that changes VERSION publishes every
 # channel the product ships to, in parallel, with nothing in front of npm:
 #   pack-npm -> publish-npm      npm loki-mode under latest AND next
 #   release                      git tag vX.Y.Z + GitHub Release (CHANGELOG notes, skill zips, brew tarball)
