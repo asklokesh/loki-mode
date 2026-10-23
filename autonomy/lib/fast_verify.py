@@ -302,6 +302,9 @@ def _run_covers(root: str, base, head, changed: set) -> bool:
     """True when the run's own changed-file set (git diff base_sha head_sha) holds every file of the verified diff."""
     if not base or not head:
         return False
+    # head must descend from base (an amend or rebase after the seal breaks the record); an unreachable SHA fails too
+    if _git_strict(["merge-base", "--is-ancestor", base, head], root) is None:
+        return False
     raw = _git_strict(["diff", "--name-only", base, head], root)
     return raw is not None and changed <= set(raw.splitlines())
 

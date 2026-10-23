@@ -3266,7 +3266,8 @@ async def loki_verify_fast(path: str = ".", diff_base: str = "") -> str:
         loki_wall_* file that ran and passed AND is tracked, unchanged against the
         diff base and HEAD, sealed (its sha256 matches a wall.sealed event under
         .loki/runs/), and, with a diff base, was sealed by a run whose changed files
-        (git diff of that run's intake base_sha to its commit head_sha, read from the
+        (git diff of that run's intake base_sha to its commit head_sha, where head
+        descends from base and both SHAs exist in the repo, read from the
         same events.jsonl) cover every file in the verified diff and the Wall names a
         changed module. A run record without those SHAs gives INCONCLUSIVE with a
         NOT PROVEN line.
