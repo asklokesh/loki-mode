@@ -45,7 +45,7 @@ export type RetryClass = "transient" | "non_retryable";
 // rejecting the request, not a string an app can legitimately print. When in
 // doubt, leave it out -- omission costs one retry, inclusion can kill a build.
 const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|invalid[_ -]?x-api-key|authentication[_ -]?(?:failed|error))|^\W*(?:not logged in\b|oauth token has expired|please run \/login)/im],
+  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|invalid[_ -]?x-api-key|authentication[_ -]?(?:failed|error))|^\W*(?:sdk-loop error: )?(?:not logged in\b|oauth token has expired|please run \/login)/im],
   ["unknown_model", /\b(?:model[_ -]?not[_ -]?found|unknown[_ -]?model|does not exist.{0,20}model)/i],
   ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request)/i],
   // "quota"/"billing" = the account is out of funds; unlike a rate limit this

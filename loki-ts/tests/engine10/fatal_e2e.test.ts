@@ -36,7 +36,7 @@ let __i = 0;
 } });
 `;
 
-function run(env: Record<string, string>) {
+function run(env: Record<string, string>, human = false) {
   const tmp = mkdtempSync(join(tmpdir(), "loki-a113b-")); temps.push(tmp);
   const repo = join(tmp, "repo");
   cpSync(join(FIX, "repo"), repo, { recursive: true });
@@ -52,11 +52,12 @@ function run(env: Record<string, string>) {
     HOME: tmp, LOKI_RECEIPT_SIGNING_KEY_FILE: join(tmp, "k.pem"), BUN_OPTIONS: `--preload ${plugin}`, ...env,
   };
   delete e.LOKI_LEGACY_BASH; delete e.LOKI_MODEL_OVERRIDE; delete e.LOKI_RECEIPT_SIGNING_KEY;
-  const r = Bun.spawnSync(["bash", BIN_LOKI, "add a multiply(a, b) function to calc.ts", "--no-pr", "--json"], { cwd: repo, env: e, timeout: 90_000 });
+  const r = Bun.spawnSync(["bash", BIN_LOKI, "add a multiply(a, b) function to calc.ts", "--no-pr", ...(human ? [] : ["--json"])], { cwd: repo, env: e, timeout: 90_000 });
   const out = r.stdout.toString();
   const line = out.trim().split("\n").filter((l) => l.startsWith("{")).pop();
+  if (human) return { out: out + r.stderr.toString(), json: { outcome: "", stop: null, run_id: "" }, code: r.exitCode, repo };
   if (!line) throw new Error(`no --json line: ${out}${r.stderr.toString()}`);
-  return { json: JSON.parse(line) as { outcome: string; stop: string | null; run_id: string }, code: r.exitCode, repo };
+  return { out: out + r.stderr.toString(), json: JSON.parse(line) as { outcome: string; stop: string | null; run_id: string }, code: r.exitCode, repo };
 }
 
 describe("A-113b fatal classification through the CLI invoker", () => {
@@ -68,6 +69,14 @@ describe("A-113b fatal classification through the CLI invoker", () => {
       expect(run({ STUB_OUT: text, STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
     }, 120_000);
   }
+  test("CW-16: the user-visible output names the auth cause and fix, never the sk-ant key text", () => {
+    const key = "sk-ant-" + "zZ9yY8xX7wW6vV5uU4tT3s";
+    const r = run({ STUB_ERR: `Not logged in \u00b7 Please run /login ${key}`, STUB_EXIT: "1" }, true);
+    const all = r.out;
+    expect(all).toContain("provider authentication failed: Not logged in");
+    expect(all).toContain("claude /login");
+    expect(all).not.toContain(key);
+  }, 120_000);
   test("a .stderr file the agent plants is overwritten, never classified (forgery guard)", () => {
     expect(run({ STUB_PLANT: "Your credit balance is too low", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
   }, 120_000);

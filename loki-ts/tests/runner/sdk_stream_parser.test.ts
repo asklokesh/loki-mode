@@ -154,6 +154,22 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     expect(r.capturedText).toContain("rate_limit");
   });
 
+  test("CW-16: an auth or billing assistant error plus an error result records one [sdk-loop error: ...] line with the provider text", async () => {
+    for (const [err, text] of [["authentication_failed", "Invalid API key \u00b7 Fix external API key"], ["billing_error", "Credit balance is too low"]] as const) {
+      const msgs = [
+        { type: "assistant", error: err, message: { content: [{ type: "text", text }] } },
+        { type: "result", is_error: true, result: text, session_id: "s" },
+      ] as unknown as StreamMsg[];
+      const r = await consumeSdkStream(msgs, ctx(), clock);
+      expect(r.exitCode).toBe(1);
+      expect(r.capturedText).toContain(`[sdk-loop error: ${text}]`);
+    }
+  });
+  test("CW-16 control: an error result with no structural auth/billing error adds no [sdk-loop error] line (agent prose is never promoted)", async () => {
+    const msgs = [{ type: "result", is_error: true, result: "Invalid API key in my test fixture", session_id: "s" }] as unknown as StreamMsg[];
+    expect((await consumeSdkStream(msgs, ctx(), clock)).capturedText).not.toContain("[sdk-loop error");
+  });
+
   test("rate_limit_event with status 'allowed' is a HEARTBEAT, NOT a rate limit (ignored)", async () => {
     // The SDK emits this on every call; treating it as a rate limit was a bug.
     const msgs = [

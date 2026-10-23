@@ -187,6 +187,7 @@ export async function consumeSdkStream(
   let seenSessionId: string | undefined;
   let sessionModel: string | undefined; // E-59: from system/init, overridden by a result message's own model if present
   let totalCostUsd: number | null | undefined;
+  let structuralProviderErr = false; // CW-16: the SDK itself flagged an assistant message authentication_failed or billing_error
   let captured = ""; // load-bearing capture (final assistant text + result.result)
   // Blocks are newline-separated so a line-anchored marker never swallows the next block's prose.
   // Assistant text is remembered per frame uuid so a refusal-fallback retraction can evict exactly that text.
@@ -269,6 +270,7 @@ export async function consumeSdkStream(
       // SDKAssistantMessage.error can be 'rate_limit' | 'overloaded' | ...
       evict(data.supersedes); // refusal-fallback: this frame replaces earlier ones
       const err = data.error;
+      if (err === "authentication_failed" || err === "billing_error") structuralProviderErr = true;
       if (err === "rate_limit" || err === "overloaded") {
         rateLimit = rateLimit ?? {};
         captured += `\n[${err}]\n`; // so the file-based rate-limit scanner fires
@@ -457,6 +459,8 @@ export async function consumeSdkStream(
     if (msgType === "result") {
       sawResult = true;
       if (data.result) capture(data.result);
+      // CW-16: the provider's own error line, promoted only on the SDK's structural error flag (never on agent prose), so the session tail can name the cause.
+      if (data.is_error && structuralProviderErr && data.result) captured += `\n[sdk-loop error: ${String(data.result).replace(/\s+/g, " ").trim().slice(0, 300)}]\n`;
       const completedAt = nowIso(clock);
       for (const id of Object.keys(agents)) {
         if (agents[id]!.status === "active") {

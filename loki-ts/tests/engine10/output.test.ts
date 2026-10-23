@@ -2,6 +2,7 @@
 // Golden lines are copied verbatim from the ENGINE.md examples.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { nextOf } from "../../src/util/run_summary.ts";
 import {
   estimateEtaS,
   formatClock,
@@ -325,6 +326,11 @@ describe("reasonOf (A-130 round 4)", () => {
   test("fatal stops are named", () => {
     expect(reasonOf([ev("stage.failed", "implement", { reason: "exit 1 (general error)" })], false, "fatal:quota_exhausted", "FAILED")).toBe("provider credit exhausted");
     expect(reasonOf([], false, "fatal:auth", "FAILED")).toBe("provider authentication failed");
+  });
+  test("CW-16: a fatal stop appends the provider line and fix from the failed stage", () => {
+    const r = reasonOf([ev("stage.failed", "implement", { reason: "auth: Not logged in (fix: run `claude /login`, or unset ANTHROPIC_API_KEY)" })], false, "fatal:auth", "FAILED");
+    expect(r).toBe("provider authentication failed: Not logged in (fix: run `claude /login`, or unset ANTHROPIC_API_KEY)");
+    expect(nextOf("failed", 0, r)).toBe("claude login");
   });
   test("BLOCKED prints the conflict, not the empty diff", () => {
     const e = [ev("stage.completed", "implement", { spec_conflict_reason: "spec says A and B" }), ev("stage.failed", "verify", { reason: "empty diff without an already_done marker" })];
