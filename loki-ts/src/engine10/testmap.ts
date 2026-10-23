@@ -47,10 +47,13 @@ function pytestPython(root: string): string {
 }
 /** No detected runner and no Python/Go test suite (docs, plugins, config): Loki's own bun runs the Wall's bun:test file, in the Wall and in verify. Off with LOKI_WALL_HARNESS_RUNNER=0 or no bun on PATH (FC-17 skip, as before). */
 export const harnessRunners = (runners: RunnerName[], files: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): RunnerName[] => runners.length === 0 && !files.some((f) => PY_TEST_RE.test(basename(f)) || GO_TEST_RE.test(f)) && env.LOKI_WALL_HARNESS_RUNNER !== "0" && Bun.which("bun", { PATH: env.PATH ?? "" }) ? ["bun"] : runners;
-/** The runner that executes a Wall-authored file, by its extension; null when no runner of this repo can run it (wall.ts seals it unrun, verify skips it). */
-export function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
+/** Cargo selects one file only as `cargo test --test <stem>`, and only for an integration test directly under a tests/ directory. */
+export const CARGO_TEST_FILE_RE = /(?:^|\/)tests\/[^/]+\.rs$/;
+/** The runner that executes a Wall-authored file, by its extension; null when no runner of this repo can run it (wall.ts seals it unrun, verify skips it). relPath (repo-relative) decides a .rs file: cargo only under tests/, else null (FC-WALL-RUST-FILE-HAS-NO-RUNNER). */
+export function guessRunner(fileName: string, runners: RunnerName[], relPath?: string): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
   if (fileName.endsWith(".go")) return "go";
+  if (fileName.endsWith(".rs")) return runners.includes("cargo") && relPath !== undefined && CARGO_TEST_FILE_RE.test(relPath) ? "cargo" : null;
   return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
 }
 /** TEN-COST-09: "project" when a repo-local interpreter exists (.venv, venv, or an in-repo VIRTUAL_ENV), else "system". Mirrors verify.ts resolveTool, which marks a system pytest result not_run. */

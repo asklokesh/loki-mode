@@ -180,7 +180,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
   if (generated.length > 0) mkdirSync(targetDir, { recursive: true }); const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
-    const dest = join(targetDir, name), runner = guessRunner(name, runners);
+    const dest = join(targetDir, name), runner = guessRunner(name, runners, relative(ctx.repoDir, dest));
     writeFileSync(dest, content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
