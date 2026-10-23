@@ -1455,3 +1455,29 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: state/manager.py get_state_manager has the same single-default shape and is to follow the same keying rule (separate branch); no other TS caller passes arguments to getStateManager.
 - Mechanism: one per-root cache in state/manager.ts keyed by the (st_dev, st_ino) of the .loki directory (symlinks and case spellings share a manager), capped by LOKI_STATE_MANAGER_MAX (default 8), least recently used evicted and stop()ped.
 - Fixture: loki-ts/tests/state_manager.test.ts (under loki-ts so bun and CI discover it). Red on origin/main (2 fail), green after (5 pass or 4 pass and 1 skip on a case-sensitive volume); mutations: no eviction, eviction without stop, path-string key, constant key, no LRU touch each go red.
+
+- Fixture: tests/mcp/test_phase1_tools.py test_stored_text_appears_only_inside_untrusted_content (red with loki_verify_fast trusted: leaks ['loki_verify_fast']; green after).
+
+## FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF A green publish-npm job proved only that npm accepted the upload, not that the registry served the version
+- User-visible vs raw: user-visible. Run 39852427194 printed "+ loki-mode@11.50.0" at 20:52:55Z and "+latest" at 20:52:57Z, but the registry did not serve 11.50.0 until about 21:04Z. A consumer installing in that window got the old version from a release reported green.
+- Law: a release is green on registry proof, not on a client's upload log; the proof is a read of the registry.
+- Cause (measured): the registry applies a publish asynchronously. The registry's own time field for 11.53.0, 11.53.1 and 11.54.0 is 4m10s, 5m13s and 6m12s after the workflow's "+ loki-mode@" line.
+- Siblings swept: publish-ts-sdk and publish-python-sdk (same upload-log-only pattern; not changed here, listed as follow-up), npm-dist-tags.sh (re-reads tags after writing).
+- Mechanism: job verify-npm-registry (needs publish-npm only, no concurrency group, nothing needs it) polls `npm view loki-mode@VERSION version --prefer-online` for about 15 minutes and fails red if it never resolves. It cannot delay docker, homebrew, tag or release, nor hold the release-npm lock.
+- Fixture: tests/test_release_next_tag.py test_registry_proof_is_its_own_job_and_nothing_waits_on_it. Red when the job is renamed or removed (mutant run), green after.
+
+## FC-RELEASE-NOTES-FORMAT-UNCHECKED-LOCALLY release.sh --ship wrote a CHANGELOG section CI's release-notes.sh rejects, so the failure surfaced only after npm had published and the tag and GitHub release were skipped
+- User-visible vs raw: user-visible. v11.53.0, v11.53.1 and v11.54.0 were on npm with no tag and no GitHub release: "section ... is not fully written (no '### ' subsection)".
+- Law: a local release gate runs the same validators CI runs before the commit and push; no validator that can block a downstream channel runs only after an irreversible publish.
+- Cause (measured): ship_write_changelog copied the --notes file verbatim and only compared the header line; scripts/release-notes.sh ran first in CI's release job.
+- Siblings swept: the global guard rows (scripts/global-guards.tsv) already run locally; the pre-push hook's release-notes gate checks the tree, not the --notes file before the write.
+- Mechanism: run_ship calls ship_check_notes_format (scripts/release-notes.sh on the notes file) in preflight, before any write, and again on the written CHANGELOG.md; both refuse with SHIP_NOTES_FORMAT (exit 4). LOKI_RELEASE_SKIP_GUARDS does not reach it.
+- Fixture: tests/test-release-sh.sh T17d (flat notes with LOKI_RELEASE_SKIP_GUARDS=1). Red on origin/main's release.sh (exit 0, VERSION bumped, pushed), green after.
+
+## FC-DIST-TAG-MOVED-BACKWARDS Concurrent back-to-back releases left npm latest below the newest version
+- User-visible vs raw: user-visible. After 11.53.0, 11.53.1 and 11.54.0 shipped within 8 minutes, dist-tags read latest=11.53.1 and next=11.54.0, so `npm i loki-mode` installed an older release than the newest.
+- Law: a dist-tag only ever moves to the highest published version, and the final state is read back, not assumed from the write.
+- Cause (measured, partly inferred): publish-npm logs show the writes in order (11.53.1 "+latest" 23:31:01Z, 11.54.0 "+latest" 23:34:42Z), so the runs did not run out of order and the lagging CUR read could only cause a skip, not a backwards move. The registry's time field shows 11.53.1 became served at 23:36:13Z, after 11.54.0's tag write; the observed latest=11.53.1 is consistent with the registry applying 11.53.1's tag write late. That mechanism is inferred from timestamps, not directly observed.
+- Siblings swept: publish-ts-sdk has the same CUR-vs-VERSION compare (loki-mode-sdk, lower traffic; follow-up), the CoS-dispatched force_republish run 39898474372 re-asserted 11.54.0 at 04:06:43Z.
+- Mechanism: scripts/npm-dist-tags.sh targets max(VERSION, latest, next, every published stable version), never lower; it re-reads both tags after writing and again after a pause, re-asserting the target until both settle or the tries run out (red).
+- Fixture: tests/test-npm-dist-tags.sh (5 cases incl. late overtaking write restored). Mutants (ignore tags, no re-read, target=VERSION) each fail a case.
