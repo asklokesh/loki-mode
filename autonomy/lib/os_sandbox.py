@@ -577,8 +577,8 @@ def bwrap_argv_prefix(
 _PROBE_SCRIPT = (
     'cat "$1/.env" >/dev/null 2>&1 && exit 41; '
     'cat "$1/plain.txt" >/dev/null 2>&1 || exit 42; '
-    ': > "$1/w.txt" 2>/dev/null || exit 43; '
-    '[ -z "$2" ] || { : > "$2" 2>/dev/null && exit 44; }; '
+    '( : > "$1/w.txt" ) 2>/dev/null || exit 43; '
+    '[ -z "$2" ] || { ( : > "$2" ) 2>/dev/null && exit 44; }; '
     'exit 0'
 )
 
