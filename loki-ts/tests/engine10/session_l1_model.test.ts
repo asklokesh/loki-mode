@@ -218,7 +218,7 @@ describe("FC-ENGINE10-IGNORES-SESSION-MODEL-PIN", () => {
     test(`bash parity: ${pin} resolves to the model resolve_model_for_tier ${tier} gives`, () => {
       process.env["LOKI_SESSION_MODEL"] = pin;
       const bash = spawnSync("bash", ["-c", `. "${resolve(LOKI_TS, "..", "providers", "claude.sh")}" >/dev/null 2>&1; resolve_model_for_tier "${tier}"`], { env: { ...process.env }, encoding: "utf8" });
-      expect(bash.stdout.trim()).toBe(sessionPinModel());
+      expect(bash.stdout.trim()).toBe(sessionPinModel() as string);
     });
   }
 });
