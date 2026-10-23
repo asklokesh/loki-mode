@@ -22,19 +22,23 @@ WHY THIS EXISTS
 
 THE FIVE DESIGN RULES
     A. SINGLE PASS      - walk once, classify once, hand each detector its slice.
-    B. ZERO SUBPROCESS  - detectors are pure functions in ONE process. Startup is
-                          paid once, not 25 times.
+    B. ONE PROCESS      - the static detectors are pure functions in ONE process.
+                          Startup is paid once, not 25 times. The only subprocesses
+                          are git discovery and the Wall run (see below).
     C. CONTENT-ADDRESSED- cache each file's findings by content hash. An unchanged
                           file is never re-read. Warm runs approach cache-read cost.
     D. DIFF-SCOPED      - verifying a change needs the changed files, not the repo.
-    E. EXOGENOUS ONLY   - no LLM on this path, ever. Only checks the agent cannot
-                          author or influence: deterministic, reproducible, and
-                          therefore trustworthy. That constraint is what makes the
-                          fast path both fast AND the thing worth trusting.
+    E. NO LLM           - no model call and no network on this path, ever. The
+                          static rules are deterministic and reproducible. The
+                          Wall run executes loki_wall_* files, which are repo code:
+                          a Wall file can FAIL a verdict, but only one that is
+                          tracked, unchanged and matches an engine10 seal hash can
+                          supply the behavioral signal that earns PASS.
 
 WHAT THIS DELIBERATELY DOES NOT DO
-    It does not run the test suite, call a model, or render judgment. Those are
-    slower and, in the case of model judgment, not exogenous. This module answers
+    It does not run the project's test suite, call a model, or render judgment.
+    It does execute loki_wall_* files (repo code, 60 s total budget, no pytest
+    cache written). Model judgment is slower and not exogenous. This module answers
     only the question a machine can answer deterministically, which is exactly the
     question worth answering in milliseconds.
 """
@@ -46,6 +50,7 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -201,12 +206,16 @@ RULES = (_rule_mock_render, _rule_toothless_test, _rule_mock_target)
 
 # --- Behavioral signal: Wall files that already exist ------------------------
 # The Wall is authored per run by an LLM (engine10 stages/wall.ts) and cannot be
-# authored here. When loki_wall_* Python files are present in the working tree they
-# are deterministic checks, so run them: a failing one is a FAIL. Other runners
-# (ts/js) are counted as skipped, not as a pass.
+# authored here. When loki_wall_* files are present in the working tree they are
+# run (this EXECUTES repo code): a failing one is a FAIL. .py runs under pytest;
+# ts/js are counted as skipped, not as a pass. Only a file whose
+# provenance checks out (_wall_trusted) can earn the behavioral signal: an agent can
+# write `assert True` into an untracked loki_wall_ok.py, so an unattested Wall can
+# FAIL a run but never PASS one.
 
 WALL_PREFIX = "loki_wall_"
 WALL_TIMEOUT_S = 20
+WALL_TOTAL_BUDGET_S = 60  # whole Wall stage
 
 
 def _wall_files(root: str) -> list:
@@ -223,30 +232,84 @@ def _wall_files(root: str) -> list:
             if os.path.basename(n).startswith(WALL_PREFIX) and not EXCLUDE_RE.search(n)]
 
 
-def _run_wall(root: str) -> tuple:
-    """Returns (findings, ran, skipped). Only .py Wall files are executed."""
-    findings, ran, skipped = [], 0, 0
-    for rel in _wall_files(root):
+def _sealed_wall_hashes(root: str) -> set:
+    """(basename, sha256) of every Wall file an engine10 run sealed: the `wall.sealed` event in
+    .loki/runs/*/events.jsonl (stages/wall.ts installCore). No second record format."""
+    out = set()
+    for ev in Path(root, ".loki", "runs").glob("*/events.jsonl"):
+        try:
+            for line in ev.read_text(encoding="utf-8", errors="replace").splitlines():
+                if '"wall.sealed"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("type") != "wall.sealed":
+                    continue
+                for f in (rec.get("data") or {}).get("files") or []:
+                    if isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(f.get("sha256"), str):
+                        out.add((os.path.basename(f["path"]), f["sha256"]))
+        except OSError:
+            continue
+    return out
+
+
+def _wall_trusted(root: str, rel: str, diff_base: str, sealed: set) -> bool:
+    """A Wall file may supply the behavioral signal only if an agent could not have just written it:
+    tracked, unchanged against diff_base (or HEAD) and HEAD, and its sha256 matches a recorded engine10 seal.
+    A file failing these still runs and can FAIL a verdict, never earn a PASS."""
+    if not _git(["ls-files", "--error-unmatch", "--", rel], root).strip():
+        return False
+    for ref in {diff_base or "HEAD", "HEAD"}:
+        if _git(["diff", "--name-only", ref, "--", rel], root).strip():
+            return False
+    try:
+        with open(os.path.join(root, rel), "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return False
+    return (os.path.basename(rel), digest) in sealed
+
+
+def _run_wall(root: str, diff_base: str = "") -> tuple:
+    """Returns (findings, ran, skipped, trusted). EXECUTES loki_wall_* files, which are repo code: .py under
+    pytest (no cache dir written); .ts/.js are counted skipped. Any executed file can FAIL; only a
+    trusted one (see _wall_trusted) counts toward `trusted`, the behavioral signal. WALL_TOTAL_BUDGET_S caps the
+    whole stage; files left when it runs out are counted skipped."""
+    findings, ran, skipped, trusted = [], 0, 0, 0
+    deadline = time.monotonic() + WALL_TOTAL_BUDGET_S
+    files = _wall_files(root)
+    sealed = _sealed_wall_hashes(root) if files else set()
+    status = {}
+    for rel in files:
         if not rel.endswith(".py"):
-            skipped += 1
+            continue  # ts/js Wall files are counted skipped, not run
+        left = deadline - time.monotonic()
+        if left <= 0:
             continue
         try:
-            p = subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", "--no-header", rel],
-                               cwd=root, capture_output=True, text=True, timeout=WALL_TIMEOUT_S)
+            p = subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider", rel],
+                               cwd=root, capture_output=True, text=True, timeout=min(WALL_TIMEOUT_S, left))
             out = p.stdout + p.stderr
             # rc 0 pass, 1 test failure; anything else (no pytest, collection error)
             # is not a result and must not be read as pass or fail.
             if p.returncode == 0:
-                ran += 1
+                status[rel] = "pass"
             elif p.returncode == 1:
-                ran += 1
+                status[rel] = "fail"
                 findings.append(Finding(rule="wall_failed", path=rel, line=1,
                                         message="Wall test fails: " + (out.strip().splitlines() or [""])[-1][:160]))
-            else:
-                skipped += 1
         except (OSError, subprocess.SubprocessError):
+            pass
+    for rel in files:
+        if rel not in status:
             skipped += 1
-    return findings, ran, skipped
+            continue
+        ran += 1
+        if status[rel] == "pass" and _wall_trusted(root, rel, diff_base, sealed):
+            trusted += 1
+    return findings, ran, skipped, trusted
 
 
 # --- Discovery: one pass, from the git index ---------------------------------
@@ -511,9 +574,9 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
     if cache is not None:
         cache.save()
 
-    wall_findings, wall_ran, wall_skipped = _run_wall(root)
+    wall_findings, wall_ran, wall_skipped, wall_trusted = _run_wall(root, diff_base)
     findings.extend(wall_findings)
-    behavioral = wall_ran > 0
+    behavioral = wall_trusted > 0
     blocking = [f for f in findings if f.severity == "high"]
     if blocking:
         verdict = "FAIL"
@@ -522,7 +585,7 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
     else:
         verdict = "INCONCLUSIVE"
     signals = {"rules": [r.__name__.replace("_rule_", "", 1) for r in RULES], "tests_run": 0,
-               "wall_files_run": wall_ran, "wall_files_skipped": wall_skipped,
+               "wall_files_run": wall_ran, "wall_files_trusted": wall_trusted, "wall_files_skipped": wall_skipped,
                "behavioral": behavioral}
 
     return Result(

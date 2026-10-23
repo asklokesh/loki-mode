@@ -113,7 +113,7 @@ T
 Verification
 
   loki verify                  Deterministic PR verification
-  loki verify --fast           Exogenous checks only, milliseconds, no model call
+  loki verify --fast           Static checks plus loki_wall_* files (repo code, executed); no model call
   loki verify --json           One JSON object: command, exit_code, ok, output
   loki verify --pubkey FILE    Check a receipt against a public key
   loki receipt                 Inspect the proof-of-run receipt
