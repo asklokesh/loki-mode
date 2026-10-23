@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "id": "fd-3b-refactor-invariant",
+  "source": "loki-bench-discriminator",
+  "source_ref": "benchmarks/bench/tasks/fd-3b-refactor-invariant.json",
+  "title": "Refactor with a stated behavior invariant",
+  "fixture": "../fixtures/fd-3b-refactor-invariant",
+  "prompt": "`pricing.py` has one function `invoice_total(items, tax_rate)` whose body repeats the same rounding logic in two places. Refactor it into two module-level helpers and have `invoice_total` call them:\n\n    def line_total(unit_price: str, quantity: int) -> Decimal   # unit_price * quantity, rounded to cents\n    def apply_tax(subtotal: Decimal, tax_rate: str) -> Decimal  # subtotal + tax, tax rounded to cents\n\nInvariant: `invoice_total` must return exactly the same value, and raise the same errors, as before for every input. Do not change its signature. Rounding behavior must not change in any case, including exact half-cent amounts. The existing tests in `tests/test_pricing.py` must keep passing.\n\n`line_total` and `apply_tax` must each be importable from `pricing` and behave as described.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 60,
+    "overlay": "../fixtures/fd-3b-refactor-invariant-overlay"
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 900
+}

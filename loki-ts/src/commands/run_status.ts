@@ -1,7 +1,7 @@
 // CLI-MODERN-2: `loki status` on the Loki 10 engine. Reads only .loki/runs/<id>/events.jsonl (the
 // engine's own record), never STATUS.txt or any legacy state.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
@@ -215,5 +215,54 @@ export function runControlVerb(verb: RunControlAction, env: NodeJS.ProcessEnv = 
   if (verb === "resume" && readRunControl(join(root, id)) !== "pause") { process.stderr.write(`loki resume: run ${id} is not paused\n`); return 1; }
   writeRunControl(join(root, id), verb);
   process.stdout.write(`${verb} requested for run ${id}; it takes effect at the next stage boundary\n`);
+  return 0;
+}
+
+export interface RunRow { id: string; repo: string; state: WorkItemState; usd: number | null; verdict: string | null }
+
+/** Registered project dirs from ~/.loki/dashboard/projects.json (the `loki projects` registry), deduplicated by path; unreadable entries are skipped (a missing dir has no runs). */
+export function registeredProjects(env: NodeJS.ProcessEnv): Array<{ name: string; path: string }> {
+  const home = env.HOME ?? "";
+  if (!home) return [];
+  let data: { projects?: Record<string, { name?: unknown; path?: unknown }> };
+  try { data = JSON.parse(readFileSync(join(home, ".loki", "dashboard", "projects.json"), "utf8")); } catch { return []; }
+  const seen = new Set<string>();
+  const out: Array<{ name: string; path: string }> = [];
+  for (const p of Object.values(data.projects ?? {})) {
+    if (typeof p?.path !== "string" || !p.path || seen.has(p.path)) continue;
+    seen.add(p.path);
+    out.push({ name: typeof p.name === "string" && p.name ? p.name : basename(p.path), path: p.path });
+  }
+  return out;
+}
+
+/** One row per run in every registered project, newest first (run ids embed a sortable UTC timestamp). */
+export function collectRuns(env: NodeJS.ProcessEnv, nowMs: number): RunRow[] {
+  const rows: RunRow[] = [];
+  for (const proj of registeredProjects(env)) {
+    const root = join(proj.path, ".loki", "runs"); // never LOKI_DIR: one env path cannot name N projects
+    for (const id of listRunIds(root)) {
+      const events = readEvents(eventsPath(root, id));
+      if (events.length === 0) continue;
+      const s = summarize(id, events, root, nowMs);
+      rows.push({ id, repo: proj.name, state: s.state, usd: s.cost_usd, verdict: fold(events).run.verdict ?? null });
+    }
+  }
+  return rows.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** `loki runs [--json]`: every run across the registered projects (`loki projects`). */
+export function runRunsList(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): number {
+  const usage = "Usage: loki runs [--json]\n";
+  let json = false;
+  for (const a of argv) {
+    if (a === "--json") json = true;
+    else if (a === "--help" || a === "-h") { process.stdout.write(`${usage}  Lists runs across the projects registered with: loki projects add <path>\n`); return 0; }
+    else { process.stderr.write(`loki runs: unknown argument ${a}\n${usage}`); return 1; }
+  }
+  const rows = collectRuns(env, Date.now());
+  if (json) { process.stdout.write(`${JSON.stringify(rows)}\n`); return 0; }
+  if (rows.length === 0) { process.stdout.write("No runs in registered projects. Register one with: loki projects add <path>\n"); return 0; }
+  for (const r of rows) process.stdout.write(`${r.id}  ${r.repo}  ${r.state}  ${r.usd === null ? "cost n/a" : `$${r.usd.toFixed(2)}`}  ${r.verdict ?? "-"}\n`);
   return 0;
 }

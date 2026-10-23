@@ -9,7 +9,7 @@ import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { run } from "../util/shell.ts";
-import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
+import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, promoteLesson, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
@@ -147,6 +147,14 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       const task = i >= 0 ? (argv[i + 1] ?? "") : "";
       if (i >= 0 && (task === "" || task.startsWith("--"))) { process.stderr.write("Usage: loki memory brief [--task <text>]\n"); return 2; }
       process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
+      return 0;
+    }
+    case "promote": {
+      const id = argv[1];
+      if (!id) { process.stderr.write("Usage: loki memory promote <prl-id>\n"); return 2; }
+      const got = promoteLesson(process.cwd(), id);
+      if (!got) { process.stderr.write(`Error: no such lesson '${id}'\n`); return 1; }
+      process.stdout.write(`Promoted ${got.id}: it can now appear in briefs for every repo. 'loki memory forget ${got.id}' withdraws it.\n`);
       return 0;
     }
     case "forget": {

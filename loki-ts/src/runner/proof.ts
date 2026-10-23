@@ -156,6 +156,20 @@ async function collectAppFacts(ctx: RunnerContext, deps: ProofDeps): Promise<voi
   }
 }
 
+/**
+ * Drop the previous run's proof pointer at run start. Parity with run.sh
+ * (`rm -f .loki/state/last-proof-id.txt`, #211): a run that dies before proof
+ * generation must leave NO pointer, because a stale id makes every reader show
+ * a receipt for different work. Absent reads as "no data"; stale reads as evidence.
+ */
+export function clearStaleProofPointer(lokiDir: string): void {
+  try {
+    rmSync(join(lokiDir, "state", "last-proof-id.txt"), { force: true });
+  } catch {
+    /* best effort: same as bash `|| true` */
+  }
+}
+
 export async function maybeGenerateProof(ctx: RunnerContext, deps: ProofDeps = {}): Promise<boolean> {
   try {
     if (process.env["LOKI_PROOF"] === "0") {

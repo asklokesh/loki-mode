@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.60.8. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.63.1. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -51,6 +51,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki control prune` | Delete matching runs |
 | `loki control stop` | Stop the running control plane |
 | `loki control status` | Show control plane reachability |
+| `loki runs` | List runs across registered projects |
 | `loki intent` | Show a past run's intent card |
 | `loki intent show` | Print the intent card and answer |
 | `loki kpis` | KPI snapshot (alias of report kpis) |
