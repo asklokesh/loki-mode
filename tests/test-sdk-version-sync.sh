@@ -17,6 +17,9 @@
 #   3. root package-lock.json
 #   4. every Dockerfile* install line that pins the package
 #
+# It also asserts @anthropic-ai/sdk is pinned exactly and identical across
+# loki-ts/package.json, loki-ts/bun.lock and every Dockerfile pin.
+#
 # Deterministic and offline: reads only files already in the repo.
 
 set -uo pipefail
@@ -108,9 +111,48 @@ if [[ "$DOCKER_MISMATCH" -eq 0 && "$FOUND_PIN" -eq 0 ]]; then
   FAILS=$((FAILS + 1))
 fi
 
+# --- 5. @anthropic-ai/sdk (raw judge SDK, the agent SDK's peer) ------------
+# Same drift class: the Dockerfile peer pin must equal loki-ts/package.json and
+# the loki-ts/bun.lock resolved version, or the image ships a different major.
+PEER="@anthropic-ai/sdk"
+PEER_SRC="$(node -e '
+  const d = require("./loki-ts/package.json");
+  process.stdout.write((d.dependencies || {})["'"$PEER"'"] || "");
+')"
+echo "  loki-ts/package.json ($PEER): ${PEER_SRC:-<missing>}"
+if ! [[ "$PEER_SRC" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "  FAIL: loki-ts/package.json must pin $PEER exactly, found '${PEER_SRC}'"
+  FAILS=$((FAILS + 1))
+fi
+PEER_LOCK="$(grep -oE "\"${PEER}\": \[\"${PEER}@[0-9][0-9A-Za-z.-]*" loki-ts/bun.lock | head -1 | sed "s|.*${PEER}@||")"
+echo "  loki-ts/bun.lock ($PEER):     ${PEER_LOCK:-<missing>}"
+if [[ "$PEER_LOCK" != "$PEER_SRC" ]]; then
+  echo "  FAIL: loki-ts/bun.lock resolves $PEER $PEER_LOCK, loki-ts expects $PEER_SRC"
+  FAILS=$((FAILS + 1))
+fi
+PEER_PIN_FOUND=0
+while IFS= read -r -d '' file; do
+  [[ -f "$REPO_ROOT/$file" ]] || continue
+  while IFS=: read -r lineno content; do
+    [[ -z "$lineno" ]] && continue
+    ver="$(printf '%s' "$content" | grep -oE "${PEER}@[0-9][0-9A-Za-z.\\-]*" | head -1 | sed "s|^${PEER}@||")"
+    [[ -z "$ver" ]] && continue
+    PEER_PIN_FOUND=1
+    echo "  ${file}:${lineno} ($PEER):        $ver"
+    if [[ "$ver" != "$PEER_SRC" ]]; then
+      echo "  FAIL: ${file}:${lineno} pins $PEER $ver, loki-ts expects $PEER_SRC"
+      FAILS=$((FAILS + 1))
+    fi
+  done < <(grep -nE "${PEER}@[0-9]" "$REPO_ROOT/$file" 2>/dev/null)
+done < <(git -C "$REPO_ROOT" ls-files -z -- 'Dockerfile*' '**/Dockerfile*' 2>/dev/null)
+if [[ "$PEER_PIN_FOUND" -eq 0 ]]; then
+  echo "  FAIL: no tracked Dockerfile* pins $PEER (expected at least one)"
+  FAILS=$((FAILS + 1))
+fi
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then
-  echo "SDK-VERSION-SYNC-TEST: PASS (all 4 locations pin $SRC_VER)"
+  echo "SDK-VERSION-SYNC-TEST: PASS (agent SDK pinned in all 4 locations at $SRC_VER; $PEER pinned at $PEER_SRC)"
   exit 0
 fi
 echo "SDK-VERSION-SYNC-TEST: FAIL (${FAILS} mismatch(es))"
