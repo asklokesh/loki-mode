@@ -339,8 +339,8 @@ describe("resume from stage (P12-07)", () => {
       expect(execFileSync("git", ["symbolic-ref", "--short", "HEAD"], { cwd: dir, encoding: "utf8" }).trim()).toBe(`loki/${RID}`);
       writeFileSync(p, text(evs) + '{"v":1,"seq":5,"ty');
       say.length = 0;
-      expect(await resumeFlag(RID, false, { out, supervise: supervise as never })).toBe(2);
-      expect(say.join("")).toContain("refused");
+      expect(await resumeFlag(RID, false, { out, supervise: supervise as never })).toBe(4);
+      expect(say.join("")).toContain(`resume: run ${RID} cannot be resumed (its event log is torn`);
       expect(seen.length).toBe(1);
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
   });
@@ -452,6 +452,72 @@ describe("resume from stage (P12-07)", () => {
       expect(await resumeFlag(RID, true, { out: () => {}, supervise })).toBe(0);
       expect(seen[0]!.restoreBranch).toBe("main");
     } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+  describe("exit 4 only for a measured property of the run (cw17b)", () => {
+    const git = (dir: string) => (...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: dir, encoding: "utf8" });
+    const setup = (events: (sha: string) => Spec[], opts: { branch?: boolean } = {}): { dir: string; g: ReturnType<typeof git>; ev: string } => {
+      const dir = mkdtempSync(join(tmpdir(), "loki-cw17b-")), g = git(dir);
+      g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "i");
+      const sha = g("rev-parse", "HEAD").trim();
+      if (opts.branch !== false) g("branch", `loki/${RID}`);
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const ev = join(dir, ".loki", "runs", RID, "events.jsonl");
+      writeFileSync(ev, text(mk(events(sha))));
+      return { dir, g, ev };
+    };
+    const full = (sha: string, started: Record<string, unknown> = {}): Spec[] => [["run.started", null, { provider: "claude", model: "m", ...started }], ["stage.completed", "intake", { base_sha: sha, task: "t" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"]];
+    const drive = async (dir: string, env: Record<string, string> = {}): Promise<{ rc: number; say: string; seen: number }> => {
+      const cwd = process.cwd(), saved: Record<string, string | undefined> = {}, say: string[] = []; let seen = 0;
+      for (const k of Object.keys(env)) { saved[k] = process.env[k]; process.env[k] = env[k]; }
+      try {
+        process.chdir(dir);
+        const rc = await resumeFlag(RID, true, { out: (x) => { say.push(x); }, supervise: (async () => { seen++; return { outcome: "VERIFIED" }; }) as never });
+        return { rc, say: say.join(""), seen };
+      } finally { process.chdir(cwd); for (const k of Object.keys(env)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+    };
+    const msg = (reason: string): string => `resume: run ${RID} cannot be resumed (${reason}`;
+    test("control: a healthy run resumes (rc 0)", async () => {
+      const { dir } = setup((sha) => full(sha));
+      try { const r = await drive(dir); expect(r.rc).toBe(0); expect(r.seen).toBe(1); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("the run branch is gone: exit 4 with the new-run action", async () => {
+      const { dir, g } = setup((sha) => full(sha), { branch: false });
+      try {
+        expect(g("symbolic-ref", "--short", "HEAD").trim()).toBe("main");
+        const r = await drive(dir);
+        expect(r.rc).toBe(4); expect(r.seen).toBe(0);
+        expect(r.say).toContain(msg(`run branch loki/${RID} is gone`));
+        expect(r.say).toContain(`its work is on branch loki/${RID}. Start a new run: loki start <task>`);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("the base commit is gone: exit 4", async () => {
+      const { dir } = setup(() => full("1234567890abcdef1234567890abcdef12345678"));
+      try { const r = await drive(dir); expect(r.rc).toBe(4); expect(r.seen).toBe(0); expect(r.say).toContain(msg("its base commit 1234567890ab is gone from this repo")); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("the event log is unreadable: exit 4", async () => {
+      const { dir, ev } = setup((sha) => full(sha));
+      try { writeFileSync(ev, readFileSync(ev, "utf8") + '{"v":1,"seq":5,"ty'); const r = await drive(dir); expect(r.rc).toBe(4); expect(r.seen).toBe(0); expect(r.say).toContain(msg("its event log is torn")); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("no stage had settled: exit 4", async () => {
+      const { dir } = setup(() => [["run.started", null, { provider: "claude", model: "m" }], ["stage.started", "intake"]]);
+      try { const r = await drive(dir); expect(r.rc).toBe(4); expect(r.seen).toBe(0); expect(r.say).toContain(msg("no stage had settled")); } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("the provider changed since the kill: exit 4; the same provider still resumes", async () => {
+      const { dir } = setup((sha) => full(sha));
+      try {
+        const r = await drive(dir, { LOKI_PROVIDER: "codex" });
+        expect(r.rc).toBe(4); expect(r.seen).toBe(0); expect(r.say).toContain(msg("the provider changed since the kill: the run used claude, LOKI_PROVIDER is codex"));
+        expect((await drive(dir, { LOKI_PROVIDER: "claude" })).rc).toBe(0);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    test("the model changed since the kill: exit 4; an override the run already applied does not", async () => {
+      const a = setup((sha) => full(sha)), b = setup((sha) => full(sha, { model_override_applied: true }));
+      try {
+        const r = await drive(a.dir, { LOKI_MODEL_OVERRIDE: "other-model" });
+        expect(r.rc).toBe(4); expect(r.seen).toBe(0); expect(r.say).toContain(msg("the model changed since the kill: the run used m, LOKI_MODEL_OVERRIDE is other-model"));
+        expect((await drive(b.dir, { LOKI_MODEL_OVERRIDE: "other-model" })).rc).toBe(0);
+      } finally { rmSync(a.dir, { recursive: true, force: true }); rmSync(b.dir, { recursive: true, force: true }); }
+    });
   });
   test("P12-07i review R5: resume refuses a run that hit its cap, and seeds prior spend and remaining time otherwise", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-r5-")), cwd = process.cwd();

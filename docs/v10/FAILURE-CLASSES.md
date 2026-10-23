@@ -1566,3 +1566,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: touched() prefix rule, the loop resolving a path under a gitlink against cwd and root, rule (i) bare basename, rule (ii) final-segment component; all four now share one gitlink check (checkedOut, deleted-in-diff).
 - Mechanism: citationVerdict returns "refuted" | "unproven" | "ok". A gitlink directory with content on disk and no deleted-in-diff record (CitationContext.gitlinkDeleted, filled by voter_agents from the submodule old..new diff) refutes the citation (MEDIUM, [citation not found]); an absent or empty gitlink directory keeps HIGH and prefixes the description with [NOT PROVEN: ...], which travels in the council issue text.
 - Fixture: loki-ts/tests/council/finding_schema.test.ts "submodule citation: checked out", "not checked out" and "deleted in the diff"; red when the return in the gitlink branch of citationVerdict is mutated back to "ok".
+
+## FC-VERIFY-PATH-REROOTED-UNDER-RUNS A `loki verify` argument that is a path to a missing receipt was treated as a run id, so the error named a path that never existed
+- User-visible vs raw: user-visible. `loki verify .loki/runs/e10-nope/receipt.json` printed `receipt not found: .loki/runs/.loki/runs/e10-nope/receipt.json/receipt.json`.
+- Law: a path the user typed is reported as given; the reporter never invents a location.
+- Cause (measured): engine10/verify_cmd.ts treated only an EXISTING file as a path, so a missing one fell through to `join(runsRoot, runId, "receipt.json")`.
+- Siblings swept: run id form (unchanged), absolute path, a receipt copied elsewhere, a non-receipt .json (diff verifier).
+- Mechanism: an argument containing a path separator or ending in .json is a path whether or not the file exists.
+- Fixture: tests/test-verify-receipt-route.sh "a missing receipt at a run path is UNCHECKED rc 2 with the path as given" (red before, green after).
