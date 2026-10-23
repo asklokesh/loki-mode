@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.9 (2026-10-23)
+
+### Fixed
+- The allowed-paths sandbox-mount test is corrected (rq-60). Approval: "ship pd/rq60 a8acf9478d31e7b5a7edba62a87291ccbac88d02. rev-b HIGH verdict: APPROVE".
+
 ## v11.67.8 (2026-10-23)
 
 ### Fixed
