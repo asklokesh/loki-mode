@@ -561,3 +561,26 @@ every summary of this result, and must stay there.
 * Acceptance here is `greet.js_exists`, a file-existence assertion. It shows the
   engine finished the job. It is NOT a judgment of output quality, and must not
   be reported as one.
+
+## #348 (CW-15): false-pass on judge-trap-1 and hard-1-order-api, 2026-10-23
+
+Live run, bin/loki v11.56.0 (equals VERSION), claude_code adapter, sonnet,
+n=3 trials per arm per task (12 trials), about $2.06 total. Command, run once
+per task:
+
+    LOKI_BENCH_SPEND_APPROVED=1 LOKI_BENCH_VS_TOOLS="loki claude_code" benchmarks/bench/run.sh vs benchmarks/bench/tasks/<task>.json --trials 3
+
+| task | arm | n | grader pass | wall s (sum) | usd (sum) | claimed done | false-pass |
+|---|---|---|---|---|---|---|---|
+| judge-trap-1 | loki | 3 | 0/3 | 595.8 | 0.6200 | 0 (PARTIAL, FAILED, PARTIAL) | not captured (no claim) |
+| judge-trap-1 | claude_code | 3 | 0/3 | 106.6 | 0.6203 | 3 | 3/3 |
+| hard-1-order-api | loki | 3 | 2/3 | 245.1 | 0.3185 | 0 (PARTIAL x3) | not captured (no claim) |
+| hard-1-order-api | claude_code | 3 | 3/3 | 131.6 | 0.4998 | 3 | 0/3 |
+
+* Loki passed 0/3 on judge-trap-1: it declined to claim the task, it did not
+  solve it.
+* Positive control: the judge-trap-1 hidden grader exits 0 on a reference
+  slugify and 1 on a naive one. The metric code has fake-adapter controls in
+  benchmarks/bench/tests/test_trial_metrics.py.
+* Council cache share and journal reuse are emitted per trial but NOT yet
+  measured live (null in this run); they stay open on #348.

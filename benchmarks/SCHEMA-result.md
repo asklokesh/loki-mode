@@ -51,6 +51,10 @@ reviewer will check.
 | `adapter` | object | adapter | full adapter-output (cost + provenance, never outcome) |
 | `cost_usd` | number or null | runner | lifted from adapter; null preserved |
 | `duration_s` | number | runner | lifted from adapter |
+| `metrics.claimed_done` | bool or null | runner | loki: verify_verdict == VERIFIED; other tools: exit_status completed; null when unmeasured |
+| `metrics.false_pass` | bool or null | runner | claimed_done while the grader failed; null when no claim |
+| `metrics.council_cache_share` | number or null | runner | cache_read / (input + cache_creation + cache_read) over review/council ledger phases; null when none |
+| `metrics.journal_reuse_wall_s` | number or null | runner | wall seconds of a second run on the same card and base sha, from provenance; null when not measured |
 
 ## summary
 

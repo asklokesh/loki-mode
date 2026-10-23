@@ -79,6 +79,7 @@ def load_efficiency_cost():
 
 def build_output(*, tool, tool_version, model_used, duration_s, iterations,
                  tokens_in, tokens_out, cost_usd, exit_status, provenance,
+                 cache_read_tokens=None, cache_creation_tokens=None,
                  **ignored):
     """Construct the canonical adapter-output dict.
 
@@ -97,6 +98,13 @@ def build_output(*, tool, tool_version, model_used, duration_s, iterations,
         "exit_status": str(exit_status),
         "provenance": provenance if isinstance(provenance, dict) else {},
     }
+    # Omitted (not zeroed) when unknown so normalize_adapter_output keeps its
+    # default; before this pass-through the keys were swallowed by **ignored and
+    # every adapter row recorded cache_read_tokens 0 whatever the run read.
+    for k, v in (("cache_read_tokens", cache_read_tokens),
+                 ("cache_creation_tokens", cache_creation_tokens)):
+        if isinstance(v, int) and not isinstance(v, bool):
+            out[k] = v
     # Defense in depth: never let a forbidden key survive into the output.
     for k in FORBIDDEN_ADAPTER_KEYS:
         out.pop(k, None)

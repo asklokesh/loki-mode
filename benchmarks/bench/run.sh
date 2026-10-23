@@ -37,7 +37,8 @@ TIMEOUT_SECS="${LOKI_BENCH_TIMEOUT:-3600}"   # hard wall-clock cap per task run
 # Tools used by `vs`. Loki always first; competitors are real adapters that
 # EXIST + are mock-tested but are NOT executed for paid runs in R2 unless the
 # operator opts in. manual.py records externally-supplied (unverified) numbers.
-VS_TOOLS="${LOKI_BENCH_VS_TOOLS:-loki}"
+# Space or comma separated; a comma list used to be read as one adapter name.
+VS_TOOLS="$(printf '%s' "${LOKI_BENCH_VS_TOOLS:-loki}" | tr ',' ' ')"
 
 usage() {
     cat <<'EOF'
