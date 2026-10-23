@@ -76,6 +76,8 @@ cat > "$WORK/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 ST="$STUB_STATE"; PKGN="${STUB_PKG:-loki-mode}"
 url="${*: -1}"; v="${url##*/}"; rest="${url%/*}"
+# Uncached read only: without the no-cache header the registry answers from a CDN cache.
+case "$*" in *"Cache-Control: no-cache"*) ;; *) echo 404; exit 0 ;; esac
 [ "${rest##*/}" = "$PKGN" ] || { echo 404; exit 0; }
 [ -z "${STUB_OUTAGE:-}" ] || { echo 503; exit 0; }
 c=$(( $(cat "$ST/dcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$ST/dcalls"
@@ -206,8 +208,8 @@ TRIES_T=40 STUB_TAG_LAG=9 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 
 # A write that is accepted but never applies fails loud once the window is spent.
 STUB_TAG_LAG=999 run_case nolag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
-{ [ $CASE_RC -ne 0 ] && grep -q "did not settle" <<<"$CASE_OUT"; } \
-    && ok "a tag that never applies fails the job" || bad "nolag: rc=$CASE_RC $CASE_OUT"
+{ [ $CASE_RC -ne 0 ] && grep -q "did not settle" <<<"$CASE_OUT" && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 2 ]; } \
+    && ok "a tag that never applies fails the job after exactly one rewrite" || bad "nolag: rc=$CASE_RC $CASE_OUT"
 
 # 11.60.8 evidence: an accepted latest write never applied. Late in the window it is
 # rewritten once with a named warning, and the run then settles.
@@ -276,11 +278,13 @@ for name in ('verify-npm-registry', 'verify-sdk-registry'):
     b = job(name)
     if 'LAG_FATAL=0' in b or 'SETTLE_S=' in b: bad.append(name + ': verify must keep the default long fatal poll')
     t = re.search(r'timeout-minutes: (\d+)', b)
-    if not t or int(t.group(1)) < 35: bad.append(name + ': timeout under the poll + materialize + settle budget (35)')
+    if not t or int(t.group(1)) < 45: bad.append(name + ': timeout under the poll + materialize + settle budget (45)')
     code = '\n'.join(l for l in b.splitlines() if not l.lstrip().startswith('#'))
     # B2: proof is an uncached version document + tarball read; a cached packument read (npm view) is not.
     if 'npm view' in code: bad.append(name + ': npm view (cached packument) used as proof')
     if code.count('Cache-Control: no-cache') < 2: bad.append(name + ': version document and tarball must both be read uncached')
+    if not re.search(r'\"\$vcode\" = 200 \] && \[ \"\$tcode\" = 200', code): bad.append(name + ': poll must require the version document AND the tarball')
+    if 'rc=0' not in code or '|| rc=$?' not in code: bad.append(name + ': converge exit status must survive bash -e')
     # B4/N1: poll and converge are one step, and nothing between the poll and the script call can exit.
     steps = re.split(r'\n      - name:', code)
     conv = [x for x in steps if 'npm-dist-tags.sh' in x and 'bash scripts' in x]
@@ -307,9 +311,15 @@ open(w + '/mut_exit.yml', 'w').write(s.replace('          # Converge always runs
 # prove and converge split into two steps
 open(w + '/mut_split.yml', 'w').write(s.replace('          # Converge always runs', '      - name: Converge\n        run: |\n          # Converge always runs', 1))
 # timeout back to 25
-open(w + '/mut_to.yml', 'w').write(s.replace('timeout-minutes: 40', 'timeout-minutes: 25'))
+open(w + '/mut_to.yml', 'w').write(s.replace('timeout-minutes: 45', 'timeout-minutes: 25'))
 PY2
-for m in npmview exit split to; do
+python3 - "$WF" "$WORK" <<'PY3'
+import sys
+s = open(sys.argv[1]).read(); w = sys.argv[2]
+open(w + '/mut_vonly.yml', 'w').write(s.replace('[ "$vcode" = 200 ] && [ "$tcode" = 200 ]', '[ "$vcode" = 200 ]'))
+open(w + '/mut_rc.yml', 'w').write(s.replace('"$VERSION" || rc=$?', '"$VERSION"; rc=$?'))
+PY3
+for m in npmview exit split to vonly rc; do
     check_workflow "$WORK/mut_$m.yml" >/dev/null && bad "mutant $m: workflow shape not caught" || ok "mutant: workflow $m is caught"
 done
 
