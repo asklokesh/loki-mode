@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.74.0 (2026-10-23)
+
+### Added
+- Always-on headless company seats driven by the trigger daemon, with seat definitions in autonomy/company-seats.json, per-seat flock locks, and a tick runner that always sends SIGKILL to the whole tick process group after the TERM grace so a child that ignores TERM can no longer leak (fix for the earlier BLOCK on 8f9620e21). Approval: "APPROVE 417992e1675241e17670c1738e1e189dbe5b3867 (company/always-on). The approval covers 8f9620e21 plus 417992e16" (rev-company-on, opus), shipped in that order. Known residual from the reviewer: if a tick parent is SIGKILLed, its claude keeps running and the next tick can run alongside it; the operating doc states this.
+
 ## v11.73.0 (2026-10-23)
 
 ### Added
