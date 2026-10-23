@@ -742,3 +742,51 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+// FC-CRASH-WORK-READ-AS-PREEXISTING: a file a crashed run of the same task wrote is the run's change; a file untracked before that run began never is.
+describe("engine10 intake crash-written work", () => {
+  const TASK = "do a thing";
+  const writePrior = (id: string, over: { task?: string; pre?: string[]; sealed?: boolean; startTs?: string } = {}): void => {
+    mkdirSync(join(repoDir, ".loki", "runs", id), { recursive: true });
+    const ev = (seq: number, type: string, stage: string | null, data: Record<string, unknown>, ts = over.startTs ?? new Date(Date.now() - 60000).toISOString()) => JSON.stringify({ v: 1, seq, ts, run: id, type, stage, data });
+    const lines = [ev(1, "run.started", null, {}), ev(2, "stage.completed", "intake", { task: over.task ?? TASK, preexisting_untracked: over.pre ?? [] })];
+    if (over.sealed) lines.push(ev(3, "receipt.sealed", "seal", {}));
+    writeFileSync(join(repoDir, ".loki", "runs", id, "events.jsonl"), lines.join("\n") + "\n");
+  };
+  const intake = async (): Promise<Record<string, unknown>> => { const r = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: TASK }); expect(r.status).toBe("completed"); return r.data; };
+
+  test("crash-written files, a new directory included, are the run's own; a file untracked before the crashed run is not", async () => {
+    writeFileSync(join(repoDir, "user-notes.txt"), "mine\n");
+    writePrior("e10-crashed", { pre: ["user-notes.txt"] });
+    writeFileSync(join(repoDir, "mul.js"), "module.exports = (a, b) => a * b;\n");
+    mkdirSync(join(repoDir, "lib", "deep"), { recursive: true }); writeFileSync(join(repoDir, "lib", "deep", "x.js"), "x\n");
+    const d = await intake();
+    expect((d.crash_written as string[]).sort()).toEqual(["lib/deep/x.js", "mul.js"]);
+    expect(d.preexisting_untracked as string[]).toEqual(["user-notes.txt"]);
+    expect(Object.keys(d.preexisting_untracked_blobs as object)).toEqual(["user-notes.txt"]);
+  });
+  test("an unsealed prior run of another task, or a sealed one, attributes nothing", async () => {
+    writeFileSync(join(repoDir, "mul.js"), "x\n");
+    writePrior("e10-other", { task: "another task" });
+    expect((await intake()).crash_written).toEqual([]);
+    rmSync(join(repoDir, ".loki", "runs", "e10-other"), { recursive: true, force: true });
+    writePrior("e10-sealed", { sealed: true });
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("a file older than the crashed run's start is not attributed", async () => {
+    writeFileSync(join(repoDir, "old.js"), "x\n");
+    writePrior("e10-crashed", { startTs: new Date(Date.now() + 3600000).toISOString() });
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("the crash-written file is committed with the run", async () => {
+    writeFileSync(join(repoDir, "user-notes.txt"), "mine\n");
+    writePrior("e10-crashed", { pre: ["user-notes.txt"] });
+    writeFileSync(join(repoDir, "mul.js"), "x\n");
+    const ctx = makeCtx(repoDir, runDir, fakeTests());
+    const r = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+    const c = await commitStage.run({ ...ctx, baseSha: String(r.data.base_sha), outputs: () => ({ intake: r.data }) } as RunContext, new AbortController().signal);
+    expect(c.status).toBe("completed");
+    expect(gitOut(repoDir, ["show", "--name-only", "--format=", "HEAD"]).split("\n")).toContain("mul.js");
+    expect(r.data.crash_written).toEqual(["mul.js"]);
+  });
+});

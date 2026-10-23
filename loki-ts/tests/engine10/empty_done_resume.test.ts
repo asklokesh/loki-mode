@@ -88,4 +88,25 @@ describe("FC-43 empty-diff done resume", () => {
     expect(s.calls.length).toBe(1);
     expect(r.status).toBe("completed");
   });
+
+  test("FC-CRASH-WORK-READ-AS-PREEXISTING: already_done over crash-written files is done, never base evidence", async () => {
+    writeFileSync(join(repo, "mul.js"), "x\n");
+    const s = new Seq([already("mul.js:1 exists")]);
+    const c = { ...ctxOf(s), outputs: () => ({ intake: { crash_written: ["mul.js"] } }) } as unknown as RunContext;
+    const r = await implementStage.run(c, new AbortController().signal);
+    expect(r.data.exit).toBe("done");
+    expect(r.data.crash_recovered).toEqual(["mul.js"]);
+    expect(r.data.already_done_evidence).toBeNull();
+  });
+  test("positive control: already_done with no crash-written file stays already_done", async () => {
+    const s = new Seq([already("a.txt:1 already one")]);
+    const r = await implementStage.run(ctxOf(s), new AbortController().signal);
+    expect(r.data.exit).toBe("already_done");
+    expect(r.data.already_done_evidence).toBe("a.txt:1 already one");
+  });
+  test("a recorded crash file that is gone does not block already_done", async () => {
+    const s = new Seq([already("a.txt:1")]);
+    const c = { ...ctxOf(s), outputs: () => ({ intake: { crash_written: ["gone.js"] } }) } as unknown as RunContext;
+    expect((await implementStage.run(c, new AbortController().signal)).data.exit).toBe("already_done");
+  });
 });

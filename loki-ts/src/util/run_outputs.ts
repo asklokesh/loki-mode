@@ -369,7 +369,11 @@ export async function resumeMain(args: string[], deps: ResumeDeps = {}): Promise
   if (it.phase === "publish") return resumePublish(repoDir, it, deps);
   let br = "";
   try { br = safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/loki/${it.runId}`]).trim(); } catch { /* no run branch */ }
-  out(`interrupted run ${it.runId} stopped in phase: ${it.phase} (last seq ${fold(it.events).lastSeq}); ${br ? `work is preserved on branch loki/${it.runId}` : "no run branch was created"}\n`);
+  const base = it.events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
+  let ahead = 0; if (br && typeof base === "string") { try { ahead = Number(safeGit(repoDir, ["rev-list", "--count", `${base}..${br}`]).trim()) || 0; } catch { /* unknown: claim nothing */ } }
+  let loose: string[] = []; if (ahead === 0) { try { loose = safeGit(repoDir, ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"]).split("\n").filter(Boolean).map((l) => l.slice(3)); } catch { /* unreadable tree */ } }
+  const where = ahead > 0 ? `work is preserved on branch loki/${it.runId} (${ahead} commit${ahead === 1 ? "" : "s"})` : loose.length > 0 ? `no commits yet; uncommitted files in the working tree: ${loose.slice(0, 10).join(", ")}${loose.length > 10 ? ` (+${loose.length - 10} more)` : ""}` : br ? "no work was written" : "no run branch was created"; // FC-CRASH-WORK-READ-AS-PREEXISTING: never claim a branch holds work it does not
+  out(`interrupted run ${it.runId} stopped in phase: ${it.phase} (last seq ${fold(it.events).lastSeq}); ${where}\n`);
   out(`phase ${it.phase} is not auto-resumable (stage state is in memory); start a new run${it.task ? " with the same task" : ""}: loki start\n`);
   return 4;
 }
