@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.62.1 (2026-10-23)
+
+
+
+### Fixed
+- The P9 moat test pins the shorthand helper binding in a dynamic-import destructure to both the import and indirect rules (p9-shorthand, rebased onto main). Approval: "Ship: p9-shorthand. rev-c HIGH re-APPROVE on 61ca6c363, which replaces my earlier a060fbc15 + 518d2891e line. The range is the single commit 61ca6c363 on origin/main."
+
 ## v11.62.0 (2026-10-23)
 
 
