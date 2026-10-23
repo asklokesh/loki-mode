@@ -7,7 +7,7 @@ import { safeGit } from "../util/safe_git.ts";
 const LOCKFILE = /(^|\/)([^/]+\.lockb?|[^/]*\.lockfile|lockfile|[^/]+-lock\.(json|ya?ml)|go\.sum|npm-shrinkwrap\.json|Package\.resolved)$/;
 
 // --no-filters: never run a clean filter from the agent-writable .git/config; stderr silenced so a deleted recorded file prints no `fatal:`
-const blob = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string =>
+export const blob = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string =>
   safeGit(repoDir, ["hash-object", "-w", "--no-filters", "--", path], { env }).trim();
 
 /** Splits `git status --porcelain` lines into blocking ones and {lockfile path: blob sha} for modified lockfiles. */
@@ -37,20 +37,6 @@ export function snapshotUntracked(repoDir: string): Record<string, string> {
     try { if (!st.isFile() || st.size > cap) throw new Error("skip"); out[p] = `${blob(repoDir, p)} ${(st.mode & 0o777).toString(8)}`; } catch { out[p] = `!${st.size}:${st.mtimeMs}:${st.ctimeMs}`; }
   }
   return out;
-}
-
-/** FC-COMMIT-STAGES-USER-UNTRACKED: intake-untracked files the run left exactly as they were (bytes and mode for a snapshotted file, size/mtime/ctime for one that was too big to snapshot). */
-export function untouchedUntracked(repoDir: string, recorded: unknown, env: NodeJS.ProcessEnv = process.env): string[] {
-  if (!recorded || typeof recorded !== "object") return [];
-  return Object.entries(recorded as Record<string, unknown>).filter(([p, v]) => {
-    if (typeof v !== "string") return false;
-    try {
-      const st = lstatSync(join(repoDir, p));
-      if (v.startsWith("!")) return v === `!${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-      const [sha, mode] = v.split(" ");
-      return st.isFile() && blob(repoDir, p, env) === sha && (st.mode & 0o777).toString(8) === mode;
-    } catch { return false; }
-  }).map(([p]) => p);
 }
 
 export function untouchedSinceIntake(repoDir: string, recorded: unknown, env: NodeJS.ProcessEnv = process.env): string[] {

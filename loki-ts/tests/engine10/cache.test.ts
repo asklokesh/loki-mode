@@ -7,8 +7,6 @@ import {
   cacheStats,
   cachedRepoMap,
   cachedTestMap,
-  computeProducerFingerprint,
-  producerFingerprint,
   pruneCache,
   readRepoMapCache,
   readTestMapCache,
@@ -16,11 +14,11 @@ import {
   readSliceJournal,
   repoKey,
   sliceKey,
-  sourceFingerprint,
   writeRepoMapCache,
   writeSliceJournal,
   writeTestMapCache,
 } from "../../src/engine10/cache.ts";
+import { computeProducerFingerprint, producerFingerprint, sourceFingerprint } from "../../src/util/producer_fingerprint.ts";
 import { readFlaky, recordFailures, recordFlaky, topFailures } from "../../src/util/failure_memory.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type { TestMap } from "../../src/engine10/types.ts";
@@ -343,7 +341,7 @@ describe("#331 producer-bound, private, atomic cache", () => {
 describe("FC-ENGINE10-CACHE-KEY-NOT-PRODUCER-BOUND: unbound fallback and injected value", () => {
   const SRC_ROOT = resolve(import.meta.dir, "..", "..", "src");
   const probe = (): string => {
-    const code = `import { computeProducerFingerprint } from ${JSON.stringify(resolve(SRC_ROOT, "engine10", "cache.ts"))}; process.stdout.write(computeProducerFingerprint(${JSON.stringify(join(SRC_ROOT, "no-such-dir"))}, undefined));`;
+    const code = `import { computeProducerFingerprint } from ${JSON.stringify(resolve(SRC_ROOT, "util", "producer_fingerprint.ts"))}; process.stdout.write(computeProducerFingerprint(${JSON.stringify(join(SRC_ROOT, "no-such-dir"))}, undefined));`;
     const r = Bun.spawnSync([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
     expect(r.exitCode).toBe(0);
     return r.stdout.toString();
