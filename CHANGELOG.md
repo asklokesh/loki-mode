@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.65.1 (2026-10-23)
+
+
+
+### Fixed
+- The supervisor_backstop and route_matrix test bounds scale with machine load, the SIGTERM to SIGKILL gap is measured from the worker's own signal timestamp, and the fake repo dir is cleared at each stage boundary (pd/loadaware). Approval: "APPROVE (LOW, tl-324): pd/loadaware branch head at full SHA 00b2a89160fba583be733074a1f74b0ef1175b49 (merge commit; second parent d8fec54ac is origin/main)". Shipped by merging that head; it contains 2264accef, 7385f1da5, 8722d92ae and 28b795fd1.
+
 ## v11.65.0 (2026-10-23)
 
 
