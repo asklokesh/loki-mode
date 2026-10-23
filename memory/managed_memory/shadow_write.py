@@ -137,7 +137,6 @@ def _shadow_write_blob(
             store_id=store_id,
             path=logical_path,
             content=content,
-            sha256_precondition=sha,
         )
         emit_managed_event(
             "managed_memory_shadow_write",
@@ -170,6 +169,11 @@ def _shadow_write_blob(
                     else None
                 )
                 if existing_entry and existing_sha:
+                    if existing_entry.get("content") is None:
+                        # Merging into unseen content would overwrite it.
+                        raise RuntimeError(
+                            f"stored content for {logical_path} not returned"
+                        )
                     # Simple merge: if existing content already contains a
                     # "versions" list, append; else seed it. We do NOT attempt
                     # semantic merging in Phase 1.
@@ -190,9 +194,9 @@ def _shadow_write_blob(
                     new_sha = compute_sha(merged_content)
                     # Precondition is the sha of the CURRENT remote state that
                     # we just read. The new sha is what the server will store.
-                    client.memory_create(
+                    client.memory_update(
                         store_id=store_id,
-                        path=logical_path,
+                        memory_id=existing_entry["id"],
                         content=merged_content,
                         sha256_precondition=existing_sha,
                     )
@@ -247,7 +251,7 @@ def shadow_write_verdict(verdict_json_path: str) -> bool:
     """
     Read a council verdict JSON from disk and shadow-write it.
 
-    The logical remote path is `verdicts/<iteration>.json`. If the file is
+    The logical remote path is `/verdicts/<iteration>.json`. If the file is
     missing or unreadable, the call is a no-op. Never raises.
     """
     if not is_enabled():
@@ -260,14 +264,14 @@ def shadow_write_verdict(verdict_json_path: str) -> bool:
         )
         return False
     iteration = payload.get("iteration") or payload.get("round") or "unknown"
-    logical = f"verdicts/iteration-{iteration}.json"
+    logical = f"/verdicts/iteration-{iteration}.json"
     return _shadow_write_blob(logical, payload, kind="verdict")
 
 
 def shadow_write_pattern(pattern: Dict[str, Any]) -> bool:
     """
     Shadow-write a SemanticPattern-shaped dict. Logical path is
-    `patterns/<pattern_id>.json`. Never raises.
+    `/patterns/<pattern_id>.json`. Never raises.
     """
     if not is_enabled():
         return False
@@ -278,14 +282,14 @@ def shadow_write_pattern(pattern: Dict[str, Any]) -> bool:
         )
         return False
     pid = pattern.get("pattern_id") or pattern.get("id") or "unknown"
-    logical = f"patterns/{pid}.json"
+    logical = f"/patterns/{pid}.json"
     return _shadow_write_blob(logical, pattern, kind="pattern")
 
 
 def shadow_write_episode(episode_path: str) -> bool:
     """
     Shadow-write a high-importance episode trace JSON. Logical path is
-    `episodes/<episode_id>.json`. Called from autonomy/run.sh's
+    `/episodes/<episode_id>.json`. Called from autonomy/run.sh's
     auto_capture_episode ONLY when importance >= 0.6. Never raises.
     """
     if not is_enabled():
@@ -298,7 +302,7 @@ def shadow_write_episode(episode_path: str) -> bool:
         )
         return False
     eid = payload.get("id") or payload.get("task_id") or Path(episode_path).stem
-    logical = f"episodes/{eid}.json"
+    logical = f"/episodes/{eid}.json"
     return _shadow_write_blob(logical, payload, kind="episode")
 
 

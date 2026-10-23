@@ -404,6 +404,89 @@ class ProvidersManagedTests(unittest.TestCase):
             with self.assertRaises(self.managed.ManagedUnavailable, msg=label):
                 sess.run()
 
+    def _fast_poll(self):
+        prev = self.managed._SESSION_POLL_S
+        self.addCleanup(setattr, self.managed, "_SESSION_POLL_S", prev)
+        self.managed._SESSION_POLL_S = 0.0
+
+    def _real_session(self, client, agent_ids=("agent_aaaa",), timeout_s=5):
+        return self.managed._RealMultiagentSession(
+            client=client, agent_ids=list(agent_ids), context={}, timeout_s=timeout_s
+        )
+
+    def test_session_not_finished_or_terminated_is_unavailable(self):
+        from types import SimpleNamespace as NS
+
+        self._fast_poll()
+        msg = NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id=None)
+        for status, timeout_s in (("running", 0), ("rescheduling", 0), ("terminated", 30)):
+            client = self._client_with_events([msg], [])
+            client.beta.sessions.create = lambda **kw: NS(id="s", status=status)
+            client.beta.sessions.retrieve = lambda sid: NS(status=status)
+            start = time.monotonic()
+            with self.assertRaises(self.managed.ManagedUnavailable, msg=status):
+                self._real_session(client, timeout_s=timeout_s).run()
+            # terminated must fail at once, not wait out the deadline
+            self.assertLess(time.monotonic() - start, 3.0, status)
+
+    def test_idle_at_create_waits_for_the_agent_message(self):
+        from types import SimpleNamespace as NS
+
+        self._fast_poll()
+        msg = NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id=None)
+        batches = [[], [NS(type="user.message")], [msg]]
+        client = self._client_with_events([], [])
+        client.beta.sessions.events = NS(
+            list=lambda sid: batches.pop(0) if len(batches) > 1 else batches[0]
+        )
+        out = self._real_session(client).run()
+        self.assertEqual([m["text"] for m in out["raw"]], ["APPROVE"])
+
+    def test_coordinator_cache_key_includes_model(self):
+        from types import SimpleNamespace as NS
+
+        created = []
+
+        class _A:
+            def create(self, **kw):
+                created.append(kw["model"])
+                return NS(id=f"coord_{len(created)}")
+
+        client = self._client_with_events([], [])
+        client.beta.agents = _A()
+        ids = ("agent_aaaa", "agent_bbbb")
+        prev = os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT")
+        try:
+            for model in ("model-one", "model-two", "model-one"):
+                os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = model
+                self._real_session(client, ids)._coordinator_id(client.beta)
+        finally:
+            if prev is None:
+                os.environ.pop("LOKI_CLAUDE_MODEL_DEVELOPMENT", None)
+            else:
+                os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = prev
+        self.assertEqual(created, ["model-one", "model-two"])
+
+    def test_duplicate_agent_reply_is_unavailable_in_both_councils(self):
+        dup = [
+            {"agent_id": "agent_aaaa", "text": "APPROVE"},
+            {"agent_id": "agent_aaaa", "text": "APPROVE"},
+            {"agent_id": "agent_bbbb", "text": "APPROVE"},
+        ]
+        self.managed._set_session_factory_for_tests(
+            lambda client, *, agent_ids, context, timeout_s: FakeMultiagentSession(
+                agent_ids, context, timeout_s, dup
+            )
+        )
+        with self.assertRaises(self.managed.ManagedUnavailable):
+            self.managed.run_council(
+                agent_pool=["reviewer-a", "reviewer-b", "reviewer-c"], context={}, timeout_s=5
+            )
+        with self.assertRaises(self.managed.ManagedUnavailable):
+            self.managed.run_completion_council(
+                voters=["reviewer-a", "reviewer-b", "reviewer-c"], context={}, timeout_s=5
+            )
+
     # ---------- helpers -----------------------------------------------------
 
     def _read_events(self):

@@ -105,7 +105,7 @@ def retrieve_related_verdicts(
             store_id = store.get("id") or store.get("store_id")
         if not store_id:
             return []
-        entries = client.memories_list(store_id=store_id, path_prefix="verdicts/")
+        entries = client.memories_list(store_id=store_id, path_prefix="/verdicts/")
     except Exception as e:
         _warn_once(f"memories_list failed ({e}); returning empty")
         emit_managed_event(
@@ -192,7 +192,7 @@ def hydrate_patterns(
         store_id = store.get("id") or store.get("store_id")
         if not store_id:
             return 0
-        entries = client.memories_list(store_id=store_id, path_prefix="patterns/")
+        entries = client.memories_list(store_id=store_id, path_prefix="/patterns/")
     except Exception as e:
         emit_managed_event(
             "managed_agents_fallback",
@@ -329,7 +329,7 @@ def hydrate_skills(
         store_id = store.get("id") or store.get("store_id")
         if not store_id:
             return 0
-        entries = client.memories_list(store_id=store_id, path_prefix="skills/")
+        entries = client.memories_list(store_id=store_id, path_prefix="/skills/")
     except Exception as e:
         emit_managed_event(
             "managed_agents_fallback",
