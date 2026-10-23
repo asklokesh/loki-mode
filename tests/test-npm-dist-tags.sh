@@ -180,6 +180,10 @@ never_out="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_HIDE_VER=11.55.1 S
 run_case stale "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
 { [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.55.1 ] && [ "$(cat "$CASE_ST/next")" = 11.55.1 ]; } \
     && ok "settle reads dist-tag ls, not the stale cached packument" || bad "stale: rc=$CASE_RC $CASE_OUT"
+# Live evidence 2026-10-23 (runs 11.60.5 to 11.60.7): next stayed behind latest. A run that
+# stops between the two writes must have written next first.
+{ [ "$(grep -m1 '^add ' "$CASE_ST/log" | awk '{print $3}')" = next ]; } \
+    && ok "next is written before latest" || bad "order: $(cat "$CASE_ST/log")"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
