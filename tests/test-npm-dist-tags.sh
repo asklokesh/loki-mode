@@ -25,8 +25,15 @@ fi
 case "$1 $2 $3" in
     "view loki-mode versions")
         printf '['; paste -sd, "$ST/versions" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
-    "view loki-mode dist-tags.latest") cat "$ST/latest" ;;
-    "view loki-mode dist-tags.next") cat "$ST/next" ;;
+    "view loki-mode dist-tags."*)
+        tag="${3#dist-tags.}"
+        # STUB_FRESH=<ver>: the first read of each tag returns the state file, every
+        # later read returns <ver> (another run moved the tag in between).
+        if [ -n "${STUB_FRESH:-}" ]; then
+            n=$(( $(cat "$ST/reads.$tag" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$ST/reads.$tag"
+            [ "$n" -gt 1 ] && printf '%s\n' "$STUB_FRESH" > "$ST/$tag"
+        fi
+        cat "$ST/$tag" ;;
     "dist-tag add loki-mode@"*)
         spec="$3"; tag="$4"; ver="${spec#loki-mode@}"
         echo "add $ver $tag" >> "$ST/log"
@@ -43,7 +50,7 @@ chmod +x "$WORK/bin/npm"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -77,6 +84,12 @@ for mode in error empty; do
         && grep -q "refusing to move latest (fail closed)" <<<"$CASE_OUT"; } \
         && ok "view outage ($mode) refuses with zero writes" || bad "outage $mode: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
 done
+
+# rev-a repro: the first read of each tag says 11.54.2, later reads say 11.54.3
+# (another run moved the tags). The script must write nothing and leave 11.54.3.
+STUB_FRESH=11.54.3 run_case fresh "11.54.1 11.54.2" 11.54.2 11.54.2 11.54.2
+{ [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.3 ] && [ "$(cat "$CASE_ST/next")" = 11.54.3 ]; } \
+    && ok "a tag read fresh-higher than the target is never written backwards" || bad "fresh: rc=$CASE_RC log=$(cat "$CASE_ST/log") latest=$(cat "$CASE_ST/latest")"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
