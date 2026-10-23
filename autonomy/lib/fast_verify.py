@@ -265,21 +265,57 @@ def _sealed_wall_hashes(root: str) -> set:
     return out
 
 
-def _wall_trusted(root: str, rel: str, diff_base: str, sealed: set) -> bool:
+def _git_strict(args: list, cwd: str):
+    """stdout of a git command, or None when git failed or could not run. Trust decisions use this, never
+    _git: an empty string from a failed command must not read as "nothing changed"."""
+    try:
+        p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def _changed_source_stems(root: str, diff_base: str):
+    """Module stems of the code files the change touches (Wall files excluded), or None when the diff cannot be
+    read. Only meaningful with a diff base; the empty set means the change touched no code a Wall could exercise."""
+    if _git_strict(["rev-parse", "--verify", "--quiet", diff_base + "^{commit}"], root) is None:
+        return None
+    raw = _git_strict(["diff", "--name-only", diff_base + "...HEAD"], root)
+    if raw is None or not raw.strip():
+        raw = _git_strict(["diff", "--name-only", diff_base], root)
+    if raw is None:
+        return None
+    return {Path(ln).stem for ln in raw.splitlines()
+            if ln and Path(ln).suffix in CODE_EXT and not Path(ln).name.startswith("loki_wall_")}
+
+
+def _wall_trusted(root: str, rel: str, diff_base: str, sealed: set, stems=None) -> bool:
     """A Wall file may supply the behavioral signal only if an agent could not have just written it:
     tracked, unchanged against diff_base (or HEAD) and HEAD, and its sha256 matches a recorded engine10 seal.
-    A file failing these still runs and can FAIL a verdict, never earn a PASS."""
-    if not _git(["ls-files", "--error-unmatch", "--", rel], root).strip():
+    With a diff base it must also exercise the change: its text names a changed module (`stems`, from
+    _changed_source_stems; None means the diff was unreadable). Every git error fails closed.
+    A file failing these still runs and can FAIL a verdict, never earn a PASS. The seal is a local attestation
+    that anyone able to write .loki/ can forge, not proof."""
+    if _git_strict(["ls-files", "--error-unmatch", "--", rel], root) is None:
         return False
     for ref in {diff_base or "HEAD", "HEAD"}:
-        if _git(["diff", "--name-only", ref, "--", rel], root).strip():
+        out = _git_strict(["diff", "--name-only", ref, "--", rel], root)
+        if out is None or out.strip():
             return False
     try:
         with open(os.path.join(root, rel), "rb") as fh:
-            digest = hashlib.sha256(fh.read()).hexdigest()
+            raw = fh.read()
     except OSError:
         return False
-    return (os.path.basename(rel), digest) in sealed
+    if (os.path.basename(rel), hashlib.sha256(raw).hexdigest()) not in sealed:
+        return False
+    if diff_base:
+        if not stems:
+            return False
+        text = raw.decode("utf-8", "replace")
+        if not any(re.search(r"\b%s\b" % re.escape(st), text) for st in stems):
+            return False
+    return True
 
 
 def _run_wall_js(root: str, rels: list, budget_s: float) -> dict:
@@ -308,6 +344,7 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
     deadline = time.monotonic() + WALL_TOTAL_BUDGET_S
     files = _wall_files(root)
     sealed = _sealed_wall_hashes(root) if files else set()
+    stems = _changed_source_stems(root, diff_base) if diff_base and files else None
     status = {}
     js = [r for r in files if not r.endswith(".py")]
     for rel in files:
@@ -340,7 +377,7 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
             skipped += 1
             continue
         ran += 1
-        if status[rel] == "pass" and _wall_trusted(root, rel, diff_base, sealed):
+        if status[rel] == "pass" and _wall_trusted(root, rel, diff_base, sealed, stems):
             trusted += 1
     return findings, ran, skipped, trusted
 
