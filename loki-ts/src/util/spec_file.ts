@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { taskBlock } from "../engine10/types.ts";
-import { stripTemplate } from "./intent_card.ts";
+import { parseContract } from "../features/contract.ts";
 import type { SessionRunner } from "../engine10/types.ts";
 
 export const SPEC_MARKER = "<!-- loki-spec v1: edit the intent and criteria; keep the three headings. -->";
@@ -13,7 +13,7 @@ const MAX_CRITERIA = 20;
 export const MAX_CLAUSES = 40;
 const CLAUSE_TEXT_MAX = 380;
 const DROPPED_RE = /^<!-- clauses-dropped: (\d+) -->$/;
-const CLAUSE_LINE_RE = /^C(\d+): (.+?)(?: \[((?:p\d+:)?l\d+)\])?$/;
+const CLAUSE_LINE_RE = /^(AC-\d+): (.+?)(?: \[((?:p\d+:)?l\d+)\])?$/;
 const MAX_FIELD = 400;
 const H_TASK = "## Task", H_INTENT = "## Intent", H_CRIT = "## Acceptance criteria";
 
@@ -50,70 +50,30 @@ export function checkCriteriaJson(x: unknown): string | null {
   return null;
 }
 
-const mkClause = (n: string, text: string, anchor?: string): Clause => ({ id: `C${n}`, text, ...(anchor ? { anchor } : {}), text_sha256: sha256Hex(text) });
-/** `C3: <text> [p3:l12]`, the one rendering shared by the locked spec and the Wall brief. */
+const mkClause = (id: string, text: string, anchor?: string): Clause => ({ id, text, ...(anchor ? { anchor } : {}), text_sha256: sha256Hex(text) });
+/** `AC-3: <text> [p3:l12]`, the one rendering shared by the locked spec and the Wall brief. */
 export const clauseLine = (k: Clause): string => `${k.id}: ${k.text}${k.anchor ? ` [${k.anchor}]` : ""}`;
 
 const normClause = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-const ACCEPT_KEY = /accept|criteria|requirement|must/i, NOT_REQ_HEAD = /steps|reproduc|install|setup|example|environment/i;
-const ITEM = /^([-*+]|\d+[.)])\s+(\[[ xX]\]\s*)?/, CHECK = /^[-*+]\s+\[[ xX]\]\s*/, NUMBERED = /^\d+[.)]\s+/, RFC = /\b(MUST|SHALL)(\s+NOT)?\b/;
 const clipClause = (t: string): string => (t.length > CLAUSE_TEXT_MAX ? `${t.slice(0, CLAUSE_TEXT_MAX - 3)}...` : t);
 
-/**
- * CW-07: acceptance clauses from any spec text (Markdown, PDF or DOCX extracted text, an issue body). A clause is a line under an
- * accept/criteria/requirement/must heading, a checklist item, a numbered requirement line, or an RFC 2119 (MUST/SHALL) sentence.
- * Issue-template boilerplate is dropped through stripTemplate. Ids C1..Cn follow source order and are a pure function of the text;
- * duplicates (normalized) are kept once. Beyond MAX_CLAUSES the rest is counted in `dropped`, never silently lost.
- * Anchors: `l<line>`, or `p<page>:l<line>` when the text has form feeds (pdftotext page breaks).
- */
-export function extractClauses(text: string): { clauses: Clause[]; dropped: number } {
-  const raw = text.replace(/\r\n/g, "\n").split("\n");
-  let page = 1, pageLine = 0, paged = false;
-  const rows = raw.map((l) => {
-    const parts = l.split("\f");
-    if (parts.length > 1) { paged = true; page += parts.length - 1; pageLine = 0; }
-    pageLine++;
-    return { t: new String((parts[parts.length - 1] ?? "").trim()) as String, page, line: pageLine };
-  });
-  // stripTemplate keeps the same element objects, so line positions survive the filter.
-  const kept = new Set(stripTemplate(rows.map((r) => r.t as unknown as string)) as unknown as object[]);
-  const seen = new Set<string>(), all: { text: string; anchor: string }[] = [];
-  const add = (t: string, r: { page: number; line: number }): void => {
-    const text1 = clipClause(t.replace(/\s+/g, " ").trim()), key = normClause(text1);
-    if (key === "" || seen.has(key)) return;
-    seen.add(key); all.push({ text: text1, anchor: `${paged ? `p${r.page}:` : ""}l${r.line}` });
-  };
-  let sect: "none" | "accept" | "plain" | "skip" = "none", got = false;
-  for (const r of rows) {
-    if (!kept.has(r.t)) continue;
-    const l = String(r.t);
-    if (l === "") { if (sect === "plain" && got) sect = "none"; continue; }
-    const md = /^#{1,6}\s*(.*)$/.exec(l);
-    const plainHead = !md && l.length <= 60 && !ITEM.test(l) && !/[.;!?]$/.test(l.replace(/:$/, "")) && ACCEPT_KEY.test(l) && !RFC.test(l);
-    if (md || plainHead) {
-      const title = md ? md[1]! : l;
-      sect = ACCEPT_KEY.test(title) ? (md ? "accept" : "plain") : NOT_REQ_HEAD.test(title) ? "skip" : "none"; got = false;
-      continue;
-    }
-    if (sect === "accept" || sect === "plain") { add(l.replace(ITEM, ""), r); got = true; continue; }
-    if (CHECK.test(l)) { add(l.replace(CHECK, ""), r); continue; }
-    if (NUMBERED.test(l) && sect !== "skip") { add(l.replace(NUMBERED, ""), r); continue; }
-    for (const sentence of l.replace(ITEM, "").split(/(?<=[.!?])\s+/)) if (RFC.test(sentence)) add(sentence, r);
-  }
+/** The clauses parseContract (the one extractor) finds in a task or spec text, capped at MAX_CLAUSES with the overflow counted. */
+export function taskClauses(text: string): { clauses: Clause[]; dropped: number } {
+  const c = parseContract(text);
   return {
-    clauses: all.slice(0, MAX_CLAUSES).map((c, i) => mkClause(String(i + 1), c.text, c.anchor)),
-    dropped: Math.max(0, all.length - MAX_CLAUSES),
+    clauses: c.criteria.slice(0, MAX_CLAUSES).map((k) => mkClause(k.id, clipClause(k.text), k.anchor)),
+    dropped: Math.max(0, c.criteria.length - MAX_CLAUSES) + (c.dropped ?? 0),
   };
 }
 
 /** Task clauses first (anchored), then the model's criteria as further clauses without an anchor; capped at MAX_CLAUSES, overflow counted; empty when the task has no clauses. */
 export function lockClauses(task: string, modelCriteria: string[]): { clauses: Clause[]; dropped: number } {
-  const ex = extractClauses(task);
+  const ex = taskClauses(task);
   if (ex.clauses.length === 0) return { clauses: [], dropped: 0 }; // no task clauses: the spec stays exactly as before
   const seen = new Set(ex.clauses.map((c) => normClause(c.text)));
   const extra = modelCriteria.filter((c) => { const k = normClause(c); if (seen.has(k)) return false; seen.add(k); return true; });
   const room = MAX_CLAUSES - ex.clauses.length;
-  const more = extra.slice(0, Math.max(0, room)).map((t, i) => mkClause(String(ex.clauses.length + i + 1), clipClause(t)));
+  const more = extra.slice(0, Math.max(0, room)).map((t, i) => mkClause(`AC-${ex.clauses.length + i + 1}`, clipClause(t)));
   return { clauses: [...ex.clauses, ...more], dropped: ex.dropped + Math.max(0, extra.length - Math.max(0, room)) };
 }
 
@@ -163,7 +123,8 @@ export function parseSpec(text: string, file?: string): ParsedSpec {
   }
   if (criteria.length === 0) fail(at[H_CRIT]! + 1, "no acceptance criteria");
   const clauses = criteria.map((x) => CLAUSE_LINE_RE.exec(x));
-  const tagged = clauses.every((m) => m !== null); // CW-07: a fully clause-tagged spec may hold up to MAX_CLAUSES lines
+  const tagged = clauses.every((m) => m !== null);
+  if (tagged) { const ids = new Set<string>(); for (const m of clauses) { if (ids.has(m![1]!)) fail(at[H_CRIT]! + 1, `duplicate clause id ${m![1]}`); ids.add(m![1]!); } } // CW-07: a fully clause-tagged spec may hold up to MAX_CLAUSES lines
   if (criteria.length > (tagged ? MAX_CLAUSES : MAX_CRITERIA)) fail(at[H_CRIT]! + 1, `more than ${tagged ? MAX_CLAUSES : MAX_CRITERIA} criteria`);
   return {
     task: taskLines.join("\n"), intent: intentLines.join(" "), criteria,

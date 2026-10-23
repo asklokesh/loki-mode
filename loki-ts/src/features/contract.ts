@@ -6,13 +6,16 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { spawnSync } from "node:child_process";
 import { atomicWriteJson } from "../util/atomic.ts";
 import { parseSpec } from "../util/spec_file.ts";
+import { templateKeep } from "../util/intent_card.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Unit } from "./decompose.ts";
-export interface Criterion { id: string; text: string; source_line: number }
-export interface Contract { source: string; criteria: Criterion[]; constraints?: Constraint[] }
+/** `anchor` is `p<page>:l<line>` (page from a form feed) or `l<line>`, the position inside the page the text came from. */
+export interface Criterion { id: string; text: string; source_line: number; anchor?: string }
+/** `dropped` counts clauses found beyond MAX_CRITERIA, so a cut is never silent. */
+export interface Contract { source: string; criteria: Criterion[]; constraints?: Constraint[]; dropped?: number }
 export const CONSTRAINT_KINDS = ["perf", "api", "security"] as const;
 export type ConstraintKind = (typeof CONSTRAINT_KINDS)[number];
 /** P12-43: a typed constraint, traced to the Wall case ids that prove it. */
@@ -22,46 +25,71 @@ export interface ContractTrace { criteria: TracedCriterion[]; sha256?: string }
 export const MAX_CRITERIA = 50;
 export const MAX_TEXT = 500;
 const HEADING = /^#{1,6}\s+(.*?)\s*#*\s*$/;
-const SECTION = /(acceptance\s+criteria|requirements?|must(\s+have)?)\b/i;
-const CHECKLIST = /^\s*[-*+]\s+\[[ xX]\]\s+(.+)$/;
-const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+)$/;
+const ACCEPT_KEY = /accept|criteria|requirement|must/i, NOT_REQ_HEAD = /steps|reproduc|install|setup|example|environment/i;
+const CHECKLIST = /^[-*+]\s+\[[ xX]\]\s+(.+)$/;
+const ITEM = /^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, BULLET = /^(?:[-*+]|\d+[.)])\s+(.+)$/, NUMBERED = /^\d+[.)]\s+(.+)$/;
+const RFC = /\b(MUST|SHALL)(\s+NOT)?\b/;
+const normClause = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 export function contractEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["LOKI_CONTRACT"] !== "0";
 }
 function clean(s: string): string {
   return s.replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim();
 }
+/**
+ * The one acceptance-clause extractor (verify_pr, run_group, the locked spec and the Wall all read through it). Input is any spec
+ * text: Markdown, PDF or DOCX extracted text, an issue body. A clause is a bullet under an accept/criteria/requirement/must heading
+ * (Markdown or a plain-text heading, whose section ends at a blank line), a checklist item, a numbered requirement line outside a
+ * steps/setup section, or an RFC 2119 (MUST/SHALL) sentence. Fenced code is skipped; issue-template boilerplate is dropped by
+ * stripTemplate. Ids AC-1..AC-n follow source order and are a pure function of the text; duplicates (normalized) are kept once.
+ * Beyond MAX_CRITERIA the rest is counted in `dropped`. Anchors: `l<line>`, or `p<page>:l<line>` when the text has form feeds.
+ */
 export function parseContract(markdown: string, source = ""): Contract {
-  const found: { text: string; line: number }[] = [];
+  const found: { text: string; line: number; anchor: string }[] = [];
   const seen = new Set<string>();
-  const add = (raw: string, line: number): void => {
+  let page = 1, pageLine = 0, paged = false, inFence = false;
+  // Fence lines and fenced code become empty rows: they keep their position but never open a section or add a clause.
+  const rows = markdown.split(/\r?\n/).map((ln, i) => {
+    const parts = ln.split("\f");
+    if (parts.length > 1) { paged = true; page += parts.length - 1; pageLine = 0; }
+    pageLine++;
+    const t = (parts[parts.length - 1] ?? "").trim();
+    const fence = /^(```|~~~)/.test(t);
+    if (fence) inFence = !inFence;
+    return { t: fence || inFence ? "" : t, line: i + 1, page, pageLine };
+  });
+  const keep = templateKeep(rows.map((r) => r.t));
+  let sect: "none" | "accept" | "plain" | "skip" = "none", sectionLevel = 0, got = false;
+  const add = (raw: string, r: { line: number; page: number; pageLine: number }): void => {
     const text = clean(raw);
-    const key = text.toLowerCase();
-    if (text.length < 3 || seen.has(key) || found.length >= MAX_CRITERIA) return;
+    const key = normClause(text);
+    if (text.length < 3 || key === "" || seen.has(key)) return;
     seen.add(key);
-    found.push({ text, line });
+    found.push({ text, line: r.line, anchor: `${paged ? `p${r.page}:` : ""}l${r.pageLine}` });
   };
-  let inSection = false;
-  let sectionLevel = 0;
-  let inFence = false;
-  markdown.split(/\r?\n/).forEach((ln, i) => {
-    if (/^\s*(```|~~~)/.test(ln)) { inFence = !inFence; return; }
-    if (inFence) return;
-    const h = HEADING.exec(ln);
-    if (h) {
-      const level = ln.trimStart().match(/^#+/)![0].length;
-      if (SECTION.test(h[1]!)) { inSection = true; sectionLevel = level; }
-      else if (inSection && level <= sectionLevel) inSection = false;
+  rows.forEach((r, i) => {
+    if (!keep[i]) return;
+    const l = r.t;
+    if (l === "") { if (sect === "plain" && got) sect = "none"; return; }
+    const h = HEADING.exec(l);
+    const plainHead = !h && l.length <= 60 && !ITEM.test(l) && !/[.;!?]$/.test(l.replace(/:$/, "")) && ACCEPT_KEY.test(l) && !RFC.test(l);
+    if (h || plainHead) {
+      const title = h ? h[1]! : l, level = h ? l.match(/^#+/)![0].length : 0;
+      if (ACCEPT_KEY.test(title)) { sect = h ? "accept" : "plain"; sectionLevel = level; got = false; }
+      else if (!(sect === "accept" && level > sectionLevel)) { sect = NOT_REQ_HEAD.test(title) ? "skip" : "none"; got = false; } // a deeper heading stays inside an accept section
       return;
     }
-    const c = CHECKLIST.exec(ln);
-    if (c) { add(c[1]!, i + 1); return; }
-    if (inSection) {
-      const b = BULLET.exec(ln);
-      if (b) add(b[1]!, i + 1);
-    }
+    const c = CHECKLIST.exec(l);
+    if (c) { add(c[1]!, r); return; }
+    if (sect === "plain") { add(l.replace(ITEM, ""), r); got = true; return; }
+    const b = BULLET.exec(l);
+    if (sect === "accept" && b) { add(b[1]!, r); return; }
+    const n = NUMBERED.exec(l);
+    if (n && sect !== "skip") { add(n[1]!, r); return; }
+    for (const sentence of l.replace(ITEM, "").split(/(?<=[.!?])\s+/)) if (RFC.test(sentence)) add(sentence, r);
   });
-  return { source, criteria: found.map((f, n) => ({ id: `AC-${n + 1}`, text: f.text, source_line: f.line })) };
+  const kept = found.slice(0, MAX_CRITERIA), dropped = found.length - kept.length;
+  return { source, criteria: kept.map((f, n) => ({ id: `AC-${n + 1}`, text: f.text, source_line: f.line, anchor: f.anchor })), ...(dropped ? { dropped } : {}) };
 }
 // CONTRACT (v11.7.0): per-unit acceptance for a parallel group. Criteria are frozen to .loki/groups/<id>/contract.json before any
 // worker spawns; a criterion no unit owns fails the group closed (nothing is spawned, nothing is guessed).

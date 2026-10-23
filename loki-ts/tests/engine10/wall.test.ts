@@ -957,8 +957,8 @@ describe("CW-07 wall clauses", () => {
   };
   test("a task with clauses puts each Cn line and the marker instruction in the brief", async () => {
     const { brief } = await run(TASK, () => SAMPLE);
-    expect(brief).toContain("Acceptance: C1: Results are sorted by recency [l4]");
-    expect(brief).toContain("Acceptance: C2: Ties keep a stable order [l5]");
+    expect(brief).toContain("Acceptance: AC-1: Results are sorted by recency [l4]");
+    expect(brief).toContain("Acceptance: AC-2: Ties keep a stable order [l5]");
     expect(brief).toContain(WALL_CLAUSE_MARKER);
   });
   test("a task with no clauses yields the brief byte-identical to the pre-CW-07 builder", async () => {
@@ -968,12 +968,16 @@ describe("CW-07 wall clauses", () => {
     expect(buildWallBrief("t", "", [], false, "", [])).not.toContain(WALL_CLAUSE_MARKER);
   });
   test("an authored file without a clause marker is listed as untagged; tagged files are not", async () => {
-    const { data } = await run(TASK, (n) => (n === 1 ? `// clause: C1\n${SAMPLE}` : SAMPLE));
+    const { data } = await run(TASK, (n) => (n === 1 ? `// clause: AC-1\n${SAMPLE}` : SAMPLE));
     expect(data.clauses).toBe(2);
     expect(data.untagged).toEqual(["loki_wall_b.test.ts"]);
   });
+  test("sparse ids: a marker is tagged when it names a clause id in the set, unknown when it does not", () => {
+    const ids = ["AC-1", "AC-5", "AC-9"];
+    expect(untaggedWallFiles(new Map([["nine", "# clause: AC-9"], ["two", "# clause: AC-2"], ["five", "// clause: AC-5\n"]]), ids)).toEqual(["two"]);
+  });
   test("a marker naming a clause that does not exist does not count as tagged", () => {
-    expect(untaggedWallFiles(new Map([["a", "# clause: C9"], ["b", "# clause: C2"]]), 2)).toEqual(["a"]);
+    expect(untaggedWallFiles(new Map([["a", "# clause: AC-9"], ["b", "# clause: AC-2"]]), ["AC-1", "AC-2"])).toEqual(["a"]);
   });
   test("clauses beyond the cap are disclosed as not_proven in the wall data", async () => {
     const t = "## Acceptance\n" + Array.from({ length: 43 }, (_, i) => `- requirement number ${i}`).join("\n");
@@ -982,15 +986,15 @@ describe("CW-07 wall clauses", () => {
   });
   test("a locked spec snapshot's clauses win over the task text", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
-    const { renderSpec, extractClauses } = await import("../../src/util/spec_file.ts");
-    writeFileSync(join(runDir, "spec.snapshot.md"), renderSpec("t", { intent: "i", criteria: ["x"], clauses: extractClauses("## Accept\n- from the spec\n").clauses }));
+    const { renderSpec, taskClauses } = await import("../../src/util/spec_file.ts");
+    writeFileSync(join(runDir, "spec.snapshot.md"), renderSpec("t", { intent: "i", criteria: ["x"], clauses: taskClauses("## Accept\n- from the spec\n").clauses }));
     process.env.LOKI_E10_SPEC_SHA256 = "x";
     let brief = "";
     try {
       const ctx = fakeCtx(repoDir, runDir, new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), SAMPLE); }), { intake: { task: TASK, testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
       await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 1, fail: 0 }) });
     } finally { delete process.env.LOKI_E10_SPEC_SHA256; rmSync(repoDir, { recursive: true, force: true }); }
-    expect(brief).toContain("Acceptance: C1: from the spec");
-    expect(brief).not.toContain("Acceptance: C1: Results are sorted");
+    expect(brief).toContain("Acceptance: AC-1: from the spec");
+    expect(brief).not.toContain("Acceptance: AC-1: Results are sorted");
   });
 });

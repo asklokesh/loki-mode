@@ -9,7 +9,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import { unitSpec } from "../../features/speed/unit_mode.ts";
-import { clauseLine, extractClauses, loadSpecFile } from "../../util/spec_file.ts";
+import { clauseLine, loadSpecFile, taskClauses } from "../../util/spec_file.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
@@ -63,23 +63,25 @@ export const WALL_OUTPUT_BUDGET = "Output budget: write one test file, one asser
 export const WALL_REPO_PATHS = "Reach repo code by repo-relative paths, never via home dir, $HOME or ~/.";
 
 /** CW-07: each assertion block names the clause it proves, in the test language's own comment syntax. */
-export const WALL_CLAUSE_MARKER = "Put a comment `clause: C3` (the id of the clause the block proves, in this test language's comment syntax) at each assertion block. Cover every Cn line.";
-const CLAUSE_TAG = /^C\d+: /, CLAUSE_MARK = /\bclause:\s*C(\d+)\b/g;
+export const WALL_CLAUSE_MARKER = "Put a comment `clause: AC-3` (the id of the clause the block proves, in this test language's comment syntax) at each assertion block. Cover every AC-n line.";
+const CLAUSE_TAG = /^AC-\d+: /, CLAUSE_MARK = /\bclause:\s*(AC-\d+)\b/g;
 
 /** CW-07: the clause lines the Wall must prove (the locked spec's tagged criteria, else clauses read from the task) and how many were dropped. */
-export function wallClauses(ctx: RunContext, task: string): { lines: string[]; dropped: number } {
+export function wallClauses(ctx: RunContext, task: string): { lines: string[]; ids: string[]; dropped: number } {
   if (process.env.LOKI_E10_SPEC_SHA256) {
     try {
       const sp = loadSpecFile(join(ctx.runDir, "spec.snapshot.md"));
-      if (sp.clauses?.length) return { lines: sp.clauses.map(clauseLine), dropped: sp.clausesDropped ?? 0 };
+      if (sp.clauses?.length) return { lines: sp.clauses.map(clauseLine), ids: sp.clauses.map((k) => k.id), dropped: sp.clausesDropped ?? 0 };
     } catch { /* no readable snapshot: read the task text */ }
   }
-  const ex = extractClauses(task);
-  return { lines: ex.clauses.map(clauseLine), dropped: ex.dropped };
+  const ex = taskClauses(task);
+  return { lines: ex.clauses.map(clauseLine), ids: ex.clauses.map((k) => k.id), dropped: ex.dropped };
 }
-/** CW-07: authored files with no `clause: Cn` marker naming a known clause; listed, never silently counted. */
-export const untaggedWallFiles = (contents: Map<string, string>, clauseCount: number): string[] =>
-  [...contents].filter(([, c]) => ![...c.matchAll(CLAUSE_MARK)].some((m) => Number(m[1]) >= 1 && Number(m[1]) <= clauseCount)).map(([f]) => f);
+/** CW-07: authored files with no `clause: AC-n` marker naming a known clause id; listed, never silently counted. */
+export const untaggedWallFiles = (contents: Map<string, string>, clauseIds: Iterable<string>): string[] => {
+  const known = new Set(clauseIds);
+  return [...contents].filter(([, c]) => ![...c.matchAll(CLAUSE_MARK)].some((m) => known.has(m[1]!))).map(([f]) => f);
+};
 
 export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = [], location: string | null = null): string { // location: repo-relative destination directory; "" is the repo root; null is unknown (no line)
   return withStagePrefix([
@@ -126,7 +128,7 @@ function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null
 }
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
-export interface WallAuthored { kind: "authored"; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: { count: number; dropped: number }; }
+export interface WallAuthored { kind: "authored"; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; clauses?: { ids: string[]; dropped: number }; }
 export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
 
 /** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
@@ -195,7 +197,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal, retry?: {
     if (oorWhy) discarded.push({ file: name, reason: `${oorWhy}; wall test discarded after one rewrite request` }); else if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
   }
   rmSync(cwd, { recursive: true, force: true });
-  return { kind: "authored", model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}), ...(clauses.lines.length ? { clauses: { count: clauses.lines.length, dropped: clauses.dropped } } : {}) };
+  return { kind: "authored", model, iterationId, task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(wm ? { manifestSha256: wm.sha256 } : {}), ...(held ? { holdoutDir: held.dir } : {}), ...(clauses.lines.length ? { clauses: { ids: clauses.ids, dropped: clauses.dropped } } : {}) };
 }
 
 /** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
@@ -234,7 +236,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
       iteration_ids: [a.iterationId ?? `${ctx.runId}-wall`],
       already_satisfied: false, ...(alreadySatisfied ? { green_on_base: true } : {}), ...(a.holdoutDir ? { holdout_dir: a.holdoutDir } : {}), // opaque path only: names stay in the private store
       ...(discarded.length ? { discarded } : {}),
-      ...(a.clauses ? { clauses: a.clauses.count, untagged: untaggedWallFiles(a.contents, a.clauses.count), ...(a.clauses.dropped ? { not_proven: [`${a.clauses.dropped} acceptance clauses beyond the first ${a.clauses.count} were not given to the Wall`] } : {}) } : {}), // CW-07
+      ...(a.clauses ? { clauses: a.clauses.ids.length, untagged: untaggedWallFiles(a.contents, a.clauses.ids), ...(a.clauses.dropped ? { not_proven: [`${a.clauses.dropped} acceptance clauses beyond the first ${a.clauses.ids.length} were not given to the Wall`] } : {}) } : {}), // CW-07
     },
   };
 }

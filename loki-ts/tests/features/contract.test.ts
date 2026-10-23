@@ -48,6 +48,22 @@ describe("parseContract", () => {
   });
 });
 
+describe("parseContract clause rules (CW-07)", () => {
+  const texts = (t: string): string[] => parseContract(t).criteria.map((c) => c.text);
+  test("RFC 2119 sentence, numbered line and plain-text heading section", () => {
+    expect(texts("Overview.\nThe service MUST log every query. Other words.\n\n1. Cache SHALL NOT serve stale rows\n")).toEqual(["The service MUST log every query.", "Cache SHALL NOT serve stale rows"]);
+    expect(texts("Requirements:\nResults are sorted\nTies are stable\n\nOverview paragraph.")).toEqual(["Results are sorted", "Ties are stable"]);
+  });
+  test("steps-to-reproduce numbers and preflight attestations are not clauses", () => {
+    expect(texts("## Preflight Checklist\n- [ ] I have searched existing issues\n\n## Steps to reproduce\n1. Open the page\n")).toEqual([]);
+  });
+  test("form feeds give p<page>:l<line> anchors, and the cap is counted in dropped", () => {
+    expect(parseContract("Intro\n\fThe system MUST encrypt data.").criteria[0]!.anchor).toBe("p2:l1");
+    const r = parseContract(Array.from({ length: 53 }, (_, i) => `- [ ] criterion number ${i}`).join("\n"));
+    expect([r.criteria.length, r.dropped]).toEqual([50, 3]);
+  });
+});
+
 describe("traceContract", () => {
   test("maps by keyword overlap; untraced when no file matches", () => {
     const c = parseContract(SPEC);

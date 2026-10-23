@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { clauseLine, extractClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
+import { clauseLine, taskClauses, generateSpec, loadSpecFile, parseSpec, renderSpec, slugify, specPrLine, specReceiptBlock, SpecError, specBriefBlock } from "../../src/util/spec_file.ts";
 import type { SessionResult, SessionRunner, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const here = import.meta.dir;
@@ -270,7 +270,7 @@ const ISSUE = [
   "## Steps to reproduce", "1. Open the page", "2. Search", "", "## Expected", "- [ ] Results are sorted by recency",
   "- [ ] I have read the contributing guide",
 ].join("\n");
-const texts = (t: string): string[] => extractClauses(t).clauses.map((c) => c.text);
+const texts = (t: string): string[] => taskClauses(t).clauses.map((c) => c.text);
 
 describe("CW-07 clause extraction", () => {
   test("Markdown PRD: heading items, RFC 2119 sentences, checklist items, numbered lines, in source order", () => {
@@ -278,7 +278,7 @@ describe("CW-07 clause extraction", () => {
       "Results are sorted by recency", "Ties keep a stable order", "The API MUST return 200 for an empty query.",
       "Docs updated", "The cache SHALL NOT serve stale rows",
     ]);
-    expect(extractClauses(MD_PRD).clauses.map((c) => `${c.id}@${c.anchor}`)).toEqual(["C1@l6", "C2@l7", "C3@l10", "C4@l11", "C5@l13"]);
+    expect(taskClauses(MD_PRD).clauses.map((c) => `${c.id}@${c.anchor}`)).toEqual(["AC-1@l6", "AC-2@l7", "AC-3@l10", "AC-4@l11", "AC-5@l13"]);
   });
   test("DOCX-extracted plain text: a plain heading opens a section; a blank line closes it; MUST sentences still found", () => {
     expect(texts(DOCX_TEXT)).toEqual(["Results are sorted by recency", "Ties keep a stable order", "The service MUST log every query."]);
@@ -287,35 +287,47 @@ describe("CW-07 clause extraction", () => {
     expect(texts(ISSUE)).toEqual(["Results are sorted by recency"]);
   });
   test("PDF text with form feeds anchors as p<page>:l<line>", () => {
-    const c = extractClauses("Intro\n\fThe system MUST encrypt data.\nfiller\n\fThe client SHALL retry.").clauses;
-    expect(c.map(clauseLine)).toEqual(["C1: The system MUST encrypt data. [p2:l1]", "C2: The client SHALL retry. [p3:l1]"]);
+    const c = taskClauses("Intro\n\fThe system MUST encrypt data.\nfiller\n\fThe client SHALL retry.").clauses;
+    expect(c.map(clauseLine)).toEqual(["AC-1: The system MUST encrypt data. [p2:l1]", "AC-2: The client SHALL retry. [p3:l1]"]);
   });
   test("dedupe on normalized text, and the same text gives the same ids and hashes on two runs", () => {
     const t = "## Accept\n- Be fast!\n- be   fast\n- Be small\n";
     expect(texts(t)).toEqual(["Be fast!", "Be small"]);
-    expect(extractClauses(MD_PRD)).toEqual(extractClauses(MD_PRD));
+    expect(taskClauses(MD_PRD)).toEqual(taskClauses(MD_PRD));
   });
   test("editing one clause changes only that clause's text_sha256", () => {
-    const a = extractClauses(MD_PRD).clauses, b = extractClauses(MD_PRD.replace("Ties keep a stable order", "Ties keep insertion order")).clauses;
+    const a = taskClauses(MD_PRD).clauses, b = taskClauses(MD_PRD.replace("Ties keep a stable order", "Ties keep insertion order")).clauses;
     expect(b.map((c, i) => c.text_sha256 !== a[i]!.text_sha256)).toEqual([false, true, false, false, false]);
     expect(b.map((c) => c.id)).toEqual(a.map((c) => c.id));
   });
   test("over 40 clauses: the first 40 are kept and the drop is counted, never silent", () => {
     const t = "## Acceptance\n" + Array.from({ length: 45 }, (_, i) => `- requirement number ${i}`).join("\n");
-    const r = extractClauses(t);
+    const r = taskClauses(t);
     expect(r.clauses).toHaveLength(40);
     expect(r.dropped).toBe(5);
   });
+  test("fenced code is skipped: headings, bullets, checklist, numbered and MUST lines inside a fence are not clauses", () => {
+    const t = ["## Acceptance criteria", "- search ranks by recency", "```", "## Acceptance", "- fenced bullet", "- [ ] fenced check", "1. fenced numbered", "The tool MUST not be read.", "```", "~~~", "- tilde bullet", "~~~"].join("\n");
+    expect(texts(t)).toEqual(["search ranks by recency"]);
+  });
+  test("a fence does not shift the line anchors of the clauses after it", () => {
+    const t = ["## Acceptance criteria", "```", "x", "```", "- after the fence"].join("\n");
+    expect(taskClauses(t).clauses.map((c) => c.anchor)).toEqual(["l5"]);
+  });
+  test("a spec that repeats a clause id is rejected", () => {
+    const text = renderSpec("t", { intent: "i", criteria: ["x"], clauses: [{ id: "AC-1", text: "a", text_sha256: "x" }, { id: "AC-1", text: "b", text_sha256: "y" }] });
+    expect(() => parseSpec(text)).toThrow(/duplicate clause id AC-1/);
+  });
   test("no clauses: empty result", () => {
-    expect(extractClauses("Just a plain sentence about a thing.\nAnd another.")).toEqual({ clauses: [], dropped: 0 });
+    expect(taskClauses("Just a plain sentence about a thing.\nAnd another.")).toEqual({ clauses: [], dropped: 0 });
   });
   test("locked spec: clauses render as C<n>: text [anchor], parse back with ids, anchors and the dropped count", () => {
-    const { clauses } = extractClauses(MD_PRD);
+    const { clauses } = taskClauses(MD_PRD);
     const text = renderSpec("build ranking", { intent: "Rank", criteria: ["x"], clauses, clausesDropped: 3 });
-    expect(text).toContain("- C1: Results are sorted by recency [l6]");
+    expect(text).toContain("- AC-1: Results are sorted by recency [l6]");
     const p = parseSpec(text);
     expect(p.clauses).toEqual(clauses);
-    expect(p.criteria[0]).toBe("C1: Results are sorted by recency [l6]");
+    expect(p.criteria[0]).toBe("AC-1: Results are sorted by recency [l6]");
     expect(p.clausesDropped).toBe(3);
   });
   test("a spec without clauses renders and parses exactly as before", () => {
@@ -327,7 +339,7 @@ describe("CW-07 clause extraction", () => {
     const write = (o: SessionRunOptions, b: string): void => writeFileSync(jsonPathOf(b), JSON.stringify(CRIT));
     const g = await generateSpec({ task: MD_PRD, repoDir: dir, sessions: new Fake(write) });
     const p = parseSpec(readFileSync(g.path, "utf8"));
-    expect(p.clauses!.map((c) => c.id)).toEqual(["C1", "C2", "C3", "C4", "C5", "C6", "C7"]);
+    expect(p.clauses!.map((c) => c.id)).toEqual(["AC-1", "AC-2", "AC-3", "AC-4", "AC-5", "AC-6", "AC-7"]);
     expect(p.clauses![5]).toMatchObject({ text: "ranking test passes" });
     expect(p.clauses![5]!.anchor).toBeUndefined();
     const g2 = await generateSpec({ task: "plain task without any requirement words", repoDir: dir, sessions: new Fake(write) });

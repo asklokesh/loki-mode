@@ -113,11 +113,16 @@ export const acceptancePromptBlock = (lines: string[]): string[] => lines.length
 
 // FC-PR-BODY-PUBLIC-HYGIENE: an issue template's checklist is form boilerplate, never what was asked. Dropped: checkbox items under a Preflight or before-submitting heading, anywhere, and checkbox items worded as a first-person attestation. Nothing under an acceptance or criteria heading is ever dropped.
 const TEMPLATE_HEAD = /^#+\s*(pre-?flight(\s+checklist)?|before (you )?(submit(ting)?|open(ing)?|fil(e|ing)))\s*:?\s*$/i, ACCEPT_HEAD = /^#+\s.*(accept|criteria)/i, CHECK_ITEM = /^[-*+]\s+\[[ xX]\]/, ATTEST = /\bI (have (searched|read|checked|confirmed)|am using the latest|agree to)\b/i;
-export function stripTemplate(lines: string[]): string[] {
+/** Which lines survive stripTemplate, by position, so a caller that needs line numbers keeps them. */
+export function templateKeep(lines: string[]): boolean[] {
   let tpl = false, acc = false;
-  return lines.filter((l) => {
+  return lines.map((l) => {
     if (/^#+\s/.test(l)) { tpl = TEMPLATE_HEAD.test(l); acc = ACCEPT_HEAD.test(l); return !tpl; }
     return acc || !(CHECK_ITEM.test(l) && (tpl || ATTEST.test(l)));
   });
+}
+export function stripTemplate(lines: string[]): string[] {
+  const keep = templateKeep(lines);
+  return lines.filter((_, i) => keep[i]);
 }
 export const intentLine = (card: unknown): string | null => { for (const l of Array.isArray(card) ? card : []) { const m = /^\s*what i think you want\s*:\s*(\S.*)$/i.exec(String(l)); if (m) return m[1]!.trim(); } return null; };
