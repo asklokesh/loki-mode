@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; with a diff base the Wall must also come from a run whose changed files (the intake base_sha to commit head_sha diff in the same events.jsonl) cover every file in the verified diff, and name a changed module (a sealed Wall from an unrelated run earns no PASS; with no such run record the result is INCONCLUSIVE with a NOT PROVEN line), and any git error fails closed to INCONCLUSIVE. The wall.sealed event is a local attestation an agent with write access to .loki/ can forge; it is not proof. Any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
 
+## v11.63.5 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test reads the full grouped help from loki help all and tracks its 32 entries (FC-TEST-ALIAS-FWD-HELP-PAGE-DRIFT). Approval: "APPROVE pd/alias-help-groups2 a1dcdf113 stacked on pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): 211/0 on bash and bun routes, 154 spawns; repoint-to-plain-help mutant red (202/9) and restored; only conflict is docs/v10/FAILURE-CLASSES.md (keep-both; both rows append at EOF); ships after rq53."
+
+## v11.63.4 (2026-10-23)
+
+### Fixed
+- The alias-forwarding test shares one alias --json run between two assertions and prints the CLI spawn count (FC-TEST-ALIAS-FWD-REDUNDANT-SPAWN, #183). Approval: "APPROVE pd/rq53-alias-spawns 8c97e1ab1 (tl-2, LOW): merge-tree rc=0; alias-forwarding suite 154 spawns, 202/9 on both routes, same 9 failing rows as base 5cae48655; export keeps its second spawn; empty-alias-stdout mutant red (189/22) and restored."
+
+## v11.63.3 (2026-10-23)
+
+
+
+### Fixed
+- A sealed Wall path always runs, not only those test discovery lists; a sealed Rust Wall file under tests/ runs as cargo test --test <name>; a sealed Go Wall file runs only its own Test, Fuzz and Example functions via go test -run; and the real go test check gets an explicit 60s timeout (wallgo-r5). Approval: "ship pd/wallgo-r5 37127bc3d4ea913a214ad0c7ac0ad68027158e65 (HIGH, rev-b APPROVE). It is 5 commits over origin/main 5746a4550, linear with 0 merges". rev-c holds no open BLOCK on the wallfile or wallrust commits.
+
+## v11.63.2 (2026-10-23)
+
+
+
+### Fixed
+- get_state_manager caps its per-root cache with an LRU like the TypeScript side (rq35). Approval: "APPROVE pd/rq35 384aca714 (tl-2, LOW), ships after race-impl-hang e59771e33 and rq25 66de3ec0b".
+
+## v11.63.1 (2026-10-23)
+
+
+
+### Fixed
+- The Bun route clears the previous run's proof pointer at run start (rq25; FC-PROOF-POINTER-STALE). Approval: "APPROVE pd/rq25 66de3ec0b (tl-2, MEDIUM), ships after race-impl-hang e59771e33". CoS ruled it independent of race-impl-hang (separate files), so it ships on its own.
+
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
 ## v11.62.1 (2026-10-23)
 
 

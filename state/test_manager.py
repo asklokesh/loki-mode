@@ -420,6 +420,82 @@ class TestSingletonManager:
             reset_state_manager()
 
 
+class TestDefaultManagerCap:
+    """#312 Python half: the per-root cache is an LRU capped by
+    LOKI_STATE_MANAGER_MAX so a long-lived process does not leak fds and threads."""
+
+    @staticmethod
+    def _roots(tmp_path, names):
+        out = []
+        for n in names:
+            d = tmp_path / n / ".loki"
+            d.mkdir(parents=True)
+            out.append(d)
+        return out
+
+    def test_cap_evicts_oldest_and_stops_it(self, tmp_path, monkeypatch):
+        import state.manager as sm
+        monkeypatch.setenv("LOKI_STATE_MANAGER_MAX", "2")
+        reset_state_manager()
+        try:
+            a, b, c = self._roots(tmp_path, "abc")
+            kw = dict(enable_watch=False, enable_events=False)
+            mgr_a = get_state_manager(a, **kw)
+            stopped = []
+            orig = mgr_a.stop
+            mgr_a.stop = lambda: (stopped.append(True), orig())[1]
+            get_state_manager(b, **kw)
+            get_state_manager(c, **kw)
+            assert stopped == [True]
+            assert len(sm._default_managers) == 2
+        finally:
+            reset_state_manager()
+
+    def test_cap_is_lru_not_fifo(self, tmp_path, monkeypatch):
+        import state.manager as sm
+        monkeypatch.setenv("LOKI_STATE_MANAGER_MAX", "2")
+        reset_state_manager()
+        try:
+            a, b, c = self._roots(tmp_path, "abc")
+            kw = dict(enable_watch=False, enable_events=False)
+            mgr_a = get_state_manager(a, **kw)
+            get_state_manager(b, **kw)
+            assert get_state_manager(a, **kw) is mgr_a
+            get_state_manager(c, **kw)
+            keys = list(sm._default_managers)
+            assert os.path.realpath(str(a)) in keys
+            assert os.path.realpath(str(b)) not in keys
+        finally:
+            reset_state_manager()
+
+    def test_eviction_releases_threads(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LOKI_STATE_MANAGER_MAX", "1")
+        reset_state_manager()
+        try:
+            roots = self._roots(tmp_path, "abcd")
+            for r in roots:
+                get_state_manager(r)
+            base = threading.active_count()
+            for r in self._roots(tmp_path, ["e", "f", "g"]):
+                get_state_manager(r)
+            deadline = time.time() + 5
+            while threading.active_count() > base and time.time() < deadline:
+                time.sleep(0.05)
+            assert threading.active_count() <= base
+        finally:
+            reset_state_manager()
+
+    def test_default_cap_unchanged_for_one_root(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LOKI_STATE_MANAGER_MAX", raising=False)
+        reset_state_manager()
+        try:
+            (a,) = self._roots(tmp_path, "a")
+            kw = dict(enable_watch=False, enable_events=False)
+            assert get_state_manager(a, **kw) is get_state_manager(a, **kw)
+        finally:
+            reset_state_manager()
+
+
 class TestVersionVector:
     """Tests for VersionVector class."""
 

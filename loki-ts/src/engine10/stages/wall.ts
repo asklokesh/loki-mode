@@ -14,7 +14,7 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallFirstModel, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256, wallGreenOnBaseOf } from "./seal.ts"; import { removeHoldout, stashHoldout, wallHoldoutRatio } from "../../util/holdout.ts";
-import { commandFor } from "./verify.ts"; import { buildTestMap, harnessRunners, projectInterpreter } from "../testmap.ts";
+import { commandFor } from "./verify.ts"; import { buildTestMap, guessRunner, harnessRunners, projectInterpreter } from "../testmap.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { baseJobs, classify, classifyCheck, mapPool, NO_RUNNER_REASON, notRunReason, plainTestEnv, spawnCollect, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, outOfRepoReask, outOfRepoTarget, phantomReason, phantomRepoPaths, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
@@ -98,11 +98,6 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
 /** Runner for a generated file: extension decides for Python/Go, a JS/TS file takes the repo's detected JS runner; anything else never guesses (unselectable). */
-function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
-  if (fileName.endsWith(".py")) return "pytest";
-  if (fileName.endsWith(".go")) return "go";
-  return /\.[cm]?[jt]sx?$/.test(fileName) ? (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null : null; // a JS runner only ever runs a JS/TS file
-}
 
 /** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
 export interface WallAuthored { kind: "authored"; model?: string; iterationId?: string; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; holdoutDir?: string; }
@@ -185,7 +180,7 @@ function* installCore(ctx: RunContext, a: WallAuthored, baseDir: string, opts: W
   if (generated.length > 0) mkdirSync(targetDir, { recursive: true }); const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
   for (const name of generated) {
     const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
-    const dest = join(targetDir, name), runner = guessRunner(name, runners);
+    const dest = join(targetDir, name), runner = guessRunner(name, runners, relative(ctx.repoDir, dest));
     writeFileSync(dest, content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
