@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 import { describe, expect, it, beforeEach } from "bun:test";
 import { findPython3, pythonAvailable, runInline, runModule, _resetPythonCacheForTests } from "../../src/util/python.ts";
 

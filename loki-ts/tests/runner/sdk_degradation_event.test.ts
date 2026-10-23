@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/runner/sdk_degradation_event.test.ts
 //
 // The SDK loop is already FAIL-CLOSED: there is no silent downgrade to the

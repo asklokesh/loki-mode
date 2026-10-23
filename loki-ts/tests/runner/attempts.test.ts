@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // 11.3.0 T5: --attempts N selection, executed-only counting, tie, receipt losers, cleanup, N=1 identity.
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Tests for the router advisor line and bundled Claude Code version in
 // `loki doctor` (ROUTER-1 R1-20). The advisor reason comes straight from
 // probeAdvisor (R1-06); these tests pin the rendered line for both outcomes.

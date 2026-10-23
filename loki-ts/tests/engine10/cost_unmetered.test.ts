@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D48: a CLI-invoker (stub) session has no provider dollars. It records 0 with an explicit marker, never null;
 // the same zero-usage file WITHOUT the marker stays unmeasured (E-69).
 import { expect, test } from "bun:test";

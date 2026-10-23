@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Wave-7 bug-hunt regression tests for src/runner/quality_gates.ts.
 //
 // Covers two forward-looking fixes. NOTE on reachability: runCodeReview /

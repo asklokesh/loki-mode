@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Bash-vs-Bun parity tests for `loki wiki show` (R5 auto-wiki).
 //
 // The bin/loki shim allowlist includes "wiki", so when bun is installed the Bun

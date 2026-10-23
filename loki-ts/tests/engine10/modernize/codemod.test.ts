@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-16: deterministic codemods first (futurize for py2 to 3, OpenRewrite for java 8 to 21), or
 // skipped with a reason when the tool is absent. The runner is stubbed throughout: no test here
 // depends on futurize or mvn actually being on PATH.

@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // CH-02: the advisor attaches only to stages Opus marks (plan, fix). Every other stage child env carries LOKI_ADVISOR_SCOPE=off,
 // which the probe reads as advisor-unavailable (executor stays Sonnet, never Haiku).
 import { afterEach, describe, expect, test } from "bun:test";

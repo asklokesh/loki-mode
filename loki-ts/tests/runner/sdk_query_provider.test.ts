@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v8 Phase 4 Story 4: hermetic test for sdkQueryProvider (NO API call). The
 // Agent SDK's query() is stubbed via mock.module to yield a canned SDKMessage
 // stream; we assert the provider satisfies the ProviderInvoker contract, writes

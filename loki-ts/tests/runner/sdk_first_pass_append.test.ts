@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/runner/sdk_first_pass_append.test.ts
 //
 // The FIRST-PASS EXCELLENCE directive is the measured iterations-to-done lever:
