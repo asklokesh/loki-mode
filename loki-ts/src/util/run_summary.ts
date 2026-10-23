@@ -67,7 +67,10 @@ export function nextOf(result: RunResult, filesChanged: number | null, reason?: 
   const r = reason ?? "", undo = filesChanged ? "; loki undo to revert" : "";
   if (result === "stopped" && r === "cost/time cap reached") return `if the cost cap was hit, loki start --max-cost <higher>${runId ? ` (stopped run ${runId})` : ""}, then rerun the same task; if the time cap, rerun with more time`;
   if (result === "stopped") return r.startsWith("spec conflict") ? 'loki answer --text "<your decision>"' : r.startsWith("stalled") ? "loki chat --attach" : "loki status";
-  if (r === "provider authentication failed") return provider === "claude" ? "claude login" : `re-authenticate ${provider}, then loki doctor`;
+  if (r === "provider authentication failed" || r.startsWith("provider authentication failed: ")) {
+    if (provider !== "claude") return `re-authenticate ${provider}, then loki doctor`;
+    return /api key/i.test(r) ? "replace or unset ANTHROPIC_API_KEY, or run claude login" : "claude login"; // an env key outranks the login, so claude login alone would not clear a rejected key
+  }
   if (r === "provider credit exhausted") return "check provider billing, or loki start --provider <other>";
   if (r === "engine ended before sealing a receipt") return "loki doctor";
   if (/^[^:]+ failed(: |$)/.test(r)) return `loki chat --attach (ask why)${undo}`;

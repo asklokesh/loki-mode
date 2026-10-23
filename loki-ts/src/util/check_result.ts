@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
-import { isTestFile } from "../engine10/testmap.ts";
+import { CARGO_TEST_FILE_RE, isTestFile } from "../engine10/testmap.ts";
 import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets } from "./redact.ts";
@@ -697,6 +697,10 @@ export function resolveTool(repoDir: string, bin: string, fallback: string, last
   const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
   return project ? [project, "project", []] : existsSync(join(repoDir, "uv.lock")) && onPath("uv") ? ["uv", "project", ["run", "--", bin]] : [onPath(fallback) ? fallback : lastResort, "system", []]; // TEN-QUALITY-11: uv.lock, no venv: uv run is the project interpreter
 }
+/** FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: the Test, Fuzz and Example function names of one Go file, matched by name only. Over-inclusion is harmless for -run (a name that is no test matches nothing); a signature check would drop valid tests (multi-line, unnamed or aliased *testing.T, non-ASCII names) and turn a red Wall into no run. TestMain is excluded; [] when unreadable or none. */
+export function goTestNames(file: string): string[] {
+  try { return [...new Set([...readFileSync(file, "utf8").matchAll(/^func\s+((?:Test|Fuzz|Example)[\p{L}\p{N}_]*)\s*\(/gmu)].map((m) => m[1]!).filter((n) => n !== "TestMain"))]; } catch { return []; }
+}
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
 export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
@@ -710,13 +714,12 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", "-json", `./${dirname(t.path)}`]];
-    case "cargo": return ["cargo", ["test"]];
+    case "go": { const names = goTestNames(join(repoDir, t.path)); return ["go", ["test", "-json", ...(names.length ? ["-run", `^(${names.join("|")})$`] : []), `./${dirname(t.path)}`]]; } // one file: only its own Test functions
+    case "cargo": return CARGO_TEST_FILE_RE.test(t.path) ? ["cargo", ["test", "--test", basename(t.path, ".rs")]] : ["cargo", ["test"]]; // a Wall-sealed tests/<name>.rs runs by itself
   }
 }
 /** The legacy per-runner full suite (no multi-root model), one check per detected runner: run by deep.ts, baselined via package_suite.ts fullSuiteSpecs. */
-export const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
-  pytest: { cmd: "python", args: ["-m", "pytest", "-q"] },
+const FULL_SUITE_STATIC: Record<Exclude<RunnerName, "pytest">, { cmd: string; args: string[] }> = {
   vitest: { cmd: "npx", args: ["vitest", "run"] },
   jest: { cmd: "npx", args: ["jest"] },
   bun: { cmd: "bun", args: ["test"] },
@@ -725,6 +728,12 @@ export const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }>
   go: { cmd: "go", args: ["test", "-json", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
 };
+/** FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER: the one full-suite command per runner. pytest resolves its interpreter exactly as a per-test run does (resolveTool: project .venv, else python3), never a bare `python` that python3-only hosts lack. */
+export function fullSuiteCmd(runner: RunnerName, repoDir: string): { cmd: string; args: string[]; interpreter?: Interpreter } {
+  if (runner !== "pytest") return FULL_SUITE_STATIC[runner];
+  const [cmd, interpreter, pre] = resolveTool(repoDir, "python", "python3", "python");
+  return { cmd, args: [...pre, "-m", "pytest", "-q"], interpreter };
+}
 /** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
 export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
   const site = siteFor(api, repoDir, t.path);

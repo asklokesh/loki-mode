@@ -204,3 +204,12 @@ export async function commandVersion(
   const first = (r.stdout || r.stderr).split(/\r?\n/)[0]?.trim() ?? "";
   return first || null;
 }
+
+/** POSIX single-quote one word for a `bash -c` line. */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+/** FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH: quote a word only when bash would split or expand it, so a plain command line (`go test -json ./...`) stays byte-identical. */
+export function shellWord(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
+}
