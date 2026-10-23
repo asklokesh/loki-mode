@@ -698,3 +698,32 @@ describe("engine10 verify: verify jobs (TEN-SPEED-18)", () => {
     for (const v of ["0", "abc", "-2", ""]) expect((await runJobs(v)).emitted[0]).toBe("bun:a_slow.test.ts");
   }, 120_000);
 });
+
+describe("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: verify runs every sealed Wall path", () => {
+  // The runner's discovery lists only test_x.py; the Wall file loki_wall_x.py is not a pytest-discovered name.
+  function wallRepo(files: Record<string, string>): { repoDir: string; sha: string } {
+    const repoDir = mkRepo();
+    for (const [n, c] of Object.entries(files)) writeFileSync(join(repoDir, n), c);
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src.txt"), "changed\n"); // untracked -> non-empty diff
+    return { repoDir, sha };
+  }
+  test("a pytest repo runs loki_wall_x.py although detect() lists only test_x.py", async () => {
+    const { repoDir, sha } = wallRepo({ "test_x.py": "def test_x():\n    assert True\n", "loki_wall_x.py": "def test_wall():\n    assert True\n" });
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["pytest"], tests: [{ runner: "pytest", path: "test_x.py" }] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_x.py") }] } } });
+    const names = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).map((c) => c.name);
+    expect(names).toContain("pytest:loki_wall_x.py");
+  }, 60_000);
+  test("a Go loki_wall_x_test.go still runs (discovery already lists it)", async () => {
+    const { repoDir, sha } = wallRepo({ "go.mod": "module x\n\ngo 1.20\n", "loki_wall_x_test.go": 'package x\n\nimport "testing"\n\nfunc TestWall(t *testing.T) {}\n' });
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["go"], tests: [{ runner: "go", path: "loki_wall_x_test.go" }] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_x_test.go") }] } } });
+    const names = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).map((c) => c.name);
+    expect(names).toContain("go:loki_wall_x_test.go");
+  }, 60_000);
+  test("a sealed file no runner of this repo can run is not invented into a check", async () => {
+    const { repoDir, sha } = wallRepo({ "loki_wall_x.rs": "// no runner\n" });
+    const { ctx } = fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["cargo"], tests: [] }), impacted: () => [], outputs: { wall: { files: [{ path: join(repoDir, "loki_wall_x.rs") }] } } });
+    const names = ((await verifyStage.run(ctx, sig())).data.checks as VerifyCheck[]).map((c) => c.name);
+    expect(names.filter((n) => n.includes("loki_wall_x.rs"))).toEqual([]);
+  }, 60_000);
+});
