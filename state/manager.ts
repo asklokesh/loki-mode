@@ -13,8 +13,21 @@ import * as fs from "fs";
 import * as path from "path";
 import { EventEmitter } from "events";
 
+// Minimal surface of chokidar this module uses. Declared locally so the file
+// typechecks without the optional dependency installed.
+interface FileWatcher {
+  on(event: "change" | "add", listener: (filePath: string) => void): FileWatcher;
+  close(): unknown;
+}
+interface ChokidarLike {
+  watch(
+    paths: string,
+    options: { persistent: boolean; ignoreInitial: boolean; ignored: RegExp[]; depth: number },
+  ): FileWatcher;
+}
+
 // Try to import chokidar for file watching
-let chokidar: typeof import("chokidar") | null = null;
+let chokidar: ChokidarLike | null = null;
 try {
   chokidar = require("chokidar");
 } catch {
@@ -404,7 +417,7 @@ export class StateManager extends EventEmitter {
   private subscribers: Set<StateCallback>;
   private filteredSubscribers: FilteredSubscriber[];
   private notificationChannels: NotificationChannel[];
-  private watcher: ReturnType<typeof import("chokidar").watch> | null;
+  private watcher: FileWatcher | null;
   private eventBus: InstanceType<typeof import("../events/bus.ts").EventBus> | null;
   private enableWatch: boolean;
   private enableEvents: boolean;
