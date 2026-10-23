@@ -105,5 +105,18 @@ rm -rf "$t6_home"
 rm -f "$t6_out"
 
 echo
+echo "T7 -- freshness mutation: widening the 7-day window to 70 must fail the self-test (RQ-106)"
+t7_dir="$(mktemp -d)"
+sed 's/^FRESHNESS_WINDOW_DAYS = 7$/FRESHNESS_WINDOW_DAYS = 70/' "$SCRIPT" >"$t7_dir/dep-inventory.py"
+if cmp -s "$SCRIPT" "$t7_dir/dep-inventory.py"; then
+    bad "mutation did not apply: FRESHNESS_WINDOW_DAYS = 7 line not found"
+elif python3 "$t7_dir/dep-inventory.py" --self-test >/dev/null 2>&1; then
+    bad "self-test stayed green with the window mutated to 70"
+else
+    ok "self-test goes red when the window is mutated to 70"
+fi
+rm -rf "$t7_dir"
+
+echo
 echo "Results: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
