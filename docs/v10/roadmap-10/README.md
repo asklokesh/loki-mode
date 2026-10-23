@@ -127,105 +127,105 @@ Tier follows docs/v10/OPERATING-MODEL.md: HIGH touches the moat, verifier, Seal,
 
 | Rank | Id | Area | Feature | Size | Tier | Issue |
 |---|---|---|---|---|---|---|
-| 1 | ship-first R100-001 | onboarding | Zero-question first run with an already logged-in provider | M | MEDIUM | to be filed |
+| 1 | ship-first R100-001 | onboarding | Zero-question first run with an already logged-in provider | M | MEDIUM | #357 |
 | 2 | ship-first R100-002 | trust | Seal any agent's diff: signed receipt for changes Claude Code, Codex or a human already made | M | HIGH | #345 (existing) |
-| 3 | ship-first R100-003 | autonomy | In-place resume after a human answers a blocked question | L | MEDIUM | to be filed |
-| 4 | ship-first R100-004 | deploy | Per-PR preview URL with its health result in the PR body | M | MEDIUM | to be filed |
-| 5 | ship-first R100-005 | team | PR and issue comment commands: /loki fix, /loki explain, /loki reseal | M | HIGH | to be filed |
+| 3 | ship-first R100-003 | autonomy | In-place resume after a human answers a blocked question | L | MEDIUM | #358 |
+| 4 | ship-first R100-004 | deploy | Per-PR preview URL with its health result in the PR body | M | MEDIUM | #359 |
+| 5 | ship-first R100-005 | team | PR and issue comment commands: /loki fix, /loki explain, /loki reseal | M | HIGH | #360 |
 | 6 | ship-first R100-006 | trust | Spec clause matrix in the PR body and receipt comment | M | HIGH | #342 (existing) |
-| 7 | ship-first R100-007 | speed | Live run view: `loki status --follow` streams stages, edits, tests and cost | S | LOW | to be filed |
-| 8 | ship-first R100-008 | autonomy | Background runs and one run list across repos | M | MEDIUM | to be filed |
+| 7 | ship-first R100-007 | speed | Live run view: `loki status --follow` streams stages, edits, tests and cost | S | LOW | #361 |
+| 8 | ship-first R100-008 | autonomy | Background runs and one run list across repos | M | MEDIUM | #362 |
 | 9 | ship-first R100-009 | autonomy | Run large multi-part tasks as decomposed, separately verified units | L | MEDIUM | #235 (existing) |
-| 10 | ship-first R100-010 | team | Approval inbox: everything waiting on a human, across repos | M | MEDIUM | to be filed |
-| 11 | ship-first R100-011 | memory | Learn from what users edit: amended or rejected Loki PRs become lessons | M | MEDIUM | to be filed |
-| 12 | ship-first R100-012 | trust | Seal as a required merge check: `loki github protect` | S | HIGH | to be filed |
+| 10 | ship-first R100-010 | team | Approval inbox: everything waiting on a human, across repos | M | MEDIUM | #363 |
+| 11 | ship-first R100-011 | memory | Learn from what users edit: amended or rejected Loki PRs become lessons | M | MEDIUM | #364 |
+| 12 | ship-first R100-012 | trust | Seal as a required merge check: `loki github protect` | S | HIGH | #365 |
 | 13 | ship-first R100-013 | trust | Seal web apps by driving the spec's user flows in a real browser | L | HIGH | #249 (existing) |
-| 14 | ship-first R100-014 | ecosystem | Read every agent's rules: CLAUDE.md, AGENTS.md, Cursor, Copilot and Windsurf rule files | S | LOW | to be filed |
-| 15 | ship-first R100-015 | providers | Model shootout on your own task: `loki compare` | M | MEDIUM | to be filed |
-| 16 | ship-first R100-016 | trust | Verify a receipt in the browser, offline, with no install | M | HIGH | to be filed |
-| 17 | ship-first R100-017 | onboarding | Single-binary install with no node or python3 required | M | MEDIUM | to be filed |
-| 18 | ship-first R100-018 | deploy | Automatic rollback on all four deploy providers | M | MEDIUM | to be filed |
-| 19 | ship-first R100-019 | dashboard | Leader screen: work in, sealed shipped, cost per sealed change, waiting on a human | M | MEDIUM | to be filed |
-| 20 | ship-first R100-020 | onboarding | Native Windows support | L | MEDIUM | to be filed |
+| 14 | ship-first R100-014 | ecosystem | Read every agent's rules: CLAUDE.md, AGENTS.md, Cursor, Copilot and Windsurf rule files | S | LOW | #366 |
+| 15 | ship-first R100-015 | providers | Model shootout on your own task: `loki compare` | M | MEDIUM | #367 |
+| 16 | ship-first R100-016 | trust | Verify a receipt in the browser, offline, with no install | M | HIGH | #368 |
+| 17 | ship-first R100-017 | onboarding | Single-binary install with no node or python3 required | M | MEDIUM | #369 |
+| 18 | ship-first R100-018 | deploy | Automatic rollback on all four deploy providers | M | MEDIUM | #370 |
+| 19 | ship-first R100-019 | dashboard | Leader screen: work in, sealed shipped, cost per sealed change, waiting on a human | M | MEDIUM | #371 |
+| 20 | ship-first R100-020 | onboarding | Native Windows support | L | MEDIUM | #372 |
 | 21 | R100-021 | onboarding | Name the provider failure cause and its fix on the Reason line | S | LOW | #351 (existing) |
 | 22 | R100-022 | onboarding | Check publish capability at intake, before any work | S | MEDIUM | #231 (existing) |
-| 23 | R100-023 | onboarding | Zero-install try in a dev container or Codespace | S | LOW | to be filed |
-| 24 | R100-024 | onboarding | Starter task suggestions from issues, TODOs and failing tests | S | LOW | to be filed |
-| 25 | R100-025 | onboarding | `loki try <repo-url>`: one command to a sealed sample change on any public repo | S | LOW | to be filed |
-| 26 | R100-026 | speed | Readable plan with cost in under 10 seconds | S | LOW | to be filed |
-| 27 | R100-027 | speed | Desktop and phone push notifications when a run needs you or finishes | S | LOW | to be filed |
-| 28 | R100-028 | speed | Best-of-N implement for small tasks | M | MEDIUM | to be filed |
-| 29 | R100-029 | speed | Warm engine daemon for sub-second start | M | MEDIUM | to be filed |
-| 30 | R100-030 | speed | Re-seal in under a minute after a human edits a Loki PR | M | HIGH | to be filed |
+| 23 | R100-023 | onboarding | Zero-install try in a dev container or Codespace | S | LOW | #373 |
+| 24 | R100-024 | onboarding | Starter task suggestions from issues, TODOs and failing tests | S | LOW | #374 |
+| 25 | R100-025 | onboarding | `loki try <repo-url>`: one command to a sealed sample change on any public repo | S | LOW | #375 |
+| 26 | R100-026 | speed | Readable plan with cost in under 10 seconds | S | LOW | #376 |
+| 27 | R100-027 | speed | Desktop and phone push notifications when a run needs you or finishes | S | LOW | #377 |
+| 28 | R100-028 | speed | Best-of-N implement for small tasks | M | MEDIUM | #378 |
+| 29 | R100-029 | speed | Warm engine daemon for sub-second start | M | MEDIUM | #379 |
+| 30 | R100-030 | speed | Re-seal in under a minute after a human edits a Loki PR | M | HIGH | #380 |
 | 31 | R100-031 | speed | Opt-in fast mode with ledger premium and fallback | M | MEDIUM | #279 (existing) |
-| 32 | R100-032 | speed | Progress mirrored to the Slack thread and a live PR checklist | S | LOW | to be filed |
-| 33 | R100-033 | deploy | Database provisioning per preview | L | MEDIUM | to be filed |
-| 34 | R100-034 | deploy | Run the spec's user flows against the live deploy URL | M | HIGH | to be filed |
-| 35 | R100-035 | deploy | Container image build and push with SBOM bound to the receipt | M | MEDIUM | to be filed |
-| 36 | R100-036 | deploy | Kubernetes deploy with canary through the user's own kube context | L | HIGH | to be filed |
-| 37 | R100-037 | deploy | `loki deploy init`: detect a logged-in deploy CLI and write config with no questions | S | LOW | to be filed |
-| 38 | R100-038 | team | CODEOWNERS-aware reviewers on every Loki PR | S | LOW | to be filed |
-| 39 | R100-039 | team | Fill the repo's pull request template | S | LOW | to be filed |
-| 40 | R100-040 | team | Team memory shared through git | M | MEDIUM | to be filed |
+| 32 | R100-032 | speed | Progress mirrored to the Slack thread and a live PR checklist | S | LOW | #381 |
+| 33 | R100-033 | deploy | Database provisioning per preview | L | MEDIUM | #382 |
+| 34 | R100-034 | deploy | Run the spec's user flows against the live deploy URL | M | HIGH | #383 |
+| 35 | R100-035 | deploy | Container image build and push with SBOM bound to the receipt | M | MEDIUM | #384 |
+| 36 | R100-036 | deploy | Kubernetes deploy with canary through the user's own kube context | L | HIGH | #385 |
+| 37 | R100-037 | deploy | `loki deploy init`: detect a logged-in deploy CLI and write config with no questions | S | LOW | #386 |
+| 38 | R100-038 | team | CODEOWNERS-aware reviewers on every Loki PR | S | LOW | #387 |
+| 39 | R100-039 | team | Fill the repo's pull request template | S | LOW | #388 |
+| 40 | R100-040 | team | Team memory shared through git | M | MEDIUM | #389 |
 | 41 | R100-041 | team | Team login for the shared Control Plane | L | HIGH | #188 (existing) |
-| 42 | R100-042 | team | Bitbucket and Azure DevOps pull requests | M | MEDIUM | to be filed |
-| 43 | R100-043 | team | Release notes written from sealed receipts | S | LOW | to be filed |
-| 44 | R100-044 | ide | VS Code extension: run panel and receipt viewer | L | MEDIUM | to be filed |
-| 45 | R100-045 | ide | Ready-made ACP configs for Zed and JetBrains | S | LOW | to be filed |
-| 46 | R100-046 | ide | Start, status and seal commands in the Claude Code plugin | S | LOW | to be filed |
-| 47 | R100-047 | ide | Full-screen terminal UI with approve, steer and pause keys | M | LOW | to be filed |
-| 48 | R100-048 | ide | Images and mockups as task input | M | MEDIUM | to be filed |
-| 49 | R100-049 | ide | MCP one-click install works on a clean machine | S | LOW | to be filed |
-| 50 | R100-050 | ide | Start, steer and answer runs from the Control Plane in the browser | M | MEDIUM | to be filed |
-| 51 | R100-051 | ide | Answer blocked questions from the phone with a push reply action | S | MEDIUM | to be filed |
+| 42 | R100-042 | team | Bitbucket and Azure DevOps pull requests | M | MEDIUM | #390 |
+| 43 | R100-043 | team | Release notes written from sealed receipts | S | LOW | #391 |
+| 44 | R100-044 | ide | VS Code extension: run panel and receipt viewer | L | MEDIUM | #392 |
+| 45 | R100-045 | ide | Ready-made ACP configs for Zed and JetBrains | S | LOW | #393 |
+| 46 | R100-046 | ide | Start, status and seal commands in the Claude Code plugin | S | LOW | #394 |
+| 47 | R100-047 | ide | Full-screen terminal UI with approve, steer and pause keys | M | LOW | #395 |
+| 48 | R100-048 | ide | Images and mockups as task input | M | MEDIUM | #396 |
+| 49 | R100-049 | ide | MCP one-click install works on a clean machine | S | LOW | #397 |
+| 50 | R100-050 | ide | Start, steer and answer runs from the Control Plane in the browser | M | MEDIUM | #398 |
+| 51 | R100-051 | ide | Answer blocked questions from the phone with a push reply action | S | MEDIUM | #399 |
 | 52 | R100-052 | memory | Code embedding provider for memory retrieval | M | MEDIUM | #248 (existing) |
-| 53 | R100-053 | memory | Search every past run: `loki history search` | S | LOW | to be filed |
-| 54 | R100-054 | memory | `loki blame <file>:<line>`: which run, clause and decision produced this line | S | LOW | to be filed |
-| 55 | R100-055 | memory | Personal profile applied across repos | M | MEDIUM | to be filed |
-| 56 | R100-056 | memory | Memory page in the Control Plane: view, pin, edit and forget lessons | S | LOW | to be filed |
-| 57 | R100-057 | memory | Playbooks: save a sealed run as a reusable task recipe | M | LOW | to be filed |
-| 58 | R100-058 | memory | Reverted changes become lessons and regression-test proposals | S | MEDIUM | to be filed |
-| 59 | R100-059 | cost | Live cost meter with alerts at 50, 80 and 100 percent of budget | S | LOW | to be filed |
-| 60 | R100-060 | cost | Estimate accuracy: show actual vs estimate and self-calibrate | S | LOW | to be filed |
-| 61 | R100-061 | cost | Monthly budgets per repo and per user | M | MEDIUM | to be filed |
-| 62 | R100-062 | cost | Cost breakdown by stage and route with savings against an all-top-model baseline | S | LOW | to be filed |
-| 63 | R100-063 | cost | Finance export: monthly CSV of spend by repo, user and sealed change | S | LOW | to be filed |
+| 53 | R100-053 | memory | Search every past run: `loki history search` | S | LOW | #400 |
+| 54 | R100-054 | memory | `loki blame <file>:<line>`: which run, clause and decision produced this line | S | LOW | #401 |
+| 55 | R100-055 | memory | Personal profile applied across repos | M | MEDIUM | #402 |
+| 56 | R100-056 | memory | Memory page in the Control Plane: view, pin, edit and forget lessons | S | LOW | #403 |
+| 57 | R100-057 | memory | Playbooks: save a sealed run as a reusable task recipe | M | LOW | #404 |
+| 58 | R100-058 | memory | Reverted changes become lessons and regression-test proposals | S | MEDIUM | #405 |
+| 59 | R100-059 | cost | Live cost meter with alerts at 50, 80 and 100 percent of budget | S | LOW | #406 |
+| 60 | R100-060 | cost | Estimate accuracy: show actual vs estimate and self-calibrate | S | LOW | #407 |
+| 61 | R100-061 | cost | Monthly budgets per repo and per user | M | MEDIUM | #408 |
+| 62 | R100-062 | cost | Cost breakdown by stage and route with savings against an all-top-model baseline | S | LOW | #409 |
+| 63 | R100-063 | cost | Finance export: monthly CSV of spend by repo, user and sealed change | S | LOW | #410 |
 | 64 | R100-064 | cost | Warn when attached MCP tool definitions cost too many tokens | S | LOW | #290 (existing) |
-| 65 | R100-065 | cost | Show prompt-cache savings per run | S | LOW | to be filed |
-| 66 | R100-066 | cost | Quote approval for expensive runs | S | MEDIUM | to be filed |
-| 67 | R100-067 | providers | Provider adapters for GitHub Copilot CLI, cursor-agent and Factory droid | M | MEDIUM | to be filed |
-| 68 | R100-068 | providers | Any OpenAI-compatible endpoint on every route | M | MEDIUM | to be filed |
+| 65 | R100-065 | cost | Show prompt-cache savings per run | S | LOW | #411 |
+| 66 | R100-066 | cost | Quote approval for expensive runs | S | MEDIUM | #412 |
+| 67 | R100-067 | providers | Provider adapters for GitHub Copilot CLI, cursor-agent and Factory droid | M | MEDIUM | #413 |
+| 68 | R100-068 | providers | Any OpenAI-compatible endpoint on every route | M | MEDIUM | #414 |
 | 69 | R100-069 | providers | Judge client from the provider the user configured | M | HIGH | #267 (existing) |
 | 70 | R100-070 | providers | One effort and thinking knob across all five providers | M | MEDIUM | #346 (existing) |
 | 71 | R100-071 | providers | Doctor auth rows and a zero-token probe for every provider | S | MEDIUM | #347 (existing) |
-| 72 | R100-072 | providers | Hybrid local and cloud: offload cheap stages to a local model when present | M | MEDIUM | to be filed |
-| 73 | R100-073 | providers | New-model check: `loki models --new` compares a new model on your recent tasks | S | LOW | to be filed |
-| 74 | R100-074 | providers | Model route settings in the Control Plane with live prices | S | LOW | to be filed |
-| 75 | R100-075 | autonomy | Maintenance autopilot: dependency upgrades, lint debt and flaky tests as sealed PRs | M | MEDIUM | to be filed |
+| 72 | R100-072 | providers | Hybrid local and cloud: offload cheap stages to a local model when present | M | MEDIUM | #415 |
+| 73 | R100-073 | providers | New-model check: `loki models --new` compares a new model on your recent tasks | S | LOW | #416 |
+| 74 | R100-074 | providers | Model route settings in the Control Plane with live prices | S | LOW | #417 |
+| 75 | R100-075 | autonomy | Maintenance autopilot: dependency upgrades, lint debt and flaky tests as sealed PRs | M | MEDIUM | #418 |
 | 76 | R100-076 | autonomy | Preserve working state across compaction | M | MEDIUM | #277 (existing) |
 | 77 | R100-077 | autonomy | Relay operator input to a running worker | M | MEDIUM | #278 (existing) |
 | 78 | R100-078 | autonomy | Every run in its own worktree by default | M | HIGH | #232 (existing) |
-| 79 | R100-079 | autonomy | Multi-day missions with milestone receipts | L | MEDIUM | to be filed |
-| 80 | R100-080 | autonomy | Overnight backlog window with a morning report | S | LOW | to be filed |
-| 81 | R100-081 | autonomy | Move a run to another machine: export and import run state | M | MEDIUM | to be filed |
-| 82 | R100-082 | dashboard | Run replay: step through stages with the diff and test output at each step | M | LOW | to be filed |
-| 83 | R100-083 | dashboard | Compare two runs side by side | S | LOW | to be filed |
-| 84 | R100-084 | dashboard | Weekly digest to Slack or email | S | LOW | to be filed |
-| 85 | R100-085 | dashboard | Stage time and cost chart per run | S | LOW | to be filed |
-| 86 | R100-086 | dashboard | Repo health page: seal rate, revert rate and change-failure rate trends | S | LOW | to be filed |
-| 87 | R100-087 | dashboard | Stuck-run alert when no progress for N minutes | S | LOW | to be filed |
-| 88 | R100-088 | ecosystem | Hosted template registry: search and publish | M | LOW | to be filed |
-| 89 | R100-089 | ecosystem | Custom gates in loki.yaml that feed the Seal | M | HIGH | to be filed |
-| 90 | R100-090 | ecosystem | `loki hooks install`: fast verify on pre-commit | S | LOW | to be filed |
-| 91 | R100-091 | ecosystem | Signed outbound run webhooks with a typed event schema | S | MEDIUM | to be filed |
+| 79 | R100-079 | autonomy | Multi-day missions with milestone receipts | L | MEDIUM | #419 |
+| 80 | R100-080 | autonomy | Overnight backlog window with a morning report | S | LOW | #420 |
+| 81 | R100-081 | autonomy | Move a run to another machine: export and import run state | M | MEDIUM | #421 |
+| 82 | R100-082 | dashboard | Run replay: step through stages with the diff and test output at each step | M | LOW | #422 |
+| 83 | R100-083 | dashboard | Compare two runs side by side | S | LOW | #423 |
+| 84 | R100-084 | dashboard | Weekly digest to Slack or email | S | LOW | #424 |
+| 85 | R100-085 | dashboard | Stage time and cost chart per run | S | LOW | #425 |
+| 86 | R100-086 | dashboard | Repo health page: seal rate, revert rate and change-failure rate trends | S | LOW | #426 |
+| 87 | R100-087 | dashboard | Stuck-run alert when no progress for N minutes | S | LOW | #427 |
+| 88 | R100-088 | ecosystem | Hosted template registry: search and publish | M | LOW | #428 |
+| 89 | R100-089 | ecosystem | Custom gates in loki.yaml that feed the Seal | M | HIGH | #429 |
+| 90 | R100-090 | ecosystem | `loki hooks install`: fast verify on pre-commit | S | LOW | #430 |
+| 91 | R100-091 | ecosystem | Signed outbound run webhooks with a typed event schema | S | MEDIUM | #431 |
 | 92 | R100-092 | ecosystem | One MCP config for every MCP-capable provider | M | MEDIUM | #343 (existing) |
-| 93 | R100-093 | ecosystem | Use existing Claude Code and droid skills in any provider's run | M | MEDIUM | to be filed |
-| 94 | R100-094 | ecosystem | Embeddable TypeScript SDK: `runLoki({ spec })` | M | MEDIUM | to be filed |
-| 95 | R100-095 | trust | Receipts in a public transparency log | M | HIGH | to be filed |
+| 93 | R100-093 | ecosystem | Use existing Claude Code and droid skills in any provider's run | M | MEDIUM | #432 |
+| 94 | R100-094 | ecosystem | Embeddable TypeScript SDK: `runLoki({ spec })` | M | MEDIUM | #433 |
+| 95 | R100-095 | trust | Receipts in a public transparency log | M | HIGH | #434 |
 | 96 | R100-096 | trust | Clause-by-clause spec trace in the receipt | L | HIGH | #341 (existing) |
 | 97 | R100-097 | trust | Numbered, anchored acceptance clauses from any spec | M | HIGH | #340 (existing) |
 | 98 | R100-098 | trust | Vision pass over captured screenshots in the Seal | M | HIGH | #263 (existing) |
-| 99 | R100-099 | trust | Audit evidence pack from receipts | S | HIGH | to be filed |
+| 99 | R100-099 | trust | Audit evidence pack from receipts | S | HIGH | #435 |
 | 100 | R100-100 | trust | Page and line anchors for PDF and DOCX specs | M | MEDIUM | #339 (existing) |
 
 ### Item detail
@@ -234,7 +234,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-001 Zero-question first run with an already logged-in provider
 
-- Issue: to be filed. Area: onboarding. Size: M. Tier: MEDIUM. Deps: FR-A, #347.
+- Issue: #357. Area: onboarding. Size: M. Tier: MEDIUM. Deps: FR-A, #347.
 - Problem: A new user who already has claude, codex, opencode, cline or aider logged in still meets `loki setup` before the first build; every extra step loses users before their first VERIFIED build.
 - Feature: `loki start "<task>"` in a fresh HOME detects a logged-in provider CLI, picks the default route, and runs with no prompt. `loki setup` becomes optional (extends FR-A in 04-first-run.md, `start.ts`, `doctor_fix.ts`).
 - Acceptance:
@@ -254,7 +254,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-003 In-place resume after a human answers a blocked question
 
-- Issue: to be filed. Area: autonomy. Size: L. Tier: MEDIUM. Deps: #278, #353, journal (#283, closed).
+- Issue: #358. Area: autonomy. Size: L. Tier: MEDIUM. Deps: #278, #353, journal (#283, closed).
 - Problem: Today a BLOCKED engine10 run is terminal; a Slack reply starts a new follow-up run (`loki-ts/src/contrib/slack_inbound.ts` lines 2-4), so completed work is re-done and users abandon blocked runs.
 - Feature: A blocked run parks with its journal intact. `loki answer <run> "<text>"`, a Slack thread reply, or a PR comment resumes the same run id and skips completed slices.
 - Acceptance:
@@ -267,7 +267,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-004 Per-PR preview URL with its health result in the PR body
 
-- Issue: to be filed. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-A.
+- Issue: #359. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-A.
 - Problem: Reviewers cannot click a sealed change; they must pull and run it, which slows every review.
 - Feature: On a PR run with a configured provider (Netlify, Vercel, Cloudflare, Fly), deploy to a preview destination, probe health, write the URL and probe result into the PR body and the receipt, and prune old previews (DEP-A in 05-deploy.md).
 - Acceptance:
@@ -280,7 +280,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-005 PR and issue comment commands: /loki fix, /loki explain, /loki reseal
 
-- Issue: to be filed. Area: team. Size: M. Tier: HIGH. Deps: verify-pr respond, D60-4 Action.
+- Issue: #360. Area: team. Size: M. Tier: HIGH. Deps: verify-pr respond, D60-4 Action.
 - Problem: Reviewers who want a change on a Loki PR must leave GitHub, open a terminal and run Loki themselves.
 - Feature: The existing issue-to-PR GitHub Action listens for `/loki fix <text>`, `/loki explain` and `/loki reseal` comments from users with write access and runs them on the PR branch; untrusted comment text never shares a step with secrets (moat 9).
 - Acceptance:
@@ -300,7 +300,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-007 Live run view: `loki status --follow` streams stages, edits, tests and cost
 
-- Issue: to be filed. Area: speed. Size: S. Tier: LOW. Deps: event log.
+- Issue: #361. Area: speed. Size: S. Tier: LOW. Deps: event log.
 - Problem: During a long run users see little; they cancel runs that were progressing.
 - Feature: `loki status --follow [--json]` prints one line per event (stage, file edited, test result, cost) and Ctrl-C detaches without stopping the run (extends `status.ts` and the event log).
 - Acceptance:
@@ -313,7 +313,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-008 Background runs and one run list across repos
 
-- Issue: to be filed. Area: autonomy. Size: M. Tier: MEDIUM. Deps: #232.
+- Issue: #362. Area: autonomy. Size: M. Tier: MEDIUM. Deps: #232.
 - Problem: A run ties up the terminal; users with several repos cannot see every running build in one place.
 - Feature: `loki start --bg` returns a run id, `loki runs` lists every run across registered projects (`loki projects`) with state, cost and verdict, and `loki attach <id>` re-joins one.
 - Acceptance:
@@ -333,7 +333,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-010 Approval inbox: everything waiting on a human, across repos
 
-- Issue: to be filed. Area: team. Size: M. Tier: MEDIUM. Deps: R100-003.
+- Issue: #363. Area: team. Size: M. Tier: MEDIUM. Deps: R100-003.
 - Problem: Blocked questions, PRs awaiting approval and deploys awaiting promotion are spread across terminals, Slack and GitHub; work waits for hours.
 - Feature: `loki inbox` and a Control Plane page list each waiting item with one action (answer, approve, promote, dismiss).
 - Acceptance:
@@ -346,7 +346,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-011 Learn from what users edit: amended or rejected Loki PRs become lessons
 
-- Issue: to be filed. Area: memory. Size: M. Tier: MEDIUM. Deps: memory learn, outcomes.
+- Issue: #364. Area: memory. Size: M. Tier: MEDIUM. Deps: memory learn, outcomes.
 - Problem: Users fix the same Loki habits by hand on every PR; nothing learns from their code edits (`loki memory learn` reads review comments only).
 - Feature: When a Loki PR is merged after human commits, or closed unmerged, the human diff becomes a scoped, cited lesson injected into later runs in that repo.
 - Acceptance:
@@ -359,7 +359,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-012 Seal as a required merge check: `loki github protect`
 
-- Issue: to be filed. Area: trust. Size: S. Tier: HIGH. Deps: TEN-DEPLOY-07 commit status.
+- Issue: #365. Area: trust. Size: S. Tier: HIGH. Deps: TEN-DEPLOY-07 commit status.
 - Problem: The receipt status is advisory; teams cannot require it before merge without hand-editing branch protection.
 - Feature: `loki github protect [--dry-run]` makes `loki/receipt` a required status check on the default branch, and the Action re-verifies the receipt on every PR push.
 - Acceptance:
@@ -378,7 +378,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-014 Read every agent's rules: CLAUDE.md, AGENTS.md, Cursor, Copilot and Windsurf rule files
 
-- Issue: to be filed. Area: ecosystem. Size: S. Tier: LOW. Deps: none.
+- Issue: #366. Area: ecosystem. Size: S. Tier: LOW. Deps: none.
 - Problem: Teams already wrote rules for other agents; Loki reads AGENTS.md (v7.21) but not `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.windsurfrules` or `GEMINI.md`.
 - Feature: One loader folds every known rule file into the run brief and `loki doctor` lists which were loaded and which conflict.
 - Acceptance:
@@ -390,7 +390,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-015 Model shootout on your own task: `loki compare`
 
-- Issue: to be filed. Area: providers. Size: M. Tier: MEDIUM. Deps: loki bench.
+- Issue: #367. Area: providers. Size: M. Tier: MEDIUM. Deps: loki bench.
 - Problem: Users cannot tell which model or provider is best and cheapest for their repo; `loki bench vs` needs a task-spec file.
 - Feature: `loki compare "<task>" --routes a,b,c` runs the task on N routes in isolated worktrees, prints sealed, cost and time per route, and `--adopt <route>` saves the winner.
 - Acceptance:
@@ -403,7 +403,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-016 Verify a receipt in the browser, offline, with no install
 
-- Issue: to be filed. Area: trust. Size: M. Tier: HIGH. Deps: PRF-B.
+- Issue: #368. Area: trust. Size: M. Tier: HIGH. Deps: PRF-B.
 - Problem: A reviewer outside engineering cannot check a receipt without installing Loki.
 - Feature: `loki proof export --html` writes one self-contained page that verifies a receipt with the public key, offline (PRF-B in 08-proof.md).
 - Acceptance:
@@ -415,7 +415,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-017 Single-binary install with no node or python3 required
 
-- Issue: to be filed. Area: onboarding. Size: M. Tier: MEDIUM. Deps: FR-B.
+- Issue: #369. Area: onboarding. Size: M. Tier: MEDIUM. Deps: FR-B.
 - Problem: Install needs node, python3, jq, git and curl plus a provider; each missing tool is a dead end.
 - Feature: Release attaches compiled binaries (Bun compile) so the v10 path needs only git and a provider CLI (extends FR-B).
 - Acceptance:
@@ -427,7 +427,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-018 Automatic rollback on all four deploy providers
 
-- Issue: to be filed. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-B, DEP-D.
+- Issue: #370. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-B, DEP-D.
 - Problem: `loki rollback deploy` prints the rollback command but never runs it; a bad deploy stays live until a human acts.
 - Feature: With `--auto-rollback`, a failed health watch after deploy runs the provider rollback, records it in the receipt, and notifies (DEP-B, DEP-D).
 - Acceptance:
@@ -439,7 +439,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-019 Leader screen: work in, sealed shipped, cost per sealed change, waiting on a human
 
-- Issue: to be filed. Area: dashboard. Size: M. Tier: MEDIUM. Deps: kpis.
+- Issue: #371. Area: dashboard. Size: M. Tier: MEDIUM. Deps: kpis.
 - Problem: V10-VISION promises one screen for leaders; numbers exist across `loki report kpis`, outcomes and the ledger but not together.
 - Feature: `loki report kpis --leader` and a Control Plane page show the 4 numbers per week across registered repos.
 - Acceptance:
@@ -451,7 +451,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-020 Native Windows support
 
-- Issue: to be filed. Area: onboarding. Size: L. Tier: MEDIUM. Deps: R100-017.
+- Issue: #372. Area: onboarding. Size: L. Tier: MEDIUM. Deps: R100-017.
 - Problem: Windows users without WSL cannot run Loki.
 - Feature: PowerShell install and a Windows-native Bun route for `loki start`, `loki verify` and `loki status`.
 - Acceptance:
@@ -477,7 +477,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-023 Zero-install try in a dev container or Codespace
 
-- Issue: to be filed. Area: onboarding. Size: S. Tier: LOW. Deps: FR-E.
+- Issue: #373. Area: onboarding. Size: S. Tier: LOW. Deps: FR-E.
 - Problem: Prospects will not install a CLI to see a sealed run (FR-E).
 - Feature: A `.devcontainer/` config and README badge; the container boots and runs `loki tour`, then a live task when a key is present.
 - Acceptance:
@@ -489,7 +489,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-024 Starter task suggestions from issues, TODOs and failing tests
 
-- Issue: to be filed. Area: onboarding. Size: S. Tier: LOW. Deps: loki next.
+- Issue: #374. Area: onboarding. Size: S. Tier: LOW. Deps: loki next.
 - Problem: A new user in a repo does not know what small task to give first.
 - Feature: `loki next` with no active run proposes 3 small tasks from open issues, TODO/FIXME lines and failing tests, each with a cost estimate; picking a number starts it.
 - Acceptance:
@@ -502,7 +502,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-025 `loki try <repo-url>`: one command to a sealed sample change on any public repo
 
-- Issue: to be filed. Area: onboarding. Size: S. Tier: LOW. Deps: R100-024.
+- Issue: #375. Area: onboarding. Size: S. Tier: LOW. Deps: R100-024.
 - Problem: Evaluators want to see Loki on a real repo without touching their own checkout.
 - Feature: Clone a public repo into a run-owned temp worktree, pick a starter task, run it, show the receipt, then clean up.
 - Acceptance:
@@ -514,7 +514,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-026 Readable plan with cost in under 10 seconds
 
-- Issue: to be filed. Area: speed. Size: S. Tier: LOW. Deps: loki plan.
+- Issue: #376. Area: speed. Size: S. Tier: LOW. Deps: loki plan.
 - Problem: Users wait before they see whether Loki understood the task.
 - Feature: `loki plan` streams a one-screen plan and cost estimate from the small tier first, then refines.
 - Acceptance:
@@ -526,7 +526,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-027 Desktop and phone push notifications when a run needs you or finishes
 
-- Issue: to be filed. Area: speed. Size: S. Tier: LOW. Deps: notify.
+- Issue: #377. Area: speed. Size: S. Tier: LOW. Deps: notify.
 - Problem: Users miss a blocked question for hours because notify only covers Slack, Discord and webhooks.
 - Feature: Add `desktop` (macOS and Linux) and `ntfy` channels to `loki notify`, fired on blocked, done and failed.
 - Acceptance:
@@ -538,7 +538,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-028 Best-of-N implement for small tasks
 
-- Issue: to be filed. Area: speed. Size: M. Tier: MEDIUM. Deps: M-17 scheduler.
+- Issue: #378. Area: speed. Size: M. Tier: MEDIUM. Deps: M-17 scheduler.
 - Problem: One unlucky attempt costs a whole retry round.
 - Feature: `LOKI_BEST_OF=2` runs 2 implementations in parallel worktrees on the cheap tier and keeps the first that seals (extends the modernize best-of-2 scheduler to start).
 - Acceptance:
@@ -550,7 +550,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-029 Warm engine daemon for sub-second start
 
-- Issue: to be filed. Area: speed. Size: M. Tier: MEDIUM. Deps: SPD-B.
+- Issue: #379. Area: speed. Size: M. Tier: MEDIUM. Deps: SPD-B.
 - Problem: Each `loki start` pays engine boot, repo map and test map cost.
 - Feature: `loki daemon` keeps the Bun engine, repo map and test map warm per repo; `loki start` attaches when it is running.
 - Acceptance:
@@ -562,7 +562,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-030 Re-seal in under a minute after a human edits a Loki PR
 
-- Issue: to be filed. Area: speed. Size: M. Tier: HIGH. Deps: fast_verify.
+- Issue: #380. Area: speed. Size: M. Tier: HIGH. Deps: fast_verify.
 - Problem: A one-line human tweak drops the receipt and a full re-verify is slow.
 - Feature: `loki verify --reseal` re-runs only the checks affected by the new commits and issues an updated receipt.
 - Acceptance:
@@ -581,7 +581,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-032 Progress mirrored to the Slack thread and a live PR checklist
 
-- Issue: to be filed. Area: speed. Size: S. Tier: LOW. Deps: slack_inbound.
+- Issue: #381. Area: speed. Size: S. Tier: LOW. Deps: slack_inbound.
 - Problem: Teammates who started a run from Slack or an issue cannot see progress without a terminal.
 - Feature: Each stage transition edits one Slack thread message and a draft PR checklist in place.
 - Acceptance:
@@ -593,7 +593,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-033 Database provisioning per preview
 
-- Issue: to be filed. Area: deploy. Size: L. Tier: MEDIUM. Deps: R100-004.
+- Issue: #382. Area: deploy. Size: L. Tier: MEDIUM. Deps: R100-004.
 - Problem: Apps with a database cannot get a working preview.
 - Feature: A deploy hook creates a database (Postgres in Docker, or a branch on the user's provider), runs migrations and injects the URL (DEP-C).
 - Acceptance:
@@ -605,7 +605,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-034 Run the spec's user flows against the live deploy URL
 
-- Issue: to be filed. Area: deploy. Size: M. Tier: HIGH. Deps: #249, R100-004.
+- Issue: #383. Area: deploy. Size: M. Tier: HIGH. Deps: #249, R100-004.
 - Problem: A deploy can pass a health probe while the main flow is broken.
 - Feature: After deploy, run the browser flow checks from #249 against the deployed URL and record them in the receipt.
 - Acceptance:
@@ -617,7 +617,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-035 Container image build and push with SBOM bound to the receipt
 
-- Issue: to be filed. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-F.
+- Issue: #384. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-F.
 - Problem: Teams that ship containers must build and push by hand after Loki finishes.
 - Feature: `loki deploy --target container --registry <url>` builds the image, pushes it, and binds the digest and an SBOM to the receipt.
 - Acceptance:
@@ -629,7 +629,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-036 Kubernetes deploy with canary through the user's own kube context
 
-- Issue: to be filed. Area: deploy. Size: L. Tier: HIGH. Deps: R100-018.
+- Issue: #385. Area: deploy. Size: L. Tier: HIGH. Deps: R100-018.
 - Problem: Teams on Kubernetes cannot use `loki deploy`.
 - Feature: Generate or reuse manifests, apply to the user's current context with a canary step, health-gate, and roll back on failure.
 - Acceptance:
@@ -641,7 +641,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-037 `loki deploy init`: detect a logged-in deploy CLI and write config with no questions
 
-- Issue: to be filed. Area: deploy. Size: S. Tier: LOW. Deps: none.
+- Issue: #386. Area: deploy. Size: S. Tier: LOW. Deps: none.
 - Problem: First deploy needs provider flags and env files the user has to look up.
 - Feature: Detect logged-in netlify, vercel, wrangler or flyctl, pick the project, and write the deploy block to loki.yaml.
 - Acceptance:
@@ -653,7 +653,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-038 CODEOWNERS-aware reviewers on every Loki PR
 
-- Issue: to be filed. Area: team. Size: S. Tier: LOW. Deps: github publish.
+- Issue: #387. Area: team. Size: S. Tier: LOW. Deps: github publish.
 - Problem: Loki PRs land with no reviewer and wait.
 - Feature: Request reviewers from CODEOWNERS for touched paths and list owners per file in the PR body.
 - Acceptance:
@@ -665,7 +665,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-039 Fill the repo's pull request template
 
-- Issue: to be filed. Area: team. Size: S. Tier: LOW. Deps: R100-006.
+- Issue: #388. Area: team. Size: S. Tier: LOW. Deps: R100-006.
 - Problem: Loki PR bodies ignore the team's template, so reviewers reject them.
 - Feature: When `.github/pull_request_template.md` exists, Loki fills each section from the receipt and plan.
 - Acceptance:
@@ -677,7 +677,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-040 Team memory shared through git
 
-- Issue: to be filed. Area: team. Size: M. Tier: MEDIUM. Deps: R100-011.
+- Issue: #389. Area: team. Size: M. Tier: MEDIUM. Deps: R100-011.
 - Problem: Each teammate's Loki learns alone.
 - Feature: `loki memory push` and `pull` sync redacted, approved lessons through a committed `.loki/team-memory/` folder.
 - Acceptance:
@@ -696,7 +696,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-042 Bitbucket and Azure DevOps pull requests
 
-- Issue: to be filed. Area: team. Size: M. Tier: MEDIUM. Deps: push-mr.
+- Issue: #390. Area: team. Size: M. Tier: MEDIUM. Deps: push-mr.
 - Problem: V10-VISION promises neutrality across GitHub, GitLab and Bitbucket; only GitHub and GitLab publish today.
 - Feature: Publish branches and open PRs on Bitbucket Cloud and Azure DevOps with the receipt in the body.
 - Acceptance:
@@ -708,7 +708,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-043 Release notes written from sealed receipts
 
-- Issue: to be filed. Area: team. Size: S. Tier: LOW. Deps: receipts.
+- Issue: #391. Area: team. Size: S. Tier: LOW. Deps: receipts.
 - Problem: Teams write release notes by hand from PR titles.
 - Feature: `loki report release-notes <from>..<to>` groups sealed changes by clause and area, with receipt links and a list of unsealed commits.
 - Acceptance:
@@ -720,7 +720,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-044 VS Code extension: run panel and receipt viewer
 
-- Issue: to be filed. Area: ide. Size: L. Tier: MEDIUM. Deps: R100-007.
+- Issue: #392. Area: ide. Size: L. Tier: MEDIUM. Deps: R100-007.
 - Problem: VS Code users must switch to a terminal to start, steer and read receipts.
 - Feature: An extension that starts runs, follows status, answers blocked questions and renders the receipt and clause matrix, talking to the CLI (no new engine).
 - Acceptance:
@@ -732,7 +732,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-045 Ready-made ACP configs for Zed and JetBrains
 
-- Issue: to be filed. Area: ide. Size: S. Tier: LOW. Deps: loki acp.
+- Issue: #393. Area: ide. Size: S. Tier: LOW. Deps: loki acp.
 - Problem: `loki acp` exists but users must hand-write editor config.
 - Feature: `loki acp --print-config zed|jetbrains` prints a working snippet and `loki acp --check` runs the handshake.
 - Acceptance:
@@ -744,7 +744,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-046 Start, status and seal commands in the Claude Code plugin
 
-- Issue: to be filed. Area: ide. Size: S. Tier: LOW. Deps: R100-002.
+- Issue: #394. Area: ide. Size: S. Tier: LOW. Deps: R100-002.
 - Problem: The plugin ships grill, spec-status and handoff commands, but not start, status or seal.
 - Feature: Add `/loki-start`, `/loki-status` and `/loki-seal` commands to `plugins/loki-mode/commands/`.
 - Acceptance:
@@ -756,7 +756,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-047 Full-screen terminal UI with approve, steer and pause keys
 
-- Issue: to be filed. Area: ide. Size: M. Tier: LOW. Deps: R100-007.
+- Issue: #395. Area: ide. Size: M. Tier: LOW. Deps: R100-007.
 - Problem: Watching a run means juggling `status`, `logs` and `diff`.
 - Feature: `loki tui` shows stages, diff, tests and cost in panes; keys a, s and p approve, steer and pause.
 - Acceptance:
@@ -768,7 +768,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-048 Images and mockups as task input
 
-- Issue: to be filed. Area: ide. Size: M. Tier: MEDIUM. Deps: #263.
+- Issue: #396. Area: ide. Size: M. Tier: MEDIUM. Deps: #263.
 - Problem: Users cannot give a screenshot or mockup as part of the spec.
 - Feature: `loki start --image mock.png` attaches images to the plan and Wall stages; the Wall may write visual acceptance clauses.
 - Acceptance:
@@ -780,7 +780,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-049 MCP one-click install works on a clean machine
 
-- Issue: to be filed. Area: ide. Size: S. Tier: LOW. Deps: FR-D.
+- Issue: #397. Area: ide. Size: S. Tier: LOW. Deps: FR-D.
 - Problem: A README deeplink with no env can exit 2 on a non-TTY launch (FR-D).
 - Feature: Deeplinks and `loki mcp install` carry the auto-bootstrap env.
 - Acceptance:
@@ -792,7 +792,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-050 Start, steer and answer runs from the Control Plane in the browser
 
-- Issue: to be filed. Area: ide. Size: M. Tier: MEDIUM. Deps: #188.
+- Issue: #398. Area: ide. Size: M. Tier: MEDIUM. Deps: #188.
 - Problem: Users away from the terminal cannot act on a run from the dashboard.
 - Feature: Control Plane run page gets start, steer and answer actions over the existing API.
 - Acceptance:
@@ -804,7 +804,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-051 Answer blocked questions from the phone with a push reply action
 
-- Issue: to be filed. Area: ide. Size: S. Tier: MEDIUM. Deps: R100-003, R100-027.
+- Issue: #399. Area: ide. Size: S. Tier: MEDIUM. Deps: R100-003, R100-027.
 - Problem: A blocked question on a commute waits until the user is back at a desk.
 - Feature: The ntfy channel from R100-027 carries reply actions that call the inbox API.
 - Acceptance:
@@ -823,7 +823,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-053 Search every past run: `loki history search`
 
-- Issue: to be filed. Area: memory. Size: S. Tier: LOW. Deps: none.
+- Issue: #400. Area: memory. Size: S. Tier: LOW. Deps: none.
 - Problem: Users cannot find the run where a decision or fix was made.
 - Feature: Full-text search across runs, receipts, decisions and lessons with run id and date.
 - Acceptance:
@@ -835,7 +835,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-054 `loki blame <file>:<line>`: which run, clause and decision produced this line
 
-- Issue: to be filed. Area: memory. Size: S. Tier: LOW. Deps: P12-37 decisions.
+- Issue: #401. Area: memory. Size: S. Tier: LOW. Deps: P12-37 decisions.
 - Problem: Months later nobody knows why Loki wrote a line.
 - Feature: Map a line to its commit, receipt, clause and decision record.
 - Acceptance:
@@ -847,7 +847,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-055 Personal profile applied across repos
 
-- Issue: to be filed. Area: memory. Size: M. Tier: MEDIUM. Deps: R100-011.
+- Issue: #402. Area: memory. Size: M. Tier: MEDIUM. Deps: R100-011.
 - Problem: A user repeats the same preferences in every repo.
 - Feature: `~/.loki/profile.yaml` holds editable preferences (test style, commit style, language), learned from lessons the user promotes, applied to every repo below repo rules.
 - Acceptance:
@@ -859,7 +859,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-056 Memory page in the Control Plane: view, pin, edit and forget lessons
 
-- Issue: to be filed. Area: memory. Size: S. Tier: LOW. Deps: R100-011.
+- Issue: #403. Area: memory. Size: S. Tier: LOW. Deps: R100-011.
 - Problem: Lessons are only manageable from the CLI.
 - Feature: A Control Plane page over `loki memory lessons` with use counts and outcomes.
 - Acceptance:
@@ -871,7 +871,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-057 Playbooks: save a sealed run as a reusable task recipe
 
-- Issue: to be filed. Area: memory. Size: M. Tier: LOW. Deps: templates.
+- Issue: #404. Area: memory. Size: M. Tier: LOW. Deps: templates.
 - Problem: Repeated chores (upgrade a dependency, add an endpoint) are re-described every time.
 - Feature: `loki playbook save <run> <name>` stores the spec, parameters and checks; `loki playbook run <name> key=value` reuses it.
 - Acceptance:
@@ -883,7 +883,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-058 Reverted changes become lessons and regression-test proposals
 
-- Issue: to be filed. Area: memory. Size: S. Tier: MEDIUM. Deps: outcomes.
+- Issue: #405. Area: memory. Size: S. Tier: MEDIUM. Deps: outcomes.
 - Problem: `loki outcomes` sees a revert but nothing learns from it.
 - Feature: On a detected revert of a sealed change, record a lesson and propose a regression test for the next run in that area.
 - Acceptance:
@@ -895,7 +895,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-059 Live cost meter with alerts at 50, 80 and 100 percent of budget
 
-- Issue: to be filed. Area: cost. Size: S. Tier: LOW. Deps: R100-007.
+- Issue: #406. Area: cost. Size: S. Tier: LOW. Deps: R100-007.
 - Problem: Users learn the cost after the run.
 - Feature: Status, follow view and notify show spend so far and projected final cost; alerts fire at 50, 80 and 100 percent of `--budget`.
 - Acceptance:
@@ -907,7 +907,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-060 Estimate accuracy: show actual vs estimate and self-calibrate
 
-- Issue: to be filed. Area: cost. Size: S. Tier: LOW. Deps: estimate.
+- Issue: #407. Area: cost. Size: S. Tier: LOW. Deps: estimate.
 - Problem: Users stop trusting estimates that are never checked.
 - Feature: After each run print estimate vs actual; `loki cost --history` shows the error per size class and the estimator uses it.
 - Acceptance:
@@ -919,7 +919,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-061 Monthly budgets per repo and per user
 
-- Issue: to be filed. Area: cost. Size: M. Tier: MEDIUM. Deps: ledger.
+- Issue: #408. Area: cost. Size: M. Tier: MEDIUM. Deps: ledger.
 - Problem: Teams cannot cap spend across runs.
 - Feature: `budgets:` in loki.yaml sets monthly caps per repo and per user; runs that would exceed pause with a named reason.
 - Acceptance:
@@ -931,7 +931,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-062 Cost breakdown by stage and route with savings against an all-top-model baseline
 
-- Issue: to be filed. Area: cost. Size: S. Tier: LOW. Deps: ledger.
+- Issue: #409. Area: cost. Size: S. Tier: LOW. Deps: ledger.
 - Problem: Users cannot see where money goes or what routing saved.
 - Feature: `loki report cost --breakdown` lists cost per stage and model and the counterfactual cost at the top model.
 - Acceptance:
@@ -943,7 +943,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-063 Finance export: monthly CSV of spend by repo, user and sealed change
 
-- Issue: to be filed. Area: cost. Size: S. Tier: LOW. Deps: ledger.
+- Issue: #410. Area: cost. Size: S. Tier: LOW. Deps: ledger.
 - Problem: Finance needs spend tied to delivered work.
 - Feature: `loki report cost --month 2026-10 --csv` exports rows per run with repo, user, usd and verdict.
 - Acceptance:
@@ -962,7 +962,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-065 Show prompt-cache savings per run
 
-- Issue: to be filed. Area: cost. Size: S. Tier: LOW. Deps: ledger.
+- Issue: #411. Area: cost. Size: S. Tier: LOW. Deps: ledger.
 - Problem: Users do not see that cache reuse saved money.
 - Feature: Run summary and kpis show cache read tokens and the dollar saving.
 - Acceptance:
@@ -974,7 +974,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-066 Quote approval for expensive runs
 
-- Issue: to be filed. Area: cost. Size: S. Tier: MEDIUM. Deps: R100-010.
+- Issue: #412. Area: cost. Size: S. Tier: MEDIUM. Deps: R100-010.
 - Problem: A large backlog run can spend more than a user expects.
 - Feature: Runs whose estimate exceeds `quote_over_usd` wait for approval in the inbox, Slack or terminal before any model call.
 - Acceptance:
@@ -986,7 +986,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-067 Provider adapters for GitHub Copilot CLI, cursor-agent and Factory droid
 
-- Issue: to be filed. Area: providers. Size: M. Tier: MEDIUM. Deps: #347.
+- Issue: #413. Area: providers. Size: M. Tier: MEDIUM. Deps: #347.
 - Problem: Users of those agents cannot run Loki on their existing subscription.
 - Feature: Three new provider configs in `providers/` with the same contract and doctor rows.
 - Acceptance:
@@ -998,7 +998,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-068 Any OpenAI-compatible endpoint on every route
 
-- Issue: to be filed. Area: providers. Size: M. Tier: MEDIUM. Deps: #267.
+- Issue: #414. Area: providers. Size: M. Tier: MEDIUM. Deps: #267.
 - Problem: OpenAI-shaped gateways work only through the aider and cline routes.
 - Feature: `loki provider add openai-compatible --base-url <url> --model <id>` works for implement and judge stages.
 - Acceptance:
@@ -1031,7 +1031,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-072 Hybrid local and cloud: offload cheap stages to a local model when present
 
-- Issue: to be filed. Area: providers. Size: M. Tier: MEDIUM. Deps: models --local.
+- Issue: #415. Area: providers. Size: M. Tier: MEDIUM. Deps: models --local.
 - Problem: Users with Ollama pay cloud prices for lint fixes and unit tests.
 - Feature: When `loki models --local` finds a capable model, route the cheapest stages to it by default and record it in the receipt.
 - Acceptance:
@@ -1043,7 +1043,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-073 New-model check: `loki models --new` compares a new model on your recent tasks
 
-- Issue: to be filed. Area: providers. Size: S. Tier: LOW. Deps: R100-015, #268.
+- Issue: #416. Area: providers. Size: S. Tier: LOW. Deps: R100-015, #268.
 - Problem: Users learn of a better model late.
 - Feature: When the Models API lists a new model, offer a `loki compare` run on the last 3 sealed tasks and recommend.
 - Acceptance:
@@ -1055,7 +1055,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-074 Model route settings in the Control Plane with live prices
 
-- Issue: to be filed. Area: providers. Size: S. Tier: LOW. Deps: #188.
+- Issue: #417. Area: providers. Size: S. Tier: LOW. Deps: #188.
 - Problem: Changing per-stage models needs env vars.
 - Feature: A settings page that reads and writes the route in loki.yaml with prices from model-pricing.json.
 - Acceptance:
@@ -1067,7 +1067,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-075 Maintenance autopilot: dependency upgrades, lint debt and flaky tests as sealed PRs
 
-- Issue: to be filed. Area: autonomy. Size: M. Tier: MEDIUM. Deps: loki trigger.
+- Issue: #418. Area: autonomy. Size: M. Tier: MEDIUM. Deps: loki trigger.
 - Problem: Chores never get scheduled.
 - Feature: `loki maintain deps|lint|flaky` runs on a `loki trigger` schedule and keeps at most N open PRs.
 - Acceptance:
@@ -1100,7 +1100,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-079 Multi-day missions with milestone receipts
 
-- Issue: to be filed. Area: autonomy. Size: L. Tier: MEDIUM. Deps: R100-009.
+- Issue: #419. Area: autonomy. Size: L. Tier: MEDIUM. Deps: R100-009.
 - Problem: Work bigger than one run has no shape across days.
 - Feature: `loki mission start <spec>` splits into milestones, each sealed with its own receipt, resumable across days; `loki mission status` shows progress.
 - Acceptance:
@@ -1112,7 +1112,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-080 Overnight backlog window with a morning report
 
-- Issue: to be filed. Area: autonomy. Size: S. Tier: LOW. Deps: loki backlog.
+- Issue: #420. Area: autonomy. Size: S. Tier: LOW. Deps: loki backlog.
 - Problem: Backlog runs during work hours compete with the user's own quota.
 - Feature: `loki backlog <repo> --until 07:00` runs until the time window ends and posts one morning digest.
 - Acceptance:
@@ -1124,7 +1124,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-081 Move a run to another machine: export and import run state
 
-- Issue: to be filed. Area: autonomy. Size: M. Tier: MEDIUM. Deps: R100-003.
+- Issue: #421. Area: autonomy. Size: M. Tier: MEDIUM. Deps: R100-003.
 - Problem: A run started on a laptop cannot continue on a server.
 - Feature: `loki run export <id>` writes a redacted bundle; `loki run import` resumes it elsewhere at the same stage.
 - Acceptance:
@@ -1136,7 +1136,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-082 Run replay: step through stages with the diff and test output at each step
 
-- Issue: to be filed. Area: dashboard. Size: M. Tier: LOW. Deps: timeline.
+- Issue: #422. Area: dashboard. Size: M. Tier: LOW. Deps: timeline.
 - Problem: The human timeline shows phases, not what changed at each step.
 - Feature: Extend the Control Plane timeline with a scrubber that shows diff, tests and cost at each stage.
 - Acceptance:
@@ -1148,7 +1148,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-083 Compare two runs side by side
 
-- Issue: to be filed. Area: dashboard. Size: S. Tier: LOW. Deps: cp_runs_compare.
+- Issue: #423. Area: dashboard. Size: S. Tier: LOW. Deps: cp_runs_compare.
 - Problem: Users cannot see why one attempt sealed and another did not.
 - Feature: A Control Plane page over the existing runs-compare data: verdict, cost, time, clauses and diff.
 - Acceptance:
@@ -1160,7 +1160,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-084 Weekly digest to Slack or email
 
-- Issue: to be filed. Area: dashboard. Size: S. Tier: LOW. Deps: R100-019.
+- Issue: #424. Area: dashboard. Size: S. Tier: LOW. Deps: R100-019.
 - Problem: Users forget Loki between sessions.
 - Feature: Once a week, post sealed changes, cost, waiting items and top lesson to the notify channel.
 - Acceptance:
@@ -1172,7 +1172,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-085 Stage time and cost chart per run
 
-- Issue: to be filed. Area: dashboard. Size: S. Tier: LOW. Deps: events.
+- Issue: #425. Area: dashboard. Size: S. Tier: LOW. Deps: events.
 - Problem: Users cannot see which stage is slow or expensive.
 - Feature: A per-run chart of stage durations and costs from the ledger and events.
 - Acceptance:
@@ -1184,7 +1184,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-086 Repo health page: seal rate, revert rate and change-failure rate trends
 
-- Issue: to be filed. Area: dashboard. Size: S. Tier: LOW. Deps: outcomes.
+- Issue: #426. Area: dashboard. Size: S. Tier: LOW. Deps: outcomes.
 - Problem: `loki outcomes` numbers are CLI only.
 - Feature: A Control Plane page with weekly trends from `loki outcomes` and receipts.
 - Acceptance:
@@ -1196,7 +1196,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-087 Stuck-run alert when no progress for N minutes
 
-- Issue: to be filed. Area: dashboard. Size: S. Tier: LOW. Deps: notify.
+- Issue: #427. Area: dashboard. Size: S. Tier: LOW. Deps: notify.
 - Problem: A wedged run burns time unnoticed.
 - Feature: If no event arrives for `LOKI_STUCK_MIN` (default 15) minutes, notify once with the last stage and a suggested action.
 - Acceptance:
@@ -1208,7 +1208,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-088 Hosted template registry: search and publish
 
-- Issue: to be filed. Area: ecosystem. Size: M. Tier: LOW. Deps: loki template.
+- Issue: #428. Area: ecosystem. Size: M. Tier: LOW. Deps: loki template.
 - Problem: `loki template` installs from source only; a central hub is listed as future work in its help.
 - Feature: `loki template search <q>` and `loki template publish` against a static registry index in a public repo.
 - Acceptance:
@@ -1220,7 +1220,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-089 Custom gates in loki.yaml that feed the Seal
 
-- Issue: to be filed. Area: ecosystem. Size: M. Tier: HIGH. Deps: gates.
+- Issue: #429. Area: ecosystem. Size: M. Tier: HIGH. Deps: gates.
 - Problem: Teams cannot add their own checks (Lighthouse, k6, license scan) to the Seal.
 - Feature: `gates:` entries with a command, pass condition and timeout run with the other gates and are recorded as exogenous evidence.
 - Acceptance:
@@ -1232,7 +1232,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-090 `loki hooks install`: fast verify on pre-commit
 
-- Issue: to be filed. Area: ecosystem. Size: S. Tier: LOW. Deps: fast_verify.
+- Issue: #430. Area: ecosystem. Size: S. Tier: LOW. Deps: fast_verify.
 - Problem: Developers find problems only in CI.
 - Feature: Install a pre-commit hook that runs the fast verify on staged changes.
 - Acceptance:
@@ -1244,7 +1244,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-091 Signed outbound run webhooks with a typed event schema
 
-- Issue: to be filed. Area: ecosystem. Size: S. Tier: MEDIUM. Deps: notify.
+- Issue: #431. Area: ecosystem. Size: S. Tier: MEDIUM. Deps: notify.
 - Problem: Integrators parse free-form notify messages.
 - Feature: Run lifecycle events posted as JSON with a schema version and an HMAC signature header.
 - Acceptance:
@@ -1263,7 +1263,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-093 Use existing Claude Code and droid skills in any provider's run
 
-- Issue: to be filed. Area: ecosystem. Size: M. Tier: MEDIUM. Deps: #259.
+- Issue: #432. Area: ecosystem. Size: M. Tier: MEDIUM. Deps: #259.
 - Problem: Skills written for one agent are lost when switching providers.
 - Feature: Load `SKILL.md` folders from known skill dirs into the brief for every provider, with a doctor row.
 - Acceptance:
@@ -1275,7 +1275,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-094 Embeddable TypeScript SDK: `runLoki({ spec })`
 
-- Issue: to be filed. Area: ecosystem. Size: M. Tier: MEDIUM. Deps: R100-091.
+- Issue: #433. Area: ecosystem. Size: M. Tier: MEDIUM. Deps: R100-091.
 - Problem: Platforms that want to embed Loki shell out and parse text.
 - Feature: A typed SDK export that starts a run, streams events and returns the receipt.
 - Acceptance:
@@ -1287,7 +1287,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-095 Receipts in a public transparency log
 
-- Issue: to be filed. Area: trust. Size: M. Tier: HIGH. Deps: PRF-A.
+- Issue: #434. Area: trust. Size: M. Tier: HIGH. Deps: PRF-A.
 - Problem: A self-generated trust root cannot be checked by a third party.
 - Feature: Opt-in upload of receipt digests to Sigstore Rekor; `loki verify` checks inclusion (PRF-A).
 - Acceptance:
@@ -1320,7 +1320,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 
 #### R100-099 Audit evidence pack from receipts
 
-- Issue: to be filed. Area: trust. Size: S. Tier: HIGH. Deps: receipts.
+- Issue: #435. Area: trust. Size: S. Tier: HIGH. Deps: receipts.
 - Problem: Auditors ask for change-management evidence that teams assemble by hand.
 - Feature: `loki proof export --audit <from>..<to>` writes a zip of receipts, a CSV index and a verification script (evidence export only, no certification claim).
 - Acceptance:
