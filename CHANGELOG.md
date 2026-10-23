@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.56.4 (2026-10-23)
+
+### Fixed
+- The claude provider refuses a thinking type the model catalog does not list for the model at any effort, and disabled thinking maps to between_tools for claude-sonnet-5-5, with the usage error derived from the catalog. Refs #314.
+
 ## v11.56.3 (2026-10-23)
 
 ### Fixed
