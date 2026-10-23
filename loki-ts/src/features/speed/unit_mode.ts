@@ -2,6 +2,7 @@
 // whose brief carries only its own context pack (no transcript, no model-driven exploration) and whose token budget
 // is fixed by the decomposer. Active only when LOKI_SPEED=1 and LOKI_UNIT_SPEC names a readable, valid spec file;
 // otherwise every export is inert and the callers behave byte-identically. Data and fence only, no verdict logic.
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Staged } from "../../e10ext/commit_filter.ts";
@@ -53,6 +54,22 @@ export function unitSpec(env: NodeJS.ProcessEnv = process.env): UnitSpec | null 
   if (frozen !== undefined) return frozen.length <= MAX_SPEC_BYTES ? parseText(frozen) : null; // frozen at intake: the file is never consulted again
   if (!memo.has(path)) memo.set(path, parseSpec(path));
   return memo.get(path) ?? null;
+}
+
+const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+/** #317b: the one canonical identity of a unit spec (id, items, acceptance, writeSet, base). The seal writer (unitSpecReceiptBlock) and the slice-journal adoption check both hash through this, so they cannot drift. */
+export function unitSpecSha256(s: { id?: unknown; items?: unknown; acceptance?: unknown; writeSet?: unknown; base?: unknown }): string {
+  return createHash("sha256").update(JSON.stringify({ id: typeof s.id === "string" ? s.id : "", items: arr(s.items), acceptance: arr(s.acceptance), writeSet: arr(s.writeSet), base: typeof s.base === "string" ? s.base : "" })).digest("hex");
+}
+/** Additive receipt block, signed with the receipt: the spec hash of the unit run that produced it. Empty (key omitted, receipt hashes stay stable) outside a unit run. */
+export function unitSpecReceiptBlock(env: NodeJS.ProcessEnv = process.env): { unit_spec?: { sha256: string } } {
+  const path = env["LOKI_UNIT_SPEC"], frozen = env["LOKI_UNIT_SPEC_FROZEN"];
+  if (env["LOKI_SPEED"] === "0" || !path) return {};
+  try {
+    const txt = frozen !== undefined ? frozen : readBounded(path);
+    if (txt === null || txt.length > MAX_SPEC_BYTES) return {};
+    return { unit_spec: { sha256: unitSpecSha256(JSON.parse(txt) as Record<string, unknown>) } };
+  } catch { return {}; }
 }
 
 /** A path is inside the write set when it equals an entry or sits under an entry that ends in "/". */

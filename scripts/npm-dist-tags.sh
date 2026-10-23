@@ -57,6 +57,13 @@ while [ "$i" -lt "$TRIES" ]; do
     for tag in latest next; do
         cur="$(tag_of "$tag")"
         if [ "$cur" = "$TARGET" ]; then continue; fi
+        # A fresh read above the target means another run moved the tag since the
+        # first reads; never write below it, re-read everything instead.
+        if [ -z "$cur" ] || [ "$(highest "$TARGET" "$cur")" != "$TARGET" ]; then
+            echo "$tag is '${cur}', not at or below $TARGET; re-reading"
+            sleep "$NAP"
+            continue 2
+        fi
         if [ "$TARGET" != "$VERSION" ]; then
             echo "SKIP: $VERSION is lower than $TARGET; re-asserting $tag=$TARGET (was '${cur}')"
         fi
