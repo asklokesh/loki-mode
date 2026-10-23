@@ -61,7 +61,7 @@ export function claudeEffortLevels(model: string): string[] | null {
   }
 }
 
-interface ThinkingSpec { max_effort?: Record<string, string>; substitute?: Record<string, string> }
+interface ThinkingSpec { types?: string[]; max_effort?: Record<string, string>; substitute?: Record<string, string> }
 
 function claudeThinkingSpec(model: string): ThinkingSpec | null {
   try {
@@ -92,4 +92,20 @@ export function claudeThinkingMaxEffort(model: string, type: string): string | n
 export function claudeThinkingSubstitute(model: string, type: string): string | null {
   const sub = claudeThinkingSpec(model)?.substitute?.[type];
   return typeof sub === "string" ? sub : null;
+}
+
+/**
+ * False when the catalog lists thinking.types for the model, the requested type is not among them, and no substitute is recorded for it,
+ * so the API would answer 400 at every effort. True when the model, the catalog entry or the types list is unknown: never refuse on a guess.
+ */
+export function claudeThinkingAccepted(model: string, type: string): boolean {
+  const spec = claudeThinkingSpec(model);
+  if (!spec || !Array.isArray(spec.types)) return true;
+  return spec.types.includes(type) || typeof spec.substitute?.[type] === "string";
+}
+
+/** Whether the catalog lists adaptive for the model (the type every clamp falls back to). */
+export function claudeThinkingHasAdaptive(model: string): boolean {
+  const types = claudeThinkingSpec(model)?.types;
+  return Array.isArray(types) && types.includes("adaptive");
 }

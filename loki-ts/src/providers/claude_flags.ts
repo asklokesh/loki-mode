@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
-import { claudeEffortLevels, claudeThinkingMaxEffort, claudeThinkingSubstitute } from "../util/claude_model.ts";
+import { claudeEffortLevels, claudeThinkingAccepted, claudeThinkingHasAdaptive, claudeThinkingMaxEffort, claudeThinkingSubstitute } from "../util/claude_model.ts";
 
 // --disallowedTools tree-mutation guard for reviewer sessions. Byte-identical to
 // loki_review_guard_denylist in autonomy/lib/claude-flags.sh. Kept in this leaf
@@ -98,6 +98,8 @@ export interface ThinkingClamp {
 // The change is returned for the caller to record. Unchanged when the model, the catalog entry, or the effort is unknown.
 export function clampThinkingForEffort<T extends { type: string }>(model: string, thinking: T | undefined, effort: string | undefined): { thinking: T | { type: string } | undefined; clamp: ThinkingClamp | null } {
   if (!thinking) return { thinking, clamp: null };
+  // A type the catalog does not list for the model (and does not substitute) is a 400 at every effort: send adaptive instead.
+  if (!claudeThinkingAccepted(model, thinking.type) && claudeThinkingHasAdaptive(model)) return { thinking: { type: "adaptive" }, clamp: { from: thinking.type, to: "adaptive", effort: effort ?? "default", max: "none" } };
   const sub = claudeThinkingSubstitute(model, thinking.type);
   const type = sub ?? thinking.type;
   const max = claudeThinkingMaxEffort(model, type);
@@ -108,15 +110,19 @@ export function clampThinkingForEffort<T extends { type: string }>(model: string
   return { thinking, clamp: null };
 }
 
-// A disabled thinking type with xhigh or max effort is a caller bug when the catalog records neither a limit nor a substitute for the
-// model: the pair is refused rather than guessed at. A model whose catalog records either is clamped instead (clampThinkingForEffort).
+// A thinking type is refused when the catalog does not list it for the model and records no substitute (the API answers 400 at every
+// effort), and a disabled type with xhigh or max effort is refused when the catalog records neither a limit nor a substitute for the
+// model: the pair is refused rather than guessed at. A model whose catalog records a limit or substitute is clamped instead (clampThinkingForEffort).
 export function thinkingConflictsEffort(model: string, thinking: { type: string } | undefined, effort: string | undefined): boolean {
+  if (thinking && !claudeThinkingAccepted(model, thinking.type)) return true;
   return thinking?.type === "disabled" && (effort === "xhigh" || effort === "max") && claudeThinkingMaxEffort(model, "disabled") === null && claudeThinkingSubstitute(model, "disabled") === null;
 }
 
 // The --thinking usage error of `loki internal sdk-judge` and `sdk-text`, derived from the catalog entry of the model so it never
 // states a rule the model does not have.
 export function thinkingUsageError(tool: string, model: string): string {
+  if (!claudeThinkingAccepted(model, "disabled")) return `${tool}: --thinking must be adaptive; disabled is not accepted by ${model}`;
+  if (!claudeThinkingAccepted(model, "adaptive")) return `${tool}: --thinking must be disabled; adaptive is not accepted by ${model}`;
   const base = `${tool}: --thinking must be disabled or adaptive`;
   const sub = claudeThinkingSubstitute(model, "disabled");
   const max = claudeThinkingMaxEffort(model, sub ?? "disabled");
