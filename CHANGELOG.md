@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.56.0 (2026-10-23)
+
+### Added
+- Per-provider MCP launch for codex, opencode and cline, with an opt-in project .mcp.json under LOKI_MCP_PROJECT=1. Codex MCP env values ride the process env, never argv. Refs #343.
+
 ## v11.55.3 (2026-10-23)
 
 ### Fixed
