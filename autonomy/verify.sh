@@ -2567,7 +2567,7 @@ OPTIONS:
     --fast             Run only the exogenous fast checks (no model call, no network)
                        through fast_verify.py, in milliseconds. Takes [ROOT] and
                        the three options below, plus --json. Exit 0 PASS, 1 FAIL,
-                       3 INCONCLUSIVE, 64 unknown option.
+                       2 root not found, 3 INCONCLUSIVE, 64 unknown option.
     --path <dir>       With --fast: the repo root to check.
     --diff-base <ref>  With --fast: scope the checks to the diff against ref.
     --no-cache         With --fast: ignore the result cache.

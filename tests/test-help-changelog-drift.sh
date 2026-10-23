@@ -218,6 +218,16 @@ for flag in --fast --path --diff-base --no-cache; do
     if has_token "$WORK/verify-arm.txt" "$flag"; then ok "'$flag' is in the loki.bash verify arm"; else bad "'$flag' is absent from the loki.bash verify arm"; fi
     if grep -qF -- "'${flag}[" "$WORK/verify-zsh.txt"; then ok "'$flag' is in the _loki verify arm"; else bad "'$flag' is absent from the _loki verify arm"; fi
 done
+# The --fast exit codes in verify help must be exactly the ones fast_verify.py really returns.
+FV="$(dirname "$LOKI")/lib/fast_verify.py"
+FV_CODES="$(python3 "$FV" --help 2>&1 | sed -n 's/^exit codes: //p' | grep -oE '(^|, )[0-9]+' | tr -d ', ' | sort -n | tr '\n' ' ')"
+FAST_PARA="$(printf '%s\n' "$VERIFY_HELP" | awk '/^ +--fast /{f=1;print;next} f&&/^ +--path /{exit} f{print}')"
+HELP_CODES="$(printf '%s ' $FAST_PARA | sed -n 's/.*Exit //p' | grep -oE '[0-9]+ [A-Za-z]' | grep -oE '^[0-9]+' | sort -n | tr '\n' ' ')"
+if [ -n "$FV_CODES" ] && [ "$FV_CODES" = "$HELP_CODES" ]; then ok "verify --fast help lists exactly fast_verify.py's exit codes ($FV_CODES)"; else bad "verify --fast help exit codes [$HELP_CODES] differ from fast_verify.py [$FV_CODES]"; fi
+python3 "$FV" "$WORK/no-such-root" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then ok "fast_verify.py exits 2 for a missing root"; else bad "fast_verify.py exit $rc for a missing root, expected 2"; fi
+python3 "$FV" --bogus >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 64 ]; then ok "fast_verify.py exits 64 for an unknown option"; else bad "fast_verify.py exit $rc for an unknown option, expected 64"; fi
 if printf '%s\n' "$HELP_ALL" | grep -qE 'verify \[base\] \[--fast\]'; then ok "'loki help all' lists verify --fast"; else bad "'loki help all' does not list verify --fast"; fi
 HELP_SHORT="$(bash "$LOKI" help </dev/null 2>&1 || true)"
 if printf '%s\n' "$HELP_SHORT" | grep -qE 'verify [[]--json[|]--fast[]]'; then ok "'loki help' lists verify --fast"; else bad "'loki help' does not list verify --fast"; fi
