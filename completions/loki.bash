@@ -305,7 +305,7 @@ _loki_completion() {
                 COMPREPLY=( $(compgen -W "--json --since --efficiency --help" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "session metrics cost kpis export share dogfood" -- "$cur") )
+            COMPREPLY=( $(compgen -W "session metrics cost kpis export share dogfood release-notes" -- "$cur") )
             return 0
             ;;
 
