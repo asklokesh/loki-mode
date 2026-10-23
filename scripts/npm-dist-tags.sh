@@ -7,8 +7,10 @@
 # The target is max(published versions, current latest, current next, VERSION),
 # so a lagging tag read can never pick a lower version, and a run for an older
 # release converges to the highest version instead of its own. Tags are
-# re-read after every write; a tag the registry applied late (an overtaken
-# write) is re-asserted until both tags settle or the tries run out.
+# re-read after every write. Each tag is written once; a write still unapplied
+# at half the read window (SETTLE_S/2) is treated as lost and rewritten once,
+# loudly (DISTTAG-WRITE-NOT-APPLIED). Both tags must read the target or the
+# window ends (fatal at LAG_FATAL=1).
 #
 # Tags are read with `npm dist-tag ls` (the uncached dist-tags endpoint), never
 # from the packument: the packument is a CDN-cached document that kept the
@@ -129,7 +131,7 @@ while [ "$i" -lt "$TRIES" ]; do
             # Late in the window an accepted write that still has not applied is treated as
             # lost (11.60.8: latest never applied and later read 11.60.9): rewrite it once,
             # loudly. A tag that still does not apply fails the job after the window.
-            if [ "$i" -lt $((TRIES - 1)) ] || [ -n "$forced" ]; then
+            if [ "$i" -lt $((TRIES / 2)) ] || [ -n "$forced" ]; then
                 echo "waiting: $tag still '${cur}' after an accepted write of $TARGET"
                 continue
             fi
