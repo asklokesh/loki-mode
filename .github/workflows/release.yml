@@ -212,7 +212,9 @@ jobs:
   # served the version.
   verify-npm-registry:
     needs: publish-npm
-    if: always() && needs.publish-npm.result != 'cancelled' && needs.publish-npm.result != 'skipped'
+    # Converge dist-tags even when the publish job's tag step failed (RQ-102). !cancelled() so a
+    # cancelled run stops this job too; skipped publish means nothing was uploaded.
+    if: ${{ !cancelled() && needs.publish-npm.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -570,7 +572,9 @@ jobs:
   # window of milliseconds remains.
   verify-sdk-registry:
     needs: publish-ts-sdk
-    if: always() && needs.publish-ts-sdk.result != 'cancelled' && needs.publish-ts-sdk.result != 'skipped'
+    # Converge dist-tags even when the publish job's tag step failed (RQ-102). !cancelled() so a
+    # cancelled run stops this job too; skipped publish means nothing was uploaded.
+    if: ${{ !cancelled() && needs.publish-ts-sdk.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
