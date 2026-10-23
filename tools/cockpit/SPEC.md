@@ -29,7 +29,15 @@ Non-goals:
    `ThreadingHTTPServer`, `json`, `subprocess`, `fcntl`, `secrets`). No pip
    dependency.
 2. Client: one static file `tools/cockpit/index.html` with inline CSS and JS.
-   No build step, no CDN, no framework. Works offline.
+   No build step, no framework, no new asset files. One CDN exception: the 3D
+   seat avatars import `three@0.160.0` (exact pin) from
+   `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`, the
+   only external origin in the CSP. Offline, or when WebGL or the import
+   fails, every avatar falls back to an inline 2D SVG portrait; every number
+   still renders. All DOM writes go through one `add()` helper (the only
+   `appendChild` call) that turns non-Node values into text nodes, and each
+   panel and the member drawer render inside their own try/catch, so one bad
+   field shows "render error in <panel>" in that panel only.
 3. Bind 127.0.0.1 only. The `--host` flag accepts only `127.0.0.1` or `::1`;
    any other value exits 64 with a message. Never `0.0.0.0`.
 4. Read-only except `POST /api/queue`, which only appends to FOUNDER-QUEUE.md.
@@ -68,14 +76,22 @@ python3 tools/cockpit/server.py [--port 8787] [--host 127.0.0.1]
   `COCKPIT_GIT_ROOT`, `COCKPIT_GIT_DAYS` (default 15), `COCKPIT_GH_RUNS_CMD`,
   `COCKPIT_GH_ISSUES_CMD`, `COCKPIT_GH_PRS_CMD`, `COCKPIT_TRANSCRIPT_ROOT`,
   `COCKPIT_TOKEN_CACHE`, `COCKPIT_PRICING_JSON`, `COCKPIT_USAGE_CAP_CMD`,
-  `COCKPIT_LEADER_FILE`, `COCKPIT_SCOREBOARD_DIR`.
+  `COCKPIT_LEADER_FILE`, `COCKPIT_SCOREBOARD_DIR`. HQ adds
+  `COCKPIT_GH_OPEN_ISSUES_CMD` (default `gh issue list --state open --limit
+  1000 --json number,title,state,labels`, the source of open_now and open P0 counts),
+  `COCKPIT_BOARD_STALE_HOURS` (default 24), `COCKPIT_GOVERNOR_TTL_S` (cache
+  TTL of the usage governor, floored at 300 s because one run takes about
+  36 s) and `COCKPIT_WATCH_INTERVAL_S` (stream watcher poll, default 2 s).
+- A second launch on a port already in use prints "already in use" and exits
+  0, so the KeepAlive LaunchAgent (`SuccessfulExit` false) does not crash
+  loop while another cockpit holds the port.
 - On start the server prints `cockpit: http://127.0.0.1:<port>/` and its PID,
   and writes the PID to `.loki/cockpit/server.pid` so it is stopped by
   recorded PID only.
 
 ## 5. Panels and data sources
 Each panel in the snapshot has the shape
-`{status: OK|VIOLATION|UNKNOWN|UNMEASURED, as_of, source_cmd, data, error}`.
+`{status: OK|VIOLATION|UNKNOWN|UNMEASURED|PARTIAL|STALE, as_of, source_cmd, data, error}`.
 `source_cmd` is the exact command or file read, shown on the page under each
 panel (evidence rule, retro 3.1.1).
 
@@ -114,6 +130,14 @@ panel (evidence rule, retro 3.1.1).
   approved, blocked) with age in minutes against their tier budget (LOW 15,
   MEDIUM 30, HIGH 60 per OPERATING-MODEL.md), and an "unparsed rows" list.
   Ready count below 30 is flagged (D91).
+- Status cell forms parsed: `released@<time>`, `released v1.2.3@<time>`,
+  `released@<time> v1.2.3`, `released v1.2.3`, bare `released`, each with an
+  optional `: note` or `(note)`. A row without a time counts in
+  `released_unknown_time`, never in the 24 h or 7 d windows.
+- Freshness: the board `as_of` is the file time (last commit time when the
+  file is tracked and clean, else its mtime; `freshness.basis` says which).
+  Older than `COCKPIT_BOARD_STALE_HOURS` the board panel and every section
+  that reads BOARD.md are STALE with the age; their numbers are still shown.
 
 ### 5.4 Agents
 - Source: `.loki/company/status/<slug>.json` for the 10 slugs in
@@ -207,10 +231,14 @@ when all are.
   (`scripts/usage-governor.py iter_records`) times
   `loki-ts/data/model-pricing.json` by tier. It is an ESTIMATE at list price,
   not billed spend. A model without a price is listed under `unpriced_models`,
-  never priced at 0.
+  never priced at 0. The 24 h window is hour-floored (it spans 24 to 25 h);
+  `transcripts.window_note` says so and the page shows it. `data.total` is the
+  seat count.
 - releases: timeline with lead time (npm publish minus release commit time;
   None when the commit is not found), rates, failures, dist-tags, and CI state
-  per release SHA from the last 100 runs of `gh run list`.
+  per release SHA from the last 100 runs of `gh run list`. Each row carries
+  `local_tag_exists`; the page labels that column "local tag" (a tag in this
+  clone, not proof of a GitHub release).
 - work: commits by conventional type (24h, 7d, previous 7d, lines changed),
   slices released from BOARD stamps, merged PRs by type, issues opened and
   closed (commit log, `gh pr list`, `gh issue list`, BOARD.md).
@@ -232,7 +260,19 @@ when all are.
 - Always running: `loki trigger install` also installs the LaunchAgent
   `dev.autonomi.loki-cockpit` (`server.py --port 8787 --repo-root <root>`,
   KeepAlive, RunAtLoad, plist mode 0600, logs under `~/.loki/logs/`);
-  `loki trigger uninstall` removes it.
+  `loki trigger uninstall` removes it. The plist resolves `server.py` from
+  the location of `autonomy/trigger-schedule.py`, install skips the cockpit
+  with a message when that file is missing, and before bootstrap it probes
+  the port: a listener answering `/healthz` with a pid is an existing
+  cockpit; any other listener is reported as foreign and never signalled.
+- Member detail (`GET /api/member/<slug>`): one seat's agent-file persona
+  (mandate, decision rights, metrics, escalation, root causes), status file,
+  last tick, tick history from `.loki/company/<slug>/log.jsonl` (bad lines
+  skipped; counts 24 h and 7 d by outcome), last run from `last.out`
+  (MEASURED: duration, turns, cost, models), transcript cost (ESTIMATE),
+  BOARD slices owned by the slug, and the seat ROI row with its formula.
+  Per-tick cost and per-seat commits have no source yet and are "no data:
+  <reason>" strings, never numbers. Each part has its own source entry.
 
 ### 5.7 Founder command box
 - UI: one textarea (max 2000 characters), one "Why only you" optional field,
@@ -262,6 +302,8 @@ when all are.
 | GET | `/` | index.html |
 | GET | `/api/snapshot` | all panels |
 | GET | `/api/panel/<name>` | one panel (pulse, releases, board, agents, okrs, roi, queue, work, compare, health) |
+| GET | `/api/member/<slug>` | one seat's detail; slug must match `^[a-z0-9][a-z0-9-]{0,63}$` and a `.claude/agents/<slug>.md` file, else 404 |
+| GET | `/api/stream` | server-sent events: `retry: 3000`, `event: hello`, then `event: change` with `{changed: [panel names], at, seq}` when a watched source signature changes |
 | GET | `/healthz` | `{"ok": true, "pid": N}` |
 | POST | `/api/queue` | append result |
 Every other method or path returns 405 or 404.
@@ -275,7 +317,8 @@ Security:
   an `Origin` equal to the served origin. Missing or wrong: 403.
 - Request body capped at 8 KB. Responses set `Cache-Control: no-store`,
   `X-Content-Type-Options: nosniff` and a CSP of `default-src 'self';
-  script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'`.
+  script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src
+  'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'`.
 - Subprocesses run with an argument list (never `shell=True`) and an env built
   deny-by-default (PATH, HOME, USER, LOGNAME, LANG, gh and npm config paths
   only), per security-lead rule 3.9.2.
@@ -283,12 +326,18 @@ Security:
   env.
 
 ## 7. Page behaviour
-- Polls `/api/snapshot` every 15 s; panels update in place without layout
-  shift (fixed card heights, skeleton rows); a "last refreshed" time and the
-  age of each source are always visible.
+- Subscribes to `/api/stream`; on a change event it refetches the named
+  panels. The header shows Live, Polling every 15 s (stream lost; polls
+  `/api/snapshot`) or Offline. Panels update in place without layout shift;
+  a "last refreshed" time and the age of each source are always visible.
+- Dark first with a light toggle; a KPI strip; SVG charts; the 10 seats as
+  cards with persona, mandate, color and avatar. Clicking a seat opens the
+  member drawer (`#member/<slug>`, deep-linkable).
+- A missing value renders "no data: <reason>", never a blank or 0.
 - Order: pulse violations band, agents, BOARD flow, releases, OKRs, ROI,
   command box.
-- Light and dark from `prefers-color-scheme`; readable at 1280 px and 390 px.
+- Light and dark from `prefers-color-scheme`, overridable by the toggle;
+  readable at 1280 px and 390 px.
 - Every number has a hover or caption with its `source_cmd` and `as_of`.
 
 ## 8. Headless test (`tests/test-cockpit.sh`)
@@ -314,6 +363,12 @@ recorded PID only, sets `LOKI_NO_BROWSER=1`. Fixtures under the run tmp dir:
   usage-cap command cases (OK, PAUSED cap, PAUSED stale, override, missing script, bad rc, bad JSON), and a walker that fails when any panel number
   lacks a source claim or an UNKNOWN source still carries numbers (with two
   mutation controls). `tests/test_trigger.py` covers the cockpit plist.
+- HQ: member endpoint (values, missing files, 404 cases), the stream (hello,
+  change after a status write, retry), the in-use exit 0, BOARD forms and
+  STALE, open issues from the separate call, governor TTL floor, and a node
+  fake-DOM run of the page script (appendChild throws on non-Nodes) over
+  null, empty, garbage and fixture inputs. Each has a mutation the suite
+  kills.
 - Positive control for every absence assertion (retro 3.1.6): the same probe
   run on a fixture that does contain the value must find it.
 

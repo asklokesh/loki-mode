@@ -519,10 +519,65 @@ def write_launchagent(home, repo, loki_bin):
     return _write_plist(home, plist, LAUNCHAGENT_LABEL)
 
 
+def cockpit_server_path():
+    """server.py resolved from this script's own checkout, never from the cwd."""
+    return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "tools", "cockpit", "server.py"))
+
+
 def cockpit_argv(repo, python_bin=None):
-    return [python_bin or sys.executable or "python3",
-            os.path.join(repo, "tools", "cockpit", "server.py"),
+    return [python_bin or sys.executable or "python3", cockpit_server_path(),
             "--port", str(COCKPIT_PORT), "--repo-root", repo]
+
+
+def probe_cockpit_port(port, timeout=0.5):
+    """What listens on 127.0.0.1:<port>: ("free"|"cockpit"|"foreign", detail).
+
+    "cockpit" means GET /healthz answered {"ok": true, "pid": N}; any other
+    listener is "foreign". Only connects; never signals a process.
+    """
+    import socket
+    import urllib.request
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            pass
+    except OSError:
+        return "free", "nothing listens on 127.0.0.1:%d" % port
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/healthz" % port,
+                                     headers={"Host": "127.0.0.1:%d" % port})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            body = json.loads(r.read(4096).decode("utf-8", "replace"))
+        if isinstance(body, dict) and body.get("ok") is True and isinstance(body.get("pid"), int) \
+                and not isinstance(body.get("pid"), bool):
+            return "cockpit", "healthz pid %d" % body["pid"]
+        return "foreign", "healthz answered without a cockpit pid"
+    except Exception as ex:  # error status, timeout or non-JSON: not a cockpit
+        return "foreign", "healthz probe failed: %s" % (ex,)
+
+
+def cockpit_load_decision(probe, port=None, label=None):
+    """(load, message, rc) for a probe_cockpit_port result."""
+    port = COCKPIT_PORT if port is None else port
+    label = label or COCKPIT_LABEL
+    state, detail = probe
+    if state == "free":
+        return True, "", 0
+    if state == "cockpit":
+        return False, ("Cockpit port %d already served by a cockpit (%s); not loading %s"
+                       % (port, detail, label)), 0
+    return False, ("Port %d is in use by a non-cockpit listener (%s); not loading %s"
+                   % (port, detail, label)), 1
+
+
+def wait_cockpit_port(port, budget_secs=2.0, step=0.25):
+    """Probe, retrying while busy so a just-booted-out agent can free the port."""
+    deadline = time.time() + budget_secs
+    res = probe_cockpit_port(port)
+    while res[0] != "free" and time.time() < deadline:
+        time.sleep(step)
+        res = probe_cockpit_port(port)
+    return res
 
 
 def write_cockpit_launchagent(home, repo, python_bin=None):
@@ -538,7 +593,8 @@ def write_cockpit_launchagent(home, repo, python_bin=None):
             "HOME": home,
         },
         "RunAtLoad": True,
-        "KeepAlive": True,
+        # Restart only on a crash: exit 0 (port already served) must not respawn.
+        "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 30,
         "StandardOutPath": os.path.join(logs, "cockpit.out.log"),
         "StandardErrorPath": os.path.join(logs, "cockpit.err.log"),
@@ -580,7 +636,7 @@ def cockpit_systemd_unit(repo, python_bin=None):
         "[Service]",
         "WorkingDirectory=%s" % repo,
         "ExecStart=%s" % " ".join(cockpit_argv(repo, python_bin)),
-        "Restart=always",
+        "Restart=on-failure",
         "RestartSec=30",
         "",
         "[Install]",
@@ -603,11 +659,17 @@ def install_company(no_load=False):
         print("NOT SUPPORTED: launchd install is macOS only. Equivalent systemd user unit "
               "(~/.config/systemd/user/loki-company.service):\n")
         print(systemd_unit(repo, loki_bin))
-        print("\nCockpit (~/.config/systemd/user/loki-cockpit.service):\n")
-        print(cockpit_systemd_unit(repo))
+        if os.path.isfile(cockpit_server_path()):
+            print("\nCockpit (~/.config/systemd/user/loki-cockpit.service):\n")
+            print(cockpit_systemd_unit(repo))
+        else:
+            print("\nSkipped cockpit: %s not found" % cockpit_server_path())
         return 0
-    paths = [(LAUNCHAGENT_LABEL, write_launchagent(home, repo, loki_bin)),
-             (COCKPIT_LABEL, write_cockpit_launchagent(home, repo))]
+    paths = [(LAUNCHAGENT_LABEL, write_launchagent(home, repo, loki_bin))]
+    if os.path.isfile(cockpit_server_path()):
+        paths.append((COCKPIT_LABEL, write_cockpit_launchagent(home, repo)))
+    else:
+        print("Skipped cockpit: %s not found" % cockpit_server_path())
     rc = 0
     for label, path in paths:
         print("Wrote %s" % path)
@@ -615,6 +677,12 @@ def install_company(no_load=False):
             continue
         dom = "gui/%d" % os.getuid()
         _launchctl("bootout", dom, path)
+        if label == COCKPIT_LABEL:
+            load, msg, lrc = cockpit_load_decision(wait_cockpit_port(COCKPIT_PORT))
+            if not load:
+                print(msg)
+                rc = rc or lrc
+                continue
         r = _launchctl("bootstrap", dom, path)
         if r.returncode != 0:
             print("launchctl bootstrap failed for %s: %s" % (label, r.stderr.strip() or r.stdout.strip()))

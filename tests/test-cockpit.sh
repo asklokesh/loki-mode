@@ -209,6 +209,8 @@ gc 2026-10-23T11:25:00Z "release: v11.17.1"
 RSHA="$(git -C "$G" log -1 --format=%H --grep='^release:')"
 stub ghruns 0 "[{\"databaseId\":11,\"workflowName\":\"Release\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"$RSHA\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-23T11:26:00Z\",\"event\":\"push\"},{\"databaseId\":12,\"workflowName\":\"Tests\",\"status\":\"completed\",\"conclusion\":\"failure\",\"headSha\":\"$RSHA\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-23T11:26:00Z\",\"event\":\"push\"},{\"databaseId\":13,\"workflowName\":\"Tests\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"ffffffffffffffffffff\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-22T11:00:00Z\",\"event\":\"push\"},{\"databaseId\":14,\"workflowName\":\"Release\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"eeeeeeeeeeeeeeeeeeee\",\"headBranch\":\"main\",\"createdAt\":\"2026-10-22T10:00:00Z\",\"event\":\"push\"}]"
 stub ghissues 0 '[{"number":1,"title":"p0 crash","state":"OPEN","createdAt":"2026-10-22T08:00:00Z","closedAt":null,"labels":[{"name":"P0"}]},{"number":2,"title":"bug fixed","state":"CLOSED","createdAt":"2026-10-01T08:00:00Z","closedAt":"2026-10-21T08:00:00Z","labels":[{"name":"bug"}]},{"number":3,"title":"old open","state":"OPEN","createdAt":"2026-09-01T08:00:00Z","closedAt":null,"labels":[]}]'
+# open-issues call (--state open --limit 1000): 3 open, one P0; ghissues above is the opened/closed window
+stub ghopen 0 '[{"number":1,"title":"p0 crash","state":"OPEN","labels":[{"name":"P0"}]},{"number":3,"title":"old open","state":"OPEN","labels":[]},{"number":4,"title":"new open","state":"OPEN","labels":[{"name":"enhancement"}]}]'
 stub ghprs 0 '[{"number":5,"title":"fix: x","mergedAt":"2026-10-22T08:00:00Z","author":{"login":"asklokesh"}},{"number":4,"title":"feat: y","mergedAt":"2026-10-10T08:00:00Z","author":{"login":"asklokesh"}}]'
 stub capok 0 '{"state": "OK", "reason": "ok", "week_pct": 42.5, "ceiling": 90, "override": false, "reading_at": "2026-10-23T11:00:00Z", "cache_age_secs": 120}'
 stub cappaused 0 '{"state": "PAUSED", "reason": "cap", "week_pct": 91.0, "ceiling": 90, "override": false, "reading_at": "2026-10-23T11:00:00Z", "cache_age_secs": 60, "message": "weekly cap reached"}'
@@ -241,7 +243,8 @@ base_env() {
         COCKPIT_GH_CMD="bash $FIX/sb/ghok.sh" COCKPIT_PULSE_CMD="bash $FIX/sb/pulse0.sh" \
         COCKPIT_USAGE_CMD="bash $FIX/sb/usage.sh" COCKPIT_CMD_TIMEOUT=5 COCKPIT_FIRST_WAIT=20 \
         COCKPIT_GIT_ROOT="$G" COCKPIT_GH_RUNS_CMD="bash $FIX/sb/ghruns.sh" \
-        COCKPIT_GH_ISSUES_CMD="bash $FIX/sb/ghissues.sh" COCKPIT_GH_PRS_CMD="bash $FIX/sb/ghprs.sh" \
+        COCKPIT_GH_ISSUES_CMD="bash $FIX/sb/ghissues.sh" COCKPIT_GH_OPEN_ISSUES_CMD="bash $FIX/sb/ghopen.sh" \
+        COCKPIT_GH_PRS_CMD="bash $FIX/sb/ghprs.sh" \
         COCKPIT_TRANSCRIPT_ROOT="$TX" COCKPIT_TOKEN_CACHE="$FIX/rt/token-cache.json" \
         COCKPIT_PRICING_JSON="$FIX/pricing.json" COCKPIT_USAGE_CAP_CMD="bash $FIX/sb/capok.sh" \
         COCKPIT_LEADER_FILE="$FIX/leader"
@@ -340,7 +343,7 @@ check "work: lines changed excludes release commits" "4" "$(exp 'd["panels"]["wo
 check "work: slices released 7d from BOARD stamps" "1" "$(exp 'd["panels"]["work"]["data"]["slices"]["released_7d"]')"
 check "work: PRs merged 7d (older PR excluded)" "1" "$(exp 'd["panels"]["work"]["data"]["pull_requests"]["merged_7d"]')"
 check "work: PRs merged by type" "{'fix': 1}" "$(exp 'd["panels"]["work"]["data"]["pull_requests"]["merged_by_type_7d"]')"
-check "work: issues opened/closed/bugs closed/open" "[1, 1, 1, 2]" "$(exp '[d["panels"]["work"]["data"]["issues"][k] for k in ("opened_7d","closed_7d","bugs_closed_7d","open_now")]')"
+check "work: issues opened/closed/bugs closed/open (open_now from the open-issues call)" "[1, 1, 1, 3]" "$(exp '[d["panels"]["work"]["data"]["issues"][k] for k in ("opened_7d","closed_7d","bugs_closed_7d","open_now")]')"
 check "health: OK on fixtures" "OK" "$(exp 'd["panels"]["health"]["status"]')"
 check "health: CI counts" "[3, 1, 75.0]" "$(exp '[d["panels"]["health"]["data"]["ci"]["all"][k] for k in ("success","failure","green_rate_pct")]')"
 check "health: per-workflow green rate (Tests 1 of 2)" "50.0" "$(exp 'd["panels"]["health"]["data"]["ci"]["by_workflow"]["Tests"]["green_rate_pct"]')"
@@ -414,7 +417,7 @@ check "gh issues missing: work.issues None" "None" "$(pj "$FIX/d-gh.json" 'd["pa
 check "gh prs missing: work.pull_requests None" "None" "$(pj "$FIX/d-gh.json" 'd["panels"]["work"]["data"]["pull_requests"]')"
 dead work BOARD_MD="$FIX/no-board.md" >"$FIX/d-board.json"
 check "BOARD missing: work.slices None" "None" "$(pj "$FIX/d-board.json" 'd["panels"]["work"]["data"]["slices"]')"
-dead health COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false BOARD_MD="$FIX/no-board.md" COCKPIT_USAGE_CMD=false COCKPIT_USAGE_CAP_CMD=false COCKPIT_LEADER_FILE="$FIX/no-leader" >"$FIX/d-health.json"
+dead health COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false COCKPIT_GH_OPEN_ISSUES_CMD=false BOARD_MD="$FIX/no-board.md" COCKPIT_USAGE_CMD=false COCKPIT_USAGE_CAP_CMD=false COCKPIT_LEADER_FILE="$FIX/no-leader" >"$FIX/d-health.json"
 check "health: ci, p0, blocked, usage all None" "[None, None, None, None]" "$(pj "$FIX/d-health.json" '[d["panels"]["health"]["data"][k] for k in ("ci","p0","blocked","usage")]')"
 check "health: leader file missing gives leader None and an error string" "[None, True]" "$(pj "$FIX/d-health.json" '[d["panels"]["health"]["data"]["system"]["leader"], bool(d["panels"]["health"]["data"]["system"]["leader_error"])]')"
 check "health: five sections UNKNOWN, panel PARTIAL" "[5, 'PARTIAL']" "$(pj "$FIX/d-health.json" '[sum(1 for v in d["panels"]["health"]["data"]["sources"].values() if v["status"]=="UNKNOWN"), d["panels"]["health"]["status"]]')"
@@ -477,7 +480,7 @@ for name, p in snap["panels"].items():
 print("ok" if not bad else "; ".join(bad))
 PYEOF
 check "walker: fixture snapshot (all sources present)" "ok" "$(python3 "$FIX/walker.py" "$FIX/ex.json")"
-env COCKPIT_GIT_ROOT="$FIX/x1" COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false COCKPIT_GH_PRS_CMD=false \
+env COCKPIT_GIT_ROOT="$FIX/x1" COCKPIT_GH_RUNS_CMD=false COCKPIT_GH_ISSUES_CMD=false COCKPIT_GH_OPEN_ISSUES_CMD=false COCKPIT_GH_PRS_CMD=false \
     COCKPIT_TRANSCRIPT_ROOT="$FIX/x2" COCKPIT_USAGE_CMD=false COCKPIT_LEADER_FILE="$FIX/x3" BOARD_MD="$FIX/x4.md" \
     COCKPIT_NPM_CMD=false COCKPIT_GH_CMD=false python3 "$SERVER" --once --json >"$FIX/allbad.json" 2>/dev/null
 check "walker: snapshot with every executive source broken" "ok" "$(python3 "$FIX/walker.py" "$FIX/allbad.json")"
@@ -499,6 +502,134 @@ json.dump(d, open(sys.argv[2], "w"))
 PYEOF
 if [ "$(python3 "$FIX/walker.py" "$FIX/ex-mut2.json")" != "ok" ]; then ok "walker detects UNKNOWN source that still has numbers (mutation control)"; else bad "walker missed UNKNOWN-with-data"; fi
 
+echo "== mutation helper (python str.replace, each pattern must occur exactly once)"
+cat >"$FIX/mutate.py" <<'PYEOF'
+import sys
+src, dst, pairs = sys.argv[1], sys.argv[2], sys.argv[3:]
+t = open(src, encoding="utf-8").read()
+for old, new in zip(pairs[::2], pairs[1::2]):
+    n = t.count(old)
+    if n != 1:
+        print("stale mutation pattern (%d hits): %s" % (n, old))
+        sys.exit(3)
+    t = t.replace(old, new)
+open(dst, "w", encoding="utf-8").write(t)
+PYEOF
+mkmut() { # mkmut <name> <old> <new> [<old> <new>...]: writes $FIX/m-<name>/server.py and prints its path
+    local d="$FIX/m-$1"
+    shift
+    mkdir -p "$d"
+    cp "$REPO_ROOT/tools/cockpit/index.html" "$REPO_ROOT/tools/cockpit/roi-basis.json" "$d/"
+    python3 "$FIX/mutate.py" "$SERVER" "$d/server.py" "$@" >&2 || return 1
+    printf '%s\n' "$d/server.py"
+}
+srvpy() { # srvpy <server.py> <python expr over module m>: import a server copy and print the expression
+    python3 - "$1" "$2" 2>&1 <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("cockpit_server_under_test", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(eval(sys.argv[2]))
+PYEOF
+}
+
+echo "== N1: governor TTL floor is 300 s"
+check "COCKPIT_GOVERNOR_TTL_S=10 is floored to 300" "300" "$(COCKPIT_GOVERNOR_TTL_S=10 srvpy "$SERVER" 'm.GOVERNOR_TTL_S')"
+check "COCKPIT_GOVERNOR_TTL_S=900 is kept" "900" "$(COCKPIT_GOVERNOR_TTL_S=900 srvpy "$SERVER" 'm.GOVERNOR_TTL_S')"
+if M="$(mkmut ttl 'GOVERNOR_TTL_S = max(300,' 'GOVERNOR_TTL_S = max(0,')"; then
+    check "mutant (floor removed) is caught: TTL 10 leaks through" "10" "$(COCKPIT_GOVERNOR_TTL_S=10 srvpy "$M" 'm.GOVERNOR_TTL_S')"
+else
+    bad "mutation ttl did not apply (stale pattern)"
+fi
+
+echo "== N2: open issues come from a separate --state open --limit 1000 call"
+N2X='(lambda c: " ".join(c[:3]) == "gh issue list" and "--state open" in " ".join(c) and "--limit 1000" in " ".join(c))(m.Ctx(m.HERE).gh_open_issues_cmd)'
+check "default open-issues command is gh issue list --state open --limit 1000" "True" "$(unset COCKPIT_GH_OPEN_ISSUES_CMD; srvpy "$SERVER" "$N2X")"
+check "health p0 counted from the open-issues call" "1" "$(exp 'd["panels"]["health"]["data"]["p0"]["open_p0_issues"]')"
+check "issues source names the open-issues call" "True" "$(exp '"ghopen" in d["panels"]["work"]["data"]["sources"]["issues"]["source"]')"
+COCKPIT_GH_OPEN_ISSUES_CMD=false python3 "$SERVER" --once --json --panel work >"$FIX/n2-dead.json" 2>/dev/null
+check "open-issues call failing: open_now None with an error, never the window count" "[None, True]" \
+    "$(pj "$FIX/n2-dead.json" '[d["panels"]["work"]["data"]["issues"]["open_now"], bool(d["panels"]["work"]["data"]["issues"].get("open_now_error"))]')"
+if M="$(mkmut n2 'ctx.gh_open_issues_cmd, "gh issue list --state open"' 'ctx.gh_issues_cmd, "gh issue list --state open"')"; then
+    python3 "$M" --repo-root "$REPO_ROOT" --once --json --panel work >"$FIX/n2-mut.json" 2>/dev/null
+    check "mutant (open_now from the 300-row window) is caught: open_now 2, not 3" "2" "$(pj "$FIX/n2-mut.json" 'd["panels"]["work"]["data"]["issues"]["open_now"]')"
+else
+    bad "mutation n2 did not apply (stale pattern)"
+fi
+
+echo "== B1: BOARD status cell forms, unknown-time rows, 7d window"
+{
+    echo "| ID | Owner | Branch @ SHA | File set (summary) | Tier | Status | Notes |"
+    echo "|---|---|---|---|---|---|---|"
+    echo "| R-a | cto | b @ abc | f | LOW | released v11.17.47@2026-10-22T10:00Z | prefix version |"
+    echo "| R-b | cto | b @ abc | f | LOW | released@2026-10-21T10:00Z v11.1.0 | suffix version |"
+    echo "| R-c | cto | b @ abc | f | LOW | released@2026-10-23T11:00Z: shipped | colon note |"
+    echo "| R-d | cto | b @ abc | f | LOW | released v11.17.47 | no time |"
+    echo "| R-e | cto | b @ abc | f | LOW | released | bare |"
+    echo "| R-f | cto | b @ abc | f | LOW | released@2026-10-10T10:00Z | outside 7d |"
+    echo "| R-g | cto | b @ abc | f | LOW | released v1.2.3 (note) | paren note |"
+} >"$FIX/BOARD2.md"
+B1X='[(x or (None,))[0:3] for x in map(m.parse_status_cell, ["released v11.17.47@2026-10-22T10:00Z", "released@2026-10-21T10:00Z v11.1.0", "released v11.17.47", "released", "released v1.2.3 (note)", "in progress someday"])]'
+B1W='(lambda s: [s["released_24h"], s["released_7d"], s["released_unknown_time"], s["rows_parsed"], s["unparsed_rows"]])(d["panels"]["work"]["data"]["slices"])'
+B1WANT="[('released', '2026-10-22T10:00Z', 'v11.17.47'), ('released', '2026-10-21T10:00Z', 'v11.1.0'), ('released', None, 'v11.17.47'), ('released', None, None), ('released', None, 'v1.2.3'), (None,)]"
+check "parse_status_cell: every released form keeps token, time and version" "$B1WANT" "$(srvpy "$SERVER" "$B1X")"
+BOARD_MD="$FIX/BOARD2.md" python3 "$SERVER" --once --json --panel work >"$FIX/b1.json" 2>/dev/null
+check "work slices: 24h=1, 7d=3, unknown-time=3, all 7 rows parsed" "[1, 3, 3, 7, 0]" "$(pj "$FIX/b1.json" "$B1W")"
+if M="$(mkmut b1re '(?:\s+(v?\d+\.\d+\.\d+\S*?))?(?:@' '()(?:@')"; then
+    if [ "$(srvpy "$M" "$B1X")" != "$B1WANT" ]; then ok "mutant (prefix version group removed) is caught by the parser probe"; else bad "parser probe missed the prefix-version mutant"; fi
+else
+    bad "mutation b1re did not apply (stale pattern)"
+fi
+if M="$(mkmut b1win '"released_7d": sum(1 for r in rel if inwin(r, d7))' '"released_7d": len(rel)')"; then
+    BOARD_MD="$FIX/BOARD2.md" python3 "$M" --repo-root "$REPO_ROOT" --once --json --panel work >"$FIX/b1-mut.json" 2>/dev/null
+    check "mutant (7d window dropped) is caught: released_7d 7, not 3" "7" "$(pj "$FIX/b1-mut.json" 'd["panels"]["work"]["data"]["slices"]["released_7d"]')"
+else
+    bad "mutation b1win did not apply (stale pattern)"
+fi
+
+echo "== B1: BOARD file as_of and STALE past 24 h"
+mkdir -p "$FIX/stale"
+cp "$FIX/BOARD.md" "$FIX/stale/BOARD.md"
+TZ=UTC touch -t 202610211200.00 "$FIX/stale/BOARD.md"
+BOARD_MD="$FIX/stale/BOARD.md" python3 "$SERVER" --once --json >"$FIX/stale.json" 2>/dev/null
+STX='[d["panels"]["board"]["status"], d["panels"]["board"]["as_of"], d["panels"]["board"]["data"]["freshness"]["basis"], d["panels"]["work"]["data"]["sources"]["slices"]["status"], d["panels"]["work"]["data"]["sources"]["slices"]["as_of"]]'
+check "48 h old untracked BOARD: board and slices STALE, as_of is the file mtime" \
+    "['STALE', '2026-10-21T12:00:00Z', 'mtime', 'STALE', '2026-10-21T12:00:00Z']" "$(pj "$FIX/stale.json" "$STX")"
+check "STALE board keeps its numbers (counts still reported)" "2" "$(pj "$FIX/stale.json" 'd["panels"]["board"]["data"]["counts"]["building"]')"
+check "walker: snapshot with a STALE board" "ok" "$(python3 "$FIX/walker.py" "$FIX/stale.json")"
+TZ=UTC touch -t 202610231100.00 "$FIX/stale/BOARD.md"
+BOARD_MD="$FIX/stale/BOARD.md" python3 "$SERVER" --once --json --panel board >"$FIX/fresh.json" 2>/dev/null
+check "1 h old BOARD is OK with as_of = mtime (positive control)" "['OK', '2026-10-23T11:00:00Z']" "$(pj "$FIX/fresh.json" '[d["panels"]["board"]["status"], d["panels"]["board"]["as_of"]]')"
+TZ=UTC touch -t 202610211200.00 "$FIX/stale/BOARD.md"
+if M="$(mkmut stale '"stale": age_h is not None and age_h > thr}' '"stale": False}')"; then
+    BOARD_MD="$FIX/stale/BOARD.md" python3 "$M" --repo-root "$REPO_ROOT" --once --json --panel board >"$FIX/stale-mut.json" 2>/dev/null
+    check "mutant (never stale) is caught: 48 h old board reads OK" "OK" "$(pj "$FIX/stale-mut.json" 'd["panels"]["board"]["status"]')"
+else
+    bad "mutation stale did not apply (stale pattern)"
+fi
+
+echo "== N5: hour-floor disclosure, local tag label, seat total"
+check "agents transcripts carry the hour-floor note" "True" "$(exp '"hour-floored" in d["panels"]["agents"]["data"]["transcripts"]["window_note"]')"
+check "agents data has total = number of seats" "True" "$(exp 'd["panels"]["agents"]["data"]["total"] == len(d["panels"]["agents"]["data"]["seats"])')"
+check "release timeline rows carry local_tag_exists" "True" "$(exp 'all("local_tag_exists" in r for r in d["panels"]["releases"]["data"]["timeline"])')"
+htmlq() { # htmlq <index.html>: which N5 client labels are present, and the appendChild count
+    python3 - "$1" <<'PYEOF'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+print([s in t for s in ('"local tag"', "hour-floored", "d.total", "local_tag_exists")], t.count(".appendChild("))
+PYEOF
+}
+check "page: local tag column, hour-floor label, d.total; one appendChild" "[True, True, True, True] 1" "$(htmlq "$REPO_ROOT/tools/cockpit/index.html")"
+python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-mut.html" '"local tag"' '"tag"' \
+    'if(!isNode(c))c=document.createTextNode(String(c));' 'if(!isNode(c))document.body.appendChild(c);'
+check "mutant page (label renamed, second appendChild) is caught" "[False, True, True, True] 2" "$(htmlq "$FIX/index-mut.html")"
+if M="$(mkmut n5 '"unpriced_models": toks["unpriced_models"], "window_note": HOUR_FLOOR_NOTE}' '"unpriced_models": toks["unpriced_models"]}' '"local_tag_exists": ((' '"tag_exists": ((')"; then
+    python3 "$M" --repo-root "$REPO_ROOT" --once --json >"$FIX/n5-mut.json" 2>/dev/null
+    check "mutant (note and local_tag_exists dropped) is caught" "[False, False]" "$(pj "$FIX/n5-mut.json" '["window_note" in d["panels"]["agents"]["data"]["transcripts"], all("local_tag_exists" in r for r in d["panels"]["releases"]["data"]["timeline"])]')"
+else
+    bad "mutation n5 did not apply (stale pattern)"
+fi
+
 echo "== LaunchAgent plist for the cockpit"
 if python3 - "$REPO_ROOT" <<'PYEOF'
 import importlib.util, os, plistlib, sys, tempfile
@@ -513,9 +644,9 @@ PYEOF
 then ok "cockpit LaunchAgent argv points at a real server.py with --port 8787 --repo-root"; else bad "cockpit LaunchAgent argv"; fi
 
 # ------------------------------------------------------------------ server
-start_server() { # start_server <server.py> <outvar-prefix>; sets PORT, SPID
+start_server() { # start_server <server.py> <outvar-prefix> [extra server args]; sets PORT, SPID
     local script="$1" log="$FIX/server-$2.log" i
-    python3 "$script" --port 0 >"$log" 2>&1 &
+    python3 "$script" --port 0 "${@:3}" >"$log" 2>&1 &
     SPID=$!
     SERVER_PIDS+=("$SPID")
     PORT=""
@@ -527,6 +658,8 @@ start_server() { # start_server <server.py> <outvar-prefix>; sets PORT, SPID
     [ -n "$PORT" ]
 }
 
+# The stream watcher polls fast so the SSE probes finish in seconds.
+export COCKPIT_WATCH_INTERVAL_S=0.5
 echo "== live server"
 start_server "$SERVER" main || { bad "server did not start"; cat "$FIX/server-main.log"; exit 1; }
 RECORDED_PID="$(sed -n 's/^cockpit pid: \([0-9]*\)$/\1/p' "$FIX/server-main.log" | head -n 1)"
@@ -611,6 +744,64 @@ NUMS="$(grep -F 'concurrent ' "$FIX/QUEUE.md" | sed -n 's/^| \([0-9][0-9]*\) |.*
 check "six concurrent posts got six distinct row numbers" 6 "$NUMS"
 check "queue panel reflects the new rows after invalidation" "True" "$(code "$BASE/api/panel/queue" >/dev/null; pj "$FIX/body.out" 'd["data"]["cockpit_rows"]>=7')"
 
+echo "== GET /api/member/<slug>"
+printf '{"ts":"2026-10-23T11:50:00Z","outcome":"dispatched","detail":"2 slices"}\n{"ts":"2026-10-23T11:20:00Z","outcome":"skipped","detail":"paused"}\n{"ts":"2026-10-20T10:00:00Z","outcome":"error: tick timed out"}\nnot json\n' >"$FIX/company/cto/log.jsonl"
+printf '{"duration_ms":61000,"num_turns":7,"total_cost_usd":0.42,"is_error":false,"terminal_reason":"completed","modelUsage":{"claude-sonnet-4-6":{}}}\n' >"$FIX/company/cto/last.out"
+check "GET /api/member/cto 200" 200 "$(code "$BASE/api/member/cto")"
+cp "$FIX/body.out" "$FIX/member.json"
+memq() { pj "$FIX/member.json" "$1"; }
+check "member: slug, status and last tick read from the seat files" "['cto', 'OK', 'dispatched 2 slices', 'x']" "$(memq '[d["data"]["slug"], d["data"]["sources"]["status"]["status"], d["data"]["last_tick"]["outcome"], d["data"]["status"]["doing"]]')"
+check "member: history from log.jsonl (bad line skipped), 24h and 7d counts, kinds" "[3, 2, 3, {'error': 1, 'ran': 1, 'skipped': 1}]" "$(memq '(lambda h: [h["total"], h["ticks_24h"], h["ticks_7d"], dict(sorted(h["outcomes_7d"].items()))])(d["data"]["history"])')"
+check "member: last run duration, turns and cost from last.out (MEASURED)" "[61000, 7, 0.42, ['claude-sonnet-4-6']]" "$(memq '(lambda r: [r["duration_ms"], r["num_turns"], r["total_cost_usd"], r["models"]])(d["data"]["last_run"])')"
+check "member: cost from transcripts (cto opus 3.00, ESTIMATE)" "[3.0, True]" "$(memq '[d["data"]["cost"]["usd_24h"], d["data"]["cost"]["label"].startswith("ESTIMATE")]')"
+check "member: BOARD slices attributed by owner slug" "True" "$(memq 'isinstance(d["data"]["slices"]["total"], int)')"
+check "member: commits are a no-data reason, never a number" "True" "$(memq 'd["data"]["commits"].startswith("no data:")')"
+check "member: per-tick cost is a no-data reason" "True" "$(memq 'd["data"]["history"]["per_tick_cost"].startswith("no data:")')"
+check "member: ROI row carries its formula or an UNKNOWN reason" "True" "$(memq '(d["data"]["roi"] is not None and "formula" in d["data"]["roi"]) or (d["data"]["sources"]["roi"]["status"] == "UNKNOWN" and bool(d["data"]["sources"]["roi"]["error"]))')"
+python3 -c 'import json,sys; json.dump({"panels": {"member": json.load(open(sys.argv[1]))}}, open(sys.argv[2], "w"))' "$FIX/member.json" "$FIX/member-snap.json"
+check "walker: member detail (every number claimed by a source)" "ok" "$(python3 "$FIX/walker.py" "$FIX/member-snap.json")"
+check "GET /api/member/security-lead 200 (seat with missing files)" 200 "$(code "$BASE/api/member/security-lead")"
+cp "$FIX/body.out" "$FIX/member-sl.json"
+check "member with missing files: None values, UNKNOWN sources with errors, no fabricated numbers" "[None, None, None, 'UNKNOWN', True, 'UNKNOWN', True]" \
+    "$(pj "$FIX/member-sl.json" '[d["data"]["status"], d["data"]["last_run"], d["data"]["history"], d["data"]["sources"]["status"]["status"], bool(d["data"]["sources"]["status"]["error"]), d["data"]["sources"]["history"]["status"], bool(d["data"]["sources"]["history"]["error"])]')"
+python3 -c 'import json,sys; json.dump({"panels": {"member": json.load(open(sys.argv[1]))}}, open(sys.argv[2], "w"))' "$FIX/member-sl.json" "$FIX/member-sl-snap.json"
+check "walker: member detail with missing files" "ok" "$(python3 "$FIX/walker.py" "$FIX/member-sl-snap.json")"
+check "GET /api/member/nope 404 (not a .claude/agents seat)" 404 "$(code "$BASE/api/member/nope")"
+check "GET /api/member/CTO 404 (slug pattern is lowercase)" 404 "$(code "$BASE/api/member/CTO")"
+check "GET /api/member/..%2Fcto 404 (no path tricks)" 404 "$(code "$BASE/api/member/..%2Fcto")"
+check "GET /api/member/ 404 (empty slug)" 404 "$(code "$BASE/api/member/")"
+
+echo "== GET /api/stream (server-sent events)"
+cnt1() { if [ "${1:-0}" -gt 0 ] 2>/dev/null; then echo 1; else echo 0; fi; }
+sse_probe() { # sse_probe <base-url> <tag>: prints "hello=0|1 agents_change=0|1 retry=0|1"
+    local out="$FIX/sse-$2.txt" cpid
+    curl -sN --max-time 6 "$1/api/stream" >"$out" 2>/dev/null &
+    cpid=$!
+    sleep 1.5
+    printf '{"seat":"cto","model":"opus","doing":"x","slice":"S-1","next":"y","blocked_on":"decision","updated":"2026-10-23T11:55:00Z","probe":"%s"}\n' "$2" >"$FIX/status/cto.json"
+    sleep 1.5
+    printf '{"seat":"cto","model":"opus","doing":"x","slice":"S-1","next":"y","blocked_on":"decision","updated":"2026-10-23T11:56:00Z","probe":"%s second"}\n' "$2" >"$FIX/status/cto.json"
+    wait "$cpid" 2>/dev/null
+    printf 'hello=%s agents_change=%s retry=%s\n' "$(cnt1 "$(grep -c '^event: hello' "$out")")" \
+        "$(cnt1 "$(grep -A1 '^event: change' "$out" | grep -c '"agents"')")" "$(cnt1 "$(grep -c '^retry: 3000' "$out")")"
+}
+curl -s -D "$FIX/sse-hdrs.txt" -o /dev/null --max-time 2 "$BASE/api/stream"
+if grep -qi '^content-type: text/event-stream' "$FIX/sse-hdrs.txt"; then ok "stream content type is text/event-stream"; else bad "stream content type: $(cat "$FIX/sse-hdrs.txt")"; fi
+check "stream: hello, then a change event naming agents after a status file write" "hello=1 agents_change=1 retry=1" "$(sse_probe "$BASE" real)"
+
+echo "== second launch on a port in use exits 0 (no launchd crash loop)"
+python3 "$SERVER" --port "$PORT" >"$FIX/inuse.log" 2>&1
+check "second server on the live port exits 0" 0 "$?"
+if grep -q 'already in use' "$FIX/inuse.log"; then ok "second server says the port is already in use"; else bad "in-use message: $(cat "$FIX/inuse.log")"; fi
+check "first server still answers after the second launch" 200 "$(code "$BASE/healthz")"
+if M="$(mkmut inuse 'if ex.errno == errno.EADDRINUSE:' 'if False:')"; then
+    python3 "$M" --repo-root "$REPO_ROOT" --port "$PORT" >"$FIX/inuse-mut.log" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then ok "mutant (EADDRINUSE not handled) is caught: exits $rc"; else bad "mutant in-use server exited 0"; fi
+else
+    bad "mutation inuse did not apply (stale pattern)"
+fi
+
 kill "$SPID" 2>/dev/null
 wait "$SPID" 2>/dev/null
 
@@ -637,6 +828,126 @@ probe() { # probe <server.py> <tag>: prints "host=<code> pipes=<n>"
 }
 check "real server probe: Host rejected, pipes sanitized" "host=403 pipes=7" "$(probe "$SERVER" real)"
 check "mutant probe: Host accepted, pipe kept (probe detects the mutation)" "host=200 pipes=8" "$(probe "$MUT/server.py" mut)"
+
+echo "== mutation: a watcher that never diffs must fail the stream probe"
+if M="$(mkmut sse 'diff = [k for k in new if new[k] != self.sigs.get(k)]' 'diff = []')"; then
+    if start_server "$M" ssemut --repo-root "$REPO_ROOT"; then
+        check "mutant stream probe: hello but no change event (probe detects the mutation)" "hello=1 agents_change=0 retry=1" "$(sse_probe "http://127.0.0.1:$PORT" mut)"
+        kill "$SPID" 2>/dev/null
+        wait "$SPID" 2>/dev/null
+    else
+        bad "sse mutant server did not start"
+    fi
+else
+    bad "mutation sse did not apply (stale pattern)"
+fi
+
+echo "== client null-safety: the page script under a strict fake DOM (node)"
+cat >"$FIX/shim.js" <<'JSEOF'
+// Runs the page's #cockpit-main script against a fake DOM whose appendChild
+// throws the browser's TypeError for a non-Node, then renders hostile inputs.
+"use strict";
+const fs = require("fs"), vm = require("vm");
+const html = fs.readFileSync(process.argv[2], "utf8");
+const m = html.match(/<script id="cockpit-main">([\s\S]*?)<\/script>/);
+if (!m) { console.log("no #cockpit-main script"); process.exit(2); }
+class Text { constructor(s) { this.nodeType = 3; this.data = String(s); this.parent = null; } get textContent() { return this.data; } }
+class El {
+  constructor(tag) { this.nodeType = 1; this.tagName = String(tag).toLowerCase(); this.kids = []; this.attrs = {}; this.parent = null; this.className = "";
+    this.style = { setProperty() {} }; }
+  appendChild(c) {
+    if (c === null || typeof c !== "object" || typeof c.nodeType !== "number")
+      throw new TypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.");
+    c.parent = this; this.kids.push(c); return c; }
+  set textContent(v) { this.kids = v === "" ? [] : [new Text(v)]; }
+  get textContent() { return this.kids.map((k) => k.textContent).join(""); }
+  setAttribute(k, v) { this.attrs[k] = String(v); if (k === "class") this.className = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  addEventListener() {}
+  getContext() { return null; }
+  closest(sel) { let n = this; while (n) { if (n.tagName === sel) return n; n = n.parent; } return null; }
+  querySelector(sel) { const want = sel.split(" ").pop().replace(".", ""); const walk = (n) => { for (const k of n.kids || []) {
+      if (k.nodeType === 1 && String(k.className).split(" ").indexOf(want) >= 0) return k; const r = walk(k); if (r) return r; } return null; };
+    return walk(this); }
+}
+const ids = {};
+const PANELS = ["pulse", "releases", "board", "agents", "work", "compare", "health", "okrs", "roi", "queue"];
+for (const p of PANELS) {
+  const sec = new El("section"), ph = new El("div"), chip = new El("span"), asof = new El("span"), body = new El("div");
+  ph.className = "ph"; chip.className = "chip"; asof.className = "asof";
+  ph.appendChild(chip); ph.appendChild(asof); sec.appendChild(ph); sec.appendChild(body); ids["p-" + p] = body;
+}
+for (const id of ["kpi", "dhead", "dbody", "drawer", "backdrop", "fail", "live", "livetxt", "tip"]) ids[id] = new El("div");
+const warns = [];
+const document = { createElement: (t) => new El(t), createElementNS: (_ns, t) => new El(t), createTextNode: (s) => new Text(s),
+  getElementById: (id) => ids[id] || null, documentElement: new El("html"), body: new El("body"), hidden: true, addEventListener() {} };
+const window = { __COCKPIT_TEST: 1, console: { warn: (...a) => warns.push(a.map(String).join(" ")), log() {}, error() {} },
+  matchMedia: () => ({ matches: true }), requestAnimationFrame: () => 0, innerWidth: 1600, innerHeight: 1000 };
+const ctx = vm.createContext({ window, document, setTimeout, clearTimeout, setInterval, clearInterval });
+vm.runInContext(m[1], ctx, { filename: "cockpit-main.js" });
+const C = window.__cockpit;
+const fails = [];
+const txt = (id) => ids[id].textContent;
+function step(label, fn, opts) {
+  opts = opts || {};
+  try { fn(); } catch (e) { fails.push(label + ": threw " + e.message); return; }
+  for (const p of PANELS) {
+    if (opts.panels === false) break;
+    const t = txt("p-" + p);
+    if (!t.trim()) fails.push(label + ": panel " + p + " rendered empty");
+    if (opts.clean && t.indexOf("render error") >= 0) fails.push(label + ": " + t.slice(t.indexOf("render error"), t.indexOf("render error") + 160));
+  }
+}
+const ex = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const mem = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+step("render(null)", () => C.render(null));
+step("render(undefined)", () => C.render(undefined));
+step("render({panels:{}})", () => C.render({ panels: {} }));
+step("render(garbage)", () => C.render({ panels: { pulse: 5, releases: { status: "OK", data: { timeline: [null, 1, "x", { ci: 7 }] } },
+  board: { status: "OK", data: { counts: "x", active: 5, freshness: null } }, agents: { status: "OK", data: { seats: [null, { slug: null }, 3] } },
+  work: { status: "OK", data: "str" }, compare: [], health: { data: { usage_cap: 1 } }, okrs: { data: { items: [null] } }, roi: null, queue: { data: { last: [null] } } } }));
+step("render(fixture snapshot)", () => { const n = C.render(ex); if (n !== 10) fails.push("fixture snapshot: " + n + " of 10 panels rendered"); }, { clean: true });
+if (!txt("kpi").trim()) fails.push("KPI strip empty on the fixture snapshot");
+const memStep = (label, p, needClean) => { try { C.renderMember(p, null); } catch (e) { fails.push(label + ": threw " + e.message); return; }
+  const t = txt("dbody"); if (!t.trim()) fails.push(label + ": drawer body empty");
+  if (needClean && t.indexOf("render error") >= 0) fails.push(label + ": " + t.slice(t.indexOf("render error"), t.indexOf("render error") + 160)); };
+memStep("renderMember(null)", null);
+memStep("renderMember({})", {});
+memStep("renderMember({data:garbage})", { status: "OK", data: { history: { ticks: [null, 4] }, last_tick: { actions: "x", evidence: 5 }, slices: { rows: [null] } } });
+memStep("renderMember(member.json)", mem, true);
+const realBoard = C.R.board;
+C.R.board = function () { throw new Error("boom"); };
+step("isolation", () => { const n = C.render(ex); if (n !== 9) fails.push("isolation: " + n + " panels ok, want 9"); });
+if (txt("p-board").indexOf("render error in board: boom") < 0) fails.push("isolation: board does not show its render error");
+if (txt("p-releases").indexOf("render error") >= 0) fails.push("isolation: releases caught the board error");
+C.R.board = realBoard;
+console.log(fails.length ? fails.slice(0, 6).join(" | ") : "ok");
+JSEOF
+if command -v node >/dev/null 2>&1; then
+    check "page script survives null, empty, garbage, fixture and member inputs; a panel error stays in its panel" "ok" \
+        "$(node "$FIX/shim.js" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/ex.json" "$FIX/member.json" 2>&1)"
+    python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-nonode.html" 'if(!isNode(c))c=document.createTextNode(String(c));' ''
+    if [ "$(node "$FIX/shim.js" "$FIX/index-nonode.html" "$FIX/ex.json" "$FIX/member.json" 2>&1)" != "ok" ]; then
+        ok "mutant page (text-node conversion removed) is caught by the fake DOM"
+    else
+        bad "fake DOM missed the removed text-node conversion"
+    fi
+    python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-noiso.html" \
+        '}catch(e){clear(sh.body);add(sh.body,h("div",{"class":"err"},"render error in "+name' '}catch(e){throw e;add(sh.body,h("div",{"class":"err"},"render error in "+name'
+    if [ "$(node "$FIX/shim.js" "$FIX/index-noiso.html" "$FIX/ex.json" "$FIX/member.json" 2>&1)" != "ok" ]; then
+        ok "mutant page (per-panel isolation removed) is caught"
+    else
+        bad "fake DOM missed the removed per-panel isolation"
+    fi
+    python3 "$FIX/mutate.py" "$REPO_ROOT/tools/cockpit/index.html" "$FIX/index-nolist.html" 'function list(title,items,mono){items=arr(items);' 'function list(title,items,mono){items=items||[];'
+    if [ "$(node "$FIX/shim.js" "$FIX/index-nolist.html" "$FIX/ex.json" "$FIX/member.json" 2>&1)" != "ok" ]; then
+        ok "mutant page (scalar seat list fed to .map) is caught by the member render"
+    else
+        bad "fake DOM missed a scalar evidence field breaking the member drawer"
+    fi
+else
+    echo "SKIP: node not found; the client null-safety shim did not run (NOT a pass)"
+fi
 
 echo
 echo "Passed: $PASS  Failed: $FAIL"

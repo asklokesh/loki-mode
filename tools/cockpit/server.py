@@ -8,7 +8,9 @@ Every data source degrades to an explicit UNKNOWN (or UNMEASURED) with the
 reason in `error`; a missing value is None, never 0.
 """
 import argparse
+import errno
 import fcntl
+import glob
 import json
 import os
 import re
@@ -35,6 +37,11 @@ QUEUE_CAP = 2000
 BODY_CAP = 8192
 STALE_SEAT_MIN = 60
 BASIS_STALE_DAYS = 90
+# usage-governor.py takes ~36 s per run; a short TTL at a 15 s poll burned about
+# half a core per open tab (rev-execdash N1). Floor 300 s.
+GOVERNOR_TTL_S = max(300, int(os.environ.get("COCKPIT_GOVERNOR_TTL_S") or 300))
+# The 24h token window starts at the top of the hour 24h ago (hourly buckets).
+HOUR_FLOOR_NOTE = "24h window is hour-floored: it starts at the top of the hour 24h ago, so it spans 24 to 25 hours"
 ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR",
              "NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG",
              "GH_CONFIG_DIR", "XDG_CONFIG_HOME")
@@ -78,6 +85,8 @@ class Ctx:
             "databaseId,workflowName,status,conclusion,headSha,headBranch,createdAt,event"))
         self.gh_issues_cmd = shlex.split(e("COCKPIT_GH_ISSUES_CMD") or (
             "gh issue list --state all --limit 300 --json number,title,state,createdAt,closedAt,labels"))
+        self.gh_open_issues_cmd = shlex.split(e("COCKPIT_GH_OPEN_ISSUES_CMD") or (
+            "gh issue list --state open --limit 1000 --json number,title,state,labels"))
         self.gh_prs_cmd = shlex.split(e("COCKPIT_GH_PRS_CMD") or (
             "gh pr list --state merged --limit 200 --json number,title,mergedAt,author"))
         self.transcript_root = e("COCKPIT_TRANSCRIPT_ROOT")
@@ -302,6 +311,11 @@ def ds_issues(ctx):
     return ds_json_cmd(ctx, ctx.gh_issues_cmd, "gh issue list", list)
 
 
+def ds_open_issues(ctx):
+    """Open issues only, so open_now and open P0 are not capped by the newest-300 window (N2)."""
+    return ds_json_cmd(ctx, ctx.gh_open_issues_cmd, "gh issue list --state open", list)
+
+
 def ds_prs(ctx):
     return ds_json_cmd(ctx, ctx.gh_prs_cmd, "gh pr list", list)
 
@@ -375,7 +389,7 @@ def ds_tokens(ctx):
         return None, "no transcript directory found (COCKPIT_TRANSCRIPT_ROOT or ~/.claude/projects) for " + ctx.root, as_of
     try:
         from pathlib import Path
-        gov = _load_module("usage_governor_cockpit", os.path.join(HERE, "..", "..", "scripts", "usage-governor.py"))
+        gov = _load_module("usage_governor_cockpit", os.path.join(ctx.root, "scripts", "usage-governor.py"))
     except Exception as ex:
         return None, "cannot load usage-governor.py: %r" % (ex,), as_of
     slugs, _ = agent_slugs(ctx)
@@ -641,7 +655,7 @@ def collect_releases(ctx):
                     ci["note"] = "no run for this SHA in the last 100 runs"
             tl.append({"version": v, "published": iso(d), "sha": c["sha"][:10] if c else None,
                        "commit_time": iso(c["ts"]) if c else None, "lead_time_min": lead,
-                       "tag_exists": (("v" + v) in tagset) if tagset is not None else None, "ci": ci})
+                       "local_tag_exists": (("v" + v) in tagset) if tagset is not None else None, "ci": ci})
         for d, v in vers:
             c = relmap.get(v)
             if c and now - d <= timedelta(days=7):
@@ -685,6 +699,22 @@ def split_row(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+# Status cell forms seen in BOARD.md: "token@TS", "released vX@TS",
+# "released@TS vX", "released vX" and a bare "token", each optionally followed
+# by a ": note" or " (note)". A row without a timestamp keeps since=None and is
+# counted as unknown-time; it is never dropped and never given a time.
+STATUS_RE = re.compile(r"^([a-z-]+)(?:\s+(v?\d+\.\d+\.\d+\S*?))?(?:@(\d{4}-\d\d-\d\dT\d\d:\d\dZ))?"
+                       r"(?:\s+(v?\d+\.\d+\.\d+\S*))?(?:\s*[:(].*)?$")
+
+
+def parse_status_cell(cell):
+    """(token, since or None, version or None) or None when the cell is not a status."""
+    m = STATUS_RE.match(cell or "")
+    if not m or m.group(1) not in BOARD_TOKENS:
+        return None
+    return m.group(1), m.group(3), m.group(2) or m.group(4)
+
+
 def parse_board(text):
     rows, unparsed = [], []
     for line in text.splitlines():
@@ -693,15 +723,61 @@ def parse_board(text):
         cells = split_row(line)
         if not cells or cells[0] in ("ID", "") or set(cells[0]) <= set("-: "):
             continue
-        status_cell = cells[5] if len(cells) >= 7 else ""
-        m = re.match(r"^([a-z-]+)@(\d{4}-\d\d-\d\dT\d\d:\d\dZ)$", status_cell)
-        if len(cells) >= 7 and m and m.group(1) in BOARD_TOKENS:
+        st = parse_status_cell(cells[5]) if len(cells) >= 7 else None
+        if st:
             rows.append({"id": cells[0], "owner": cells[1], "tier": cells[4].upper(),
-                         "token": m.group(1), "since": m.group(2),
+                         "token": st[0], "since": st[1], "version": st[2],
                          "notes": "|".join(cells[6:])[:300]})
         else:
             unparsed.append(cells[0])
     return rows, unparsed
+
+
+_FILE_AS_OF = {}
+
+
+def file_as_of(ctx, path):
+    """When a file source last changed: its last commit time when tracked and
+    clean, else its mtime. Returns (iso or None, basis). Cached 60 s."""
+    hit = _FILE_AS_OF.get(path)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    res = (None, "missing")
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc)
+        res = (iso(mtime), "mtime")
+        d = os.path.dirname(os.path.abspath(path))
+        rc, out, _ = run_cmd(ctx, ["git", "-C", d, "log", "-1", "--format=%cI", "--", path], 10)
+        ct = parse_iso(out.strip()) if rc == 0 and out.strip() else None
+        if ct:
+            rc2, dirty, _ = run_cmd(ctx, ["git", "-C", d, "status", "--porcelain", "--", path], 10)
+            if rc2 == 0 and not dirty.strip():
+                res = (iso(ct.astimezone(timezone.utc)), "last commit")
+    except OSError:
+        pass
+    _FILE_AS_OF[path] = (time.time(), res)
+    return res
+
+
+def board_freshness(ctx):
+    """{as_of, basis, age_h, stale, threshold_h} for BOARD.md (STALE past COCKPIT_BOARD_STALE_HOURS, default 24)."""
+    thr = float(os.environ.get("COCKPIT_BOARD_STALE_HOURS") or 24)
+    a, basis = file_as_of(ctx, ctx.board)
+    age = age_min(ctx, a)
+    age_h = round(age / 60.0, 1) if age is not None else None
+    return {"as_of": a, "basis": basis, "age_h": age_h, "threshold_h": thr,
+            "stale": age_h is not None and age_h > thr}
+
+
+def board_source(S, ctx, key, keys=None):
+    """Record a BOARD.md-backed section with the file's own as_of, STALE past the threshold."""
+    f = board_freshness(ctx)
+    S.ok(key, "read %s (as of %s: %s)" % (ctx.board, f["basis"], f["as_of"]), f["as_of"], keys=keys)
+    if f["stale"]:
+        S.m[key]["status"] = "STALE"
+        S.m[key]["error"] = "STALE: %s last changed %s (%s), %sh ago, over %sh" % (
+            ctx.board, f["as_of"], f["basis"], f["age_h"], f["threshold_h"])
+    return f
 
 
 def collect_board(ctx):
@@ -720,11 +796,19 @@ def collect_board(ctx):
             budget = TIER_BUDGET_MIN.get(r["tier"])
             active.append({**r, "age_min": a, "budget_min": budget,
                            "over_budget": (a is not None and budget is not None and a > budget)})
+    fr = board_freshness(ctx)
     data = {"counts": counts, "active": active, "unparsed": unparsed, "rows_parsed": len(rows),
-            "ready_below_30": counts["ready"] < 30, "ready_target": 30}
+            "unknown_time": {t: sum(1 for r in rows if r["token"] == t and r["since"] is None)
+                             for t in BOARD_TOKENS if any(r["token"] == t and r["since"] is None for r in rows)},
+            "ready_below_30": counts["ready"] < 30, "ready_target": 30, "freshness": fr}
     if not rows:
         return unknown(ctx, src, "no BOARD rows parsed from " + ctx.board)
-    return panel(ctx, "OK", src, data, None)
+    p = panel(ctx, "STALE" if fr["stale"] else "OK", src, data,
+              ("STALE: %s last changed %s (%s), %sh ago" % (ctx.board, fr["as_of"], fr["basis"], fr["age_h"]))
+              if fr["stale"] else None)
+    if fr["as_of"]:
+        p["as_of"] = fr["as_of"]
+    return p
 
 
 # --------------------------------------------------------------- agents
@@ -750,6 +834,57 @@ def root_causes(path):
         elif cur is not None and line.startswith("  ") and line.strip():
             out[-1] += " " + line.strip()
     return out
+
+
+def md_section(txt, title):
+    """Body of one '## <title>' section of a seat .md file, or None."""
+    m = re.search(r"^## " + re.escape(title) + r"[^\n]*\n(.*?)(?=^## |\Z)", txt or "", re.S | re.M)
+    return m.group(1).strip() if m else None
+
+
+def md_bullets(body, cap=8):
+    """Bullets of a section; a markdown table yields 'cell1: cell2' per body row."""
+    out = []
+    for line in (body or "").splitlines():
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 2 and not set(cells[0]) <= set("-: ") and cells[0].lower() not in ("metric", "name"):
+                out.append("%s: %s" % (cells[0], cells[1]))
+        elif line.startswith("- "):
+            out.append(line[2:].strip())
+        elif out and line.startswith("  ") and line.strip():
+            out[-1] += " " + line.strip()
+    return out[:cap]
+
+
+def seat_profile(ctx, slug):
+    """Display name, role, persona line and mandate, all quoted from .claude/agents/<slug>.md.
+    Nothing here is invented: every field is a substring of the file, or None."""
+    path = os.path.join(ctx.agents_dir, slug + ".md")
+    txt, err = read_text(path)
+    prof = {"source": "read " + path, "display_name": None, "role": None, "persona": None,
+            "mandate": None, "description": None, "decision_rights": [], "metrics": [], "escalation": None}
+    if err or not txt:
+        prof["error"] = err or "empty file"
+        return prof
+    fm = re.match(r"^---\n(.*?)\n---\n", txt, re.S)
+    if fm:
+        d = re.search(r"^description:\s*(.+)$", fm.group(1), re.M)
+        prof["description"] = d.group(1).strip() if d else None
+    h1 = re.search(r"^# (.+)$", txt, re.M)
+    if h1:
+        t = h1.group(1).strip()
+        m = re.match(r"^(.*?)\s*\((.*)\)\s*$", t)
+        prof["display_name"], prof["role"] = (m.group(1), m.group(2)) if m else (t, None)
+    mand = md_section(txt, "Mandate")
+    if mand:
+        prof["mandate"] = re.sub(r"\s+", " ", mand)
+        prof["persona"] = re.split(r"(?<=[.!?])\s", prof["mandate"], maxsplit=1)[0]
+    prof["decision_rights"] = md_bullets(md_section(txt, "Decision rights"))
+    prof["metrics"] = md_bullets(md_section(txt, "Owned metrics and targets"))
+    esc = md_section(txt, "Escalation rule")
+    prof["escalation"] = re.sub(r"\s+", " ", esc) if esc else None
+    return prof
 
 
 def seat_cadence(ctx):
@@ -839,13 +974,15 @@ def collect_agents(ctx):
     cadence, mod = seat_cadence(ctx)
     for slug in slugs:
         seat = {"slug": slug, "state": "UNKNOWN", "model_file": agent_model(ctx, slug),
-                "root_causes": root_causes(os.path.join(ctx.agents_dir, slug + ".md"))}
+                "root_causes": root_causes(os.path.join(ctx.agents_dir, slug + ".md")),
+                "profile": seat_profile(ctx, slug)}
         seat["tick"] = tick = seat_tick(ctx, slug, cadence, mod)
         seat["activity"] = seat_activity(ctx, slug, now)
         if rows is not None:
             t24, t7 = tok_sum(rows, now - timedelta(hours=24), now + timedelta(hours=1), seat=slug), \
                 tok_sum(rows, now - timedelta(days=7), now + timedelta(hours=1), seat=slug)
             seat["cost"] = {"label": "ESTIMATE (list-price equivalent, not billed spend)", "source": "transcripts x price table", "as_of": tas,
+                            "window_note": HOUR_FLOOR_NOTE,
                             "usd_24h": t24["usd"], "usd_7d": t7["usd"], "output_tokens_24h": t24["out"],
                             "output_tokens_7d": t7["out"], "messages_7d": t7["msgs"]}
         else:
@@ -880,7 +1017,7 @@ def collect_agents(ctx):
                     "main_session": tok_sum(rows, a, now + timedelta(hours=1), seat="main-session")}
         data["transcripts"] = {"last_24h": blk(h=24), "last_7d": blk(d=7), "files_scanned": toks["files"],
                                "label": "ESTIMATE, list-price equivalent not billed spend (tokens x price table dated %s)" % toks.get("price_updated"),
-                               "unpriced_models": toks["unpriced_models"]}
+                               "unpriced_models": toks["unpriced_models"], "window_note": HOUR_FLOOR_NOTE}
         S.ok("transcripts", "Claude Code transcripts under %s via scripts/usage-governor.py iter_records" % (
             ", ".join(toks["roots"]),), tas)
     else:
@@ -904,10 +1041,126 @@ def collect_agents(ctx):
                   for r in brows if r["token"] in ("building", "review", "review-blocked", "approved")]
         data["slice_owners"] = {**own, "in_flight": active,
                                 "note": "BOARD owner column is free text; unmatched owners are 'unattributed'"}
-        S.ok("slice_owners", "read " + ctx.board)
+        board_source(S, ctx, "slice_owners")
     if have == 0:
         data["sources"] = S.m
         return panel(ctx, "UNKNOWN", src, data, "no seat has written a status file in " + ctx.status_dir)
+    return S.finish(src, data)
+
+
+MEMBER_LOG_CAP = 200
+
+
+def tick_kind(outcome):
+    o = str(outcome or "").lower()
+    if o == "skipped":
+        return "skipped"
+    if o.startswith(("error", "fail", "timeout", "killed")):
+        return "error"
+    return "ran"
+
+
+def collect_member(ctx, slug, roi_panel=None):
+    """Detail for one seat: profile, live status, last tick, tick history, cost, slices, ROI.
+    Returns None for a slug that is not a .claude/agents/*.md file (the caller answers 404)."""
+    slugs, _ = agent_slugs(ctx)
+    if slug not in slugs:
+        return None
+    S, now = Src(ctx), ctx.now()
+    seat_dir = os.path.join(ctx.company_dir, slug)
+    src = "read %s/%s.md, %s/%s.json, %s/{last.json,log.jsonl,last.out}" % (
+        ctx.agents_dir, slug, ctx.status_dir, slug, seat_dir)
+    data = {"slug": slug, "profile": seat_profile(ctx, slug), "model_file": agent_model(ctx, slug),
+            "root_causes": root_causes(os.path.join(ctx.agents_dir, slug + ".md"))}
+    S.ok("profile", data["profile"]["source"], keys=["slug", "profile", "model_file", "root_causes"])
+    st, e = read_json(os.path.join(ctx.status_dir, slug + ".json"))
+    if isinstance(st, dict):
+        data["status"] = {k: st.get(k) for k in ("model", "doing", "slice", "since", "next", "blocked_on", "updated")}
+        data["status"]["updated_min_ago"] = age_min(ctx, st.get("updated"))
+        S.ok("status", "read %s/%s.json" % (ctx.status_dir, slug), st.get("updated"))
+    else:
+        data["status"] = None
+        S.bad("status", "read %s/%s.json" % (ctx.status_dir, slug), e or "status file is not an object")
+    cadence, mod = seat_cadence(ctx)
+    data["tick"] = seat_tick(ctx, slug, cadence, mod)
+    S.ok("tick", "read %s/last.json ts; cadence from %s" % (seat_dir, ctx.schedules))
+    lj, e = read_json(os.path.join(seat_dir, "last.json"))
+    if isinstance(lj, dict):
+        data["last_tick"] = {k: lj.get(k) for k in ("ts", "outcome", "actions", "evidence", "escalations", "untested")}
+        S.ok("last_tick", "read %s/last.json" % seat_dir, lj.get("ts"))
+    else:
+        data["last_tick"] = None
+        S.bad("last_tick", "read %s/last.json" % seat_dir, e or "last.json is not an object")
+    o, e = read_json(os.path.join(seat_dir, "last.out"))
+    if isinstance(o, dict):
+        mu = o.get("modelUsage") if isinstance(o.get("modelUsage"), dict) else {}
+        data["last_run"] = {"duration_ms": o.get("duration_ms"), "num_turns": o.get("num_turns"),
+                            "total_cost_usd": o.get("total_cost_usd"), "is_error": o.get("is_error"),
+                            "terminal_reason": o.get("terminal_reason"), "models": sorted(mu),
+                            "label": "MEASURED: claude -p result of the last tick only"}
+        S.ok("last_run", "read %s/last.out (claude -p --output-format json)" % seat_dir)
+    else:
+        data["last_run"] = None
+        S.bad("last_run", "read %s/last.out" % seat_dir, e or "last.out is not an object")
+    entries, e = read_log(ctx, slug)
+    if entries is None:
+        data["history"] = None
+        S.bad("history", "read %s/log.jsonl" % seat_dir, e)
+    else:
+        tail = entries[-MEMBER_LOG_CAP:]
+        w7 = [x for x in entries if now - x["dt"] <= timedelta(days=7)]
+        outcomes = {}
+        for x in w7:
+            k = tick_kind(x.get("outcome"))
+            outcomes[k] = outcomes.get(k, 0) + 1
+        data["history"] = {
+            "ticks": [{"ts": iso(x["dt"]), "kind": tick_kind(x.get("outcome")), "outcome": x.get("outcome"),
+                       "detail": x.get("detail")} for x in reversed(tail)],
+            "shown": len(tail), "total": len(entries),
+            "ticks_24h": sum(1 for x in entries if now - x["dt"] <= timedelta(hours=24)),
+            "ticks_7d": len(w7), "outcomes_7d": outcomes,
+            "per_tick_cost": "no data: log.jsonl records ts, outcome and detail only; "
+                             "duration and cost exist for the last tick only (last.out)"}
+        S.ok("history", "read %s/log.jsonl (newest %d of %d)" % (seat_dir, len(tail), len(entries)),
+             iso(entries[-1]["dt"]) if entries else None)
+    toks, terr, tas = ctx.ds.get("tokens", 300, ds_tokens)
+    if toks:
+        t24 = tok_sum(toks["rows"], now - timedelta(hours=24), now + timedelta(hours=1), seat=slug)
+        t7 = tok_sum(toks["rows"], now - timedelta(days=7), now + timedelta(hours=1), seat=slug)
+        data["cost"] = {"usd_24h": t24["usd"], "usd_7d": t7["usd"], "output_tokens_24h": t24["out"],
+                        "output_tokens_7d": t7["out"], "messages_7d": t7["msgs"],
+                        "label": "ESTIMATE (list-price equivalent, not billed spend)", "window_note": HOUR_FLOOR_NOTE}
+        S.ok("cost", "transcripts x price table", tas)
+    else:
+        data["cost"] = None
+        S.bad("cost", "transcripts x price table", terr)
+    btext, berr = read_text(ctx.board)
+    if berr:
+        data["slices"] = None
+        S.bad("slices", "read " + ctx.board, berr)
+    else:
+        brows, _ = parse_board(btext)
+        mine = [r for r in brows if owner_group(r["owner"], slugs) == slug]
+        mine.sort(key=lambda r: r["since"] or "", reverse=True)
+        data["slices"] = {"rows": [{"id": r["id"], "status": r["token"], "since": r["since"], "version": r.get("version")}
+                                   for r in mine[:40]],
+                          "total": len(mine), "released": sum(1 for r in mine if r["token"] == "released"),
+                          "note": "attributed by seat slug in the BOARD owner column (free text)"}
+        board_source(S, ctx, "slices")
+    data["commits"] = "no data: the commit author is the repo identity, not the seat, so commits cannot be attributed to a seat"
+    roi = None
+    if isinstance(roi_panel, dict):
+        for r in (((roi_panel.get("data") or {}).get("by_seat") or {}).get("seats") or []):
+            if r.get("seat") == slug:
+                roi = dict(r)
+    if roi is not None:
+        roi["formula"] = ("usd_per_slice = cost_7d_usd (transcripts x price table, ESTIMATE) / slices_released_7d "
+                          "(BOARD released rows owned by this seat in the last 7d); withheld when the count is 0")
+        data["roi"] = roi
+        S.ok("roi", "roi panel by_seat", roi_panel.get("as_of"))
+    else:
+        data["roi"] = None
+        S.bad("roi", "roi panel by_seat", (roi_panel or {}).get("error") or "no by_seat row for this seat")
     return S.finish(src, data)
 
 
@@ -994,7 +1247,7 @@ def collect_roi(ctx):
     if uerr:
         notes.append("usage readings: " + uerr)
     gov = None
-    g, gerr, _gas = ctx.ds.get("governor", 55, ds_governor)
+    g, gerr, _gas = ctx.ds.get("governor", GOVERNOR_TTL_S, ds_governor)
     if gerr:
         notes.append(gerr)
     else:
@@ -1255,13 +1508,15 @@ def collect_work(ctx):
         data["slices"] = {
             "counts": counts, "rows_parsed": len(rows), "unparsed_rows": len(unparsed),
             "released_24h": sum(1 for r in rel if inwin(r, d1)), "released_7d": sum(1 for r in rel if inwin(r, d7)),
+            "released_unknown_time": sum(1 for r in rel if r["since"] is None),
             "released_prev_7d": sum(1 for r in rel if inwin(r, d14, d7)),
             "released_by_tier_7d": by_tier, "released_by_owner_7d": by_owner,
             "released_per_day_14d": [{"day": a.strftime("%Y-%m-%d"),
                                       "count": sum(1 for r in rel if inwin(r, a, a + timedelta(days=1)))}
                                      for a in day_buckets(ctx)],
-            "note": "the BOARD status stamp for a released row is its release time; owner is free text"}
-        S.ok("slices", "read " + ctx.board)
+            "note": "the BOARD status stamp for a released row is its release time; a released row without a stamp "
+                    "(for example 'released v11.17.47') is counted in released_unknown_time and in no window; owner is free text"}
+        board_source(S, ctx, "slices")
 
     prs, perr, pas = ctx.ds.get("prs", 120, ds_prs)
     if perr:
@@ -1289,9 +1544,14 @@ def collect_work(ctx):
         data["issues"] = {"opened_7d": sum(1 for i in it if parse_iso(i.get("createdAt")) and parse_iso(i["createdAt"]) >= d7),
                           "closed_7d": len(closed7),
                           "bugs_closed_7d": sum(1 for i in closed7 if "bug" in label_names(i)),
-                          "open_now": sum(1 for i in it if str(i.get("state", "")).upper() == "OPEN"),
-                          "window_note": "newest 300 issues only"}
-        S.ok("issues", " ".join(ctx.gh_issues_cmd), ias)
+                          "open_now": None,
+                          "window_note": "opened/closed: newest 300 issues; open_now: every open issue (limit 1000)"}
+        oi, oerr, _oas = ctx.ds.get("open_issues", 120, ds_open_issues)
+        if oerr:
+            data["issues"]["open_now_error"] = oerr
+        else:
+            data["issues"]["open_now"] = sum(1 for i in oi if isinstance(i, dict) and str(i.get("state", "OPEN")).upper() == "OPEN")
+        S.ok("issues", " ".join(ctx.gh_issues_cmd) + " ; " + " ".join(ctx.gh_open_issues_cmd), ias)
     return S.finish(src, data)
 
 
@@ -1460,16 +1720,16 @@ def collect_health(ctx):
                       "note": "last 100 runs; green rate = success / (success + failure), cancelled excluded"}
         S.ok("ci", " ".join(ctx.gh_runs_cmd), ras)
 
-    issues, ierr, ias = ctx.ds.get("issues", 120, ds_issues)
+    issues, ierr, ias = ctx.ds.get("open_issues", 120, ds_open_issues)
     if ierr:
         data["p0"] = None
-        S.bad("p0", " ".join(ctx.gh_issues_cmd), ierr)
+        S.bad("p0", " ".join(ctx.gh_open_issues_cmd), ierr)
     else:
-        p0 = [i for i in issues if isinstance(i, dict) and str(i.get("state", "")).upper() == "OPEN"
+        p0 = [i for i in issues if isinstance(i, dict) and str(i.get("state", "OPEN")).upper() == "OPEN"
               and any(n in ("p0", "priority: p0", "priority/p0") for n in label_names(i))]
         data["p0"] = {"open_p0_issues": len(p0), "items": [{"number": i.get("number"), "title": str(i.get("title"))[:120]}
                                                            for i in p0[:10]]}
-        S.ok("p0", " ".join(ctx.gh_issues_cmd), ias)
+        S.ok("p0", " ".join(ctx.gh_open_issues_cmd), ias)
 
     btext, berr = read_text(ctx.board)
     if berr:
@@ -1487,9 +1747,9 @@ def collect_health(ctx):
                                                and re.search(r"\bP0\b", r["id"] + " " + r["notes"])),
                            "blocked_rows": [{"id": r["id"], "owner": r["owner"][:40], "age_min": age_min(ctx, r["since"]),
                                              "notes": r["notes"][:140]} for r in bl[:10]]}
-        S.ok("blocked", "read " + ctx.board)
+        board_source(S, ctx, "blocked")
 
-    g, gerr, gas = ctx.ds.get("governor", 55, ds_governor)
+    g, gerr, gas = ctx.ds.get("governor", GOVERNOR_TTL_S, ds_governor)
     pause_file = os.path.join(ctx.company_dir, "PAUSE")
     if gerr:
         data["usage"] = None
@@ -1609,6 +1869,103 @@ class Store:
         return {"generated_at": iso(self.ctx.now()), "repo_root": self.ctx.root, "panels": out}
 
 
+# ------------------------------------------------------------ live push
+SSE_MAX_CLIENTS = 8
+SSE_HEARTBEAT_S = 15
+
+
+def file_sig(path):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+class Watcher:
+    """One shared thread, alive only while an /api/stream client is connected.
+    Every interval it fingerprints the source files (mtime and size) and the
+    release and usage-cap state of the cached panels; a change invalidates the
+    affected panels and wakes every stream with the changed group names."""
+
+    def __init__(self, ctx, store, interval=None):
+        self.ctx, self.store = ctx, store
+        self.interval = float(interval or os.environ.get("COCKPIT_WATCH_INTERVAL_S") or 2)
+        self.cond = threading.Condition()
+        self.seq, self.changed, self.at = 0, [], None
+        self.clients, self.thread, self.sigs = 0, None, None
+
+    def groups(self):
+        c = self.ctx
+        seat = []
+        for d in sorted(glob.glob(os.path.join(c.company_dir, "*", ""))):
+            for f in ("last.json", "log.jsonl"):
+                seat.append((d + f, file_sig(d + f)))
+        for f in sorted(glob.glob(os.path.join(c.status_dir, "*.json"))):
+            seat.append((f, file_sig(f)))
+        return {"agents": tuple(seat), "board": file_sig(c.board), "queue": file_sig(c.queue),
+                "usage": file_sig(c.readings), "pause": file_sig(os.path.join(c.company_dir, "PAUSE")),
+                "releases": self.panel_sig("releases", ("latest", "next", "last_publish_minutes_ago")),
+                "usage_cap": self.panel_sig("health", ("usage_cap",))}
+
+    def panel_sig(self, name, keys):
+        self.store.kick(name)  # TTL-bounded: reruns only when the cached entry is older than the panel TTL
+        with self.store.lock:
+            e = self.store.entries.get(name)
+        if not e:
+            return None
+        d = e[1].get("data") or {}
+        return json.dumps([d.get(k) for k in keys], sort_keys=True, default=str)
+
+    PANELS_FOR = {"agents": ["agents", "roi"], "board": ["board", "work", "agents"], "queue": ["queue"],
+                  "usage": ["health", "roi"], "pause": ["health"], "releases": ["releases", "compare"],
+                  "usage_cap": []}
+
+    def step(self):
+        new = self.groups()
+        if self.sigs is None:
+            self.sigs = new
+            return []
+        diff = [k for k in new if new[k] != self.sigs.get(k)]
+        self.sigs = new
+        if diff:
+            for k in diff:
+                for p in self.PANELS_FOR.get(k, []):
+                    if k not in ("releases", "usage_cap"):
+                        self.store.invalidate(p)
+            with self.cond:
+                self.seq += 1
+                self.changed, self.at = diff, iso(self.ctx.now())
+                self.cond.notify_all()
+        return diff
+
+    def _loop(self):
+        while True:
+            with self.cond:
+                if self.clients <= 0:
+                    self.thread, self.sigs = None, None
+                    return
+            try:
+                self.step()
+            except Exception:
+                pass
+            time.sleep(self.interval)
+
+    def attach(self):
+        with self.cond:
+            if self.clients >= SSE_MAX_CLIENTS:
+                return False
+            self.clients += 1
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._loop, daemon=True)
+                self.thread.start()
+            return True
+
+    def detach(self):
+        with self.cond:
+            self.clients -= 1
+
+
 # --------------------------------------------------------- queue append
 def sanitize(s):
     s = re.sub(r"[\r\n\t]+", " ", s)
@@ -1676,10 +2033,16 @@ def append_queue(ctx, item, why):
 
 
 # ----------------------------------------------------------------- http
-def make_handler(ctx, store, token, port, index_html):
+THREE_CDN = "https://cdn.jsdelivr.net"
+
+
+def make_handler(ctx, store, token, port, index_html, watcher=None):
     hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
     origins = {"http://" + h for h in hosts}
-    csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    # The one external origin: the pinned three.js module for the seat avatars (SPEC.md section 3).
+    csp = ("default-src 'self'; script-src 'self' 'unsafe-inline' %s; style-src 'self' 'unsafe-inline'; "
+           "img-src 'self' data:; connect-src 'self'" % THREE_CDN)
+    watcher = watcher or Watcher(ctx, store)
 
     class H(BaseHTTPRequestHandler):
         server_version = "cockpit"
@@ -1722,16 +2085,63 @@ def make_handler(ctx, store, token, port, index_html):
                 if name not in COLLECTORS:
                     return self.send(404, {"error": "unknown panel"})
                 return self.send(200, store.get(name, ctx.first_wait))
+            if path.startswith("/api/member/"):
+                slug = path[len("/api/member/"):]
+                if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", slug):
+                    return self.send(404, {"error": "unknown member"})
+                res = collect_member(ctx, slug, store.get("roi", ctx.first_wait))
+                if res is None:
+                    return self.send(404, {"error": "unknown member"})
+                return self.send(200, res)
+            if path == "/api/stream":
+                return self.stream()
             if path == "/api/queue":
                 return self.send(405, {"error": "method not allowed"})
             self.send(404, {"error": "not found"})
+
+        def stream(self):
+            if not watcher.attach():
+                return self.send(503, {"error": "too many live streams (max %d)" % SSE_MAX_CLIENTS})
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", csp)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                with watcher.cond:
+                    seen = watcher.seq
+                hello = {"at": iso(ctx.now()), "interval_s": watcher.interval}
+                self.wfile.write(("retry: 3000\nevent: hello\ndata: %s\n\n" % json.dumps(hello)).encode())
+                self.wfile.flush()
+                last_beat = time.time()
+                while True:
+                    with watcher.cond:
+                        watcher.cond.wait(1.0)
+                        seq, changed, at = watcher.seq, list(watcher.changed), watcher.at
+                    if seq != seen:
+                        seen = seq
+                        msg = json.dumps({"changed": changed, "at": at, "seq": seq})
+                        self.wfile.write(("event: change\ndata: %s\n\n" % msg).encode())
+                        self.wfile.flush()
+                    elif time.time() - last_beat >= SSE_HEARTBEAT_S:
+                        self.wfile.write((": beat %s\n\n" % iso(ctx.now())).encode())
+                        self.wfile.flush()
+                        last_beat = time.time()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                watcher.detach()
 
         def do_POST(self):
             if not self.host_ok():
                 return
             path = self.path.split("?", 1)[0]
             if path != "/api/queue":
-                known = path in ("/", "/healthz", "/api/snapshot") or path.startswith("/api/panel/")
+                known = path in ("/", "/healthz", "/api/snapshot", "/api/stream") or \
+                    path.startswith(("/api/panel/", "/api/member/"))
                 return self.send(405 if known else 404, {"error": "method not allowed" if known else "not found"})
             tok = self.headers.get("X-Cockpit-Token") or ""
             if not secrets.compare_digest(tok, token) or self.headers.get("Origin") not in origins:
@@ -1784,7 +2194,16 @@ def serve(ctx, host, port):
     # Bind first: the handler's Host allow-list needs the real port.
     httpd = srv_cls((host, port), BaseHTTPRequestHandler, bind_and_activate=False)
     httpd.daemon_threads = True
-    httpd.server_bind()
+    try:
+        httpd.server_bind()
+    except OSError as ex:
+        httpd.server_close()
+        if ex.errno == errno.EADDRINUSE:
+            # A second launch (launchd restart, a manual run) must not crash-loop: report and exit 0.
+            print("cockpit: port %d on %s is already in use; another cockpit or listener holds it, "
+                  "not starting a second server (check http://%s:%d/healthz)" % (port, host, host, port), flush=True)
+            return 0
+        raise
     real_port = httpd.server_address[1]
     httpd.RequestHandlerClass = make_handler(ctx, store, token, real_port, index_html)
     httpd.server_activate()

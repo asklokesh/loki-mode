@@ -911,11 +911,14 @@ class TestCompanySeats(unittest.TestCase):
         import plistlib
         d = plistlib.load(open(path, "rb"))
         self.assertEqual(d["Label"], "dev.autonomi.loki-cockpit")
+        script_server = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(tsc.__file__)), "..", "tools", "cockpit", "server.py"))
         self.assertEqual(d["ProgramArguments"], [
-            "/usr/bin/python3", os.path.join(self.root, "tools", "cockpit", "server.py"),
-            "--port", "8787", "--repo-root", self.root])
+            "/usr/bin/python3", script_server, "--port", "8787", "--repo-root", self.root])
+        self.assertTrue(os.path.isfile(script_server))
         self.assertTrue(d["RunAtLoad"])
-        self.assertTrue(d["KeepAlive"])
+        # Restart on crash only; an exit 0 (port already served) must not respawn.
+        self.assertEqual(d["KeepAlive"], {"SuccessfulExit": False})
         self.assertEqual(d["WorkingDirectory"], self.root)
         self.assertEqual(d["StandardOutPath"], os.path.join(home, ".loki", "logs", "cockpit.out.log"))
         self.assertEqual(d["StandardErrorPath"], os.path.join(home, ".loki", "logs", "cockpit.err.log"))
@@ -930,7 +933,123 @@ class TestCompanySeats(unittest.TestCase):
     def test_cockpit_systemd_unit_text(self):
         unit = tsc.cockpit_systemd_unit(self.root, "/usr/bin/python3")
         self.assertIn("tools/cockpit/server.py --port 8787 --repo-root " + self.root, unit)
-        self.assertIn("Restart=always", unit)
+        self.assertIn("Restart=on-failure", unit)
+        self.assertNotIn("Restart=always", unit)
+
+    def test_cockpit_server_path_from_script_location_not_cwd(self):
+        old = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            p = tsc.cockpit_server_path()
+        finally:
+            os.chdir(old)
+        want = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(tsc.__file__)), "..", "tools", "cockpit", "server.py"))
+        self.assertEqual(p, want)
+        self.assertFalse(p.startswith(self.tmp))
+        self.assertEqual(tsc.cockpit_argv(self.root, "py")[1], want)
+
+    def test_install_skips_cockpit_when_server_missing(self):
+        home = os.path.join(self.tmp, "home-skip")
+        os.makedirs(home)
+        missing = os.path.join(self.tmp, "no", "server.py")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        old = os.getcwd()
+        os.chdir(self.root)
+        try:
+            with patch.object(tsc, "cockpit_server_path", return_value=missing), \
+                    patch.dict(os.environ, {"HOME": home}), \
+                    patch.object(tsc.os.path, "expanduser", return_value=home), \
+                    patch.object(tsc.sys, "platform", "darwin"), redirect_stdout(buf):
+                rc = tsc.install_company(no_load=True)
+        finally:
+            os.chdir(old)
+        self.assertEqual(rc, 0)
+        self.assertIn("Skipped cockpit: %s not found" % missing, buf.getvalue())
+        self.assertFalse(os.path.exists(tsc.launchagent_path(home, tsc.COCKPIT_LABEL)))
+        self.assertTrue(os.path.exists(tsc.launchagent_path(home)))
+
+    def _serve(self, handler_body, status=200):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                b = handler_body.encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1]
+
+    def test_probe_cockpit_port_free(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        self.assertEqual(tsc.probe_cockpit_port(port)[0], "free")
+
+    def test_probe_cockpit_port_cockpit(self):
+        port = self._serve('{"ok": true, "pid": 4242}')
+        self.assertEqual(tsc.probe_cockpit_port(port), ("cockpit", "healthz pid 4242"))
+
+    def test_probe_cockpit_port_foreign(self):
+        self.assertEqual(tsc.probe_cockpit_port(self._serve("<html>hi</html>"))[0], "foreign")
+        self.assertEqual(tsc.probe_cockpit_port(self._serve('{"ok": true}'))[0], "foreign")
+        self.assertEqual(tsc.probe_cockpit_port(self._serve('{"ok": true, "pid": 1}', 500))[0], "foreign")
+
+    def test_cockpit_load_decision(self):
+        self.assertEqual(tsc.cockpit_load_decision(("free", "x")), (True, "", 0))
+        load, msg, rc = tsc.cockpit_load_decision(("cockpit", "healthz pid 33680"))
+        self.assertEqual((load, rc), (False, 0))
+        self.assertEqual(msg, "Cockpit port 8787 already served by a cockpit (healthz pid 33680); "
+                              "not loading dev.autonomi.loki-cockpit")
+        self.assertNotIn("Loaded", msg)
+        load, msg, rc = tsc.cockpit_load_decision(("foreign", "healthz probe failed"))
+        self.assertEqual((load, rc), (False, 1))
+        self.assertTrue(msg.startswith("Port 8787 is in use by a non-cockpit listener"))
+        self.assertIn("not loading dev.autonomi.loki-cockpit", msg)
+
+    def test_install_does_not_bootstrap_cockpit_when_port_served(self):
+        home = os.path.join(self.tmp, "home-busy")
+        os.makedirs(home)
+        calls = []
+
+        def fake_launchctl(*args):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        old = os.getcwd()
+        os.chdir(self.root)
+        try:
+            with patch.object(tsc, "_launchctl", side_effect=fake_launchctl), \
+                    patch.object(tsc, "wait_cockpit_port", return_value=("cockpit", "healthz pid 33680")), \
+                    patch.object(tsc.os.path, "expanduser", return_value=home), \
+                    patch.object(tsc.sys, "platform", "darwin"), redirect_stdout(buf):
+                rc = tsc.install_company(no_load=False)
+        finally:
+            os.chdir(old)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("already served by a cockpit (healthz pid 33680)", out)
+        self.assertNotIn("Loaded %s" % tsc.COCKPIT_LABEL, out)
+        self.assertIn("Loaded %s" % tsc.LAUNCHAGENT_LABEL, out)
+        boots = [c for c in calls if c[0] == "bootstrap"]
+        self.assertEqual(len(boots), 1)
+        self.assertNotIn("cockpit", boots[0][2])
 
     def test_systemd_unit_text(self):
         unit = tsc.systemd_unit(self.root, "/usr/local/bin/loki")
