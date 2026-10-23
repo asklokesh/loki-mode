@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.56.3 (2026-10-23)
+
+### Fixed
+- The release workflow converges npm dist-tags again once the new version resolves on the registry, so a late-materializing earlier publish can no longer leave latest or next behind.
+
 ## v11.56.2 (2026-10-23)
 
 ### Fixed
