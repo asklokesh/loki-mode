@@ -566,7 +566,7 @@ case_airgap_effective_provider() {
 # The telemetry row must report the real send gate, in both directions.
 case_airgap_telemetry_state() {
     command -v curl >/dev/null 2>&1 || { nok "prerequisite missing: curl (telemetry cannot be enabled without it)"; return; }
-    local route out tel="http://127.0.0.1:9"
+    local route out tel="http://127.0.0.1:9" tel_host="127.0.0.1"
     # Clear every opt-out and auto-off signal (empty values fail their tests);
     # the endpoint is a dead loopback port, so an emit goes nowhere.
     local on="LOKI_TELEMETRY_ENDPOINT=$tel LOKI_TTY_INTERACTIVE=1 LOKI_TELEMETRY_DISABLED= DO_NOT_TRACK= CI= GITHUB_ACTIONS= GITLAB_CI= BUILDKITE= JENKINS_URL= TEAMCITY_VERSION= CONTINUOUS_INTEGRATION= LOKI_ENTERPRISE= LOKI_AIRGAP="
@@ -576,8 +576,8 @@ case_airgap_telemetry_state() {
         airgap "$route" "$out" $on
         [ "$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["enabled"]')" = "True" ] \
             || nok "$route: telemetry enabled by default on an interactive host, audit JSON says enabled=$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["enabled"]')"
-        [ "$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["host"]')" = "$tel" ] \
-            || nok "$route: telemetry host is '$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["host"]')', not the configured $tel"
+        [ "$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["host"]')" = "$tel_host" ] \
+            || nok "$route: telemetry host is '$(ag_field "$out" '[e for e in d["egress"] if e["name"] == "telemetry"][0]["host"]')', not the configured endpoint host $tel_host (the audit names a host, never scheme or port)"
         grep -q 'telemetry.*\[on\]' "$out.txt" || nok "$route: text audit does not show telemetry [on]"
         out="$MOAT_TMP/ag-tel-$route-dnt"
         # shellcheck disable=SC2086
