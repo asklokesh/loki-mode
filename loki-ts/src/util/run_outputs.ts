@@ -122,8 +122,15 @@ export function cwReceiptBlocks(runDir: string, env: NodeJS.ProcessEnv = process
   const unproven = (b.spec_trace?.clauses ?? []).filter((c) => c.status === "unproven");
   for (const c of unproven) notProven.push(`spec clause ${clauseAt(c)} is unproven`);
   let ceiling: "FAILED" | "PARTIAL" | null = null;
-  if (env["LOKI_SPEC_STRICT"] === "1" && unproven.length > 0) ceiling = "PARTIAL";
-  if (env["LOKI_OS_SANDBOX"] === "on" && b.confinement?.kind === "none") { ceiling = "FAILED"; notProven.push("confinement.kind is none under LOKI_OS_SANDBOX=on, which cannot happen when the sandbox is enforced; sealing fails closed"); }
+  // Fail closed: under a strict switch a missing or corrupt file is never a way out of the cap.
+  if (env["LOKI_SPEC_STRICT"] === "1") {
+    if (!b.spec_trace) { ceiling = "PARTIAL"; notProven.push("LOKI_SPEC_STRICT=1 but spec-trace.json is absent or malformed; no clause is proven"); }
+    else if (unproven.length > 0) ceiling = "PARTIAL";
+  }
+  if ((env["LOKI_OS_SANDBOX"] ?? "").trim().toLowerCase() === "on") {
+    const kind = b.confinement?.kind.trim().toLowerCase();
+    if (kind === undefined || kind === "none") { ceiling = "FAILED"; notProven.push(kind === undefined ? "LOKI_OS_SANDBOX=on but confinement.json is absent or malformed; confinement is unproven, sealing fails closed" : "confinement.kind is none under LOKI_OS_SANDBOX=on, which cannot happen when the sandbox is enforced; sealing fails closed"); }
+  }
   return { blocks: b, notProven, ceiling };
 }
 /** receipt.md lines for the CW-04 blocks: a confinement line and a spec clause table. A judged clause is labelled judged, never proof. */

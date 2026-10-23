@@ -2076,6 +2076,26 @@ describe("CW-04 receipt blocks", () => {
     expect(r.not_proven.some((l) => l.includes("confinement.kind is none"))).toBe(true);
     expect((await sealWith("cw-seatbelt-on", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
   });
+  test("fail closed: LOKI_OS_SANDBOX=on with confinement.json absent or malformed seals FAILED; On/ON and None are normalized", async () => {
+    process.env["LOKI_OS_SANDBOX"] = "on";
+    const absent = await sealWith("cw-sbx-absent", {});
+    expect(absent.s.data.verdict).toBe("FAILED");
+    expect(absent.r.not_proven.some((l) => l.includes("confinement.json is absent or malformed"))).toBe(true);
+    expect((await sealWith("cw-sbx-bad", { "confinement.json": "{nope" })).s.data.verdict).toBe("FAILED");
+    expect((await sealWith("cw-sbx-None", { "confinement.json": { ...CONF, kind: "None" } })).s.data.verdict).toBe("FAILED");
+    process.env["LOKI_OS_SANDBOX"] = "ON";
+    expect((await sealWith("cw-sbx-ON", { "confinement.json": { ...CONF, kind: "none" } })).s.data.verdict).toBe("FAILED");
+    expect((await sealWith("cw-sbx-ON-ok", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
+  });
+  test("fail closed: LOKI_SPEC_STRICT=1 with spec-trace.json absent or malformed caps at PARTIAL; unset it does not", async () => {
+    expect((await sealWith("cw-st-absent-off", {})).s.data.verdict).toBe("VERIFIED");
+    expect((await sealWith("cw-st-bad-off", { "spec-trace.json": "{nope" })).s.data.verdict).toBe("VERIFIED");
+    process.env["LOKI_SPEC_STRICT"] = "1";
+    const absent = await sealWith("cw-st-absent", {});
+    expect(absent.s.data.verdict).toBe("PARTIAL");
+    expect(absent.r.not_proven.some((l) => l.includes("spec-trace.json is absent or malformed"))).toBe(true);
+    expect((await sealWith("cw-st-bad", { "spec-trace.json": "{nope" })).s.data.verdict).toBe("PARTIAL");
+  });
   test("receipt.md shows the confinement line and the clause table", async () => {
     const { ctx } = await sealWith("cw-md", { "confinement.json": CONF, "spec-trace.json": TRACE });
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
