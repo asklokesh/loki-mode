@@ -1,6 +1,7 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { createWatchdog, stallKillS, stallThresholdS } from "../runner/watchdog.ts";
+import { sdkAuthCause } from "../runner/retry_class.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -282,9 +283,9 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           // The CLI invoker writes only to its iteration log, never stdout.
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);
-          const durationS = (Date.now() - start) / 1000;
+          const durationS = (Date.now() - start) / 1000, authCause = code === 0 ? null : sdkAuthCause(logText); // FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: the provider text rides the event so the Reason line can name it
           cfg.emit?.("session.ended", opts.stage, {
-            session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
+            session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), ...(authCause !== null ? { provider_error: authCause } : {}), duration_s: durationS, ...(killCause === "stalled" ? { reason: "stalled" } : {}),
           });
           const psid = readSessionId(opts.cwd ?? process.cwd(), opts.iterationId), ran = sessionEffortFor(opts).effort; if (psid && ran) sessionEffort.set(psid, ran); // ER-05: what the next resume of this session must keep
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
