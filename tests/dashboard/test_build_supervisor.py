@@ -340,6 +340,66 @@ class BuildSupervisorTests(unittest.TestCase):
         self.assertNotIn("LOKI_API_TOKEN", names)
         self.assertNotIn("UNRELATED_PARENT_VALUE", names)
 
+    def test_child_receives_a_forwarded_loki_setting_by_value(self):
+        runner = self._runner('env > "$LOKI_TARGET_DIR/child-env.txt"\nexit 0')
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LOKI_CLAUDE_TASK_BUDGET": "64000",
+                "LOKI_PR_BOT_TOKEN": "must-not-pass",
+                "LOKI_RECEIPT_SIGNING_KEY": "must-not-pass",
+            },
+            clear=False,
+        ):
+            self.assertEqual(self._run(runner), 0)
+        lines = (self.workspace / "child-env.txt").read_text(encoding="utf-8").splitlines()
+        self.assertIn("LOKI_CLAUDE_TASK_BUDGET=64000", lines)
+        child_names = {line.split("=", 1)[0] for line in lines}
+        self.assertNotIn("LOKI_PR_BOT_TOKEN", child_names)
+        self.assertNotIn("LOKI_RECEIPT_SIGNING_KEY", child_names)
+
+    @staticmethod
+    def _unlisted_loki_reads(src_root: Path) -> set[str]:
+        """LOKI_* names read under src_root that child-env.json does not list."""
+        import re
+
+        data = json.loads(supervisor._CHILD_ENV_DATA.read_text(encoding="utf-8"))
+        listed = set(data["forwarded"]) | set(data["not_forwarded"])
+        read_re = re.compile(r"\benv(?:\.|\[\s*[\"'])(LOKI_[A-Z0-9_]+)")
+        found: set[str] = set()
+        for path in src_root.rglob("*"):
+            if path.suffix in {".ts", ".tsx", ".js", ".mjs"} and path.is_file():
+                found |= set(read_re.findall(path.read_text(encoding="utf-8", errors="replace")))
+        return found - listed
+
+    def test_every_loki_env_read_in_the_runner_is_listed(self):
+        repo = Path(supervisor.__file__).resolve().parent.parent
+        self.assertEqual(
+            sorted(self._unlisted_loki_reads(repo / "loki-ts" / "src")),
+            [],
+            "list each in loki-ts/data/child-env.json as forwarded or not_forwarded",
+        )
+
+    def test_an_unlisted_loki_env_read_is_caught(self):
+        fixture = self.root / "src-fixture"
+        fixture.mkdir()
+        (fixture / "planted.ts").write_text(
+            'const x = process.env["LOKI_PLANTED_X"]; const y = process.env.LOKI_PLANTED_Y;\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            self._unlisted_loki_reads(fixture), {"LOKI_PLANTED_X", "LOKI_PLANTED_Y"}
+        )
+
+    def test_child_env_lists_are_disjoint_and_forward_no_secret_shaped_name(self):
+        data = json.loads(supervisor._CHILD_ENV_DATA.read_text(encoding="utf-8"))
+        forwarded, held = set(data["forwarded"]), set(data["not_forwarded"])
+        self.assertEqual(forwarded & held, set())
+        self.assertEqual(
+            [n for n in forwarded if any(k in n for k in ("TOKEN", "SECRET", "KEY", "PASSWORD", "CRED"))],
+            [],
+        )
+
     def test_child_environment_uses_supervised_build_local_state(self):
         with mock.patch.dict(
             os.environ, {"LOKI_SPEC_SHA256": "a" * 64}, clear=False
