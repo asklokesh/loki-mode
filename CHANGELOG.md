@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.63.0 (2026-10-23)
+
+
+
+### Added
+- loki runs lists every run across registered projects and reads each project's own .loki/runs, never LOKI_DIR (R100-008a, #362; FC-RUNS-ENV-LEAKS-ACROSS-PROJECTS). Approval: "ship pd/r100-008a 861656d44caa7d99f91b5eba57feb9258e46986d ea74b8fc9926b346d2b3ac8be4050d126e755901 (2 commits over origin/main 5746a4550, HIGH, rev-b)".
+
 ## v11.62.1 (2026-10-23)
 
 
