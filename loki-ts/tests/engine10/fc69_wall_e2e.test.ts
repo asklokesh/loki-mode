@@ -62,6 +62,8 @@ describe("RQ-64 verify --fast runs a real engine10-written .ts Wall file", () =>
     const { repo } = runWallColor({});
     const wall = join(repo, "loki_wall_multiply.test.ts");
     expect(existsSync(wall)).toBe(true);
+    // provenance: the Wall must be tracked and unchanged, and its sha256 is in the run's wall.sealed event (the engine may already have committed it)
+    if (Bun.spawnSync(["git", "status", "--porcelain", "--", "loki_wall_multiply.test.ts"], { cwd: repo }).stdout.toString().trim()) { git(repo, "add", "loki_wall_multiply.test.ts"); git(repo, "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "commit", "-q", "-m", "wall"); }
     writeFileSync(join(repo, "calc.ts"), readFileSync(join(repo, "calc.ts"), "utf8").replace(/export function multiply[\s\S]*?\n}\n/, ""));
     const red = fast(repo);
     expect({ v: red.verdict, w: red.wall }).toEqual({ v: "FAIL", w: 1 });
