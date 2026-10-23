@@ -84,6 +84,9 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
     return task;
   };
   const fb = (t: string, reason: string): RouteResult => { say(`loki: sequential (reason: ${reason})\n`); return { code: null, task: seq(t) }; };
+  // The real group runner launches units through backlog.py, which needs an owner/repo origin. An injected runner (tests) has no such need.
+  const NO_ORIGIN = "no origin remote of the form owner/repo, which group units need; running the task as one local run";
+  const lacksOrigin = async (): Promise<boolean> => deps.group === undefined && (await import("./run_group.ts")).originSlug(repoDir) === undefined;
   let spec = task, specPath: string | null = null, dag: Dag | undefined;
   let missions: ReturnType<typeof parseMilestones> = [];
   let mdags: Dag[] = [];
@@ -105,6 +108,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
   if (missions.length) {
     // Mission: milestone by milestone, in order. 1-unit groups and sequential providers are allowed here.
     const cap = providerSlots(env, deps.provider);
+    if (await lacksOrigin()) return fb(spec, NO_ORIGIN);
     try {
       const group = deps.group ?? (await import("./run_group.ts")).runGroup.bind(null, deps.backlog);
       for (let i = 0; i < missions.length; i++) {
@@ -125,6 +129,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
   if (!dag || dag.units.length < 2) return fb(spec, `decomposer returned ${dag?.units.length ?? 0} unit`);
   const cap = providerSlots(env, deps.provider);
   if (cap.slots < 2) return fb(spec, `provider ${cap.provider} runs units sequentially`);
+  if (await lacksOrigin()) return fb(spec, NO_ORIGIN);
   try {
     const group = deps.group ?? (await import("./run_group.ts")).runGroup.bind(null, deps.backlog);
     return { code: await group(dag, { task, repoDir, env, provider: cap.provider, spec, specPath, seal: deps.seal, say }), task: spec };
