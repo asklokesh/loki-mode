@@ -356,3 +356,8 @@ test("deriveFlows: an imperative at clause start and a user-subject verb are sti
   expect(r.flows[0]!.steps.map((s) => s.action)).toEqual(["click", "type"]);
   expect(r.notProven.map((n) => n.split(":")[0])).toEqual(["AC-3"]);
 });
+test("deriveFlows: a flow that would skip a stated action stands for nothing; the criterion is NOT PROVEN naming the step", () => {
+  const r = deriveFlows([AC(1, 'Type "bob" and click "Submit"'), AC(2, 'The user types "bob" then clicks "Submit"')]);
+  expect(r.flows).toEqual([]);
+  expect(r.notProven).toEqual(['AC-1: step "type" states no target, flow not derived', 'AC-2: step "type" states no target, flow not derived']);
+});

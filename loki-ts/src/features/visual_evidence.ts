@@ -122,7 +122,7 @@ async function recordE2eMedia(repoDir: string, runDir: string, relDir: string, b
 }
 
 export type FlowAction = "click" | "type" | "submit" | "open" | "select";
-export interface FlowStep { action: FlowAction; target: string | null; value?: string } // words from the criterion only; no selector is ever invented
+export interface FlowStep { action: FlowAction; target: string; value?: string } // words from the criterion only; no selector is ever invented
 export interface SpecFlow { id: string; line: number; steps: FlowStep[] }
 const FLOW_VERB = /\b(click|press|tap|type|enter|fill|submit|select|choose|open|visit)(?:s|es|ed)?\b/gi;
 const FLOW_ACTION: Record<string, FlowAction> = { click: "click", press: "click", tap: "click", type: "type", enter: "type", fill: "type", submit: "submit", select: "select", choose: "select", open: "open", visit: "open" };
@@ -144,15 +144,17 @@ export function deriveFlows(criteria: readonly Criterion[]): { flows: SpecFlow[]
       const chained = hits.length > 0 && FLOW_CHAIN.test(before);
       if (chained || (FLOW_CLAUSE_START.test(before) && FLOW_OBJECT_START.test(c.text.slice(m.index! + m[0].length))) || FLOW_USER_SUBJECT.test(before)) hits.push(m);
     }
-    const steps: FlowStep[] = hits.map((m, i) => {
+    const steps: (Omit<FlowStep, "target"> & { target: string | null })[] = hits.map((m, i) => {
       const rest = c.text.slice(m.index! + m[0].length, hits[i + 1]?.index ?? c.text.length).split(/\s+(?:and|then)\s*$/i)[0]!;
       const quoted = [...rest.matchAll(/"([^"]{1,120})"/g)].map((q) => q[1]!);
       const action = FLOW_ACTION[m[1]!.toLowerCase()]!;
       if (action === "type") { const into = /\b(?:in|into)\s+(.+)$/i.exec(rest.replace(/"[^"]*"/g, "")); return { action, target: into ? stated(into[1]!) : null, ...(quoted[0] ? { value: quoted[0].replace(HOME_PATH, "<path>") } : {}) }; }
       return { action, target: quoted[0] ? quoted[0].replace(HOME_PATH, "<path>") : stated(rest.replace(/\s+(?:and|then)\b.*$/i, "")) };
-    }).filter((st) => st.target !== null);
+    });
+    const bare = steps.find((st) => st.target === null);
     if (steps.length === 0) notProven.push(`${c.id}: no user action stated, flow not derived`);
-    else flows.push({ id: c.id, line: c.source_line, steps });
+    else if (bare) notProven.push(`${c.id}: step "${bare.action}" states no target, flow not derived`);
+    else flows.push({ id: c.id, line: c.source_line, steps: steps as FlowStep[] });
   }
   return { flows, notProven };
 }
