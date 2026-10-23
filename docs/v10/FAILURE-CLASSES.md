@@ -1951,3 +1951,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: run id form (unchanged), absolute path, a receipt copied elsewhere, a non-receipt .json (diff verifier).
 - Mechanism: an argument containing a path separator or ending in .json is a path whether or not the file exists.
 - Fixture: tests/test-verify-receipt-route.sh "a missing receipt at a run path is UNCHECKED rc 2 with the path as given" (red before, green after).
+
+## FC-L0-GUARD-RED-ON-MAIN
+- User-visible vs raw: raw (tests/engine10/l0_guard.test.ts red on main e4e5043ea, 2 of 3 tests failing; no user effect).
+- Law broken: Engine Law gate integrity. A guard that is red on main means merged slices bypassed it, so it no longer protects the generic-not-per-stack rule.
+- Cause (measured, git log -S): six new hits landed on 2026-10-23 in 6912e4a21 (failures.ts go test and cargo test, repo_profile.ts npm test comment), 8e5dc5028 (verify.ts pyproject.toml, requirements.txt) and e409e4b91 (util/shell.ts go test comment); 62f946e19 removed wall.ts jest and vitest without shrinking the allowlist. scripts/select-tests.sh --files-from on the 8e5dc5028 file list DOES select loki-ts/tests/engine10/l0_guard.test.ts (R8, measured), so the selector is not the gap; the slice gates that approved these commits did not run or did not heed the selected guard, and only the post-merge run showed it red. The guard itself was always correct.
+- Siblings swept: all six hits plus both stale rows, decided per hit: 3 comment-only hits reworded away (repo_profile.ts, util/shell.ts) or kept as output-parser rows (failures.ts go and cargo, same role as the listed jest, pytest, vitest rows); verify.ts manifests allowlisted with a reason (lint tool detection of the target repo as data); 2 stale wall.ts rows removed.
+- Mechanism: the allowlist stays reviewed one row at a time; no regeneration.
+- Fixture: tests/engine10/l0_guard.test.ts 3 pass; mutation: re-adding a removed probe makes "no unlisted manifest probe" red.

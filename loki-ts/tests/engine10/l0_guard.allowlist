@@ -8,6 +8,9 @@ src/e10ext/wall_hints.ts	vitest
 src/engine10/failures.ts	jest
 src/engine10/failures.ts	pytest
 src/engine10/failures.ts	vitest
+# FC-L0-GUARD-RED-ON-MAIN go and cargo ids: failures.ts parses the output of the repo own go and cargo test runs into failing ids (6912e4a21), the same output-parsing role as its listed jest, pytest and vitest rows; it never runs them. Goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
+src/engine10/failures.ts	cargo test
+src/engine10/failures.ts	go test
 src/engine10/modernize/inventory.ts	build.gradle
 src/engine10/modernize/inventory.ts	pom.xml
 src/engine10/modernize/inventory.ts	pyproject.toml
@@ -24,9 +27,10 @@ src/engine10/modernize/targets/python3.ts	pytest
 src/engine10/output.ts	pytest
 src/engine10/output.ts	vitest
 src/engine10/stages/verify.ts	pytest
-src/engine10/stages/wall.ts	jest
+# FC-L0-GUARD-RED-ON-MAIN projectDeclaresRuff (8e5dc5028) reads the TARGET repo Python tooling manifests as data to decide whether the project names ruff, so the section 4 Python lint check is skipped for a repo that never uses it; it never runs or installs anything. Goes away with Project Model sourcing of manifest knowledge (11.3.3 L4).
+src/engine10/stages/verify.ts	pyproject.toml
+src/engine10/stages/verify.ts	requirements.txt
 src/engine10/stages/wall.ts	pytest
-src/engine10/stages/wall.ts	vitest
 src/engine10/testmap.ts	Cargo.toml
 src/engine10/testmap.ts	cargo test
 src/engine10/testmap.ts	go test

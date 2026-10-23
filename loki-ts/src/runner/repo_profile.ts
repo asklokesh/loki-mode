@@ -509,7 +509,7 @@ function goIdTouched(repoDir: string, id: string, changed: string[]): boolean {
 }
 
 /** FC-CARGO-ID-CHANGED-CRATE: a cargo test id is a module path ("tests::adds") with no crate or file in it, so no changed-file guard can match it.
- *  A failing full-suite check is never excused when the diff touches Rust source or a Cargo manifest, whatever its command (make test and npm test wrap cargo), since the failing test may live in the edited crate. */
+ *  A failing full-suite check is never excused when the diff touches Rust source or a Cargo manifest, whatever its command (a make target or a package-manager script can wrap cargo), since the failing test may live in the edited crate. */
 function cargoTouched(changed: string[]): boolean {
   return changed.some((f) => /\.rs$|(?:^|\/)(?:Cargo\.(?:toml|lock)|build\.rs)$/.test(f));
 }
