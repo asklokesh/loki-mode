@@ -1,4 +1,4 @@
-// Loki Mode `stats` command -- TypeScript port of autonomy/loki cmd_stats (line 2285).
+// Loki Mode `stats` command -- TypeScript port of autonomy/loki cmd_stats().
 //
 // Aggregates session statistics from $LOKI_DIR/state, $LOKI_DIR/metrics, and
 // $LOKI_DIR/quality. Supports text (default) and JSON modes plus an

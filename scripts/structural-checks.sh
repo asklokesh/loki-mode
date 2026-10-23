@@ -213,7 +213,7 @@ typecheck() {
 # FC-RUNSH-LINE-CITE-DRIFT: loki-ts/src comments name run.sh by function or literal, never by line.
 runsh_line_cites() {
     local hits
-    hits="$(grep -rnE '(run\.sh|autonomy/loki|completion-council\.sh)[: (~]+[0-9]{3,}' loki-ts/src 2>/dev/null)" || return 0
+    hits="$(grep -rnE '(run\.sh|autonomy/loki|completion-council\.sh)([: (~]+[0-9]{3,}|[^;]{0,60}\((lines? )?[0-9]{3,}[,)])' loki-ts/src 2>/dev/null)" || return 0
     printf '%s\n' "$hits" | head -10
     return 1
 }

@@ -1,4 +1,4 @@
-// Port of autonomy/loki:cmd_memory (line 12943) -- subset for Phase 2:
+// Port of autonomy/loki cmd_memory() -- subset for Phase 2:
 // `list` / `ls` and `index` only. Other subcommands (show, consolidate,
 // timeline, etc.) defer to bash via execLegacyBash.
 import { existsSync, readFileSync } from "node:fs";
