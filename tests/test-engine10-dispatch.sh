@@ -17,7 +17,7 @@ mkdir -p "$T/root/bin" "$T/root/autonomy" "$T/fakebin" "$T/home" "$T/cwd"
 cp "$REPO/bin/loki" "$T/root/bin/loki"
 cp "$REPO/autonomy/telemetry.sh" "$T/root/autonomy/telemetry.sh"
 printf '#!/usr/bin/env bash\nprintf "BASH %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/root/autonomy/loki"
-printf '#!/usr/bin/env bash\nprintf "BUN %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/fakebin/bun"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = --config=/dev/null ] && shift 2\nprintf "BUN %%s\\n" "$*" >"%s/out"\n' "$T" >"$T/fakebin/bun"
 chmod +x "$T/root/autonomy/loki" "$T/fakebin/bun" "$T/root/bin/loki"
 ENTRY="$T/entry.ts"
 : >"$ENTRY"
@@ -206,7 +206,7 @@ fi
 #    stray third exec line anywhere else in the file. Anchored on the arms'
 #    own text, not line numbers, so edits elsewhere in the file don't rot it.
 BIN="$REPO/bin/loki"
-EXEC_PAT='exec "$_lb" "$BUN_CLI" engine10'
+EXEC_PAT='_loki_exec_bun "$_lb" engine10'
 # find_fi <start-line>: the depth-aware matching "fi" for the "if" at start-line.
 find_fi() {
     awk -v s="$1" '

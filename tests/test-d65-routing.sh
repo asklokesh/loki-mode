@@ -21,6 +21,7 @@ mkdir -p "$WORK/bin" "$WORK/home" "$ROOT/bin" "$ROOT/autonomy" "$ROOT/loki-ts/di
 cat > "$WORK/bin/bun" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in --version) echo "1.0.0"; exit 0 ;; esac
+[ "${1:-}" = --config=/dev/null ] && shift 2
 echo "ROUTE=BUN args=$*"
 exit 0
 STUB
