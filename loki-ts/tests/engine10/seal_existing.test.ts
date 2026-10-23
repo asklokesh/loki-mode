@@ -2,7 +2,7 @@
 // claude (no billed calls). The Wall is authored from the intent alone (information barrier, #208), the patch is applied
 // only afterwards, no implement or fix session ever runs, and the receipt verifies.
 import { afterAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -70,6 +70,20 @@ describe("CW-12 --seal-existing", () => {
     expect(JSON.stringify(s.receipt)).toMatch(/"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,}"/); // a signed JWT is on the receipt
     const prev = process.env.LOKI_RECEIPT_SIGNING_KEY_FILE; process.env.LOKI_RECEIPT_SIGNING_KEY_FILE = s.keyFile;
     try { expect((await verifyReceipt(s.receiptPath)).verdict).toBe("VERIFIED"); } finally { if (prev === undefined) delete process.env.LOKI_RECEIPT_SIGNING_KEY_FILE; else process.env.LOKI_RECEIPT_SIGNING_KEY_FILE = prev; }
+  }, 120_000);
+
+  test("B5: owner/repo#N with --seal-existing still fetches the issue (the else binds to the issue branch, not the patch check)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "loki-cw12-gh-")); temps.push(tmp);
+    const bin = join(tmp, "bin"), repo = join(tmp, "repo"), ghLog = join(tmp, "gh.log"), patch = join(tmp, "p.patch");
+    cpSync(join(FIX, "repo"), repo, { recursive: true }); mkdirSync(bin);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.name", "e2e"); git(repo, "config", "user.email", "e2e@example.invalid");
+    git(repo, "add", "calc.ts", "calc.test.ts", "bunfig.toml"); git(repo, "commit", "-q", "-m", "base");
+    writeFileSync(patch, ""); writeFileSync(join(bin, "gh"), '#!/bin/sh\necho "$@" >> "$E2E_GH_LOG"\necho "stub gh: no network" >&2\nexit 1\n'); chmodSync(join(bin, "gh"), 0o755);
+    const env: Record<string, string | undefined> = { ...process.env, LOKI_TS_ENTRY: ENTRY, LOKI_E10_INVOKER: "cli", LOKI_CLAUDE_CLI: join(FIX, "bin", "claude"), PATH: `${bin}:${join(FIX, "bin")}:${process.env.PATH ?? ""}`, E2E_GH_LOG: ghLog, E2E_STUB_MODE: "wallcolor", LOKI_NO_BROWSER: "1" };
+    for (const k of ["LOKI_LEGACY_BASH", "LOKI_E10_SEAL_EXISTING_PATCH"]) delete env[k];
+    const run = (...a: string[]) => { if (existsSync(ghLog)) rmSync(ghLog); Bun.spawnSync(["bash", BIN_LOKI, "acme/widgets#7", ...a], { cwd: repo, env, timeout: 60_000 }); return existsSync(ghLog) ? readFileSync(ghLog, "utf8").split("\n").filter(Boolean).length : 0; };
+    expect(run()).toBeGreaterThan(0); // control: the plain issue run fetches
+    expect(run("--seal-existing", patch)).toBeGreaterThan(0);
   }, 120_000);
 
   test("B2: the patch path reaches no session env (the Wall author's child env has it empty), while the diff is still applied", () => {

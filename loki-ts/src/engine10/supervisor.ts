@@ -311,7 +311,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
     for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
   }
-  env.LOKI_E10_MAX_COST_USD = String(cap.usd); const seed = cap.usd > 0 ? priorSpend(repoDir, task) : 0; if (seed > 0) env.LOKI_E10_SPENT_USD = String(seed); if (!isIssue) env.LOKI_E10_TASK_TEXT = task; if (sealPatch !== null) { if (!existsSync(sealPatch)) { process.stderr.write(`engine10: --seal-existing patch not found: ${sealPatch}\n`); return 2; } env.LOKI_E10_SEAL_EXISTING_PATCH = sealPatch; }
+  env.LOKI_E10_MAX_COST_USD = String(cap.usd); const seed = cap.usd > 0 ? priorSpend(repoDir, task) : 0; if (seed > 0) env.LOKI_E10_SPENT_USD = String(seed); if (sealPatch !== null) { if (!existsSync(sealPatch)) { process.stderr.write(`engine10: --seal-existing patch not found: ${sealPatch}\n`); return 2; } env.LOKI_E10_SEAL_EXISTING_PATCH = sealPatch; } if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { if (trackerRef) await fetchTrackerIssueToFile(trackerRef, join(runDir, "issue.json")); else fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
