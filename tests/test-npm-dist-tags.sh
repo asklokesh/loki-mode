@@ -17,25 +17,27 @@ mkdir -p "$WORK/bin"
 # a late write that sets latest to <ver> (the registry applying an older run's write late).
 cat > "$WORK/bin/npm" <<'STUB'
 #!/usr/bin/env bash
-ST="$STUB_STATE"
+ST="$STUB_STATE"; PKGN="${STUB_PKG:-loki-mode}"
 if [ "$1" = view ] && [ -n "${STUB_OUTAGE:-}" ]; then
     [ "$STUB_OUTAGE" = empty ] && exit 0
     echo "npm error code E503" >&2; exit 1
 fi
 case "$1 $2 $3" in
-    "view loki-mode versions")
+    "view $PKGN versions")
         printf '['; paste -sd, "$ST/versions" | sed 's/\([0-9.]*\)/"\1"/g'; printf ']\n' ;;
-    "view loki-mode dist-tags."*)
+    "view $PKGN dist-tags."*)
         tag="${3#dist-tags.}"
         # STUB_FRESH=<ver>: the first read of each tag returns the state file, every
         # later read returns <ver> (another run moved the tag in between).
         if [ -n "${STUB_FRESH:-}" ]; then
             n=$(( $(cat "$ST/reads.$tag" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$ST/reads.$tag"
+            # STUB_FRESH=EMPTY: later reads succeed with an empty answer.
+            if [ "$n" -gt 1 ] && [ "$STUB_FRESH" = EMPTY ]; then exit 0; fi
             [ "$n" -gt 1 ] && printf '%s\n' "$STUB_FRESH" > "$ST/$tag"
         fi
         cat "$ST/$tag" ;;
-    "dist-tag add loki-mode@"*)
-        spec="$3"; tag="$4"; ver="${spec#loki-mode@}"
+    "dist-tag add $PKGN@"*)
+        spec="$3"; tag="$4"; ver="${spec#"$PKGN"@}"
         echo "add $ver $tag" >> "$ST/log"
         printf '%s\n' "$ver" > "$ST/$tag"
         if [ "$tag" = latest ] && [ -n "${STUB_OVERTAKE:-}" ] && [ ! -e "$ST/overtook" ]; then
@@ -50,7 +52,7 @@ chmod +x "$WORK/bin/npm"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -77,6 +79,26 @@ run_case pre "11.54.0 11.55.0-rc.1" 11.54.0 11.54.0 11.54.0
 { [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \
     && ok "prereleases are ignored; settled tags are not rewritten" || bad "pre: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
 
+# The SDK package goes through the same script (LOKI_DISTTAG_PKG); the stub knows only that package.
+# The per-tag read inside the loop comes back empty while the first reads succeed:
+# nothing may be written (guards the empty-cur clause).
+STUB_FRESH=EMPTY run_case emptycur "11.54.1 11.54.2" 11.54.1 11.54.1 11.54.2
+{ [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.1 ]; } \
+    && ok "an empty in-loop tag read writes nothing" || bad "emptycur: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
+STUB_PKG=loki-mode-sdk run_case sdk-up "1.0.0 1.0.1" 1.0.0 1.0.0 1.0.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.1 ] && [ "$(cat "$CASE_ST/next")" = 1.0.1 ]; } \
+    && ok "sdk: highest version moves latest and next" || bad "sdk-up: rc=$CASE_RC $CASE_OUT"
+STUB_PKG=loki-mode-sdk run_case sdk-low "1.0.0 1.0.1" 1.0.1 1.0.1 1.0.0
+{ [ $CASE_RC -eq 0 ] && ! grep -q 'add 1.0.0' "$CASE_ST/log"; } \
+    && ok "sdk: a lower version never moves a tag backwards" || bad "sdk-low: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+STUB_PKG=loki-mode-sdk run_case sdk-over "1.0.0 1.0.1 1.0.2" 1.0.0 1.0.0 1.0.2 1.0.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.2 ]; } \
+    && ok "sdk: an overtaken latest is restored" || bad "sdk-over: rc=$CASE_RC $CASE_OUT"
+STUB_PKG=loki-mode-sdk STUB_OUTAGE=error run_case sdk-out "1.0.1" 1.0.1 1.0.1 1.0.0
+{ [ $CASE_RC -ne 0 ] && [ ! -s "$CASE_ST/log" ]; } \
+    && ok "sdk: view outage refuses with zero writes" || bad "sdk-out: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
 # FC-DIST-TAG-MOVED-BACKWARDS review: a registry view outage must fail closed, zero writes.
 for mode in error empty; do
     STUB_OUTAGE=$mode run_case "out-$mode" "11.54.0" 11.54.0 11.54.0 11.53.1
@@ -95,6 +117,12 @@ printf '%s\n' 11.54.1 > "$CASE_ST/next"
 second_out="$(PATH="$WORK/bin:$PATH" STUB_STATE="$CASE_ST" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" 11.54.1 2>&1)"; second_rc=$?
 { [ $first_rc -eq 0 ] && [ $second_rc -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.54.1 ] && [ "$(cat "$CASE_ST/next")" = 11.54.1 ]; } \
     && ok "latest dragged down after the first settle is restored by a second run" || bad "late: rc=$first_rc/$second_rc latest=$(cat "$CASE_ST/latest") $second_out"
+
+STUB_PKG=loki-mode-sdk run_case sdk-late "1.0.0 1.0.1 1.0.2" 1.0.1 1.0.1 1.0.2
+printf '%s\n' 1.0.1 > "$CASE_ST/latest"; printf '%s\n' 1.0.2 > "$CASE_ST/next"
+sdk_out="$(PATH="$WORK/bin:$PATH" STUB_STATE="$CASE_ST" STUB_PKG=loki-mode-sdk LOKI_DISTTAG_PKG=loki-mode-sdk LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" 1.0.2 2>&1)"; sdk_rc=$?
+{ [ $sdk_rc -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.2 ]; } \
+    && ok "sdk: latest dragged down after the first settle is restored by a second run" || bad "sdk-late: rc=$sdk_rc $sdk_out"
 
 run_case idem "11.54.0 11.54.1" 11.54.1 11.54.1 11.54.1
 { [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \

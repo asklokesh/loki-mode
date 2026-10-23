@@ -542,15 +542,9 @@ jobs:
             fi
             echo "loki-mode-sdk@${VERSION} already published"
           fi
-          CUR="$(npm view loki-mode-sdk dist-tags.latest --prefer-online 2>/dev/null || true)"
-          if [ -z "$CUR" ]; then
-            echo "::error::npm view returned no current latest for loki-mode-sdk; refusing to move latest (fail closed). ${VERSION} stays published under next."
-            exit 1
-          fi
-          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
-            npm dist-tag add "loki-mode-sdk@${VERSION}" latest
-            npm dist-tag add "loki-mode-sdk@${VERSION}" next
-          fi
+          # Same highest-version guard, fail-closed reads and overtaken-tag restore as
+          # loki-mode (FC-DIST-TAG-MOVED-BACKWARDS).
+          LOKI_DISTTAG_PKG=loki-mode-sdk bash ../../scripts/npm-dist-tags.sh "$VERSION"
 
   # Native per-arch build (no QEMU), pushed by digest; needs nothing, so it
   # starts at t=0. The docker job assembles the multi-arch manifest.
