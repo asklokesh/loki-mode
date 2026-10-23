@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.6 (2026-10-23)
+
+### Fixed
+- The help-drift guard reads plain-prose release notes, which clears the test-help-changelog-drift red that blocked several contributors. Approval: "tl-324 approval line: ship range origin/main..2dd3ec556c9b409e4567a7db64d135f6f23a7f09 (pd/p0-helpdrift-rc, 1 commit, MEDIUM, merge-tree rc 0)".
+
 ## v11.60.5 (2026-10-23)
 
 ### Fixed
