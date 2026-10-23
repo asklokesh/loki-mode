@@ -14,12 +14,15 @@ import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
 const TERMINAL = new Set(["stage.completed", "stage.failed", "stage.skipped"]);
+// `state` reports "running" for any phase of a live run; the finer work-item vocabulary stays in `phase`.
+const LIVE_PHASES = new Set<WorkItemState>(["received", "prepared", "planned", "executing", "validating", "ready_to_ship", "delivering", "observing"]);
 
 export interface ModernStatus {
   engine: "loki10";
   run_id: string | null;
   ref: string | null;
-  state: WorkItemState;
+  state: WorkItemState | "running";
+  phase: WorkItemState;
   work_item_id: string | null;
   blockers: string[];
   stage: string | null;
@@ -71,18 +74,20 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
   const pr = events.findLast((e) => e.type === "pr.opened")?.data.url ?? f.run.completed?.data.pr_url;
   const sealed = events.findLast((e) => e.type === "receipt.sealed")?.data.path;
   const receipt = join(root, runId, "receipt.json");
-  const state = workItemState(events, nowMs);
+  const phase = workItemState(events, nowMs);
+  const state = LIVE_PHASES.has(phase) ? "running" : phase;
   return {
     engine: "loki10",
     run_id: runId,
     ref: typeof issue === "string" && issue ? issue : null,
     state,
+    phase,
     work_item_id: workItemId(events),
     blockers: workItemBlockers(events),
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
     cost_usd: f.cost.usd,
-    outcome: state === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : state === "stalled" ? "stalled (no events for 30m+)" : "running"),
+    outcome: phase === "cancelled" ? "cancelled" : f.run.verdict ?? (done ? "completed" : phase === "stalled" ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
     last_event_ago_s: events.length && Number.isFinite(lastTs(events)) ? Math.max(0, Math.round((nowMs - lastTs(events)) / 1000)) : null,
     last_event_seq: events.length ? events[events.length - 1]!.seq : null,
@@ -107,7 +112,7 @@ export function pickRun(root: string, _nowMs: number): { id: string; events: Eve
 export function render(s: ModernStatus): string {
   const cost = s.cost_usd === null ? "cost not measured" : `$${s.cost_usd.toFixed(2)}`;
   const lines = [
-    `Loki 10 run ${s.run_id}: ${s.state}${s.outcome !== null && s.outcome !== s.state && /^[A-Z_]+$/.test(s.outcome) ? ` (${s.outcome})` : ""}${s.stage ? `, ${s.stage}` : ""}`,
+    `Loki 10 run ${s.run_id}: ${s.phase}${s.outcome !== null && s.outcome !== s.phase && /^[A-Z_]+$/.test(s.outcome) ? ` (${s.outcome})` : ""}${s.stage ? `, ${s.stage}` : ""}`,
     `  ${s.ref ?? "text task"}, ${formatDuration(s.elapsed_s ?? 0)} elapsed, ${cost}`,
     `  PR: ${s.pr_url ?? "none"}, receipt: ${s.receipt_path ?? "not sealed yet"}`,
   ];
@@ -149,8 +154,12 @@ export function followLine(e: EventEnvelope, usdSoFar: number | null): string {
   }
 }
 
+const FOLLOW_GRACE_MS = 2500;
+
 /** Streams a run's progress until run.completed. Resolves 0 on completion or on SIGINT (detach). */
-export function followRun(root: string, wanted: string | null, json: boolean, out: (s: string) => void = (s) => void process.stdout.write(s)): Promise<number> {
+export function followRun(root: string, wanted: string | null, json: boolean, out: (s: string) => void = (s) => void process.stdout.write(s), graceMs: number = FOLLOW_GRACE_MS): Promise<number> {
+  const startedAt = Date.now();
+  const existing = new Set(listRunIds(root));
   return new Promise((resolveDone) => {
     let stop: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -159,7 +168,13 @@ export function followRun(root: string, wanted: string | null, json: boolean, ou
     const onSigint = (): void => { if (!json) process.stderr.write("detached; the run keeps going\n"); finish(); };
     process.once("SIGINT", onSigint);
     const attach = (): void => {
-      const id = wanted ?? pickRun(root, Date.now())?.id ?? latestRunId(root);
+      let id = wanted;
+      if (id === null) {
+        const hit = pickRun(root, Date.now());
+        // A finished run that predates this follower may be the previous one: give a run that is starting now graceMs to write its first event before replaying it.
+        if (hit && existing.has(hit.id) && hit.events.some((e) => e.type === "run.completed") && Date.now() - startedAt < graceMs) { timer = setTimeout(attach, 100); return; }
+        id = hit?.id ?? latestRunId(root);
+      }
       if (id === null || !existsSync(eventsPath(root, id))) { timer = setTimeout(attach, 250); return; }
       stop = tail(eventsPath(root, id), (e) => {
         if (!FOLLOW_TYPES.has(e.type)) return;
@@ -210,7 +225,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   if (cp === null) cp = await probeConfiguredControl(env);
   if (!hit) {
     process.stdout.write(json
-      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, last_event_ago_s: null, last_event_seq: null, control_plane_run_url: null, hint: NO_RUN_HINT })}\n`
+      ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, state: null, phase: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, last_event_ago_s: null, last_event_seq: null, control_plane_run_url: null, hint: NO_RUN_HINT })}\n`
       : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }

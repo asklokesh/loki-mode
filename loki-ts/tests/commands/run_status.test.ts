@@ -1,8 +1,8 @@
 // CLI-MODERN-2: `loki status` shows Loki 10 runs and never the legacy box.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
 import { controlRunLink, issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
@@ -279,7 +279,9 @@ describe("work-item state (one vocabulary)", () => {
     writeRun("e10-20261003T000000Z-dddd", { done: true });
     expect(JSON.parse((await run(["--json"])).out).state).toBe("completed");
     writeRun("e10-20261003T000001Z-eeee", { done: false });
-    expect(JSON.parse((await run(["--json", "e10-20261003T000001Z-eeee"])).out).state).toBe("executing");
+    const live = JSON.parse((await run(["--json", "e10-20261003T000001Z-eeee"])).out);
+    expect(live.state).toBe("running");
+    expect(live.phase).toBe("executing");
   });
 });
 
@@ -469,7 +471,7 @@ describe("loki status --follow (R100-007)", () => {
   test("--json emits at least one stage event per stage (7 stages) and ends at run.completed", async () => {
     stageRun(mkLog(), true);
     const lines: string[] = [];
-    expect(await followRun(root(), null, true, (l) => void lines.push(l))).toBe(0);
+    expect(await followRun(root(), null, true, (l) => void lines.push(l), 0)).toBe(0);
     const evs = lines.map((l) => JSON.parse(l) as EventEnvelope);
     const stageEvents = evs.filter((e) => e.type.startsWith("stage."));
     expect(new Set(stageEvents.map((e) => e.stage))).toEqual(new Set(STAGES));
@@ -481,7 +483,7 @@ describe("loki status --follow (R100-007)", () => {
     const log = mkLog();
     stageRun(log, true);
     const lines: string[] = [];
-    await followRun(root(), null, true, (l) => void lines.push(l));
+    await followRun(root(), null, true, (l) => void lines.push(l), 0);
     const costs = lines.map((l) => JSON.parse(l) as EventEnvelope).filter((e) => e.type === "cost");
     expect(costs.length).toBe(7);
     for (const c of costs) expect(typeof c.data.usd_so_far).toBe("number");
@@ -515,9 +517,10 @@ describe("loki status --follow (R100-007)", () => {
     expect(await done).toBe(0);
     expect(lines.length).toBeGreaterThanOrEqual(2);
     const { out } = await run(["--json"]);
-    const st = JSON.parse(out) as { state: string; outcome: string };
+    const st = JSON.parse(out) as { state: string; phase: string; outcome: string };
     expect(st.outcome).toBe("running");
-    expect(st.state).toBe("executing");
+    expect(st.state).toBe("running");
+    expect(st.phase).toBe("executing");
     log.append("stage.completed", "implement", {}); // the run is still writable and the follower is gone
     expect(readEvents(join(root(), RUN, "events.jsonl")).length).toBe(3);
   });
@@ -525,14 +528,86 @@ describe("loki status --follow (R100-007)", () => {
   test("text mode is one line per event with a running cost total", async () => {
     stageRun(mkLog(), true);
     const lines: string[] = [];
-    await followRun(root(), null, false, (l) => void lines.push(l));
+    await followRun(root(), null, false, (l) => void lines.push(l), 0);
     expect(lines.some((l) => l.includes("stage.started implement"))).toBe(true);
     expect(lines.some((l) => l.includes("test pass t3"))).toBe(true);
     expect(followLine({ v: 1, seq: 0, ts: "2026-10-23T01:02:03Z", run: RUN, type: "cost", stage: "plan", data: { usd: 0.5 } }, 1.25)).toBe("01:02:03 cost $0.5000 (total $1.2500) plan");
+  });
+
+  // tl-2 repro: the newest existing run is finished; the new run's dir/events appear 500 ms after the follower starts.
+  test("a follower started before the new run exists shows the new run, not the finished older one", async () => {
+    const OLD = "e10-20261022T000000Z-aaaa", NEW = "e10-20261023T000000Z-bbbb";
+    const old = new EventLog(join(root(), OLD, "events.jsonl"), OLD);
+    old.append("run.started", null, {});
+    old.append("run.completed", null, { verdict: "VERIFIED" });
+    const lines: string[] = [];
+    const done = followRun(root(), null, true, (l) => void lines.push(l), 5000);
+    await Bun.sleep(500);
+    const fresh = new EventLog(join(root(), NEW, "events.jsonl"), NEW);
+    fresh.append("run.started", null, {});
+    fresh.append("stage.started", "plan", {});
+    fresh.append("run.completed", null, { verdict: "VERIFIED" });
+    expect(await done).toBe(0);
+    const runs = new Set(lines.map((l) => (JSON.parse(l) as EventEnvelope).run));
+    expect(runs).toEqual(new Set([NEW]));
+  });
+
+  // Mutant: with no grace window the follower attaches to the finished older run, which is the defect the grace window removes.
+  test("mutant: grace 0 attaches to the finished older run (proves the repro test bites)", async () => {
+    const OLD = "e10-20261022T000000Z-aaaa";
+    const old = new EventLog(join(root(), OLD, "events.jsonl"), OLD);
+    old.append("run.started", null, {});
+    old.append("run.completed", null, { verdict: "VERIFIED" });
+    const lines: string[] = [];
+    await followRun(root(), null, true, (l) => void lines.push(l), 0);
+    expect(new Set(lines.map((l) => (JSON.parse(l) as EventEnvelope).run))).toEqual(new Set([OLD]));
+  });
+
+  test("a passed run id is followed exactly, never replaced by a newer run", async () => {
+    const OLD = "e10-20261022T000000Z-aaaa", NEW = "e10-20261023T000000Z-bbbb";
+    for (const id of [OLD, NEW]) {
+      const l = new EventLog(join(root(), id, "events.jsonl"), id);
+      l.append("run.started", null, {});
+      l.append("run.completed", null, { verdict: "VERIFIED" });
+    }
+    const lines: string[] = [];
+    await followRun(root(), OLD, true, (l) => void lines.push(l));
+    expect(new Set(lines.map((l) => (JSON.parse(l) as EventEnvelope).run))).toEqual(new Set([OLD]));
   });
 
   test("--follow is an accepted flag and rejects a bad run id", async () => {
     const { code } = await run(["--follow", "../x"]);
     expect(code).toBe(2);
   });
+});
+
+// R100-007 AC2: the first followed event arrives within 2 s of `loki start`, timed from the start command (not from the follower), headless, stub provider.
+describe("loki status --follow first event from loki start (R100-007 AC2)", () => {
+  const BIN_LOKI = resolve(import.meta.dir, "../../../bin/loki");
+  const FIX = resolve(import.meta.dir, "../engine10/fixtures/e2e/repo");
+  test("first event within 2 s of spawning loki start with a stub claude", async () => {
+    const repo = join(dir, "repo");
+    cpSync(FIX, repo, { recursive: true });
+    const git = (...a: string[]): void => { const r = Bun.spawnSync(["git", ...a], { cwd: repo }); if (r.exitCode !== 0) throw new Error(r.stderr.toString()); };
+    git("init", "-q", "-b", "main"); git("config", "user.name", "t"); git("config", "user.email", "t@example.invalid");
+    git("add", "calc.ts", "calc.test.ts", "bunfig.toml"); git("commit", "-q", "-m", "base");
+    const bin = join(dir, "bin"); mkdirSync(bin);
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "--settings"; exit 0;; esac\nexit 0\n`, { mode: 0o755 });
+    const e: Record<string, string | undefined> = {
+      ...process.env, LOKI_TS_ENTRY: resolve(import.meta.dir, "../../src/cli.ts"), LOKI_E10_INVOKER: "cli", LOKI_CLAUDE_CLI: join(bin, "claude"),
+      PATH: `${bin}:${process.env.PATH ?? ""}`, LOKI_NO_BROWSER: "1", HOME: dir, LOKI_CONTROL: "0", LOKI_RECEIPT_SIGNING_KEY_FILE: join(dir, "k.pem"),
+    };
+    delete e.LOKI_LEGACY_BASH; delete e.LOKI_MODEL_OVERRIDE; delete e.LOKI_RECEIPT_SIGNING_KEY; delete e.LOKI_DIR;
+    const t0 = Date.now();
+    const child = Bun.spawn(["bash", BIN_LOKI, "start", "add a multiply(a, b) function to calc.ts", "--no-pr", "--json"], { cwd: repo, env: e, stdout: "ignore", stderr: "ignore" });
+    try {
+      let first = 0;
+      const done = followRun(join(repo, ".loki", "runs"), null, true, () => { if (first === 0) first = Date.now() - t0; });
+      const guard = setTimeout(() => process.emit("SIGINT"), 8000);
+      await done;
+      clearTimeout(guard);
+      expect(first).toBeGreaterThan(0);
+      expect(first).toBeLessThan(2000);
+    } finally { child.kill(); await child.exited; }
+  }, 30000);
 });
