@@ -350,7 +350,7 @@ test("deriveFlows: noun and adjective uses of a flow verb are not user actions (
   expect(r.flows).toEqual([]);
   expect(r.notProven.map((n) => n.split(":")[0])).toEqual(["AC-1", "AC-2", "AC-3", "AC-4"]);
 });
-test("deriveFlows: an imperative at clause start and a user-subject verb are still actions; a step with no target is dropped", () => {
+test("deriveFlows: an imperative at clause start and a user-subject verb are still actions; a criterion with an untargeted step is NOT PROVEN", () => {
   const r = deriveFlows([AC(1, 'Click "Save" and then type "x" in the title box'), AC(2, "Admins can open the settings page"), AC(3, "The user types")]);
   expect(r.flows.map((f) => f.id)).toEqual(["AC-1", "AC-2"]);
   expect(r.flows[0]!.steps.map((s) => s.action)).toEqual(["click", "type"]);
