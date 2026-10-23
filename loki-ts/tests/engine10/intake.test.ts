@@ -746,10 +746,10 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
 // FC-CRASH-WORK-READ-AS-PREEXISTING: a file a crashed run of the same task wrote is the run's change; a file untracked before that run began never is.
 describe("engine10 intake crash-written work", () => {
   const TASK = "do a thing";
-  const writePrior = (id: string, over: { task?: string; pre?: string[]; sealed?: boolean; startTs?: string; eventsAgeMs?: number } = {}): void => {
+  const writePrior = (id: string, over: { task?: string; pre?: string[]; crashWritten?: string[]; sealed?: boolean; startTs?: string; eventsAgeMs?: number } = {}): void => {
     mkdirSync(join(repoDir, ".loki", "runs", id), { recursive: true });
     const ev = (seq: number, type: string, stage: string | null, data: Record<string, unknown>, ts = over.startTs ?? new Date(Date.now() - 60000).toISOString()) => JSON.stringify({ v: 1, seq, ts, run: id, type, stage, data });
-    const lines = [ev(1, "run.started", null, {}), ev(2, "stage.completed", "intake", { task: over.task ?? TASK, preexisting_untracked: over.pre ?? [] })];
+    const lines = [ev(1, "run.started", null, {}), ev(2, "stage.completed", "intake", { task: over.task ?? TASK, preexisting_untracked: over.pre ?? [], ...(over.crashWritten ? { crash_written: over.crashWritten } : {}) })];
     if (over.sealed) lines.push(ev(3, "receipt.sealed", "seal", {}));
     writeFileSync(join(repoDir, ".loki", "runs", id, "events.jsonl"), lines.join("\n") + "\n");
     if (over.eventsAgeMs) { const t = new Date(Date.now() - over.eventsAgeMs); utimesSync(join(repoDir, ".loki", "runs", id, "events.jsonl"), t, t); }
@@ -777,6 +777,24 @@ describe("engine10 intake crash-written work", () => {
   test("a file older than the crashed run's start is not attributed", async () => {
     writeFileSync(join(repoDir, "old.js"), "x\n");
     writePrior("e10-crashed", { startTs: new Date(Date.now() + 3600000).toISOString() });
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("stacked crash (rev-a B1): run 2 attributed mul.js and crashed untouched; run 3 still reads it as crash work, not pre-existing", async () => {
+    writeFileSync(join(repoDir, "user-notes.txt"), "mine\n");
+    writeFileSync(join(repoDir, "mul.js"), "x\n"); const old = new Date(Date.now() - 3600000); utimesSync(join(repoDir, "mul.js"), old, old); // run 1 wrote it an hour ago, outside run 2's window
+    writePrior("e10-run2", { pre: ["user-notes.txt"], crashWritten: ["mul.js"] });
+    const d = await intake();
+    expect(d.crash_written).toEqual(["mul.js"]);
+    expect(d.preexisting_untracked as string[]).toEqual(["user-notes.txt"]);
+  });
+  test("stacked crash: a recorded crash_written file that is no longer untracked is not attributed", async () => {
+    writePrior("e10-run2", { crashWritten: ["gone.js", ".loki/x"] });
+    expect((await intake()).crash_written).toEqual([]);
+  });
+  test("an older same-task crash behind a newer unended run of another task attributes nothing (rev-a M7)", async () => {
+    writePrior("e10-older", { startTs: new Date(Date.now() - 30000).toISOString(), eventsAgeMs: 600000 });
+    writePrior("e10-other", { task: "another task" });
+    writeFileSync(join(repoDir, "mul.js"), "x\n");
     expect((await intake()).crash_written).toEqual([]);
   });
   test("a newer sealed same-task run ends the scan: a user file written after it is not crash work", async () => {

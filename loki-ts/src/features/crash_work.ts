@@ -9,7 +9,7 @@ import { runOwnerAlive } from "../util/run_pid.ts";
 const CRASH_SLACK_MS = 120_000;
 /** FC-CRASH-WORK-READ-AS-PREEXISTING: untracked files an earlier run of the SAME task wrote before it crashed. The latest unsealed, ownerless run whose intake
  *  settled and recorded its own pre-existing untracked set; a file untracked now, absent from that set and written between that run's first and last event (plus slack) is the crashed run's work. A newer same-task run that sealed, completed or is live ends the scan.
- *  A file that was untracked before the crashed run began is in its set, so it is never attributed. A prior intake's own crash_written list is not pre-existing for it. */
+ *  A file that was untracked before the crashed run began is in its set, so it is never attributed. A prior intake's own crash_written list is crash work too while still untracked (a stacked crash: run 2 attributed it, crashed before touching it, and run 3 must not read it as pre-existing). */
 export function crashWrittenFiles(repoDir: string, selfId: string, task: string): string[] {
   const root = join(repoDir, ".loki", "runs"); let ids: string[] = [];
   try { ids = readdirSync(root); } catch { return []; }
@@ -23,7 +23,9 @@ export function crashWrittenFiles(repoDir: string, selfId: string, task: string)
     if (!d || d["already_satisfied"] === true || typeof d["task"] !== "string" || d["task"].trim() !== task.trim() || !Array.isArray(d["preexisting_untracked"])) return []; // newest candidate only: an older run is no
     const prior = new Set(d["preexisting_untracked"] as string[]), startMs = Date.parse(ev[0]!.ts), endMs = Date.parse(ev[ev.length - 1]!.ts) + CRASH_SLACK_MS;
     if (!(startMs > 0) || !(endMs > 0)) return [];
-    return untrackedAtIntake(repoDir).filter((f) => !f.startsWith(".loki/") && !prior.has(f) && (() => { try { const m = lstatSync(join(repoDir, f)).mtimeMs; return m >= startMs && m <= endMs; } catch { return false; } })());
+    const now = untrackedAtIntake(repoDir), inWindow = (f: string): boolean => { try { const m = lstatSync(join(repoDir, f)).mtimeMs; return m >= startMs && m <= endMs; } catch { return false; } };
+    const own = Array.isArray(d["crash_written"]) ? (d["crash_written"] as unknown[]).filter((f): f is string => typeof f === "string") : []; // stacked crash: the candidate's own attributed files stay crash work even outside its window, while still untracked
+    return [...new Set([...now.filter((f) => !f.startsWith(".loki/") && !prior.has(f) && inWindow(f)), ...own.filter((f) => !f.startsWith(".loki/") && now.includes(f))])];
   }
   return [];
 }
