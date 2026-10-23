@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.57.0 (2026-10-23)
+
+### Added
+- One OS confinement module (Seatbelt moved out of build_supervisor, plus Linux bwrap) with secret paths read from one JSON file, off by default (LOKI_OS_SANDBOX=off). A symlink read to a non-secret file outside the workspace is not confined, and Linux bwrap is not proven in CI. Refs #334.
+
+## v11.56.5 (2026-10-23)
+
+### Fixed
+- loki start --resume now reaches the stage resume, and loki verify with a receipt path reaches the engine10 verifier. Refs #352.
+
+## v11.56.4 (2026-10-23)
+
+### Fixed
+- The claude provider refuses a thinking type the model catalog does not list for the model at any effort, and disabled thinking maps to between_tools for claude-sonnet-5-5, with the usage error derived from the catalog. Refs #314.
+
+## v11.56.3 (2026-10-23)
+
+### Fixed
+- The release workflow converges npm dist-tags again once the new version resolves on the registry, so a late-materializing earlier publish can no longer leave latest or next behind.
+
+## v11.56.2 (2026-10-23)
+
+### Fixed
+- npm dist-tags fail closed on any registry read error, never write below a tag read fresh-higher than the target, and the release runs a registry proof job, so latest can no longer move backwards.
+
+## v11.56.1 (2026-10-23)
+
+### Fixed
+- The voter_agents tests judge the --disallowedTools guard on every flag value and record that the claude CLI merges a repeated --disallowedTools flag, so they are green on main again.
+
+## v11.56.0 (2026-10-23)
+
+### Added
+- Per-provider MCP launch for codex, opencode and cline, with an opt-in project .mcp.json under LOKI_MCP_PROJECT=1. Codex MCP env values ride the process env, never argv. Refs #343.
+
+## v11.55.3 (2026-10-23)
+
+### Fixed
+- getStateManager is keyed on the resolved project root, the state manager test moved into loki-ts, and chokidar types are made local. Refs #312.
+
+## v11.55.2 (2026-10-23)
+
+### Fixed
+- Load-aware bun test timeouts (LOKI_TEST_TIMEOUT_SCALE cap 10, LOKI_TEST_TIMEOUT_MS floor); real hangs still time out.
+
+## v11.55.1 (2026-10-23)
+
+### Fixed
+- Group journal adoption binds a signed unit spec hash over id, items, acceptance, writeSet and base, so an edited unit spec is no longer adopted. Refs #283 #317.
+
 ## v11.55.0 (2026-10-23)
 
 ### Added

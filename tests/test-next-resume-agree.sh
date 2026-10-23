@@ -189,16 +189,16 @@ if command -v bun >/dev/null 2>&1; then
     dir="$WORK/start_resume"; mkdir -p "$dir"
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --resume delegates to engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --resume delegates to engine10 resume" ;;
         *) fail "start --resume did not reach engine10 resume: $out" ;;
     esac
     [ "$rc" -eq 0 ] && pass "start --resume exit 0 when resume succeeds" || fail "start --resume rc=$rc, expected 0"
     out="$(cd "$dir" && STUB_RC=4 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume e10-abc 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume e10-abc"*) pass "start --resume passes the run id through" ;;
+        *"STUB-ARGV:engine10 --resume e10-abc"*) pass "start --resume passes the run id through" ;;
         *) fail "start --resume dropped the run id: $out" ;;
     esac
-    [ "$rc" -eq 0 ] && pass "phase-reported (4) maps to exit 0, same as loki resume" || fail "rc=$rc, expected 0 for a reported phase"
+    [ "$rc" -eq 4 ] && pass "a run that cannot resume (4) exits 4, never 0" || fail "rc=$rc, expected 4: the resume was reported as success but resumed nothing"
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start "fix the login bug" --resume 2>&1)"; rc=$?
     [ "$rc" -eq 2 ] && pass "start <task> --resume is refused with exit 2" || fail "start <task> --resume rc=$rc, expected 2"
     case "$out" in
@@ -208,36 +208,36 @@ if command -v bun >/dev/null 2>&1; then
     case "$out" in *STUB-ARGV*) fail "task text reached the delegate" ;; *) pass "task text never reaches the delegate" ;; esac
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --provider claude --budget 5 --resume 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --provider claude --budget 5 --resume reaches engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --provider claude --budget 5 --resume reaches engine10 resume" ;;
         *) fail "value flags around --resume were refused: $out" ;;
     esac
-    case "$out" in *"STUB-ARGV:engine10 resume claude"*|*"resume 5"*) fail "a flag value leaked as a run id: $out" ;; *) pass "flag values are not passed as run ids" ;; esac
+    case "$out" in *"STUB-ARGV:engine10 --resume claude"*|*"--resume 5"*) fail "a flag value leaked as a run id: $out" ;; *) pass "flag values are not passed as run ids" ;; esac
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --provider claude e10-abc --budget 5 2>&1)"
     case "$out" in
-        *"STUB-ARGV:engine10 resume e10-abc"*) pass "run id kept when value flags surround it" ;;
+        *"STUB-ARGV:engine10 --resume e10-abc"*) pass "run id kept when value flags surround it" ;;
         *) fail "run id lost around value flags: $out" ;;
     esac
     # P12-07e: --brief consumes the next token, so its text is never a run id.
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --brief "build a todo app" 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --resume --brief TEXT reaches engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --resume --brief TEXT reaches engine10 resume" ;;
         *) fail "--brief text was misparsed as a run id: $out" ;;
     esac
     case "$out" in *"build a todo app"*"STUB-ARGV"*|*"STUB-ARGV"*"build a todo app"*) fail "--brief text leaked to the delegate: $out" ;; *) pass "--brief text never reaches the delegate" ;; esac
     # P12-07f: --mirofish takes an optional URL, --mirofish-docker a required image.
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish http://x 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish URL reaches engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --resume --mirofish URL reaches engine10 resume" ;;
         *) fail "--mirofish URL was misparsed as a run id: $out" ;;
     esac
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish --provider claude 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish before another flag reaches engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --resume --mirofish before another flag reaches engine10 resume" ;;
         *) fail "bare --mirofish broke the scan: $out" ;;
     esac
     out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish-docker img 2>&1)"; rc=$?
     case "$out" in
-        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish-docker IMG reaches engine10 resume" ;;
+        *"STUB-ARGV:engine10 --resume"*) pass "start --resume --mirofish-docker IMG reaches engine10 resume" ;;
         *) fail "--mirofish-docker image was misparsed as a run id: $out" ;;
     esac
     # P12-07k: the scan consumes only the value of an allowlisted valued flag, and an unknown flag (even a Bun-route-only one) exits 64 so its value is never read as a run id.
@@ -246,7 +246,7 @@ if command -v bun >/dev/null 2>&1; then
         # shellcheck disable=SC2086 # intentional split: "$pair" is flag plus value
         out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume $pair 2>&1)"
         case "$out" in
-            *"STUB-ARGV:engine10 resume"*) pass "start --resume $pair reaches engine10 resume" ;;
+            *"STUB-ARGV:engine10 --resume"*) pass "start --resume $pair reaches engine10 resume" ;;
             *) fail "'$pair' value was misparsed as a run id: $out" ;;
         esac
     done
@@ -258,13 +258,34 @@ if command -v bun >/dev/null 2>&1; then
     # The --workspace brief scan reads the same allowlist as the --resume scan.
     out="$(cd "$dir" && bash -c 'source <(sed -n "/^_loki_start_flag_kind()/,/^}/p" "$1"); for f in --provider --mirofish --resume --fast; do _loki_start_flag_kind "$f" || echo "MISSING $f"; done; for f in --model --max-cost --max-wait; do ! _loki_start_flag_kind "$f" || echo "UNEXPECTED $f"; done' _ "$LOKI_BIN" 2>&1)"
     [ -z "$out" ] && pass "shared allowlist knows start flags and rejects Bun-only ones" || fail "shared list gaps: $out"
-    # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
+    # start --resume passes the stage-resume code through; the reporter command `loki resume` still maps 5 to 1.
     out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
     mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
     out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"; rc_resume=$?
-    if [ "$rc_start" -eq 1 ] && [ "$rc_resume" -eq 1 ]; then pass "exit 5 maps to 1 in start --resume and resume"; else fail "exit 5 parity: start=$rc_start resume=$rc_resume, expected 1 and 1"; fi
+    if [ "$rc_start" -eq 5 ] && [ "$rc_resume" -eq 1 ]; then pass "exit 5 passes through start --resume and maps to 1 in resume"; else fail "exit 5: start=$rc_start resume=$rc_resume, expected 5 and 1"; fi
     out="$(cd "$dir" && STUB_RC=3 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
     [ "$rc" -eq 3 ] && pass "nothing to resume (3) is not turned into a new build" || fail "rc=$rc, expected 3"
+
+    # #352: the REAL entry, not a stub. A seeded interrupted run (settled intake, plan and wall; the cap already hit so no model is spawned) must
+    # reach the stage resume (resumeFlag), whose first line is "engine10: resume from stage", and exit 2 (refused: cap hit), never the reporter's 0.
+    real="$WORK/real_resume"; mkdir -p "$real/.loki/runs/e10-seeded"
+    git -C "$real" init -q . 2>/dev/null; git -C "$real" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base 2>/dev/null
+    git -C "$real" branch loki/e10-seeded 2>/dev/null
+    python3 - "$real/.loki/runs/e10-seeded/events.jsonl" <<'PY'
+import json, sys
+rows = [("run.started", None, {"provider": "claude", "model": ""}),
+        ("stage.completed", "intake", {"base_sha": "a" * 40, "source": "text", "task": "t"}),
+        ("stage.completed", "plan", {}), ("stage.completed", "wall", {}), ("cap.hit", None, {})]
+with open(sys.argv[1], "w") as f:
+    for i, (t, st, d) in enumerate(rows):
+        f.write(json.dumps({"v": 1, "seq": i, "ts": "2026-01-01T00:00:%02dZ" % i, "run": "e10-seeded", "type": t, "stage": st, "data": d}) + "\n")
+PY
+    out="$(cd "$real" && env -u LOKI_ENGINE -u LOKI_TS_ENTRY BUN_FROM_SOURCE=1 LOKI_LEGACY_BASH=1 LOKI_TELEMETRY_DISABLED=1 timeout -k 5 120 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
+    case "$out" in
+        *"engine10: resume from stage implement"*) pass "start --resume on a seeded interrupted run reaches the stage resume (resumeFlag)" ;;
+        *) fail "start --resume did not reach resumeFlag on a seeded interrupted run: $out" ;;
+    esac
+    [ "$rc" -eq 2 ] && pass "a refused stage resume exits non-zero (2), not 0" || fail "real route rc=$rc, expected 2: $out"
 else
     fail "bun unavailable: start --resume route was NOT measured (unmeasured, not clean)"
 fi

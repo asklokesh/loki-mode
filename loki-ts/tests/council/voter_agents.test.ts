@@ -362,6 +362,18 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     };
   }
 
+  // Every --disallowedTools value on the argv. The permission policy (#256) emits
+  // its own web and credential deny list ahead of the voter guard, so the flag
+  // can appear more than once; the guard is judged on the union, never on the
+  // first occurrence.
+  // Measured on claude 2.1.309: repeated --disallowedTools flags merge (both orders
+  // drop WebFetch and Edit from the init tool list; a single --disallowedTools Edit
+  // keeps WebFetch), so two flags on one argv lose no deny entry.
+  function denyValues(argv: string[]): string[] {
+    return argv.flatMap((a, i) => (a === "--disallowedTools" ? [argv[i + 1] ?? ""] : []));
+  }
+  const GUARD_ENTRIES = ["Edit", "Write", "NotebookEdit", "Bash(git reset:*)", "Bash(git push:*)"];
+
   it("passes --disallowedTools with a deny list (default on) when CLI supports it", async () => {
     _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
     const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
@@ -369,9 +381,11 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      const idx = cap.argv.indexOf("--disallowedTools");
-      expect(idx).toBeGreaterThanOrEqual(0);
-      const denyList = cap.argv[idx + 1] ?? "";
+      const values = denyValues(cap.argv);
+      expect(values.length).toBeGreaterThanOrEqual(1);
+      // The voter guard is its own flag value, separate from the policy deny list.
+      expect(values.some((v) => v.startsWith("Edit,Write,NotebookEdit"))).toBe(true);
+      const denyList = values.join(",");
       // Mutating tools denied.
       expect(denyList).toContain("Edit");
       expect(denyList).toContain("Write");
@@ -405,28 +419,33 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     }
   });
 
-  it("omits --disallowedTools when LOKI_REVIEW_TOOL_GUARD=0 (opt-out)", async () => {
+  it("omits the voter guard deny list when LOKI_REVIEW_TOOL_GUARD=0 (opt-out)", async () => {
     _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
     const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
     process.env["LOKI_REVIEW_TOOL_GUARD"] = "0";
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+      // The voter guard is absent; the policy web and credential deny list is
+      // not the guard's to remove, so it stays.
+      const denyList = denyValues(cap.argv).join(",");
+      for (const e of GUARD_ENTRIES) expect(denyList).not.toContain(e);
+      expect(denyList).toContain("Read(//**/.ssh/**)");
     } finally {
       if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
       else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
     }
   });
 
-  it("omits --disallowedTools when the CLI does not advertise it (graceful degrade)", async () => {
+  it("omits the voter guard deny list when the CLI does not advertise it (graceful degrade)", async () => {
     _resetClaudeHelpCacheForTest("  --agents\n  --json-schema");
     const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
     delete process.env["LOKI_REVIEW_TOOL_GUARD"];
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
-      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+      const denyList = denyValues(cap.argv).join(",");
+      for (const e of GUARD_ENTRIES) expect(denyList).not.toContain(e);
       // The voter still functions (agents + schema + prompt present).
       expect(cap.argv.includes("--agents")).toBe(true);
       expect(cap.argv[cap.argv.length - 2]).toBe("-p");

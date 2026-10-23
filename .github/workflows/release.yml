@@ -152,7 +152,9 @@ jobs:
       - name: Checkout (VERSION only)
         uses: actions/checkout@v4
         with:
-          sparse-checkout: VERSION
+          sparse-checkout: |
+            VERSION
+            scripts/npm-dist-tags.sh
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -190,19 +192,66 @@ jobs:
               echo "FATAL: npm publish failed and loki-mode@${VERSION} is not on the registry"; exit 1
             fi
           fi
-          CUR="$(npm view loki-mode dist-tags.latest --prefer-online 2>/dev/null || true)"
-          if [ -z "$CUR" ]; then
-            echo "::error::npm view returned no current latest for loki-mode; refusing to move latest (fail closed). ${VERSION} stays published under next."
-            exit 1
-          fi
-          if [ "$(printf '%s\n%s\n' "$CUR" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
-            npm dist-tag add "loki-mode@${VERSION}" latest
-            npm dist-tag add "loki-mode@${VERSION}" next
-          else
-            echo "SKIP dist-tags: ${VERSION} is lower than current latest ${CUR} (never backwards)"
-            exit 0
-          fi
+          # Highest-version guard, post-write re-read and overtaken-tag restore live in
+          # scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS).
+          bash scripts/npm-dist-tags.sh "$VERSION"
           echo "PUBLISHED loki-mode@${VERSION} latest+next" >> "$GITHUB_STEP_SUMMARY"
+
+  # FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF: "+ loki-mode@X" in the publish log is
+  # not proof; the registry served 11.50.0 about 11 minutes later. Own job with no
+  # concurrency group, so it never holds the release-npm lock, and nothing needs it,
+  # so docker, homebrew and release never wait on it. Red means the registry never
+  # served the version.
+  verify-npm-registry:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (VERSION and dist-tag script)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            VERSION
+            scripts/npm-dist-tags.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Prove the registry serves this version
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          for i in $(seq 1 90); do
+            got="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
+            if [ "$got" = "$VERSION" ]; then
+              echo "registry serves loki-mode@${VERSION} (poll $i)"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::registry never served loki-mode@${VERSION} within about 15 minutes"
+          exit 1
+
+      # The registry applies a publish 3 to 6 minutes after the client prints
+      # "+ loki-mode@X". A dist-tag write made inside publish-npm can be
+      # overtaken by an earlier version materializing late, leaving latest
+      # below the max (latest=11.54.1 next=11.54.2 at 04:41Z on 2026-10-23).
+      # Converge again now that this version is served. The script only ever
+      # moves tags to the max stable semver and never lower, so it is
+      # convergent and safe to run outside the release-npm lock.
+      - name: Converge dist-tags after the version resolves
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          bash scripts/npm-dist-tags.sh "$VERSION"
 
   # Tag and GitHub Release. Needs nothing, so it runs in parallel with npm.
   release:
