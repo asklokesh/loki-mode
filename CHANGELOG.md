@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The help-vs-changelog drift test now scans a 1000-section window by default, so a missing invocation can no longer hide below the old 5-section cap (FC-HELP-DRIFT-WINDOW-CAP). Approval: "tl-2 APPROVE pd/p0-helpdrift-empty-window 984a2d787 (LOW, P0)".
+## Unreleased
+
+### Changed
+- `loki verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` Python file), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files are counted as skipped, not run (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
 
 ## v11.60.9 (2026-10-23)
 
