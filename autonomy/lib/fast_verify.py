@@ -242,26 +242,36 @@ def _lokits_entries() -> list:
             if bun and os.path.exists(os.path.join(ts, rel))]
 
 
-def _sealed_wall_hashes(root: str) -> set:
-    """(basename, sha256) of every Wall file an engine10 run sealed: the `wall.sealed` event in
-    .loki/runs/*/events.jsonl (stages/wall.ts installCore). No second record format."""
-    out = set()
+def _sealed_wall_records(root: str) -> dict:
+    """{(basename, sha256): [(base_sha, head_sha), ...]} for every Wall file an engine10 run sealed: the `wall.sealed`
+    event in .loki/runs/*/events.jsonl (stages/wall.ts installCore). base_sha and head_sha come from the SAME
+    events.jsonl: the intake `stage.completed` (data.base_sha) and the commit `stage.completed` (data.head_sha); a
+    missing one is None. No second record format."""
+    out = {}
     for ev in Path(root, ".loki", "runs").glob("*/events.jsonl"):
+        base = head = None
+        sealed = []
         try:
             for line in ev.read_text(encoding="utf-8", errors="replace").splitlines():
-                if '"wall.sealed"' not in line:
+                if '"wall.sealed"' not in line and '"stage.completed"' not in line:
                     continue
                 try:
                     rec = json.loads(line)
                 except ValueError:
                     continue
-                if rec.get("type") != "wall.sealed":
-                    continue
-                for f in (rec.get("data") or {}).get("files") or []:
-                    if isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(f.get("sha256"), str):
-                        out.add((os.path.basename(f["path"]), f["sha256"]))
+                data = rec.get("data") or {}
+                if rec.get("type") == "wall.sealed":
+                    for f in data.get("files") or []:
+                        if isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(f.get("sha256"), str):
+                            sealed.append((os.path.basename(f["path"]), f["sha256"]))
+                elif rec.get("type") == "stage.completed" and rec.get("stage") == "intake" and isinstance(data.get("base_sha"), str):
+                    base = data["base_sha"]
+                elif rec.get("type") == "stage.completed" and rec.get("stage") == "commit" and isinstance(data.get("head_sha"), str):
+                    head = data["head_sha"]
         except OSError:
             continue
+        for key in sealed:
+            out.setdefault(key, []).append((base, head))
     return out
 
 
@@ -275,9 +285,8 @@ def _git_strict(args: list, cwd: str):
     return p.stdout if p.returncode == 0 else None
 
 
-def _changed_source_stems(root: str, diff_base: str):
-    """Module stems of the code files the change touches (Wall files excluded), or None when the diff cannot be
-    read. Only meaningful with a diff base; the empty set means the change touched no code a Wall could exercise."""
+def _changed_code_files(root: str, diff_base: str):
+    """Code files (Wall files excluded) in the verified diff, or None when the diff cannot be read."""
     if _git_strict(["rev-parse", "--verify", "--quiet", diff_base + "^{commit}"], root) is None:
         return None
     raw = _git_strict(["diff", "--name-only", diff_base + "...HEAD"], root)
@@ -285,37 +294,50 @@ def _changed_source_stems(root: str, diff_base: str):
         raw = _git_strict(["diff", "--name-only", diff_base], root)
     if raw is None:
         return None
-    return {Path(ln).stem for ln in raw.splitlines()
+    return {ln for ln in raw.splitlines()
             if ln and Path(ln).suffix in CODE_EXT and not Path(ln).name.startswith("loki_wall_")}
 
 
-def _wall_trusted(root: str, rel: str, diff_base: str, sealed: set, stems=None) -> bool:
-    """A Wall file may supply the behavioral signal only if an agent could not have just written it:
-    tracked, unchanged against diff_base (or HEAD) and HEAD, and its sha256 matches a recorded engine10 seal.
-    With a diff base it must also exercise the change: its text names a changed module (`stems`, from
-    _changed_source_stems; None means the diff was unreadable). Every git error fails closed.
-    A file failing these still runs and can FAIL a verdict, never earn a PASS. The seal is a local attestation
-    that anyone able to write .loki/ can forge, not proof."""
-    if _git_strict(["ls-files", "--error-unmatch", "--", rel], root) is None:
+def _run_covers(root: str, base, head, changed: set) -> bool:
+    """True when the run's own changed-file set (git diff base_sha head_sha) holds every file of the verified diff."""
+    if not base or not head:
         return False
+    raw = _git_strict(["diff", "--name-only", base, head], root)
+    return raw is not None and changed <= set(raw.splitlines())
+
+
+def _wall_trust(root: str, rel: str, diff_base: str, sealed: dict, changed=None) -> str:
+    """"" when a Wall file may supply the behavioral signal, else the reason it may not (a NOT PROVEN line).
+    An agent must not have just written it: tracked, unchanged against diff_base (or HEAD) and HEAD, and its
+    sha256 matches a recorded engine10 seal. With a diff base it must also be bound to the change: the sealing
+    run's own changed-file set (git diff of that run's base_sha and head_sha from the same events.jsonl) covers
+    every file of the verified diff, and the Wall text names one of them (`changed`, from _changed_code_files;
+    None means the diff was unreadable). Every git error fails closed. A file failing these still runs and can
+    FAIL a verdict, never earn a PASS. The seal is a local attestation, not proof."""
+    if _git_strict(["ls-files", "--error-unmatch", "--", rel], root) is None:
+        return "%s is not tracked" % rel
     for ref in {diff_base or "HEAD", "HEAD"}:
         out = _git_strict(["diff", "--name-only", ref, "--", rel], root)
         if out is None or out.strip():
-            return False
+            return "%s is changed against %s or its git state is unreadable" % (rel, ref)
     try:
         with open(os.path.join(root, rel), "rb") as fh:
             raw = fh.read()
     except OSError:
-        return False
-    if (os.path.basename(rel), hashlib.sha256(raw).hexdigest()) not in sealed:
-        return False
+        return "%s is unreadable" % rel
+    runs = sealed.get((os.path.basename(rel), hashlib.sha256(raw).hexdigest()))
+    if not runs:
+        return "%s has no matching wall.sealed event under .loki/runs/" % rel
     if diff_base:
-        if not stems:
-            return False
+        if not changed:
+            return "%s: the verified diff is unreadable or touches no code file a Wall could exercise" % rel
+        if not any(_run_covers(root, b, h, changed) for b, h in runs):
+            return ("%s: no run record lists changed files covering the diff (the sealing run's events.jsonl needs "
+                    "intake base_sha and commit head_sha whose diff holds every changed file)" % rel)
         text = raw.decode("utf-8", "replace")
-        if not any(re.search(r"\b%s\b" % re.escape(st), text) for st in stems):
-            return False
-    return True
+        if not any(re.search(r"\b%s\b" % re.escape(Path(c).stem), text) for c in changed):
+            return "%s names none of the changed modules" % rel
+    return ""
 
 
 def _run_wall_js(root: str, rels: list, budget_s: float) -> dict:
@@ -336,15 +358,16 @@ def _run_wall_js(root: str, rels: list, budget_s: float) -> dict:
 
 
 def _run_wall(root: str, diff_base: str = "") -> tuple:
-    """Returns (findings, ran, skipped, trusted). EXECUTES loki_wall_* files, which are repo code: .py under
+    """Returns (findings, ran, skipped, trusted, notes); notes are NOT PROVEN lines for passing Walls that earned no trust. EXECUTES loki_wall_* files, which are repo code: .py under
     pytest (no cache dir written), .ts/.js through the engine10 Wall runner. Any executed file can FAIL; only a
     trusted one (see _wall_trusted) counts toward `trusted`, the behavioral signal. WALL_TOTAL_BUDGET_S caps the
     whole stage; files left when it runs out are counted skipped."""
     findings, ran, skipped, trusted = [], 0, 0, 0
     deadline = time.monotonic() + WALL_TOTAL_BUDGET_S
     files = _wall_files(root)
-    sealed = _sealed_wall_hashes(root) if files else set()
-    stems = _changed_source_stems(root, diff_base) if diff_base and files else None
+    sealed = _sealed_wall_records(root) if files else {}
+    changed = _changed_code_files(root, diff_base) if diff_base and files else None
+    notes = []
     status = {}
     js = [r for r in files if not r.endswith(".py")]
     for rel in files:
@@ -377,9 +400,13 @@ def _run_wall(root: str, diff_base: str = "") -> tuple:
             skipped += 1
             continue
         ran += 1
-        if status[rel] == "pass" and _wall_trusted(root, rel, diff_base, sealed, stems):
-            trusted += 1
-    return findings, ran, skipped, trusted
+        if status[rel] == "pass":
+            why = _wall_trust(root, rel, diff_base, sealed, changed)
+            if why:
+                notes.append("NOT PROVEN: " + why)
+            else:
+                trusted += 1
+    return findings, ran, skipped, trusted, notes
 
 
 # --- Discovery: one pass, from the git index ---------------------------------
@@ -644,7 +671,7 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
     if cache is not None:
         cache.save()
 
-    wall_findings, wall_ran, wall_skipped, wall_trusted = _run_wall(root, diff_base)
+    wall_findings, wall_ran, wall_skipped, wall_trusted, wall_notes = _run_wall(root, diff_base)
     findings.extend(wall_findings)
     behavioral = wall_trusted > 0
     blocking = [f for f in findings if f.severity == "high"]
@@ -656,7 +683,7 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
         verdict = "INCONCLUSIVE"
     signals = {"rules": [r.__name__.replace("_rule_", "", 1) for r in RULES], "tests_run": 0,
                "wall_files_run": wall_ran, "wall_files_trusted": wall_trusted, "wall_files_skipped": wall_skipped,
-               "behavioral": behavioral}
+               "behavioral": behavioral, "not_proven": wall_notes}
 
     return Result(
         verdict=verdict,
@@ -708,6 +735,8 @@ def main(argv: list) -> int:
               f"({r.files_scanned} files, {r.files_from_cache} cached)")
         if r.verdict == "INCONCLUSIVE" and r.static_clean:
             print("  static checks clean; no behavioral signal ran (no Wall file), so this is not a pass")
+        for line in r.signals.get("not_proven", [])[:5]:
+            print("  " + line)
         for f in r.findings[:20]:
             print(f"  [{f['severity']}] {f['rule']} {f['path']}:{f['line']} - {f['message']}")
         if len(r.findings) > 20:
