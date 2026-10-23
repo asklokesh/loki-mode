@@ -142,10 +142,10 @@ for pair in "publish-npm verify-npm-registry" "publish-ts-sdk verify-sdk-registr
     pub="${pair%% *}"; ver="${pair##* }"
     vb="$(job_block "$ver")"; pb="$(job_block "$pub")"
     gate="$(printf '%s\n' "$vb" | grep -E '^    if:' || true)"
-    { printf '%s' "$gate" | grep -q 'always()' \
-        && printf '%s' "$gate" | grep -q "needs.$pub.result != 'cancelled'" \
+    { printf '%s' "$gate" | grep -q '!cancelled()' \
+        && ! printf '%s' "$gate" | grep -q 'always()' \
         && printf '%s' "$gate" | grep -q "needs.$pub.result != 'skipped'"; } \
-        && ok "$ver runs when $pub fails (always() unless cancelled or skipped)" || bad "$ver gate: '$gate'"
+        && ok "$ver runs when $pub fails (!cancelled() and not skipped)" || bad "$ver gate: '$gate'"
     tries="$(printf '%s\n' "$vb" | sed -n "s/.*LOKI_DISTTAG_TRIES: '\([0-9]*\)'.*/\1/p")"
     nap="$(printf '%s\n' "$vb" | sed -n "s/.*LOKI_DISTTAG_SLEEP: '\([0-9]*\)'.*/\1/p")"
     tmo="$(printf '%s\n' "$vb" | sed -n 's/^    timeout-minutes: \([0-9]*\)$/\1/p')"
