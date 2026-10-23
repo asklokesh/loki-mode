@@ -68,6 +68,28 @@ class BenchListTest(unittest.TestCase):
         self.assertIn("demo-pass", r.stdout)
 
 
+class BenchVsToolsSeparatorTest(unittest.TestCase):
+    """LOKI_BENCH_VS_TOOLS accepts commas as well as spaces. Bogus adapter
+    names keep this free: each tool must get its own header line."""
+
+    def _headers(self, tools):
+        env = dict(os.environ, LOKI_BENCH_VS_TOOLS=tools)
+        r = _run(["bash", _RUN_SH, "vs", _DEMO_TASK, "--trials", "1"], env=env)
+        return [ln for ln in r.stdout.splitlines() if ln.startswith("=== ")]
+
+    def test_space_separated_runs_each_tool(self):
+        h = self._headers("nopea nopeb")
+        self.assertEqual([x.split()[1] for x in h], ["nopea", "nopeb"])
+
+    def test_comma_separated_runs_each_tool(self):
+        h = self._headers("nopea,nopeb")
+        self.assertEqual([x.split()[1] for x in h], ["nopea", "nopeb"])
+
+    def test_comma_and_space_mix(self):
+        h = self._headers("nopea, nopeb")
+        self.assertEqual([x.split()[1] for x in h], ["nopea", "nopeb"])
+
+
 class BenchVerifyTest(unittest.TestCase):
     """Generate a real result-row for the committed demo task (via the python
     runner with a mock adapter, no paid calls), then verify it through the bash
