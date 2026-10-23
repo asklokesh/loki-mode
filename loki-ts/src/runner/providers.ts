@@ -22,7 +22,7 @@
 
 import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
-import { run as shellRun } from "../util/shell.ts";
+import { run as shellRun, shellQuote } from "../util/shell.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import {
   buildAutoFlags,
@@ -306,10 +306,6 @@ function physicalPath(path: string): string {
   } catch {
     return resolve(path);
   }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function hostGuardRequired(cwd: string): boolean {
