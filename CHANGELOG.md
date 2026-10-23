@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.71.2 (2026-10-23)
+
+### Fixed
+- RQ-75: line-number cites of run.sh, autonomy/loki and completion-council.sh in loki-ts/src are removed and anchored on a function or literal, with a structural guard (tests/test-structural-checks.sh T13) that catches line cites after a function name or in parentheses, plus the FC-RUNSH-LINE-CITE-DRIFT failure class row. Approval: "APPROVE pd/rq75r2 e6d27b6db33318cfae88f73f80228bfe16393c43 (tl-2, LOW), merge f0a3a6acb + fix e6d27b6db". Shipped as a no-ff merge of the approved head e6d27b6db after the cherry-pick of the non-merge commits conflicted in loki-ts/src/runner/intervention.ts. The T1 engine10 line-budget failure (5136 >= 5000) is on base, not caused by this change.
+
 ## v11.71.1 (2026-10-23)
 
 ### Fixed
