@@ -171,7 +171,7 @@ function _loki {
                         '--since[Window for kpis (Nd or YYYY-MM-DD)]:since:' \
                         '--efficiency[Include efficiency totals]' \
                         '--help[Show help]' \
-                        '1:subcommand:(session metrics cost kpis export share dogfood)'
+                        '1:subcommand:(session metrics cost kpis export share dogfood release-notes)'
                     ;;
                 share)
                     _arguments \
