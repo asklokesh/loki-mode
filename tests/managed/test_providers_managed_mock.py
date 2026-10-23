@@ -294,18 +294,23 @@ class ProvidersManagedTests(unittest.TestCase):
                 calls[self._n] = kw
                 return self._r
 
+        msg = lambda text: NS(type="agent.message", content=[NS(text=text)])  # noqa: E731
+        per_thread = {"t1": [msg("APPROVE")], "t2": [msg("REJECT")]}
+        seen = {}
+
+        def _thread_events(tid, session_id=None):
+            seen[tid] = session_id
+            return per_thread[tid]
+
         class _Sessions(_Ns):
-            events = NS(
-                list=lambda sid: [
-                    NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id="t1"),
-                    NS(type="agent.message", content=[NS(text="REJECT")], session_thread_id="t2"),
-                ]
-            )
+            # the coordinator's own reply; agent.message has no thread field
+            events = NS(list=lambda sid: [msg("coordinator summary")])
             threads = NS(
                 list=lambda sid: [
                     NS(id="t1", agent=NS(id="agent_aaaa")),
                     NS(id="t2", agent=NS(id="agent_bbbb")),
-                ]
+                ],
+                events=NS(list=_thread_events),
             )
             retrieve = staticmethod(lambda sid: NS(status="idle"))
 
@@ -334,6 +339,7 @@ class ProvidersManagedTests(unittest.TestCase):
             {m["agent_id"]: m["text"] for m in out["raw"]},
             {"agent_aaaa": "APPROVE", "agent_bbbb": "REJECT"},
         )
+        self.assertEqual(seen, {"t1": "sess_1", "t2": "sess_1"})
         self.assertEqual(calls["agents"]["model"], self.managed.agent_model())
         # ids cached: a second run creates no new agent or environment
         calls.clear()
@@ -356,7 +362,8 @@ class ProvidersManagedTests(unittest.TestCase):
             "multiagent": {"type": "coordinator", "agents": []},
         })
 
-    def _client_with_events(self, events, threads):
+    def _client_with_events(self, events, threads, thread_events=None):
+        """events: session-level events; thread_events: {thread_id: [events]}."""
         from types import SimpleNamespace as NS
 
         class _C:
@@ -366,10 +373,14 @@ class ProvidersManagedTests(unittest.TestCase):
             def create(self, **kw):
                 return self._r
 
+        thread_events = thread_events or {}
         sessions = _C(NS(id="s", status="idle"))
         sessions.retrieve = lambda sid: NS(status="idle")
         sessions.events = NS(list=lambda sid: events)
-        sessions.threads = NS(list=lambda sid: threads)
+        sessions.threads = NS(
+            list=lambda sid: threads,
+            events=NS(list=lambda tid, session_id=None: thread_events.get(tid, [])),
+        )
         return NS(
             beta=NS(
                 agents=_C(NS(id="agent_coord")),
@@ -381,28 +392,69 @@ class ProvidersManagedTests(unittest.TestCase):
     def test_incomplete_council_reply_is_unavailable_not_fewer_votes(self):
         from types import SimpleNamespace as NS
 
-        msg = lambda text, tid: NS(  # noqa: E731
-            type="agent.message", content=[NS(text=text)], session_thread_id=tid
-        )
+        msg = lambda text: NS(type="agent.message", content=[NS(text=text)])  # noqa: E731
         threads = [
             NS(id="t1", agent=NS(id="agent_aaaa")),
             NS(id="t2", agent=NS(id="agent_bbbb")),
             NS(id="t3", agent=NS(id="agent_cccc")),
         ]
+        top = [msg("coordinator summary")]
         cases = {
-            "fewer": [msg("APPROVE", "t1"), msg("APPROVE", "t2")],
-            "merged_unattributed": [msg("a: APPROVE, b: APPROVE, c: REJECT", None)],
-            "duplicated": [msg("APPROVE", "t1"), msg("APPROVE", "t1"), msg("APPROVE", "t2")],
+            "fewer": {"t1": [msg("APPROVE")], "t2": [msg("APPROVE")], "t3": []},
+            "merged_into_one_thread": {"t1": [msg("a: APPROVE, b: APPROVE, c: REJECT")]},
+            "duplicated": {
+                "t1": [msg("APPROVE"), msg("APPROVE")],
+                "t2": [msg("APPROVE")],
+                "t3": [],
+            },
+            "unknown_thread_agent": {
+                "t1": [msg("APPROVE")],
+                "t2": [msg("APPROVE")],
+                "t3": [msg("APPROVE")],
+            },
         }
-        for label, events in cases.items():
+        # a thread whose agent is outside the roster must not count as a vote
+        unknown = [NS(id="t1", agent=NS(id="agent_aaaa")), NS(id="t2", agent=NS(id="agent_bbbb")),
+                   NS(id="t3", agent=NS(id="agent_zzzz"))]
+        for label, tev in cases.items():
             sess = self.managed._RealMultiagentSession(
-                client=self._client_with_events(events, threads),
+                client=self._client_with_events(
+                    top, unknown if label == "unknown_thread_agent" else threads, tev
+                ),
                 agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
                 context={},
                 timeout_s=5,
             )
             with self.assertRaises(self.managed.ManagedUnavailable, msg=label):
                 sess.run()
+
+        # control: exactly one reply per rostered agent is accepted
+        ok = {t: [msg(f"V{t}")] for t in ("t1", "t2", "t3")}
+        out = self.managed._RealMultiagentSession(
+            client=self._client_with_events(top, threads, ok),
+            agent_ids=["agent_aaaa", "agent_bbbb", "agent_cccc"],
+            context={},
+            timeout_s=5,
+        ).run()
+        self.assertEqual(
+            {m["agent_id"]: m["text"] for m in out["raw"]},
+            {"agent_aaaa": "Vt1", "agent_bbbb": "Vt2", "agent_cccc": "Vt3"},
+        )
+
+    def test_agent_model_rejects_non_claude_override(self):
+        cat = json.load(open(Path(self.managed.__file__).parent / "model_catalog.json"))["providers"]["claude"]
+        keys = ("LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_MODEL_DEVELOPMENT")
+        prev = {k: os.environ.pop(k, None) for k in keys}
+        try:
+            os.environ["LOKI_MODEL_DEVELOPMENT"] = "gpt-5.3-codex"
+            self.assertEqual(self.managed.agent_model(), cat["latest_development"])
+            os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "opus"
+            self.assertEqual(self.managed.agent_model(), cat["cli_aliases"]["opus"])
+        finally:
+            for k in keys:
+                os.environ.pop(k, None)
+                if prev[k] is not None:
+                    os.environ[k] = prev[k]
 
     def _fast_poll(self):
         prev = self.managed._SESSION_POLL_S
@@ -418,7 +470,7 @@ class ProvidersManagedTests(unittest.TestCase):
         from types import SimpleNamespace as NS
 
         self._fast_poll()
-        msg = NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id=None)
+        msg = NS(type="agent.message", content=[NS(text="APPROVE")])
         for status, timeout_s in (("running", 0), ("rescheduling", 0), ("terminated", 30)):
             client = self._client_with_events([msg], [])
             client.beta.sessions.create = lambda **kw: NS(id="s", status=status)
@@ -433,7 +485,7 @@ class ProvidersManagedTests(unittest.TestCase):
         from types import SimpleNamespace as NS
 
         self._fast_poll()
-        msg = NS(type="agent.message", content=[NS(text="APPROVE")], session_thread_id=None)
+        msg = NS(type="agent.message", content=[NS(text="APPROVE")])
         batches = [[], [NS(type="user.message")], [msg]]
         client = self._client_with_events([], [])
         client.beta.sessions.events = NS(
@@ -457,7 +509,7 @@ class ProvidersManagedTests(unittest.TestCase):
         ids = ("agent_aaaa", "agent_bbbb")
         prev = os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT")
         try:
-            for model in ("model-one", "model-two", "model-one"):
+            for model in ("sonnet", "opus", "sonnet"):
                 os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = model
                 self._real_session(client, ids)._coordinator_id(client.beta)
         finally:
@@ -465,7 +517,7 @@ class ProvidersManagedTests(unittest.TestCase):
                 os.environ.pop("LOKI_CLAUDE_MODEL_DEVELOPMENT", None)
             else:
                 os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = prev
-        self.assertEqual(created, ["model-one", "model-two"])
+        self.assertEqual(created, ["claude-sonnet-5-5", "claude-opus-5-5"])
 
     def test_duplicate_agent_reply_is_unavailable_in_both_councils(self):
         dup = [
