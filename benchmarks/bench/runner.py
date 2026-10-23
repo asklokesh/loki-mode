@@ -153,9 +153,16 @@ def _resolve_task_path(stored: str) -> str:
 # workdir preparation
 # ---------------------------------------------------------------------------
 
-def prepare_workdir(fixture_dir: str, tool: str) -> str:
-    """Copy the fixture into a fresh mktemp workdir. Returns the workdir path."""
-    workdir = tempfile.mkdtemp(prefix="loki-bench-%s-" % tool)
+def prepare_workdir(fixture_dir: str, tool: str, dest: Optional[str] = None) -> str:
+    """Copy the fixture into a fresh mktemp workdir (or into the empty `dest`).
+    Returns the workdir path."""
+    if dest:
+        if os.path.isdir(dest) and os.listdir(dest):
+            raise ValueError("kept workdir already exists and is not empty: %s" % dest)
+        os.makedirs(dest, exist_ok=True)
+        workdir = dest
+    else:
+        workdir = tempfile.mkdtemp(prefix="loki-bench-%s-" % tool)
     if os.path.isdir(fixture_dir):
         # Copy contents of the fixture into workdir (workdir already exists).
         for name in os.listdir(fixture_dir):
@@ -420,10 +427,20 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
               keep_workdir: bool = False,
               runner_fn: Any = None,
               task_dir: Optional[str] = None,
-              effort: Optional[str] = None) -> Dict[str, Any]:
-    """One trial: prepare workdir, invoke adapter, GRADE, assemble trial record."""
+              effort: Optional[str] = None,
+              trial_label: Optional[str] = None) -> Dict[str, Any]:
+    """One trial: prepare workdir, invoke adapter, GRADE, assemble trial record.
+
+    LOKI_BENCH_WORKDIRS=<root> keeps every workdir at <root>/<tool>/<task>/<label>/
+    (label defaults to the trial index) so a later measurement, for example
+    trust_time, can read the same trials without a second paid run."""
     agent_timeout = int(spec.get("agent_timeout_s", 1800))
-    workdir = prepare_workdir(fixture_dir, tool)
+    root = os.environ.get("LOKI_BENCH_WORKDIRS")
+    dest = None
+    if root:
+        keep_workdir = True
+        dest = os.path.join(root, tool, spec["id"], trial_label or str(trial_index))
+    workdir = prepare_workdir(fixture_dir, tool, dest=dest)
     try:
         adapter_out = invoke_adapter(adapter, workdir, spec, model,
                                      agent_timeout, runner_fn=runner_fn,
@@ -635,7 +652,8 @@ def run_resume_pair(task_path: str, adapter_name: str, *, interrupt: Any,
     pairs = []
     for i in range(1, max(1, trials) + 1):
         ctl = run_trial(adapter, spec, fixture_dir, used_model, adapter_name, i,
-                        runner_fn=runner_fn, task_dir=task_dir)
+                        runner_fn=runner_fn, task_dir=task_dir,
+                        trial_label="control-%d" % i)
         itr = run_trial(resumed, spec, fixture_dir, used_model, adapter_name, i,
                         runner_fn=runner_fn, task_dir=task_dir)
         pairs.append({"control": ctl, "interrupted": itr,
