@@ -1584,3 +1584,19 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: deep.ts and package_suite.ts (both consumers moved), non-pytest runners (vitest, jest, bun, node, npm, go, cargo: no interpreter, stay static), per-test pytest (already resolveTool).
 - Mechanism: `fullSuiteCmd(runner, repoDir)` resolves pytest through `resolveTool(repoDir, "python", "python3", "python")`; both consumers call it.
 - Fixture: tests/engine10/deep.test.ts "pytest full suite runs under the project .venv python when no bare `python` is on PATH" (red on the static table, green after).
+
+## FC-LINT-TOOL-NEVER-USED-BY-PROJECT verify demanded lint:ruff of a Python repo that neither declares ruff nor has it installed, so the check ended not_run and the run PARTIAL
+- User-visible vs raw: user-visible. The 05:44Z python fixture run (kvparse, bench workdir loki-bench-loki-jxegolv0) had no .venv, no ruff config and no ruff on PATH; verify recorded lint:ruff not_run (reason "ruff not found on PATH") and seal listed "not run: lint:ruff" as NOT PROVEN, so a correct change could not reach VERIFIED.
+- Law: a verifier demands only the checks the project itself uses; a tool the project never names and the machine does not have is not applicable, while a tool the project names and the machine lacks stays not_run.
+- Cause (measured): runLintChecks (engine10/stages/verify.ts) ran lint:ruff for every changed .py with resolveTool's last resort `ruff`, which fails to spawn when nothing resolves.
+- Siblings swept: lint:shellcheck (bash -n always runs; shellcheck is a general tool on the changed set, unchanged), lint:eslint (already gated on an ESLint config in the package), lint:tsc (already gated on tsconfig.json). ruff was the only named-tool check with no project gate.
+- Mechanism: lint:ruff runs when ruff resolves (project .venv, uv, or PATH) or the project declares it (projectDeclaresRuff: ruff.toml, .ruff.toml, or `ruff` in pyproject.toml, setup.cfg, tox.ini, .pre-commit-config.yaml, Pipfile or a requirements file). Otherwise no check is recorded.
+- Fixture: tests/engine10/verify.test.ts "FC-LINT-TOOL-NEVER-USED-BY-PROJECT" (no ruff, nothing declared: no check; declared but absent: not_run). Mutant (gate always true) turns the first test red.
+
+## FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN Seal listed "visual evidence skipped: no package.json" for a repo with no UI and no changed page file, so a CLI or library change was NOT PROVEN for evidence it never had to produce
+- User-visible vs raw: user-visible. The same python fixture run and the first-run gate `scripts/first-run-gate.sh --entry start-empty` (eng-mcpchain, #357 criterion 3) ended PARTIAL with this line among the NOT PROVEN items.
+- Law: an item is NOT PROVEN only when the run could have produced it and did not; a capture that has no subject is not applicable.
+- Cause (measured): sealEvidence (features/visual_evidence.ts) added every capture skip reason to notProven, including the two that mean there is nothing to boot ("no package.json", "no dev, preview or start script") when no changed file is a page file.
+- Siblings swept: the LOKI_VISUAL_GATE evidence_failed branch (same predicate now), "no changed page files" (existing, pinned by the no-web-pages test, left as is), a changed page file with no package.json (still NOT PROVEN and still a gate failure), and LOKI_VISUAL_EVIDENCE=1 (API transcript requested, still reported).
+- Mechanism: one predicate in sealEvidence, noUi = skip reason is one of the two no-boot reasons AND the API transcript was not requested AND no changed file isPageFile; it suppresses both the NOT PROVEN line and evidence_failed.
+- Fixture: tests/features/visual_evidence.test.ts "FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN" (changed .py: no line, no failure; changed page file with no package.json: line and failure).

@@ -237,9 +237,10 @@ export async function sealEvidence(repoDir: string, runDir: string, o: { verify?
   const cf = Array.isArray(o.verify?.["changed_files"]) ? (o.verify["changed_files"] as unknown[]).map(String) : [];
   const ev = await captureVisualEvidence(repoDir, runDir, cf, { signal, onServer: (pgid) => emit?.("session.started", "seal", { session_id: "visual-evidence", provider: "visual-evidence", model: null, pgid }) }); // the supervisor reaps announced groups on a hard kill
   if (signal?.aborted) throw new Error("seal aborted: visual evidence discarded");
-  if (ev.skipped) notProven.add(`visual evidence skipped: ${ev.skipped}`);
+  const noUi = ev.skipped !== null && ev.skipped !== undefined && /^no package\.json$|^no dev, preview or start script$/.test(ev.skipped) && process.env["LOKI_VISUAL_EVIDENCE"] !== "1" && !cf.some(isPageFile); // FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN: nothing to boot and no changed page file means there is nothing to show, which is not a gap
+  if (ev.skipped && !noUi) notProven.add(`visual evidence skipped: ${ev.skipped}`);
   if (ev.e2eSkipped) notProven.add(ev.e2eSkipped);
-  if (visualGateEnabled() && ev.skipped && !/^no changed page files/.test(ev.skipped)) return { evidence_failed: ev.skipped }; // a repo with no pages has nothing to fail
+  if (visualGateEnabled() && ev.skipped && !noUi && !/^no changed page files/.test(ev.skipped)) return { evidence_failed: ev.skipped }; // a repo with no pages has nothing to fail
   return ev.screens.length > 0 ? { evidence_screens: ev.screens } : {};
 }
 /** Verify hook: null when the receipt has no evidence_screens or all still match, else a message. */
