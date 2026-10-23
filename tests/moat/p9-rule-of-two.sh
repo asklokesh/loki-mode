@@ -1243,6 +1243,7 @@ case_injection() {
             && printf '.venv/\n__pycache__/\n.pytest_cache/\n' > .gitignore \
             && mkdir -p .venv/bin && ln -s "$(command -v python3)" .venv/bin/python \
             && printf '#!/bin/sh\necho "All checks passed!"\n' > .venv/bin/ruff && chmod +x .venv/bin/ruff \
+            && printf 'line-length = 100\n' > ruff.toml \
             && git add -A && git commit -qm init \
             && git clone -q --bare "$W" "$T/remote.git" \
             && git remote add origin https://github.com/octocat/hello.git \
@@ -1900,7 +1901,8 @@ PY
     }
     scn_unverified() {
     # 5. unverified: same run, but the fixture's ruff shim is removed, so lint
-    #    is not_run and the run seals PARTIAL. FC-NO-PUSH-UNVERIFIED: Loki must
+    #    is not_run and the run seals PARTIAL (the fixture declares ruff in ruff.toml, so a missing binary is a
+    #    not_run check, not a repo with no lint; verify.ts projectDeclaresRuff). FC-NO-PUSH-UNVERIFIED: Loki must
     #    then keep the branch local (no push, no PR), say so, and the provider
     #    still never sees the token. Guards the new behaviour and proves the
     #    VERIFIED legs above reach their push because the run is VERIFIED.
