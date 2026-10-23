@@ -449,7 +449,7 @@ printed on its `Cost:` line.
 | First output line | 0.71s | first timestamp of the same run | 0.56s |
 | First stage line (`[wall]`) | 6.72s | same run | 5.57s |
 | Missing provider CLI | actionable message with the fix command, rc=2, 1.40s | `PATH=/usr/bin:/bin:<dir with node and git> loki start "add x"` | rc=2 at 1.19s |
-| Flags on the core path | 0 required; `loki start --help` is 136 lines, 60 distinct `--flags`; `loki --help` lists 25 commands | `loki start --help \| wc -l`, `grep -oE -- '--[a-z][a-z0-9-]*' \| sort -u \| wc -l` | 135 lines, 60 flags, 25 commands |
+| Flags on the core path | 0 required; `loki start --help` is 135 lines, 60 distinct `--flags`; `loki --help` lists 25 commands | `loki start --help \| wc -l`, `grep -oE -- '--[a-z][a-z0-9-]*' \| sort -u \| wc -l` | 135 lines, 60 flags, 25 commands |
 
 Observed again on 11.55.3 without a new number:
 
