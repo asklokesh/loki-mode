@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks and config in a primary checkout, so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+## v11.63.9 (2026-10-23)
+
+### Fixed
+- A rejected API key ends the run naming its cause and the fix (FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG); engine markers are neutralized in child and CLI stderr as well as stdout (FC-AGENT-TEXT-FORGES-ENGINE-MARKER); a forged sdk-loop auth line on CLI stderr is not fatal:auth end to end. Approval: "SHIP keycause-final2: rev-c APPROVES 11a9fffe4, e0a417163, c939d0786 and e324c350c (head e324c350c). merge-tree against fresh origin/main gives rc=0. tsc rc=0. fatal_e2e, session_dispatch, providers, sdk_stream_parser and output give 196 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
+## v11.63.8 (2026-10-23)
+
+### Fixed
+- The full suite runs under the project interpreter and the repo-identity note names its fix (FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER); the full-suite baseline run line quotes each word so a spaced repo path still runs (FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH); a Python repo with no ruff and a repo with no UI no longer end PARTIAL (FC-LINT-TOOL-NEVER-USED-BY-PROJECT, FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN). Approval: "Ship approved for A-r5+C-r4 (pd/partial-harness-ac-r5), head e6bc96d84. The range over origin/main is 7e7a30f7e, e409e4b91, 8e5dc5028 and e6bc96d84, the merge of origin/main 1b36976dc. tsc gives rc=0, verify.test.ts plus visual_evidence.test.ts give 85 pass and 0 fail, and merge-tree against origin/main 5bc5f4dd0 gives rc=0. Merge by SHA e6bc96d84." (rev-c, only assigned HIGH reviewer per CoS ruling)
 
 ## v11.63.7 (2026-10-23)
 

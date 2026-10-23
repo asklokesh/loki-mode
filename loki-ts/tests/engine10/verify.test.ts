@@ -713,6 +713,31 @@ describe("engine10 verify: verify jobs (TEN-SPEED-18)", () => {
   }, 120_000);
 });
 
+describe("FC-LINT-TOOL-NEVER-USED-BY-PROJECT", () => {
+  const noRuffPath = (): string => { const d = mkdtempSync(join(tmpdir(), "e10-noruff-")); cleanupDirs.push(d); return d; };
+  test("a Python repo that neither declares ruff nor has one installed records no lint:ruff check", async () => {
+    const repoDir = mkRepo();
+    const saved = process.env["PATH"]; process.env["PATH"] = noRuffPath();
+    try {
+      const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+      const checks: VerifyCheck[] = [];
+      await runLintChecks(ctx, ["changed.py"], sig(), checks);
+      expect(checks.find((c) => c.name === "lint:ruff")).toBeUndefined();
+    } finally { if (saved === undefined) delete process.env["PATH"]; else process.env["PATH"] = saved; }
+  });
+  test("a repo that declares ruff but has none installed still records lint:ruff as not_run", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "pyproject.toml"), "[tool.ruff]\nline-length = 100\n");
+    const saved = process.env["PATH"]; process.env["PATH"] = noRuffPath();
+    try {
+      const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+      const checks: VerifyCheck[] = [];
+      await runLintChecks(ctx, ["changed.py"], sig(), checks);
+      expect(checks.find((c) => c.name === "lint:ruff")?.result).toBe("not_run");
+    } finally { if (saved === undefined) delete process.env["PATH"]; else process.env["PATH"] = saved; }
+  });
+});
+
 describe("FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER: verify runs every sealed Wall path", () => {
   // The runner's discovery lists only test_x.py; the Wall file loki_wall_x.py is not a pytest-discovered name.
   function wallRepo(files: Record<string, string>): { repoDir: string; sha: string } {

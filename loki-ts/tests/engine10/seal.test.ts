@@ -466,6 +466,10 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     for (const n of ["repo not recorded by intake", "resume state not recorded by intake", "wall result not recorded by verify",
       "cost not measured (no iteration ids recorded)"]) expect(r.not_proven).toContain(n);
     expect(r.verdict).toBe("PARTIAL");
+    const noOrigin = ctxFor(repo, base, "claude", { intake: { source: "issue", repo: null, resumed: false, task_sha256: "ab".repeat(32) } });
+    const nr = receiptOf(await sealStage.run(noOrigin.ctx, new AbortController().signal)).not_proven;
+    expect(nr).toContain("repo identity unknown: the repo has no origin remote (run: git remote add origin <url>)");
+    expect(nr).not.toContain("repo not recorded by intake");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
   }, 30000);

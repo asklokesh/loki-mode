@@ -315,3 +315,18 @@ test("sealEvidence records evidence_failed only when the gate is on and capture 
     expect((await sealEvidence(root, RUN, { verify: { changed_files: ["lib/x.ts"] } }, new Set())).evidence_failed).toBeUndefined();
   } finally { if (env === undefined) delete process.env["LOKI_VISUAL_GATE"]; else process.env["LOKI_VISUAL_GATE"] = env; }
 });
+
+test("FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN: a repo with no UI and no changed page file records no skip; a changed page file with no package.json still does", async () => {
+  const env = process.env["LOKI_VISUAL_EVIDENCE"], gate = process.env["LOKI_VISUAL_GATE"];
+  try {
+    delete process.env["LOKI_VISUAL_EVIDENCE"]; process.env["LOKI_VISUAL_GATE"] = "1";
+    const np = new Set<string>();
+    const out = await sealEvidence(root, RUN, { verify: { changed_files: ["src/app.py"] } }, np);
+    expect([...np]).toEqual([]);
+    expect(out.evidence_failed).toBeUndefined();
+    const np2 = new Set<string>();
+    const out2 = await sealEvidence(root, RUN, { verify: { changed_files: ["src/pages/a.tsx"] } }, np2);
+    expect([...np2].join(" ")).toContain("visual evidence skipped: no package.json");
+    expect(out2.evidence_failed).toBeTruthy();
+  } finally { if (env === undefined) delete process.env["LOKI_VISUAL_EVIDENCE"]; else process.env["LOKI_VISUAL_EVIDENCE"] = env; if (gate === undefined) delete process.env["LOKI_VISUAL_GATE"]; else process.env["LOKI_VISUAL_GATE"] = gate; }
+});
