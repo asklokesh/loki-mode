@@ -91,7 +91,6 @@ _DEFAULT_CALL_TIMEOUT = 10.0
 _CACHE_FILE_REL = ".loki/managed/agent_ids.json"
 _ENVIRONMENT_CACHE_KEY = "__environment__"
 _COORDINATOR_CACHE_PREFIX = "__coordinator__"
-_COORDINATOR_MODEL = "claude-sonnet-5-5"
 _SESSION_POLL_S = 2.0
 
 
@@ -256,6 +255,23 @@ def _reset_client() -> None:
         _cached_client = None
 
 
+def agent_model() -> str:
+    """Model id for managed agents: env override chain, else providers/model_catalog.json."""
+    name = (
+        os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT", "").strip()
+        or os.environ.get("LOKI_MODEL_DEVELOPMENT", "").strip()
+    )
+    try:
+        with open(Path(__file__).resolve().parent / "model_catalog.json", encoding="utf-8") as f:
+            claude = json.load(f)["providers"]["claude"]
+    except (OSError, ValueError, KeyError) as e:
+        if name:
+            return name
+        raise ManagedUnavailable(f"managed agent model unresolved: {e}")
+    name = name or claude["latest_development"]
+    return claude.get("cli_aliases", {}).get(name, name)
+
+
 # ---------------------------------------------------------------------------
 # Fake / dependency-injection hook for tests
 # ---------------------------------------------------------------------------
@@ -360,7 +376,7 @@ class _RealMultiagentSession:
             return getattr(
                 agents.create(
                     name="Loki council coordinator",
-                    model=_COORDINATOR_MODEL,
+                    model=agent_model(),
                     system="Ask every rostered agent for its verdict and report each one.",
                     multiagent={"type": "coordinator", "agents": roster},
                 ),
@@ -401,6 +417,11 @@ class _RealMultiagentSession:
                 time.sleep(_SESSION_POLL_S)
                 status = getattr(sessions.retrieve(sid), "status", "idle")
             events = list(sessions.events.list(sid)) if status == "idle" else []
+            thread_agent = {}
+            if len(self._agent_ids) > 1 and events:
+                for th in sessions.threads.list(sid):
+                    ref = getattr(th, "agent", None)
+                    thread_agent[getattr(th, "id", None)] = getattr(ref, "id", None)
         except (AttributeError, TypeError) as e:
             raise ManagedUnavailable(f"SDK session shape mismatch: {e}")
 
@@ -409,9 +430,20 @@ class _RealMultiagentSession:
             if getattr(ev, "type", None) != "agent.message":
                 continue
             text = "".join(getattr(b, "text", "") or "" for b in getattr(ev, "content", []))
-            messages.append(
-                {"agent_id": getattr(ev, "session_thread_id", None) or "", "text": text}
-            )
+            aid = thread_agent.get(getattr(ev, "session_thread_id", None)) or ""
+            messages.append({"agent_id": aid, "text": text})
+        if len(self._agent_ids) > 1:
+            # Never pass fewer, merged or duplicated votes off as a complete council.
+            got = sorted(m["agent_id"] for m in messages if m["agent_id"] in self._agent_ids)
+            if got != sorted(self._agent_ids):
+                raise ManagedUnavailable(
+                    f"council reply incomplete: expected one reply from each of "
+                    f"{len(self._agent_ids)} agents, attributed {len(got)}"
+                )
+        elif not messages:
+            raise ManagedUnavailable("session produced no agent message")
+        else:
+            messages[0]["agent_id"] = self._agent_ids[0]
         return {"raw": messages or None, "session_id": sid}
 
 

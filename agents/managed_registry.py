@@ -166,7 +166,7 @@ def _call_create_agent(pool_name: str) -> str:
     translate to a fallback-capable flow.
     """
     # Deferred import to keep the module SDK-free at import time.
-    from providers.managed import _get_client  # local import of shared client
+    from providers.managed import _get_client, agent_model  # local import of shared client
 
     client = _get_client()
     beta = getattr(client, "beta", None)
@@ -183,6 +183,7 @@ def _call_create_agent(pool_name: str) -> str:
     try:
         created = agents_ns.create(
             name=display_name,
+            model=agent_model(),
             system=persona,
             metadata={"loki_pool": pool_name},
         )
