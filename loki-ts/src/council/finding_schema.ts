@@ -125,6 +125,7 @@ export function hasFileLineAnchor(desc: string): boolean {
 }
 
 export const CITATION_NOT_FOUND_TAG = "[citation not found]";
+export const CITATION_NOT_PROVEN_TAG = "[NOT PROVEN: the cited path lies under a submodule that is not checked out]";
 const MAX_CITATION_FILE_BYTES = 8 * 1024 * 1024;
 
 // Where cited paths are resolved. root = the reviewed tree (derived by the
@@ -139,7 +140,9 @@ const MAX_CITATION_FILE_BYTES = 8 * 1024 * 1024;
 // subdirectory); a cwd-relative citation resolves there first. diffFiles are
 // root-relative, as git diff --name-only prints them. gitlinks are the diffFiles
 // entries that are submodule gitlinks (mode 160000 on either side of git diff --raw).
-export type CitationContext = { root?: string; cwd?: string; diffFiles?: readonly string[]; gitlinks?: readonly string[] };
+// gitlinkDeleted are root-relative files the bump deleted inside a checked-out submodule (its old..new diff): the only way a missing path under a
+// checked-out gitlink is recognized as a deletion rather than a fabrication.
+export type CitationContext = { root?: string; cwd?: string; diffFiles?: readonly string[]; gitlinks?: readonly string[]; gitlinkDeleted?: readonly string[] };
 
 type Citation = { path: string; line: number };
 
@@ -193,8 +196,8 @@ function lineCount(abs: string): number | null {
   } catch { return null; }
 }
 
-// "refuted" only on positive evidence; everything else is "ok" (keep severity).
-function citationVerdict(c: Citation, ctx: CitationContext): "refuted" | "ok" {
+// "refuted" only on positive evidence; "unproven" when the path may sit in a submodule that is not checked out; everything else is "ok" (keep severity).
+function citationVerdict(c: Citation, ctx: CitationContext): "refuted" | "unproven" | "ok" {
   if (ctx.diffFiles === undefined) return "ok"; // no diff: neither a missing file nor a past-EOF line is evidence
   const root = ctx.root as string;
   const touched = (f: string): boolean => ctx.diffFiles!.some((d0) => { const d = d0.replace(/\\/g, "/"); return f === d || f.startsWith(`${d}/`); }); // a submodule shows in the diff as its gitlink path only
@@ -213,27 +216,43 @@ function citationVerdict(c: Citation, ctx: CitationContext): "refuted" | "ok" {
   }
   if (files.length > 1) return "ok"; // ambiguous: not evidence
   if (ctx.diffFiles.some((f) => suffixMatches([f.replace(/\\/g, "/")], c.path).length > 0)) return "ok";
-  // A file deleted inside a diff-listed submodule is absent on disk and the diff names only the gitlink: the cited path, resolved against cwd or the root, lies under it.
+  // An unresolved path may sit inside a bumped submodule: a gitlink the diff lists (its entry is a directory prefix of the path), one whose final segment is a whole
+  // directory component of the path (vendor/lib never matches src/libfoo/x.ts), or, for a bare basename, any gitlink. The diff names only the gitlink, so a checked-out
+  // one refutes the path unless gitlinkDeleted records it; one with no content on disk cannot be searched, so the citation is unproven, never silently ok.
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/^(\.?\/)+/, "");
+  const deleted = (ctx.gitlinkDeleted ?? []).map(norm);
+  const links = [...new Set([...(ctx.gitlinks ?? []), ...ctx.diffFiles.filter((d) => ctx.diffFiles!.some((f) => f !== d && f.startsWith(`${d}/`)) || (ctx.gitlinks ?? []).includes(d))])].map(norm);
+  const parts = norm(c.path).split("/").filter(Boolean);
+  const owners = new Set<string>();
   for (const base of [ctx.cwd ?? root, root]) {
-    const inRoot = relative(root, resolvePath(base, c.path));
-    if (!inRoot.startsWith("..") && !isAbsolute(inRoot) && touched(inRoot.split(sep).join("/"))) return "ok";
+    const inRoot = relative(root, resolvePath(base, c.path)).split(sep).join("/");
+    if (inRoot.startsWith("..") || isAbsolute(inRoot)) continue;
+    if (deleted.includes(inRoot)) return "ok";
+    for (const g of links) if (inRoot === g || inRoot.startsWith(`${g}/`)) owners.add(g);
+    if (touched(inRoot)) for (const d of ctx.diffFiles) if (inRoot.startsWith(`${norm(d)}/`)) owners.add(norm(d));
   }
-  // An unresolved citation may sit inside a bumped submodule only when (i) it is a bare basename, or (ii) one of its directory components equals a gitlink's
-  // final segment, whole (vendor/lib never matches src/libfoo/x.ts). A path starting with a gitlink path plus "/" always has that component, so it needs no rule of its own.
-  // Anything else is refuted.
-  const parts = c.path.replace(/\\/g, "/").replace(/^(\.?\/)+/, "").split("/").filter(Boolean);
-  const links = (ctx.gitlinks ?? []).map((d0) => d0.replace(/\\/g, "/"));
-  if (links.length > 0 && parts.length <= 1) return "ok"; // (i)
-  const names = links.map((d) => d.split("/").filter(Boolean).pop());
-  if (parts.slice(0, -1).some((seg) => names.includes(seg))) return "ok"; // (ii)
-  return "refuted";
+  for (const g of links) {
+    const seg = g.split("/").filter(Boolean).pop();
+    if (parts.length <= 1 || parts.slice(0, -1).includes(seg as string)) owners.add(g);
+  }
+  if (deleted.some((d) => suffixMatches([d], c.path).length > 0)) return "ok";
+  if (owners.size === 0) return "refuted";
+  return [...owners].every((g) => checkedOut(root, g)) ? "refuted" : "unproven";
 }
 
-// True when a description cites file:line anchors and every one is refuted.
-function citationsAllMissing(desc: string, ctx: CitationContext): boolean {
-  if (!ctx.root || NO_FILE_MARKER.test(desc)) return false;
+// A gitlink directory counts as checked out when it holds anything besides its .git pointer.
+function checkedOut(root: string, gitlink: string): boolean {
+  try { return readdirSync(join(root, gitlink)).some((n) => n !== ".git"); } catch { return false; }
+}
+
+// "refuted" when every citation is refuted; "unproven" when each is refuted or unproven and one could not be checked; otherwise "ok".
+function citationStatus(desc: string, ctx: CitationContext): "refuted" | "unproven" | "ok" {
+  if (!ctx.root || NO_FILE_MARKER.test(desc)) return "ok";
   const cites = extractCitations(desc);
-  return cites.length > 0 && cites.every((c) => citationVerdict(c, ctx) === "refuted");
+  if (cites.length === 0) return "ok";
+  const v = cites.map((c) => citationVerdict(c, ctx));
+  if (v.every((x) => x === "refuted")) return "refuted";
+  return v.every((x) => x !== "ok") ? "unproven" : "ok";
 }
 
 export type ValidationError = { error: string; path: string };
@@ -301,13 +320,16 @@ export function validateFinding(obj: unknown, ctx: CitationContext = {}): AgentV
         issuesOut.push({ severity: "MEDIUM", description: `${UNANCHORED_TAG} ${desc}` });
         continue;
       }
-      if (
-        BLOCKING_SEVERITY.has(sev) &&
-        !ANCHOR_EXEMPT_ROLES.has(obj["role"] as string) &&
-        citationsAllMissing(desc, ctx)
-      ) {
-        issuesOut.push({ severity: "MEDIUM", description: `${CITATION_NOT_FOUND_TAG} ${desc}` });
-        continue;
+      if (BLOCKING_SEVERITY.has(sev) && !ANCHOR_EXEMPT_ROLES.has(obj["role"] as string)) {
+        const status = citationStatus(desc, ctx);
+        if (status === "refuted") {
+          issuesOut.push({ severity: "MEDIUM", description: `${CITATION_NOT_FOUND_TAG} ${desc}` });
+          continue;
+        }
+        if (status === "unproven") {
+          issuesOut.push({ severity: sev as Severity, description: `${CITATION_NOT_PROVEN_TAG} ${desc}` });
+          continue;
+        }
       }
       issuesOut.push({ severity: sev as Severity, description: desc });
     }

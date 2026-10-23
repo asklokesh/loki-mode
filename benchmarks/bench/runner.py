@@ -483,6 +483,8 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
             # Advisor errors this trial hit; a trial with calls but errors is not attached.
             "advisor_errors": _advisor_field(adapter_out, "errors"),
         }
+        row["metrics"] = schema.trial_metrics(
+            adapter_out, verdict["success"], measured=not unmeasured_reasons)
         if unmeasured_reasons:
             # Held-out grader evidence preserved separately, never discarded.
             #

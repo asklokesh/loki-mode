@@ -5,6 +5,37 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.58.3 (2026-10-23)
+
+### Fixed
+- A council citation under a bumped submodule is refuted when the submodule is checked out and labelled NOT PROVEN when it is not, instead of always counting as a high-severity finding. Refs #332.
+
+## v11.58.2 (2026-10-23)
+
+### Fixed
+- Bench: the judge-trap-1 overlay rejects an off-by-one word cut and grades with its own overlay; per-trial false-pass, council cache share and journal reuse metrics are reported. Refs #348.
+- Docs: UX scorecard baselines re-measured on 11.55.3 (Refs #350), and the Feature 100 roadmap links its 79 filed issues.
+
+## v11.58.1 (2026-10-23)
+
+### Fixed
+- LeanCostTableTest rows carry a cost_source so the validator accepts them, which fixes the red test_attribution on main.
+
+## v11.58.0 (2026-10-23)
+
+### Added
+- Four pre-registered false-done bench tasks with hash-attested oracles; the fd-1 duplicate-key check requires the key name, and the fd-2, fd-3 and fd-4 overlays reject near-misses that break a stated rule. Refs #355.
+
+## v11.57.6 (2026-10-23)
+
+### Fixed
+- A plain run never repoints a valid global skill link, takes it into a temp dir, or downgrades it.
+
+## v11.57.5 (2026-10-23)
+
+### Fixed
+- The bench run.sh vs mode accepts commas in LOKI_BENCH_VS_TOOLS.
+
 ## v11.57.4 (2026-10-23)
 
 ### Fixed
