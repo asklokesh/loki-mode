@@ -50,7 +50,7 @@ export interface EventEnvelope<D extends Record<string, unknown> = Record<string
   data: D;
 }
 export type Verdict = "VERIFIED" | "PARTIAL" | "ALREADY_SATISFIED" | "SPEC_CONFLICT" | "FAILED";
-export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed";
+export type ImplementExit = "done" | "already_done" | "spec_conflict" | "killed" | "external";
 export interface StageResult {
   status: "completed" | "failed" | "skipped";
   /** Becomes stage.completed.data (or stage.failed / stage.skipped data). */
