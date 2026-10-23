@@ -549,6 +549,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the cold one-time init is warmed in a beforeAll with its own 60s budget, and every test that performs a real rasterize passes an explicit RENDER_TIMEOUT_MS (30s); a test that does real wasm work must not rely on the 5s default.
 - Fixture: loki-ts/tests/cockpit.test.ts. Red evidence: with RENDER_TIMEOUT_MS=1 and the warm disabled both render tests fail "timed out after 1ms"; with the fix 26 pass, 0 fail.
 
+## FC-TEST-BULK-FIXTURE-DEFAULT-TIMEOUT A test that writes thousands of files and runs git reddens on a loaded host at bun's 5s default (MAIN-RED P12-12d)
+- User saw: P12-12d "untracked growth is seen even with a very large tracked change list" red on origin/main 4b0bbb0ca and bc2e0a8ff. Raw: `(fail) ... [21552.81ms]` then `this test timed out after 5000ms` at 1-min load 27; no assertion failed.
+- Law: evidence or it did not happen; never weaken the assertion. The test and session.ts are unchanged since 2026-10-16/17 (git log -S2100), so this is a cost-versus-default-budget fault in the test, not a product regression.
+- Cause (measured): the test writes 2100 files twice plus git add/commit, about 20s under load; bun's default per-test timeout is 5000ms.
+- Siblings swept: same family as FC-50; the only other bulk-file git fixture in session.test.ts is the sibling test in the same describe, which is small.
+- Mechanism: the fixture size is a named SPILL=1100 (just over the 1000-file per-list budget it must exceed) and the test carries an explicit 60_000 timeout.
+- Fixture: loki-ts/tests/engine10/session.test.ts. Red: unmodified, `bun test tests/engine10/session.test.ts -t P12-12d` fails "timed out after 5000ms"; green: 2 pass, 0 fail. Mutant (one shared file budget across both lists in diffSignature) fails the test by assertion, 1 pass 1 fail.
+
 ## FC-51 A publish-path change silently dropped a field a later gate depends on (PROMOTE-GITHEAD)
 - User saw: 11.3.1 stuck on the npm `next` tag; Promote run 37784566223 failed "FATAL: loki-mode@11.3.1 has no gitHead on npm", so the release never reached latest, Docker latest or Homebrew. Every later release would stick the same way.
 - Law: evidence or it did not happen; a change to one stage must keep every field a downstream stage reads.
