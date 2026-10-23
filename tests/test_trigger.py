@@ -903,6 +903,35 @@ class TestCompanySeats(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
         self.assertFalse(tsc.remove_launchagent(home))
 
+    def test_cockpit_plist_valid_private_and_removable(self):
+        home = os.path.join(self.tmp, "homec")
+        os.makedirs(home)
+        path = tsc.write_cockpit_launchagent(home, self.root, "/usr/bin/python3")
+        self.assertEqual(path, os.path.join(home, "Library", "LaunchAgents", "dev.autonomi.loki-cockpit.plist"))
+        import plistlib
+        d = plistlib.load(open(path, "rb"))
+        self.assertEqual(d["Label"], "dev.autonomi.loki-cockpit")
+        self.assertEqual(d["ProgramArguments"], [
+            "/usr/bin/python3", os.path.join(self.root, "tools", "cockpit", "server.py"),
+            "--port", "8787", "--repo-root", self.root])
+        self.assertTrue(d["RunAtLoad"])
+        self.assertTrue(d["KeepAlive"])
+        self.assertEqual(d["WorkingDirectory"], self.root)
+        self.assertEqual(d["StandardOutPath"], os.path.join(home, ".loki", "logs", "cockpit.out.log"))
+        self.assertEqual(d["StandardErrorPath"], os.path.join(home, ".loki", "logs", "cockpit.err.log"))
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        if shutil.which("plutil"):
+            r = subprocess.run(["plutil", "-lint", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(tsc.remove_launchagent(home, tsc.COCKPIT_LABEL))
+        self.assertFalse(os.path.exists(path))
+        self.assertFalse(tsc.remove_launchagent(home, tsc.COCKPIT_LABEL))
+
+    def test_cockpit_systemd_unit_text(self):
+        unit = tsc.cockpit_systemd_unit(self.root, "/usr/bin/python3")
+        self.assertIn("tools/cockpit/server.py --port 8787 --repo-root " + self.root, unit)
+        self.assertIn("Restart=always", unit)
+
     def test_systemd_unit_text(self):
         unit = tsc.systemd_unit(self.root, "/usr/local/bin/loki")
         self.assertIn("ExecStart=/usr/local/bin/loki trigger daemon --loop", unit)
@@ -918,12 +947,14 @@ class TestCompanySeats(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         if sys.platform == "darwin":
             self.assertTrue(os.path.exists(tsc.launchagent_path(home)))
+            self.assertTrue(os.path.exists(tsc.launchagent_path(home, tsc.COCKPIT_LABEL)))
         sched = json.load(open(os.path.join(self.root, ".loki", "triggers", "schedules.json")))
         self.assertEqual(len(sched), 10)
         r = subprocess.run([sys.executable, script, "uninstall", "--no-load"], cwd=self.root,
                            env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(tsc.launchagent_path(home)))
+        self.assertFalse(os.path.exists(tsc.launchagent_path(home, tsc.COCKPIT_LABEL)))
 
     def test_daemon_loop_single_pass_exits(self):
         old = os.getcwd()

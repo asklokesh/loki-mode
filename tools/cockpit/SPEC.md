@@ -60,11 +60,15 @@ python3 tools/cockpit/server.py [--port 8787] [--host 127.0.0.1]
   is UNKNOWN, mirroring the pulse contract 0 clean, 1 violation, 2 unknown;
   exit 1 if the pulse reports a VIOLATION).
 - `--panel NAME`: restrict `--once` to one panel (pulse, releases, board,
-  agents, okrs, roi, queue).
+  agents, okrs, roi, queue, work, compare, health).
 - Env overrides (for tests and fixtures): `COCKPIT_NPM_CMD`, `COCKPIT_GH_CMD`,
   `COCKPIT_PULSE_CMD`, `BOARD_MD`, `FOUNDER_QUEUE_MD`, `RETRO_MD`,
   `USAGE_READINGS_TSV`, `COST_HISTORY_FILE`, `COCKPIT_STATUS_DIR`,
-  `COCKPIT_NOW` (ISO8601 UTC, for deterministic ages).
+  `COCKPIT_NOW` (ISO8601 UTC, for deterministic ages). Executive panels add
+  `COCKPIT_GIT_ROOT`, `COCKPIT_GIT_DAYS` (default 15), `COCKPIT_GH_RUNS_CMD`,
+  `COCKPIT_GH_ISSUES_CMD`, `COCKPIT_GH_PRS_CMD`, `COCKPIT_TRANSCRIPT_ROOT`,
+  `COCKPIT_TOKEN_CACHE`, `COCKPIT_PRICING_JSON`, `COCKPIT_USAGE_CAP_JSON`,
+  `COCKPIT_LEADER_FILE`, `COCKPIT_SCOREBOARD_DIR`.
 - On start the server prints `cockpit: http://127.0.0.1:<port>/` and its PID,
   and writes the PID to `.loki/cockpit/server.pid` so it is stopped by
   recorded PID only.
@@ -189,6 +193,44 @@ Human-equivalent value (right side):
 - Every assumption is editable only in `roi-basis.json`; the page shows its
   path and git SHA, never an inline editor.
 
+### 5.8 Executive panels (work, compare, health) and extended team, releases, ROI
+Data rule for every executive number: it comes from a real source, the
+panel lists that source and its as-of time per section, a missing source is
+UNKNOWN with the error (never 0 or a guess), and every assumption is labelled
+ASSUMPTION. Each panel carries `data.sources[section] = {status, source,
+as_of, error, keys}`; `keys` names the data keys that section produced. A
+panel is OK when all sections are OK, PARTIAL when some are UNKNOWN, UNKNOWN
+when all are.
+- agents (team): the 10 seats with model, last tick, outcome, skip reason,
+  ticks/day, cost/day, STALE at 2x cadence, plus spawned engineers and
+  reviewers seen in 24h and 7d. Cost is tokens from Claude transcripts
+  (`scripts/usage-governor.py iter_records`) times
+  `loki-ts/data/model-pricing.json` by tier. It is an ESTIMATE at list price,
+  not billed spend. A model without a price is listed under `unpriced_models`,
+  never priced at 0.
+- releases: timeline with lead time (npm publish minus release commit time;
+  None when the commit is not found), rates, failures, dist-tags, and CI state
+  per release SHA from the last 100 runs of `gh run list`.
+- work: commits by conventional type (24h, 7d, previous 7d, lines changed),
+  slices released from BOARD stamps, merged PRs by type, issues opened and
+  closed (commit log, `gh pr list`, `gh issue list`, BOARD.md).
+- compare: week over week and day over day (pct is None when the previous
+  value is 0), seat versus seat, model mix by tier, and the Loki versus raw
+  `claude -p` scoreboard from `.loki/company/scoreboard/*.json` (fields shown
+  verbatim, UNKNOWN with the path looked for if absent).
+- health: CI green rate overall and per workflow, open P0 issues (label p0),
+  blocked, review-blocked and parked rows, usage percents and the governor
+  cap, PAUSED state, load, and the leader lock holder. The usage cap file
+  (`COCKPIT_USAGE_CAP_JSON`) is read defensively: unparseable or unknown shape
+  gives `paused_by_usage_cap` None, never False.
+- roi: company cost 7d, cost per release, per released slice and per fix
+  commit, per-seat cost, plan proration labelled ASSUMPTION. The ROI multiple
+  stays withheld while `hours_per_outcome.verified_slice` is unset.
+- Always running: `loki trigger install` also installs the LaunchAgent
+  `dev.autonomi.loki-cockpit` (`server.py --port 8787 --repo-root <root>`,
+  KeepAlive, RunAtLoad, plist mode 0600, logs under `~/.loki/logs/`);
+  `loki trigger uninstall` removes it.
+
 ### 5.7 Founder command box
 - UI: one textarea (max 2000 characters), one "Why only you" optional field,
   one submit button. After submit, the page shows the appended row number
@@ -216,7 +258,7 @@ Human-equivalent value (right side):
 |---|---|---|
 | GET | `/` | index.html |
 | GET | `/api/snapshot` | all panels |
-| GET | `/api/panel/<name>` | one panel |
+| GET | `/api/panel/<name>` | one panel (pulse, releases, board, agents, okrs, roi, queue, work, compare, health) |
 | GET | `/healthz` | `{"ok": true, "pid": N}` |
 | POST | `/api/queue` | append result |
 Every other method or path returns 405 or 404.
@@ -261,12 +303,20 @@ recorded PID only, sets `LOKI_NO_BROWSER=1`. Fixtures under the run tmp dir:
 - `--host 0.0.0.0` exits 64. POST without token: 403. Bad Host: 403.
 - `--once --json` output parses and its exit code matches the pulse stub's
   exit code mapping.
+- Executive fixtures: a real repo with dated commits, stubbed gh runs,
+  issues and PRs, transcripts, a price table, a scoreboard dir, a leader file.
+  Assert exact values (commit counts by window and type, lead time, CI per
+  release SHA, cost, ROI ratios), the UNKNOWN path for each source (commits,
+  gh, BOARD, transcripts, price table, usage, leader, scoreboard), the
+  defensive usage-cap read, and a walker that fails when any panel number
+  lacks a source claim or an UNKNOWN source still carries numbers (with two
+  mutation controls). `tests/test_trigger.py` covers the cockpit plist.
 - Positive control for every absence assertion (retro 3.1.6): the same probe
   run on a fixture that does contain the value must find it.
 
 ## 9. Acceptance (Wall checks)
 1. `python3 tools/cockpit/server.py --once --json | python3 -m json.tool`
-   exits 0 or 2 on a clean checkout, with all 7 panels present.
+   exits 0 or 2 on a clean checkout, with all 10 panels present.
 2. `bash tests/test-cockpit.sh` passes, and fails when the append sanitizer
    or the Host check is removed (mutation).
 3. `lsof -nP -iTCP:<port> -sTCP:LISTEN` shows 127.0.0.1 only.

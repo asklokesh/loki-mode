@@ -245,6 +245,8 @@ DEFAULT_SEAT_TIMEOUT_SECS = 1200
 GOVERNOR_CACHE_SECS = 300
 TERM_GRACE_SECS = 15
 LAUNCHAGENT_LABEL = "dev.autonomi.loki-company"
+COCKPIT_LABEL = "dev.autonomi.loki-cockpit"
+COCKPIT_PORT = 8787
 
 SEAT_TICK_PROMPT = (
     "Run one iteration of your standing loop from your agent file. "
@@ -482,8 +484,17 @@ def next_fire(cron_expr, after):
     return next(_fire_minutes(cron_expr, start, 8 * 1440), None)
 
 
-def launchagent_path(home):
-    return os.path.join(home, "Library", "LaunchAgents", LAUNCHAGENT_LABEL + ".plist")
+def launchagent_path(home, label=None):
+    return os.path.join(home, "Library", "LaunchAgents", (label or LAUNCHAGENT_LABEL) + ".plist")
+
+
+def _write_plist(home, plist, label):
+    path = launchagent_path(home, label)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+        plistlib.dump(plist, f)
+    os.chmod(path, 0o600)
+    return path
 
 
 def write_launchagent(home, repo, loki_bin):
@@ -505,16 +516,38 @@ def write_launchagent(home, repo, loki_bin):
         "StandardOutPath": os.path.join(logs, "company.out.log"),
         "StandardErrorPath": os.path.join(logs, "company.err.log"),
     }
-    path = launchagent_path(home)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
-        plistlib.dump(plist, f)
-    os.chmod(path, 0o600)
-    return path
+    return _write_plist(home, plist, LAUNCHAGENT_LABEL)
 
 
-def remove_launchagent(home):
-    path = launchagent_path(home)
+def cockpit_argv(repo, python_bin=None):
+    return [python_bin or sys.executable or "python3",
+            os.path.join(repo, "tools", "cockpit", "server.py"),
+            "--port", str(COCKPIT_PORT), "--repo-root", repo]
+
+
+def write_cockpit_launchagent(home, repo, python_bin=None):
+    """Write the always-on CEO cockpit LaunchAgent plist. Does not load it."""
+    logs = os.path.join(home, ".loki", "logs")
+    os.makedirs(logs, exist_ok=True)
+    plist = {
+        "Label": COCKPIT_LABEL,
+        "ProgramArguments": cockpit_argv(repo, python_bin),
+        "WorkingDirectory": repo,
+        "EnvironmentVariables": {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "HOME": home,
+        },
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 30,
+        "StandardOutPath": os.path.join(logs, "cockpit.out.log"),
+        "StandardErrorPath": os.path.join(logs, "cockpit.err.log"),
+    }
+    return _write_plist(home, plist, COCKPIT_LABEL)
+
+
+def remove_launchagent(home, label=None):
+    path = launchagent_path(home, label)
     if not os.path.exists(path):
         return False
     os.unlink(path)
@@ -539,6 +572,23 @@ def systemd_unit(repo, loki_bin):
     ])
 
 
+def cockpit_systemd_unit(repo, python_bin=None):
+    return "\n".join([
+        "[Unit]",
+        "Description=Loki Mode CEO cockpit (127.0.0.1:%d)" % COCKPIT_PORT,
+        "",
+        "[Service]",
+        "WorkingDirectory=%s" % repo,
+        "ExecStart=%s" % " ".join(cockpit_argv(repo, python_bin)),
+        "Restart=always",
+        "RestartSec=30",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ])
+
+
 def _launchctl(*args):
     return subprocess.run(["launchctl"] + list(args), capture_output=True, text=True)
 
@@ -553,18 +603,25 @@ def install_company(no_load=False):
         print("NOT SUPPORTED: launchd install is macOS only. Equivalent systemd user unit "
               "(~/.config/systemd/user/loki-company.service):\n")
         print(systemd_unit(repo, loki_bin))
+        print("\nCockpit (~/.config/systemd/user/loki-cockpit.service):\n")
+        print(cockpit_systemd_unit(repo))
         return 0
-    path = write_launchagent(home, repo, loki_bin)
-    print("Wrote %s" % path)
-    if not no_load:
+    paths = [(LAUNCHAGENT_LABEL, write_launchagent(home, repo, loki_bin)),
+             (COCKPIT_LABEL, write_cockpit_launchagent(home, repo))]
+    rc = 0
+    for label, path in paths:
+        print("Wrote %s" % path)
+        if no_load:
+            continue
         dom = "gui/%d" % os.getuid()
         _launchctl("bootout", dom, path)
         r = _launchctl("bootstrap", dom, path)
         if r.returncode != 0:
-            print("launchctl bootstrap failed: %s" % (r.stderr.strip() or r.stdout.strip()))
-            return 1
-        print("Loaded %s" % LAUNCHAGENT_LABEL)
-    return 0
+            print("launchctl bootstrap failed for %s: %s" % (label, r.stderr.strip() or r.stdout.strip()))
+            rc = 1
+            continue
+        print("Loaded %s" % label)
+    return rc
 
 
 def uninstall_company(no_load=False):
@@ -572,10 +629,11 @@ def uninstall_company(no_load=False):
     if sys.platform != "darwin":
         print("NOT SUPPORTED: nothing to remove (launchd is macOS only).")
         return 0
-    path = launchagent_path(home)
-    if not no_load and os.path.exists(path):
-        _launchctl("bootout", "gui/%d" % os.getuid(), path)
-    print("Removed %s" % path if remove_launchagent(home) else "Not installed: %s" % path)
+    for label in (LAUNCHAGENT_LABEL, COCKPIT_LABEL):
+        path = launchagent_path(home, label)
+        if not no_load and os.path.exists(path):
+            _launchctl("bootout", "gui/%d" % os.getuid(), path)
+        print("Removed %s" % path if remove_launchagent(home, label) else "Not installed: %s" % path)
     return 0
 
 

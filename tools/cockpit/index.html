@@ -12,25 +12,37 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-ap
 header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;padding:12px 16px;border-bottom:1px solid var(--line)}
 header h1{font-size:16px;margin:0}
 #refreshed{color:var(--mute);font-size:12px}
+#kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:12px 16px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:84px}
+.kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+.kpi .v{font-size:22px;font-weight:600;line-height:1.2;min-height:27px}
+.kpi .s{font-size:11px;color:var(--mute);min-height:15px}
+.kpi.UNKNOWN .v{color:var(--unk);font-size:16px}
+.kpi.VIOLATION .v{color:var(--bad)}.kpi.OK .v{color:var(--ok)}.kpi.STALE .v{color:var(--warn)}
 main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;padding:12px 16px}
 section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:160px;overflow:hidden}
 section.wide{grid-column:1/-1}
 h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;display:flex;gap:8px;align-items:center}
+h3{font-size:12px;margin:12px 0 4px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
 .badge{font-size:11px;padding:1px 6px;border-radius:10px;border:1px solid currentColor}
-.OK{color:var(--ok)}.VIOLATION{color:var(--bad)}.UNKNOWN,.UNMEASURED,.UNCITED{color:var(--unk)}.STALE{color:var(--warn)}
+.OK{color:var(--ok)}.VIOLATION{color:var(--bad)}.UNKNOWN,.UNMEASURED,.UNCITED,.PARTIAL,.NO-TICK{color:var(--unk)}.STALE{color:var(--warn)}.ASSUMPTION{color:var(--warn);font-weight:600}
 .src{margin-top:8px;color:var(--mute);font:11px ui-monospace,Menlo,monospace;word-break:break-all}
 .err{color:var(--warn);font-size:12px;margin:4px 0}
 .band{background:var(--badbg);color:var(--bad);border:1px solid var(--bad);border-radius:6px;padding:8px;margin-bottom:8px}
 .band .top{font-size:16px;font-weight:600}
+.scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:12px}
 td,th{text-align:left;padding:3px 6px 3px 0;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .flow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .flow div{border:1px solid var(--line);border-radius:6px;padding:4px 8px;min-width:78px}
 .flow b{display:block;font-size:18px}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
-.card{border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px}
-.card.blocked{border-color:var(--bad)}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.spark{display:flex;align-items:flex-end;gap:2px;height:40px;margin:4px 0}
+.spark i{flex:1;min-width:3px;background:var(--accent);border-radius:1px 1px 0 0}
 .mute{color:var(--mute)}
+details{margin-top:8px}summary{cursor:pointer;color:var(--mute);font-size:11px}
 textarea,input[type=text]{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
 button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;font:inherit;cursor:pointer}
 button:disabled{opacity:.5}
@@ -39,13 +51,17 @@ button:disabled{opacity:.5}
 </head>
 <body>
 <header><h1>Loki Cockpit</h1><span id="refreshed">loading</span><span class="mute" id="fail"></span></header>
+<div id="kpi"></div>
 <main>
 <section class="wide" id="p-pulse"><h2>Pulse</h2><div class="body">loading</div></section>
-<section class="wide" id="p-agents"><h2>Agents</h2><div class="body">loading</div></section>
-<section id="p-board"><h2>BOARD flow</h2><div class="body">loading</div></section>
-<section id="p-releases"><h2>Releases</h2><div class="body">loading</div></section>
-<section class="wide" id="p-okrs"><h2>OKRs</h2><div class="body">loading</div></section>
+<section class="wide" id="p-agents"><h2>Company team</h2><div class="body">loading</div></section>
 <section class="wide" id="p-roi"><h2>ROI</h2><div class="body">loading</div></section>
+<section id="p-releases"><h2>Releases</h2><div class="body">loading</div></section>
+<section id="p-work"><h2>Work made</h2><div class="body">loading</div></section>
+<section class="wide" id="p-compare"><h2>Comparisons</h2><div class="body">loading</div></section>
+<section id="p-health"><h2>Health and risk</h2><div class="body">loading</div></section>
+<section id="p-board"><h2>BOARD flow</h2><div class="body">loading</div></section>
+<section class="wide" id="p-okrs"><h2>OKRs</h2><div class="body">loading</div></section>
 <section class="wide" id="p-queue"><h2>Founder command box</h2><div class="body">loading</div>
 <div>
 <textarea id="item" rows="3" maxlength="2000" placeholder="Command or decision for the chief of staff (max 2000 characters)"></textarea>
@@ -59,18 +75,29 @@ button:disabled{opacity:.5}
 (function(){
 "use strict";
 var TOKEN="__COCKPIT_TOKEN__";
+var COST_NOTE="list-price equivalent from transcript tokens, not billed spend";
 function h(tag,attrs){var e=document.createElement(tag);if(attrs){for(var k in attrs){if(k==="class")e.className=attrs[k];else if(k==="title")e.title=attrs[k];else e.setAttribute(k,attrs[k]);}}
  for(var i=2;i<arguments.length;i++){var c=arguments[i];if(c===null||c===undefined)continue;e.appendChild(typeof c==="object"?c:document.createTextNode(String(c)));}return e;}
 function show(v){return v===null||v===undefined?"UNKNOWN":String(v);}
+function usd(v){return v===null||v===undefined?"UNKNOWN":"USD "+Number(v).toLocaleString(undefined,{maximumFractionDigits:2});}
+function pctv(v){return v===null||v===undefined?"n/a":(v>0?"+":"")+v+"%";}
 function badge(s){return h("span",{"class":"badge "+s},s);}
+function get(o,path){var c=o;for(var i=0;i<path.length;i++){if(c===null||c===undefined)return undefined;c=c[path[i]];}return c;}
 function src(p){return h("div",{"class":"src",title:"as of "+p.as_of},"source: "+p.source_cmd+"  as of "+p.as_of+(p.cache_age_s!==undefined?"  cached "+p.cache_age_s+"s":""));}
 function err(p){return p.error?h("div",{"class":"err"},p.error):null;}
-function table(rows,head){var t=h("table");if(head){var tr=h("tr");head.forEach(function(x){tr.appendChild(h("th",null,x));});t.appendChild(tr);}
- rows.forEach(function(r){var tr=h("tr");r.forEach(function(c){tr.appendChild(h("td",null,c));});t.appendChild(tr);});return t;}
+function table(rows,head,numcols){var t=h("table");var nc=numcols||[];if(head){var tr=h("tr");head.forEach(function(x,i){tr.appendChild(h("th",{"class":nc.indexOf(i)>=0?"num":""},x));});t.appendChild(tr);}
+ rows.forEach(function(r){var tr=h("tr");r.forEach(function(c,i){tr.appendChild(h("td",{"class":nc.indexOf(i)>=0?"num":""},c));});t.appendChild(tr);});
+ var w=h("div",{"class":"scroll"});w.appendChild(t);return w;}
+function ledger(d){var s=d&&d.sources;if(!s)return null;var rows=Object.keys(s).map(function(k){var x=s[k];
+  return [k,h("span",{"class":x.status},x.status),x.source||"none",x.as_of||"none",x.error||""];});
+ var det=h("details",null,h("summary",null,"data sources ("+rows.length+")"));det.appendChild(table(rows,["Section","State","Source","As of","Error"]));return det;}
 function fill(id,p,build){var s=document.getElementById("p-"+id);var b=s.querySelector(".body");var h2=s.querySelector("h2");
  while(h2.childNodes.length>1)h2.removeChild(h2.lastChild);h2.appendChild(badge(p.status));
  var nb=h("div",{"class":"body"});try{build(nb,p.data||{},p);}catch(e){nb.appendChild(h("div",{"class":"err"},"render error: "+e));}
- nb.appendChild(err(p));nb.appendChild(src(p));s.replaceChild(nb,b);}
+ nb.appendChild(err(p));nb.appendChild(ledger(p.data));nb.appendChild(src(p));s.replaceChild(nb,b);}
+function sectionNote(b,d,key){var x=get(d,["sources",key]);if(x&&x.status==="UNKNOWN"){b.appendChild(h("div",{"class":"err"},"UNKNOWN "+key+": "+show(x.error)));return true;}return false;}
+function spark(series,field){var max=0;series.forEach(function(r){if(r[field]>max)max=r[field];});
+ var w=h("div",{"class":"spark",title:field+" per day"});series.forEach(function(r){var i=h("i",{title:r.day+": "+r[field]});i.style.height=(max?Math.max(2,Math.round(r[field]/max*100)):2)+"%";w.appendChild(i);});return w;}
 
 var R={};
 R.pulse=function(b,d){
@@ -81,33 +108,108 @@ R.pulse=function(b,d){
  var m=d.metrics||{};b.appendChild(table(Object.keys(m).map(function(k){return [k,m[k]];})));
  if((d.unknown_metrics||[]).length)b.appendChild(h("p",{"class":"mute"},"UNKNOWN metrics: "+d.unknown_metrics.join(", ")));
  (d.stale||[]).forEach(function(x){b.appendChild(h("p",{"class":"STALE"},x));});};
-R.agents=function(b,d){var c=h("div",{"class":"cards"});
- (d.seats||[]).forEach(function(s){var card=h("div",{"class":"card"+(s.blocked?" blocked":"")});
-  card.appendChild(h("div",null,h("b",null,s.slug)," ",badge(s.state)));
-  if(s.state==="UNKNOWN"){card.appendChild(h("div",{"class":"mute"},s.error||"no status file"));}
-  else{card.appendChild(h("div",null,"model: "+show(s.model)));card.appendChild(h("div",null,"doing: "+show(s.doing)));
-   card.appendChild(h("div",null,"slice: "+show(s.slice)));card.appendChild(h("div",null,"updated: "+show(s.updated_min_ago)+" min ago"));
-   if(s.blocked_on)card.appendChild(h("div",{"class":"VIOLATION"},"blocked on: "+s.blocked_on));}
-  var tk=s.tick||{};card.appendChild(h("div",null,"last tick: "+show(tk.last_tick)+" ("+show(tk.outcome)+")"));
-  card.appendChild(h("div",null,"next due: "+show(tk.next_due)+(tk.state==="STALE"?" STALE (no tick in 2x "+tk.interval_min+" min)":"")));
-  (s.root_causes||[]).forEach(function(r){card.appendChild(h("div",{"class":"mute"},r));});c.appendChild(card);});
- b.appendChild(c);};
+R.agents=function(b,d){
+ var rows=(d.seats||[]).map(function(s){var tk=s.tick||{},a=s.activity||{},c=s.cost||{};
+  var stale=tk.state==="STALE";
+  return [h("b",null,s.slug),show(s.model||s.model_file),h("span",{"class":stale?"STALE":(s.state==="UNKNOWN"?"UNKNOWN":"OK")},stale?"STALE":s.state),
+   show(tk.last_tick)+" ("+show(tk.outcome)+")",show(a.ticks_24h),show(a.last_skip_reason),usd(c.usd_24h),usd(c.usd_7d),
+   s.state==="UNKNOWN"?(s.error||"no status file"):show(s.doing)];});
+ b.appendChild(table(rows,["Seat","Model","State","Last tick","Ticks 24h","Last skip reason","Est cost 24h","Est cost 7d","Doing / error"]));
+ b.appendChild(h("p",{"class":"mute"},"Seats reporting: "+show(d.reporting)+" of "+show(d.total)+". STALE = no tick in 2x cadence. Cost: "+COST_NOTE+"."));
+ var t=d.transcripts;
+ if(t){b.appendChild(h("h3",null,"Engineers and reviewers seen in transcripts ("+t.label+")"));
+  var tr=[];["last_24h","last_7d"].forEach(function(w){var x=t[w]||{};["main_session","spawned"].forEach(function(k){var y=x[k];if(y)tr.push([w,k,show(y.sessions),show(y.msgs),show(y.out),usd(y.usd)]);});});
+  b.appendChild(table(tr,["Window","Kind","Sessions","Messages","Output tokens","Est cost"],[2,3,4,5]));}
+ var so=get(d,["slice_owners","last_7d"]);
+ if(so){b.appendChild(h("h3",null,"Slices released in 7d by owner (BOARD free text)"));
+  b.appendChild(table(Object.keys(so).map(function(k){return [k,so[k]];}),["Owner","Slices"],[1]));}};
 R.board=function(b,d){var f=h("div",{"class":"flow"});var cs=d.counts||{};
  ["ready","building","review","approved","merged","released"].forEach(function(t){f.appendChild(h("div",null,h("b",null,show(cs[t])),t));});b.appendChild(f);
  if(d.ready_below_30)b.appendChild(h("div",{"class":"err"},"ready queue below "+d.ready_target+" (D91)"));
  b.appendChild(table((d.active||[]).map(function(r){return [r.id,r.owner,r.tier,r.token,show(r.age_min)+" / "+show(r.budget_min)+" min"+(r.over_budget?" OVER":"")];}),["ID","Owner","Tier","Status","Age / budget"]));
  if((d.unparsed||[]).length)b.appendChild(h("p",{"class":"mute"},"Unparsed rows: "+d.unparsed.join(", ")));};
 R.releases=function(b,d){
+ var rt=d.rates||{},lt=d.lead_time||{};
  b.appendChild(table([["npm latest",show(d.latest)],["npm next",show(d.next)],["VERSION",show(d.version_file)],["last tag",show(d.last_tag)],
-  ["minutes since last publish",show(d.last_publish_minutes_ago)],["releases last hour",show(d.releases_last_hour)],["releases last 24h",show(d.releases_last_24h)]]));
- b.appendChild(h("p",{"class":"mute"},d.npm_label));
+  ["minutes since last publish",show(d.last_publish_minutes_ago)],["releases last hour",show(d.releases_last_hour)],["releases last 24h",show(d.releases_last_24h)],
+  ["releases last 7d",show(rt.last_7d)],["week over week",pctv(rt.week_over_week_pct)],
+  ["lead time median / p90 (min)",show(lt.median_min)+" / "+show(lt.p90_min)+" (n="+show(lt.n)+")"],
+  ["failed Release runs (last 20 / 24h)",show(get(d,["failed_release_runs","last_20_runs"]))+" / "+show(get(d,["failed_release_runs","last_24h"]))]]));
+ b.appendChild(h("p",{"class":"mute"},d.npm_label+". Lead time: "+show(lt.definition)));
+ if(rt.per_day_last_14d)b.appendChild(spark(rt.per_day_last_14d,"count"));
  (d.flags||[]).forEach(function(x){b.appendChild(h("div",{"class":"VIOLATION"},x));});
- b.appendChild(table((d.runs||[]).slice(0,8).map(function(r){var a=h("a",{href:r.url||"#",rel:"noreferrer",target:"_blank"},String(r.databaseId));return [a,show(r.conclusion||r.status),(r.headSha||"").slice(0,8)];}),["Run","Result","SHA"]));
- b.appendChild(table((d.versions||[]).slice(0,10).map(function(v){return [v.version,v.published];}),["Version","Published"]));};
+ b.appendChild(h("h3",null,"Timeline with CI per release commit"));
+ b.appendChild(table((d.timeline||[]).slice(0,12).map(function(r){var ci=r.ci||{};
+  return [r.version,r.published,show(r.lead_time_min),(r.sha||"").slice(0,8),h("span",{"class":ci.state==="green"?"OK":(ci.state==="red"?"VIOLATION":"UNKNOWN")},show(ci.state)+(ci.runs!==undefined?" ("+ci.runs+")":""))];}),["Version","Published","Lead min","SHA","CI"],[2]));
+ b.appendChild(table((d.runs||[]).slice(0,8).map(function(r){var a=h("a",{href:r.url||"#",rel:"noreferrer",target:"_blank"},String(r.databaseId));return [a,show(r.conclusion||r.status),(r.headSha||"").slice(0,8)];}),["Run","Result","SHA"]));};
+R.work=function(b,d){
+ if(!sectionNote(b,d,"commits")){var c=d.commits||{};
+  b.appendChild(h("h3",null,"Commits (git log)"));
+  b.appendChild(table([["last 24h",show(c.last_24h)],["last 7d",show(c.last_7d)],["previous 7d",show(c.prev_7d)],["lines added 7d",show(c.lines_added_7d)],["lines deleted 7d",show(c.lines_deleted_7d)],
+   ["lines changed excl. release 7d",show(c.lines_changed_excl_release_7d)],["files touched 7d",show(c.files_touched_7d)]]));
+  var bt=c.by_type_7d||{};b.appendChild(table(Object.keys(bt).sort(function(x,y){return bt[y]-bt[x];}).map(function(k){return [k,bt[k]];}),["Type","Commits 7d"],[1]));
+  b.appendChild(h("p",{"class":"mute"},c.note));if(c.per_day_14d)b.appendChild(spark(c.per_day_14d,"commits"));}
+ if(!sectionNote(b,d,"slices")){var s=d.slices||{};b.appendChild(h("h3",null,"Slices (BOARD)"));
+  b.appendChild(table([["released 24h",show(s.released_24h)],["released 7d",show(s.released_7d)],["released previous 7d",show(s.released_prev_7d)],["rows parsed",show(s.rows_parsed)],["unparsed rows",show(s.unparsed_rows)]]));
+  b.appendChild(h("p",{"class":"mute"},s.note));}
+ if(!sectionNote(b,d,"pull_requests")){var p=d.pull_requests||{};b.appendChild(h("h3",null,"Pull requests"));
+  var mt=p.merged_by_type_7d||{};
+  b.appendChild(table([["merged 24h",show(p.merged_24h)],["merged 7d",show(p.merged_7d)]].concat(Object.keys(mt).map(function(k){return ["merged 7d: "+k,mt[k]];}))));}
+ if(!sectionNote(b,d,"issues")){var i=d.issues||{};b.appendChild(h("h3",null,"Issues"));
+  b.appendChild(table([["open now",show(i.open_now)],["opened 7d",show(i.opened_7d)],["closed 7d",show(i.closed_7d)],["bugs closed 7d",show(i.bugs_closed_7d)]]));
+  b.appendChild(h("p",{"class":"mute"},i.window_note));}};
+R.compare=function(b,d){
+ if(!sectionNote(b,d,"week_over_week")){var w=get(d,["week_over_week","metrics"])||{};
+  b.appendChild(h("h3",null,"Week over week (last 7d vs the 7d before)"));
+  b.appendChild(table(Object.keys(w).map(function(k){var m=w[k];return [k,show(m.this_7d),show(m.prev_7d),pctv(m.pct),m.source];}),["Metric","This 7d","Prev 7d","Change","Source"],[1,2,3]));
+  b.appendChild(h("p",{"class":"mute"},"Token cost is a "+COST_NOTE+"."));}
+ if(!sectionNote(b,d,"day_over_day")){var dd=d.day_over_day||{},t=dd.today_vs_yesterday||{};
+  b.appendChild(h("h3",null,"Day over day"));
+  b.appendChild(table(Object.keys(t).map(function(k){var m=t[k];return [k,show(m.this_7d),show(m.prev_7d),pctv(m.pct)];}),["Metric","Today","Yesterday","Change"],[1,2,3]));
+  b.appendChild(h("p",{"class":"mute"},dd.note));
+  if(dd.series){b.appendChild(spark(dd.series,"npm_releases"));b.appendChild(spark(dd.series,"commits"));}}
+ if(!sectionNote(b,d,"seat_vs_seat")){var sv=d.seat_vs_seat||{};b.appendChild(h("h3",null,"Seat versus seat, 7d ("+sv.label+")"));
+  b.appendChild(table((sv.seats||[]).map(function(s){var bar=h("div",{"class":"bar"},h("i"));bar.firstChild.style.width=Math.min(100,s.usd_share_pct||0)+"%";
+   return [s.seat,show(s.sessions_7d),show(s.output_tokens_7d),usd(s.usd_7d),show(s.usd_share_pct)+"%",bar,show(s.slices_released_7d)];}),["Seat","Sessions","Output tokens","Est cost","Share","","Slices released"],[1,2,3,4,6]));}
+ if(!sectionNote(b,d,"model_mix")){var mm=d.model_mix||{};b.appendChild(h("h3",null,"Model mix ("+mm.label+")"));
+  var rows=[];["last_24h","last_7d"].forEach(function(w){(mm[w]||[]).forEach(function(x){rows.push([w,x.tier,show(x.msgs),show(x.out),show(x.out_share_pct)+"%",usd(x.usd),show(x.usd_share_pct)+"%"]);});});
+  b.appendChild(table(rows,["Window","Tier","Messages","Output tokens","Out share","Est cost","Cost share"],[2,3,4,5,6]));}
+ if(!sectionNote(b,d,"scoreboard")){var sb=d.scoreboard||{};b.appendChild(h("h3",null,"Loki versus raw claude -p"));
+  b.appendChild(h("pre",{"class":"src"},JSON.stringify(sb,null,1).slice(0,1500)));}};
+R.health=function(b,d){
+ if(!sectionNote(b,d,"system")){var s=d.system||{},l=s.leader||{};
+  b.appendChild(table([["company paused",show(s.company_paused)],["leader lock",l.pid!==undefined?("pid "+l.pid+(l.alive?" alive":" DEAD")):"UNKNOWN: "+show(s.leader_error)],["load 1 min",show(s.load_1min)]]));}
+ if(!sectionNote(b,d,"usage")){var u=d.usage||{};b.appendChild(h("h3",null,"Usage and governor ("+show(u.cap_basis)+")"));
+  b.appendChild(table([["weekly used",show(u.weekly_percent)+"% (resets "+show(u.weekly_resets)+")"],["5h window used",show(u.window_5h_percent)+"% (resets "+show(u.window_resets)+")"],
+   ["max engineers next hour",show(u.max_engineers_next_hour)],["active engineers last hour",show(u.active_engineers_last_hour)],
+   ["paused by usage cap",show(u.paused_by_usage_cap)],["cap file",u.usage_cap_file&&u.usage_cap_file.present?"present":"absent ("+show(get(u,["usage_cap_file","reason"]))+")"]]));}
+ if(!sectionNote(b,d,"ci")){var c=d.ci||{},a=c.all||{};b.appendChild(h("h3",null,"CI green rate"));
+  b.appendChild(table([["overall",show(a.green_rate_pct)+"% ("+show(a.success)+" ok, "+show(a.failure)+" failed, "+show(a.cancelled)+" cancelled)"]].concat(
+   Object.keys(c.by_workflow||{}).map(function(k){var x=c.by_workflow[k];return [k,show(x.green_rate_pct)+"% ("+x.success+" ok, "+x.failure+" failed)"];}))));
+  b.appendChild(h("p",{"class":"mute"},c.note));}
+ if(!sectionNote(b,d,"p0")){var p=d.p0||{};b.appendChild(h("h3",null,"Open P0 issues: "+show(p.open_p0_issues)));
+  b.appendChild(table((p.items||[]).map(function(i){return [i.number,i.title];}),["#","Title"]));}
+ if(!sectionNote(b,d,"blocked")){var k=d.blocked||{};b.appendChild(h("h3",null,"Blocked and parked rows"));
+  b.appendChild(table([["blocked",show(k.blocked)],["review-blocked",show(k.review_blocked)],["parked",show(k.parked)],["rejected",show(k.rejected)],["open P0 rows",show(k.p0_rows_open)]]));
+  b.appendChild(table((k.blocked_rows||[]).map(function(r){return [r.id,show(r.age_min)+" min",r.notes];}),["ID","Age","Notes"]));}};
 R.okrs=function(b,d){b.appendChild(table((d.items||[]).map(function(i){
  var cur=i.current?(show(i.current.value)+(i.current.target!==undefined?" / "+i.current.target:"")):"";
  return [i.n,i.title,show(i.owner),h("span",{"class":i.state},i.state),cur];}),["#","Item","Owner","State","Value / target"]));};
-R.roi=function(b,d){var c=d.cost||{},v=d.value||{},r=d.roi||{},m=c.metered||{},u=c.usage||{};
+R.roi=function(b,d){var c=d.cost||{},v=d.value||{},r=d.roi||{},m=c.metered||{},u=c.usage||{},co=d.company;
+ if(co){b.appendChild(h("h3",null,"Company cost versus output, "+co.window+" ("+co.label+")"));
+  b.appendChild(table([["agent cost 7d",usd(co.cost_7d_usd)+" ("+COST_NOTE+")"],
+   ["plan proration 7d",usd(co.plan_proration_7d_usd)],
+   ["npm releases 7d",show(co.releases_7d)+" -> "+usd(co.usd_per_release)+" per release"],
+   ["slices released 7d",show(co.slices_released_7d)+" -> "+usd(co.usd_per_slice)+" per slice"],
+   ["fix commits 7d",show(co.bug_fix_commits_7d)+" -> "+usd(co.usd_per_bug_fix)+" per fix"],
+   ["issues closed 7d",show(co.issues_closed_7d)]]));
+  b.appendChild(h("p",{"class":"mute"},h("span",{"class":"ASSUMPTION"},"ASSUMPTION"),": "+show(co.plan_proration_label)));
+  b.appendChild(h("p",{"class":"mute"},"Formula: "+co.formula));
+  (co.unknown_inputs||[]).forEach(function(x){b.appendChild(h("div",{"class":"err"},"UNKNOWN input: "+x));});}
+ var bs0=d.by_seat;
+ if(bs0){b.appendChild(h("h3",null,"ROI per seat ("+bs0.label+")"));
+  b.appendChild(table((bs0.seats||[]).map(function(s){return [s.seat,usd(s.cost_7d_usd),show(s.output_tokens_7d),show(s.slices_released_7d),s.usd_per_slice===null||s.usd_per_slice===undefined?"UNKNOWN":usd(s.usd_per_slice)];}),["Seat","Est cost 7d","Output tokens","Slices released","Cost per slice"],[1,2,3,4]));
+  var ns=bs0.non_seat_cost_7d_usd||{};b.appendChild(h("p",{"class":"mute"},"Non-seat cost 7d: "+Object.keys(ns).map(function(k){return k+" "+usd(ns[k]);}).join(", ")+". Unattributed slices 7d: "+show(bs0.slices_unattributed_7d)));}
  b.appendChild(h("h3",null,"Agent cost ("+c.label+")"));
  b.appendChild(table([["plan USD per month",show(c.plan_usd_per_month)],["plan USD per day (ESTIMATE)",show(c.plan_usd_per_day)],["daily budget USD",show(c.daily_budget_usd)],
   ["weekly plan-usage percent",show(u.weekly_percent)],["5h window percent",show(u.window_percent)],
@@ -116,15 +218,35 @@ R.roi=function(b,d){var c=d.cost||{},v=d.value||{},r=d.roi||{},m=c.metered||{},u
  b.appendChild(h("h3",null,"Human-equivalent value ("+show(v.state||"standing payroll only")+")"));
  var pr=v.standing_payroll_equivalent;
  b.appendChild(table([["standing payroll equivalent per day",pr?("USD "+pr.per_day_usd+" for "+pr.seats+" seats, "+pr.label):"UNKNOWN"],
-  ["human-equivalent value",v.human_equivalent_usd===null||v.human_equivalent_usd===undefined?"UNMEASURED":"USD "+v.human_equivalent_usd],["ROI multiple",r.multiple===null?"not printed ("+r.note+")":r.multiple+"x ("+r.weaker_side_label+")"],
-  ["cost per verified outcome",(d.scoreboard||{}).cost_per_verified_outcome_usd===null?"UNMEASURED":"USD "+d.scoreboard.cost_per_verified_outcome_usd]]));
+  ["human-equivalent value",v.human_equivalent_usd===null||v.human_equivalent_usd===undefined?"UNMEASURED":"USD "+v.human_equivalent_usd],["ROI multiple",r.multiple===null||r.multiple===undefined?"not printed ("+r.note+")":r.multiple+"x ("+r.weaker_side_label+")"],
+  ["cost per verified outcome",(d.scoreboard||{}).cost_per_verified_outcome_usd===null||(d.scoreboard||{}).cost_per_verified_outcome_usd===undefined?"UNMEASURED":"USD "+d.scoreboard.cost_per_verified_outcome_usd]]));
  b.appendChild(h("p",{"class":"mute"},"Formula: "+v.formula));
  var bs=d.basis||{};b.appendChild(h("p",{"class":"mute"},"Basis: "+bs.path+" at "+show(bs.git_sha)+", snapshot "+show(bs.snapshot_date)+(bs.stale?" (STALE: "+bs.stale_note+")":"")+", source "+show(bs.source_url)));
  (d.notes||[]).forEach(function(x){b.appendChild(h("div",{"class":"err"},x));});};
 R.queue=function(b,d){b.appendChild(h("p",null,"Rows: "+show(d.rows_total)+", last number "+show(d.max_number)+", from cockpit "+show(d.cockpit_rows)));
  b.appendChild(table((d.last||[]).map(function(r){return [r.n,r.date,r.item];}),["#","Date","Item"]));};
 
-function render(snap){var ps=snap.panels||{};Object.keys(R).forEach(function(k){if(ps[k])fill(k,ps[k],R[k]);});
+function kpi(label,panel,path,fmt,ps,sub,cls){
+ var p=ps[panel],v=p?get(p.data,path):undefined,ok=p&&v!==undefined&&v!==null;
+ var c=h("div",{"class":"kpi "+(ok?(cls?cls(v):""):"UNKNOWN"),title:p?("source: "+p.source_cmd+"; as of "+p.as_of):"panel missing"},
+  h("div",{"class":"k"},label),h("div",{"class":"v"},ok?fmt(v):"UNKNOWN"),h("div",{"class":"s"},ok?(sub?sub(p.data):""):(p&&p.error?p.error.slice(0,60):"no source")));
+ return c;}
+function renderKpi(ps){var k=document.getElementById("kpi");var items=[
+ kpi("Releases 24h","releases",["releases_last_24h"],String,ps,function(d){return show(get(d,["rates","last_7d"]))+" in 7d";}),
+ kpi("Lead time median","releases",["lead_time","median_min"],function(v){return v+" min";},ps,function(d){return "p90 "+show(get(d,["lead_time","p90_min"]))+" min";}),
+ kpi("Commits 7d","work",["commits","last_7d"],String,ps,function(d){return show(get(d,["commits","last_24h"]))+" in 24h";}),
+ kpi("Slices released 7d","work",["slices","released_7d"],String,ps,function(d){return "prev 7d "+show(get(d,["slices","released_prev_7d"]));}),
+ kpi("Agent cost 7d","roi",["company","cost_7d_usd"],usd,ps,function(){return "list price, not billed";}),
+ kpi("Cost per release","roi",["company","usd_per_release"],usd,ps,function(d){return "per slice "+usd(get(d,["company","usd_per_slice"]));}),
+ kpi("CI green rate","health",["ci","all","green_rate_pct"],function(v){return v+"%";},ps,function(d){return "last "+show(get(d,["ci","runs_considered"]))+" runs";},function(v){return v<80?"STALE":"OK";}),
+ kpi("Open P0","health",["p0","open_p0_issues"],String,ps,null,function(v){return v>0?"VIOLATION":"OK";}),
+ kpi("Weekly usage","health",["usage","weekly_percent"],function(v){return v+"%";},ps,function(d){return "max engineers "+show(get(d,["usage","max_engineers_next_hour"]));},function(v){return v>=90?"VIOLATION":(v>=75?"STALE":"OK");}),
+ kpi("Company","health",["system","company_paused"],function(v){return v?"PAUSED":"RUNNING";},ps,function(d){var l=get(d,["system","leader"])||{};return l.pid!==undefined?"leader pid "+l.pid+(l.alive?" alive":" dead"):"leader UNKNOWN";},function(v){return v?"VIOLATION":"OK";}),
+ kpi("Seats reporting","agents",["reporting"],function(v){return v+" of 10";},ps,null)
+ ];
+ while(k.firstChild)k.removeChild(k.firstChild);items.forEach(function(x){k.appendChild(x);});}
+
+function render(snap){var ps=snap.panels||{};Object.keys(R).forEach(function(k){if(ps[k])fill(k,ps[k],R[k]);});renderKpi(ps);
  document.getElementById("refreshed").textContent="last refreshed "+new Date().toLocaleTimeString()+" (generated "+snap.generated_at+")";
  document.getElementById("fail").textContent="";}
 function poll(){fetch("/api/snapshot",{cache:"no-store"}).then(function(r){return r.json();}).then(render)
