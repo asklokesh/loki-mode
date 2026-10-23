@@ -20,6 +20,7 @@ import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help 
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv, safeGitRun } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
+import { GENERIC_TIERS, VALID_TIERS } from "../util/claude_model.ts";
 import { applyCostProfile, COST_PROFILES } from "../util/cost_profile.ts";
 import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import { suggestWord } from "../cli/registry.ts";
@@ -106,21 +107,6 @@ const SPEC_NOOP_BOOL_FLAGS = new Set([...ATTEMPTS_NOOP_BOOL_FLAGS, "--spec-first
 function hasSpecFlag(args: readonly string[]): boolean {
   return args.some((a) => a === "--spec" || a.startsWith("--spec=") || a === "--spec-first");
 }
-
-// The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
-// tier names plus the Claude aliases (opus is the top-only setting; bash
-// dispatches it as opus, not as the sonnet-defaulted planning tier).
-const VALID_TIERS = new Set(["planning", "development", "fast", "opus", "sonnet", "haiku", "fable"]);
-
-// Generic capability tiers: small|medium|high -> the canonical tier names.
-// Callers ask for a CLASS of model and each provider supplies its own latest
-// model in that class, so no user has to name a vendor model. Translated, so
-// downstream consumers only ever see the canonical names in VALID_TIERS.
-const GENERIC_TIERS: Record<string, string> = {
-  small: "fast",
-  medium: "development",
-  high: "planning",
-};
 
 // The full set of flag names this route ACCEPTS (value + bool-env + no-op).
 // Anything else is rejected loudly (fail-closed: no silent capability loss).
