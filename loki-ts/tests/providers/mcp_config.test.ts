@@ -13,6 +13,10 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv, mcpLaunchFor } from "../../src/providers/mcp_config.ts";
+import { setLoadAwareTimeout } from "../preload.ts";
+
+// FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT: the bash/TS launch parity case spawns both CLIs.
+setLoadAwareTimeout(30_000);
 
 describe("mcp_config.mcpConfigPath", () => {
   let td: string;
