@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Changed
-- `loki verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` Python file), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files are counted as skipped, not run (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
+- `loki verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Wall files only. `loki_wall_*` `.ts` and `.js` Wall files now run through the same runner the engine10 verify stage uses (`loki internal wall-run`), so a failing one flips the verdict to FAIL and a passing one earns PASS; with no bun or no runner they are counted as skipped, not run (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION, RQ-64).
 
 ## v11.60.1 (2026-10-23)
 

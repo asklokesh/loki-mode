@@ -46,6 +46,7 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -201,12 +202,14 @@ RULES = (_rule_mock_render, _rule_toothless_test, _rule_mock_target)
 
 # --- Behavioral signal: Wall files that already exist ------------------------
 # The Wall is authored per run by an LLM (engine10 stages/wall.ts) and cannot be
-# authored here. When loki_wall_* Python files are present in the working tree they
-# are deterministic checks, so run them: a failing one is a FAIL. Other runners
-# (ts/js) are counted as skipped, not as a pass.
+# authored here. When loki_wall_* files are present in the working tree they are
+# deterministic checks, so run them: a failing one is a FAIL. .py runs under pytest;
+# ts/js go through the engine10 Wall runner (RQ-64). A file with no real result
+# (no bun, no runner) is counted as skipped, not as a pass.
 
 WALL_PREFIX = "loki_wall_"
 WALL_TIMEOUT_S = 20
+WALL_JS_TIMEOUT_S = 60  # per file, the engine10 Wall runner's own BASE_RUN_TIMEOUT_MS
 
 
 def _wall_files(root: str) -> list:
@@ -223,12 +226,46 @@ def _wall_files(root: str) -> list:
             if os.path.basename(n).startswith(WALL_PREFIX) and not EXCLUDE_RE.search(n)]
 
 
+def _lokits_entries() -> list:
+    """argv prefixes that run `loki internal ...` in bun: the shipped dist, then the source tree. Empty when bun is absent."""
+    bun = shutil.which("bun")
+    ts = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "loki-ts")
+    return [[bun, os.path.join(ts, rel)] for rel in ("dist/loki.js", "src/cli.ts")
+            if bun and os.path.exists(os.path.join(ts, rel))]
+
+
+def _run_wall_js(root: str, rels: list) -> tuple:
+    """RQ-64: .ts/.js Wall files go through the engine10 Wall runner (`loki internal wall-run`), not a second runner.
+    Returns (findings, ran, skipped); a file with no real result (no bun, no runner, crash) is skipped. An entry that
+    does not know the subcommand (a stale dist) yields no JSON, so the next entry is tried."""
+    results = None
+    for entry in _lokits_entries():
+        try:
+            p = subprocess.run(entry + ["internal", "wall-run", root] + rels, cwd=root, capture_output=True, text=True,
+                               timeout=WALL_JS_TIMEOUT_S * len(rels))
+            results = json.loads(p.stdout.strip().splitlines()[-1])
+            break
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            continue
+    findings, ran = [], 0
+    for r in results if isinstance(results, list) else []:
+        if not isinstance(r, dict) or r.get("file") not in rels:
+            continue
+        if r.get("status") == "pass":
+            ran += 1
+        elif r.get("status") == "fail":
+            ran += 1
+            findings.append(Finding(rule="wall_failed", path=r["file"], line=1, message="Wall test fails (engine10 Wall runner)"))
+    return findings, ran, len(rels) - ran
+
+
 def _run_wall(root: str) -> tuple:
-    """Returns (findings, ran, skipped). Only .py Wall files are executed."""
+    """Returns (findings, ran, skipped). .py Wall files run under pytest; .ts/.js through the engine10 Wall runner."""
     findings, ran, skipped = [], 0, 0
+    js = []
     for rel in _wall_files(root):
         if not rel.endswith(".py"):
-            skipped += 1
+            js.append(rel)
             continue
         try:
             p = subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", "--no-header", rel],
@@ -246,6 +283,9 @@ def _run_wall(root: str) -> tuple:
                 skipped += 1
         except (OSError, subprocess.SubprocessError):
             skipped += 1
+    if js:
+        f2, r2, s2 = _run_wall_js(root, js)
+        findings += f2; ran += r2; skipped += s2
     return findings, ran, skipped
 
 
