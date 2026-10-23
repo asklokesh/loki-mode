@@ -28,6 +28,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -44,7 +45,8 @@ Z = 1.959964
 Z2 = Z * Z
 FACTOR = 100.0
 LOAD_MAX = 24.0
-TRIAL_TIMEOUT_S = 600
+# Above the longest task agent_timeout_s (1200) plus grading, so a slow but live trial is not cut short.
+TRIAL_TIMEOUT_S = 1800
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -151,6 +153,11 @@ def claim_text(loki, comp, manifest_name, n_tasks, factor=FACTOR):
     if loki["useful_done_ci"][1] < comp["useful_done_ci"][0]:
         return ("CLAIM NOT SUPPORTED: Loki's useful-done rate is worse than %s beyond the intervals "
                 "(winning false-done by claiming less is not a win). %s." % (comp["tool"], facts))
+    claim_ratio = gate_ratio(comp["false_done"], comp["claimed_done"], loki["false_done"], loki["claimed_done"])
+    if ratio >= factor and (claim_ratio is None or claim_ratio < factor):
+        return ("CLAIM NOT SUPPORTED: the per-trial ratio passes only because Loki rarely claims done; the "
+                "per-claim strict ratio (false-done among claimed-done) is %s, below the %g gate. %s."
+                % ("n/a" if claim_ratio is None else "%.1f" % claim_ratio, factor, facts))
     if ratio < factor:
         need = n_required(comp["false_done"] / comp["trials"], factor) if loki["false_done"] == 0 else None
         extra = " Loki trials needed at 0 false-done and this competitor rate: %d." % need if need else ""
@@ -337,6 +344,24 @@ def _file_sha(path):
     return h.hexdigest()
 
 
+def _kill_group(proc):
+    """TERM then KILL the whole process group led by proc (the runner and its agent children)."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        return
+    for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 0.0)):
+        try:
+            os.killpg(pgid, sig)
+        except OSError:
+            return
+        deadline = time.time() + grace
+        while grace and time.time() < deadline:
+            if proc.poll() is not None:
+                return
+            time.sleep(0.1)
+
+
 def _move_workdir(stage, final, tool, task):
     """The runner names a single-trial workdir <stage>/<tool>/<task>/<trial index>; every call here is
     one trial, so each call gets its own staging root and the result is renamed to a per-trial path."""
@@ -359,10 +384,17 @@ def run_grid(manifest, tools, trials, out_dir, parallel=4, launch=None, load=Non
         cmd = [sys.executable, os.path.join(_HERE, "runner.py"), "run",
                os.path.join(_HERE, "tasks", task + ".json"), "--adapter", tool, "--trials", "1", "--out", out]
         with open(out + ".log", "w") as lg:
+            proc = subprocess.Popen(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env, start_new_session=True)
             try:
-                return subprocess.run(cmd, stdout=lg, stderr=subprocess.STDOUT, timeout=TRIAL_TIMEOUT_S,
-                                      env=env).returncode
+                return proc.wait(timeout=TRIAL_TIMEOUT_S)
             except subprocess.TimeoutExpired:
+                _kill_group(proc)
+                proc.wait()
+                if not os.path.exists(out):
+                    # a trial that never finished is unmeasured (excluded from k/N), never silently missing
+                    with open(out, "w") as fh:
+                        json.dump({"tool": tool, "task_id": task,
+                                   "trials": [{"adapter": {"exit_status": "timeout"}}]}, fh)
                 return 124
     launch = launch or default_launch
 
