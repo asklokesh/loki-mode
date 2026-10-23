@@ -57,7 +57,7 @@ MAIN_PID=$$
 trap cleanup EXIT
 
 # --- 0. THE FROZEN CONTRACT -------------------------------------------------
-# The 47 published tool names, sorted. Reviewed constant -- see header.
+# The 48 published tool names, sorted. Reviewed constant -- see header.
 # A tool added or renamed in mcp/*.py without an accompanying reviewed edit
 # here is contract drift and fails below, by name, on both sides.
 CONTRACT="$(cat <<'CONTRACT_EOF'
@@ -96,6 +96,7 @@ loki_memory_store_pattern
 loki_metrics_efficiency
 loki_project_status
 loki_quality_report
+loki_seal_diff
 loki_start_project
 loki_state_get
 loki_task_queue_add

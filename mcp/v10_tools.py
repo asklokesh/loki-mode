@@ -9,7 +9,9 @@ validator before use.
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -18,6 +20,7 @@ LOKI_BIN = str(Path(__file__).resolve().parent.parent / "bin" / "loki")
 RUNS_REL = os.path.join(".loki", "runs")
 V10_RUN_ID_WAIT_S = 2.0
 V10_VERIFY_TIMEOUT_S = 120
+SEAL_DIFF_TIMEOUT_S = int(os.environ.get("LOKI_SEAL_DIFF_TIMEOUT_S", "1800"))
 _TERMINAL = {"stage.completed", "stage.failed", "stage.skipped"}
 
 
@@ -193,6 +196,72 @@ def v10_verify(receipt_path: str, repo_path: str, validate: Callable[[str], str]
         return {"error": f"could not run loki verify: {e}"}
     out = ((p.stdout or "") + (p.stderr or "")).strip()
     return {"exit_code": p.returncode, "verified": p.returncode == 0, "output": out[-2000:]}
+
+
+def _git(cwd: str, *args: str, env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                          capture_output=True, timeout=120)
+
+
+def seal_diff(repo_path: str, intent: str, validate: Callable[[str], str]) -> dict:
+    """Seal changes already made in repo_path (CW-12): the existing engine runs on a scratch clone of HEAD with the
+    working-tree diff handed to `--seal-existing`, so the Wall is authored from the intent alone and the diff only
+    reaches the tree at implement. The user's tree, index and branch are never touched; only the run dir is copied back."""
+    if not isinstance(intent, str) or not intent.strip() or intent.startswith("-") or "\x00" in intent:
+        return {"error": "invalid intent: must be a non-empty description that does not start with '-'"}
+    try:
+        repo = validate(repo_path)
+    except Exception as e:
+        return {"error": str(e)}
+    if not os.path.isdir(repo):
+        return {"error": f"repo_path is not a directory: {repo_path}"}
+    work = tempfile.mkdtemp(prefix="loki-seal-")
+    try:
+        if _git(repo, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+            return {"error": "repo_path is not a git repository with a commit to diff against"}
+        # Snapshot the working tree (tracked edits plus new files) with a private index so the user's index is untouched.
+        idx_env = dict(os.environ, GIT_INDEX_FILE=os.path.join(work, "index"))
+        for step in (("read-tree", "HEAD"), ("add", "-A")):
+            r = _git(repo, *step, env=idx_env)
+            if r.returncode != 0:
+                return {"error": f"could not snapshot the working tree: {r.stderr.decode('utf-8', 'replace').strip()[-300:]}"}
+        d = _git(repo, "diff", "--cached", "--binary", "HEAD", env=idx_env)
+        if d.returncode != 0 or not d.stdout.strip():
+            return {"error": "no changes to seal: the working tree matches HEAD"}
+        patch = os.path.join(work, "external.patch")
+        with open(patch, "wb") as f:
+            f.write(d.stdout)
+        clone = os.path.join(work, "clone")
+        c = _git(work, "clone", "--quiet", "--no-hardlinks", repo, clone)
+        if c.returncode != 0:
+            return {"error": f"could not clone the repository: {c.stderr.decode('utf-8', 'replace').strip()[-300:]}"}
+        try:
+            p = subprocess.run([LOKI_BIN, intent, "--seal-existing", patch], cwd=clone, env=_env(), stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=SEAL_DIFF_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            return {"error": f"seal timed out after {SEAL_DIFF_TIMEOUT_S}s"}
+        except OSError as e:
+            return {"error": f"could not run loki: {e}"}
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+        try:
+            with open(os.path.join(clone, ".loki", "engine.json"), "r", encoding="utf-8") as f:
+                run_id = json.load(f)["run_id"]
+            src = os.path.join(clone, RUNS_REL, run_id)
+            with open(os.path.join(src, "receipt.json"), "r", encoding="utf-8") as f:
+                receipt = json.load(f)
+        except (OSError, ValueError, KeyError):
+            return {"error": f"loki exited {p.returncode} without a receipt. Output tail:\n{out[-1500:]}"}
+        dest = os.path.join(repo, RUNS_REL, run_id)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+        verdict = receipt.get("verdict")
+        return {"run_id": run_id, "verdict": verdict, "verified": verdict == "VERIFIED",
+                "receipt_path": os.path.join(dest, "receipt.json"),
+                "not_proven": receipt.get("not_proven", []), "exit_code": p.returncode}
+    except subprocess.TimeoutExpired:
+        return {"error": "git timed out"}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _cwd_validator(p: str) -> str:

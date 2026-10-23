@@ -164,6 +164,7 @@ _FRESH_REPO_CALLS = {
     "loki_v10_run": dict(ref="", repo_path="."),
     "loki_v10_status": dict(repo_path=""),
     "loki_v10_verify": dict(receipt_path="/nonexistent-receipt.json"),
+    "loki_seal_diff": dict(repo_path=".", intent=""),  # empty intent -> early error, no scratch clone
 }
 
 
