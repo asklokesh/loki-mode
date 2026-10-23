@@ -220,16 +220,107 @@ def provider_write_paths(provider: str, home: Path | None = None) -> list[Path]:
     return [p.resolve() for p in found]
 
 
+# Read allow-list for confine_reads (macOS). Measured with sandbox-exec: the
+# dyld/system roots below plus blanket file-read-metadata and read-data on the
+# "/" literal are the minimum for /bin/sh, python3, node, bun and claude to start.
+SYSTEM_READ_ROOTS = (
+    "/usr", "/bin", "/sbin", "/System", "/Library", "/private/etc",
+    "/private/var/db", "/private/var/select", "/dev", "/Applications",
+    "/opt/homebrew", "/private/tmp", "/private/var/folders",
+)
+HOME_TOOLCHAIN = (
+    ".local", ".nvm", ".bun", ".cargo", ".npm", ".npmrc", ".config/git",
+    ".cache", "Library/Caches",
+    # Measured: claude login (macOS Keychain) reports "Not logged in" without it.
+    # The db is encrypted at rest; securityd access already rides on mach-lookup.
+    "Library/Keychains",
+)
+
+
+def git_read_paths(workspace: Path) -> list[Path]:
+    """Common git dir (linked worktrees) and object alternates for the workspace."""
+    found: list[Path] = []
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return found
+    if res.returncode != 0 or not res.stdout.strip():
+        return found
+    common = Path(res.stdout.strip())
+    common = (common if common.is_absolute() else workspace / common).resolve()
+    if common.is_dir():
+        found.append(common)
+        alternates = common / "objects" / "info" / "alternates"
+        if alternates.is_file():
+            for line in alternates.read_text(errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    alt = Path(line)
+                    alt = (alt if alt.is_absolute() else common / "objects" / alt).resolve()
+                    if alt.exists():
+                        found.append(alt)
+    return found
+
+
+def git_write_paths(workspace: Path) -> list[Path]:
+    """Writable git state of a LINKED worktree: its own gitdir plus the shared
+    objects, refs, logs and packed-refs. Never the common hooks or config, so a
+    confined process cannot plant a hook that runs outside the sandbox."""
+    def rev(flag: str) -> Path | None:
+        try:
+            res = subprocess.run(["git", "-C", str(workspace), "rev-parse", flag],
+                                 capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if res.returncode != 0 or not res.stdout.strip():
+            return None
+        out = Path(res.stdout.strip())
+        return (out if out.is_absolute() else workspace / out).resolve()
+
+    gitdir, common = rev("--git-dir"), rev("--git-common-dir")
+    if not gitdir or not common or gitdir == common:
+        return []
+    paths = [gitdir]
+    for name in ("objects", "refs", "logs"):
+        if (common / name).is_dir():
+            paths.append(common / name)
+    if (common / "packed-refs").exists():
+        paths.append(common / "packed-refs")
+    paths.append(common / "packed-refs.lock")
+    return paths
+
+
+def read_allow_paths(
+    workspace: Path, run_dir: Path, provider: str, home: Path
+) -> list[Path]:
+    paths = [Path(p) for p in SYSTEM_READ_ROOTS if Path(p).exists()]
+    paths += [workspace, run_dir, *provider_write_paths(provider, home)]
+    paths += [(home / rel) for rel in HOME_TOOLCHAIN if (home / rel).exists()]
+    paths += git_read_paths(workspace)
+    return paths
+
+
 def seatbelt_provider_profile(
     workspace: Path,
     run_dir: Path,
     provider: str,
     secret_regexes: Iterable[str],
     home: Path | None = None,
+    confine_reads: bool = False,
 ) -> bytes:
-    """Provider-CLI profile: reads open, writes confined, secrets denied."""
+    """Provider-CLI profile: writes confined, secrets denied.
+
+    Reads are open unless confine_reads, which replaces the blanket read allow
+    with an allow-list (system roots, workspace, run dir, provider and toolchain
+    paths, git common dir, gitconfig) so a symlink out of the workspace to a
+    non-secret file cannot be read.
+    """
+    home = (home or Path(os.path.expanduser("~"))).resolve()
     quote = lambda value: json.dumps(str(value), ensure_ascii=True)
-    writable = [workspace, run_dir, *provider_write_paths(provider, home)]
+    writable = [workspace, run_dir, *provider_write_paths(provider, home), *git_write_paths(workspace)]
     lines = [
         "(version 1)",
         "(deny default)",
@@ -241,9 +332,18 @@ def seatbelt_provider_profile(
         "(allow ipc-posix-shm ipc-posix-sem)",
         "(allow network*)",
         "(allow user-preference-read)",
-        "(allow file-read*)",
         "(allow file-map-executable)",
     ]
+    if confine_reads:
+        lines.append("(allow file-read-metadata)")
+        lines.append('(allow file-read-data (literal "/"))')
+        for path in sorted({*read_allow_paths(workspace, run_dir, provider, home)}, key=str):
+            lines.append(f"(allow file-read* {seatbelt_path_filter(path)})")
+        lines.append(
+            "(allow file-read* (regex #\"^" + re.escape(str(home)) + "/\\.gitconfig[^/]*$\"))"
+        )
+    else:
+        lines.append("(allow file-read*)")
     for path in sorted({*writable}, key=str):
         lines.append(f"(allow file-write* {seatbelt_path_filter(path)})")
     for tmp in TMP_ROOTS["darwin"]:
@@ -512,6 +612,7 @@ def build_confinement(
     mode: str | None = None,
     home: Path | None = None,
     platform: str | None = None,
+    confine_reads: bool | None = None,
 ) -> dict[str, Any]:
     """Return the typed confinement status for wrapping a provider CLI argv.
 
@@ -530,8 +631,14 @@ def build_confinement(
     run_dir = run_dir.resolve(strict=True)
     rules = load_secret_rules()
     regexes = secret_path_regexes(rules)
-    limitations = ["unrestricted-outbound-network",
-                   "reads-outside-workspace-allowed-except-secret-paths"]
+    if confine_reads is None:
+        confine_reads = os.environ.get("LOKI_OS_SANDBOX_CONFINE_READS", "0") == "1"
+    confine_reads = bool(confine_reads) and platform == "darwin"
+    limitations = ["unrestricted-outbound-network"]
+    if not confine_reads:
+        limitations.append("reads-outside-workspace-allowed-except-secret-paths")
+    else:
+        limitations.append("keychain-db-readable-for-provider-login")
 
     def unavailable(reason: str) -> dict[str, Any]:
         if mode == "on":
@@ -541,7 +648,7 @@ def build_confinement(
     if platform == "darwin":
         if not SANDBOX_EXEC.is_file() or not os.access(SANDBOX_EXEC, os.X_OK):
             return unavailable(f"/usr/bin/sandbox-exec missing; {INSTALL_HINT['darwin']}")
-        profile = seatbelt_provider_profile(workspace, run_dir, provider, regexes, home)
+        profile = seatbelt_provider_profile(workspace, run_dir, provider, regexes, home, confine_reads)
         profile_path = run_dir / "os-sandbox.sb"
         profile_path.write_bytes(profile)
         prefix = [str(SANDBOX_EXEC), "-f", str(profile_path)]

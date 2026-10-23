@@ -304,6 +304,74 @@ class BwrapKernelTest(KernelMixin, unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
+class SeatbeltConfineReadsTest(unittest.TestCase):
+    """AC6: with confine_reads a symlink out of W to a non-secret file is unreadable."""
+
+    def _git(self, *args, cwd):
+        env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+
+    def setUp(self):
+        raw = tempfile.mkdtemp(prefix="os-sandbox-cr-", dir="/private/var/tmp")
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw).resolve()
+        self.home = self.base / "h"
+        self.main_repo, self.ws, self.run_dir = self.base / "main", self.base / "wt", self.base / "r"
+        for d in (self.home, self.main_repo, self.run_dir):
+            d.mkdir()
+        (self.home / ".gitconfig").write_text("[user]\n\tname = t\n\temail = t@t.test\n")
+        self._git("init", "-q", "-b", "main", cwd=self.main_repo)
+        (self.main_repo / "a.txt").write_text("plain\n")
+        self._git("add", "a.txt", cwd=self.main_repo)
+        self._git("commit", "-q", "-m", "init", cwd=self.main_repo)
+        self._git("worktree", "add", "-q", "-b", "feat", str(self.ws), cwd=self.main_repo)
+        (self.base / "outside.txt").write_text("outside\n")
+        os.symlink(self.base / "outside.txt", self.ws / "link-to-outside")
+        self.status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=True)
+
+    def _sh(self, script: str) -> subprocess.CompletedProcess:
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+        return subprocess.run([*self.status["argv_prefix"], "/bin/sh", "-c", script],
+                              capture_output=True, text=True, timeout=30, cwd=self.ws, env=env)
+
+    def test_limitation_no_longer_lists_open_reads(self):
+        self.assertNotIn("reads-outside-workspace-allowed-except-secret-paths",
+                         self.status["known_limitations"])
+
+    def test_symlink_to_nonsecret_outside_file_denied(self):
+        res = self._sh(f'cat "{self.ws}/link-to-outside"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("outside", res.stdout)
+
+    def test_other_home_file_denied_workspace_read_allowed(self):
+        (self.home / "notes.txt").write_text("private\n")
+        self.assertNotEqual(self._sh(f'cat "{self.home}/notes.txt"').returncode, 0)
+        self.assertEqual(self._sh(f'cat "{self.ws}/a.txt"').stdout.strip(), "plain")
+
+    def test_git_status_and_commit_in_linked_worktree(self):
+        self.assertEqual(self._sh("git status -s").returncode, 0)
+        res = self._sh('echo n > new.txt && git add new.txt && git commit -q -m c && git log --oneline | head -1')
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("c", res.stdout)
+
+    def test_linked_worktree_cannot_plant_hook_or_edit_common_config(self):
+        hooks = self.main_repo / ".git" / "hooks"
+        res = self._sh(f'echo "#!/bin/sh" > "{hooks}/post-commit"')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertFalse((hooks / "post-commit").exists())
+        res = self._sh(f'echo "[x]" >> "{self.main_repo}/.git/config"')
+        self.assertNotEqual(res.returncode, 0)
+
+    def test_default_off_keeps_reads_open(self):
+        status = os_sandbox.build_confinement(
+            self.ws, self.run_dir, "claude", mode="on", home=self.home, confine_reads=False)
+        res = subprocess.run([*status["argv_prefix"], "/bin/cat", str(self.ws / "link-to-outside")],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(res.stdout.strip(), "outside")
+
+
+@unittest.skipUnless(HAVE_SEATBELT, "macOS sandbox-exec is required (not macOS or binary missing)")
 class SeatbeltSmokeProbeTest(unittest.TestCase):
     def test_real_smoke_probe_passes(self):
         # workspace_root must be short and outside tmp: an AF_UNIX path under $TMPDIR is too long.
