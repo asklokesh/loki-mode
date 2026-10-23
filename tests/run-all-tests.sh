@@ -1679,6 +1679,7 @@ run_test "Quick quiet failure tail and stdin (A-134b)" "$SCRIPT_DIR/test-quick-q
 run_test "Pre-commit author email guard (E-153)" "$SCRIPT_DIR/test-pre-commit-author-guard.sh"
 run_test "Provider stdin closed under verbose (A-134c)" "$SCRIPT_DIR/test-provider-stdin-closed.sh"
 run_test "D51 Phase B workspaces (B01)" "$SCRIPT_DIR/test-workspace.sh"
+run_test "release-approval-gate.sh approves a range by SHA: stacked parents, patch-id, holds, exemptions (FC-RELEASE-UNNAMED-STACKED-PARENT)" "$SCRIPT_DIR/test-release-approval-gate.sh"
 run_test "train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)" "$SCRIPT_DIR/test-train-cycle.sh"
 run_test "Python shutdown SIGABRT with piped output (PY-ABORT)" "$SCRIPT_DIR/test-py-shutdown-abort.sh"
 run_test "audit.py verify exits 2 when it checked nothing (PO-AUDIT-CLI-1)" "timeout -k 10 120 python3 -m pytest -q $SCRIPT_DIR/dashboard/test_audit_verify_cli_nothing_checked.py"

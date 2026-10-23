@@ -880,4 +880,4 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
 
 ### 2026-10-23: release manager shipped unnamed stacked parents
 - **Incident:** rm-1 shipped unnamed stacked parents (cw20-r2 e4c445b73 13b46699d; cw15/ux350/roadmap100 parents 9bf08f534, dc2e16314, 64e9f1a09, cf177adf5). cw20-r2 shipped as v11.58.0 while a hold on that slice stood.
-- **Guard:** the approval line must name every shipped SHA and its reviewer; holds match by slice name, not SHA; a queue order is never an approval. A scripted check follows as a slice.
+- **Guard:** the approval line must name every shipped SHA and its reviewer; holds match by slice name, not SHA; a queue order is never an approval. The check is scripted: `scripts/release-approval-gate.sh` denies any range commit not named by SHA, rebase-equal by patch-id or exempt, and any commit whose slice is held; `scripts/train-cycle.sh` phase B calls it. Proof: `bash tests/test-release-approval-gate.sh` (stacked parents, clean and changed rebase, hold, exemptions, env bypass, and mutants that must go red).
