@@ -646,12 +646,15 @@ def bwrap_argv_prefix(
     extra_read: Iterable[Path] = (),
 ) -> list[str]:
     home = (home or Path(os.path.expanduser("~"))).resolve()
+    # Own pid namespace: when bwrap returns, every descendant (a setsid child that outlives
+    # the provider included) is killed, so nothing can write .git/commondir after the
+    # post-provider guard has run. --new-session blocks tty injection.
     if confine_reads:
         # Empty root: only the listed paths exist inside, so reads outside them fail.
-        argv = [bwrap, *_bwrap_root_binds(workspace, run_dir, provider, home, extra_read),
+        argv = [bwrap, "--unshare-pid", "--new-session", *_bwrap_root_binds(workspace, run_dir, provider, home, extra_read),
                 "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     else:
-        argv = [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+        argv = [bwrap, "--unshare-pid", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
                 "--tmpfs", "/tmp"]
     writable = [workspace, run_dir, *provider_write_paths(provider, home)]
     seen: set[str] = set()

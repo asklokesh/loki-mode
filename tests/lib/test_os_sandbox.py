@@ -142,14 +142,14 @@ class BwrapArgvTest(unittest.TestCase):
                 ws, run, "claude", os_sandbox.load_secret_rules(), home=home
             )
         joined = " ".join(argv)
-        self.assertEqual(argv[:4], ["bwrap", "--ro-bind", "/", "/"])
+        self.assertEqual(argv[:6], ["bwrap", "--unshare-pid", "--new-session", "--ro-bind", "/", "/"])
         self.assertIn(f"--bind {ws} {ws}", joined)
         self.assertIn(f"--bind {run} {run}", joined)
         self.assertIn(f"--bind {home / '.claude'} {home / '.claude'}", joined)
         self.assertIn(f"--tmpfs {home / '.ssh'}", joined)
         self.assertIn(f"--ro-bind /dev/null {ws / '.env'}", joined)
         self.assertNotIn(str(ws / "node_modules" / ".env"), joined)
-        for flag in ("--dev /dev", "--proc /proc", "--die-with-parent"):
+        for flag in ("--dev /dev", "--proc /proc", "--die-with-parent", "--unshare-pid", "--new-session"):
             self.assertIn(flag, joined)
 
 
