@@ -1666,3 +1666,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every other test in fix_resume.test.ts that loops is pure (the P12-07j malformed-event loop at :382, the P12-07m cap loop at :560); the single-supervisor async tests run one resume and the only subprocess test (P12-07m main(), :576) already has 70000.
 - Mechanism: the P12-07n test takes an explicit 60000ms bound; no assertion changed.
 - Fixture: tests/engine10/fix_resume.test.ts P12-07n itself; it fails at 5000ms on origin/main debc7e843 under load and passes with the bound.
+
+## FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER The deep-verify full pytest suite ran under bare `python`, not the project's own interpreter, so a repo with a working .venv and no `python` on PATH could never prove its suite
+- User-visible vs raw: user-visible. An uninterrupted run on a Python fixture with a working .venv and ruff ended PARTIAL because the full-suite check could not run (bare `python` missing or without pytest), while per-test runs under the same repo used the venv.
+- Law: every check that executes project code resolves its interpreter through one resolver (project venv first), and no stage hardcodes a bare interpreter name.
+- Cause (measured): `FULL_SUITE_CMD` in util/check_result.ts was a static table (`python -m pytest -q`); the per-test path used `resolveTool` but the full-suite path (engine10/stages/deep.ts, project_model/package_suite.ts) did not.
+- Siblings swept: deep.ts and package_suite.ts (both consumers moved), non-pytest runners (vitest, jest, bun, node, npm, go, cargo: no interpreter, stay static), per-test pytest (already resolveTool).
+- Mechanism: `fullSuiteCmd(runner, repoDir)` resolves pytest through `resolveTool(repoDir, "python", "python3", "python")`; both consumers call it.
+- Fixture: tests/engine10/deep.test.ts "pytest full suite runs under the project .venv python when no bare `python` is on PATH" (red on the static table, green after).
