@@ -1951,6 +1951,18 @@ async function runText(deps: DoctorDeps = {}): Promise<number> {
   }
   process.stdout.write(`\n`);
 
+  // Project .env: bin/loki starts bun with --no-env-file, so a repo .env never reaches Loki unless
+  // LOKI_ALLOW_PROJECT_ENV=1 (and even then no LOKI_* name is applied). Informational, no tally.
+  if (existsSync(join(process.cwd(), ".env"))) {
+    process.stdout.write(`${CYAN}Project .env:${NC}\n`);
+    if (process.env["LOKI_ALLOW_PROJECT_ENV"] === "1") {
+      process.stdout.write(`  ${badge("pass")}  .env found in ${process.cwd()}: non-LOKI names applied (LOKI_ALLOW_PROJECT_ENV=1); LOKI_* names are never read from it\n`);
+    } else {
+      process.stdout.write(`  ${DIM}  --  ${NC}  .env found in ${process.cwd()} and ignored by Loki. Hint: set LOKI_ALLOW_PROJECT_ENV=1 to apply its non-LOKI names (LOKI_* names are never read from it)\n`);
+    }
+    process.stdout.write(`\n`);
+  }
+
   // Install integrity. The bash route has checked this since v8.38.0; the Bun
   // route -- the DEFAULT runtime -- did not, so the users most likely to hit
   // the failure were the ones who could not see it.
