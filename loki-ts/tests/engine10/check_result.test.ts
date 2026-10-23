@@ -1,9 +1,9 @@
 // FC-16: a check that executed zero tests is NOT a pass. One shared classifier, every runner fixture, plus the verdict gate.
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkProvenance, classifyCheck, failureExcerpt, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, testCount } from "../../src/util/check_result.ts";
+import { checkProvenance, classifyCheck, failureExcerpt, goTestNames, GO_EXIT0_REASON, hasExecutedProof, hasExogenousProof, runnerCmd, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, testCheckName, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -356,5 +356,22 @@ describe("TEN-QUALITY-01 failureExcerpt", () => {
   test("unknown shape falls back to the last lines; empty stays empty", () => {
     expect(failureExcerpt("a\nb\nboom\n")).toContain("boom");
     expect(failureExcerpt("")).toBe("");
+  });
+});
+
+describe("FC-WALL-GO-FILE-RUNS-WHOLE-PACKAGE: goTestNames and the go argv", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gotn-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  test("top-level Test functions only, TestMain excluded, deduplicated", () => {
+    const f = join(dir, "x_test.go");
+    writeFileSync(f, 'package x\n\nfunc TestMain(m *testing.M) {}\nfunc TestA(t *testing.T) {}\nfunc TestB_c(t *testing.T) {}\nfunc BenchmarkA(b *testing.B) {}\nfunc testHelper(t *testing.T) {}\nfunc (s *S) TestMethod(t *testing.T) {}\n');
+    expect(goTestNames(f)).toEqual(["TestA", "TestB_c"]);
+    expect(goTestNames(join(dir, "missing_test.go"))).toEqual([]);
+  });
+  test("runnerCmd scopes to the file's tests, and keeps the package run when the file has none", () => {
+    writeFileSync(join(dir, "y_test.go"), "package x\n\nfunc TestY(t *testing.T) {}\n");
+    writeFileSync(join(dir, "z_test.go"), "package x\n");
+    expect(runnerCmd({ runner: "go", path: "y_test.go" }, dir)[1]).toEqual(["test", "-json", "-run", "^(TestY)$", "./."]);
+    expect(runnerCmd({ runner: "go", path: "z_test.go" }, dir)[1]).toEqual(["test", "-json", "./."]);
   });
 });
