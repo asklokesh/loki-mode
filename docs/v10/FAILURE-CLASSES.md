@@ -1559,3 +1559,19 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: attribution.py (false_done, false_completion_rate) and runner.py grade already compute the metric and are unchanged; the existing tasks all pass on both tools in the recorded trials, so none separates them.
 - Mechanism: four pre-registered tasks (benchmarks/bench/tasks/fd-1 to fd-4), each with a held-out overlay that checks only prompt-stated requirements. References and near-miss artifacts stay outside the repo and are hash-attested through run.sh oracles (private_probe.py). The task and overlay bytes are pinned, so a change after a paid trial needs a new task id.
 - Fixture: tests/test_bench_taskspec.py FalseDonePreRegisteredTasks (pins, task load, overlay red on the untouched fixture). Red when an overlay or task byte changes.
+
+## FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER The deep-verify full pytest suite ran under bare `python`, not the project's own interpreter, so a repo with a working .venv and no `python` on PATH could never prove its suite
+- User-visible vs raw: user-visible. An uninterrupted run on a Python fixture with a working .venv and ruff ended PARTIAL because the full-suite check could not run (bare `python` missing or without pytest), while per-test runs under the same repo used the venv.
+- Law: every check that executes project code resolves its interpreter through one resolver (project venv first), and no stage hardcodes a bare interpreter name.
+- Cause (measured): `FULL_SUITE_CMD` in util/check_result.ts was a static table (`python -m pytest -q`); the per-test path used `resolveTool` but the full-suite path (engine10/stages/deep.ts, project_model/package_suite.ts) did not.
+- Siblings swept: deep.ts and package_suite.ts (both consumers moved), non-pytest runners (vitest, jest, bun, node, npm, go, cargo: no interpreter, stay static), per-test pytest (already resolveTool).
+- Mechanism: `fullSuiteCmd(runner, repoDir)` resolves pytest through `resolveTool(repoDir, "python", "python3", "python")`; both consumers call it.
+- Fixture: tests/engine10/deep.test.ts "pytest full suite runs under the project .venv python when no bare `python` is on PATH" (red on the static table, green after).
+
+## FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER The sealed Wall file for a Python repo was never run because test discovery matches only test_*.py and *_test.py, while Wall files are named loki_wall_*
+- User-visible vs raw: user-visible. A Python run sealed a Wall file, then verify reported no Wall test run and `wall_passed` false, so the receipt stayed PARTIAL however correct the fix.
+- Law: a file the product itself wrote as proof is run by the verifier by path, never dropped by a name-pattern discovery meant for user tests.
+- Cause (measured): wall.ts names Wall files `loki_wall_*`; `buildTestMap` (engine10/testmap.ts) discovers pytest files by name pattern only; verify.ts `wallTests` selected from the map, so the Wall file was absent for pytest.
+- Siblings swept: JS/TS Wall files (already matched by the runner patterns), Go and Rust (Wall written under their native test layout), other discovery consumers (classify, per-test selection use the same map and now see the Wall file through wallTests only).
+- Mechanism: verify.ts `wallTests` adds each sealed `.py` Wall path absent from the map as a pytest TestRef when the repo has the pytest runner.
+- Fixture: tests/engine10/verify.test.ts python Wall file test (check `pytest:loki_wall_mods.py` passes, `wall_passed` true, then false when the assertion fails); mutant (drop the added refs) turns it red.

@@ -225,6 +225,22 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(testChecks[0]?.result).toBe("pass");
   }, 20_000);
 
+  test("a python Wall file named loki_wall_*.py (outside pytest discovery) is run by verify and credited as wall_passed (FC-WALL-FILE-NOT-DISCOVERED-BY-RUNNER)", async () => {
+    const repoDir = mkRepo("bun-target");
+    mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repoDir, ".venv", "bin", "python"), '#!/bin/sh\nexec python3 "$@"\n'); chmodSync(join(repoDir, ".venv", "bin", "python"), 0o755); // project interpreter, so the result counts
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src.txt"), "changed\n");
+    writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 1\n");
+    const mk = (files: string[]) => fakeCtx({ repoDir, baseSha: sha, detect: async () => ({ runners: ["pytest"], tests: [] }), impacted: () => [], outputs: { wall: { files: files.map((f) => ({ path: join(repoDir, f) })) } } }).ctx;
+    const res = await verifyStage.run(mk(["loki_wall_mods.py"]), sig()), c = (res.data.checks as VerifyCheck[]).find((x) => x.name === "pytest:loki_wall_mods.py");
+    expect(c?.result).toBe("pass");
+    expect(res.data.wall_passed).toBe(true);
+    writeFileSync(join(repoDir, "loki_wall_mods.py"), "def test_w():\n    assert 1 == 2\n");
+    const bad = await verifyStage.run(mk(["loki_wall_mods.py"]), sig());
+    expect(bad.data.wall_passed).toBe(false); // a failing Wall file is a failure, never silently absent
+  }, 30_000);
+
   test("no project runner: the Wall file runs with Loki's bun, so the receipt gets a real Wall result (not 'no tests to run')", async () => {
     const repoDir = mkRepo("bun-target");
     const sha = baseSha(repoDir);

@@ -10,7 +10,7 @@
 // failure".
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -360,6 +360,18 @@ describe("engine10 deep: full suite", () => {
     const checks = result.data.checks as { name: string; result: string }[];
     expect(checks.find((c) => c.name === "full suite: pytest")?.result).toBe("not_run");
     expect((result.data.not_proven as string[]).some((n) => n.includes("full suite: pytest"))).toBe(true);
+  });
+
+  test("pytest full suite runs under the project .venv python when no bare `python` is on PATH (FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER)", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.py", "x = 1\n");
+    mkdirSync(join(dir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(dir, ".venv", "bin", "python"), '#!/bin/sh\necho "1 passed in 0.01s"\n'); chmodSync(join(dir, ".venv", "bin", "python"), 0o755);
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, tests: { runners: ["pytest"], tests: [{ runner: "pytest", path: "a.py" }] } });
+    const result = await runDeep(ctx, sig(), baseOpts({ path: NO_PATH }));
+    const full = (result.data.checks as { name: string; result: string; cmd: string }[]).find((c) => c.name === "full suite: pytest");
+    expect(full?.result).toBe("pass");
+    expect(full?.cmd).toContain(join(".venv", "bin", "python"));
   });
 
   test("no detected runner is N/A (FC-SEAL-NA-AS-UNPROVEN), listed not hidden", async () => {
