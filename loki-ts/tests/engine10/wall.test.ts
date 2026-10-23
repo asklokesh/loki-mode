@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWallBrief,
+  untaggedWallFiles,
+  WALL_CLAUSE_MARKER,
   classify,
   RealBaseTestRunner,
   runWall,
@@ -938,5 +940,57 @@ describe("COST-11 r2: escalation on doubt", () => {
   });
   test("B2: the stage ceiling covers two max-length sessions plus base runs", () => {
     expect(wallStage.limitS).toBeGreaterThanOrEqual(2 * (300 + WALL_BASE_FILES * 60));
+  });
+});
+
+// CW-07: acceptance clauses reach the Wall brief, and every authored test must name the clause it proves.
+describe("CW-07 wall clauses", () => {
+  const TASK = "build search\n\n## Acceptance criteria\n- Results are sorted by recency\n- Ties keep a stable order\n";
+  const run = async (task: string, body: (n: number) => string) => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    let brief = "";
+    const sessions = new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), body(1)); writeFileSync(join(o.cwd!, "loki_wall_b.test.ts"), body(2)); });
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task, testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
+    const r = await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 1, fail: 0 }) });
+    rmSync(repoDir, { recursive: true, force: true });
+    return { brief, data: r.data };
+  };
+  test("a task with clauses puts each Cn line and the marker instruction in the brief", async () => {
+    const { brief } = await run(TASK, () => SAMPLE);
+    expect(brief).toContain("Acceptance: C1: Results are sorted by recency [l4]");
+    expect(brief).toContain("Acceptance: C2: Ties keep a stable order [l5]");
+    expect(brief).toContain(WALL_CLAUSE_MARKER);
+  });
+  test("a task with no clauses yields the brief byte-identical to the pre-CW-07 builder", async () => {
+    const { brief } = await run("add x", () => SAMPLE);
+    expect(brief).not.toContain("clause:");
+    expect(brief).not.toContain("Acceptance:");
+    expect(buildWallBrief("t", "", [], false, "", [])).not.toContain(WALL_CLAUSE_MARKER);
+  });
+  test("an authored file without a clause marker is listed as untagged; tagged files are not", async () => {
+    const { data } = await run(TASK, (n) => (n === 1 ? `// clause: C1\n${SAMPLE}` : SAMPLE));
+    expect(data.clauses).toBe(2);
+    expect(data.untagged).toEqual(["loki_wall_b.test.ts"]);
+  });
+  test("a marker naming a clause that does not exist does not count as tagged", () => {
+    expect(untaggedWallFiles(new Map([["a", "# clause: C9"], ["b", "# clause: C2"]]), 2)).toEqual(["a"]);
+  });
+  test("clauses beyond the cap are disclosed as not_proven in the wall data", async () => {
+    const t = "## Acceptance\n" + Array.from({ length: 43 }, (_, i) => `- requirement number ${i}`).join("\n");
+    const { data } = await run(t, () => SAMPLE);
+    expect(data.not_proven).toEqual(["3 acceptance clauses beyond the first 40 were not given to the Wall"]);
+  });
+  test("a locked spec snapshot's clauses win over the task text", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    const { renderSpec, extractClauses } = await import("../../src/util/spec_file.ts");
+    writeFileSync(join(runDir, "spec.snapshot.md"), renderSpec("t", { intent: "i", criteria: ["x"], clauses: extractClauses("## Accept\n- from the spec\n").clauses }));
+    process.env.LOKI_E10_SPEC_SHA256 = "x";
+    let brief = "";
+    try {
+      const ctx = fakeCtx(repoDir, runDir, new FakeSessionRunner((o) => { brief = o.brief; writeFileSync(join(o.cwd!, "loki_wall_a.test.ts"), SAMPLE); }), { intake: { task: TASK, testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
+      await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 1, fail: 0 }) });
+    } finally { delete process.env.LOKI_E10_SPEC_SHA256; rmSync(repoDir, { recursive: true, force: true }); }
+    expect(brief).toContain("Acceptance: C1: from the spec");
+    expect(brief).not.toContain("Acceptance: C1: Results are sorted");
   });
 });
