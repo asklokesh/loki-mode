@@ -41,6 +41,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki proof badge` | Print the Verified by Loki badge |
 | `loki proof md` | Print badge markdown for a README |
 | `loki proof bundle` | Write a self-verifying receipt bundle |
+| `loki proof export <run-id> --html` | Write one offline page that re-checks the receipt in a browser |
 | `loki wiki` | Cited codebase wiki and Q&A |
 | `loki wiki generate` | Generate the wiki |
 | `loki wiki show` | Show a section |
