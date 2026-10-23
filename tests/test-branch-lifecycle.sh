@@ -4043,6 +4043,46 @@ else
 fi
 rm -f "$RED_NONREG_LIB2"
 
+# =============================================================================
+# FC-FAILED-RUN-LEAVES-EMPTY-BRANCH-CHECKED-OUT: _loki_restore_base_branch
+# =============================================================================
+echo "Test BR: failed or empty session returns to the base branch; empty branch deleted; branch with commits kept"
+RESTORE_LIB="$WORKROOT/restore-lib.sh"
+awk '
+    /^_loki_restore_base_branch\(\) \{/ { p=1 }
+    p { print }
+    p && /^}$/ { exit }
+' "$RUN_SH" > "$RESTORE_LIB"
+grep -q '^_loki_restore_base_branch() {' "$RESTORE_LIB" || fail "could not extract _loki_restore_base_branch" "$(head -3 "$RESTORE_LIB")"
+# case <name> <result> <commit:yes|no> <dirty:yes|no> -> "HEAD=<branch> BRANCHES=<list>"
+br_case() {
+    local name="$1" result="$2" commit="$3" dirty="$4" repo
+    repo="$(make_repo "$name")"
+    (
+        cd "$repo" || exit 1
+        source "$PREAMBLE"; source "$RESTORE_LIB"
+        TARGET_DIR="$repo"
+        setup_agent_branch >/dev/null 2>&1
+        [ "$commit" = yes ] && { echo w > w.txt; git add w.txt; git commit -q -m work; }
+        [ "$dirty" = yes ] && echo changed >> seed.txt
+        _loki_restore_base_branch "$result" >/dev/null 2>&1
+        printf 'HEAD=%s BRANCHES=%s' "$(git rev-parse --abbrev-ref HEAD | sed 's/loki\/session-[0-9-]*/LOKI/')" "$(git branch --format='%(refname:short)' | sed 's/loki\/session-[0-9-]*/LOKI/' | sort | tr '\n' ',')"
+    )
+}
+o="$(br_case br1 1 no no)";  [ "$o" = "HEAD=develop BRANCHES=develop," ] && pass "failed session, no commits: back on develop, empty branch deleted" || fail "failed empty session" "$o"
+o="$(br_case br2 1 yes no)"; [ "$o" = "HEAD=develop BRANCHES=develop,LOKI," ] && pass "failed session with a commit: back on develop, branch kept" || fail "failed session with commit" "$o"
+o="$(br_case br3 0 yes no)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "successful session with commits stays on the session branch" || fail "successful session with commit" "$o"
+o="$(br_case br4 0 no no)";  [ "$o" = "HEAD=develop BRANCHES=develop," ] && pass "successful session that committed nothing: restored and deleted" || fail "successful empty session" "$o"
+o="$(br_case br5 1 no yes)"; [ "$o" = "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "dirty tracked tree: stays put, branch kept" || fail "dirty tree" "$o"
+# Mutation: drop the keep-on-success-with-commits guard; the successful commit-bearing case must now leave the session branch
+MUT_LIB="$WORKROOT/restore-mut.sh"
+sed 's/\[ "\$result" != "0" \] || \[ "\$tip" = "\$start" \] || return 0/:/' "$RESTORE_LIB" > "$MUT_LIB"
+if cmp -s "$RESTORE_LIB" "$MUT_LIB"; then fail "mutation did not apply (sed drift)" ""; else
+    RESTORE_LIB_SAVED="$RESTORE_LIB"; RESTORE_LIB="$MUT_LIB"
+    o="$(br_case br6 0 yes no)"; RESTORE_LIB="$RESTORE_LIB_SAVED"
+    [ "$o" != "HEAD=LOKI BRANCHES=develop,LOKI," ] && pass "mutant (restore on success with commits) is caught: $o" || fail "mutant survived" "$o"
+fi
+
 echo ""
 echo "============================================"
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"

@@ -18,3 +18,18 @@ export function restoreBranch(repoDir: string, orig: string | null): void {
     safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });
   } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); }
 }
+
+/** End of a run: back to the user's branch when the run failed or kept nothing, then drop the run branch only if its tip is still the base (zero commits). A branch with commits is never deleted; `-d` also refuses an unmerged one. */
+export function restoreAfterRun(repoDir: string, orig: string | null, runBranch: string, baseSha: string | null, failed: boolean): void {
+  if (!orig || orig === runBranch) return;
+  let tip = "";
+  try { tip = safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${runBranch}`], { stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return; }
+  const empty = baseSha !== null && tip === baseSha;
+  if (currentBranch(repoDir) !== runBranch) { if (empty) dropEmpty(repoDir, runBranch); return; }
+  if (!failed && !empty) return;
+  restoreBranch(repoDir, orig);
+  if (empty && currentBranch(repoDir) === orig) dropEmpty(repoDir, runBranch);
+}
+function dropEmpty(repoDir: string, runBranch: string): void {
+  try { safeGit(repoDir, ["branch", "-d", runBranch], { stdio: "ignore" }); } catch { /* unmerged or gone: leave it */ }
+}
