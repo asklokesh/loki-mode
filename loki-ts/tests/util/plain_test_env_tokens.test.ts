@@ -2,11 +2,12 @@
 // parent env, then check the child of plainTestEnv and a Wall base run (RealBaseTestRunner, real `node --test`) see none of them.
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import { plainTestEnv } from "../../src/util/check_result.ts";
+import { shellRunner } from "../../src/runner/repo_profile.ts";
 
 const SECRETS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"];
 const saved: Record<string, string | undefined> = {};
@@ -41,5 +42,53 @@ describe("FC-87 plainTestEnv is token-free", () => {
     writeFileSync(join(repo, "tests", "wall_env.test.js"), body);
     const r = new RealBaseTestRunner(null, 60_000).run(repo, [{ path: "tests/wall_env.test.js", runner: "node" } as never]);
     expect(r).toEqual({ pass: 1, fail: 0, not_run: 0 });
+  });
+});
+
+// FC-PYTEST-READS-STALE-BYTECODE: one pin in plainTestEnv covers every harness-run test child. Real pytest on a Wall file whose
+// in-tree bytecode (warmed from a passing version) is valid for the failing rewrite: the base run must see the source, not the pyc.
+describe("FC-PYTEST-READS-STALE-BYTECODE plainTestEnv pins bytecode", () => {
+  const pyRepo = (): string => {
+    const d = mkdtempSync(join(tmpdir(), "pycpin-")); dirs.push(d);
+    mkdirSync(join(d, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(d, ".venv", "bin", "python"), '#!/bin/sh\nexec python3 "$@"\n'); chmodSync(join(d, ".venv", "bin", "python"), 0o755);
+    const f = join(d, "loki_wall_pyc.py"), when = new Date(Math.floor(Date.now() / 1000) * 1000);
+    writeFileSync(f, "def test_w():\n    assert 1 == 1\n"); utimesSync(f, when, when);
+    const warm = spawnSync("python3", ["-m", "pytest", "-q", "loki_wall_pyc.py"], { cwd: d, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "", PYTHONPYCACHEPREFIX: "" } });
+    expect(warm.status).toBe(0); expect(existsSync(join(d, "__pycache__"))).toBe(true);
+    writeFileSync(f, "def test_w():\n    assert 1 == 2\n"); utimesSync(f, when, when); // same size, same mtime second: the planted pyc still validates
+    return d;
+  };
+  const file = { runner: "pytest" as const, path: "loki_wall_pyc.py" };
+  test("the env carries a run-scoped, empty, out-of-repo prefix and bytecode writing off", () => {
+    const e = plainTestEnv();
+    expect(e["PYTHONDONTWRITEBYTECODE"]).toBe("1"); expect(e["PYTHONPYCACHEPREFIX"]).toBeTruthy();
+    expect(readdirSync(e["PYTHONPYCACHEPREFIX"]!)).toEqual([]);
+  });
+  test("each call gets its own prefix: a pyc a child plants through its own env is never read by the next child", () => {
+    const e1 = plainTestEnv(), e2 = plainTestEnv();
+    expect(e1["PYTHONPYCACHEPREFIX"]).not.toBe(e2["PYTHONPYCACHEPREFIX"]);
+    const d = mkdtempSync(join(tmpdir(), "pycpin-")); dirs.push(d);
+    const f = join(d, "loki_wall_w.py"), when = new Date(Math.floor(Date.now() / 1000) * 1000);
+    writeFileSync(f, "def test_w():\n    assert 1 == 1\n"); utimesSync(f, when, when);
+    const plant = { ...e1, PYTHONDONTWRITEBYTECODE: "" }; // a hostile child re-enables writing into the prefix it can see
+    expect(spawnSync("python3", ["-m", "pytest", "-q", "loki_wall_w.py"], { cwd: d, env: plant }).status).toBe(0);
+    expect(readdirSync(e1["PYTHONPYCACHEPREFIX"]!).length).toBeGreaterThan(0);
+    writeFileSync(f, "def test_w():\n    assert 1 == 2\n"); utimesSync(f, when, when);
+    expect(spawnSync("python3", ["-m", "pytest", "-q", "loki_wall_w.py"], { cwd: d, env: plainTestEnv() }).status).not.toBe(0);
+  });
+  test("Wall base runner run(): a planted passing pyc never makes the failing file green", () => {
+    const d = pyRepo(); const r = new RealBaseTestRunner().run(d, [file]);
+    expect(r.pass).toBe(0); expect(r.fail).toBe(1);
+  });
+  test("Wall base runner runEach(): the parallel path pins it too", async () => {
+    const d = pyRepo(); const [r] = await new RealBaseTestRunner().runEach(d, [file, file], 2);
+    expect(r!.pass).toBe(0); expect(r!.fail).toBe(1);
+  });
+  test("repo_profile shellRunner child sees the pin", () => {
+    const d = mkdtempSync(join(tmpdir(), "pycpin-")); dirs.push(d);
+    const r = shellRunner('echo "$PYTHONPYCACHEPREFIX $PYTHONDONTWRITEBYTECODE"', d, 10_000);
+    const [prefix = "", dont = ""] = r.out.trim().split(" ");
+    expect(dont).toBe("1"); expect(prefix).not.toBe(""); expect(prefix.startsWith(d)).toBe(false);
   });
 });

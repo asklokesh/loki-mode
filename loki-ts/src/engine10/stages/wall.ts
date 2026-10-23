@@ -4,7 +4,6 @@
 // already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { freshPycache } from "../../util/python.ts";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
@@ -39,8 +38,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
     this.lastNotRunFiles = [];
     let pass = 0, fail = 0, not_run = 0; const not_run_files: { file: string; reason: string }[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
-      const pyc = freshPycache(); // FC-PYTEST-READS-STALE-BYTECODE: a base run never answers from an in-tree .pyc
-      let r: ReturnType<typeof spawnSync>; try { r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: { ...plainTestEnv(), ...pyc.env } }); } finally { pyc.dispose(); } // FC-69: plain env in, ANSI stripped out
+      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: plainTestEnv() }); // FC-69: plain env in, ANSI stripped out
       const status = r.error ? null : r.status;
       const result = classify(f, status, stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), repoDir, interpreter);
       if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter) }); }

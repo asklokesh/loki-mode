@@ -2,7 +2,6 @@
 // D33 line cap; modernize/cli.ts only routes here. One unit runs through the existing runUnit (M-15) inside a
 // run-owned temp checkout of repo@ref, fetched with safe_git (hooks, fsmonitor, ext:: off). Exit 0 only on PROVEN.
 import { spawnSync } from "node:child_process";
-import type { SpawnSyncReturns } from "node:child_process";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -11,7 +10,8 @@ import { DEFAULT_NORMALIZERS } from "../engine10/modernize/oracle/seal.ts";
 import { isSafeUnitId, makeModernizeId } from "../engine10/modernize/types.ts";
 import type { ModernizeTarget } from "../engine10/modernize/types.ts";
 import { runUnit } from "../engine10/modernize/unit.ts";
-import { freshPycache, makePytestBaseRunner, makePytestCollector } from "./python.ts";
+import { makePytestBaseRunner, makePytestCollector } from "./python.ts";
+import { pycachePin } from "./check_result.ts";
 import type { CollectRunner } from "./python.ts";
 import type { Implementer, UnitCard, UnitRunResult } from "../engine10/modernize/unit.ts";
 import type { BaseConformanceRunner } from "../engine10/modernize/presealed_wall.ts";
@@ -172,12 +172,8 @@ function runPythonCase(o: UnitRunnerOpts, unitId: string, newTreeDir: string, re
   try {
     const cases = join(dir, "in.jsonl"), out = join(dir, "out.jsonl");
     writeFileSync(cases, JSON.stringify({ entry: rec.entry, args: rec.args, kwargs: rec.kwargs, boundaries: boundariesFromCase(rec) }) + "\n", "utf8");
-    const pyc = freshPycache(); // FC-PYTEST-READS-STALE-BYTECODE: was write-pinned only; a planted .pyc could still be read
-    let r: SpawnSyncReturns<string>;
-    try {
-      r = spawnSync(o.pythonBin ?? "python3", [join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py"), "--unit", src, "--cases", cases, "--out", out, ...(stub ? ["--stub"] : [])],
-        { cwd: newTreeDir, encoding: "utf8", timeout: CASE_TIMEOUT_MS, env: { ...tokenFreeEnv(), ...pyc.env } });
-    } finally { pyc.dispose(); }
+    const r = spawnSync(o.pythonBin ?? "python3", [join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py"), "--unit", src, "--cases", cases, "--out", out, ...(stub ? ["--stub"] : [])],
+      { cwd: newTreeDir, encoding: "utf8", timeout: CASE_TIMEOUT_MS, env: { ...tokenFreeEnv(), ...pycachePin() } }); // FC-PYTEST-READS-STALE-BYTECODE
     if (r.status !== 0 || !existsSync(out)) throw new Error(`new-tree case runner failed (${r.status ?? r.signal ?? "no status"}): ${String(r.stderr ?? "").trim().split("\n").pop() ?? ""}`);
     const line = readFileSync(out, "utf8").split("\n").find((l) => l.trim() !== "");
     if (!line) throw new Error("new-tree case runner produced no record");

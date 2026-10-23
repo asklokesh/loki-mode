@@ -3,7 +3,7 @@
 // A stub `npx` on PATH records "<cwd>|<argv>" so the tests assert where a command ran, never whether the host has vitest.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -374,6 +374,26 @@ describe("FC-16 C1 per-package suites route through classifyCheck", () => {
     process.env["FORCE_COLOR"] = "3";
     try { await runFullSuite(ctxFor(dir, base, []), sig(), {}, [], new Set<string>()); } finally { delete process.env["FORCE_COLOR"]; }
     expect(readFileSync(join(stubDir, "env.out"), "utf8").trim()).toBe("0 1");
+  });
+  /** FC-PYTEST-READS-STALE-BYTECODE: the child saw a run-scoped, empty, out-of-repo pycache prefix and bytecode writing off. */
+  const pinSeen = (file: string, dir: string): void => {
+    const [prefix = "", dont = ""] = readFileSync(file, "utf8").trim().split(" ");
+    expect(dont).toBe("1"); expect(prefix).not.toBe(""); expect(prefix.startsWith(dir)).toBe(false); expect(readdirSync(prefix)).toEqual([]);
+  };
+  test("FC-PYTEST-READS-STALE-BYTECODE: the package suite child (bash -c line) gets the pycache pin", async () => {
+    const { dir, base } = monorepo(true);
+    const m = loadProjectApi(dir)!.model as ProjectModel;
+    m.packages[0]!.commands.test = cmd(`echo "$PYTHONPYCACHEPREFIX $PYTHONDONTWRITEBYTECODE" > "${join(stubDir, "pyc.pkg")}"; echo " Tests  1 passed (1)"`, "backend", "backend/package.json");
+    writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+    await runFullSuite(ctxFor(dir, base, []), sig(), {}, [], new Set<string>());
+    pinSeen(join(stubDir, "pyc.pkg"), dir);
+  });
+  test("FC-PYTEST-READS-STALE-BYTECODE: the per-runner full suite child (deep.ts runFullSuite) gets the pycache pin", async () => {
+    const { dir, base } = singlePackage();
+    writeFileSync(join(stubDir, "npx"), `#!/bin/sh\necho "$PYTHONPYCACHEPREFIX $PYTHONDONTWRITEBYTECODE" > "${join(stubDir, "pyc.deep")}"\necho " Tests  1 passed (1)"\nexit 0\n`);
+    chmodSync(join(stubDir, "npx"), 0o755);
+    await runFullSuite(ctxFor(dir, base, []), sig(), {}, [], new Set<string>());
+    pinSeen(join(stubDir, "pyc.deep"), dir);
   });
   test("a failing package stays fail", async () => {
     const r = await suite("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n", 1);

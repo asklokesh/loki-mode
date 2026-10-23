@@ -69,6 +69,18 @@ describe("runPythonTests", () => {
     expect(s.calls.some((a) => a.join(" ") === "python3 -m pytest --tb=short")).toBe(true);
   });
 
+  it("FC-PYTEST-READS-STALE-BYTECODE: the test child runs under the pycache pin", async () => {
+    const seen: Array<{ argv: Call; env: Record<string, string> }> = [];
+    const exec: PyExec = async (argv, o) => { seen.push({ argv, env: { ...(o.env ?? {}) } }); return { stdout: "", stderr: "", exitCode: 0 }; };
+    await runPythonTests(dir, ["--tb=short"], { exec, exists: has });
+    const runs = seen.filter((c) => !isImport(c.argv));
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+    for (const c of runs) {
+      expect(c.env["PYTHONPYCACHEPREFIX"]).toBeTruthy();
+      expect(c.env["PYTHONDONTWRITEBYTECODE"]).toBe("1");
+    }
+  });
+
   it("exit 5 falls back to unittest and a passing unittest run passes", async () => {
     const s = script([
       [isImport, { exitCode: 0 }],

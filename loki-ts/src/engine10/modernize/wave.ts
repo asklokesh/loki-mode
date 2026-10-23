@@ -4,13 +4,12 @@
 // reason naming the failing step (M-21 ship consumes this verdict). Child processes get tokenFreeEnv.
 // Output is kept only as a bounded tail for humans, never parsed and never in the reason string.
 import { spawnSync } from "node:child_process";
-import type { SpawnSyncReturns } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { InventoryResult } from "./inventory.ts";
 import type { ModernizeLog } from "./log.ts";
 import { tokenFreeEnv } from "../../util/safe_git.ts";
-import { freshPycache, isPythonCommand } from "../../util/python.ts";
+import { pycachePin } from "../../util/check_result.ts";
 
 export const WAVE_STEPS = ["build", "integration", "original_suite"] as const;
 export type WaveStep = (typeof WAVE_STEPS)[number];
@@ -65,14 +64,10 @@ function clampTimeout(ms: number | undefined): number {
 
 export const spawnStepRunner: StepRunner = (_step, cmd, cwd) => {
   const [bin, ...args] = cmd.argv;
-  const pyc = isPythonCommand(bin!, args) ? freshPycache() : null; // FC-PYTEST-READS-STALE-BYTECODE: the wave's python suite never answers from an in-tree .pyc
-  let r: SpawnSyncReturns<string>;
-  try {
-    r = spawnSync(bin!, args, {
-      cwd, encoding: "utf8", timeout: clampTimeout(cmd.timeoutMs), maxBuffer: 64 * 1024 * 1024,
-      env: { ...tokenFreeEnv(), CI: "1", LOKI_NO_BROWSER: "1", ...(pyc?.env ?? {}) },
-    });
-  } finally { pyc?.dispose(); }
+  const r = spawnSync(bin!, args, {
+    cwd, encoding: "utf8", timeout: clampTimeout(cmd.timeoutMs), maxBuffer: 64 * 1024 * 1024,
+    env: { ...tokenFreeEnv(), CI: "1", LOKI_NO_BROWSER: "1", ...pycachePin() }, // FC-PYTEST-READS-STALE-BYTECODE
+  });
   const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
   const timedOut = code === "ETIMEDOUT";
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
