@@ -255,6 +255,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-003 In-place resume after a human answers a blocked question
 
 - Issue: #358. Area: autonomy. Size: L. Tier: MEDIUM. Deps: #278, #353, journal (#283, closed).
+- Already exists (corrected 2026-10-23): `loki answer [<run-id>]` already ships in `loki-ts/src/features/blocked_answer.ts` (D63-C4), but the answer starts a new run. This item is the in-place resume under the same run id.
 - Problem: Today a BLOCKED engine10 run is terminal; a Slack reply starts a new follow-up run (`loki-ts/src/contrib/slack_inbound.ts` lines 2-4), so completed work is re-done and users abandon blocked runs.
 - Feature: A blocked run parks with its journal intact. `loki answer <run> "<text>"`, a Slack thread reply, or a PR comment resumes the same run id and skips completed slices.
 - Acceptance:
@@ -301,6 +302,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-007 Live run view: `loki status --follow` streams stages, edits, tests and cost
 
 - Issue: #361. Area: speed. Size: S. Tier: LOW. Deps: event log.
+- Already exists (corrected 2026-10-23): `loki cockpit --follow` already exists as an inline-image multi-repo view. This item is the text and JSONL stream for one run in `loki-ts/src/commands/status.ts`.
 - Problem: During a long run users see little; they cancel runs that were progressing.
 - Feature: `loki status --follow [--json]` prints one line per event (stage, file edited, test result, cost) and Ctrl-C detaches without stopping the run (extends `status.ts` and the event log).
 - Acceptance:
@@ -314,6 +316,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-008 Background runs and one run list across repos
 
 - Issue: #362. Area: autonomy. Size: M. Tier: MEDIUM. Deps: #232.
+- Already exists (corrected 2026-10-23): `loki start --bg` and `--detach` already exist in `autonomy/loki`, and `loki projects` lists registered repos. This item is `loki runs`, `loki attach` and `loki runs stop` only.
 - Problem: A run ties up the terminal; users with several repos cannot see every running build in one place.
 - Feature: `loki start --bg` returns a run id, `loki runs` lists every run across registered projects (`loki projects`) with state, cost and verdict, and `loki attach <id>` re-joins one.
 - Acceptance:
@@ -416,6 +419,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-017 Single-binary install with no node or python3 required
 
 - Issue: #369. Area: onboarding. Size: M. Tier: MEDIUM. Deps: FR-B.
+- Already exists (corrected 2026-10-23): `build:binary` (`bun build --compile`) already exists in `loki-ts/package.json`. This item is building and attaching the 5 targets in `.github/workflows/release.yml`.
 - Problem: Install needs node, python3, jq, git and curl plus a provider; each missing tool is a dead end.
 - Feature: Release attaches compiled binaries (Bun compile) so the v10 path needs only git and a provider CLI (extends FR-B).
 - Acceptance:
@@ -428,6 +432,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-018 Automatic rollback on all four deploy providers
 
 - Issue: #370. Area: deploy. Size: M. Tier: MEDIUM. Deps: DEP-B, DEP-D.
+- Already exists (corrected 2026-10-23): `--auto-rollback` already exists on `loki start` and `loki deploy`, for Vercel and Fly only. This item adds Netlify, Cloudflare and a timed health watch.
 - Problem: `loki rollback deploy` prints the rollback command but never runs it; a bad deploy stays live until a human acts.
 - Feature: With `--auto-rollback`, a failed health watch after deploy runs the provider rollback, records it in the receipt, and notifies (DEP-B, DEP-D).
 - Acceptance:
@@ -527,6 +532,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-027 Desktop and phone push notifications when a run needs you or finishes
 
 - Issue: #377. Area: speed. Size: S. Tier: LOW. Deps: notify.
+- Already exists (corrected 2026-10-23): Desktop notifications already exist on the legacy route (`send_notification` in `autonomy/run.sh`), and `loki notify` sends to slack, discord and webhook. This item adds a desktop channel and ntfy to `loki notify` and engine10.
 - Problem: Users miss a blocked question for hours because notify only covers Slack, Discord and webhooks.
 - Feature: Add `desktop` (macOS and Linux) and `ntfy` channels to `loki notify`, fired on blocked, done and failed.
 - Acceptance:
@@ -539,6 +545,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-028 Best-of-N implement for small tasks
 
 - Issue: #378. Area: speed. Size: M. Tier: MEDIUM. Deps: M-17 scheduler.
+- Already exists (corrected 2026-10-23): Two parallel attempts already exist behind `LOKI_E10_ATTEMPTS=2` (default off) in `loki-ts/src/features/attempts.ts`. This item makes that the default for small tasks and records the arms in the receipt.
 - Problem: One unlucky attempt costs a whole retry round.
 - Feature: `LOKI_BEST_OF=2` runs 2 implementations in parallel worktrees on the cheap tier and keeps the first that seals (extends the modernize best-of-2 scheduler to start).
 - Acceptance:
@@ -551,6 +558,7 @@ Items that reuse an existing issue carry their acceptance criteria in that issue
 #### R100-029 Warm engine daemon for sub-second start
 
 - Issue: #379. Area: speed. Size: M. Tier: MEDIUM. Deps: SPD-B.
+- Already exists (corrected 2026-10-23): The warm engine already ships (D61): `loki-ts/src/features/warm.ts` and `warm_client.ts`, on by default. This item is limited to measuring startup overhead and a read-only `loki daemon status`; if warm p50 is already at or under 1 s, #379 closes as a duplicate of D61.
 - Problem: Each `loki start` pays engine boot, repo map and test map cost.
 - Feature: `loki daemon` keeps the Bun engine, repo map and test map warm per repo; `loki start` attaches when it is running.
 - Acceptance:
