@@ -1692,3 +1692,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: cli.ts:330 is the only dynamic import of safe_git outside loki-ts/src/util (git grep). Static named imports of safe_git were already accepted; the dynamic destructured form is the same shape.
 - Mechanism: in the P9 AST scan, a literal `await import("...safe_git...")` is accepted only as the initializer of an object destructuring whose every element is a plain identifier property (no rest, no computed key, no string key, no nested pattern) and none of whose names is an opt-in helper. Any other dynamic or require form still flags. A destructured safeGit with allowToken is still caught by the raw allowToken grep outside the two fetch callers.
 - Fixture: tests/moat/p9-rule-of-two.sh positive controls for a rest destructure, a computed-key destructure, a renamed opt-in helper and a destructured safeGit carrying allowToken (each must be flagged), and a negative control for the real `{ reviewerGitEnv }` form (must not flag). Mutant: accept any destructure shape; the rest and computed controls must go red.
+
+## FC-PROOF-POINTER-STALE-ON-BUN-ROUTE The Bun route never cleared .loki/state/last-proof-id.txt at run start, so a run that stopped before proof generation left the previous run's id and every reader showed a receipt for different work
+
+- User-visible vs raw: user-visible (receipt and summary sections name the wrong run).
+- Law: absent reads as "no data"; a stale pointer reads as evidence, so a run must never inherit a prior run's pointer.
+- Cause (measured): #211 was fixed on the bash route only (autonomy/run.sh:7665). `git grep -n last-proof-id origin/main -- loki-ts/src` returned only the writer in runner/proof.ts.
+- Siblings swept: loki-ts/src/engine10 neither writes nor reads the pointer (`git grep -n last-proof-id -- loki-ts/src/engine10` returns nothing). The readers (run.sh, loki, run-summary.sh, trigger-server.py) are route-agnostic and unchanged.
+- Mechanism: clearStaleProofPointer in runner/proof.ts, called once from runAutonomous right after makeContext.
+- Fixture: loki-ts/tests/runner/autonomous.test.ts "#211 Bun-route sibling" seeds run-A, stops the run before proof with LOKI_PROOF=0, expects the pointer absent. Mutant: remove the call in runAutonomous; the test goes red.
