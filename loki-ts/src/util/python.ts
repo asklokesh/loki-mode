@@ -11,6 +11,7 @@ import type { ShellResult } from "./shell.ts";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tokenFreeEnv } from "./safe_git.ts";
+import { pycachePin } from "./check_result.ts";
 import type { BaseConformanceRunner, BaseRunOutcome, PytestCounts, TestOutcome } from "../engine10/modernize/presealed_wall.ts";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -388,26 +389,11 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
   };
 }
 
-/** FC-PYTEST-READS-STALE-BYTECODE: the one pin that keeps bytecode from answering for source. A fresh empty
- *  PYTHONPYCACHEPREFIX means no in-tree .pyc is read (stale or planted), PYTHONDONTWRITEBYTECODE means none is
- *  written. Every spawn that runs repo python tests uses this; call dispose() in a finally. */
-export function freshPycache(): { env: Record<string, string>; dispose: () => void } {
-  const prefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
-  return { env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: prefix }, dispose: () => rmSync(prefix, { recursive: true, force: true }) };
-}
-
-/** True for a python or pytest child (by command or by a pytest argument such as `python3 -m pytest`). */
-export function isPythonCommand(cmd: string, args: readonly string[]): boolean {
-  const b = (x: string) => x.slice(x.lastIndexOf("/") + 1);
-  return /^(?:python[\d.]*|pytest|py\.test)$/.test(b(cmd)) || args.some((a) => /^(?:pytest|py\.test)$/.test(b(a)));
-}
-
 /** One pytest child under the pinned configuration. Bytecode must never answer for source: no in-tree .pyc
  *  is read (fresh empty PYTHONPYCACHEPREFIX) or written (PYTHONDONTWRITEBYTECODE), pytest's cache plugin is
  *  off, and xfail is strict (-rX lists the rest). The junit file lives in a fresh mkdtemp dir so no stale
  *  report is ever read. Its path is in the child's argv, so code in the child can read and rewrite it (FC-24). */
 function spawnPytest(pythonBin: string, repoDir: string, timeoutMs: number, extra: string[], withJunit: boolean) {
-  const pyc = freshPycache();
   const junitDir = mkdtempSync(join(tmpdir(), "loki-junit-"));
   const junit = join(junitDir, "junit.xml");
   let junitXml: string | undefined;
@@ -419,12 +405,11 @@ function spawnPytest(pythonBin: string, repoDir: string, timeoutMs: number, extr
     const res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider", "--rootdir", root, "--confcutdir", root,
       "-c", pytestConfigFor(root), "-o", "xfail_strict=true", "-rX", ...(withJunit ? [`--junitxml=${junit}`] : []), ...extra], {
       cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
-      env: { ...tokenFreeEnv(), ...pyc.env },
+      env: { ...tokenFreeEnv(), ...pycachePin() },
     });
     if (withJunit) { try { junitXml = readFileSync(junit, "utf8"); } catch { junitXml = undefined; } }
     return { res, junitXml };
   } finally {
-    pyc.dispose();
     rmSync(junitDir, { recursive: true, force: true });
   }
 }

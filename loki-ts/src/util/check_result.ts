@@ -5,7 +5,8 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { siteFor } from "../project_model/resolve.ts";
 import type { ProjectApi } from "../project_model/api.ts";
@@ -14,6 +15,19 @@ import type { RunnerName, TestRef } from "../engine10/types.ts";
 import { safeGit, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets } from "./redact.ts";
 
+/** FC-PYTEST-READS-STALE-BYTECODE: the ONE pin that keeps bytecode from answering for source. PYTHONPYCACHEPREFIX names one
+ *  run-scoped empty dir outside every repo tree, so no in-tree .pyc (stale, or planted by an agent) is ever read; PYTHONDONTWRITEBYTECODE=1
+ *  keeps that dir empty. Created on first use, removed at process exit. Every harness-run test child gets it through plainTestEnv. */
+let pycachePrefix: string | undefined;
+export function pycachePin(): Record<string, string> {
+  if (pycachePrefix === undefined || !existsSync(pycachePrefix)) {
+    const dir = mkdtempSync(join(tmpdir(), "loki-pyc-"));
+    pycachePrefix = dir;
+    process.once("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  return { PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycachePrefix };
+}
+
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
  *  FC-87: the base is token-filtered (GH_TOKEN family and SSH_AUTH_SOCK dropped), so a test command never carries credentials whatever the parent. */
@@ -21,6 +35,7 @@ export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<stri
   const e: Record<string, string> = {};
   for (const [k, v] of Object.entries(tokenFreeEnv(base))) if (typeof v === "string") e[k] = v;
   e["FORCE_COLOR"] = "0"; e["NO_COLOR"] = "1";
+  Object.assign(e, pycachePin());
   delete e["CLICOLOR_FORCE"];
   return e;
 }

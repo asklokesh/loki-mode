@@ -6,7 +6,6 @@
 import { installOwned } from "../../project_model/install.ts";
 import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { freshPycache, isPythonCommand } from "../../util/python.ts";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
@@ -67,16 +66,8 @@ export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one sha
 export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
-/** FC-PYTEST-READS-STALE-BYTECODE: a python or pytest child must never answer from an in-tree .pyc (same size and mtime second as an edited source, or one an agent planted). Shared pin: freshPycache in util/python.ts. */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
-  if (isPythonCommand(cmd, args)) {
-    const pyc = freshPycache();
-    try { return await spawnOnce(cmd, args, cwd, signal, opts, pyc.env); } finally { pyc.dispose(); }
-  }
-  return spawnOnce(cmd, args, cwd, signal, opts, {});
-}
-async function spawnOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts, extraEnv: Record<string, string>): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
@@ -84,7 +75,7 @@ async function spawnOnce(cmd: string, args: string[], cwd: string, signal: Abort
     stdout: "pipe",
     stderr: "pipe",
     signal: AbortSignal.any([signal, timeout]),
-    env: { ...(opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv()), ...extraEnv }, // FC-69
+    env: opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv(), // FC-69; plainTestEnv carries the pycache pin (FC-PYTEST-READS-STALE-BYTECODE)
   });
   let tail = ""; const rs = [proc.stdout, proc.stderr].map((s) => s.getReader());
   const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail = (tail + d.decode(c.value, { stream: true })).slice(-65536); } });

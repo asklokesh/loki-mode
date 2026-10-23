@@ -227,9 +227,9 @@ describe("verifyWave optional steps (M-27E, D2)", () => {
 });
 
 describe("FC-PYTEST-READS-STALE-BYTECODE: the wave step runner", () => {
-  it("runs a python step under a fresh pycache prefix and a plain step without one", () => {
+  it("runs every step under the pycache pin", () => {
     const probe = "import os,sys; sys.exit(0 if os.environ.get('PYTHONPYCACHEPREFIX') and os.environ.get('PYTHONDONTWRITEBYTECODE') == '1' else 3)";
     expect(spawnStepRunner("build", { argv: ["python3", "-c", probe] }, tmpdir()).status).toBe(0);
-    expect(spawnStepRunner("build", { argv: ["/bin/sh", "-c", 'test -z "$PYTHONPYCACHEPREFIX"'] }, tmpdir()).status).toBe(0);
+    expect(spawnStepRunner("build", { argv: ["/bin/sh", "-c", 'test -n "$PYTHONPYCACHEPREFIX"'] }, tmpdir()).status).toBe(0);
   });
 });
