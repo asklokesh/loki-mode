@@ -7,10 +7,12 @@
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv } from "../../src/providers/mcp_config.ts";
+import { mcpConfigPath, userMcpConfigPath, buildMcpConfigArgv, mcpLaunchFor } from "../../src/providers/mcp_config.ts";
 
 describe("mcp_config.mcpConfigPath", () => {
   let td: string;
@@ -152,5 +154,142 @@ describe("mcp_config.buildMcpConfigArgv", () => {
   it("userMcpConfigPath returns null when HOME unset", () => {
     delete process.env["HOME"];
     expect(userMcpConfigPath()).toBeNull();
+  });
+});
+
+// CW-10: per-provider MCP launch.
+describe("mcp_config.mcpLaunchFor", () => {
+  const MCP_SH = resolve(import.meta.dir, "../../../autonomy/lib/mcp-config.sh");
+  let td: string;
+  let homeDir: string;
+  let emptyBin: string;
+  const saved: Record<string, string | undefined> = {};
+  const KEYS = ["HOME", "PATH", "LOKI_MCP_PROJECT"];
+
+  const writeUser = (servers: unknown) => {
+    mkdirSync(join(homeDir, ".claude"), { recursive: true });
+    writeFileSync(join(homeDir, ".claude", "mcp.json"), JSON.stringify({ mcpServers: servers }));
+  };
+  const writeProject = (servers: unknown) =>
+    writeFileSync(join(td, ".mcp.json"), JSON.stringify({ mcpServers: servers }));
+  const bashLaunch = (provider: string) => {
+    const r = spawnSync("bash", ["-c", `source "${MCP_SH}"; loki_mcp_launch_for "$1" "$2"`, "x", provider, td], {
+      encoding: "utf8",
+      env: { ...process.env },
+    });
+    expect(r.status).toBe(0);
+    return JSON.parse(r.stdout);
+  };
+
+  beforeEach(() => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    td = mkdtempSync(join(tmpdir(), "loki-mcp-launch-"));
+    homeDir = mkdtempSync(join(tmpdir(), "loki-mcp-home-"));
+    emptyBin = mkdtempSync(join(tmpdir(), "loki-mcp-nobin-"));
+    process.env["HOME"] = homeDir;
+    // python3 must stay resolvable for the bash mirror; keep system dirs, drop LSP bins via a clean list.
+    process.env["PATH"] = `${emptyBin}:/usr/bin:/bin`;
+    delete process.env["LOKI_MCP_PROJECT"];
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    for (const d of [td, homeDir, emptyBin]) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("claude: argv is identical to buildMcpConfigArgv, env empty", () => {
+    expect(mcpLaunchFor("claude", td)).toEqual({ argv: buildMcpConfigArgv(td), env: {} });
+    expect(mcpLaunchFor("claude", td).argv).toEqual(["--mcp-config", join(td, ".loki", "mcp-config.json")]);
+  });
+
+  it("codex: pins exact -c overrides for the bundle", () => {
+    expect(mcpLaunchFor("codex", td)).toEqual({
+      argv: ["-c", 'mcp_servers.loki-mode.command="python3"', "-c", 'mcp_servers.loki-mode.args=["-m","mcp.server"]'],
+      env: {},
+    });
+  });
+
+  it("opencode: pins OPENCODE_CONFIG_CONTENT for the bundle", () => {
+    expect(mcpLaunchFor("opencode", td)).toEqual({
+      argv: [],
+      env: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"mcp":{"loki-mode":{"type":"local","command":["python3","-m","mcp.server"],"enabled":true}}}',
+      },
+    });
+  });
+
+  it("cline reports unsupported with the probed version; aider and unknown report a reason", () => {
+    expect(mcpLaunchFor("cline", td)).toEqual({ argv: [], env: {}, reason: "mcp: unsupported (cline unknown)" });
+    const fake = join(emptyBin, "cline");
+    writeFileSync(fake, "#!/bin/sh\necho 3.1.4\n");
+    chmodSync(fake, 0o755);
+    expect(mcpLaunchFor("cline", td).reason).toBe("mcp: unsupported (cline 3.1.4)");
+    expect(mcpLaunchFor("aider", td)).toEqual({
+      argv: [],
+      env: {},
+      reason: "mcp: unsupported (aider has no MCP support)",
+    });
+    expect(mcpLaunchFor("nope", td).reason).toBe("mcp: unsupported (provider nope)");
+  });
+
+  it("project .mcp.json is ignored unless LOKI_MCP_PROJECT=1, and ${HOME} stays literal", () => {
+    writeProject({ proj: { command: "node", args: ["srv.js", "${HOME}/x"], env: { TOKEN: "${HOME}" } } });
+    expect(mcpLaunchFor("codex", td).argv.join(" ")).not.toContain("proj");
+    expect(mcpLaunchFor("opencode", td).env["OPENCODE_CONFIG_CONTENT"]).not.toContain("proj");
+    process.env["LOKI_MCP_PROJECT"] = "1";
+    const codex = mcpLaunchFor("codex", td).argv;
+    expect(codex).toContain('mcp_servers.proj.args=["srv.js","${HOME}/x"]');
+    expect(codex).toContain('mcp_servers.proj.env_vars=["TOKEN"]');
+    expect(mcpLaunchFor("codex", td).env).toEqual({ TOKEN: "${HOME}" });
+    const oc = JSON.parse(mcpLaunchFor("opencode", td).env["OPENCODE_CONFIG_CONTENT"] as string);
+    expect(oc.mcp.proj).toEqual({
+      type: "local",
+      command: ["node", "srv.js", "${HOME}/x"],
+      enabled: true,
+      environment: { TOKEN: "${HOME}" },
+    });
+  });
+
+  it("codex: secret env values never appear on argv; conflicting names skip the later server", () => {
+    writeUser({ a: { command: "a", env: { TOKEN: "s3cr3t-A" } }, b: { command: "b", env: { TOKEN: "s3cr3t-B" } }, c: { command: "c", env: { TOKEN: "s3cr3t-A" } } });
+    const l = mcpLaunchFor("codex", td);
+    expect(l.argv.join("\n")).not.toContain("s3cr3t");
+    expect(l.env).toEqual({ TOKEN: "s3cr3t-A" });
+    expect(l.argv).toContain('mcp_servers.a.env_vars=["TOKEN"]');
+    expect(l.argv).toContain('mcp_servers.c.env_vars=["TOKEN"]');
+    expect(l.argv.join(" ")).not.toContain("mcp_servers.b.");
+    expect(l.reason).toBe("mcp: skipped b (env name conflict)");
+  });
+
+  it("claude argv does not change under LOKI_MCP_PROJECT=1", () => {
+    writeProject({ proj: { command: "node" } });
+    const before = mcpLaunchFor("claude", td);
+    process.env["LOKI_MCP_PROJECT"] = "1";
+    expect(mcpLaunchFor("claude", td)).toEqual(before);
+  });
+
+  it("merge order: bundle wins a name collision, project beats overlay; bad entries dropped", () => {
+    writeUser({ shared: { command: "user" }, "loki-mode": { command: "evil" }, "bad name": { command: "x" }, url: { url: "http://x" } });
+    writeProject({ shared: { command: "proj" } });
+    process.env["LOKI_MCP_PROJECT"] = "1";
+    const argv = mcpLaunchFor("codex", td).argv;
+    expect(argv).toContain('mcp_servers.loki-mode.command="python3"');
+    expect(argv).toContain('mcp_servers.shared.command="proj"');
+    expect(argv.join(" ")).not.toMatch(/evil|bad name|url/);
+  });
+
+  it("bash and TS produce the same launch for the same fixture", () => {
+    writeUser({ over: { command: "uvx", args: ["pkg"], env: { A: "1" } }, over2: { command: "x", env: { A: "2" } } });
+    writeProject({ proj: { command: "node", args: ["a", "${HOME}"] } });
+    for (const proj of [false, true]) {
+      if (proj) process.env["LOKI_MCP_PROJECT"] = "1";
+      else delete process.env["LOKI_MCP_PROJECT"];
+      for (const p of ["claude", "codex", "opencode", "cline", "aider", "nope"]) {
+        expect(bashLaunch(p)).toEqual(mcpLaunchFor(p, td));
+      }
+    }
   });
 });

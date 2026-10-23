@@ -446,6 +446,95 @@ def cost_is_partial(rec: Any, ledger_usd: Optional[float] = None,
     return stored < max(others) - 1e-9
 
 
+# Per-trial metrics for #348 (CW-15). A value is None when it was not measured:
+# never 0, so a missing signal cannot read as a clean result.
+TRIAL_METRIC_KEYS = ("claimed_done", "false_pass", "council_cache_share",
+                     "journal_reuse_wall_s")
+_REVIEWER_PHASE_MARKS = ("review", "council")
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def council_cache_share(cache_by_phase: Any) -> Optional[float]:
+    """cache_read / (input + cache_creation + cache_read) over reviewer and
+    council phases of the cost ledger. None when no such phase carries tokens."""
+    if not isinstance(cache_by_phase, dict):
+        return None
+    read = total = 0
+    for phase, slot in cache_by_phase.items():
+        if not isinstance(slot, dict) or not any(
+                m in str(phase).lower() for m in _REVIEWER_PHASE_MARKS):
+            continue
+        cr, cc, inp = (slot.get(k) or 0 for k in
+                       ("cache_read", "cache_creation", "input"))
+        read += cr
+        total += cr + cc + inp
+    return round(read / total, 4) if total > 0 else None
+
+
+def trial_metrics(adapter_out: Dict[str, Any], grader_success: bool,
+                  measured: bool = True) -> Dict[str, Any]:
+    """The three #348 metrics for one trial, from adapter output plus the
+    grader's verdict. Pure: the adapter never judges, the grader does.
+
+    claimed_done: loki only when its own verdict is VERIFIED (PARTIAL and
+    FAILED are honest non-claims); any other tool when it ended cleanly.
+    false_pass: claimed_done while the hidden grader failed; None without a
+    claim or for an unmeasured trial."""
+    prov = adapter_out.get("provenance") or {}
+    if adapter_out.get("tool") == "loki":
+        claimed = prov.get("verify_verdict") == "VERIFIED"
+    else:
+        claimed = str(adapter_out.get("exit_status", "")).lower() == "completed"
+    reuse = prov.get("journal_reuse_wall_s")
+    return {
+        "claimed_done": bool(claimed) if measured else None,
+        "false_pass": (claimed and not grader_success)
+        if (measured and claimed) else None,
+        "council_cache_share": council_cache_share(
+            prov.get("cache_tokens_by_phase")),
+        "journal_reuse_wall_s": float(reuse) if _is_number(reuse) else None,
+    }
+
+
+def resume_cost(control_row: Dict[str, Any],
+                interrupted_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Extra seconds, dollars and tokens an interrupted-then-resumed trial took
+    to reach done compared with its uninterrupted control (100x axis D).
+
+    Every delta is None when either side did not record the quantity, never 0.
+    A positive value is resume overhead; near 0 or negative means the resume
+    reused finished work. reached_done is the HELD-OUT grader's verdict on the
+    resumed run, so a resume that lost the work cannot read as cheap. killed
+    False means the run finished before the interrupt point: no resume
+    happened and the pair says nothing about resume cost."""
+    def _delta(a, b):
+        return round(a - b, 4) if _is_number(a) and _is_number(b) else None
+
+    def _tokens(row):
+        ad = row.get("adapter") or {}
+        i, o = ad.get("tokens_in"), ad.get("tokens_out")
+        return i + o if _is_number(i) and _is_number(o) else None
+
+    resume = ((interrupted_row.get("adapter") or {}).get("provenance") or {}
+              ).get("resume") or {}
+    leg1_known = _is_number(resume.get("leg1_usd"))
+    return {
+        "killed": bool(resume.get("killed")),
+        "reached_done": bool(interrupted_row.get("success")),
+        "control_reached_done": bool(control_row.get("success")),
+        "extra_s": _delta(interrupted_row.get("duration_s"),
+                          control_row.get("duration_s")),
+        "extra_usd": _delta(interrupted_row.get("cost_usd"),
+                            control_row.get("cost_usd")),
+        "extra_tokens": _delta(_tokens(interrupted_row), _tokens(control_row)),
+        # False: the killed leg's spend was not recorded, extra_usd is a lower bound.
+        "extra_usd_complete": leg1_known or not resume.get("killed"),
+    }
+
+
 def trial_is_measured(trial: Dict[str, Any]) -> bool:
     """True when this trial represents a real, gradeable observation.
 

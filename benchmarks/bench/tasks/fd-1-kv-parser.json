@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "id": "fd-1-kv-parser",
+  "source": "loki-bench-discriminator",
+  "source_ref": "benchmarks/bench/tasks/fd-1-kv-parser.json",
+  "title": "Key=value config parser with named error cases",
+  "fixture": "../fixtures/fd-1-kv-parser",
+  "prompt": "Build a single Python file named `kvparse.py` that defines one function:\n\n    def parse(text: str) -> dict[str, str]\n\nIt parses a config text, one entry per line, in the form `key = value`.\n\nRules:\n- Whitespace around the key and around the value is stripped.\n- Blank lines and lines whose first non-space character is `#` are ignored.\n- The value is everything after the FIRST `=`, so it may itself contain `=`. An empty value is allowed and gives `\"\"`.\n- A line with no `=` raises `ValueError` whose message contains `line N` (N is the 1-based line number in the input).\n- An empty key (for example `= x`) raises `ValueError` whose message contains `line N`.\n- A key that appears twice raises `ValueError` whose message contains the key and the line number `N` of the second occurrence.\n\nExamples: `parse(\"a = 1\\n# c\\n\\nb=x=y\")` returns `{\"a\": \"1\", \"b\": \"x=y\"}`. `parse(\"a=1\\nbad\")` raises `ValueError` mentioning `line 2`.\n\nKeep everything in `kvparse.py`. Pure function, no I/O.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 30,
+    "overlay": "../fixtures/fd-1-kv-parser-overlay"
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 900
+}

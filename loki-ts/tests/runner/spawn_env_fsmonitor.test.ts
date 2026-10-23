@@ -20,13 +20,14 @@
 //    requires an explicit env on every Bun.spawn, Bun.spawnSync and
 //    child_process call under src; do not remove it.
 
-import { afterEach, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-setDefaultTimeout(30_000);
+setLoadAwareTimeout(30_000);
 
 const SRC = resolve(import.meta.dir, "../../src/runner");
 const CANARY_TOKEN = "ghp_FSMONCANARYstartenv0000000000";

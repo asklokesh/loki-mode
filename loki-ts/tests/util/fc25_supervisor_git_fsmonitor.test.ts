@@ -6,13 +6,14 @@
 //
 // The driver runs in a child bun whose START env carries canaries and never withholds them (supervisor shape).
 // An explicit-env control proves the plant records env values, so the product assertions can fail.
-import { afterEach, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-setDefaultTimeout(60_000);
+setLoadAwareTimeout(60_000);
 
 const SRC = resolve(import.meta.dir, "../../src");
 const CANARY_TOKEN = "ghp_FC25SUPERVISORcanary000000000000";

@@ -20,8 +20,9 @@
 //     with the flag off
 //   - the profile writer and the prompt reader address the SAME file
 
-import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-setDefaultTimeout(30_000);
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { setLoadAwareTimeout } from "../preload.ts";
+setLoadAwareTimeout(30_000);
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

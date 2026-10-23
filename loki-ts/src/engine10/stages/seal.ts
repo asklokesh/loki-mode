@@ -6,7 +6,7 @@
 // use. An empty token means UNSIGNED, never presented as attested.
 import { sanitizeReason } from "../../util/redact.ts";
 import { specReceiptBlock } from "../../util/spec_file.ts"; import { staleAtSeal, staleReason } from "../../util/steer.ts"; import { seededCorpusBlock, intentRevisionsBlock } from "../../util/run_outputs.ts";
-import { createHash } from "node:crypto";
+import { createHash } from "node:crypto"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
 import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
@@ -73,7 +73,7 @@ export const commitStage: Stage = {
     if ((await git(ctx, ["add", "-A", "--", "."], { repoDrivers: true })).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
     const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
     const staged = parseStaged(sd.out);
-    const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty, process.env, ctx.outputs().intake?.install_created);
+    const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty, process.env, ctx.outputs().intake?.install_created, ctx.outputs().intake?.preexisting_untracked_blobs);
     const sat = await discardIfSatisfied((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged, new Set(drop.filter(({ st }) => st === "L").map(({ f }) => f)), ctx.repoDir); if (sat) return sat; // D50-F1
     if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; // A-104b: reset to the run base (not HEAD) so a path committed in implement leaves the diff too; literal, so ":(top)x" is a filename
     const dropped = new Set(drop.map(({ f }) => f)), fmt = formatChanged(ctx.repoDir, staged, dropped); // TEN-QUALITY-16: only the run's own kept files
@@ -292,7 +292,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
-      ...specReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(),
+      ...specReceiptBlock(process.env), ...unitSpecReceiptBlock(process.env), ...intentRevisionsBlock(ctx.intentRevisions), ...seededCorpusBlock(),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

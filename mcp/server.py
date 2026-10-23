@@ -65,17 +65,15 @@ except ImportError:
 
 # Import StateManager for centralized state access
 try:
-    from state.manager import StateManager, ManagedFile, get_state_manager
+    from state.manager import StateManager, ManagedFile, get_state_manager, reset_state_manager
     STATE_MANAGER_AVAILABLE = True
 except ImportError:
     STATE_MANAGER_AVAILABLE = False
     StateManager = None
     ManagedFile = None
     get_state_manager = None
+    reset_state_manager = None
 
-
-# Module-level StateManager instance
-_state_manager = None
 
 # Module-level LearningCollector instance
 _learning_collector = None
@@ -85,8 +83,7 @@ def _get_learning_collector():
     """Get or create the LearningCollector instance for MCP server.
 
     Revalidates the cached collector against the current cwd-derived .loki dir
-    (mirrors the StateManager realpath-compare-recreate guard in
-    _get_mcp_state_manager). A multi-project MCP session can change cwd between
+    (get_state_manager does the same per project directory). A multi-project MCP session can change cwd between
     calls; without this, the cached collector stays bound to a PREVIOUS
     project's .loki dir and contaminates one project's learnings into another.
     """
@@ -109,33 +106,20 @@ def _get_learning_collector():
 
 
 def _get_mcp_state_manager():
-    """Get or create the StateManager instance for MCP server.
+    """Get the StateManager for the current project's .loki directory.
 
-    BUG-PU-002: Recreates the StateManager if the underlying .loki directory
-    has disappeared (e.g., project changed) to prevent stale file handle errors.
+    get_state_manager keys its instance on the resolved directory, so a cwd
+    change between projects switches to that project's manager.
     """
-    global _state_manager
     if not STATE_MANAGER_AVAILABLE or _READ_ONLY_MODE:
         # Read-only mode: StateManager creates .loki dirs on construction, so
         # callers use their direct-file-read fallbacks instead.
         return None
-    loki_dir = os.path.join(os.getcwd(), '.loki')
-    if _state_manager is not None:
-        # Verify the state manager's directory still matches cwd
-        existing_dir = getattr(_state_manager, 'loki_dir', None) or \
-                       getattr(_state_manager, '_loki_dir', None)
-        if existing_dir and os.path.realpath(existing_dir) != os.path.realpath(loki_dir):
-            # Project directory changed, recreate
-            if hasattr(_state_manager, 'close'):
-                _state_manager.close()
-            _state_manager = None
-    if _state_manager is None:
-        _state_manager = get_state_manager(
-            loki_dir=loki_dir,
-            enable_watch=False,  # MCP server doesn't need file watching
-            enable_events=False
-        )
-    return _state_manager
+    return get_state_manager(
+        loki_dir=os.path.join(os.getcwd(), '.loki'),
+        enable_watch=False,  # MCP server doesn't need file watching
+        enable_events=False
+    )
 
 
 def cleanup_mcp_singletons():
@@ -144,11 +128,9 @@ def cleanup_mcp_singletons():
     Call this before restarting the MCP server to release file handles
     held by the StateManager and LearningCollector instances.
     """
-    global _state_manager, _learning_collector
-    if _state_manager is not None:
-        if hasattr(_state_manager, 'close'):
-            _state_manager.close()
-        _state_manager = None
+    global _learning_collector
+    if reset_state_manager is not None:
+        reset_state_manager()
     if _learning_collector is not None:
         if hasattr(_learning_collector, 'close'):
             _learning_collector.close()
@@ -651,11 +633,14 @@ _UNTRUSTED_FIELDS = {
     "loki_get_hotspots": ("hotspots",),
     "loki_get_co_changes": ("co_changed_with",),
     "loki_metrics_efficiency": ("tool_breakdown",),
+    "loki_v10_status": ("run_id", "phase", "verdict", "blocked_question"),
     "cp_run_events": ("events",),
     "cp_run_artifact": ("content",),
     "cp_run_get": ("*",),
     "cp_runs_search": ("*",),
     "cp_runs_compare": ("runs",),
+    # finding rule, message and path come from the content-hash cache and the scanned repo
+    "loki_verify_fast": ("findings",),
     "loki_magic_generate": ("*",),
     "loki_magic_list": ("*",),
     "loki_magic_get": ("*",),
@@ -667,9 +652,9 @@ _UNTRUSTED_FIELDS = {
 _TRUSTED_TOOLS = frozenset({
     "loki_memory_store_pattern", "loki_task_queue_add",
     "loki_memory_capture_session_summary",
-    "loki_consolidate_memory", "loki_complete_task", "loki_v10_run", "loki_v10_status",
+    "loki_consolidate_memory", "loki_complete_task", "loki_v10_run",
     "loki_v10_verify", "loki_start_project", "loki_code_search_stats",
-    "loki_verify_fast", "loki_memory_redact",
+    "loki_memory_redact",
     "loki_magic_stats", "loki_magic_tokens_extract",
     "cp_stats", "cp_cost", "cp_repos_list",
 })

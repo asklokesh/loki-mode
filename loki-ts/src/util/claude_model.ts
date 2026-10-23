@@ -61,20 +61,51 @@ export function claudeEffortLevels(model: string): string[] | null {
   }
 }
 
-/**
- * Highest effort level at which the catalog records a model accepting a thinking type (providers.claude.models[].thinking.max_effort,
- * keyed by type). Null when the model is unknown, the catalog is unreadable, or no limit is recorded for that type, so a caller never
- * clamps on a guess. Example: claude-opus-5 accepts "disabled" only at "high" or below.
- */
-export function claudeThinkingMaxEffort(model: string, type: string): string | null {
+interface ThinkingSpec { types?: string[]; max_effort?: Record<string, string>; substitute?: Record<string, string> }
+
+function claudeThinkingSpec(model: string): ThinkingSpec | null {
   try {
     const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
-    const models = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models as Array<{ id: string; alias?: string; thinking?: { max_effort?: Record<string, string> } }> | undefined;
+    const models = JSON.parse(readFileSync(path, "utf8")).providers?.claude?.models as Array<{ id: string; alias?: string; thinking?: ThinkingSpec }> | undefined;
     if (!Array.isArray(models)) return null;
     const id = resolveClaudeModel(model);
-    const max = models.find((m) => m.id === id || m.alias === model)?.thinking?.max_effort?.[type];
-    return typeof max === "string" ? max : null;
+    return models.find((m) => m.id === id || m.alias === model)?.thinking ?? null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Highest effort level at which the catalog records a model accepting a thinking type (providers.claude.models[].thinking.max_effort,
+ * keyed by type). Null when the model is unknown, the catalog is unreadable, or no limit is recorded for that type, so a caller never
+ * clamps on a guess. Example: the previous Opus generation accepts "disabled" only at "high" or below.
+ */
+export function claudeThinkingMaxEffort(model: string, type: string): string | null {
+  const max = claudeThinkingSpec(model)?.max_effort?.[type];
+  return typeof max === "string" ? max : null;
+}
+
+/**
+ * The thinking type the catalog says to send in place of a requested one (providers.claude.models[].thinking.substitute). Null when
+ * none is recorded. Example: the current Sonnet generation rejects "disabled" at every effort, so "disabled" is sent as "between_tools".
+ */
+export function claudeThinkingSubstitute(model: string, type: string): string | null {
+  const sub = claudeThinkingSpec(model)?.substitute?.[type];
+  return typeof sub === "string" ? sub : null;
+}
+
+/**
+ * False when the catalog lists thinking.types for the model, the requested type is not among them, and no substitute is recorded for it,
+ * so the API would answer 400 at every effort. True when the model, the catalog entry or the types list is unknown: never refuse on a guess.
+ */
+export function claudeThinkingAccepted(model: string, type: string): boolean {
+  const spec = claudeThinkingSpec(model);
+  if (!spec || !Array.isArray(spec.types)) return true;
+  return spec.types.includes(type) || typeof spec.substitute?.[type] === "string";
+}
+
+/** Whether the catalog lists adaptive for the model (the type every clamp falls back to). */
+export function claudeThinkingHasAdaptive(model: string): boolean {
+  const types = claudeThinkingSpec(model)?.types;
+  return Array.isArray(types) && types.includes("adaptive");
 }

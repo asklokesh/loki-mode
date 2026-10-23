@@ -8,13 +8,13 @@ export function currentBranch(repoDir: string): string | null {
 }
 
 /** Never resets or discards: a plain `git checkout`, which refuses when it would overwrite edits. The run branch and its commits stay. */
-export function restoreBranch(repoDir: string, orig: string | null): void {
-  if (!orig) return;
-  const run = currentBranch(repoDir);
-  if (run === orig) return;
+export function restoreBranch(repoDir: string, orig: string | null): boolean {
+  if (!orig) return false;
+  const run = currentBranch(repoDir); if (run === orig) return true;
   try {
     // a checkout would carry the run's uncommitted edits onto the user's branch, so switch back only when the tracked tree is clean
     if (safeGit(repoDir, ["status", "--porcelain", "--untracked-files=no"], { stdio: ["ignore", "pipe", "pipe"] }).trim()) throw new Error("dirty");
     safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });
-  } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); }
+    return true;
+  } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); return false; }
 }
