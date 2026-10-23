@@ -31,6 +31,8 @@ case "$1 $2 $3" in
         # later read returns <ver> (another run moved the tag in between).
         if [ -n "${STUB_FRESH:-}" ]; then
             n=$(( $(cat "$ST/reads.$tag" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$ST/reads.$tag"
+            # STUB_FRESH=EMPTY: later reads succeed with an empty answer.
+            if [ "$n" -gt 1 ] && [ "$STUB_FRESH" = EMPTY ]; then exit 0; fi
             [ "$n" -gt 1 ] && printf '%s\n' "$STUB_FRESH" > "$ST/$tag"
         fi
         cat "$ST/$tag" ;;
@@ -78,6 +80,12 @@ run_case pre "11.54.0 11.55.0-rc.1" 11.54.0 11.54.0 11.54.0
     && ok "prereleases are ignored; settled tags are not rewritten" || bad "pre: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
 
 # The SDK package goes through the same script (LOKI_DISTTAG_PKG); the stub knows only that package.
+# The per-tag read inside the loop comes back empty while the first reads succeed:
+# nothing may be written (guards the empty-cur clause).
+STUB_FRESH=EMPTY run_case emptycur "11.54.1 11.54.2" 11.54.1 11.54.1 11.54.2
+{ [ ! -s "$CASE_ST/log" ] && [ "$(cat "$CASE_ST/latest")" = 11.54.1 ]; } \
+    && ok "an empty in-loop tag read writes nothing" || bad "emptycur: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
 STUB_PKG=loki-mode-sdk run_case sdk-up "1.0.0 1.0.1" 1.0.0 1.0.0 1.0.1
 { [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 1.0.1 ] && [ "$(cat "$CASE_ST/next")" = 1.0.1 ]; } \
     && ok "sdk: highest version moves latest and next" || bad "sdk-up: rc=$CASE_RC $CASE_OUT"
