@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 import { describe, expect, it } from "bun:test";
 import { run } from "../../src/util/shell.ts";
 import { resolve } from "node:path";

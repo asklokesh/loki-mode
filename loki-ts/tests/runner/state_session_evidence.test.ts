@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // A new session restarts at iteration 0, so a previous session's
 // .loki/quality/.test-results.iter ("1") would make its pass:true
 // test-results.json read as fresh evidence at the new session's iteration 1.

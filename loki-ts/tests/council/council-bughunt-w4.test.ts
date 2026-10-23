@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // loki-ts/tests/council/council-bughunt-w4.test.ts -- W4 bug-hunt fixes.
 //
 // Covers two confirmed bugs found in the W4 read-only hunt:

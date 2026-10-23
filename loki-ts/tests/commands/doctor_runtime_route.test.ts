@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v7.5.1 regression test for B23 (doctor Runtime route section).
 //
 // Pre-v7.5.1, doctor reported whether bun/bash were installed but did not

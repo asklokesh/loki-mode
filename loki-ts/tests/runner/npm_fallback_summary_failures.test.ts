@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // S-177 (BACKLOG 98, Bun half): the runTestCoverage `npm test` fallback must
 // not read an exit-0 run whose summary prints failures as a pass. Mirrors the
 // bash summary parser (run.sh enforce_test_coverage `_tr_failed_n` awk).

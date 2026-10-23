@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "./preload.ts";
+setSpawnTimeout();
 // The orchestrator's magic_debate toggle must agree with the gate body about
 // whether the gate is on. readToggles() decides whether the gate is INVOKED and
 // recorded as enabled (quality_gates.ts:3005-3010); runMagicDebateGate's body

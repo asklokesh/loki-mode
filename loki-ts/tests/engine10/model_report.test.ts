@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-50 (docs/v10/BOARD.md, found by E-14): "model 'default', 1k tokens shown
 // for 372k used". Fixture replay of a recorded result-cost file (the shape a
 // real SDK session writes via runner/sdk_stream_parser.ts writeResultCost,

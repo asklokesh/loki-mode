@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // ROUTER-1 R1-09: LOKI_ESCALATE marker, cost event fields, no-advisor executor pin. All inert unless LOKI_ROUTER=1.
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";

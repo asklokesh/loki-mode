@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../../preload.ts";
+setSpawnTimeout();
 // M-25 wall: final report. COMPLETE only if every unit PROVEN and every wave verified; sealed.
 import { describe, expect, it } from "bun:test";
 import { generateKeyPairSync, sign } from "node:crypto";

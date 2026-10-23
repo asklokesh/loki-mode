@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // S-209 (BACKLOG 99, Bun half): codex, cline and aider take no system prompt,
 // so the bash providers lead every prompt with PROVIDER_COMMIT_HYGIENE plus a
 // blank line. The Bun invokers must send the same bytes. The literal is read

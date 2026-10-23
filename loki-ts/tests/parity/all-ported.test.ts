@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // Phase 2 parity gate: every ported command must produce the same stdout
 // as the bash route. Anti-sycophancy reviewer (#1) reads this directly.
 import { describe, expect, it } from "bun:test";

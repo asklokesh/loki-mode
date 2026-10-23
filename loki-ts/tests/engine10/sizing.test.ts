@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // E-45 wall check: small tasks make 2 sessions (wall on sonnet, implement), normal 3;
 // the wall brief stays under a fixed size; the variant is recorded.
 import { afterAll, afterEach, describe, expect, it } from "bun:test";

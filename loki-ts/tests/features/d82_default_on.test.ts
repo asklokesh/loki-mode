@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // D82-FLAGS: each feature is on with the env var unset and off with =0.
 import { afterEach, describe, expect, test } from "bun:test";
 import { speedEnabled } from "../../src/features/warm.ts";

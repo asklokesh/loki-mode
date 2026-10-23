@@ -1,3 +1,5 @@
+import { setSpawnTimeout } from "../preload.ts";
+setSpawnTimeout();
 // v8.x structured code-review: prove the TS re-materializer is byte-identical to
 // the bash one (autonomy/lib/cr-rematerialize.py) and drives the UNCHANGED
 // parseVerdict / countNonBlockingFindings to the correct decision. Pure, no
