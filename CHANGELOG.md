@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.11 (2026-10-23)
+
+### Fixed
+- The Wall no longer depends on a separate runner and now runs through the single shared path (wallnorunner). Approval: "Ship line: pd/wallnorunner a1c07ce3c APPROVED by rev-c (HIGH). Range bc2e0a8ff..a1c07ce3c, a single commit a1c07ce3c".
+
 ## v11.60.10 (2026-10-23)
 
 ### Fixed
