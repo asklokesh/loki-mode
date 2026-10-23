@@ -35,6 +35,13 @@ case "$1 $2 $3" in
         [ -f "$ST/stale.$tag" ] || cp "$ST/$tag" "$ST/stale.$tag"
         cat "$ST/stale.$tag" ;;
     "dist-tag ls "*)
+        # STUB_TAG_LAG=<n>: an accepted write applies only after <n> further dist-tag ls reads.
+        for tag in latest next; do
+            if [ -f "$ST/pend.$tag" ]; then
+                read -r pv pn < "$ST/pend.$tag"
+                if [ "$pn" -le 1 ]; then printf '%s\n' "$pv" > "$ST/$tag"; rm -f "$ST/pend.$tag"; else echo "$pv $((pn - 1))" > "$ST/pend.$tag"; fi
+            fi
+        done
         for tag in latest next; do
             # STUB_FRESH=<ver>: the first read of each tag returns the state file, every
             # later read returns <ver> (another run moved the tag in between).
@@ -51,6 +58,7 @@ case "$1 $2 $3" in
         echo "add $ver $tag" >> "$ST/log"
         # A write for a version the registry has not materialized is accepted and dropped.
         if [ -n "${STUB_HIDE_VER:-}" ] && [ "$ver" = "$STUB_HIDE_VER" ] && [ "$(cat "$ST/dcalls" 2>/dev/null || echo 0)" -le "${STUB_MATERIALIZE_AFTER:-0}" ]; then echo "dropped $ver $tag" >> "$ST/log"; exit 0; fi
+        if [ -n "${STUB_TAG_LAG:-}" ]; then echo "$ver $STUB_TAG_LAG" > "$ST/pend.$tag"; exit 0; fi
         printf '%s\n' "$ver" > "$ST/$tag"
         if [ "$tag" = latest ] && [ -n "${STUB_OVERTAKE:-}" ] && [ ! -e "$ST/overtook" ]; then
             : > "$ST/overtook"; printf '%s\n' "$STUB_OVERTAKE" > "$ST/latest"
@@ -77,7 +85,7 @@ chmod +x "$WORK/bin/curl"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -184,6 +192,19 @@ run_case stale "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
 # stops between the two writes must have written next first.
 { [ "$(grep -m1 '^add ' "$CASE_ST/log" | awk '{print $3}')" = next ]; } \
     && ok "next is written before latest" || bad "order: $(cat "$CASE_ST/log")"
+
+# Measured 2026-10-23 (07:17Z): each accepted tag write applies on its own, minutes later
+# (next read 11.60.8 while latest still read 11.60.7). A lagging tag is waited on, never
+# rewritten: exactly one write per tag, and both end at the published version.
+STUB_TAG_LAG=5 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.56.1 ] && [ "$(cat "$CASE_ST/next")" = 11.56.1 ] \
+    && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 1 ] && [ "$(grep -c '^add .* next' "$CASE_ST/log")" = 1 ]; } \
+    && ok "a tag that applies late is waited on with one write per tag" || bad "lag: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+# A write that is accepted but never applies fails loud once the window is spent.
+STUB_TAG_LAG=999 run_case nolag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -ne 0 ] && grep -q "did not settle" <<<"$CASE_OUT"; } \
+    && ok "a tag that never applies fails the job" || bad "nolag: rc=$CASE_RC $CASE_OUT"
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
