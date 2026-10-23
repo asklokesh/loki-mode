@@ -307,6 +307,27 @@ class AblateEndToEndTest(unittest.TestCase):
         import signal
         self._signal_mid_run(signal.SIGTERM)
 
+    def _sigint_handler_survives(self, installed):
+        import signal
+        _write(self.repo, "calc.py", "def add(a, b):\n    return b + a\n")
+        self.record_tests()
+        original = signal.signal(signal.SIGINT, installed)
+        try:
+            ablation.ablate(self.repo, self.base, self.loki)
+            after = signal.getsignal(signal.SIGINT)
+        finally:
+            signal.signal(signal.SIGINT, original)
+        self.assertEqual(after, installed)
+
+    def test_sigint_ignored_stays_ignored(self):
+        import signal
+        self._sigint_handler_survives(signal.SIG_IGN)
+
+    def test_sigint_custom_handler_restored(self):
+        def custom(_signum, _frame):
+            pass
+        self._sigint_handler_survives(custom)
+
 
 if __name__ == "__main__":
     unittest.main()

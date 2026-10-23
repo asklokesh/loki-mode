@@ -392,18 +392,19 @@ def ablate(repo, base, loki_dir, timeout=DEFAULT_TIMEOUT_SEC):
         exit_code, timed_out = _run_command(repo, command, timeout)
     finally:
         # A second signal must not abort the restore half way.
+        prev = {}
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             try:
-                signal.signal(sig, signal.SIG_IGN)
+                prev[sig] = signal.signal(sig, signal.SIG_IGN)
             except (ValueError, OSError):
                 pass
         errors = snap.restore()
-        try:
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-        except (ValueError, OSError):
-            pass
-        for sig, handler in old.items():
-            signal.signal(sig, handler)
+        for sig, handler in prev.items():
+            # SIGTERM/SIGHUP: the caller's handler is in old; SIGINT: prev.
+            try:
+                signal.signal(sig, old.get(sig, handler))
+            except (ValueError, OSError):
+                pass
     if errors:
         raise RuntimeError("working tree restore failed: %s" % "; ".join(errors))
 
