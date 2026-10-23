@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `verify --fast` now exits 3 (INCONCLUSIVE) instead of 0 on a repo where no behavioral signal ran (no `loki_wall_*` file that ran), even when the static checks are clean. Exit 0 now means a Wall file executed and passed. Scripts that treated any non-zero exit as failure now see 3 on such repos; the Stop hook and `loki_verify_fast` already treat INCONCLUSIVE as not-a-pass, and `loki edit --verify` reports it as INCONCLUSIVE and does not commit. The fast tier detects mock-abuse tests and failing Python Wall files only; `.ts` and `.js` Wall files run through the same runner the engine10 verify stage uses (the internal `wall-run` subcommand), so a failing one flips the verdict to FAIL; with no bun or no runner they are counted as skipped, not run. `verify --fast` executes `loki_wall_*` files, which are repo code (60 s total budget, no `.pytest_cache` written into the repo). Only a Wall file that is tracked, unchanged against the diff base or HEAD, and whose sha256 matches an engine10 `wall.sealed` event under `.loki/runs/` can supply the behavioral signal; with a diff base the Wall must also come from a run whose changed files (the intake base_sha to commit head_sha diff in the same events.jsonl) cover every file in the verified diff, and name a changed module (a sealed Wall from an unrelated run earns no PASS; with no such run record the result is INCONCLUSIVE with a NOT PROVEN line), and any git error fails closed to INCONCLUSIVE. The wall.sealed event is a local attestation an agent with write access to .loki/ can forge; it is not proof. Any other Wall file can FAIL a run but never earn a PASS. On the 100-case seeded corpus the measured result is 20 of 100 caught (all mock-abuse) with 20 FAIL on the 100 old controls, which carry the same vacuous test as the seeded cases (FC-FAST-VERIFY-PASS-WITHOUT-DETECTION).
 
+## v11.64.0 (2026-10-23)
+
+
+
+### Added
+- The dashboard run replay scrubber shows one position per stage with the journal's diff, tests and cost (#422, R100-082). Approval: "APPROVE (LOW, tl-324): #422 / R100-082 run replay scrubber, pd/r422 at full SHA 6f10c92797677550c191e9bf115f5d1aa4f89ff7".
+
+## v11.63.10 (2026-10-23)
+
+### Fixed
+- The dashboard derives the child LOKI_* env allowlist from one data file and guards every runner env read (FC-CHILD-ENV-HAND-ALLOWLIST-DRIFT, #305). Approval: "APPROVE pd/rq51-child-env2 c38467306 (tl-2, MEDIUM). 41 passed, two mutants red and restored, FC row present, merge-tree rc=0, no dashes or emoji."
+
+## v11.63.9 (2026-10-23)
+
+### Fixed
+- A rejected API key ends the run naming its cause and the fix (FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG); engine markers are neutralized in child and CLI stderr as well as stdout (FC-AGENT-TEXT-FORGES-ENGINE-MARKER); a forged sdk-loop auth line on CLI stderr is not fatal:auth end to end. Approval: "SHIP keycause-final2: rev-c APPROVES 11a9fffe4, e0a417163, c939d0786 and e324c350c (head e324c350c). merge-tree against fresh origin/main gives rc=0. tsc rc=0. fatal_e2e, session_dispatch, providers, sdk_stream_parser and output give 196 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
+## v11.63.8 (2026-10-23)
+
+### Fixed
+- The full suite runs under the project interpreter and the repo-identity note names its fix (FC-FULL-SUITE-IGNORES-PROJECT-INTERPRETER); the full-suite baseline run line quotes each word so a spaced repo path still runs (FC-SUITE-RUN-LINE-BREAKS-ON-SPACED-PATH); a Python repo with no ruff and a repo with no UI no longer end PARTIAL (FC-LINT-TOOL-NEVER-USED-BY-PROJECT, FC-VISUAL-EVIDENCE-NA-READ-AS-NOT-PROVEN). Approval: "Ship approved for A-r5+C-r4 (pd/partial-harness-ac-r5), head e6bc96d84. The range over origin/main is 7e7a30f7e, e409e4b91, 8e5dc5028 and e6bc96d84, the merge of origin/main 1b36976dc. tsc gives rc=0, verify.test.ts plus visual_evidence.test.ts give 85 pass and 0 fail, and merge-tree against origin/main 5bc5f4dd0 gives rc=0. Merge by SHA e6bc96d84." (rev-c, only assigned HIGH reviewer per CoS ruling)
+
+## v11.63.7 (2026-10-23)
+
+### Fixed
+- The engine10 runner honors LOKI_SESSION_MODEL and refuses an unrecognized pin (FC-ENGINE10-IGNORES-SESSION-MODEL-PIN); the bash parity assertion is typechecked. Approval: "SHIP e10-session-model: rev-c APPROVES 8721d0612 and 3ab3843de (head 3ab3843de). merge-tree against fresh origin/main gives rc=0. tsc rc=0. session_l1_model, preflight and claude_model_bundle give 95 pass and 0 fail. start.test.ts gives 94 pass and 0 fail." rev-c is the only assigned HIGH reviewer (CoS ruling).
+
 ## v11.63.6 (2026-10-23)
 
 ### Fixed
