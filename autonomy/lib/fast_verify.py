@@ -279,7 +279,8 @@ def _git_strict(args: list, cwd: str):
     """stdout of a git command, or None when git failed or could not run. Trust decisions use this, never
     _git: an empty string from a failed command must not read as "nothing changed"."""
     try:
-        p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=20)
+        p = subprocess.run(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"] + args,
+                           cwd=cwd, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     return p.stdout if p.returncode == 0 else None
@@ -304,6 +305,10 @@ def _run_covers(root: str, base, head, changed: set) -> bool:
         return False
     # head must descend from base (an amend or rebase after the seal breaks the record); an unreachable SHA fails too
     if _git_strict(["merge-base", "--is-ancestor", base, head], root) is None:
+        return False
+    # the run's head must still be in the verified history: an amended-away head is a dangling object that
+    # still resolves until gc, so existence alone proves nothing
+    if _git_strict(["merge-base", "--is-ancestor", head, "HEAD"], root) is None:
         return False
     raw = _git_strict(["diff", "--name-only", base, head], root)
     return raw is not None and changed <= set(raw.splitlines())

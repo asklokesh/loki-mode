@@ -455,6 +455,29 @@ PY
 seal_event "$D5" loki_wall_cover.py "$F2" "$F1"
 JD9="$(fvd "$D5" HEAD~1 "$NOANC")"
 [ "$(verdict_trusted "$JD9")" = "('PASS', 1, 1)" ] && ok "mutant that drops the ancestry check trusts a non-descendant head (guard bites)" || bad "ancestry mutant still INCONCLUSIVE; fixture does not depend on the check: $JD9"
+# An amended-away run head still resolves until gc, so existence is not reachability: the sealed head must be an
+# ancestor of HEAD (rev-a rq64i B1).
+DA="$TMP/diffbind-amend"; mkdir -p "$DA"; git -C "$DA" init -q; GA="git -C $DA -c user.name=t -c user.email=t@t.invalid"
+printf '# base\n' > "$DA/README.md"; git -C "$DA" add README.md; $GA commit -qm base
+A0="$(sha_of "$DA" HEAD)"
+printf 'def price(x):\n    return x * 2\n' > "$DA/price.py"; printf 'from price import price\ndef test_cover():\n    assert price(1) == 2\n' > "$DA/loki_wall_cover.py"
+git -C "$DA" add price.py loki_wall_cover.py; $GA commit -qm "run output"
+A1="$(sha_of "$DA" HEAD)"; seal_event "$DA" loki_wall_cover.py "$A0" "$A1"
+printf 'def price(x):\n    return x + 1\n' > "$DA/price.py"; git -C "$DA" add price.py; $GA commit -q --amend -m "amended run output"
+printf 'def price(x):\n    return x + 1  # tweak\n' > "$DA/price.py"; git -C "$DA" add price.py; $GA commit -qm change
+git -C "$DA" cat-file -e "$A1" 2>/dev/null && ok "amend fixture: the sealed head object still exists before gc" || bad "amend fixture: sealed head object missing"
+JDA="$(fvd "$DA" HEAD~1)"
+[ "$(verdict_trusted "$JDA")" = "('INCONCLUSIVE', 1, 0)" ] && ok "a run whose head was amended away (object present, not in HEAD history) is INCONCLUSIVE" || bad "amended-away run head was trusted: $JDA"
+NOHEADANC="$TMP/fv-noheadanc.py"
+python3 - "$FV" "$NOHEADANC" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+a = 'if _git_strict(["merge-base", "--is-ancestor", head, "HEAD"], root) is None:'
+assert a in s
+open(sys.argv[2], "w").write(s.replace(a, "if False:", 1))
+PY
+JDB="$(fvd "$DA" HEAD~1 "$NOHEADANC")"
+[ "$(verdict_trusted "$JDB")" = "('PASS', 1, 1)" ] && ok "mutant that drops the head-in-HEAD-history check trusts an amended-away head (guard bites)" || bad "head-ancestry mutant still INCONCLUSIVE; fixture does not depend on the check: $JDB"
 # Positive control: Wall present at the base, sealed by a run that changed the verified file, naming it, earns PASS.
 D2="$TMP/diffbind2"; mkdir -p "$D2"; git -C "$D2" init -q; G2="git -C $D2 -c user.name=t -c user.email=t@t.invalid"
 printf '# base\n' > "$D2/README.md"; git -C "$D2" add README.md; $G2 commit -qm base
