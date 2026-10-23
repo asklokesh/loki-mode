@@ -268,6 +268,9 @@ describe("engine10 wall stage", () => {
     expect((result.data.files as unknown[]).length).toBe(2); // both sealed
     expect(baseRunner.calls[0]).toHaveLength(1); // only one ever executed
     expect(result.data.already_satisfied).toBe(false);
+    const nr = (result.data.not_run_files ?? []) as { file: string; reason: string }[]; // FC-WALL-FILE-WITHOUT-RUNNER-SILENTLY-DROPPED: the unrunnable file is named for Seal, the runnable one is not
+    expect(nr.filter((x) => x.file.endsWith("loki_wall_b.rb")).map((x) => x.reason)).toEqual(["no runner of this repo runs this file"]);
+    expect(nr.some((x) => x.file.endsWith("loki_wall_a.py"))).toBe(false);
     rmSync(repoDir, { recursive: true, force: true });
   });
 

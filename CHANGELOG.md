@@ -5,6 +5,102 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.14 (2026-10-23)
+
+### Fixed
+- The cost-cache test now clears LOKI_INFERENCE_GEO and its cache state so it passes regardless of the environment (costcache3). Approval: "APPROVE pd/p0-costcache3 b75336e3b7c10cb9bfe5ab7704fb4b1a0010668d (tl-2, LOW), stacked on parent 9dc4242bf822ec70c85519639131a21fe5dec4d8 (costcache2, previously approved)".
+
+## v11.60.13 (2026-10-23)
+
+### Fixed
+- The cost-cache test loader keeps the helper functions the calculator calls, so cost-cache tests exercise the real calculator instead of a loader that drops its helpers. Approval: "ship pd/p0-costcache2 9dc4242bf822ec70c85519639131a21fe5dec4d8 ... rev-b HIGH reviewer verdict: APPROVE".
+
+## v11.60.12 (2026-10-23)
+
+### Fixed
+- The branch save and restore helpers now live in util/safe_git.ts, which brings the extension module back under its line budget (P0). Approval: "tl-2 APPROVE pd/p0-e10ext-budget debdfa677 (LOW, P0)".
+
+## v11.60.11 (2026-10-23)
+
+### Fixed
+- The Wall no longer depends on a separate runner and now runs through the single shared path (wallnorunner). Approval: "Ship line: pd/wallnorunner a1c07ce3c APPROVED by rev-c (HIGH). Range bc2e0a8ff..a1c07ce3c, a single commit a1c07ce3c".
+
+## v11.60.10 (2026-10-23)
+
+### Fixed
+- The help-vs-changelog drift test now scans a 1000-section window by default, so a missing invocation can no longer hide below the old 5-section cap (FC-HELP-DRIFT-WINDOW-CAP). Approval: "tl-2 APPROVE pd/p0-helpdrift-empty-window 984a2d787 (LOW, P0)".
+
+## v11.60.9 (2026-10-23)
+
+### Fixed
+- The cline version probe now spawns with a token-free environment instead of the full parent environment, so the provider version check no longer exposes secrets to the child process. Approval: "Ship line: pd/p0-envspawn-rc f5aee29de APPROVED by rev-c (HIGH). Range 42404106a..f5aee29de, a single commit f5aee29de".
+
+## v11.60.8 (2026-10-23)
+
+### Fixed
+- The P12-12d bulk-file test fixture now sets an explicit timeout, so it no longer fails on slow machines at the default limit. Approval: "tl-324 approval line: ship range origin/main..29593679a9329eb94e9f2c4e5e57a5d220934d4e (pd/p12-12d-timeout, 1 commit, LOW, merge-tree rc 0)".
+
+## v11.60.7 (2026-10-23)
+
+### Fixed
+- A run's commit stage and backstop now leave out untracked files that existed before the run and that the run did not touch, so your own untracked files are no longer swept into the run's commit. Approval: "rev-c APPROVE pd/commitdrop 18e91429a + b40659541 (HIGH)".
+
+## v11.60.6 (2026-10-23)
+
+### Fixed
+- The help-drift guard reads plain-prose release notes, which clears the test-help-changelog-drift red that blocked several contributors. Approval: "tl-324 approval line: ship range origin/main..2dd3ec556c9b409e4567a7db64d135f6f23a7f09 (pd/p0-helpdrift-rc, 1 commit, MEDIUM, merge-tree rc 0)".
+
+## v11.60.5 (2026-10-23)
+
+### Fixed
+- The shard-coverage guard now watches the five heaviest suites from the duration table instead of a stale name list, so a slow suite can no longer slip out of its shard unnoticed. Approval: "tl-324 approval line: ship range origin/main..03300fe6705af3b03649ddc735101e673a8b5876 (pd/shardfix, 1 commit, MEDIUM, merge-tree rc 0 vs d9a7fe07e)".
+
+## v11.60.4 (2026-10-23)
+
+### Fixed
+- One advisor pair is now used for every advisor probe caller, so an invalid advisor pair is reported the same way by plan route and by doctor (RQ-04, #304). Approval: "tl-324 APPROVE pd/rq04, ship range origin/main..4f4627426e3e37a084c09363c5f110f4a76abeb3 = exactly 1 commit 4f4627426".
+
+## v11.60.3 (2026-10-23)
+
+### Fixed
+- The benchmark runner drains stderr while waiting for the stop marker, so heavy logging can no longer fake a timeout; the resume-cost instrument and engine SHA recording ship with it. Approval: "tl-324 APPROVE ... pd/resumecost3: ship range origin/main..e43a2ea45fe37217caa7446450e9e6e3e0cc63c4 = 7 commits".
+
+## v11.60.2 (2026-10-23)
+
+### Fixed
+- A failed session that committed nothing now returns to your original branch and removes its empty loki/session branch, instead of leaving you checked out on it. Approval: "tl-324 APPROVE ... pd/ux-branchrestore-sh: ship range origin/main..051a879d35ada6591907f827ce06ca6bbda883df = exactly 1 commit 051a879d3".
+
+## v11.60.1 (2026-10-23)
+
+### Fixed
+- The implement lead brief names python -m pytest and forbids files or symlinks in a test directory, so an agent no longer works around a bare pytest import error by committing a tests/<mod>.py symlink. Approval: "ship pd/pytesthint-r2 f0115bb7e (tl-324 APPROVE, MEDIUM)".
+
+## v11.60.0 (2026-10-23)
+
+### Added
+- loki doctor --json gains advisory provider_auth rows (credential source by name, never the value), and preflight records a zero-token auth probe per provider in preflight.json. A failed probe stays fatal; LOKI_PREFLIGHT_PROBE=0 skips it. Approval: "cw14-rb pd/cw14-rb 7ddde458b: APPROVE (rev-b, HIGH re-review scoped to the rebase)".
+
+## v11.59.0 (2026-10-23)
+
+### Added
+- Bench: a Codex adapter, the second arm for the false-done instrument.
+
+## v11.58.3 (2026-10-23)
+
+### Fixed
+- A council citation under a bumped submodule is refuted when the submodule is checked out and labelled NOT PROVEN when it is not, instead of always counting as a high-severity finding. Refs #332.
+
+## v11.58.2 (2026-10-23)
+
+### Fixed
+- Bench: the judge-trap-1 overlay rejects an off-by-one word cut and grades with its own overlay; per-trial false-pass, council cache share and journal reuse metrics are reported. Refs #348.
+- Docs: UX scorecard baselines re-measured on 11.55.3 (Refs #350), and the Feature 100 roadmap links its 79 filed issues.
+
+## v11.58.1 (2026-10-23)
+
+### Fixed
+- LeanCostTableTest rows carry a cost_source so the validator accepts them, which fixes the red test_attribution on main.
+
 ## v11.58.0 (2026-10-23)
 
 ### Added

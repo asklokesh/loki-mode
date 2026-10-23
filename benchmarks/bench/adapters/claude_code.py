@@ -140,7 +140,7 @@ LEAN_ARGS = (
 
 
 def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
-        lean=False, effort=None):
+        lean=False, effort=None, interrupt_after_s=None):
     """Run Claude Code on `spec` inside `workdir`; return adapter-output dict.
 
     `spec` is read as the prompt body (a path inside workdir or absolute).
@@ -150,6 +150,10 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
     no slash commands, and the same 6 tools as ENGINE10_TOOLS (providers.ts).
     It cannot combine with `bare`; that raises ValueError.
     `effort` adds `--effort <level>`; None leaves the CLI default untouched.
+    `interrupt_after_s` is the resume-cost instrument (100x axis D): stop the
+    run after that many seconds, then continue it with claude's own
+    `--continue`. The killed leg prints no usage JSON, so its spend is not
+    recorded (provenance.resume.leg1_usd None) and the total is a lower bound.
     """
     if lean and bare:
         raise ValueError("claude lean and bare are mutually exclusive")
@@ -178,7 +182,19 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
         cmd += list(LEAN_ARGS)
     rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
+        stop_after_s=interrupt_after_s,
     )
+    resume = None
+    if interrupt_after_s is not None:
+        resume = {"interrupt_after_s": interrupt_after_s,
+                  "killed": status == "interrupted", "leg1_s": duration,
+                  "leg1_usd": None, "leg2_s": None, "leg2_usd": None}
+        if status == "interrupted":
+            rc, out, err, status, dur2 = _base.run_cli(
+                cmd + ["--continue"], cwd=workdir, timeout=timeout,
+                runner=runner)
+            resume["leg2_s"] = dur2
+            duration = round(duration + dur2, 3)
 
     cost_usd, tokens_in, tokens_out, model_used = _parse_json_result(out)
     native_cost = cost_usd is not None
@@ -193,6 +209,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
             except Exception:
                 cost_usd = None
 
+    if resume is not None and resume["killed"]:
+        resume["leg2_usd"] = cost_usd
     return _base.build_output(
         tool="claude_code",
         tool_version=tool_version,
@@ -210,6 +228,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False,
             "command": "claude -p <prompt> --output-format json --model %s%s%s"
                        % (model, " --bare" if bare else "",
                           " " + " ".join(LEAN_ARGS) if lean else ""),
+            "resume": resume,
+            "journal_reuse_wall_s": resume["leg2_s"] if resume else None,
             "usage_detail": parse_usage_detail(out),
             "cost_basis": ("native" if native_cost else
                            ("priced_from_tokens" if cost_usd is not None

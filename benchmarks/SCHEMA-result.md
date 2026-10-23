@@ -51,6 +51,10 @@ reviewer will check.
 | `adapter` | object | adapter | full adapter-output (cost + provenance, never outcome) |
 | `cost_usd` | number or null | runner | lifted from adapter; null preserved |
 | `duration_s` | number | runner | lifted from adapter |
+| `metrics.claimed_done` | bool or null | runner | loki: verify_verdict == VERIFIED; other tools: exit_status completed; null when unmeasured |
+| `metrics.false_pass` | bool or null | runner | claimed_done while the grader failed; null when no claim |
+| `metrics.council_cache_share` | number or null | runner | cache_read / (input + cache_creation + cache_read) over review/council ledger phases; null when none |
+| `metrics.journal_reuse_wall_s` | number or null | runner | wall seconds of a second run on the same card and base sha, from provenance; null when not measured |
 
 ## summary
 
@@ -74,3 +78,24 @@ Mismatch == the result no longer corresponds to the inputs on disk.
 
 - `validate_result_row(row) -> [problems]`
 - `summarize_trials(trials) -> summary`
+
+## Resume-cost pair (100x axis D)
+
+`python3 benchmarks/bench/runner.py resume-cost <task> --adapter loki --interrupt <stage> --trials N`
+(for `claude_code`, `--interrupt` is seconds) runs, per trial, an uninterrupted
+control and the same task killed at a deterministic point then resumed (loki:
+`loki start --resume` after the `(<stage> done` line; claude_code: `--continue`).
+Output is `{pairs: [{control, interrupted, resume_cost}]}`, not a result-row.
+`resume_cost` holds `killed`, `reached_done` (held-out grader on the resumed
+run), `extra_s`, `extra_usd`, `extra_tokens` (interrupted minus control; null
+when either side did not record it) and `extra_usd_complete` (false when the
+killed leg's spend was not recorded, so the delta is a lower bound). A pair with
+`killed` false finished before the interrupt point and says nothing about resume
+cost. The trial metric `journal_reuse_wall_s` is the resumed leg's wall seconds.
+
+Kept workdirs: with `LOKI_BENCH_WORKDIRS=<root>` set, every trial (runner `run`,
+`vs` and `resume-cost`) keeps its graded workdir at
+`<root>/<tool>/<task>/<trial>/`, so a later measurement such as trust_time reads
+the same trials at no extra spend. In a resume-cost pair the control trial is
+kept at `<root>/<tool>/<task>/control-<trial>/` and the interrupted one at
+`<root>/<tool>/<task>/<trial>/`. An existing non-empty target is refused.

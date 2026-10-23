@@ -229,6 +229,92 @@ def test_summarize_exposes_attribution_cells():
     assert s["attribution_cells"][0]["valid"] is False
 
 
+def _codex_fake(out, rc=0, err=""):
+    seen = []
+
+    def fake(cmd, **kw):
+        seen.append(cmd)
+
+        class R:
+            returncode = rc
+            stdout = out if "exec" in cmd else "codex-cli 0.164.0"
+            stderr = err
+        return R()
+    return fake, seen
+
+
+_CODEX_OK = (
+    '{"type":"thread.started","thread_id":"t"}\n'
+    '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ok"}}\n'
+    '{"type":"turn.completed","usage":{"input_tokens":13988,"cached_input_tokens":10,"output_tokens":5,"reasoning_output_tokens":2}}\n'
+)
+
+
+def test_codex_adapter_argv_schema_and_usage():
+    from adapters import codex as codex_adapter
+    fake, seen = _codex_fake(_CODEX_OK)
+    r = codex_adapter.run(tempfile.mkdtemp(), "spec.md", model="gpt-5.6-luna", timeout=10, runner=fake)
+    argv = [c for c in seen if "exec" in c][0]
+    assert argv[1:4] == ["exec", "--json", "--skip-git-repo-check"], argv
+    assert "--ignore-user-config" in argv and "--dangerously-bypass-approvals-and-sandbox" in argv
+    assert argv[argv.index("-m") + 1] == "gpt-5.6-luna"
+    assert r["tool"] == "codex" and r["tool_version"] == "0.164.0"
+    assert (r["tokens_in"], r["tokens_out"], r["exit_status"]) == (13988, 5, "completed")
+    assert r["provenance"]["rc"] == 0 and r["provenance"]["usage_detail"]["cached_input_tokens"] == 10
+    assert r["cost_usd"] is None and r["provenance"]["cost_basis"] == "not_recorded"
+    for k in ("success", "quality", "passed", "score", "verdict"):
+        assert k not in r
+
+
+def test_codex_adapter_isolates_codex_home():
+    from adapters import codex as codex_adapter
+    seen = {}
+
+    def fake(cmd, **kw):
+        if "exec" in cmd:
+            seen["home"] = kw["env"]["CODEX_HOME"]
+            seen["entries"] = sorted(os.listdir(seen["home"]))
+
+        class R:
+            returncode = 0
+            stdout = _CODEX_OK if "exec" in cmd else "codex-cli 0.164.0"
+            stderr = ""
+        return R()
+    real = os.environ.get("CODEX_HOME")
+    src = tempfile.mkdtemp()
+    open(os.path.join(src, "auth.json"), "w").write("{}")
+    open(os.path.join(src, "AGENTS.md"), "w").write("user rules")
+    os.environ["CODEX_HOME"] = src
+    try:
+        codex_adapter.run(tempfile.mkdtemp(), "spec.md", timeout=10, runner=fake)
+    finally:
+        if real is None:
+            os.environ.pop("CODEX_HOME")
+        else:
+            os.environ["CODEX_HOME"] = real
+    assert seen["home"] != src and seen["entries"] == ["auth.json"], seen
+    assert not os.path.exists(seen["home"]), "throwaway home must be removed"
+
+
+def test_codex_adapter_negative_controls():
+    from adapters import codex as codex_adapter
+    # rc != 0: error status, no fabricated tokens, key-shaped text redacted from tails.
+    fake, _ = _codex_fake("", rc=1, err="boom sk-ant-" + "A1b2C3d4E5f6G7h8I9j0")
+    r = codex_adapter.run(tempfile.mkdtemp(), "spec.md", timeout=10, runner=fake)
+    assert r["exit_status"] == "error_rc_1" and r["tokens_in"] is None and r["tokens_out"] is None
+    assert "sk-ant-" not in r["provenance"]["stderr_tail"] and "[REDACTED]" in r["provenance"]["stderr_tail"]
+    # rc 0 but turn.failed: never reported completed.
+    failed = '{"type":"turn.started"}\n{"type":"turn.failed","error":{"message":"model not supported"}}\n'
+    fake, _ = _codex_fake(failed, rc=0)
+    r = codex_adapter.run(tempfile.mkdtemp(), "spec.md", timeout=10, runner=fake)
+    assert r["exit_status"] == "turn_failed" and "model not supported" in r["provenance"]["turn_failed"]
+    # CLI absent: honest cli_not_found.
+    def missing(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+    r = codex_adapter.run(tempfile.mkdtemp(), "spec.md", timeout=10, runner=missing)
+    assert r["exit_status"] == "cli_not_found" and r["tool_version"] is None
+
+
 if __name__ == "__main__":
     test_usage_detail_records_every_token_class()
     test_usage_detail_total_only_and_absent()
@@ -245,4 +331,7 @@ if __name__ == "__main__":
     test_claude_adapter_lean_exact_argv()
     test_claude_adapter_lean_with_bare_raises()
     test_claude_adapter_lean_recorded_in_command()
+    test_codex_adapter_argv_schema_and_usage()
+    test_codex_adapter_isolates_codex_home()
+    test_codex_adapter_negative_controls()
     print("ALL GREEN")
