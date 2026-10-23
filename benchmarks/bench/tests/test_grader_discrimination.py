@@ -107,6 +107,9 @@ def slugify(title, max_len=40):
     return t
 """
 
+# Reference with the cut off by one (ignores a dash exactly at index max_len).
+_JT_NEAR_MISS = _JT_REFERENCE.replace('t.rfind("-", 0, max_len + 1)', 't.rfind("-", 0, max_len)')
+
 
 def test_every_task_overlay_belongs_to_its_task():
     """A task wired to another task's overlay grades the wrong oracle: judge-trap-1
@@ -138,12 +141,16 @@ def test_judge_trap_1_grader_discriminates_through_the_real_spec():
     path = os.path.join(_TASKS_DIR, "judge-trap-1.json")
     spec = json.load(open(path))
     good, bad = _judge_trap_workdir(_JT_REFERENCE), _judge_trap_workdir(_JT_NAIVE)
+    near = _judge_trap_workdir(_JT_NEAR_MISS)
+    assert _JT_NEAR_MISS != _JT_REFERENCE
     try:
+        assert grade(near, spec, task_dir=_TASKS_DIR)["success"] is False
         assert grade(good, spec, task_dir=_TASKS_DIR)["success"] is True
         assert grade(bad, spec, task_dir=_TASKS_DIR)["success"] is False
     finally:
         shutil.rmtree(good, ignore_errors=True)
         shutil.rmtree(bad, ignore_errors=True)
+        shutil.rmtree(near, ignore_errors=True)
 
 
 if __name__ == "__main__":
