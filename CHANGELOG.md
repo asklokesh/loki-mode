@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.2 (2026-10-23)
+
+### Fixed
+- RQ-98: the pulse block measures origin/main when local main is behind it and raises STALE_MAIN_REF when the two have diverged, instead of reporting stale local-main numbers (FC-PULSE-MEASURES-STALE-LOCAL-MAIN). An explicitly pinned PULSE_MAIN_REF is left unchanged. Approval: "APPROVE pd/rq98 d1467837a99787e7e8335e3afe6133623883547c (stack e70a06ab5 FC row + d1467837a) (tl-2, LOW)". Picks e70a06ab5 and d1467837a.
+
 ## v11.72.1 (2026-10-23)
 
 ### Fixed
