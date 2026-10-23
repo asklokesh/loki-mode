@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.70.1 (2026-10-23)
+
+### Fixed
+- Failure-class row FC-IMPLEMENT-RESUME-STARTS-OVER documents the implement-stage resume gap and its siblings (rq77). Approval: "APPROVE pd/rq77 293b06cde (tl-2, LOW). Docs only, one FC row, FC-only conflict (keep-both)."
+
 ## v11.70.0 (2026-10-23)
 
 ### Added
