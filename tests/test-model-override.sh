@@ -412,6 +412,37 @@ PYEOF
 grep -q "REVIEWER MODEL PIN" "$RUN_SH" \
   && ok "security-review model guard comment present" || bad "security-review guard comment missing"
 
+# Behavioral pin guard (replaces trusting the comment above): replay the REAL
+# LOKI_ADVISOR_MODEL block extracted from the reviewer dispatch and assert the
+# argv it builds, plus assert --model is appended nowhere else in the reviewer
+# block. Only haiku|sonnet|opus may pin; fable or anything else gets no --model.
+RV_BLOCK="$(awk '/REVIEWER MODEL PIN/{f=1} f{print} f&&/claude "\$\{_rv_argv\[@\]\}" -p \\$/{exit}' "$RUN_SH")"
+RV_ADV="$(printf '%s\n' "$RV_BLOCK" | awk '/if \[ -n "\$\{LOKI_ADVISOR_MODEL:-\}" \]; then/{f=1} f{print} f&&/^            fi$/{exit}')"
+rv_model_argv() {
+  ( _rv_argv=(--dangerously-skip-permissions)
+    if [ "${1-__unset__}" = "__unset__" ]; then unset LOKI_ADVISOR_MODEL; else export LOKI_ADVISOR_MODEL="$1"; fi
+    eval "$RV_ADV"
+    printf '%s ' "${_rv_argv[@]}" )
+}
+if [ -z "$RV_ADV" ]; then
+  bad "reviewer pin: could not extract the LOKI_ADVISOR_MODEL block"
+else
+  rv_ok=1
+  [ "$(rv_model_argv __unset__)" = "--dangerously-skip-permissions " ] || rv_ok=0
+  [ "$(rv_model_argv fable)" = "--dangerously-skip-permissions " ] || rv_ok=0
+  [ "$(rv_model_argv gpt-5)" = "--dangerously-skip-permissions " ] || rv_ok=0
+  [ "$(rv_model_argv ' OPUS ')" = "--dangerously-skip-permissions --model opus " ] || rv_ok=0
+  [ "$(rv_model_argv haiku)" = "--dangerously-skip-permissions --model haiku " ] || rv_ok=0
+  [ "$(rv_model_argv sonnet)" = "--dangerously-skip-permissions --model sonnet " ] || rv_ok=0
+  [ "$rv_ok" = 1 ] && ok "reviewer pin: only haiku|sonnet|opus add --model; fable/other/unset add none" \
+    || bad "reviewer pin: LOKI_ADVISOR_MODEL block builds a wrong argv"
+fi
+rv_model_lines="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -c -- '"--model"')"
+rv_model_arm="$(printf '%s\n' "$RV_BLOCK" | grep -v '^[[:space:]]*#' | grep -- '"--model"' | grep -c 'haiku|sonnet|opus)')"
+[ "$rv_model_lines" = 1 ] && [ "$rv_model_arm" = 1 ] \
+  && ok "reviewer pin: the only --model append is inside the haiku|sonnet|opus arm" \
+  || bad "reviewer pin: --model appended outside the haiku|sonnet|opus arm (lines=$rv_model_lines in-arm=$rv_model_arm)"
+
 # ---------------------------------------------------------------------------
 # 6. End-to-end estimator: a fable pin quotes OPUS, never Fable (v7.39.1).
 #
