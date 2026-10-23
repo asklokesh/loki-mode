@@ -6,6 +6,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const LOKI_TS = resolve(import.meta.dir, "../..");
@@ -149,4 +150,17 @@ describe("CW-12 --seal-existing", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr.toString()).toContain("--seal-existing patch not found");
   }, 180_000);
+});
+
+describe("FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED verdictOf over every shape of an empty Wall (rev-a B7)", () => {
+  // Real paths emit wall.files = []: the no_runner skip, the no_interpreter skip, and an authored Wall whose files all came back not_run and were spliced out.
+  const checks = [{ name: "existing:test_calc", result: "pass" }] as never;
+  const verdict = (files: unknown[] | undefined): string => verdictOf({ implement: { exit: "external" }, wall: files === undefined ? { status: "skipped" } : { files, base_run: { pass: 0, fail: 1, not_run: 0 } } } as never, checks, false, false, false, true);
+  test("an external diff with no Wall key or an empty Wall file list is PARTIAL", () => {
+    expect(verdict(undefined)).toBe("PARTIAL");
+    expect(verdict([])).toBe("PARTIAL");
+  });
+  test("an external diff with a Wall file that ran stays VERIFIED", () => {
+    expect(verdict([{ path: "loki_wall_x.test.ts" }])).toBe("VERIFIED");
+  });
 });
