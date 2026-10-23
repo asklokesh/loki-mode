@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.66.1 (2026-10-23)
+
+### Fixed
+- The release approval gate approves a range by exact SHA, fails closed on a bad range, reuses release.sh RELEASE_DIST_FILES and denies a rowless approval by name (FC-RELEASE-UNNAMED-STACKED-PARENT, #436). Approval: "ship pd/rag436-r3 ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. It is 3 commits over origin/main 69ea3491d, with an FC-only conflict. Pick in order: 525f46cb81d83a2e7da167bda33e9d0550443ece, 21910793e94f70129f689456d2252f324f96852e, ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803. APPROVE ff7fb1a8efc85d1d80e98cb4e0ebdb943426c803" (rev-b)
+
 ## v11.66.0 (2026-10-23)
 
 ### Added
