@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.61.0 (2026-10-23)
+
+
+
+### Added
+- Preflight reads the PR publish capability from the GitHub API at intake, names the fallback for collaborators-only and no-fork repositories, and records the publish plan without changing PreflightResult (R100-022, #231). Approval: "tl-324: APPROVE pd/231, a stack of two commits on origin/main; ship both in order: 70c6a399cf2f93ab7c8ce7e7ebeba1ee8f200ca8 then 31d866a55a73f26a54dff0523c186f49907f1978 (head)". The receipt criterion is a separate HIGH slice and is not covered.
+
 ## v11.60.17 (2026-10-23)
 
 
