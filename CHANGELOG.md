@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.72.4 (2026-10-23)
+
+### Fixed
+- Main-red guards: the L1 never-below-raw guard allowlists the seal receipt model record field (stages/seal.ts, which configures no session) and the implement brief golden is re-captured, clearing the four tests red on main, with an FC recurrence entry for two stale engine10 guards. Approval: "APPROVE pd/mainred d2ac74b11673b0601c450b6b9a9bee7a72c93ecc over 37f94c20b FC row (tl-2, MEDIUM)". Picks 37f94c20b and d2ac74b11. Test and doc change only; no verifier, moat or Seal logic touched.
+
 ## v11.72.3 (2026-10-23)
 
 ### Added
