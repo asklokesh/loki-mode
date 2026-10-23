@@ -4,11 +4,12 @@ import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (do
 import { safeGitRun } from "../util/safe_git.ts";
 import { claudeLoginProbeCached, ghAuthProbeCached, providerAuthPath, providerLoginIssue, requirementFix } from "../commands/doctor.ts";
 import { initEmptyRepo, NOT_A_REPO } from "../util/first_run_repo.ts";
+import { probePublish, recordPublish, type PublishPlan } from "../util/engine_origin.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
 const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
 const GITHUB_ORIGIN_RE = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export interface PreflightOptions { repoDir: string; provider: string; pr: boolean; env?: Record<string, string | undefined>; runDir?: string; statfs?: (path: string) => { bavail: number | bigint; bsize: number | bigint } }
-export interface PreflightResult { fatal: string | null; warnings: string[] }
+export interface PreflightResult { fatal: string | null; warnings: string[]; publish?: PublishPlan }
 async function sh(argv: readonly string[], opts: ShellOpts): Promise<ShellResult> { try { return await run(argv, opts); } catch { return { stdout: "", stderr: "", exitCode: 127 }; } } // run() throws (Bun.spawn) when argv[0] does not resolve at all; treated as a failed check, never a crash
 /** TEN-STABILITY-36: free MB on the repo volume (same statfsSync math as doctor checkDisk), null when unreadable. */
 function freeMb(dir: string, statfs: NonNullable<PreflightOptions["statfs"]>): number | null { try { const s = statfs(dir); return (Number(s.bavail) * Number(s.bsize)) / (1024 * 1024); } catch { return null; } }
@@ -45,6 +46,8 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   if (o.pr && GITHUB_ORIGIN_RE.test((await git(["config", "--get", "remote.origin.url"])).stdout.trim())) {
     const ghOk = await ghAuthProbeCached(env, async () => (await sh(["gh", "--version"], { env, timeoutMs: 5000 })).exitCode === 0 && (await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 })).exitCode === 0); // TEN-SPEED-08: 10-min cache of a passing probe
     if (!ghOk) return { fatal: `gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr`, warnings };
+    const plan = await probePublish((await git(["config", "--get", "remote.origin.url"])).stdout.trim(), env); // R100-022: read at intake, never discovered after the work
+    if (plan) { if (plan.warning) warnings.push(plan.warning); if (o.runDir) recordPublish(o.runDir, plan); return { fatal: null, warnings, publish: plan }; }
   }
   return { fatal: null, warnings };
 }
