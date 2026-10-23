@@ -153,6 +153,11 @@ class ManagedClient:
 
     # ---------- memories ------------------------------------------------
 
+    @staticmethod
+    def _abs(path: str) -> str:
+        """Memory paths are absolute in SDK 2.x: they must start with "/"."""
+        return path if path.startswith("/") else "/" + path
+
     def memory_create(
         self,
         store_id: str,
@@ -163,17 +168,18 @@ class ManagedClient:
         """
         Create a memory entry at `path` in `store_id`.
 
-        When sha256_precondition is supplied, this is an optimistic
-        concurrency hint: if the store already holds a different hash the
-        SDK is expected to surface a 409-shaped error. Callers handle the
-        409 by re-reading, merging, and retrying once.
+        SDK 2.x paths are unique per store and create() has no precondition:
+        creating an existing path raises a 409-shaped error, which callers
+        handle by re-reading, merging, and calling memory_update with the
+        stored content hash. The legacy shape (and test fakes) still accept
+        `sha256_precondition` as an optimistic concurrency hint.
         """
         memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "create"):
             raise ManagedDisabled("memories.create not available in SDK")
         kwargs: Dict[str, Any] = {
             id_kw: store_id,
-            "path": path,
+            "path": self._abs(path),
             "content": content,
         }
         if sha256_precondition and id_kw == "store_id":
@@ -183,15 +189,50 @@ class ManagedClient:
         except ManagedDisabled:
             raise
         except Exception as e:
+            if getattr(e, "status_code", None) == 409:
+                # Keep the 409 visible so the caller can merge and update.
+                raise
             raise ManagedDisabled(f"memory_create failed: {e!s}") from e
         return self._to_dict(created)
+
+    def memory_update(
+        self,
+        store_id: str,
+        memory_id: str,
+        content: str,
+        sha256_precondition: str,
+    ) -> Dict[str, Any]:
+        """
+        Overwrite an existing memory. `sha256_precondition` must be the
+        content_sha256 of the content currently stored (not of the new
+        content); the server answers 409 if the memory changed since.
+        """
+        memories, id_kw = self._memories()
+        if memories is None or not hasattr(memories, "update"):
+            raise ManagedDisabled("memories.update not available in SDK")
+        try:
+            updated = memories.update(
+                memory_id,
+                **{id_kw: store_id},
+                content=content,
+                precondition={
+                    "type": "content_sha256",
+                    "content_sha256": sha256_precondition,
+                },
+            )
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"memory_update failed: {e!s}") from e
+        return self._to_dict(updated)
 
     def memory_read(self, store_id: str, memory_id: str) -> Dict[str, Any]:
         memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "retrieve"):
             raise ManagedDisabled("memories.retrieve not available in SDK")
         try:
-            got = memories.retrieve(**{id_kw: store_id}, memory_id=memory_id)
+            extra = {"view": "full"} if id_kw == "memory_store_id" else {}
+            got = memories.retrieve(**{id_kw: store_id}, memory_id=memory_id, **extra)
         except ManagedDisabled:
             raise
         except Exception as e:
@@ -201,20 +242,41 @@ class ManagedClient:
     def memories_list(
         self, store_id: str, path_prefix: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        """
+        List memories under `path_prefix`, content included.
+
+        SDK 2.x defaults to the basic view (content null) and pages at most
+        20 items, so request view="full" and follow the cursor until it ends.
+        Prefix rows (type "memory_prefix") are not memories and are dropped.
+        """
         memories, id_kw = self._memories()
         if memories is None or not hasattr(memories, "list"):
             raise ManagedDisabled("memories.list not available in SDK")
         kwargs: Dict[str, Any] = {id_kw: store_id}
         if path_prefix:
-            kwargs["path_prefix"] = path_prefix
+            kwargs["path_prefix"] = self._abs(path_prefix)
+        paged = id_kw == "memory_store_id"
+        if paged:
+            kwargs["view"] = "full"
+        rows: List[Dict[str, Any]] = []
+        seen_pages = set()
         try:
-            result = memories.list(**kwargs)
+            while True:
+                result = memories.list(**kwargs)
+                data = getattr(result, "data", result)
+                rows.extend(self._to_dict(x) for x in (data or []))
+                nxt = getattr(result, "next_page", None) if paged else None
+                if not nxt:
+                    break
+                if nxt in seen_pages:
+                    raise ManagedDisabled("memories.list cursor did not advance")
+                seen_pages.add(nxt)
+                kwargs["page"] = nxt
         except ManagedDisabled:
             raise
         except Exception as e:
             raise ManagedDisabled(f"memories_list failed: {e!s}") from e
-        data = getattr(result, "data", result)
-        return [self._to_dict(x) for x in (data or [])]
+        return [r for r in rows if r.get("type", "memory") == "memory"]
 
     # ---------- internal ------------------------------------------------
 

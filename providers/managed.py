@@ -368,15 +368,16 @@ class _RealMultiagentSession:
         if agents is None or not hasattr(agents, "create"):
             raise ManagedUnavailable("anthropic.beta.agents.create not available in SDK")
         roster = list(self._agent_ids)
+        model = agent_model()
         key = _COORDINATOR_CACHE_PREFIX + hashlib.sha256(
-            "|".join(roster).encode("utf-8")
+            "|".join([model] + roster).encode("utf-8")
         ).hexdigest()[:16]
 
         def _create() -> str:
             return getattr(
                 agents.create(
                     name="Loki council coordinator",
-                    model=agent_model(),
+                    model=model,
                     system="Ask every rostered agent for its verdict and report each one.",
                     multiagent={"type": "coordinator", "agents": roster},
                 ),
@@ -413,12 +414,24 @@ class _RealMultiagentSession:
             sid = getattr(session, "id", None)
             deadline = time.monotonic() + float(self._timeout_s)
             status = getattr(session, "status", "running")
-            while status in ("running", "rescheduling") and time.monotonic() < deadline:
+            while True:
+                # An idle status read right after create can predate the work,
+                # so idle only counts once an agent message exists.
+                if status == "idle":
+                    events = list(sessions.events.list(sid))
+                    if any(getattr(e, "type", None) == "agent.message" for e in events):
+                        break
+                elif status == "terminated":
+                    raise ManagedUnavailable(f"session {sid} terminated before replying")
+                if time.monotonic() >= deadline:
+                    raise ManagedUnavailable(
+                        f"session {sid} not finished within {self._timeout_s}s "
+                        f"(status={status})"
+                    )
                 time.sleep(_SESSION_POLL_S)
-                status = getattr(sessions.retrieve(sid), "status", "idle")
-            events = list(sessions.events.list(sid)) if status == "idle" else []
+                status = getattr(sessions.retrieve(sid), "status", "running")
             thread_agent = {}
-            if len(self._agent_ids) > 1 and events:
+            if len(self._agent_ids) > 1:
                 for th in sessions.threads.list(sid):
                     ref = getattr(th, "agent", None)
                     thread_agent[getattr(th, "id", None)] = getattr(ref, "id", None)
@@ -745,6 +758,9 @@ def run_council(
     for m in messages:
         aid = m["agent_id"] or ""
         if aid and aid in id_to_pool:
+            if aid in seen_ids:
+                # Two votes from one agent must not stand in for a second voter.
+                raise ManagedUnavailable(f"duplicate council reply from agent {aid}")
             seen_ids.add(aid)
             verdicts.append(
                 AgentVerdict(
@@ -831,6 +847,9 @@ def run_completion_council(
     for m in messages:
         aid = m["agent_id"] or ""
         if aid and aid in id_to_pool:
+            if aid in seen_ids:
+                # Two votes from one agent must not stand in for a second voter.
+                raise ManagedUnavailable(f"duplicate council reply from agent {aid}")
             seen_ids.add(aid)
             votes.append(
                 AgentVerdict(

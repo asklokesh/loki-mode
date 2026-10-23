@@ -61,14 +61,14 @@ class RetrieveTests(unittest.TestCase):
         sid = store["id"]
         self.fake.memory_create(
             store_id=sid,
-            path="verdicts/iteration-1.json",
+            path="/verdicts/iteration-1.json",
             content=json.dumps(
                 {"iteration": 1, "verdict": "CONTINUE", "note": "tests failing"}
             ),
         )
         self.fake.memory_create(
             store_id=sid,
-            path="verdicts/iteration-2.json",
+            path="/verdicts/iteration-2.json",
             content=json.dumps(
                 {"iteration": 2, "verdict": "COMPLETE", "note": "tests pass"}
             ),
@@ -102,12 +102,12 @@ class RetrieveTests(unittest.TestCase):
         # Seed 2 remote patterns.
         self.fake.memory_create(
             store_id=sid,
-            path="patterns/p-remote-1.json",
+            path="/patterns/p-remote-1.json",
             content=json.dumps({"pattern_id": "p-remote-1", "body": "remote1"}),
         )
         self.fake.memory_create(
             store_id=sid,
-            path="patterns/p-shared.json",
+            path="/patterns/p-shared.json",
             content=json.dumps(
                 {"pattern_id": "p-shared", "body": "REMOTE-VERSION"}
             ),

@@ -53,11 +53,11 @@ class HydrateTests(unittest.TestCase):
         )
         sid = store["id"]
         for p in patterns or []:
-            path = f"patterns/{p['pattern_id']}.json"
+            path = f"/patterns/{p['pattern_id']}.json"
             self.fake.memory_create(store_id=sid, path=path, content=json.dumps(p))
         for s in skills or []:
             name = s.get("name") or s["id"]
-            path = f"skills/{name}.json"
+            path = f"/skills/{name}.json"
             self.fake.memory_create(store_id=sid, path=path, content=json.dumps(s))
         return sid
 
@@ -255,7 +255,7 @@ class HydrateTests(unittest.TestCase):
         )
         self.fake.memory_create(
             store_id=store["id"],
-            path="patterns/p-late.json",
+            path="/patterns/p-late.json",
             content=json.dumps({"pattern_id": "p-late", "body": "late"}),
         )
 

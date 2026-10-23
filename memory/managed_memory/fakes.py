@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 
 class _Conflict(Exception):
-    """Simulated 409 raised by memory_create on sha256 mismatch."""
+    """Simulated 409: existing path on create, or stale sha on update."""
 
     status_code = 409
 
@@ -69,27 +69,58 @@ class FakeManagedClient:
                 "sha256_precondition": sha256_precondition,
             }
         )
+        # SDK 2.x semantics: paths are unique per store and absolute, and
+        # create() has no precondition, so an existing path is a 409.
         key = (store_id, path)
+        if not path.startswith("/"):
+            raise ValueError(f"memory path must start with '/': {path}")
+        if key in self.memories:
+            raise _Conflict(f"path already exists: {path}")
         sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        existing = self.memories.get(key)
-        if existing is not None and sha256_precondition is not None:
-            if existing["sha"] != sha256_precondition:
-                # Simulated 409: caller must re-read + merge + retry.
-                raise _Conflict(
-                    f"sha256 mismatch for {path}: "
-                    f"have={existing['sha']}, want={sha256_precondition}"
-                )
-        version = (existing.get("version", 0) + 1) if existing else 1
         entry = {
             "id": f"mem_{abs(hash(key)) % 10**8:08d}",
+            "type": "memory",
             "store_id": store_id,
             "path": path,
             "content": content,
             "sha": sha,
-            "version": version,
+            "content_sha256": sha,
+            "version": 1,
         }
         self.memories[key] = entry
         return entry
+
+    def memory_update(
+        self,
+        store_id: str,
+        memory_id: str,
+        content: str,
+        sha256_precondition: str,
+    ) -> Dict[str, Any]:
+        self.calls.append(
+            {
+                "op": "memory_update",
+                "store_id": store_id,
+                "memory_id": memory_id,
+                "sha256_precondition": sha256_precondition,
+            }
+        )
+        for key, entry in self.memories.items():
+            if key[0] == store_id and entry["id"] == memory_id:
+                if entry["sha"] != sha256_precondition:
+                    raise _Conflict(
+                        f"content_sha256 mismatch for {entry['path']}: "
+                        f"have={entry['sha']}, want={sha256_precondition}"
+                    )
+                sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                entry.update(
+                    content=content,
+                    sha=sha,
+                    content_sha256=sha,
+                    version=entry["version"] + 1,
+                )
+                return entry
+        raise KeyError(memory_id)
 
     def memory_read(self, store_id: str, memory_id: str) -> Dict[str, Any]:
         self.calls.append({"op": "memory_read", "memory_id": memory_id})

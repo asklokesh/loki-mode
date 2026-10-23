@@ -91,11 +91,10 @@ class ShadowWriteTests(unittest.TestCase):
         create_calls = [c for c in self.fake.calls if c["op"] == "memory_create"]
         self.assertEqual(len(create_calls), 1)
         call = create_calls[0]
-        self.assertTrue(call["path"].startswith("verdicts/iteration-7"))
-        self.assertIsNotNone(call["sha256_precondition"])
-        self.assertEqual(
-            len(call["sha256_precondition"]), 64, "sha256 hex length"
-        )
+        self.assertTrue(call["path"].startswith("/verdicts/iteration-7"))
+        # SDK 2.x create() has no precondition; a new path is never
+        # guarded by the hash of its own new content.
+        self.assertIsNone(call["sha256_precondition"])
 
         # Events file has one shadow_write record (no fallback).
         events = self._read_events()
@@ -116,19 +115,23 @@ class ShadowWriteTests(unittest.TestCase):
         sid = store["id"]
         self.fake.memory_create(
             store_id=sid,
-            path="verdicts/iteration-9.json",
+            path="/verdicts/iteration-9.json",
             content=json.dumps({"iteration": 9, "verdict": "CONTINUE"}),
-            sha256_precondition=None,  # unconditional seed
         )
+        seeded_sha = self.fake.memories[(sid, "/verdicts/iteration-9.json")]["sha"]
         self.fake.calls.clear()  # ignore seed calls
 
         path = self._write_verdict_file(iteration=9, verdict="COMPLETE")
         ok = shadow_write_verdict(path)
         self.assertTrue(ok, "after 409 retry-merge, write should succeed")
 
-        # Expect at least two memory_create calls: initial (409) + retry.
+        # Initial create hits the 409, then the merge goes through
+        # memory_update guarded by the hash of the STORED content.
         creates = [c for c in self.fake.calls if c["op"] == "memory_create"]
-        self.assertGreaterEqual(len(creates), 2)
+        updates = [c for c in self.fake.calls if c["op"] == "memory_update"]
+        self.assertEqual(len(creates), 1)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["sha256_precondition"], seeded_sha)
 
         events = self._read_events()
         sw_events = [e for e in events if e["type"] == "managed_memory_shadow_write"]
