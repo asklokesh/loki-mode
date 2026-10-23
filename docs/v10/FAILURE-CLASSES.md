@@ -1674,3 +1674,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every other test in fix_resume.test.ts that loops is pure (the P12-07j malformed-event loop at :382, the P12-07m cap loop at :560); the single-supervisor async tests run one resume and the only subprocess test (P12-07m main(), :576) already has 70000.
 - Mechanism: the P12-07n test takes an explicit 60000ms bound; no assertion changed.
 - Fixture: tests/engine10/fix_resume.test.ts P12-07n itself; it fails at 5000ms on origin/main debc7e843 under load and passes with the bound.
+
+## FC-CRASH-RERUN-STARTS-OVER A same-task `loki start` after a crash in any phase before publish started a new run, discarding the settled stages (issue #353 criterion 4)
+- User-visible vs raw: user-visible. The rerun took 114.05s and the crashed run's intake, plan, wall and implement work was redone (measured 2026-10-23 on 11.54.0, issue #353).
+- Law: an interrupted run's settled stages are the user's time and money; a start for the same task must reuse them unless the user opts out, and must say so (the publish phase already did, in startRecovery).
+- Cause (read on origin/main c891c77d5): startRecovery (loki-ts/src/util/run_outputs.ts) resumed only a publish-phase run; every other phase printed a note and returned null.
+- Siblings swept: `loki start --resume` and `loki resume` already re-enter at the first unsettled stage through resumeFlag; startRecovery is the only entry that did not call it. cw17b (pd/cw17b 686f52fb2) edits resumeFlag's exit codes only and is not an auto-resume.
+- Mechanism: startRecovery calls resumePoint on the interrupted run's log; when it is resumable, the run's recorded task equals this task and LOKI_NO_AUTO_RESUME is not 1, it prints `resuming interrupted run <id> from stage <s>` and calls resumeFlag. A resumeFlag refusal (exit 2, before any stage runs) prints `could not resume; starting a new run.` and returns null. A different task, an unreadable or torn log, and LOKI_NO_AUTO_RESUME=1 start fresh as before. LOKI_NO_RESUME=1 still disables the whole check.
+- Fixture: loki-ts/tests/engine10/fix_resume.test.ts "a same-task start after a crash auto-resumes ...". Mutants, each red: drop the LOKI_NO_AUTO_RESUME check; drop the task-equality check; drop the resumePoint ok check; drop the refusal fallback.
