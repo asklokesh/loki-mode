@@ -152,6 +152,45 @@ class BwrapArgvTest(unittest.TestCase):
         for flag in ("--dev /dev", "--proc /proc", "--die-with-parent"):
             self.assertIn(flag, joined)
 
+    def _git_ws(self, base, linked):
+        env = {**os.environ, "HOME": str(base / "h"), "GIT_CONFIG_NOSYSTEM": "1"}
+        def git(*args, cwd):
+            subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+        main = base / "main"
+        main.mkdir()
+        git("init", "-q", "-b", "main", cwd=main)
+        git("-c", "user.name=t", "-c", "user.email=t@t.test", "commit", "-q", "--allow-empty", "-m", "i", cwd=main)
+        if not linked:
+            return main
+        ws = base / "wt"
+        git("worktree", "add", "-q", "-b", "feat", str(ws), cwd=main)
+        return ws
+
+    def test_argv_on_git_workspaces_binds_files_and_subpaths_only(self):
+        # FC-SANDBOX-GIT-REDIRECT: the argv builder must work on a real git workspace and never
+        # ro-bind a literal directory (that would make the gitdir read-only and break commits).
+        for linked in (False, True):
+            with self.subTest(linked=linked), tempfile.TemporaryDirectory() as raw:
+                base = Path(raw).resolve()
+                for d in ("h", "r"):
+                    (base / d).mkdir()
+                ws = self._git_ws(base, linked)
+                argv = os_sandbox.bwrap_argv_prefix(ws, base / "r", "claude", [], home=base / "h")
+                binds = {argv[i + 2] for i, a in enumerate(argv)
+                         if a == "--ro-bind" and argv[i + 1] != "/dev/null" and argv[i + 2] != "/"}
+                denied = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(ws)}
+                for kind, path in denied:
+                    p = Path(path)
+                    if kind == "subpath":
+                        self.assertIn(path, binds)
+                    elif p.is_dir():
+                        self.assertNotIn(path, binds, path)
+                        inside = ws in p.parents or p == ws
+                        self.assertEqual(f"--bind {path} {path}" in " ".join(argv), inside, path)
+                    elif p.exists():
+                        self.assertIn(path, binds)
+                self.assertTrue(binds, "a git workspace must ro-bind at least one pointer file or hooks dir")
+
 
 class ModeTest(unittest.TestCase):
     def setUp(self):

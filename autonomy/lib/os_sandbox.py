@@ -625,11 +625,16 @@ def bwrap_argv_prefix(
         else:
             argv += ["--ro-bind", "/dev/null", str(path)]
     # FC-SANDBOX-GIT-REDIRECT: the git pointers inside the writable bind stay read-only.
-    for _kind, path in git_deny_paths(workspace):
-        # A literal directory (.git, the linked gitdir, worktrees, the common dir) stays writable
-        # (commits); the mounts on the entries inside already make it impossible to rename away.
-        if path.exists() and (kind == "subpath" or not path.is_dir()):
+    for kind, path in git_deny_paths(workspace):
+        if not path.exists():
+            continue
+        if kind == "subpath" or not path.is_dir():
             argv += ["--ro-bind", str(path), str(path)]
+        elif any(path == w or w in path.parents for w in writable):
+            # A literal directory inside a writable bind stays writable (commits) but becomes its own
+            # mount point: a mount point cannot be renamed, whereas a directory that merely contains
+            # mounts can (measured on Linux), and a recreated .git would carry a planted config.
+            argv += ["--bind", str(path), str(path)]
     argv += ["--die-with-parent", "--"]
     return argv
 
