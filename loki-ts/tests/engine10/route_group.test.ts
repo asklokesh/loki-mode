@@ -306,14 +306,15 @@ describe("default group runner (run_group.ts)", () => {
       expect(code).toBe(1);
     });
   });
-  test("no origin remote: nothing starts, exit 1", async () => {
+  test("no origin remote: no unit starts and the task runs as one local run (FC-GROUP-REFUSES-LOCAL-TASK-WITHOUT-ORIGIN)", async () => {
     await withDir(async (d) => {
       mkRepo(d); sh(d, "remote", "remove", "origin");
       const seen: string[][] = [];
       const { code, err } = await go(d, {}, launcher(d, seen));
-      expect(code).toBe(1);
+      expect(code).toBeNull();
       expect(seen.length).toBe(0);
-      expect(err).toContain("NOT PROVEN");
+      expect(err).toContain("sequential (reason: no origin remote");
+      expect(err).not.toContain("NOT PROVEN");
     });
   });
   test("LOKI_GROUP_TEST_CMD wins over a package.json test script", async () => {
@@ -363,3 +364,42 @@ describe("missions: multi-milestone specs", () => {
   });
 });
 
+describe("a group run needs an origin remote; a local task without one runs sequentially (FC-GROUP-REFUSES-LOCAL-TASK-WITHOUT-ORIGIN)", () => {
+  const gitRepo = (d: string, origin?: string): void => {
+    spawnSync("git", ["init", "-q"], { cwd: d });
+    if (origin) spawnSync("git", ["remote", "add", "origin", origin], { cwd: d });
+  };
+  const real = async (repo: string) => {
+    let err = "";
+    const res = await maybeRunGroup(SPEC, repo, { LOKI_SPEED: "1" } as NodeJS.ProcessEnv, { listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+    return { r: res.code, task: res.task, err };
+  };
+  test("no origin: falls back to a sequential run and names the reason, not NOT PROVEN", async () => {
+    await withDir(async (d) => {
+      gitRepo(d);
+      const { r, task, err } = await real(d);
+      expect(r).toBeNull();
+      expect(task).toBe(SPEC);
+      expect(err).toContain("sequential (reason: no origin remote of the form owner/repo");
+      expect(err).not.toContain("NOT PROVEN");
+    });
+  });
+  test("control: an owner/repo origin still goes to the group runner", async () => {
+    await withDir(async (d) => {
+      gitRepo(d, "https://github.com/acme/widgets.git");
+      const { r, err } = await real(d);
+      expect(r).not.toBeNull();
+      expect(err).not.toContain("sequential (reason: no origin remote");
+    });
+  });
+  test("a mission spec with no origin also falls back", async () => {
+    await withDir(async (d) => {
+      gitRepo(d);
+      let err = "";
+      const mission = "## Milestone 1: first\n" + SPEC + "\n## Milestone 2: second\n" + SPEC;
+      const res = await maybeRunGroup(mission, d, { LOKI_SPEED: "1" } as NodeJS.ProcessEnv, { listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+      expect(res.code).toBeNull();
+      expect(err).toContain("sequential (reason: no origin remote");
+    });
+  });
+});

@@ -38,7 +38,9 @@ function failClosed(why, warnings) {
 // Read denies use the bare '.env*' glob on purpose: a deny beats any allow, so a name list cannot carve out
 // the templates (.env.example, .env.sample, .env.template) without missing secret names such as .envrc,
 // .env.prod, .env.keys, .env.vault and .env.bak. The templates are blocked too.
-var CRED_DENY = ['Read(//**/.env*)', 'Read(//**/.aws/**)', 'Read(//**/.ssh/**)', 'Read(//**/*.pem)'];
+// The list lives in autonomy/lib/secret-paths.json, shared with the OS sandbox (autonomy/lib/os_sandbox.py).
+var CRED_DENY = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'autonomy', 'lib', 'secret-paths.json'), 'utf8'))
+    .rules.map(function (r) { return r.kind === 'file' ? 'Read(//**/' + r.glob + ')' : 'Read(//**/' + r.name + '/**)'; });
 var HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
 // Throws on any non-ASCII, malformed or punycode (xn-- label) domain: an ASCII xn-- name can render as a

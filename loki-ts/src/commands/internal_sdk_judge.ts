@@ -18,7 +18,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "node:fs";
 import { type Effort, describeJudgeOutcome, judgeJsonOutcome, judgeTextOutcome } from "../runner/sdk_invoker.ts";
 import { lokiDir } from "../util/paths.ts";
-import { thinkingConflictsEffort } from "../providers/claude_flags.ts";
+import { thinkingConflictsEffort, thinkingUsageError } from "../providers/claude_flags.ts";
 import { isUnresolvedClaudeAlias, resolveClaudeModel } from "../util/claude_model.ts";
 
 function argVal(args: string[], flag: string): string | undefined {
@@ -81,7 +81,7 @@ export async function runInternalSdkJudge(args: string[]): Promise<number> {
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const thinking = parseThinking(argVal(args, "--thinking"));
   if (thinking === null || thinkingConflictsEffort(model, thinking, effort)) {
-    process.stderr.write("sdk-judge: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max\n");
+    process.stderr.write(`${thinkingUsageError("sdk-judge", model)}\n`);
     return 2;
   }
   const timeoutMs = parsePosInt(argVal(args, "--timeout-ms"));
@@ -133,7 +133,7 @@ export async function runInternalSdkText(args: string[]): Promise<number> {
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
   const thinking = parseThinking(argVal(args, "--thinking"));
   if (thinking === null || thinkingConflictsEffort(model, thinking, effort)) {
-    process.stderr.write("sdk-text: --thinking must be disabled or adaptive, and disabled cannot combine with --effort xhigh or max\n");
+    process.stderr.write(`${thinkingUsageError("sdk-text", model)}\n`);
     return 2;
   }
   const timeoutMs = parsePosInt(argVal(args, "--timeout-ms"));

@@ -2708,3 +2708,28 @@ v11.17.21 published (Release success on 462fbc40a; npm latest 11.17.21, next 11.
 - Reboot wiped the scratchpad clones and reviewer state; release clone rebuilt at ~/git/lm-wt/lm-rel, worktrees now under ~/git/lm-wt.
 - Re-review of lost verdicts: #318 BLOCK (orphaned run.sh test anchor, voter_agents.ts conflict; rework pd/318r). Security batch BLOCK on #303b (unredacted input_summary in events.jsonl), #315 (backslash authority bypass sends MCP auth over http), #325e (doctor --airgap prints webhook secrets), #329 (dashboard _write_secret unswept, receipt sweep untested); rework pd/303c and pd/mcpchain. #305fix-rb pending full bun test.
 - Founder 2026-10-23: act as CTO and CoS without asking; 10/10 versus competitors in every category and measured 100x UX. Head-to-head bench (loki 11.54.0 vs bare claude -p, 8 hidden-test tasks, n=2) running on pd/h2h; codex not installed (UNMEASURED), droid unauthenticated. Architect filing win-category slices plus the UX scorecard tracking issue.
+
+
+## 2026-10-23T05:37Z (CoS) checkpoint, v11.54.0..v11.56.5 shipped
+- origin/main 39fd953b5 = v11.56.5 (cw17: start --resume reaches stage resume, Refs #352). npm at 05:36Z: latest 11.56.4, next 11.56.3 (propagation window; re-check).
+- #352 criterion 5 (resume outcome within 21s) NOT MET: 3x3 healthy resume 21-31s, posted at issue comment 6358142565. Ruling on the 21s target goes to the founder. cw17b (honest exit 4 only for runs that truly cannot resume) assigned to eng-314f.
+- P0 harness PARTIAL root-caused (one paid run, about $0.08, D108): full suite uses bare `python` (check_result.ts FULL_SUITE_CMD) and ignores .venv; Wall files `loki_wall_*.py` are never in pytest discovery, so verify never runs them; "one reviewer" is a consequence; "repo not recorded" is a no-origin fixture plus wording. Three slices: eng-314f interpreter, eng-cw12 Wall discovery (verify.ts), eng-318r wording.
+- Blocked in review: cw04 e220a18ff (rev-a B1 signed blocks read from agent-writable run-dir files with no engine writer; B2 strict bypass; B3 sandbox fails open). Ruling: label unverified, strict absent/malformed = PARTIAL, sandbox on with malformed or non-allowlisted kind = FAILED, absent = PARTIAL until the cw01 writer lands. cw18 c1def44f5 (4 blockers incl. e10ext 1520 > 1500 lines).
+- Approved: skilllink 32890c693 (tl-324 MEDIUM, 19/0, mutant red). In review: #328 bef58ca69 (rev-c), #332 c5a6d4d2b (tl-324), #309 f230e3fce (rev-b).
+- Founder machine: global loki and ~/.claude/skills/loki-mode still at 11.17.103 (left untouched).
+
+## 2026-10-23T06:15Z (RM) checkpoint, v11.57.1..v11.58.0 shipped
+- Shipped, each with `git ls-remote origin main` equal to the local HEAD: v11.57.1 c4a7f1f4c (sdkconverge), v11.57.2 50e2dc64c (goldenfix), v11.57.3 6f1e54223 (cw19b), v11.57.4 a680eda9b (groupfix), v11.57.5 4b0bbb0ca (vscomma), v11.57.6 9556d6f16 (skilllink), v11.58.0 9e4812a14 (cw20-r2, Refs #355).
+- 05:52Z: #204 closed (test-memory-cli 25/0 on clean origin/main, log ~/loki-ci-logs/cos-204.log); RQ-07 eng-313r, RQ-08 eng-cw12, RQ-06 eng-h2h, RQ-02 eng-303c, loadaware eng-351; paid resume-cost pair GO (eng-npm, D108).
+- P0 open: publish-npm red on release.yml runs for v11.56.5 and v11.57.0 to v11.57.4 (run 39908304065 log: "dist-tags did not settle on the highest version after 8 tries"). `curl registry.npmjs.org/loki-mode/11.57.4` returned 404 at 05:58:11Z and 200 at 06:01:10Z (published 05:54:57Z), so propagation exceeded the settle loop. Dist-tags read at 06:08:16Z: latest 11.57.6, next 11.57.5. Fix owner eng-npm, HIGH review rev-a; no tag is ever written by hand.
+- Live exposure: v11.57.0 (cw01 sandbox, default LOKI_OS_SANDBOX=off) shipped before rev-b's 4 blocking findings; fix-forward cw01b and cw01c in review.
+
+
+## 2026-10-23T06:32Z (CoS) checkpoint, v11.57.x..v11.60.1
+- origin/main 42404106a = v11.60.1 (pytesthint-r2 8b439ee51, GUARDS row daf6cfde4 for unnamed stacked parents and the exact-SHA approval rule).
+- npm: `npm dist-tag ls loki-mode` at 06:31Z reads latest 11.60.0, next 11.60.0. The packument (registry.npmjs.org/loki-mode, modified 06:22:41) still shows latest 11.58.3, next 11.57.5.
+- Every publish-npm failure from v11.57.4 on is a false failure. The tag writes succeed. scripts/npm-dist-tags.sh:32 and :39 read the CDN-cached packument through `npm view --prefer-online` and never see the new tags. Fix owner: eng-324 (HIGH, rev-a). GET /loki-mode/11.59.0 returned 404 at 06:31Z while 11.60.0 returned 200; re-check before calling 11.59.0 lost.
+- bun test survives SIGTERM: 3 engine10 runs under bare `timeout 590` lived 28-50 min. Rule now: `timeout -k 15 <s>`, at most 2 full engine10 runs company-wide.
+- Wall mechanism: a single one lands. eng-cw12 a1c07ce3c is the base. eng-314f splits bed40cfb4 into A (fullSuiteCmd plus seal wording) and B (rev-c rules B covered or delta).
+- Roadmap-100: lanes defined by arch-100, one live slice per hot-spot file. None of the 100 items has shipped yet.
+- 06:39Z: 11.60.1 tgz 200 (publish 06:30:51, so 4-8 min lag, variable). dist-tag ls latest=next=11.60.1. 11.59.0 version doc /loki-mode/11.59.0 returns 200, signed, shasum 71ae74c5; its tgz and `npm pack loki-mode@11.59.0` still 404. Not called lost. Interim rule: no VERSION push until the previous tgz is 200.

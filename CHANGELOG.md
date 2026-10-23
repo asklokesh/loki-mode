@@ -5,6 +5,112 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.60.4 (2026-10-23)
+
+### Fixed
+- One advisor pair is now used for every advisor probe caller, so an invalid advisor pair is reported the same way by plan route and by doctor (RQ-04, #304). Approval: "tl-324 APPROVE pd/rq04, ship range origin/main..4f4627426e3e37a084c09363c5f110f4a76abeb3 = exactly 1 commit 4f4627426".
+
+## v11.60.3 (2026-10-23)
+
+### Fixed
+- The benchmark runner drains stderr while waiting for the stop marker, so heavy logging can no longer fake a timeout; the resume-cost instrument and engine SHA recording ship with it. Approval: "tl-324 APPROVE ... pd/resumecost3: ship range origin/main..e43a2ea45fe37217caa7446450e9e6e3e0cc63c4 = 7 commits".
+
+## v11.60.2 (2026-10-23)
+
+### Fixed
+- A failed session that committed nothing now returns to your original branch and removes its empty loki/session branch, instead of leaving you checked out on it. Approval: "tl-324 APPROVE ... pd/ux-branchrestore-sh: ship range origin/main..051a879d35ada6591907f827ce06ca6bbda883df = exactly 1 commit 051a879d3".
+
+## v11.60.1 (2026-10-23)
+
+### Fixed
+- The implement lead brief names python -m pytest and forbids files or symlinks in a test directory, so an agent no longer works around a bare pytest import error by committing a tests/<mod>.py symlink. Approval: "ship pd/pytesthint-r2 f0115bb7e (tl-324 APPROVE, MEDIUM)".
+
+## v11.60.0 (2026-10-23)
+
+### Added
+- loki doctor --json gains advisory provider_auth rows (credential source by name, never the value), and preflight records a zero-token auth probe per provider in preflight.json. A failed probe stays fatal; LOKI_PREFLIGHT_PROBE=0 skips it. Approval: "cw14-rb pd/cw14-rb 7ddde458b: APPROVE (rev-b, HIGH re-review scoped to the rebase)".
+
+## v11.59.0 (2026-10-23)
+
+### Added
+- Bench: a Codex adapter, the second arm for the false-done instrument.
+
+## v11.58.3 (2026-10-23)
+
+### Fixed
+- A council citation under a bumped submodule is refuted when the submodule is checked out and labelled NOT PROVEN when it is not, instead of always counting as a high-severity finding. Refs #332.
+
+## v11.58.2 (2026-10-23)
+
+### Fixed
+- Bench: the judge-trap-1 overlay rejects an off-by-one word cut and grades with its own overlay; per-trial false-pass, council cache share and journal reuse metrics are reported. Refs #348.
+- Docs: UX scorecard baselines re-measured on 11.55.3 (Refs #350), and the Feature 100 roadmap links its 79 filed issues.
+
+## v11.58.1 (2026-10-23)
+
+### Fixed
+- LeanCostTableTest rows carry a cost_source so the validator accepts them, which fixes the red test_attribution on main.
+
+## v11.58.0 (2026-10-23)
+
+### Added
+- Four pre-registered false-done bench tasks with hash-attested oracles; the fd-1 duplicate-key check requires the key name, and the fd-2, fd-3 and fd-4 overlays reject near-misses that break a stated rule. Refs #355.
+
+## v11.57.6 (2026-10-23)
+
+### Fixed
+- A plain run never repoints a valid global skill link, takes it into a temp dir, or downgrades it.
+
+## v11.57.5 (2026-10-23)
+
+### Fixed
+- The bench run.sh vs mode accepts commas in LOKI_BENCH_VS_TOOLS.
+
+## v11.57.4 (2026-10-23)
+
+### Fixed
+- A multi-part task with no owner/repo origin runs as one local run instead of reporting NOT PROVEN.
+
+## v11.57.3 (2026-10-23)
+
+### Fixed
+- A failed run that committed nothing restores the starting branch and drops its empty loki/ branch. Refs #354.
+
+## v11.57.2 (2026-10-23)
+
+### Fixed
+- Regenerated the engine10 plan and implement brief goldens for the PARALLEL_TOOL_CALLS prefix line, so the golden tests are green again.
+
+## v11.57.1 (2026-10-23)
+
+### Fixed
+- The loki-mode-sdk dist-tags use the shared fail-closed highest-version script and converge once the SDK version resolves on the registry, so the SDK latest tag can no longer move backwards.
+
+## v11.57.0 (2026-10-23)
+
+### Added
+- One OS confinement module (Seatbelt moved out of build_supervisor, plus Linux bwrap) with secret paths read from one JSON file, off by default (LOKI_OS_SANDBOX=off). A symlink read to a non-secret file outside the workspace is not confined, and Linux bwrap is not proven in CI. Refs #334.
+
+## v11.56.5 (2026-10-23)
+
+### Fixed
+- loki start --resume now reaches the stage resume, and loki verify with a receipt path reaches the engine10 verifier. Refs #352.
+
+## v11.56.4 (2026-10-23)
+
+### Fixed
+- The claude provider refuses a thinking type the model catalog does not list for the model at any effort, and disabled thinking maps to between_tools for claude-sonnet-5-5, with the usage error derived from the catalog. Refs #314.
+
+## v11.56.3 (2026-10-23)
+
+### Fixed
+- The release workflow converges npm dist-tags again once the new version resolves on the registry, so a late-materializing earlier publish can no longer leave latest or next behind.
+
+## v11.56.2 (2026-10-23)
+
+### Fixed
+- npm dist-tags fail closed on any registry read error, never write below a tag read fresh-higher than the target, and the release runs a registry proof job, so latest can no longer move backwards.
+
 ## v11.56.1 (2026-10-23)
 
 ### Fixed

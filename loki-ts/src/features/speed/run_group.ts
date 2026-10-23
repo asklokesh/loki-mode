@@ -95,6 +95,8 @@ const git = (dir: string, args: string[]): string => {
   return r.status === 0 ? String(r.stdout).trim() : "";
 };
 const SLUG_RE = /[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/;
+/** The owner/repo slug of the origin remote, or undefined. The unit launcher (backlog.py) needs it, so a group run cannot start without one. */
+export const originSlug = (repoDir: string): string | undefined => SLUG_RE.exec(git(repoDir, ["remote", "get-url", "origin"]))?.[1];
 
 /** Repo test command argv: LOKI_GROUP_TEST_CMD (whitespace split) wins; else the repo profile's first test command (runner/repo_profile.ts); else empty (the suite then did not run). */
 export function testCommand(repoDir: string, env: NodeJS.ProcessEnv): string[] {
@@ -188,7 +190,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const groupId = resumable?.gid ?? `g${Date.now().toString(36)}`;
   const groupDir = join(repoDir, ".loki", "groups", groupId);
   const receiptPath = join(groupDir, "receipt.json");
-  const slugOf = (): string | undefined => SLUG_RE.exec(git(repoDir, ["remote", "get-url", "origin"]))?.[1];
+  const slugOf = (): string | undefined => originSlug(repoDir);
 
   let baseRef: string;
   let startBranch = "";

@@ -33,7 +33,7 @@ import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
-import { baseLine } from "../util/base_guard.ts";
+import { baseLine, dropEmptyRunBranch } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
@@ -148,7 +148,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
-  await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
+  await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env, runDir: join(opts.repoDir, ".loki", "runs", opts.runId) });
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); const rmRunPid = writeRunPid(join(opts.repoDir, ".loki", "runs", opts.runId), opts.runId); process.once("exit", rmRunPid); // origin pinned once, before any provider runs; CPE-09 run.pid for Control Plane Stop, removed on every exit path
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
@@ -194,6 +194,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       safeGit(opts.repoDir, ["diff", "--quiet", String(base), "HEAD", "--", ".", ":(exclude).loki"], { env: workerEnv, stdio: "ignore" });
     } catch { hasDiff = base !== null; }
   }
+  if (!cancelled && verdict !== "VERIFIED") { const ib = fold(readEvents(log.path)).stages["intake"], ibd = ib?.type === "stage.completed" ? ib.data : null, note = dropEmptyRunBranch(opts.repoDir, origBranch, ibd?.branch, validBase(ibd?.base_sha ?? null)); if (note) process.stderr.write(note); } // FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: a terminal run that committed nothing restores the user's branch and drops its empty run branch
   if (opts.pr && !cancelled && intact && origin && verdict !== "ALREADY_SATISFIED" && verdict !== "VERIFIED" && hasDiff) process.stderr.write(localBranchNote(opts.runId, verdict, opts.repoDir)); // FC-NO-PUSH-UNVERIFIED
   if (opts.pr && !cancelled && intact && origin && verdict === "VERIFIED" && hasDiff) { // FC-NO-PUSH-UNVERIFIED: only a verified success leaves the machine; ALREADY_SATISFIED opens no PR (E-66)
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };

@@ -225,7 +225,8 @@ export function renderHandoff(i: HandoffInput): string {
     L.push(`No stage is re-entered, so stage ${clip(i.resumeFrom, 20)} and every later stage rerun only in a new run: loki start.`);
     L.push("Only a run stopped after its receipt was sealed (publish phase) resumes, with loki resume or loki start --resume: it reuses that receipt and reruns only the PR step.");
   }
-  L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
+  if (i.filesChanged === 0 && !i.prUrl) L.push("", "## Decide", "Nothing to accept: the run committed no change.", ...(i.branch ? [`Cleanup: git branch -D ${i.branch}`] : [])); // FC-EMPTY-RUN-BRANCH-LEFT-CHECKED-OUT: the branch line shows only while the empty branch still exists
+  else L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
   if (i.prUrl) L.push(`Merge: ${mergeText(i.merge)}`);
   return `${L.join("\n")}\n`;
 }
@@ -239,6 +240,7 @@ const hunkSummary = (diff: string): HandoffHunk[] => {
   }
   return out.sort((a, b) => b.added + b.removed - (a.added + a.removed)).slice(0, 5).map((h) => ({ ...h, summary: h.summary || "changed" }));
 };
+const branchExists = (repoDir: string, b: string): boolean => { try { safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${b}`], { stdio: "ignore" }); return true; } catch { return false; } };
 const readJson = (p: string): unknown => { try { return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null; } catch { return null; } };
 export interface HandoffFacts { requirements?: HandoffInput["requirements"]; sinceMs?: number; repoDir: string; runId: string; events: EventEnvelope[]; outcome: string; reason?: string | null; prUrl?: string | null; draft?: boolean; usd: number | null; partialUsd?: number; retryUsd?: number | null; measuredSessions?: number; totalSessions?: number; elapsedS: number | null; notProven: string[]; task?: string; baseSha?: string | null; stats?: { files: number; ins: number; del: number } | null }
 /** Compose from recorded state; every missing source degrades to "not recorded", never to a fabricated value. */
@@ -277,7 +279,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
   if (f.baseSha) { try { hunks = hunkSummary(safeGit(f.repoDir, ["diff", "--unified=0", `${f.baseSha}..HEAD`, "--", ".", ":(exclude).loki"], { maxBuffer: 8 << 20 })); } catch { /* diff unavailable */ } }
   const failed = f.events.filter((e) => e.type === "stage.failed").map((e) => `${e.stage} failed: ${String(e.data.reason ?? "no reason recorded")}`);
   return {
-    task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" ? started.branch : null,
+    task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" && !(f.stats?.files === 0 && !branchExists(f.repoDir, started.branch)) ? started.branch : null,
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
     usd: f.usd, partialUsd: f.partialUsd, retryUsd: f.retryUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,

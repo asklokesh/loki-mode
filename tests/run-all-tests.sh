@@ -1543,6 +1543,7 @@ run_test "release.sh --bump-only never leaves dist deleted on build failure (E-1
 run_test "release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)" "$SCRIPT_DIR/test-release-dist-guard.sh"
 run_test "web-app python modules ship in the npm package and Docker image by glob (132-E2)" "$SCRIPT_DIR/test-webapp-modules-packaged.sh"
 run_test "release publishes npm latest and next at once (D102)" "python3 -m pytest -q $SCRIPT_DIR/test_release_next_tag.py"
+run_test "npm-dist-tags.sh never moves a tag backwards and restores an overtaken one (FC-DIST-TAG-MOVED-BACKWARDS)" "$SCRIPT_DIR/test-npm-dist-tags.sh"
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"
 run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"
@@ -1625,6 +1626,7 @@ run_test "Loki 10 gate report generator (E-33)" "$SCRIPT_DIR/../eval/loki10/test
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
 run_test "loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-ARG)" "$SCRIPT_DIR/test-verify-pubkey-cli.sh"
+run_test "loki verify <run receipt path> routes to the v10 verifier (CW-17 #352)" "$SCRIPT_DIR/test-verify-receipt-route.sh"
 run_test "Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)" "timeout -k 10 300 bash $SCRIPT_DIR/test-receipt-check-action.sh"
 run_test "metrics-usage-append arg parsing, block format, repeat append (PO-TEST-1)" "timeout -k 10 120 $SCRIPT_DIR/test-metrics-usage-append.sh"
 run_test "Loki 10 live PR smoke on a sandbox repo (E-40)" "$SCRIPT_DIR/test-engine10-live-pr.sh"
@@ -1706,6 +1708,7 @@ run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 run_test "ShellCheck heavy files lint alone, never in parallel (FC-LINT-OOM)" "timeout -k 10 120 bash $SCRIPT_DIR/test-shellcheck-heavy-serial.sh"
 run_test "MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)" "timeout -k 10 60 bash $SCRIPT_DIR/test-mcp-spec-doc.sh"
 run_test "in-toto agent-change predicate draft example parses and maps to receipt fields (SIGS-DOC)" "timeout -k 10 60 bash $SCRIPT_DIR/test-predicate-doc.sh"
+run_test "OS sandbox module: Seatbelt and bwrap confinement, one secret-path list (#334)" "python3 -m pytest -q -p no:cacheprovider $SCRIPT_DIR/lib/test_os_sandbox.py"
 
 # Summary
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"

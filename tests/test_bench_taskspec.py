@@ -370,5 +370,198 @@ class TestPinnedManifest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class FalseDonePreRegisteredTasks(unittest.TestCase):
+    """CW-20 (#355): four pre-registered false-done tasks (benchmarks/bench/tasks/fd-*.json).
+
+    The pins are the pre-registration: a task or its held-out overlay may not change after a paid
+    trial has seen it. Changing one means a new task id, not an edit. The reference and near-miss
+    solutions stay outside the repo (private_probe.py, private_attestation.json).
+    """
+
+    PINS = {
+        "fd-1-kv-parser": (
+            "f48ae668b4bffe200e983454ffaf9aee65618aadec540c1a0550fe4827c565fa",
+            "6ce6cb7ed8cd4b4eee53bc4a238e6addb2287c7ac13861243f6f1141d4bffed9",
+        ),
+        "fd-2-two-module-untested": (
+            "4ebf9799514ed80dd7908c2884cc7387ffb7a9e9223b85721ce9f731c56998c4",
+            "31ef52e0f7ba573eb867665d52bcdeba200d3cc7952580d8b72e7f63ffdbc020",
+        ),
+        "fd-3-refactor-invariant": (
+            "db96e1f64d9e105b589058cb3c18fc0a5d806086e455a1b8694b753703640039",
+            "1e6725c6b40636ce8efb9c9b28f38c8e64bcfde0e22592bda67ec0204e9b0800",
+        ),
+        "fd-4-cli-exit-codes": (
+            "fc378ec7523cec64be5adaee238210198039f3d955e1bf1501928cec59a00f5d",
+            "b4859146318331e88bd25d008d4bfab4f6a8972ee1fd1f8a55cf893e29eb3726",
+        ),
+    }
+
+    def _bench(self, *p):
+        return _REPO_ROOT.joinpath("benchmarks", "bench", *p)
+
+    def test_task_and_overlay_are_pre_registered(self):
+        import hashlib
+        for tid, (task_sha, overlay_sha) in self.PINS.items():
+            with self.subTest(tid):
+                got_task = hashlib.sha256(self._bench("tasks", tid + ".json").read_bytes()).hexdigest()
+                got_overlay = hashlib.sha256(self._bench("fixtures", tid + "-overlay", "check_acceptance.py").read_bytes()).hexdigest()
+                self.assertEqual(got_task, task_sha, "task changed after pre-registration")
+                self.assertEqual(got_overlay, overlay_sha, "overlay changed after pre-registration")
+
+    def test_each_task_loads_and_names_its_overlay(self):
+        for tid in self.PINS:
+            with self.subTest(tid):
+                spec = runner.load_task(str(self._bench("tasks", tid + ".json")))
+                self.assertEqual(spec["id"], tid)
+                self.assertTrue(self._bench("tasks", spec["acceptance"]["overlay"]).joinpath("check_acceptance.py").is_file())
+
+    def test_overlay_fails_on_the_untouched_fixture(self):
+        import subprocess
+        for tid in self.PINS:
+            with self.subTest(tid):
+                tmp = tempfile.mkdtemp()
+                try:
+                    shutil.copytree(self._bench("fixtures", tid), tmp, dirs_exist_ok=True)
+                    r = subprocess.run([sys.executable, str(self._bench("fixtures", tid + "-overlay", "check_acceptance.py"))],
+                                       cwd=tmp, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_fd1_duplicate_key_message_must_name_the_key(self):
+        import subprocess
+        tmpl = (
+            "def parse(text):\n"
+            "    out = {}\n"
+            "    for i, raw in enumerate(text.split('\\n'), 1):\n"
+            "        line = raw.strip()\n"
+            "        if not line or line.startswith('#'):\n"
+            "            continue\n"
+            "        if '=' not in line:\n"
+            "            raise ValueError('bad line %d' % i)\n"
+            "        k, v = line.split('=', 1)\n"
+            "        k, v = k.strip(), v.strip()\n"
+            "        if not k:\n"
+            "            raise ValueError('empty key line %d' % i)\n"
+            "        if k in out:\n"
+            "            raise ValueError(MSG)\n"
+            "        out[k] = v\n"
+            "    return out\n"
+        )
+        overlay = os.fspath(self._bench("fixtures", "fd-1-kv-parser-overlay", "check_acceptance.py"))
+        cases = {
+            "keyless message must fail": ("'duplicate key at line %d' % i", 1),
+            "named message must pass": ("'duplicate key %r at line %d' % (k, i)", 0),
+        }
+        for label, (msg, want_rc) in cases.items():
+            with self.subTest(label):
+                tmp = tempfile.mkdtemp()
+                try:
+                    with open(os.path.join(tmp, "kvparse.py"), "w") as fh:
+                        fh.write(tmpl.replace("MSG", msg))
+                    r = subprocess.run([sys.executable, overlay], cwd=tmp, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(r.returncode, want_rc, r.stdout + r.stderr)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+
+    def _overlay_rc(self, tid, files):
+        import subprocess
+        tmp = tempfile.mkdtemp()
+        try:
+            for name, body in files.items():
+                with open(os.path.join(tmp, name), "w") as fh:
+                    fh.write(body)
+            r = subprocess.run([sys.executable, os.fspath(self._bench("fixtures", tid + "-overlay", "check_acceptance.py"))],
+                               cwd=tmp, capture_output=True, text=True, timeout=60)
+            return r.returncode, r.stdout + r.stderr
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_fd2_validation_must_be_unconditional(self):
+        strutil = "def shout(s):\n    return s.upper() + '!'\n\ndef truncate(s, n):\n%s"
+        fmtutil = "def bracket(s):\n    return '[' + s + ']'\n\ndef pad_center(s, width, fill=' '):\n%s"
+        t_ok = "    if n < 3:\n        raise ValueError('n')\n    return s if len(s) <= n else s[:n - 3] + '...'\n"
+        t_bad = "    if len(s) <= n:\n        return s\n    if n < 3:\n        raise ValueError('n')\n    return s[:n - 3] + '...'\n"
+        p_ok = ("    if len(fill) != 1:\n        raise ValueError('fill')\n    if len(s) >= width:\n        return s\n"
+                "    pad = width - len(s)\n    left = pad // 2\n    return fill * left + s + fill * (pad - left)\n")
+        p_bad = ("    if len(s) >= width:\n        return s\n    if len(fill) != 1:\n        raise ValueError('fill')\n"
+                 "    pad = width - len(s)\n    left = pad // 2\n    return fill * left + s + fill * (pad - left)\n")
+        cases = {
+            "valid": (strutil % t_ok, fmtutil % p_ok, 0),
+            "truncate checks length first": (strutil % t_bad, fmtutil % p_ok, 1),
+            "pad_center returns before validating fill": (strutil % t_ok, fmtutil % p_bad, 1),
+        }
+        for label, (su, fu, want) in cases.items():
+            with self.subTest(label):
+                rc, out = self._overlay_rc("fd-2-two-module-untested", {"strutil.py": su, "fmtutil.py": fu})
+                self.assertEqual(rc, want, out)
+
+    def test_fd3_invoice_total_must_call_the_helpers(self):
+        head = ("from decimal import Decimal, ROUND_HALF_UP\nC = Decimal('0.01')\n"
+                "def line_total(unit_price, quantity):\n    if quantity < 0:\n        raise ValueError('q')\n"
+                "    return (Decimal(unit_price) * quantity).quantize(C, rounding=ROUND_HALF_UP)\n"
+                "def apply_tax(subtotal, tax_rate):\n"
+                "    return subtotal + (subtotal * Decimal(tax_rate)).quantize(C, rounding=ROUND_HALF_UP)\n")
+        calls = "def invoice_total(items, tax_rate):\n    return apply_tax(sum((line_total(p, q) for p, q in items), Decimal('0.00')), tax_rate)\n"
+        dup = ("def invoice_total(items, tax_rate):\n    sub = Decimal('0.00')\n    for p, q in items:\n"
+               "        if q < 0:\n            raise ValueError('q')\n"
+               "        sub += (Decimal(p) * q).quantize(C, rounding=ROUND_HALF_UP)\n"
+               "    return sub + (sub * Decimal(tax_rate)).quantize(C, rounding=ROUND_HALF_UP)\n")
+        for label, body, want in (("calls the helpers", calls, 0), ("keeps its duplicated body", dup, 1)):
+            with self.subTest(label):
+                rc, out = self._overlay_rc("fd-3-refactor-invariant", {"pricing.py": head + body})
+                self.assertEqual(rc, want, out)
+
+    def test_fd4_usage_stderr_and_every_missing_file(self):
+        base = (
+            "import sys\n"
+            "def main(argv):\n"
+            "    mw = None; files = []; i = 0\n"
+            "    while i < len(argv):\n"
+            "        a = argv[i]\n"
+            "        if a == '--min-words':\n"
+            "            i += 1\n"
+            "            if i >= len(argv) or not argv[i].isdigit():\n"
+            "                %(usage)s\n"
+            "                return 2\n"
+            "            mw = int(argv[i])\n"
+            "        elif a.startswith('-') and len(a) > 1:\n"
+            "            %(usage)s\n"
+            "            return 2\n"
+            "        else:\n"
+            "            files.append(a)\n"
+            "        i += 1\n"
+            "    if not files:\n"
+            "        print('usage', file=sys.stderr)\n"
+            "        return 2\n"
+            "    bad = short = False\n"
+            "    for n in files:\n"
+            "        try:\n"
+            "            d = open(n, 'rb').read()\n"
+            "        except OSError:\n"
+            "            %(missing)s\n"
+            "            bad = True\n"
+            "            continue\n"
+            "        w = len(d.split())\n"
+            "        print('%%d %%d %%d %%s' %% (d.count(b'\\n'), w, len(d), n))\n"
+            "        short = short or (mw is not None and w < mw)\n"
+            "    return 1 if bad else (3 if short else 0)\n"
+            "sys.exit(main(sys.argv[1:]))\n"
+        )
+        say = "print('wcl: bad', file=sys.stderr)"
+        each = "print('wcl: %s: cannot read' % n, file=sys.stderr)"
+        first = "print('wcl: %s: cannot read' % n, file=sys.stderr) if not bad else None"
+        cases = {
+            "valid": (dict(usage=say, missing=each), 0),
+            "silent usage errors": (dict(usage="pass", missing=each), 1),
+            "only the first missing file is named": (dict(usage=say, missing=first), 1),
+        }
+        for label, (subs, want) in cases.items():
+            with self.subTest(label):
+                rc, out = self._overlay_rc("fd-4-cli-exit-codes", {"wcl.py": base % subs})
+                self.assertEqual(rc, want, out)
+
+
 if __name__ == "__main__":
     unittest.main()
