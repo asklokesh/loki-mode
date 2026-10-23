@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.67.0 (2026-10-23)
+
+### Added
+- loki_seal_diff seals changes a client already made into a signed receipt (CW-12, #345); --seal-existing is registered in route.sh.
+
+### Fixed
+- A run with no Wall file is VERIFIED only if a passing test references a changed symbol; an external diff never takes the lean Wall skip; the lean symbol rule ignores local variables and strips comments over the whole added hunk (cw12-r11). Approval: "cw12-r11 720796a3b now has both HIGH approvals (rev-a and rev-c), so it is clear to merge by SHA 720796a3b." (rev-c; rev-a APPROVE also on 720796a3b)
+
 ## v11.66.2 (2026-10-23)
 
 ### Fixed
