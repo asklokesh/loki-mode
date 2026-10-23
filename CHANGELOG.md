@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.66.0 (2026-10-23)
+
+### Added
+- /loki fix, /loki explain and /loki reseal PR comment commands (#360).
+
+### Fixed
+- The /loki fork refusal is guarded, the fix chain runs end to end, and comments no longer cancel queued commands; the verify-pr stub asserts its subcommand and the publish jobs get their own concurrency group (#360, FC-WORKFLOW-STUB-IGNORES-SUBCOMMAND-AND-SHARED-PUBLISH-GROUP). Approval: "ship pd/360-r3 1cf441b003593f7444c973a5dc070a2688a9da99. It is 3 commits over origin/main 89a8ce8c7, with an FC-only conflict. Pick in order: 976da0716ba7cc3ea3dcdd026e8842aae85f548e, 6252fe6257099370c9fb63ed6a4493ea83a778c0, 1cf441b003593f7444c973a5dc070a2688a9da99. APPROVE 1cf441b003593f7444c973a5dc070a2688a9da99" (rev-b)
+
 ## v11.65.6 (2026-10-23)
 
 ### Fixed
