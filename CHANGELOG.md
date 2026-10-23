@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Security
-- The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir` and `config.worktree` files, and to hooks, config and `commondir` in a primary checkout (Seatbelt; bwrap cannot hold a path that does not exist), so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
+- The OS sandbox now denies writes to the workspace git pointer (the `.git` file or directory) and to the linked-worktree `commondir`, `gitdir`, `config` and `config.worktree` files (and the linked gitdir, `worktrees` and common dir cannot be renamed away), and to hooks, config and `commondir` in a primary checkout (Seatbelt; bwrap cannot hold a path that does not exist), so confined code can no longer repoint git at a planted config that runs a command in the next unconfined git call. Per-worktree commit state (HEAD, index, logs) stays writable. Every unconfined git call in the harness now runs with `core.fsmonitor` and `core.hooksPath` neutralised and, in the TypeScript safe-git wrapper, a pinned GIT_DIR (FC-SANDBOX-GIT-REDIRECT).
 
 ## v11.63.10 (2026-10-23)
 

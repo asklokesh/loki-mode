@@ -311,9 +311,12 @@ def git_write_paths(workspace: Path) -> list[Path]:
 def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
     """(kind, path) write denies that keep confined code from repointing the
     git metadata the harness's next unconfined git reads (FC-SANDBOX-GIT-REDIRECT).
-    kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file) and
-    gitdir/{commondir,gitdir,config.worktree}. Primary checkout: ws/.git itself,
-    ws/.git/hooks, ws/.git/config{,.worktree} and ws/.git/commondir (git reads it for any gitdir, and it does not exist on a primary checkout, so only the Seatbelt literal deny can hold it; bwrap skips absent paths). HEAD, index, logs/HEAD and
+    kind is "literal" or "subpath". Linked worktree: ws/.git (the pointer file),
+    gitdir/{commondir,gitdir,config,config.worktree}, and the gitdir, common/worktrees
+    and the common dir as literals so none can be renamed away. Primary checkout:
+    ws/.git itself, ws/.git/hooks, ws/.git/config{,.worktree} and ws/.git/commondir (git
+    reads it for any gitdir; it is absent on a primary checkout, so only the Seatbelt
+    literal deny holds it and bwrap skips absent paths). HEAD, index, logs/HEAD and
     ORIG_HEAD stay writable so a commit still works. Empty outside a git repo."""
     gitdir, common = _git_path(workspace, "--git-dir"), _git_path(workspace, "--git-common-dir")
     if not gitdir or not common:
@@ -326,7 +329,11 @@ def git_deny_paths(workspace: Path) -> list[tuple[str, Path]]:
         denies += [("subpath", gitdir / "hooks"), ("literal", gitdir / "config"),
                    ("literal", gitdir / "config.worktree"), ("literal", gitdir / "commondir")]
     else:
-        denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config.worktree")]
+        # The linked gitdir, its parent and the common dir are literal denies too: without them the
+        # whole gitdir can be renamed away inside the writable bind and recreated with a planted
+        # config and no commondir (rev-b/rev-a E11).
+        denies += [("literal", common), ("literal", common / "worktrees"), ("literal", gitdir)]
+        denies += [("literal", gitdir / name) for name in ("commondir", "gitdir", "config", "config.worktree")]
     return denies
 
 
@@ -619,9 +626,9 @@ def bwrap_argv_prefix(
             argv += ["--ro-bind", "/dev/null", str(path)]
     # FC-SANDBOX-GIT-REDIRECT: the git pointers inside the writable bind stay read-only.
     for _kind, path in git_deny_paths(workspace):
-        # A whole primary .git dir stays writable (commits); a mount on its hooks and config entries
-        # already makes them, and so .git, impossible to rename away.
-        if path.exists() and not (path.name == ".git" and path.is_dir()):
+        # A literal directory (.git, the linked gitdir, worktrees, the common dir) stays writable
+        # (commits); the mounts on the entries inside already make it impossible to rename away.
+        if path.exists() and (kind == "subpath" or not path.is_dir()):
             argv += ["--ro-bind", str(path), str(path)]
     argv += ["--die-with-parent", "--"]
     return argv

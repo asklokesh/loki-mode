@@ -726,6 +726,33 @@ class SeatbeltGitRedirectTest(unittest.TestCase):
         self._confined(status, script)
         self.assertTrue(self._unconfined_status_pwned())
 
+    def _e11_script(self, gitdir):
+        # rev-b E11: rename the whole linked gitdir away, recreate it with a planted config and no commondir.
+        gd = Path(gitdir)
+        return (f'mv "{gd}" "{self.ws}/gdmoved" && mkdir "{gd}" && cp "{self.ws}/gdmoved/HEAD" "{gd}/HEAD" && mkdir -p "{gd}/objects" "{gd}/refs/heads" && '
+                f'printf "[core]\\n\\tfsmonitor = touch {self.pwn}\\n" > "{gd}/config"')
+
+    def test_linked_gitdir_cannot_be_renamed_and_recreated(self):
+        gitdir = self._linked()
+        self._confined(self._status(), self._e11_script(gitdir))
+        self.assertTrue((gitdir / "commondir").exists())
+        self.assertFalse((self.ws / "gdmoved").exists())
+        self.assertFalse(self._unconfined_status_pwned())
+        # the parent and the common dir cannot be renamed away either
+        for target in (gitdir.parent, self.main_repo / ".git"):
+            self._confined(self._status(), f'mv "{target}" "{self.ws}/moved"')
+            self.assertTrue(target.exists(), target)
+            self.assertFalse((self.ws / "moved").exists())
+
+    def test_mutant_drop_linked_gitdir_literal_is_exploitable(self):
+        gitdir = self._linked()
+        real = os_sandbox.git_deny_paths
+        with mock.patch.object(os_sandbox, "git_deny_paths",
+                               lambda ws: [(k, p) for k, p in real(ws) if p not in (gitdir.resolve(), gitdir.resolve() / "config")]):
+            status = self._status()
+        self._confined(status, self._e11_script(gitdir))
+        self.assertTrue(self._unconfined_status_pwned())
+
     def test_deny_paths_listed(self):
         gitdir = self._linked()
         got = {(k, str(p)) for k, p in os_sandbox.git_deny_paths(self.ws)}
