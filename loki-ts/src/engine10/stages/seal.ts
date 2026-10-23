@@ -41,7 +41,7 @@ export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signi
 const EXCLUDE_LOKI = ":(exclude).loki";
 export const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
-export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff"; // CW-12 B2/B3
+export const EXTERNAL_MODEL_LABEL = "external (no Loki implement session)", EXTERNAL_DIFF_NOT_ISOLATED = "Wall author not filesystem-isolated from the external diff", EXTERNAL_NO_WALL = "external diff sealed with no Wall file that ran; the only checks are the repo's existing tests"; // CW-12 B2/B3
 const externalRun = (o: Partial<Record<StageName, Record<string, unknown>>>): boolean => o.implement?.exit === "external";
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
@@ -105,6 +105,7 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   if (typeof o.implement?.limit_s === "number") return "PARTIAL"; // A1: a limit that did not kill the session (an error or a throw) is never a clean verdict
   if (checks.some((c) => c.result === "fail")) return "FAILED";
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
+  if (exit === "external" && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) return "PARTIAL"; // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED: an external diff has no watched implement session, so with no Wall file that ran it is never VERIFIED
   if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven || !proof || wallGreenOnBase) return "PARTIAL"; // FC-VACUOUS-WALL-GREEN: a Wall green on base discriminates nothing, so a changed tree is never VERIFIED on it
   return "VERIFIED";
 }
@@ -226,6 +227,7 @@ export const sealStage: Stage = {
     for (const n of [...strs(o.commit?.not_proven), ...strs(o.commit?.scope_notes)]) notProven.add(n); // D58: scope_notes = edits flagged outside stated scope (never reverted) or scope undetermined; separate key so they never force FAILED
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     if (typeof o.verify?.baseline_line === "string" && strs(o.verify?.pre_red).length) notProven.add(o.verify.baseline_line); // REPOMEM: the one-line pre-existing vs introduced split; listed only when a baseline failure was excused, never downgrades
+    if (externalRun(o) && !(Array.isArray(o.wall?.files) && o.wall.files.length > 0)) notProven.add(EXTERNAL_NO_WALL); // FC-EXTERNAL-SEAL-WITHOUT-WALL-VERIFIED
     if (externalRun(o)) notProven.add(EXTERNAL_DIFF_NOT_ISOLATED); // CW-12 B2: the Wall author runs on disk beside the external diff until cw01 confinement covers it
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");

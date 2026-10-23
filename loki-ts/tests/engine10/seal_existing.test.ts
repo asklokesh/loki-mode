@@ -5,7 +5,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 
 const LOKI_TS = resolve(import.meta.dir, "../..");
@@ -25,7 +25,7 @@ function git(cwd: string, ...args: string[]): string {
 interface Sealed { code: number; out: string; patch: string; prompts: { wall: string; other: string }; calls: string[]; envLog: string; receiptPath: string; receipt: { verdict: string; jwt?: string | null; signature?: { jwt?: string | null } | null; checks: { name: string; result: string }[]; not_proven: string[]; task: { source: string; sha256: string }; implement?: { exit?: string } }; keyFile: string; repo: string; }
 
 /** body is the multiply() the external client wrote; the patch is its diff against the committed base. */
-function seal(body: string): Sealed {
+function seal(body: string, noPlan = false, wallOff = false): Sealed {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`);
   const tmp = mkdtempSync(join(tmpdir(), "loki-cw12-")); temps.push(tmp);
   const keyDir = mkdtempSync(join(tmpdir(), "loki-cw12-key-")); temps.push(keyDir);
@@ -45,6 +45,8 @@ function seal(body: string): Sealed {
     LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: "1", LOKI_RECEIPT_SIGNING_KEY_FILE: join(keyDir, "k.pem"),
   };
   for (const k of ["LOKI_LEGACY_BASH", "LOKI_MODEL_OVERRIDE", "LOKI_RECEIPT_SIGNING_KEY", "LOKI_E10_SEAL_EXISTING_PATCH"]) delete env[k];
+  if (wallOff) env.LOKI_E10_WALL = "0";
+  if (noPlan) delete env.LOKI_E10_PLAN; // the shipped path (v10_tools._env, plain `loki ... --seal-existing`) sets no plan mode
   const r = Bun.spawnSync(["bash", BIN_LOKI, INTENT, "--seal-existing", patch], { cwd: repo, env, timeout: 90_000 });
   const marker = JSON.parse(readFileSync(join(repo, ".loki", "engine.json"), "utf8")) as { run_id: string };
   const receiptPath = join(repo, ".loki", "runs", marker.run_id, "receipt.json");
@@ -119,6 +121,26 @@ describe("CW-12 --seal-existing", () => {
     expect(s.receipt.checks.some((c) => c.result === "fail")).toBe(true);
     expect(s.calls).not.toContain("implement");
     expect(readFileSync(join(s.repo, "calc.ts"), "utf8")).toContain("return a + b;"); // the client's change is sealed as-is, not rewritten
+  }, 120_000);
+
+  test("B6: on the shipped path (no LOKI_E10_PLAN) a wrong external body is never VERIFIED and the Wall is not skipped by the lean path", () => {
+    const s = seal("a + b + 1", true);
+    expect(s.receipt.verdict).not.toBe("VERIFIED");
+    expect(s.out).not.toContain("cascade skips Wall");
+    const events = readFileSync(join(dirname(s.receiptPath), "events.jsonl"), "utf8");
+    expect(events).not.toContain("cascade skips Wall");
+  }, 120_000);
+
+  test("B6: a correct external body without LOKI_E10_PLAN runs a Wall file and seals VERIFIED", () => {
+    const s = seal("a * b", true);
+    expect(s.receipt.verdict).toBe("VERIFIED");
+    expect(readFileSync(s.receiptPath, "utf8")).toContain("loki_wall_multiply");
+  }, 120_000);
+
+  test("B6: with the Wall off even a correct external body is PARTIAL with a NOT PROVEN line, never VERIFIED", () => {
+    const s = seal("a * b", true, true);
+    expect(s.receipt.verdict).toBe("PARTIAL");
+    expect(readFileSync(s.receiptPath, "utf8")).toContain("external diff sealed with no Wall file that ran");
   }, 120_000);
 
   test("a missing patch file is refused with exit 2 before any run state exists", () => {
