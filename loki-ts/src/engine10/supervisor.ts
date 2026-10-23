@@ -158,7 +158,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   log.append(opts.resume ? "run.resumed" : "run.started", null, { ...opts.started, ...(opts.resume ? { phase: "stage", ...(lastAlive ? { last_alive_ts: new Date(lastAlive).toISOString() } : {}) } : {}), origin_repo: githubRepoFromUrl(origin) }); if (!opts.resume) void import("../integrations/writeback.ts").then((m) => m.writeBack({ phase: "started", verdict: "", prUrl: null, receiptSha256: null, task: "" }, env)); // P12-18: opt-in tracker "started" comment + transition, never throws
   writeAliveBeat(aliveDir); const beat = setInterval(() => writeAliveBeat(aliveDir), ALIVE_BEAT_MS); beat.unref(); // cheap heartbeat for quiet stages (a long verify emits no events)
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
-  withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
+  withholdGithubTokens(workerEnv); if (origin) workerEnv.LOKI_E10_PINNED_ORIGIN = origin; /* seal pins its publish compare URL to the supervisor-memory origin */ if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
   workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
   const capS = opts.capS ?? envCapS(env.LOKI_E10_CAP_S) ?? DEFAULT_CAP_S;

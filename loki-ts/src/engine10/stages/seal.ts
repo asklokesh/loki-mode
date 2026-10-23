@@ -287,7 +287,7 @@ export const sealStage: Stage = {
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true, toolchain: collectToolchain(), // TEN-GATES-22: tool versions that ran the checks, absent tools null; covered by receipt_sha256
-      ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS), ...publishReceiptBlock(ctx.runDir, ctx.repoDir),
+      ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS), ...publishReceiptBlock(ctx.runDir, process.env["LOKI_E10_PINNED_ORIGIN"] ?? null),
       ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
