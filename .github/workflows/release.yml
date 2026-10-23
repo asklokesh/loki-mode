@@ -211,7 +211,7 @@ jobs:
   verify-npm-registry:
     needs: publish-npm
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -254,8 +254,9 @@ jobs:
           # its tags (the script writes nothing while the version document is absent).
           # The settle window starts here, after the tarball 200, not before the poll.
           if [ "$served" = 1 ]; then mat=60; else mat=300; fi
-          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION"
-          rc=$?
+          # Under GitHub's bash -e a bare failure would end the step before the error below.
+          rc=0
+          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION" || rc=$?
           if [ "$served" != 1 ]; then
             echo "::error::registry never served loki-mode@${VERSION} (version doc HTTP ${vcode:-none}, tarball HTTP ${tcode:-none}) within the poll window"
             exit 1
@@ -564,7 +565,7 @@ jobs:
   verify-sdk-registry:
     needs: publish-ts-sdk
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -608,8 +609,9 @@ jobs:
           # its tags (the script writes nothing while the version document is absent).
           # The settle window starts here, after the tarball 200, not before the poll.
           if [ "$served" = 1 ]; then mat=60; else mat=300; fi
-          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION"
-          rc=$?
+          # Under GitHub's bash -e a bare failure would end the step before the error below.
+          rc=0
+          LOKI_DISTTAG_MATERIALIZE_S="$mat" bash scripts/npm-dist-tags.sh "$VERSION" || rc=$?
           if [ "$served" != 1 ]; then
             echo "::error::registry never served loki-mode-sdk@${VERSION} (version doc HTTP ${vcode:-none}, tarball HTTP ${tcode:-none}) within the poll window"
             exit 1
