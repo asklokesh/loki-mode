@@ -92,7 +92,7 @@ function fakeCtx(opts: {
     tests: { detect: async () => map, impacted: (_m: TestMap, _c: string[]): TestRef[] => [] },
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
     clock: { now: () => Date.now() },
-    outputs: () => opts.outputs ?? {},
+    outputs: () => opts.outputs ?? { verify: { risk: { tier: "low", checks_selected: [], checks_deferred: [] }, checks: [] } }, // a usable low-tier record: nothing required, as after a normal verify
     ...(opts.pinnedOrigin === null ? {} : { pinnedOrigin: opts.pinnedOrigin ?? "https://github.com/octocat/hello.git" }),
   };
   return { ctx, emitted };
@@ -319,6 +319,27 @@ describe("engine10 deep: app boot via util/app_probe.ts (TEN-GATES-06)", () => {
     expect(low.data.required_checks).toEqual([]); expect(low.data.status_state).toBe("success");
   });
 
+  test("FC-DEEP-REQUIRED-CHECK-UNRECORDED: an unusable risk record requires every deep check and is pending, never success", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    for (const risk of [null, undefined, { tier: "high" }, { tier: "bogus", checks_selected: [], checks_deferred: [] }]) {
+      const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { verify: { risk, checks: [] } } });
+      const r = await runDeep(ctx, sig(), baseOpts());
+      expect((r.data.required_checks as { check: string }[]).map((q) => q.check)).toEqual(["full suite", "app boot", "council", "security scan"]);
+      expect(r.data.status_state).toBe("pending");
+    }
+  });
+
+  test("FC-DEEP-REQUIRED-CHECK-UNRECORDED: a required check the deep stage never ran is listed not run with the stage-missing reason (kills M4)", async () => {
+    const { dir, base } = mkRepo();
+    commitChange(dir, "a.txt", "hi\n");
+    const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { verify: { risk: null, checks: [] } } });
+    const r = await runDeep(ctx, sig(), baseOpts({ appProbe: async () => ({ checks: [{ name: "app boot", cmd: "fake", result: "n/a", duration_s: 0, reason: "no app" }], pid: null, url: null }) })); // n/a pushes no check and no "not run" note: only the stage-missing loop lists it
+    const missing = (r.data.required_checks as { check: string; ran: boolean; reason?: string }[]).filter((q) => !q.ran && q.reason === "deep stage did not run it");
+    expect(missing.map((q) => q.check)).toContain("app boot");
+    for (const q of missing) expect(r.data.not_proven as string[]).toContain(`not run: ${q.check} (deep stage did not run it)`);
+  });
+
   test("a throwing or empty probe is NOT PROVEN, never a pass", async () => {
     const { dir, base } = mkRepo();
     commitChange(dir, "a.txt", "hi\n");
@@ -416,7 +437,7 @@ describe("engine10 deep: push (Rule of Two and the comment argv contract-gap fix
     const logPath = join(dir, "push-calls.log");
     const { ctx } = fakeCtx({
       repoDir: dir, baseSha: base,
-      outputs: { pr: { pr_url: "https://github.com/octocat/hello/pull/42" } },
+      outputs: { pr: { pr_url: "https://github.com/octocat/hello/pull/42" }, verify: { risk: { tier: "low", checks_selected: [], checks_deferred: [] }, checks: [] } },
     });
     const result = await runDeep(ctx, sig(), baseOpts({ pushExtraEnv: { LOG_PATH: logPath } }));
     expect(result.status).toBe("completed");

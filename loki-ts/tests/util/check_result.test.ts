@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { deepGaps, deepRecord, DEEP_STAGE_MISSING, classifyCheck, isExitCodedScript, EXIT_CODED_COUNT, UNMEASURED_REASON, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
+import { DEEP_ITEMS, deepGaps, deepRecord, DEEP_STAGE_MISSING, classifyCheck, isExitCodedScript, EXIT_CODED_COUNT, UNMEASURED_REASON, baseJobs, mapPool, verifyJobs, classifyRisk, classifyWithRerun, diffFiles, hasExecutedProof, hasExogenousProof, manifestDepsChanged, markExecuted, type ClassifyInput } from "../../src/util/check_result.ts";
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -192,9 +192,13 @@ describe("FC-DEEP-REQUIRED-CHECK-UNRECORDED deepRecord", () => {
   test("all required ran: proven; a full suite verify already ran counts", () => {
     expect(deepRecord(high, [{ name: "full suite: bun", result: "pass" }], [{ name: "council", result: "fail" }, { name: "security scan", result: "pass" }]).proven).toBe(true);
   });
-  test("low tier and an unusable record require nothing (deepGaps owns the fail-safe)", () => {
+  test("a low tier requires nothing; an unusable record requires every deep item, matching deepGaps (B1)", () => {
     expect(deepRecord({ tier: "low", checks_selected: base, checks_deferred: [] }, [])).toEqual({ required: [], proven: true });
-    expect(deepRecord(undefined, []).required).toEqual([]);
+    for (const bad of [undefined, null, { tier: "high" }, { tier: "bogus", checks_selected: [], checks_deferred: [] }]) {
+      expect(deepRecord(bad, []).required.map((q) => q.check)).toEqual([...DEEP_ITEMS]);
+      expect(deepRecord(bad, []).proven).toBe(false);
+      expect(deepGaps(bad, []).notProven).toEqual([...DEEP_ITEMS]);
+    }
   });
 });
 

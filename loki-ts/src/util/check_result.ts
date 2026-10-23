@@ -342,10 +342,20 @@ function summaryOf(a: Pick<RiskAssessment, "tier" | "computed" | "reasons" | "ov
 
 export const DEEP_ITEMS = ["full suite", "app boot", "council", "security scan"] as const;
 export const NOT_SELECTED = "not selected by risk tier: ";
-/** The deep checks the risk tier requires. Empty for low tier or an unusable record (nothing was asked for, or the record cannot say). */
-export function deepRequired(risk: unknown): string[] {
+/** True when the risk record names a known tier and both check lists (the gate's own record is trustworthy). */
+export function riskUsable(risk: unknown): boolean {
   const r = risk as { tier?: unknown; checks_selected?: unknown; checks_deferred?: unknown } | null | undefined;
-  if (!r || (r.tier !== "medium" && r.tier !== "high") || !Array.isArray(r.checks_selected) || !Array.isArray(r.checks_deferred)) return [];
+  return !!r && (r.tier === "low" || r.tier === "medium" || r.tier === "high") && Array.isArray(r.checks_selected) && Array.isArray(r.checks_deferred);
+}
+/** True when a check named `i` (prefix match) really executed: pass or fail, never skipped. */
+export function checkExecuted(cs: { name?: unknown; result?: unknown }[], i: string): boolean {
+  return cs.some((c) => String(c.name).startsWith(i) && (c.result === "pass" || c.result === "fail"));
+}
+/** The deep checks the risk tier requires. Empty for low tier (nothing was asked for). An unusable record cannot say what was asked, so it requires every deep item (FC-DEEP-REQUIRED-CHECK-UNRECORDED, fail-safe; matches deepGaps). */
+export function deepRequired(risk: unknown): string[] {
+  if (!riskUsable(risk)) return [...DEEP_ITEMS];
+  const r = risk as { tier: string; checks_selected: unknown[] };
+  if (r.tier !== "medium" && r.tier !== "high") return [];
   const sel = r.checks_selected.filter((x): x is string => typeof x === "string");
   return DEEP_ITEMS.filter((i) => (i === "full suite" ? sel.includes("full test command") || sel.includes("full suite") : sel.includes(i)));
 }
@@ -353,9 +363,8 @@ export interface DeepRequirement { check: string; ran: boolean; reason?: string 
 export const DEEP_STAGE_MISSING = "deep stage did not run it";
 /** FC-DEEP-REQUIRED-CHECK-UNRECORDED: one row per required deep check, ran or not with the reason, read from the gate's own risk record and the deep stage's checks. `proven` is false when any required check did not run, so a deep run that skipped one is NOT PROVEN, never passed. No deep checks at all (stage removed) leaves every row not ran. */
 export function deepRecord(risk: unknown, verifyChecks: { name?: unknown; result?: unknown }[], deepChecks: { name?: unknown; result?: unknown; reason?: unknown }[] = [], notes: string[] = []): { required: DeepRequirement[]; proven: boolean } {
-  const ranIn = (cs: { name?: unknown; result?: unknown }[], i: string): boolean => cs.some((c) => String(c.name).startsWith(i) && (c.result === "pass" || c.result === "fail"));
   const required = deepRequired(risk).map((check): DeepRequirement => {
-    if (ranIn(deepChecks, check) || (check === "full suite" && ranIn(verifyChecks, "full suite"))) return { check, ran: true };
+    if (checkExecuted(deepChecks, check) || (check === "full suite" && checkExecuted(verifyChecks, "full suite"))) return { check, ran: true };
     const why = deepChecks.find((c) => String(c.name).startsWith(check) && typeof c.reason === "string" && c.reason)?.reason, note = notes.map((n) => n.replace(/^not run: /, "")).find((n) => n.startsWith(`${check} (`) && n.endsWith(")")); // the deep stage states why in a "<check> (reason)" note when it pushed no check
     return { check, ran: false, reason: typeof why === "string" ? why : note ? note.slice(check.length + 2, -1) : DEEP_STAGE_MISSING };
   });
@@ -364,8 +373,7 @@ export function deepRecord(risk: unknown, verifyChecks: { name?: unknown; result
 /** FC-SEAL-NA-AS-UNPROVEN: the deep checks a receipt lists as NOT PROVEN (the tier wanted them and they did not run) versus "not selected by risk tier" (the tier never asked). No usable risk record keeps every item NOT PROVEN (fail-safe); a full suite that verify executed is dropped. */
 export function deepGaps(risk: unknown, verifyChecks: { name?: unknown; result?: unknown }[], deepChecks: { name?: unknown; result?: unknown }[] = [], reviewRan = false): { notProven: string[]; notSelected: string[] } {
   const r = risk as { tier?: unknown; checks_selected?: unknown; checks_deferred?: unknown } | null | undefined, arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
-  const ok = !!r && (r.tier === "low" || r.tier === "medium" || r.tier === "high") && Array.isArray(r.checks_selected) && Array.isArray(r.checks_deferred);
-  const executed = (cs: { name?: unknown; result?: unknown }[], i: string): boolean => cs.some((c) => String(c.name).startsWith(i) && (c.result === "pass" || c.result === "fail"));
+  const ok = riskUsable(risk), executed = checkExecuted;
   const sel = ok ? arr(r?.checks_selected) : [], fullRan = executed(verifyChecks, "full suite") || (sel.includes("full test command") && !arr(r?.checks_deferred).includes("full test command"));
   const items = DEEP_ITEMS.filter((i) => !(i === "full suite" ? fullRan : false) && !executed(deepChecks, i));
   if (!ok) return { notProven: [...items], notSelected: [] };
