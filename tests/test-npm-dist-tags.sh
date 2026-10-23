@@ -88,7 +88,7 @@ chmod +x "$WORK/bin/curl"
 run_case() {
     ST="$WORK/$1"; mkdir -p "$ST"
     printf '%s\n' $2 > "$ST/versions"; echo "$3" > "$ST/latest"; echo "$4" > "$ST/next"; : > "$ST/log"
-    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" STUB_REJECT_ADD="${STUB_REJECT_ADD:-}" LOKI_DISTTAG_LAG_FATAL="${LAG_FATAL_T:-1}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
+    CASE_OUT="$(env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_FRESH="${STUB_FRESH:-}" STUB_OVERTAKE="${6:-}" STUB_OUTAGE="${STUB_OUTAGE:-}" STUB_PKG="${STUB_PKG:-}" STUB_HIDE_VER="${STUB_HIDE_VER:-}" STUB_MATERIALIZE_AFTER="${STUB_MATERIALIZE_AFTER:-}" STUB_TAG_LAG="${STUB_TAG_LAG:-}" STUB_DROP_FIRST="${STUB_DROP_FIRST:-}" STUB_REJECT_ADD="${STUB_REJECT_ADD:-}" LOKI_DISTTAG_LAG_FATAL="${LAG_FATAL_T:-1}" LOKI_DISTTAG_PKG="${STUB_PKG:-}" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES="${TRIES_T:-4}" LOKI_DISTTAG_MATERIALIZE_S="${STUB_MAT_S:-1}" bash "$SCRIPT" "$5" 2>&1)"
     CASE_RC=$?
     CASE_ST="$ST"
 }
@@ -199,7 +199,7 @@ run_case stale "11.55.0 11.55.1" 11.55.0 11.55.0 11.55.1
 # Measured 2026-10-23 (07:17Z): each accepted tag write applies on its own, minutes later
 # (next read 11.60.8 while latest still read 11.60.7). A lagging tag is waited on, never
 # rewritten: exactly one write per tag, and both end at the published version.
-STUB_TAG_LAG=9 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+TRIES_T=40 STUB_TAG_LAG=9 run_case lag "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
 { [ $CASE_RC -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.56.1 ] && [ "$(cat "$CASE_ST/next")" = 11.56.1 ] \
     && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 1 ] && [ "$(grep -c '^add .* next' "$CASE_ST/log")" = 1 ]; } \
     && ok "a tag that applies late is waited on with one write per tag" || bad "lag: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
@@ -216,6 +216,16 @@ STUB_DROP_FIRST=1 run_case drop "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
     && grep -q "DISTTAG-WRITE-NOT-APPLIED" <<<"$CASE_OUT" \
     && [ "$(grep -c '^add .* latest' "$CASE_ST/log")" = 2 ]; } \
     && ok "a lost tag write is rewritten once with a named warning" || bad "drop: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
+
+# N2: the lost-write rewrite fires at half the read window, not on the last read, so the
+# rewritten write still has the second half of the window to apply. Window 40 reads:
+# the warning must name read 20, and a rewrite moved back to the last read (39) must fail.
+TRIES_T=40 STUB_DROP_FIRST=1 run_case half "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+{ [ $CASE_RC -eq 0 ] && grep -q "after 20 reads; re-writing" <<<"$CASE_OUT"; } \
+    && ok "a lost write is rewritten at half the window (read 20 of 40)" || bad "half: rc=$CASE_RC $CASE_OUT"
+cp "$SCRIPT" "$WORK/late.sh"; sed -i.bak 's|\$((TRIES / 2))|$((TRIES - 1))|' "$WORK/late.sh"
+TRIES_T=40 STUB_DROP_FIRST=1 SCRIPT="$WORK/late.sh" run_case halfmut "11.56.0 11.56.1" 11.56.0 11.56.0 11.56.1
+grep -q "after 20 reads; re-writing" <<<"$CASE_OUT" && bad "mutant: rewrite at the last read not caught" || ok "mutant: rewrite at the last read is caught"
 
 # Lock-holding mode (publish-npm): lag is a named warning with exit 0 and one write
 # per tag; a rejected write still fails; an unmaterialized version writes nothing.
@@ -266,7 +276,21 @@ for name in ('verify-npm-registry', 'verify-sdk-registry'):
     b = job(name)
     if 'LAG_FATAL=0' in b or 'SETTLE_S=' in b: bad.append(name + ': verify must keep the default long fatal poll')
     t = re.search(r'timeout-minutes: (\d+)', b)
-    if not t or int(t.group(1)) < 25: bad.append(name + ': timeout under 25')
+    if not t or int(t.group(1)) < 35: bad.append(name + ': timeout under the poll + materialize + settle budget (35)')
+    code = '\n'.join(l for l in b.splitlines() if not l.lstrip().startswith('#'))
+    # B2: proof is an uncached version document + tarball read; a cached packument read (npm view) is not.
+    if 'npm view' in code: bad.append(name + ': npm view (cached packument) used as proof')
+    if code.count('Cache-Control: no-cache') < 2: bad.append(name + ': version document and tarball must both be read uncached')
+    # B4/N1: poll and converge are one step, and nothing between the poll and the script call can exit.
+    steps = re.split(r'\n      - name:', code)
+    conv = [x for x in steps if 'npm-dist-tags.sh' in x and 'bash scripts' in x]
+    if len(conv) != 1: bad.append(name + ': converge call not in exactly one step')
+    else:
+        x = conv[0]
+        if 'seq 1' not in x or 'Cache-Control' not in x: bad.append(name + ': poll and converge are separate steps')
+        else:
+            between = x[x.index('done'):x.index('bash scripts')]
+            if re.search(r'\bexit\b', between): bad.append(name + ': converge is skipped when the poll fails')
 print('; '.join(bad)); sys.exit(1 if bad else 0)
 PY
 }
@@ -274,6 +298,20 @@ WF="$(cd "$(dirname "$SCRIPT")/.." && pwd)/.github/workflows/release.yml"
 wf_out="$(check_workflow "$WF")" && ok "release.yml: publish jobs poll <= 120 s warn-only, verify jobs keep the long fatal poll" || bad "workflow shape: $wf_out"
 sed 's/LOKI_DISTTAG_SETTLE_S=120/LOKI_DISTTAG_SETTLE_S=840/' "$WF" > "$WORK/mut.yml"
 check_workflow "$WORK/mut.yml" >/dev/null && bad "mutant: long poll back in publish-npm not caught" || ok "mutant: the long poll back in publish-npm is caught"
+python3 - "$WF" "$WORK" <<'PY2'
+import sys, re
+s = open(sys.argv[1]).read(); w = sys.argv[2]
+open(w + '/mut_npmview.yml', 'w').write(s.replace('served=0\n', 'served=0\n          npm view loki-mode version --prefer-online\n', 1))
+# converge skipped when the poll fails
+open(w + '/mut_exit.yml', 'w').write(s.replace('          # Converge always runs', '          [ "$served" = 1 ] || exit 1\n          # Converge always runs', 1))
+# prove and converge split into two steps
+open(w + '/mut_split.yml', 'w').write(s.replace('          # Converge always runs', '      - name: Converge\n        run: |\n          # Converge always runs', 1))
+# timeout back to 25
+open(w + '/mut_to.yml', 'w').write(s.replace('timeout-minutes: 40', 'timeout-minutes: 25'))
+PY2
+for m in npmview exit split to; do
+    check_workflow "$WORK/mut_$m.yml" >/dev/null && bad "mutant $m: workflow shape not caught" || ok "mutant: workflow $m is caught"
+done
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
