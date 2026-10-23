@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.69.1 (2026-10-23)
+
+### Fixed
+- The loki help all command footer now lists runs (FC-72 recurrence, #362). Approval: "APPROVE pd/help-runs c6c3b1dfbe51f862930a472611f93eacd70f6eca (tl-2, LOW). Footer-only fix plus FC-72 recurrence entry".
+
 ## v11.69.0 (2026-10-23)
 
 ### Added
