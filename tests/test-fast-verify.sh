@@ -311,13 +311,42 @@ if [ "$(printf '%s' "$J2" | jfield "d['verdict']")" = "FAIL" ] && printf '%s' "$
 else
     bad "failing Wall file did not FAIL: $J2"
 fi
+# Provenance: an agent can write `assert True` into a loki_wall_* file, so only a tracked, unchanged Wall whose
+# sha256 matches an engine10 `wall.sealed` event may earn PASS. Anything else can FAIL but never PASS.
 printf 'from src import *\ndef test_wall():\n    assert True\n' > "$S1/loki_wall_spec.py"
-J3="$(cd "$S1" && python3 "$FV" . --no-cache --json 2>/dev/null)"
-if [ "$(printf '%s' "$J3" | jfield "d['verdict']")" = "PASS" ] && [ "$(printf '%s' "$J3" | jfield "d['signals']['wall_files_run']")" = "1" ]; then
-    ok "a passing Wall file is the behavioral signal that earns PASS"
-else
-    bad "passing Wall file did not PASS: $J3"
-fi
+fvj() { (cd "$1" && python3 "${2:-$FV}" . --no-cache --json 2>/dev/null); }
+verdict_trusted() { printf '%s' "$1" | jfield "(d['verdict'], d['signals']['wall_files_run'], d['signals']['wall_files_trusted'])"; }
+J3="$(fvj "$S1")"
+if [ "$(verdict_trusted "$J3")" = "('INCONCLUSIVE', 1, 0)" ]; then
+    ok "an untracked trivial Wall file that passes is INCONCLUSIVE (ran, not trusted)"
+else bad "untracked passing Wall did not stay INCONCLUSIVE: $J3"; fi
+G="git -C $S1 -c user.name=t -c user.email=t@t.invalid"
+git -C "$S1" add src.py spec.md test_visible.py loki_wall_spec.py >/dev/null 2>&1; $G commit -qm base >/dev/null 2>&1
+J3b="$(fvj "$S1")"
+if [ "$(verdict_trusted "$J3b")" = "('INCONCLUSIVE', 1, 0)" ]; then
+    ok "a committed trivial Wall with no matching engine10 seal hash is INCONCLUSIVE"
+else bad "committed Wall without a seal hash was trusted: $J3b"; fi
+SHA="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$S1/loki_wall_spec.py")"
+mkdir -p "$S1/.loki/runs/r1"
+printf '{"v":1,"seq":1,"ts":"t","run":"r1","type":"wall.sealed","stage":"wall","data":{"files":[{"path":"%s/loki_wall_spec.py","sha256":"%s"}]}}\n' "$S1" "$SHA" > "$S1/.loki/runs/r1/events.jsonl"
+J3c="$(fvj "$S1")"
+if [ "$(printf '%s' "$J3c" | jfield "d['verdict']")" = "PASS" ] && [ "$(verdict_trusted "$J3c")" = "('PASS', 1, 1)" ]; then
+    ok "a tracked, unchanged Wall file matching an engine10 wall.sealed hash is the behavioral signal that earns PASS"
+else bad "sealed, tracked Wall did not PASS: $J3c"; fi
+printf '# edited\n' >> "$S1/loki_wall_spec.py"
+J3d="$(fvj "$S1")"
+if [ "$(printf '%s' "$J3d" | jfield "d['verdict']")" = "INCONCLUSIVE" ]; then
+    ok "a modified tracked Wall file loses its trust (INCONCLUSIVE)"
+else bad "modified Wall still trusted: $J3d"; fi
+git -C "$S1" checkout -q -- loki_wall_spec.py 2>/dev/null || git -C "$S1" restore loki_wall_spec.py
+NOPROV="$TMP/fv-noprov.py"
+sed 's/behavioral = wall_trusted > 0/behavioral = wall_ran > 0/' "$FV" > "$NOPROV"
+S3="$TMP/seed-noprov"; seed_repo SD-0001 "$S3"; printf 'from src import *\ndef test_wall():\n    assert True\n' > "$S3/loki_wall_spec.py"
+J3e="$(fvj "$S3" "$NOPROV")"
+if cmp -s "$FV" "$NOPROV"; then bad "provenance mutant did not change fast_verify.py (sed pattern stale)"
+elif [ "$(printf '%s' "$J3e" | jfield "d['verdict']")" = "PASS" ]; then ok "mutant that drops the provenance check turns the untracked-Wall case into PASS (guard bites)"
+else bad "provenance mutant still INCONCLUSIVE; the test does not depend on the check"; fi
+[ -z "$(find "$S1" -name .pytest_cache -maxdepth 2)" ] && ok "verify --fast leaves no .pytest_cache in the target repo" || bad ".pytest_cache written into the target repo"
 S2="$TMP/seed-mock"; seed_repo SD-0061 "$S2"
 J4="$(cd "$S2" && python3 "$FV" . --no-cache --json 2>/dev/null)"
 if [ "$(printf '%s' "$J4" | jfield "d['verdict']")" = "FAIL" ] && printf '%s' "$J4" | grep -q '"mock_target"'; then
