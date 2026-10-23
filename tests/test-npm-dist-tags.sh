@@ -78,6 +78,21 @@ for mode in error empty; do
         && ok "view outage ($mode) refuses with zero writes" || bad "outage $mode: rc=$CASE_RC log=$(cat "$CASE_ST/log") $CASE_OUT"
 done
 
+# FC-DIST-TAG-MOVED-BACKWARDS late materialization: the first run settles, THEN the
+# registry applies an older publish and drags latest down. The converge run in
+# verify-npm-registry (a second invocation) must restore it.
+run_case late "11.53.1 11.54.0 11.54.1" 11.54.0 11.54.0 11.54.1
+first_rc=$CASE_RC
+printf '%s\n' 11.54.0 > "$CASE_ST/latest"
+printf '%s\n' 11.54.1 > "$CASE_ST/next"
+second_out="$(PATH="$WORK/bin:$PATH" STUB_STATE="$CASE_ST" LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=4 bash "$SCRIPT" 11.54.1 2>&1)"; second_rc=$?
+{ [ $first_rc -eq 0 ] && [ $second_rc -eq 0 ] && [ "$(cat "$CASE_ST/latest")" = 11.54.1 ] && [ "$(cat "$CASE_ST/next")" = 11.54.1 ]; } \
+    && ok "latest dragged down after the first settle is restored by a second run" || bad "late: rc=$first_rc/$second_rc latest=$(cat "$CASE_ST/latest") $second_out"
+
+run_case idem "11.54.0 11.54.1" 11.54.1 11.54.1 11.54.1
+{ [ $CASE_RC -eq 0 ] && [ ! -s "$CASE_ST/log" ]; } \
+    && ok "a converge run on settled tags writes nothing" || bad "idem: rc=$CASE_RC log=$(cat "$CASE_ST/log")"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
