@@ -230,14 +230,18 @@ jobs:
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
-          for i in $(seq 1 90); do
+          # Version document AND tarball, both read uncached: 11.59.0 had a 200 version
+          # document while its tarball stayed 404 for 15+ minutes (FC-DISTTAG-SETTLE-READS-CACHED-PACKUMENT).
+          tgz="https://registry.npmjs.org/loki-mode/-/loki-mode-${VERSION}.tgz"
+          for i in $(seq 1 60); do
             got="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
-            if [ "$got" = "$VERSION" ]; then
-              echo "registry serves loki-mode@${VERSION} (poll $i)"; exit 0
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Cache-Control: no-cache' "$tgz" || true)"
+            if [ "$got" = "$VERSION" ] && [ "$code" = 200 ]; then
+              echo "registry serves loki-mode@${VERSION} and its tarball (poll $i)"; exit 0
             fi
-            sleep 10
+            sleep 15
           done
-          echo "::error::registry never served loki-mode@${VERSION} within about 15 minutes"
+          echo "::error::registry never served loki-mode@${VERSION} (version '${got:-none}', tarball HTTP ${code:-none}) within 15 minutes"
           exit 1
 
       # The registry applies a publish 3 to 6 minutes after the client prints
