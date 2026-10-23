@@ -1428,6 +1428,13 @@ describe("thinking substitute and usage message (#314 follow-up)", () => {
 });
 
 describe("thinking types are derived from the catalog for every model (#314 review)", () => {
+  it("an adaptive-only model sent disabled at high is clamped to adaptive with the ledger record", () => {
+    expect(clampThinkingForEffort("claude-opus-5-5", { type: "disabled" }, "high")).toEqual({
+      thinking: { type: "adaptive" },
+      clamp: { from: "disabled", to: "adaptive", effort: "high", max: "none" },
+    });
+  });
+
   type Spec = { types?: string[]; max_effort?: Record<string, string>; substitute?: Record<string, string> };
   const catalog = JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8"));
   const models = (catalog.providers.claude.models as Array<{ id: string; thinking?: Spec }>).filter((m) => m.thinking && Array.isArray(m.thinking.types));

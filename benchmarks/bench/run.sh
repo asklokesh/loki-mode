@@ -58,8 +58,9 @@ Subcommands:
 Options:
   --trials N      Number of trials per tool (default 3)
   --model NAME    Override the model
-  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max); one
-                  result per level. Default: tier-derived effort, no effort axis
+  --effort LIST   Comma list of effort levels (low,medium,high,xhigh,max), or
+                  sweep for every level the catalog lists for --model (the
+                  effort_sweep axis); one result per level. Default: tier-derived effort, no effort axis
   --emit-proof    Emit an R1 proof-of-run for the Loki trial(s)
   --out-dir DIR   (report) output dir for results.json + RESULTS.md
 

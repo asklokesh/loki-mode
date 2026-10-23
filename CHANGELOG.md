@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.55.1 (2026-10-23)
+
+### Fixed
+- Group journal adoption binds a signed unit spec hash over id, items, acceptance, writeSet and base, so an edited unit spec is no longer adopted. Refs #283 #317.
+
+## v11.55.0 (2026-10-23)
+
+### Added
+- loki doctor adds a capability row that compares the model catalog with models.retrieve, and doctor tests now stub models.retrieve and trap api.anthropic.com fetches. Refs #324.
+
+## v11.54.4 (2026-10-23)
+
+### Fixed
+- fast_verify cache entries are signed with a per-user 0600 HMAC key, so a planted or edited cache entry can no longer suppress a finding. A tampered entry is rescanned. Refs #319.
+
 ## v11.54.3 (2026-10-23)
 
 ### Fixed

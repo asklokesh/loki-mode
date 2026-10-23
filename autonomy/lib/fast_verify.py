@@ -42,11 +42,13 @@ WHAT THIS DELIBERATELY DOES NOT DO
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -210,43 +212,165 @@ def discover(root: str, diff_base: str = "") -> list:
 
 # --- Content-addressed cache -------------------------------------------------
 
+def _producer_fingerprint() -> str | None:
+    """Digest of this file's own bytes. Every cached verdict is bound to the
+    exact rules that produced it, so any rule edit orphans old entries with no
+    hand-bumped version to forget. None when the source cannot be read, in
+    which case the cache is off."""
+    try:
+        with open(os.path.abspath(__file__), "rb") as fh:
+            return hashlib.blake2b(fh.read(), digest_size=16).hexdigest()
+    except OSError:
+        return None
+
+
+PRODUCER = _producer_fingerprint()
+
+
+def cache_key(rel: str, raw: bytes) -> str:
+    """A verdict depends on the rules, the path (is_test selects which rules
+    run) and the content, so all three are in the key."""
+    h = hashlib.blake2b(digest_size=16)
+    h.update((PRODUCER or "").encode("ascii"))
+    h.update(b"\0")
+    h.update(rel.encode("utf-8", "replace"))
+    h.update(b"\0")
+    h.update(raw)
+    return h.hexdigest()
+
+
+def cache_dir() -> str:
+    """User-owned cache root, outside every repo the agent works in
+    (LOKI_FAST_VERIFY_CACHE_DIR overrides it, for tests and sandboxes)."""
+    return os.environ.get("LOKI_FAST_VERIFY_CACHE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".loki", "cache", "fast-verify")
+
+
+def cache_path(root: str) -> str:
+    tag = hashlib.blake2b(os.path.realpath(root).encode("utf-8", "replace"), digest_size=8).hexdigest()
+    return os.path.join(cache_dir(), tag + ".json")
+
+
+def _private_dir(path: str) -> bool:
+    """Create the cache dir and force it to 0700, including a pre-existing one
+    created loose. A dir this user cannot chmod is not ours: refuse it."""
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.chmod(path, 0o700)
+        return True
+    except OSError:
+        return False
+
+
+def _write_private(path: str, data: bytes, replace: bool) -> None:
+    """Write data to a 0600 temp file in the same dir, then publish it
+    atomically: os.replace, or os.link so an existing file is never clobbered
+    and no reader sees a partial one."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if replace:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _read_key(path: str) -> bytes | None:
+    try:
+        st = os.stat(path)
+        if st.st_mode & 0o077 or st.st_uid != os.getuid():
+            return None  # a key others could read or write proves nothing
+        with open(path, "rb") as fh:
+            key = fh.read()
+        return key if len(key) >= 32 else None
+    except OSError:
+        return None
+
+
+def _cache_secret() -> bytes | None:
+    """Per-user HMAC key kept beside the cache, never inside the repo. None when
+    it can be neither read nor created, in which case the cache is off."""
+    if PRODUCER is None or not _private_dir(cache_dir()):
+        return None
+    path = os.path.join(cache_dir(), "key")
+    key = _read_key(path)
+    if key is not None:
+        return key
+    try:
+        _write_private(path, os.urandom(32), replace=False)
+    except FileExistsError:
+        pass
+    except OSError:
+        return None
+    return _read_key(path)
+
+
 class Cache:
     """Findings keyed by content hash, so unchanged files are never re-read.
 
-    Correctness note: the key is the file's CONTENT, not its path or mtime. A
-    file that moves keeps its result; a file that changes gets a new key. There
-    is no staleness window to reason about, which is what makes it safe to trust
-    a cache hit as if the scan had just run.
+    The key covers the producing rules (this file's own digest), the path and
+    the content, never mtime, so there is no staleness window and a verdict
+    cannot outlive a rule change or follow a file to a path where other rules
+    apply. Content addressing does not make an entry trustworthy
+    on its own: the key is computable by anyone, so an entry written by the
+    agent under review could suppress a finding. Each entry therefore carries
+    an HMAC under a per-user secret held outside the repo, and an entry whose
+    MAC does not verify is a miss: the file is rescanned. Without a secret
+    the cache is disabled.
     """
 
     def __init__(self, path: str):
         self.path = path
         self.data = {}
         self.hits = 0
+        self.secret = _cache_secret()
+        if self.secret is None:
+            return
         try:
             with open(path, encoding="utf-8") as fh:
                 blob = json.load(fh)
-            if isinstance(blob, dict) and blob.get("schema") == SCHEMA_VERSION:
-                self.data = blob.get("entries", {})
+            if isinstance(blob, dict) and blob.get("producer") == PRODUCER:
+                entries = blob.get("entries", {})
+                if isinstance(entries, dict):
+                    self.data = entries
         except (OSError, ValueError):
             self.data = {}
 
+    def _mac(self, key: str, findings: list) -> str:
+        body = json.dumps([PRODUCER, key, findings], sort_keys=True, separators=(",", ":"))
+        return hmac.new(self.secret, body.encode("utf-8"), "sha256").hexdigest()
+
     def get(self, key: str):
-        v = self.data.get(key)
-        if v is not None:
-            self.hits += 1
-        return v
+        entry = self.data.get(key)
+        if self.secret is None or not isinstance(entry, dict):
+            return None
+        findings, mac = entry.get("findings"), entry.get("mac")
+        if not isinstance(findings, list) or not isinstance(mac, str):
+            return None
+        if not hmac.compare_digest(mac, self._mac(key, findings)):
+            return None
+        self.hits += 1
+        return findings
 
     def put(self, key: str, findings: list) -> None:
-        self.data[key] = findings
+        if self.secret is not None:
+            self.data[key] = {"findings": findings, "mac": self._mac(key, findings)}
 
     def save(self) -> None:
+        if self.secret is None:
+            return
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"schema": SCHEMA_VERSION, "entries": self.data}, fh)
-            os.replace(tmp, self.path)
+            if not _private_dir(os.path.dirname(self.path)):
+                return
+            blob = json.dumps({"producer": PRODUCER, "entries": self.data})
+            _write_private(self.path, blob.encode("utf-8"), replace=True)
         except OSError:
             pass  # a cache that cannot be written must never break a verdict
 
@@ -256,7 +380,7 @@ class Cache:
 def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Result:
     t0 = time.perf_counter()
     root = os.path.abspath(root)
-    cache = Cache(os.path.join(root, ".loki", "cache", "fast-verify.json")) if use_cache else None
+    cache = Cache(cache_path(root)) if use_cache else None
 
     findings = []
     scanned = 0
@@ -270,7 +394,7 @@ def verify(root: str = ".", diff_base: str = "", use_cache: bool = True) -> Resu
             continue
         scanned += 1
 
-        key = hashlib.blake2b(raw, digest_size=16).hexdigest()
+        key = cache_key(rel, raw)
         if cache is not None:
             hit = cache.get(key)
             if hit is not None:
