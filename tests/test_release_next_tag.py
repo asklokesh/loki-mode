@@ -48,24 +48,30 @@ class ReleasePublishesLatestAndNext(unittest.TestCase):
 
     def test_latest_and_next_both_moved_for_both_packages(self):
         jobs = _doc()["jobs"]
-        main = "\n".join(_runs(jobs["publish-npm"]))
         sdk = "\n".join(_runs(jobs["publish-ts-sdk"]))
-        for txt, pkg in ((main, "loki-mode"), (sdk, "loki-mode-sdk")):
-            for tag in ("latest", "next"):
-                self.assertRegex(txt, r'npm dist-tag add "%s@\$\{VERSION\}" %s' % (pkg, tag))
+        for tag in ("latest", "next"):
+            self.assertRegex(sdk, r'npm dist-tag add "loki-mode-sdk@\$\{VERSION\}" %s' % tag)
+        # loki-mode tags move through scripts/npm-dist-tags.sh (FC-DIST-TAG-MOVED-BACKWARDS)
+        main = "\n".join(_runs(jobs["publish-npm"]))
+        self.assertIn('bash scripts/npm-dist-tags.sh "$VERSION"', main)
+        self.assertNotIn("dist-tag add", main)
+        script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
+        self.assertIn("for tag in latest next", script)
+        self.assertIn('npm dist-tag add "$PKG@$TARGET" "$tag"', script)
 
     def test_never_backwards_guard(self):
         jobs = _doc()["jobs"]
-        for name in ("publish-npm", "publish-ts-sdk"):
-            r = "\n".join(_runs(jobs[name]))
-            self.assertIn("sort -V", r, name)
-            self.assertLess(r.index("sort -V"), r.index("dist-tag add"), name)
-        r = "\n".join(_runs(jobs["publish-npm"]))
-        self.assertIn("never backwards", r)
+        r = "\n".join(_runs(jobs["publish-ts-sdk"]))
+        self.assertIn("sort -V", r)
+        self.assertLess(r.index("sort -V"), r.index("dist-tag add"))
+        script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
+        self.assertIn("sort -V", script)
+        self.assertLess(script.index("sort -V"), script.index("npm dist-tag add"))
+        self.assertIn("never backwards", script)
 
     def test_empty_current_latest_fails_closed(self):
         jobs = _doc()["jobs"]
-        for name in ("publish-npm", "publish-ts-sdk"):
+        for name in ("publish-ts-sdk",):
             r = "\n".join(_runs(jobs[name]))
             m = re.search(r'if \[ -z "\$CUR" \]; then\n(.*?)\n\s*fi\n', r, re.S)
             self.assertIsNotNone(m, name)
@@ -77,8 +83,9 @@ class ReleasePublishesLatestAndNext(unittest.TestCase):
 
     def test_rerun_never_retags_without_the_guard(self):
         r = "\n".join(_runs(_doc()["jobs"]["publish-npm"]))
-        self.assertEqual(r.count("dist-tag add"), 2)
-        self.assertGreater(r.index("dist-tag add"), r.index("sort -V"))
+        self.assertGreater(r.index("npm-dist-tags.sh"), r.index("npm publish"))
+        script = (_WF.parents[1] / "scripts" / "npm-dist-tags.sh").read_text(encoding="utf-8")
+        self.assertEqual(script.count("npm dist-tag add"), 1)
 
     def test_publish_npm_is_serialized(self):
         conc = _doc()["jobs"]["publish-npm"].get("concurrency")
@@ -123,20 +130,23 @@ class PublishIsInstant(unittest.TestCase):
         r = "\n".join(_runs(_doc()["jobs"]["release"]))
         self.assertNotRegex(r, r"\bnpm publish\b")
 
-    def test_gate_stays_as_post_hoc_integrity_for_downstream_jobs(self):
-        jobs = _doc()["jobs"]
-        self.assertIn("gate", _needs(jobs["release"]))
-        self.assertIn("pack-npm", _needs(jobs["release"]))
-
     def test_pack_npm_keeps_the_fresh_dist_check(self):
         r = "\n".join(_runs(_doc()["jobs"]["pack-npm"]))
         self.assertIn("packed dist does not embed VERSION", r)
 
-    def test_npm_visible_is_informational_and_nothing_needs_it(self):
+    def test_registry_proof_is_its_own_job_and_nothing_waits_on_it(self):
+        # FC-RELEASE-GREEN-WITHOUT-REGISTRY-PROOF
         jobs = _doc()["jobs"]
-        self.assertTrue(jobs["npm-visible"].get("continue-on-error"))
-        for name, job in jobs.items():
-            self.assertNotIn("npm-visible", _needs(job), name)
+        job = jobs["verify-npm-registry"]
+        self.assertEqual(_needs(job), ["publish-npm"])
+        self.assertNotIn("concurrency", job)  # never holds the release-npm lock
+        r = "\n".join(_runs(job))
+        self.assertIn('npm view "loki-mode@${VERSION}" version --prefer-online', r)
+        self.assertRegex(r, r"seq 1 \d+")
+        self.assertRegex(r, r"(?s)exit 1\s*$")
+        self.assertGreaterEqual(job["timeout-minutes"], 16)
+        for name, other in jobs.items():
+            self.assertNotIn("verify-npm-registry", _needs(other), name)
 
     def test_docker_latest_and_homebrew_ship_with_the_release(self):
         text = _RELEASE.read_text(encoding="utf-8")
