@@ -4,8 +4,7 @@
 # accept, or presents a version older than VERSION's major.minor as current.
 # Rules and limits: tests/lib/scan-doc-cli-drift.py. Intentional historical
 # mentions go in tests/docs-drift-allowlist.tsv as path<TAB>token<TAB>reason;
-# CHANGELOG.md, docs/v10/DECISIONS.md, PROGRESS.md, BOARD.md and BACKLOG.md
-# are excluded (scan-doc-cli-drift.py EXCLUDE).
+# CHANGELOG.md is excluded (scan-doc-cli-drift.py EXCLUDE).
 
 set -uo pipefail
 

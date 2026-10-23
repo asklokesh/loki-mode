@@ -217,7 +217,7 @@ def collect_efficiency(loki_dir):
     # real observation, and nulling it would be its own dishonesty (existing
     # contract: test_genuine_zero_cost_stays_zero_not_null). What is unknown is a
     # record that never carried the field at all.
-    # FC-44: a record flagged tokens_measured:false (an ambiguous resumed session) carries no usage keys. One of them makes every
+    # a record flagged tokens_measured:false (an ambiguous resumed session) carries no usage keys. One of them makes every
     # token total NOT RECORDED (None); the flag keys are added only then, so a complete run's dict is unchanged.
     _unmeasured_tokens = sum(1 for r in _records if r.get("tokens_measured") is False)
     _any_cost = any("cost_usd" in r for r in _records)

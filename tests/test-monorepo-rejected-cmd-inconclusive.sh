@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-monorepo-rejected-cmd-inconclusive.sh -- BACKLOG 62 (S-175).
+# tests/test-monorepo-rejected-cmd-inconclusive.sh -- BACKLOG 62.
 #
 # A LOKI_MONOREPO_TEST_CMD rejected by the whitelist in enforce_test_coverage
 # (autonomy/run.sh) ran nothing, yet it left test_passed=true and skipped the

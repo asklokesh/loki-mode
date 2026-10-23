@@ -21,7 +21,7 @@ in Autonomi's design language. Runs in Docker locally; opens in the browser when
 - Before/after metrics: `benchmarks/results/*.json` (speed-before/after-*.json = wall_clock_min,
   act_iterations, completion_claims, engine_completed, acceptance, per_iteration_work_s).
 - Diagnoses / decisions / plans: `docs/SPEED-DIAGNOSIS-2026-07-01.md`,
-  `docs/FOUNDER-STATUS-AND-DECISIONS-2026-07-01.md`, `docs/TOP-100-BACKLOG.md`,
+  `docs/TOP-100-BACKLOG.md`,
   `docs/research-2026-07/GAP-ANALYSIS-BACKLOG.md`.
 - What worked / didn't / mistakes: parse the above docs' honest sections + git log on origin/main
   (`git log --oneline` for shipped commits; look for "revert" and "fix(...council-review finding)"

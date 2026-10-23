@@ -44,9 +44,9 @@
 #  12. (EV-3) config isolation: all three arms get a fresh empty
 #      CLAUDE_CONFIG_DIR (operator's overridden) and env auth; auth reaches
 #      only the arm (never setup, baseline or grade); the token is in no log;
-#      (E-38) LOKI_ENGINE=legacy on the legacy arm, v10 on the v10 arm
-#  13. (E-38) --tasks a,b runs exactly those ids; an unknown id exits 2
-#  14. (E-52) LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
+#      LOKI_ENGINE=legacy on the legacy arm, v10 on the v10 arm
+#  13. --tasks a,b runs exactly those ids; an unknown id exits 2
+#  14. LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
 #      arm env; a non-allowlisted LOKI_E10_* knob and a GH_TOKEN canary do
 #      not; the legacy arm gets neither knob
 #  15. (EV-13) expected_outcome=no_change_needed: badoutcome value rejected
@@ -58,7 +58,7 @@
 #      block completion, checked for v10, raw-claude and legacy; v10's own
 #      sealed Wall test file left in the tree never counts as that diff, but
 #      a real source change alongside it still does
-#  16. (D30) validate accepts tier:medium, rejects an unknown tier value; a
+#  16. validate accepts tier:medium, rejects an unknown tier value; a
 #      task with no tier field defaults to small; --all --tier medium selects
 #      only the medium task
 #  17. (E-62/EV-8) v10 defaults to the repo's own bin/loki (never a global
@@ -67,12 +67,12 @@
 #      row) when loki-ts/node_modules differs from bun.lock -- a stale
 #      installed version and a missing node_modules dir alike; raw-claude is
 #      not gated by loki-ts at all
-#  18. (D34) measure-size.py offline against the real tiered tasks -> rc=0;
+#  18. measure-size.py offline against the real tiered tasks -> rc=0;
 #      negative controls -> rc=1 each: a temp large fixture at 3 files / 149
 #      added lines (below both the 4-file and 150-line bars), a tiered task
 #      whose refdiff was removed (in a temp copy, real tasks untouched), and
 #      --online against an unreachable source
-#  19. (S41-01) provider_cost accepts a partial-stream record (E-98e) and
+#  19. (S41-01) provider_cost accepts a partial-stream record and
 #      records cost_partial_usd; LOKI_E10_CASCADE is allowlisted into arm_env
 #      while an unlisted LOKI_E10_* knob stays scrubbed; new row fields
 #      (tier, tokens, tokens_by_stage, first_turn_prompt_tokens, escalations,
@@ -297,7 +297,7 @@ out="$(cd "$T/leak" && STUB_MODE=check bash "$STUB" 2>&1)"; rc=$?
 if [ "$rc" = 97 ] && printf '%s' "$out" | grep -q "HIDDEN LEAK"; then pass "stub fails loudly on a visible hidden file"; else fail "leak control rc=$rc out=$out"; fi
 
 export LOKI_EVAL_CLAUDE_BIN="$T/bin/claude-stub" LOKI_EVAL_LOKI_BIN="$T/bin/loki-stub"
-# E-101: keep the durable-archive writes this fixture triggers out of the
+# keep the durable-archive writes this fixture triggers out of the
 # real repo and the operator's real $HOME/loki-ci-logs.
 export LOKI_EVAL_ARCHIVE_REPO_ROOT="$T/archive-repo-root" LOKI_EVAL_ARCHIVE="$T/archive-ext"
 
@@ -319,7 +319,7 @@ prj="$R/logs/$(ls "$R/logs")/pr.json"
 rtmp="$(sed -n 's/^run tmp: //p' "$T/pass.log")"
 [ -n "$rtmp" ] && [ ! -e "$rtmp" ] && pass "run tmp removed after the run" || fail "run tmp left behind: $rtmp"
 
-# E-101: verify archive directories are created even when absent
+# verify archive directories are created even when absent
 rm -rf "$T/archive-repo-root" "$T/archive-ext"
 R="$T/out-archive-absent"
 STUB_MODE=pass RUN --arm raw-claude --task fx-greet --out "$R" >"$T/archive-absent.log" 2>&1
@@ -797,7 +797,7 @@ no_auth_outside_arm() {
 for arm in raw-claude v10 legacy; do
     R="$T/out-iso-$arm"
     STUB_MODE=noop STUB_V10_MARKER=1 CLAUDE_CONFIG_DIR="$T/operator-cfg" RUN --arm "$arm" --task fx-iso --out "$R" >/dev/null 2>&1
-    # E-38: the engine is pinned per loki arm, so the default flip cannot move EV-5.
+    # the engine is pinned per loki arm, so the default flip cannot move EV-5.
     eng="$arm"; [ "$arm" = raw-claude ] && eng="unset"
     want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset engine=$eng"
     note_read "$R/logs/x"
@@ -819,7 +819,7 @@ no_auth_outside_arm "$R" "api-key"
 if grep -rqF -e "$FAKE_OAUTH" -e "$FAKE_KEY" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
 
 rm -f "$T/.read-blocked"
-# ---- 13. (E-38) --tasks runs exactly the listed ids; an unknown id is
+# ---- 13. --tasks runs exactly the listed ids; an unknown id is
 # refused before any run, so a 5-task measurement never silently shrinks.
 R="$T/out-tasks"
 STUB_MODE=noop RUN --arm raw-claude --tasks "fx-iso, fx-greet" --out "$R" >/dev/null 2>&1
@@ -832,7 +832,7 @@ rc=$?
     || fail "E-38: bad --tasks rc=$rc rows=$(wc -l < "$R/results.jsonl" 2>/dev/null)"
 
 rm -f "$T/.read-blocked"
-# ---- 14. (E-52) v10-only engine knob passthrough
+# ---- 14. v10-only engine knob passthrough
 cat > "$T/bin/e52-stub" <<'EOF'
 #!/usr/bin/env bash
 echo "ENV-CHECK3: entry=${LOKI_TS_ENTRY:-unset} plan=${LOKI_E10_PLAN:-unset} task_text=${LOKI_E10_TASK_TEXT:-unset} gh=${GH_TOKEN:+set}" >&2
@@ -955,7 +955,7 @@ J="$R/results.jsonl"
     && pass "EV-13 v10: a receipt naming a real edit as a Wall file does not exclude it" \
     || fail "EV-13 v10 fakewall row: $(tail -1 "$J")"
 rm -f "$T/.read-blocked"
-# ---- 16. (D30) tier field: validate + --tier selection
+# ---- 16. tier field: validate + --tier selection
 bad_case tier_bogus "t['tier']='bogus'"
 seed_task fx-medium fx-greet "t['tier']='medium'" ":"
 if H validate "$TASKS/fx-medium" >/dev/null 2>&1; then pass "validator accepts tier:medium"; else fail "validator rejected tier:medium"; fi
@@ -986,7 +986,7 @@ rc=$?
     || fail "D30: bad-tier rc=$rc"
 
 rm -f "$T/.read-blocked"
-# ---- 18. (D34) measure-size.py: real-task offline pass + negative controls
+# ---- 18. measure-size.py: real-task offline pass + negative controls
 MS="$REPO_ROOT/eval/loki10/measure-size.py"
 
 python3 "$MS" >"$T/ms-real.out" 2>&1
@@ -1038,7 +1038,7 @@ rc=$?
     && pass "D34: tiered task with no refdiff -> rc=1" \
     || fail "D34: no-refdiff rc=$rc: $(cat "$T/ms-norefdiff.out")"
 
-# E-136: a second file whose change is docstring/annotation/comment only must
+# a second file whose change is docstring/annotation/comment only must
 # not count; a real behavioral second file must.
 python3 - "$MS" >"$T/ms-e136.out" 2>&1 <<'PY'
 import importlib.util, sys
@@ -1530,7 +1530,7 @@ PY
 
 rm -f "$T/.read-blocked"
 # ---- 21. (D61 slice 17) speed eval tier (authored spd- tasks, D67)
-# (A) the 8 authored spd- tasks: 4 decomposable, 4 sequential, all valid (D38).
+# (A) the 8 authored spd- tasks: 4 decomposable, 4 sequential, all valid.
 spd_dirs=("$HERE"/tasks/spd-*)
 spd_n="${#spd_dirs[@]}"
 spd_dec="$(python3 -c '
@@ -1544,7 +1544,7 @@ spd_out="$(H validate "${spd_dirs[@]}" 2>&1)"; rc=$?
 bad_case decbool "t['decomposable']='yes'"
 bad_case decbool2 "t['decomposable']=1"
 
-# Two-way name/tier anchor (D67): each control copies a real spd- task and breaks one thing.
+# Two-way name/tier anchor: each control copies a real spd- task and breaks one thing.
 spd_neg() {
     local dirname="$1" expr="$2" want="$3" d="$T/spdneg/$1" out
     rm -rf "$d"; mkdir -p "$T/spdneg"

@@ -42,7 +42,7 @@ loki_run_tmp_create || { echo "FAIL: cannot create run tmp"; exit 1; }
 T="$LOKI_RUN_TMP"
 echo "test tmp: $T"
 
-# E-137: stop everything this test started, on every exit path. Targets are
+# stop everything this test started, on every exit path. Targets are
 # only (a) members of a process group this test recorded in STARTED_PGIDS and
 # (b) descendants of this shell, snapshotted by PID. Never a name or pattern.
 STARTED_PGIDS=""
@@ -619,7 +619,7 @@ else
     pass "legG: a tier with zero tasks, or an unknown tier, exits nonzero with an error"
 fi
 
-# E-137: nothing this suite started may outlive it. Stop, then assert by the
+# nothing this suite started may outlive it. Stop, then assert by the
 # unique run dir (never a generic pattern).
 stop_started
 left="$(leftover_procs)"

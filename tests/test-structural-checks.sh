@@ -42,7 +42,7 @@ cp "$REPO/VERSION" "$REPO/SKILL.md" "$S/"
 cp -R "$REPO/loki-ts/src/engine10" "$REPO/loki-ts/src/e10ext" "$S/loki-ts/src/"
 
 run() { STRUCTURAL_ROOT="$S" bash "$S/scripts/structural-checks.sh" 2>&1; }
-# FC-61: match the FAIL line of the NAMED check, not whichever check fails first.
+# match the FAIL line of the NAMED check, not whichever check fails first.
 failed_check() { printf '%s\n' "$1" | grep -E "^FAIL +[0-9]+ms +$2"; }
 
 echo "T1 -- clean tree: every check passes"

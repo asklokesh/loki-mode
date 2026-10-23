@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-nightly-flake-tracker.sh - offline fixtures for scripts/nightly-flake-tracker.sh (FC-53)
+# tests/test-nightly-flake-tracker.sh - offline fixtures for scripts/nightly-flake-tracker.sh
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

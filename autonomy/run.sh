@@ -6092,7 +6092,7 @@ _loki_trusted_push() {
         log_warn "Not pushing branch '$_branch': origin changed during the run (it was $(_loki_github_repo_from_url "$_LOKI_PINNED_ORIGIN" 2>/dev/null || echo "not a GitHub repository") when the run started). Loki does not push to a destination the agent could have chosen."
         return 2
     fi
-    # S-100: never push a default branch, for every caller (on_run_complete,
+    # never push a default branch, for every caller (on_run_complete,
     # create_session_pr): the branch name can come from agent-writable state.
     # The default branch is resolved for the origin just validated (the pinned
     # one when pinned), gh run from / with an explicit OWNER/REPO. An
@@ -6310,7 +6310,7 @@ on_run_complete() {
     case "$branch" in
         ""|main|master|HEAD) return 0 ;;
     esac
-    # S-100: the repository's ACTUAL default branch (develop, trunk, ...) is
+    # the repository's ACTUAL default branch (develop, trunk, ...) is
     # refused inside _loki_trusted_push, for every caller.
     log_info "LOKI_DELEGATE_PR=1: opening a local pull request for branch '$branch'..."
     # Push, then create. Non-interactive (no tty in --bg). Best-effort, each
@@ -6474,7 +6474,7 @@ check_parallel_support() {
     return 0
 }
 
-# E-130: npm install cache keyed on sha256(package-lock.json + package.json),
+# npm install cache keyed on sha256(package-lock.json + package.json),
 # stored under the project's .loki/cache/install/. Hit: copy cached node_modules.
 # Miss or unusable entry: real install, then publish the entry atomically
 # (temp dir + rename) so concurrent worktrees never see a partial entry.
@@ -6529,7 +6529,7 @@ _loki_npm_install_cached() {
     return 0
 }
 
-# E-130: copy .loki into a worktree without the install cache (the cache is
+# copy .loki into a worktree without the install cache (the cache is
 # often hundreds of MB; copy-then-delete would cost more than it saves).
 # Children are copied one by one, so no tar/rsync flavour issues (bash 3.2 safe).
 _loki_copy_state_no_install_cache() {
@@ -6588,7 +6588,7 @@ create_worktree() {
 
         # Copy .loki state to worktree
         if [ -d "$TARGET_DIR/.loki" ]; then
-            # E-130: never copy the install cache into the worktree
+            # never copy the install cache into the worktree
             _loki_copy_state_no_install_cache "$TARGET_DIR/.loki" "$worktree_path/.loki"
         fi
 
@@ -10954,7 +10954,7 @@ _loki_untracked_status() {
 # <exclude> is an empty list; any other read or write failure is non-zero and
 # leaves <out> as it was. Sorted bytewise, like `LC_ALL=C sort -z -u`. One
 # python process: bash 3.2 has no associative arrays, and a bash loop cost
-# 300ms per 6,000 entries on /bin/bash. -I -S and no cwd on sys.path (D7): the
+# 300ms per 6,000 entries on /bin/bash. -I -S and no cwd on sys.path: the
 # cwd is the agent's repo.
 # BACKLOG 129: this is the snapshot WRITER -- its <out> becomes
 # preexisting-untracked.z, one of the two files the seal above digests. A bare
@@ -11222,7 +11222,7 @@ if ! type _commit_path_looks_secret >/dev/null 2>&1; then _commit_path_looks_sec
 # Atomically write <out>: the NUL-delimited entries of <paths> that <snapshot>
 # covers (the entry itself or a parent "dir/" entry, as workspace_diff._covered)
 # and that still exist under <top>. Non-zero on a read or write failure. -I -S
-# and no cwd on sys.path (D7): the cwd is the agent's repo.
+# and no cwd on sys.path: the cwd is the agent's repo.
 # BACKLOG 129: this is the snapshot READER -- it reads <snapshot>
 # (preexisting-untracked.z, sealed content) and decides which of the agent's
 # newly-added paths are actually the user's pre-existing files (to be removed
@@ -11316,7 +11316,7 @@ _loki_untrack_agent_committed_user_files() {
     rm -f "$rec.added"
     if [ ! -s "$rec.new" ]; then
         rm -f "$rec.new"
-        # S-194: the tree diff above cannot see a file an earlier (resumed)
+        # the tree diff above cannot see a file an earlier (resumed)
         # session added and then untracked, but the branch history still
         # holds it and create_session_pr gates the push on this record. Keep
         # the record while that history holds any recorded path; on a failed
@@ -11339,7 +11339,7 @@ _loki_untrack_agent_committed_user_files() {
     fi
     mv -f "$rec.new" "$rec"
     names="$(_loki_nul_names "$rec")"
-    # S-220: keep what the agent force-staged. Save the index as a tree, make the
+    # keep what the agent force-staged. Save the index as a tree, make the
     # removal commit from the branch tip alone, then restore the saved index minus
     # the removed paths. A global `git reset -q` here dropped those staged files
     # from the session commit that follows. No saved tree (unmerged index): the
@@ -11461,7 +11461,7 @@ commit_session_changes() {
     # (_commit_path_looks_secret + _commit_scan_secret_file over EVERY staged
     # file) is the actual guarantee for nested/weak secrets; these excludes are a
     # cheap first cut for the obvious top-level files only.
-    # S-219: a failed add must not fall through to the "nothing staged" no-op,
+    # a failed add must not fall through to the "nothing staged" no-op,
     # which would silently commit nothing. Unstage any partial result and say so.
     # rc 1 is benign: git exits 1 after staging everything else when a pathspec
     # (':!.loki') names an ignored path, which is the normal case. A real
@@ -13211,7 +13211,7 @@ PYEOF
             # is compile(bytes, path, "exec", dont_inherit=True)), but it
             # writes no __pycache__/*.pyc into the user's repo, where the
             # session commit would pick it up. -E and the sys.path filter
-            # (D7): the repo under check must not supply modules to the gate.
+            #: the repo under check must not supply modules to the gate.
             LOKI_DEADLINE_IDLE_TIMEOUT=0 _loki_with_deadline "$gate_timeout" \
                 python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec", dont_inherit=True)' \
                 "${TARGET_DIR:-.}/$f" 2>&1 || _py_compile_rc=$?
@@ -14337,7 +14337,7 @@ enforce_test_coverage() {
         # that is the legitimate case they were written for (a package that ships
         # a runner but no npm script).
         local _declared_test_script=""
-        # BACKLOG 81 (D7): -E plus the sys.path filter, so the agent's repo (the
+        # BACKLOG 81: -E plus the sys.path filter, so the agent's repo (the
         # cwd) cannot supply json or sitecustomize to this reader.
         _declared_test_script=$(_LOKI_PKG="${TARGET_DIR:-.}/package.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
@@ -14472,7 +14472,7 @@ TREOF
                     # npm test), so the grep only ever picked the LABEL, never
                     # what ran. This corrects the evidence, not the execution.
                     local _ws_script
-                    # BACKLOG 81 (D7): same guard as the root reader above.
+                    # BACKLOG 81: same guard as the root reader above.
                     _ws_script=$(_LOKI_PKG="$pkg_json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
@@ -14573,7 +14573,7 @@ sys.stdout.write(t.strip())
             # v7.5.15 (Triage #14): wrapped with configurable timeout via helper.
             output=$(_loki_run_pytest_with_timeout "${TARGET_DIR:-.}" --tb=short)
             pytest_exit=$?
-            # S3: the helper falls back to unittest discover on pytest exit 5; the
+            # the helper falls back to unittest discover on pytest exit 5; the
             # record must name the runner that actually produced the verdict.
             case "$output" in *"fell back to python3 -m unittest discover"*) test_runner="unittest" ;; esac
             if [ "$pytest_exit" -eq 124 ]; then
@@ -14831,7 +14831,7 @@ TREOF
     # TAP "# fail 1" and the spec reporter's "<info sign> fail 1", counted only
     # right after the matching pass line (node TAP echoes a test's own stdout
     # as "# ..." lines, which must not count), mocha "1 failing", go "--- FAIL:"
-    # lines. BACKLOG 103 (S-140): jest's "Test Suites: 1 failed, 1 total" and
+    # lines. BACKLOG 103: jest's "Test Suites: 1 failed, 1 total" and
     # vitest's "Test Files  1 failed | 2 passed" lines are matched too -- a
     # whole crashed suite/file can carry the ONLY failed count while the
     # "Tests:" line above reports just the tests that ran elsewhere ("Tests: 2
@@ -19862,7 +19862,7 @@ start_dashboard() {
         # Auto-open the dashboard in the browser, but ONLY for an interactive
         # foreground session. loki_open_url (lib/browser-open.sh) refuses on
         # no TTY, CI, test runners, LOKI_NO_BROWSER=1 or LOKI_NO_AUTO_OPEN=1.
-        # CP-LEGACY (D57): open the Control Plane, not this legacy server,
+        # CP-LEGACY: open the Control Plane, not this legacy server,
         # unless LOKI_LEGACY_DASHBOARD=1 opts back in.
         if [ "${BACKGROUND_MODE:-false}" != "true" ]; then
             if [ "${LOKI_LEGACY_DASHBOARD:-0}" = "1" ]; then
@@ -21688,7 +21688,7 @@ ${_commits}"
 # stream-fighting, byte-identical behavior (no TTY checks, no interactive paths;
 # the generator is deterministic given the same codebase index).
 #
-# INCREMENTAL change-detection (E3): regenerating the wiki walks + hashes the
+# INCREMENTAL change-detection: regenerating the wiki walks + hashes the
 # source set, which is wasted work on an iteration that did not change the
 # codebase structure. We avoid even spawning python on an unchanged repo with a
 # cheap bash-level signal: a hash over the source file list and their mtimes,
@@ -22076,7 +22076,7 @@ PYEOF
     # v6.83.0 Phase 1: RARV-C REFLECT/VERIFY shadow-write. Only when both
     # managed flags are on AND the episode meets the consolidation importance
     # threshold (>= 0.6). Fully non-blocking (backgrounded subprocess).
-    # S-156: skip when PROJECT_DIR is empty (bash 3.2 `cd ""` succeeds and
+    # skip when PROJECT_DIR is empty (bash 3.2 `cd ""` succeeds and
     # would run a memory package from the cwd), and pass importance via argv.
     if [ -n "${PROJECT_DIR:-}" ] \
         && [ "$LOKI_MANAGED_AGENTS" = "true" ] && [ "$LOKI_MANAGED_MEMORY" = "true" ] \
@@ -22214,7 +22214,7 @@ load_state() {
         if command -v python3 &> /dev/null; then
             # BUG-ST-006: Validate checkpoint integrity before loading state
             local state_valid
-            # -E and the sys.path filter (D7): the cwd is the target repo, and a
+            # -E and the sys.path filter: the cwd is the target repo, and a
             # committed json.py must not decide the loaded iteration count
             # (a fake non-zero count would skip the iteration-0 evidence drop).
             state_valid=$(LOKI_STATE_FILE="$state_file" python3 -E -c "
@@ -25200,7 +25200,7 @@ except Exception:
     fi
 
     # Notify dashboard of active project directory (for AI Chat cross-directory usage)
-    # S-195: skip when the dashboard is off (runtime flag, not LOKI_DASHBOARD).
+    # skip when the dashboard is off (runtime flag, not LOKI_DASHBOARD).
     if [[ "${ENABLE_DASHBOARD:-true}" == "true" ]] && command -v curl &>/dev/null; then
         local project_cwd
         project_cwd="$(pwd)"

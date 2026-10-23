@@ -2,7 +2,7 @@
 #
 # tests/test-local-ci-hermetic.sh
 #
-# E-94: guards scripts/local-ci.sh's hermetic changed-tests scan
+# guards scripts/local-ci.sh's hermetic changed-tests scan
 # (_lci_hermetic_scan) -- the red-main class from df7dc134 day:
 # tests/test-dep-inventory.sh passed locally because `gh` was authenticated
 # on this Mac, then failed on the CI runner, which has neither `gh` nor

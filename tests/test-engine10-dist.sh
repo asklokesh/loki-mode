@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E-32 (docs/v10/ENGINE.md): the Loki 10 engine must run from the npm package,
 # which ships loki-ts/dist and no loki-ts/src. Packs the repo, extracts it,
-# bundles the current src into <extract>/loki-ts/dist/loki.js (the Captain's
+# bundles the current src into <extract>/loki-ts/dist/loki.js (the maintainer's
 # rebuild; nothing is written to the repo's own dist), then drives the bundle.
 set -uo pipefail
 
@@ -71,7 +71,7 @@ for f in autonomy/lib/engine10-push.sh autonomy/receipt_jwt.py loki-ts/dist/loki
     grep -q "\"path\": \"$f\"" "$T/dry.json" && ok "dry-run lists $f" || bad "dry-run lists $f"
 done
 
-# 7. Full run from the package (card step 3) needs supervisor main (E-42).
+# 7. Full run from the package (card step 3) needs supervisor main.
 # ponytail: add the stub-provider run here once E-42 gives supervisor.ts a main.
 echo "PENDING E-42: end-to-end run from the package is not exercised yet (not counted as a pass)"
 

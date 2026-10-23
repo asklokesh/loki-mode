@@ -49,7 +49,7 @@ fi
 # (a bare `PORT=x` shell var is NOT inherited by the backgrounded node child;
 # the server would fall back to :3000).
 #
-# THE BUG THIS REPLACES (D14): `pkill -f "index.mjs"` matches the argv
+# THE BUG THIS REPLACES: `pkill -f "index.mjs"` matches the argv
 # substring of EVERY process on the machine, not just this test's own server
 # -- including an unrelated process from a different project or a concurrent
 # test run that happens to mention index.mjs. Confirmed by starting a decoy

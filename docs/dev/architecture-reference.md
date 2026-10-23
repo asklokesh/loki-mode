@@ -1,8 +1,5 @@
 # Architecture reference: gates, healing, memory, harness knobs
 
-Moved out of CLAUDE.md (S-78) to keep the root file short. Content unchanged
-except where noted.
-
 ## Quality Gates (8 gates; see `skills/quality-gates.md` for the canonical table)
 1. Static analysis (CodeQL, ESLint)
 2. Test suite pass/fail (red blocks; coverage % not measured in this release)
@@ -15,10 +12,9 @@ except where noted.
 
 Conditional auditor (not numbered): Backward-compatibility / legacy-healing-auditor (healing mode only - behavioral preservation, v6.67.0).
 
-Note (v10): `docs/v10/DECISIONS.md` D12 refines the review rule above -- unanimous
-APPROVE is still required, and a reproduced blocking finding always vetoes
-regardless of vote count. D13 requires every council/review agent to pin its
-model explicitly rather than inherit the session model.
+Note: unanimous APPROVE is required, and a reproduced blocking finding always
+vetoes regardless of vote count. Every council/review agent pins its model
+explicitly rather than inheriting the session model.
 
 ## Legacy System Healing (introduced v6.67.0)
 - **Status**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.

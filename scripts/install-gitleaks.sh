@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the pinned gitleaks v8.30.0 binary that .githooks/pre-push uses to
-# scan changed eval/loki10 task fixtures before they reach main (E-86). CI
+# scan changed eval/loki10 task fixtures before they reach main. CI
 # pins the same version independently (.github/workflows/security-audit.yml).
 # Idempotent: does nothing if the pinned binary is already present at the
 # right version AND its sidecar checksum still matches (see below).

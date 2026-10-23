@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-215: render_evidence_receipt_md in autonomy/lib/proof-pr.sh ran a bare
+# render_evidence_receipt_md in autonomy/lib/proof-pr.sh ran a bare
 # `python3 -`, which puts the cwd first on sys.path. Called from the agent's
 # repo, a committed json.py whose load() returns a VERIFIED honesty block made a
 # NOT VERIFIED proof render "Headline: VERIFIED" in the PR body. The renderer

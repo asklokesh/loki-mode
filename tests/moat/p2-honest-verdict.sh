@@ -976,7 +976,7 @@ EOF
             out="$(council_call "$d" "$b" _council_convergence_evidence_green)"
         fi
         [ "$out" = "$w" ] || bad="$bad [$leg _council_convergence_evidence_green: got rc '$out' want $w]"
-        # S-196: council_managed_should_stop's test_summary reader. A stub
+        # council_managed_should_stop's test_summary reader. A stub
         # providers.managed records the summary it was handed and declines
         # (rc 1, Bash fallback); a forged read would hand over '' and mark.
         if [ "$leg" = pth-fail ]; then
@@ -1381,7 +1381,7 @@ EOF
 # that replaces the legacy dashboard. Route mapping:
 #   legacy GET /api/proofs/<id> integrity_check.status  ->  CP GET /v1/runs/:source/:run
 #                                                           and /v1/runs/:source:run
-#                                                           effective_verdict (FC-08)
+#                                                           effective_verdict
 #   legacy GET /api/v2/audit/verify verified/status     ->  CP GET /v1/runs rows and the
 #                                                           ?verdict= filter (a log that fails
 #                                                           integrity reads TAMPERED; no seal

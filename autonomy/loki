@@ -1220,7 +1220,7 @@ PY
 }
 
 # loki_verify_root: the ONE place that decides which tree the receipt verifier
-# hashes (FC-29). The verifier walks and digests the directory it is given, so
+# hashes. The verifier walks and digests the directory it is given, so
 # an ambient cwd (a huge checkout, $HOME, a non-project directory) must never be
 # the default. Order: explicit TARGET_DIR; the parent of an absolute LOKI_DIR;
 # the cwd if it holds .loki; the repo top-level if it holds .loki. Anything else
@@ -2079,7 +2079,7 @@ show_help_aliases() {
     echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
 }
 
-# D51: bare `loki`. Reuse a running dashboard, else start one on a free
+# bare `loki`. Reuse a running dashboard, else start one on a free
 # loopback port, then open /start (or just print the URL when headless).
 loki_ui_free_port() {
     python3 - "$1" <<'PY'
@@ -2162,7 +2162,7 @@ _loki_control_ui() {
             echo "loki: the Control Plane needs bun (https://bun.sh); using the classic dashboard." >&2
             return 1
         fi
-        # FC-07: LOKI_CONTROL=0 is the test off switch (supervisor, run-all-tests, local-ci);
+        # LOKI_CONTROL=0 is the test off switch (supervisor, run-all-tests, local-ci);
         # it must never start a detached `control serve` that writes ~/.loki/control.
         [ "${LOKI_CONTROL:-}" = "0" ] && return 1
         local cli="$SKILL_DIR/loki-ts/dist/loki.js" cdir="${HOME}/.loki/control" spid
@@ -2388,7 +2388,7 @@ detect_arg_type() {
     echo "unknown"
 }
 
-# --- loki start detach-default handoff (S1) --------------------------------
+# --- loki start detach-default handoff --------------------------------
 # On an interactive TTY, `loki start` now detaches the build to the background
 # by default after a rich, reversible handoff card. A non-interactive shell,
 # --bg, --yes/-y, or CI takes the exact pre-existing foreground path (no card,
@@ -2409,7 +2409,7 @@ _loki_start_should_handoff() {
     return 0
 }
 
-# Stare-worthy brand banner (S6). Renders the real Autonomi logo (purple squircle
+# Stare-worthy brand banner. Renders the real Autonomi logo (purple squircle
 # + white "A" + teal dot) as a crafted truecolor block, next to a "LOKI" wordmark,
 # straight to stderr. ZERO new tooling: pure ANSI escapes. Degrades by color depth
 # ($COLORTERM truecolor -> 24-bit; else a clean 256/mono badge). Never required,
@@ -2461,7 +2461,7 @@ _loki_brand_banner() {
     fi
 }
 
-# E4: a 3-line "what Loki will do" preview from REAL signals only. Line 1 ties
+# a 3-line "what Loki will do" preview from REAL signals only. Line 1 ties
 # the detected tier to its phase count (simple=3, standard=6, complex=8 -- the
 # same mapping run.sh uses; auto/unknown stays honest as "auto-detecting"). Line
 # 2 names the spec, or admits "exploring the codebase" when there is none. Line 3
@@ -2525,7 +2525,7 @@ _loki_start_handoff() {
         esac
     fi
 
-    # Stare-worthy brand banner (S6) then the rich handoff card. Both to stderr so
+    # Stare-worthy brand banner then the rich handoff card. Both to stderr so
     # stdout carries only the decision word.
     _loki_brand_banner "$proj"
     {
@@ -4420,7 +4420,7 @@ cmd_start() {
         loki_project_graph_discover "$_pg_target" || true
     fi
 
-    # S1: detach-to-background by default on an interactive TTY. Fires a rich,
+    # detach-to-background by default on an interactive TTY. Fires a rich,
     # reversible handoff card, then arms the existing --bg path so run.sh
     # backgrounds the runner (it writes the log + PID file and prints its own
     # "Running in Background" banner). The HARD gate below keeps every
@@ -6934,7 +6934,7 @@ cmd_status() {
         fi
     fi
 
-    # P12-19 (D04): freshness of the newest Loki 10 run, same wording as the Bun route
+    # P12-19: freshness of the newest Loki 10 run, same wording as the Bun route
     # ("last event Ns ago (seq N)"). Display-only; silent when there is no run or no parseable event.
     local _e10_last _e10_ev _e10_seq _e10_ts _e10_epoch
     _e10_last=$(ls -d "$LOKI_DIR"/runs/e10-*/ 2>/dev/null | sort | tail -1) || _e10_last=""
@@ -8127,7 +8127,7 @@ _loki_dashboard_args_need_classic() {
 cmd_dashboard() {
     local subcommand="${1:-}"
 
-    # CP-LEGACY (D57): the Control Plane is the default UI for `dashboard`,
+    # CP-LEGACY: the Control Plane is the default UI for `dashboard`,
     # `dashboard start` and `dashboard open`, with or without flags. The legacy
     # Python dashboard stays reachable only by explicit opt-in:
     # LOKI_LEGACY_DASHBOARD=1 or LOKI_CONTROL_DEFAULT=0. Enterprise bind/TLS
@@ -14509,7 +14509,7 @@ cmd_config_schema() {
     loki_config_generate_schema
 }
 
-# D65: multi-repo workspaces (D51 Phase B). On by default; LOKI_WORKSPACES=0 disables.
+# multi-repo workspaces (D51 Phase B). On by default; LOKI_WORKSPACES=0 disables.
 cmd_workspace() {
     if [ "${LOKI_WORKSPACES:-}" = "0" ]; then
         echo -e "${RED}loki workspace is disabled.${NC} Unset LOKI_WORKSPACES (it is set to 0)." >&2
@@ -14519,7 +14519,7 @@ cmd_workspace() {
     python3 "$_LOKI_SCRIPT_DIR/lib/workspace.py" "$@"
 }
 
-# D51: headless backlog runner. One v10 issue-mode run per open issue, each in
+# headless backlog runner. One v10 issue-mode run per open issue, each in
 # its own worktree and branch, at most N in parallel (loki.yaml concurrency).
 cmd_backlog() {
     case "${1:-}" in
@@ -14549,7 +14549,7 @@ cmd_backlog() {
 # failures. Non-zero exit on any failure.
 cmd_config_validate() {
     local file="${1:-}" _loki_yaml
-    # D51: loki.yaml (UI + headless config) has its own schema; no argument
+    # loki.yaml (UI + headless config) has its own schema; no argument
     # validates the discovered loki.yaml (repo root, then ~/.loki/loki.yaml).
     case "$(basename -- "$file")" in "" | loki.yaml | loki.yml | loki.yaml.example) _loki_yaml=1 ;; *) _loki_yaml=0 ;; esac
     if [ "$_loki_yaml" = 1 ]; then
@@ -19767,7 +19767,7 @@ with open(manifest_path, 'w') as f:
 # usable.
 # ---------------------------------------------------------------------------
 cmd_verify() {
-    # D48: --pubkey FILE or --pubkey=FILE (any position) verifies a receipt against a given public key (v10 engine, no ~/.loki needed).
+    # --pubkey FILE or --pubkey=FILE (any position) verifies a receipt against a given public key (v10 engine, no ~/.loki needed).
     local _pk_arg
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
@@ -21326,15 +21326,9 @@ print(json.loads(p.read_text()).get('port', 7373) if p.exists() else 7373)
             python3 "$trigger_schedule_script" remove "$name"
             ;;
         daemon)
-            local daemon_flag=""
-            [[ "${1:-}" == "--dry-run" ]] && daemon_flag="--dry-run"
-            [[ "${1:-}" == "--loop" ]] && daemon_flag="--loop"
-            python3 "$trigger_schedule_script" daemon $daemon_flag
-            ;;
-        install|uninstall)
-            # Always-on company seats: LaunchAgent running the daemon loop
-            LOKI_BIN="${LOKI_BIN:-$(readlink -f "${BASH_SOURCE[0]}")}" \
-                python3 "$trigger_schedule_script" "$subcmd" "$@"
+            local dry_run_flag=""
+            [[ "${1:-}" == "--dry-run" ]] && dry_run_flag="--dry-run"
+            python3 "$trigger_schedule_script" daemon $dry_run_flag
             ;;
         test)
             local event_type="${1:-issues}"
@@ -21445,11 +21439,7 @@ for line in sys.stdin:
             echo "  add schedule <name> <cron_expr> <action> [args...]"
             echo "                        Add a cron-based schedule trigger"
             echo "  remove <name>         Remove a schedule trigger"
-            echo "  daemon [--dry-run|--loop]"
-            echo "                        Run one pass of schedule checks (call from cron), or loop once a minute"
-            echo "  install [--no-load]   Seed the ten company-seat schedules and install the always-on"
-            echo "                        LaunchAgent (dev.autonomi.loki-company; macOS)"
-            echo "  uninstall [--no-load] Remove the always-on LaunchAgent"
+            echo "  daemon [--dry-run]    Run one pass of schedule checks (call from cron)"
             echo "  test <event-type> [--repo owner/repo] [--issue NUM]"
             echo "                        Send a test webhook event (event-types: issues, pull_request, workflow_run)"
             echo "  logs [--tail N]       Show recent trigger event log (default: last 50)"
@@ -22826,7 +22816,7 @@ main() {
     fi
 
     if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = "--no-open" ]; }; then
-        # D51: bare `loki` starts the local UI. LOKI_LANDING=1 keeps the v7.28
+        # bare `loki` starts the local UI. LOKI_LANDING=1 keeps the v7.28
         # newcomer landing (tests and scripts that parse it set it).
         if [ "${LOKI_LANDING:-0}" = "1" ]; then
             show_landing
@@ -23239,7 +23229,7 @@ main() {
             cmd_verify "$@"
             ;;
         keys)
-            # D48: public-key export lives in the Bun v10 engine; re-enter the shim on that route.
+            # public-key export lives in the Bun v10 engine; re-enter the shim on that route.
             exec "$_LOKI_SCRIPT_DIR/../bin/loki" keys "$@"
             ;;
         spec)
@@ -30763,7 +30753,7 @@ tokens_known = bool(iterations)
 ctx_file = os.path.join(loki_dir, "context", "tracking.json")
 ctx = load_json(ctx_file)
 # context-tracker.py seeds tracking.json with all-zero totals, so the file
-# existing is not a measurement: only real (nonzero) totals count (S-147).
+# existing is not a measurement: only real (nonzero) totals count.
 if isinstance(ctx, dict) and not tokens_known:
     totals = ctx.get("totals")
     if isinstance(totals, dict) and (totals.get("total_input") or totals.get("total_output")
@@ -34059,7 +34049,7 @@ _docs_generate() {
     fi
     target_path="$(cd "$target_path" && pwd)"
 
-    # S6: a small-tier run (caller exports LOKI_DOCS_TIER) does not pay for the
+    # a small-tier run (caller exports LOKI_DOCS_TIER) does not pay for the
     # eight-doc suite unless docs were asked for explicitly.
     case "${LOKI_DOCS_TIER:-}" in
         small|simple)
@@ -35533,7 +35523,7 @@ cmd_canary() {
         return 2
     fi
     if [ "$subcommand" = "verify" ]; then
-        # D7: this is a verify path. -E stops PYTHONPATH (an empty component
+        # this is a verify path. -E stops PYTHONPATH (an empty component
         # would add the cwd as an absolute path) and a committed
         # sitecustomize.py from acting before the tool runs. python3 is
         # resolved to an absolute path first so an empty PATH component (or a
@@ -38913,7 +38903,7 @@ PYEOF
             if command -v jq &>/dev/null; then
                 jq . "$pj"
             else
-                # D7: this is a verify-adjacent read of proof.json. -E stops
+                # this is a verify-adjacent read of proof.json. -E stops
                 # PYTHONPATH/sitecustomize.py from acting before this line, and
                 # python3 is resolved to an absolute path first so an empty
                 # PATH component cannot let a committed python3 shim in the
@@ -39385,7 +39375,7 @@ print(json.dumps(doc, indent=2))
             local skip_confirm=0
             local visibility="--public"
             local hosted=0
-            # D7: every python3 invocation below reads proof.json from inside
+            # every python3 invocation below reads proof.json from inside
             # the checkout being shared. Resolve an absolute path once so an
             # empty PATH component cannot let a committed python3 shim in that
             # checkout answer instead of the real interpreter; each call site
@@ -39783,7 +39773,7 @@ cmd_docker() {
         # the port-in-use check, so the picked port is ignored on reuse). Run in
         # a subshell so its internal `exit` paths (already-running -> exit 0,
         # errors -> exit 1) never abort the blocking docker run.
-        # CP-LEGACY (D57): open the Control Plane, never the classic server,
+        # CP-LEGACY: open the Control Plane, never the classic server,
         # unless LOKI_LEGACY_DASHBOARD=1 opts back in. Same open gate as before.
         if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ]; then
             local _cp_args=()

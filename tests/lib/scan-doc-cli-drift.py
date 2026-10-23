@@ -32,10 +32,7 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 DOC_DIRS = ("docs", "wiki", "examples", "deploy")
 TOP_FILES = ("README.md", "SKILL.md")
 # Historical logs: every past command and version is meant to stay there.
-# BOARD.md and BACKLOG.md are live coordination queues the leader rewrites
-# every cycle; their rows quote findings and propose commands not built yet.
-EXCLUDE = {"CHANGELOG.md", "docs/v10/DECISIONS.md", "docs/v10/PROGRESS.md",
-           "docs/v10/BOARD.md", "docs/v10/BACKLOG.md"}
+EXCLUDE = {"CHANGELOG.md"}
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__"}
 
 

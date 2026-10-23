@@ -19,7 +19,7 @@
 # A plan whose total estimate cannot fit MAX_SHARDS shards at that target
 # (ceil(total/target) > MAX_SHARDS) would overflow every shard's job timeout, so
 # it fails safe to FULL (plan-over-capacity) instead of packing.
-# Anything the fast gate skips is covered by the nightly full run (D90).
+# Anything the fast gate skips is covered by the nightly full run.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,10 +75,10 @@ has_baseline() {
 guards_for() {
     local f="$1" base
     base="${f##*/}"
-    # FC-54: options BEFORE `--`; after it --include is a file operand and the filter is silently dropped.
+    # options BEFORE `--`; after it --include is a file operand and the filter is silently dropped.
     # tests that name the exact path or the basename (docker/Dockerfile.control-plane
     # selects tests/test-control-plane.sh this way)
-    # FC-73: the grep result is only a candidate set. VERSION and the root manifest names are mentioned by hundreds of
+    # the grep result is only a candidate set. VERSION and the root manifest names are mentioned by hundreds of
     # tests (fixtures, prose) that do not guard the file (their guards are the explicit lists below), and a
     # candidate with no green baseline (not run by the full suite) fails here for reasons
     # unrelated to the change. Keep only baseline-registered .sh candidates.
@@ -234,7 +234,7 @@ for line in open(os.path.join(out, "raw.tsv")):
     else:
         cost = dur.get(names.get(base, ""), 8.0)
     # A suite estimated over 80s cannot fit a 90s job. It is deferred to the
-    # nightly full run (D90) unless its own file changed (R2) or a path guard
+    # nightly full run unless its own file changed (R2) or a path guard
     # selected it (G); the deferral is listed, never silent.
     if cost > 80 and p[0] not in ("R2", "G", "R8"):
         deferred.append("%s\t%s\t%g\n" % (kind, target_, cost))
@@ -300,7 +300,7 @@ cmd_run() {
             node_test) timeout -k 10 "$SUITE_LIMIT" node --test "$target"; rc=$? ;;
             node_lint)
                 # The shard installs only the root and loki-ts deps; install the target's own
-                # locked deps so the linter binary exists (FC-73), instead of failing rc=127.
+                # locked deps so the linter binary exists, instead of failing rc=127.
                 if [ ! -x "$target/node_modules/.bin/eslint" ]; then
                     (cd "$target" && timeout -k 10 "${FAST_GATE_INSTALL_LIMIT:-300}" npm ci --ignore-scripts --no-audit --no-fund) || echo "fast-gate: npm ci failed in $target"
                 fi

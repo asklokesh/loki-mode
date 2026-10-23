@@ -42,7 +42,7 @@ This is a pure refactor:
      1200 lines) and the D66 import rules: no `stages/` import except a
      whole-statement `import type` of seal, verify or wall.
    - The new cap needs CTO sign-off (RG-06).
-6. Dist is never committed by a slice. The Release Manager rebuilds dist in the
+6. Dist is never committed by a slice. The release owner rebuilds dist in the
    main checkout, because a symlinked node_modules breaks the source maps.
 
 ## Existing partial registries (reuse, do not duplicate)

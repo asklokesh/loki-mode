@@ -26,7 +26,7 @@ skip() { SKIP=$((SKIP+1)); echo "SKIP: $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
-# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# Run-owned temp dir: all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 _OWN_TMP=0
@@ -35,7 +35,7 @@ _tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
 trap _tmp_done EXIT
 
 # Test 1: verify_all_logs() returns valid=True on a default-location audit dir.
-# Hermetic (E-148): HOME points at a fixture under LOKI_RUN_TMP, so the module's
+# Hermetic: HOME points at a fixture under LOKI_RUN_TMP, so the module's
 # default AUDIT_DIR (~/.loki/dashboard/audit) is the fixture, never the real one
 # (which fails on hosts holding old tampered data). Events go through the real
 # log_event() write path, then the verifier reads them back.

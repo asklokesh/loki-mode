@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guards run_bump_only()'s handling of a failed loki-ts build (E-102).
+# Guards run_bump_only()'s handling of a failed loki-ts build.
 #
 # INCIDENT. In a fresh worktree with no loki-ts/node_modules,
 # `bash scripts/release.sh patch --bump-only` ran `bun run build`, which
@@ -154,7 +154,7 @@ diff -q <(git -C "$WORK" show HEAD:loki-ts/dist/cockpit.js) "$WORK/loki-ts/dist/
     && ok "build exits 0 without new version: cockpit.js restored byte-identical to HEAD (case 3)" \
     || bad "build exits 0 without new version: cockpit.js NOT restored to HEAD (case 3)"
 
-# --- Case 4 (E-108): build succeeds and embeds the new version, but the
+# --- Case 4: build succeeds and embeds the new version, but the
 # rebuild gives loki.js a FRESH debugId trailer while loki.js.map's only
 # diff from HEAD is that same debugId churn (like cockpit.js.map above).
 # release_restore_debugid_only_dist restores loki.js.map to HEAD verbatim.

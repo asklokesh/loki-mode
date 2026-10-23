@@ -46,7 +46,7 @@ import logging
 import os
 from pathlib import Path
 
-# Default signer file name; one definition, free of key-ish words (E-156).
+# Default signer file name; one definition, free of key-ish words.
 RECEIPT_SIGNER_BASENAME = "receipt-ed25519.pem"
 
 try:

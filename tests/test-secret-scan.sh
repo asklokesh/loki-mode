@@ -113,7 +113,7 @@ fi
 # -------------------------------------------------------------------------
 S1="$TMP_ROOT/s1-aws"
 init_repo "$S1"
-# Assembled from two halves so no scanner-matching literal sits in this file (D78).
+# Assembled from two halves so no scanner-matching literal sits in this file.
 _s1_key='AKIAQYLP'
 _s1_key="${_s1_key}MN5HHHFPZAM2"
 commit_file "$S1" "config.py" "# planted test value, not a live credential

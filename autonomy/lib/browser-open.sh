@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loki Mode -- the single guarded browser opener (S-103).
+# Loki Mode -- the single guarded browser opener.
 #
 # Every place Loki opens a browser MUST go through loki_open_url. Tests and
 # agent sessions must never pop a browser tab on a developer's machine (a

@@ -12,7 +12,7 @@
 # v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped with that placeholder and
 # were hand-fixed after the fact.
 #
-# LOKI_ALLOW_UNSCANNED_PUSH=1 on every real hook invocation below (E-110):
+# LOKI_ALLOW_UNSCANNED_PUSH=1 on every real hook invocation below:
 # this suite is about the release-notes gate, not gitleaks, and CI's Tests
 # job (tests/run-all-tests.sh, which runs this file) does not install the
 # pinned gitleaks binary -- without the override, every push here would be
@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="${RELEASE_NOTES_SH:-$REPO_ROOT/scripts/release-notes.sh}"
 HOOK="$REPO_ROOT/.githooks/pre-push"
 # RELEASE_YML mirrors RELEASE_NOTES_SH above, for the three release.yml
-# structural checks (D36 rework): step order, notify-slack, the post-create
+# structural checks: step order, notify-slack, the post-create
 # check. Lets them run against `git show <old-sha>:.github/workflows/release.yml`.
 RELEASE_YML="${RELEASE_YML:-$REPO_ROOT/.github/workflows/release.yml}"
 
@@ -551,7 +551,7 @@ commit_version() {
     git -C "$repo" commit -q -m "bump to $version"
 }
 
-# push-authority guard (S-152) requires LOKI_RELEASE_MANAGER=1 for any push
+# push-authority guard requires LOKI_RELEASE_MANAGER=1 for any push
 # whose remote ref is refs/heads/main; the release-notes gate (E-88 B2) is
 # now main-only too, so every main push below sets it. T13/T14's non-main
 # pushes deliberately do NOT set it, since that guard must stay irrelevant

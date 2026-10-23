@@ -831,7 +831,7 @@ dual_files=$(
         git -C "$dual_repo" ls-files --others --exclude-standard 2>/dev/null
     } | grep -v '^$' | grep -vE '^\.loki/' | sort -u
 )
-# FC-81: feed the changed list on stdin, the production transport. An inherited
+# feed the changed list on stdin, the production transport. An inherited
 # stdin (CI fast-gate loops read the plan on it) is otherwise consumed instead.
 dual_stable=true
 for seed in 1 2 3 4 5 6 7 8 9 10; do

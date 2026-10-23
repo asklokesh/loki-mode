@@ -27,7 +27,7 @@ RUNNER="$SCRIPT_DIR/run-all-tests.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-quarantine-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 # Runner copies resolve REPO_ROOT to $WORK: give them the hermetic-HOME lib and lib-tmp
-# the real runner requires (FC-07). Fixtures keep the guard intact instead of bypassing it.
+# the real runner requires. Fixtures keep the guard intact instead of bypassing it.
 mkdir -p "$WORK/tests" "$WORK/eval/loki10"
 cp -R "$SCRIPT_DIR/lib" "$WORK/tests/lib"
 cp "$SCRIPT_DIR/../eval/loki10/lib-tmp.sh" "$WORK/eval/loki10/"

@@ -169,7 +169,7 @@ r=$(check_now false false)
                || bad "NEGATIVE-B: no-suite run fast-pathed (got $r) -- SAFETY WEAKENED"
 
 # === NEGATIVE-B2: runner==none, legacy pass:true shape -> does NOT fast-path ===
-# S-142: catches a mutation that drops the `runner != 'none'` guard and keys
+# catches a mutation that drops the `runner != 'none'` guard and keys
 # only on `passed is True`. NEGATIVE-B alone cannot catch that mutation since
 # its pass value is the string "inconclusive", never boolean True.
 write_notests_legacy_pass_true

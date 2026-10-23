@@ -79,7 +79,7 @@ check_receipt() { # check_receipt FILE
                 else fail "receipt: $a (got $got)"; fi ;;
         esac
     done
-    # FC-68: SC_WALL_EXECUTED=1 also requires >= 2 executed checks and an executed, non-discarded Wall test.
+    # SC_WALL_EXECUTED=1 also requires >= 2 executed checks and an executed, non-discarded Wall test.
     # Q17-04: SC_EXPECT_CHECKS=lint,mutation,review also requires each named non-Wall check in checks[].
     if [ "${SC_WALL_EXECUTED:-}" = 1 ] || [ -n "${SC_EXPECT_CHECKS:-}" ]; then
         local wl wrc=0

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# D48: runs under (the legacy quick receipt order); the default `loki quick` is the Loki 10 engine.
+# runs under (the legacy quick receipt order); the default `loki quick` is the Loki 10 engine.
 # A-134: `loki quick` prints its Evidence Receipt only after the session commit, so
 # the printed Head equals git HEAD and the printed diff sha equals proof.json; the
 # printed receipt_sha256 equals what `loki verify` reports; default stdout is at most

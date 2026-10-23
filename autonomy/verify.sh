@@ -71,7 +71,7 @@ VERIFY_EXIT_ERROR=3
 VERIFY_EXIT_USAGE=64
 VERIFY_SCHEMA_VERSION="1.0"
 
-# S-216: verify runs from the tree under review (tree="."), and a bare
+# verify runs from the tree under review (tree="."), and a bare
 # `python3 -c` / `python3 -` puts that cwd first on sys.path, so a planted
 # json.py in the reviewed tree replaced the stdlib module and forged recorded
 # gates (a dependency_audit with high CVEs read as pass). The inline readers
@@ -3161,7 +3161,7 @@ PYEOF
 _verify_receipt_digest() {
     local rid pj lib rc=0
     rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
-    # D76: a missing or unusable run-id pointer must not silently skip the receipt check.
+    # a missing or unusable run-id pointer must not silently skip the receipt check.
     # Proofs on disk with no pointer to one is NOT VERIFIED; a tree that never recorded a
     # proof (nothing to verify) says so aloud and does not claim a receipt check.
     if [ -z "$rid" ]; then
@@ -3199,7 +3199,7 @@ sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
     declare -f _deploy_receipt_verdict >/dev/null 2>&1 || { echo "attestation: UNCHECKED (run via loki verify)"; return 1; }
     local att
     att="$(_deploy_receipt_verdict "$pj")"
-    # D47: UNSIGNED is never a pass; --allow-unsigned / LOKI_VERIFY_ALLOW_UNSIGNED=1 accepts it, said aloud.
+    # UNSIGNED is never a pass; --allow-unsigned / LOKI_VERIFY_ALLOW_UNSIGNED=1 accepts it, said aloud.
     if [ "$att" = "UNSIGNED" ]; then
         if [ "${VERIFY_ALLOW_UNSIGNED:-0}" = "1" ] || [ "${LOKI_VERIFY_ALLOW_UNSIGNED:-}" = "1" ]; then
             printf 'attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n'
@@ -3209,7 +3209,7 @@ sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
         return 1
     fi
     printf 'attestation: %s\n' "$att"
-    # D76: UNCHECKED (a well-formed token whose kid no local key matches, or a check that
+    # UNCHECKED (a well-formed token whose kid no local key matches, or a check that
     # could not run) is not a pass: anyone can mint a foreign-kid token. rc 2, VERDICT not VERIFIED.
     if [ "$att" = "UNCHECKED" ]; then
         echo "  Not verified: no local key matches this attestation, so who signed it is unproven."

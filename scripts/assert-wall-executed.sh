@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/assert-wall-executed.sh RECEIPT_JSON [MIN_CHECKS] [EXPECTED_CHECKS]
-# FC-68: a release must not silently drop a verification check. Reads the keys seal.ts writes
+# a release must not silently drop a verification check. Reads the keys seal.ts writes
 # (checks[].result, wall.files, wall.passed, not_proven[]) and fails unless:
 #   - at least MIN_CHECKS (default 2) checks executed (result pass or fail; not_run does not count);
 #   - the Wall test is present (wall.files non-empty) and executed (wall.passed is a boolean);

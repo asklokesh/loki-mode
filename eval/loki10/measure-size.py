@@ -357,7 +357,7 @@ def main(argv=None):
 
     if not rows:
         # A gate that finds nothing to check and exits 0 is the exact EV-12
-        # failure mode (D34): a bad --tasks-dir must fail loudly, not pass
+        # failure mode: a bad --tasks-dir must fail loudly, not pass
         # silently by having measured zero tasks.
         print("no medium/large tiered tasks found under %s" % args.tasks_dir)
         return 1

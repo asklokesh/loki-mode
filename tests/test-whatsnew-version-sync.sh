@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E-129: WhatsNew.tsx CURRENT_VERSION must equal VERSION (release.sh stamps it).
+# WhatsNew.tsx CURRENT_VERSION must equal VERSION (release.sh stamps it).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 want="$(tr -d '[:space:]' < "$ROOT/VERSION")"

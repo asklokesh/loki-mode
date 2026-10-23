@@ -54,7 +54,7 @@ TMPROOT=$(mktemp -d -t loki-doctor-skills.XXXXXX)
 # check's genuine 'fail' status leaks into summary.failed/summary.ok on any
 # host that has no CLI at all (a fresh CI runner, or a container), and every
 # case below (BROKEN/ABSENT/HEALTHY) inherits an extra failure that has
-# nothing to do with the skill-link state this test exists to check (S-110).
+# nothing to do with the skill-link state this test exists to check.
 FAKE_BIN="$TMPROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat > "$FAKE_BIN/claude" <<'SH'
@@ -106,7 +106,7 @@ elif field == "count":
 # provider selected (no claude/codex/cline/aider CLI on PATH, as on a bare
 # CI runner) every entry, including the broken one, downgrades to "warn".
 # Without this pin the BROKEN-case assertions below only passed by accident
-# on a machine that happens to have the claude CLI installed (S-110).
+# on a machine that happens to have the claude CLI installed.
 probe() {
     local route="$1" home="$2" field="$3"
     if [ "$route" = "bash" ]; then

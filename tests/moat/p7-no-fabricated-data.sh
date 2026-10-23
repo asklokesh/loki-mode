@@ -6,7 +6,7 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 # Moat property P7: no fabricated data.
 #
 # "Every console panel is backed by a real endpoint. Cost is never shown as $0
-# when it is unmeasured." (docs/LOKI-10-BUILD-PROMPT.md, section 2, item 7)
+# when it is unmeasured."
 #
 # Cases (IDs are permanent):
 #   P7.webapp-client-routes-exist     every web-app client path resolves to a
@@ -929,7 +929,7 @@ line_of = lambda s, i: s.count('\n', 0, i) + 1
 # on a global-ish receiver (`window[sinkName](rows)`, `this[key](rows)`) as a
 # sink. Receiver-restricted (window/globalThis/self/this) so an ordinary
 # `handlers[kind](x)` or `items[i](x)` call is not swept in.
-# PO-P7-SINKS-1 (E-138): OPT_CALL lets every sink head accept an optional call
+# PO-P7-SINKS-1: OPT_CALL lets every sink head accept an optional call
 # (`setRows?.([...])`, `window[k]?.(rows)`) and an optional receiver access
 # (`globalThis?.[k]`), which a bare `\s*(?=[(<])` lookahead never matched.
 OPT_CALL = r'(?:\?\.\s*)?'
@@ -1221,7 +1221,7 @@ THIS_ARR = re.compile(r'\bthis\.([A-Za-z_$][\w$]*)\s*(?::[^=;{}]*)?=(?![=>])\s*\
 # (`+=`); `=(?![=>])` excludes `==`, `===` and `=>` the same as DECL_ARR.
 REASSIGN_ARR = re.compile(r'(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])\s*\[')
 DECL_KEYWORD = re.compile(r'\b(?:const|let|var)\s*$')
-# BACKLOG 125 B-2 (S-28): a default value on a destructured binding (`const {
+# BACKLOG 125 B-2: a default value on a destructured binding (`const {
 # rows = [rows] } = data;`) or a function parameter (`function load(rows =
 # [rows]) {}`) is neither DECL_ARR's declaration site nor a bare reassignment,
 # so it reached no arm at all when the name never flows to a setter -- the
@@ -1305,7 +1305,7 @@ HELPER_HEAD = re.compile(r'\b(?:export\s+(?:default\s+)?)?(?:async\s+)?'
 # identifier's own end, not a paren match; BARE_PARAM below finds that
 # identifier's end directly from the match position instead of close_of.
 BARE_PARAM = re.compile(r'\s*([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=>')
-# BACKLOG 144 (S-180): a class-method helper head, `_getRows() {` / `async
+# BACKLOG 144: a class-method helper head, `_getRows() {` / `async
 # load(d): Row[] {` at the start of a line, called later as `this.name(...)`
 # (never a bare `name(...)`, so its call-site prefix differs; see
 # METHOD_CALL_PRE). Statement keywords that also take `(...) {` are excluded
@@ -1356,7 +1356,7 @@ NESTED_FN_HEAD = re.compile(r'\bfunction\b[^{}();]*\([^()]*\)\s*\{'
 def make_helper_sink_head(alias_alt):
     return re.compile(r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + alias_alt + r')\s*' + OPT_CALL + r'(?:<[^()]*?>)?\s*\(')
 HELPER_CALL_SINK_HEAD = make_helper_sink_head('')
-# PO-P7-SINKS-1 (E-138): a local that FORWARDS a fabricator's result rather
+# PO-P7-SINKS-1: a local that FORWARDS a fabricator's result rather
 # than binding the bare call: `const rows = useMemo(() => normalize(getRows(d)),
 # deps)`, `const rows = [...getRows(d)]`, `const all = getRows(d).slice()`.
 # local_init_end isolates the initializer expression; the fabricator call must
@@ -1455,7 +1455,7 @@ def obj_pairs(o):
 def whole_file_findings(s):
     """(line, message) for rules 6-9; nested arrays inside a hit are not re-reported."""
     out, spans = [], []
-    # PO-P7-SINKS-1 (E-138): rebind the three sink regexes for this file so a
+    # PO-P7-SINKS-1: rebind the three sink regexes for this file so a
     # one-hop sink alias (`const push = setRows`) is a sink everywhere they are
     # used below.
     alias_alt = sink_alias_alt(s)
@@ -2206,7 +2206,7 @@ def whole_file_findings(s):
     # is_literal's backtick-`${` check). Upgrade only if review finds a real
     # instance.
     ARROW_HEAD = re.compile(r'^\(?\s*([\w$,\s]*)\s*\)?\s*=>\s*')
-    # BACKLOG 145 (S-198): a nested generator's row can use an OUTER
+    # BACKLOG 145: a nested generator's row can use an OUTER
     # generator's index (`(_, r) => Array.from({length:2}, (_, c) => ({ id: r,
     # user: 'Admin' }))`), so every enclosing {length} generator's params are
     # counters too. First pass records each generator's (open, close, params,
@@ -2807,7 +2807,7 @@ export function RH({ data, res }) {
   return null;
 }
 TSX
-    # BACKLOG 125 B-2 (S-28): a default value on a destructured binding or a
+    # BACKLOG 125 B-2: a default value on a destructured binding or a
     # function parameter is neither DECL_ARR's declaration site nor a bare
     # reassignment, so it reached no arm at all -- exactly the board's own
     # example shapes, neither of which flows anywhere (no body at all). Its own
@@ -3240,7 +3240,7 @@ export function HW() {
   return null;
 }
 TSX
-    # BACKLOG 144 (S-180): a neutrally-named class-method helper, the card's
+    # BACKLOG 144: a neutrally-named class-method helper, the card's
     # red shape verbatim, caught by METHOD_HEAD only. The honest twin returns
     # literal rows from a method that only feeds markup, and calls a
     # same-named method on ANOTHER object (`obj._cols()`) at a setter: neither
@@ -3523,7 +3523,7 @@ export function BSN({ sinkName, data }) {
   return first;
 }
 TSX
-    # PO-P7-SINKS-1 (E-138): optional-call sinks and one-hop aliases. The three
+    # PO-P7-SINKS-1: optional-call sinks and one-hop aliases. The three
     # sink heads (SETTER, FLOWS_TO_STATE_TMPL, HELPER_CALL_SINK_HEAD) required a
     # bare `(` after the sink name, so `setRows?.([...])` and
     # `window[k]?.(rows)` reached no arm, and a one-hop rename of a sink
@@ -3967,7 +3967,7 @@ export function TM() {
   return null;
 }
 TSX
-    # BACKLOG 125 B-8 (S-32): Array.from({length:N}, generator) fabrication.
+    # BACKLOG 125 B-8: Array.from({length:N}, generator) fabrication.
     # Positive: a generator callback inventing static string fields per row
     # (no sample/mock/demo/fake/placeholder name, not in a catch, no `[`
     # anywhere so the setter-span and Array.of()/Array.from()-literal-arg arms
@@ -3991,7 +3991,7 @@ export function AH({ items, data }) {
   return ids.length + idOnly.length + tagged.length + fromData.length;
 }
 TSX
-    # BACKLOG 145 (S-198): the inner row uses the OUTER generator's index, so
+    # BACKLOG 145: the inner row uses the OUTER generator's index, so
     # the arm must substitute enclosing params too. Line 2 is flagged; line 3
     # (both indices, no static string) stays clean, so the file has exactly 1.
     cat > "$d/src/components/ArrayFromGenNested.tsx" <<'TSX'
@@ -4518,7 +4518,7 @@ EOF
         [ "$got" = "${want##*:}" ] \
             || { echo "$f has $got finding(s), want ${want##*:}: $(grep "^FINDING.*$f:" <<<"$out" | tr '\n' ' ' | head -c 200)"; return 1; }
     done
-    # BACKLOG 125 B-8 (S-32) own check, kept separate from the shared loops
+    # BACKLOG 125 B-8 own check, kept separate from the shared loops
     # above to stay additive against S-29/S-30/S-31 editing this same
     # function concurrently.
     grep -q "^FINDING [a-z/]*ArrayFromGenFabricated.tsx:2 fabricated static fields via Array.from() generator callback" <<<"$out" \
@@ -4531,7 +4531,7 @@ EOF
         [ "$got" = "${want##*:}" ] \
             || { echo "$f has $got finding(s), want ${want##*:}: $(grep "^FINDING.*$f:" <<<"$out" | tr '\n' ' ' | head -c 200)"; return 1; }
     done
-    # BACKLOG 125 B-2 (S-28) own check, kept separate from the shared loops
+    # BACKLOG 125 B-2 own check, kept separate from the shared loops
     # above to stay additive against concurrent slices editing this same
     # function. Two lines of DefaultValueFabricated.tsx must each be flagged
     # with the new "default value" message (never DECL_ARR's or REASSIGN_ARR's

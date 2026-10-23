@@ -92,7 +92,7 @@ elif command -v gtimeout >/dev/null 2>&1; then
     PROBE_TIMEOUT="gtimeout -k 10 15"
 fi
 
-# PARALLEL (S-210): probes run 8 at a time via xargs, each in its own scratch
+# PARALLEL: probes run 8 at a time via xargs, each in its own scratch
 # cwd so concurrent probes never share a working directory, and each writes one
 # result file (real, unknown or hung). The worker always exits 0 (BSD xargs
 # aborts on 255), so xargs's status is never the verdict: a candidate with NO

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-216: `loki verify` runs from the tree under review (tree="."), so a bare
+# `loki verify` runs from the tree under review (tree="."), so a bare
 # `python3 -c` / `python3 -` reader puts that tree's cwd first on sys.path and
 # a planted json.py replaces the stdlib module. That forged recorded gates:
 # a dependency_audit with 3 high CVEs read as pass, and the package.json test

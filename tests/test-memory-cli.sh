@@ -10,7 +10,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOKI_CLI="${PROJECT_ROOT}/autonomy/loki"
-# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# Run-owned temp dir: all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
 . "$PROJECT_ROOT/eval/loki10/lib-tmp.sh"
 _OWN_TMP=0

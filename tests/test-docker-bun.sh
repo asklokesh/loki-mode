@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E-169: both Dockerfiles must install a working bun on PATH (the bin/loki
+# both Dockerfiles must install a working bun on PATH (the bin/loki
 # resolver finds it there), pinned to the package.json @oven/bun-* optionalDependencies.
 # Structural only: no docker needed.
 set -uo pipefail

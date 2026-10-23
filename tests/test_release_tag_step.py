@@ -73,7 +73,7 @@ class CreateGitTagStep(unittest.TestCase):
         self.tmp.cleanup()
 
     def _prepush(self, sha, keep_local=False):
-        """Release Manager pushes the tag with their own credentials. By
+        """The maintainer pushes the tag with their own credentials. By
         default the tag is then dropped locally (pushed after checkout);
         keep_local models the usual case, where the fetch-depth: 0 checkout
         already fetched it."""
@@ -117,7 +117,7 @@ class CreateGitTagStep(unittest.TestCase):
         self._reject_pushes()
         r = self._run()
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("Release Manager pushes the tag", r.stdout)
+        self.assertIn("own credentials", r.stdout)
         self.assertNotIn("continuing", r.stdout)
         self.assertEqual(self._remote_tag(), "")
 

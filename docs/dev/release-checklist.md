@@ -1,23 +1,11 @@
 # Release checklist and local CI
 
-Moved out of CLAUDE.md (S-78) to keep the root file short. Updated in this
-pass to remove two items that `docs/v10/DECISIONS.md` D25 and
-`docs/LOKI-10-BUILD-PROMPT.md` section 1 have superseded:
-- `git add -A` in step 4 is replaced with staging by name (repo rule, always).
-- Per-merge pushing and the D25 release trains are superseded by D96 (every
-  approved slice is a release; see `docs/v10/OPERATING-MODEL.md`). Waiting for
-  Tests and Security Audit green on that exact SHA still applies to any push
-  made outside the merge-gate.
-  "Wait for user approval before commit" from the old workflow is superseded
-  by the standing authorization in `docs/LOKI-10-BUILD-PROMPT.md` section 1
-  for sessions operating under that program; outside it, ask as normal.
+Release steps and local CI details for maintainers.
 
 ## Local CI Before Every Push
 
-**Superseded by D27 (`docs/v10/DECISIONS.md`).** The FAST-tier-before-every-push
-mandate that used to live in this section is retired: GitHub CI is the gate.
-Before pushing, run only syntax checks (`bash -n`, `py_compile`) plus the
-slice's own tests, capped at 60 seconds. `.githooks/pre-push` enforces the
+GitHub CI is the gate. Before pushing, run only syntax checks (`bash -n`, `py_compile`) plus the
+change's own tests, capped at 60 seconds. `.githooks/pre-push` enforces the
 repo-identity check, `bash -n` on `autonomy/run.sh` and `autonomy/loki`, and
 the red-main warning only; a push is not "done" until `git ls-remote origin
 refs/heads/main` matches `git rev-parse HEAD`. `scripts/local-ci.sh` remains
@@ -36,7 +24,7 @@ Cleanup after every local-ci run and post-release validation uses
 
 ## Release Workflow
 
-**Step 0 (always first, D27): syntax checks + the slice's own tests, 60s cap.**
+**Step 0 (always first): syntax checks + the change's own tests, 60s cap.**
 See "Local CI Before Every Push" above.
 
 ### 1. Version Bump - ALL Files
@@ -59,8 +47,8 @@ wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md
 README.md, docker/docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
 ```
 
-The CHANGELOG.md entry must be a full section, not a one-line placeholder
-(E-88): a summary line, one or more `### ` subsections (Added, Fixed, etc.)
+The CHANGELOG.md entry must be a full section, not a one-line placeholder:
+a summary line, one or more `### ` subsections (Added, Fixed, etc.)
 with a `- ` bullet for every user-visible change, and, if this version
 republishes a version that never reached npm, that version's own section
 carried forward too. `scripts/release-notes.sh <version>` extracts and
@@ -68,10 +56,10 @@ validates this section the same way release.yml does; `.githooks/pre-push`
 runs it on any push whose remote ref is `refs/heads/main` and whose VERSION
 actually changes there, and release.yml refuses to publish the release if
 the section is missing, empty, or not fully written. release.yml runs this
-extraction BEFORE tagging (D36), so a notes failure never burns a version
+extraction BEFORE tagging, so a notes failure never burns a version
 number.
 
-Carrying another version's notes forward (E-88a) is explicit only:
+Carrying another version's notes forward is explicit only:
 `--include v1,v2,...` names the versions to append, each under its own
 "## vX.Y.Z changes (first published in vNEW)" heading; release.yml itself
 passes no `--include`, so a version that never reached npm gets its
@@ -117,19 +105,15 @@ rm -f loki-mode-*.tgz
 ```
 If any check fails, do not release; fix the root cause first.
 
-### 4. Commit and land (every approved slice is a release, D96)
+### 4. Commit and land
 
-Stage files by name (never `git add -A` or `git add .`), commit with the
-repo-local `asklokesh` identity, no co-author. The merge-gate merges approved
-slices to main and a VERSION push publishes to npm under `latest` and `next` at once (D96, D102); the
+Stage files by name (never `git add -A` or `git add .`). A VERSION push to main publishes to npm under `latest` and `next` at once; the
 `publish-npm` job needs only `pack-npm` and never waits on Tests, Security Audit, nightly or the backstop.
 For a manual push (`git push origin main`), run `bash scripts/local-ci.sh` first. GitHub Actions publishes
 npm, then creates the tag and GitHub Release, builds/pushes Docker (including `:latest`), and updates the Homebrew tap. Do not manually
 create tags.
 
-Before any release merge or push to main, run `bash scripts/release-approval-gate.sh --range origin/main..<sha>` (FC-RELEASE-UNNAMED-STACKED-PARENT): every commit in the range must be named by a `TL|HIGH|CTO|tl-x|rev-x APPROVE <sha>` line in docs/v10/BOARD.md, be rebase-equal by `git patch-id --stable`, or be an exempt clean merge or release commit; a held slice denies. Exit 1 lists each unapproved SHA with its reason, and `LOKI_RELEASE_APPROVED` does not bypass it.
-
-Before pushing the release commit, run `bash scripts/release.sh --check-clean` (E-151): it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
+Before pushing the release commit, run `bash scripts/release.sh --check-clean`: it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
 
 ### 5. Verify ALL Distribution Channels
 
@@ -142,10 +126,8 @@ brew update && brew info loki-mode
 gh release view vX.Y.Z
 ```
 
-### Train cycle: previous release must be on npm
-`scripts/train-cycle.sh` (phase C) refuses to cut release N+1 until the previous `release: vX` version is visible on npm (`npm_has_version`). While it is missing, the cycle logs `PREV_NOT_ON_NPM X` and returns 0 (waiting is not a failure). An unreachable registry fails closed and adds `reason=NPM_UNREACHABLE`. After `LOKI_TC_NPM_WAIT_MIN` minutes (default 45) since the previous release commit the log becomes `PREV_NOT_ON_NPM_STALE ... refusing release, needs a human`; the release stays refused either way.
-
-Operator action: wait for the Release workflow publish-npm job to land (seconds after the push). `latest` and `next` are set together by that job (D102); do not move them by hand, and never unpublish (npm deprecate is allowed). If the STALE line appears, investigate the failed or stuck publish run rather than bypassing the check.
+### Publish check
+Wait for the Release workflow publish-npm job to land (seconds after the push). `latest` and `next` are set together by that job; do not move them by hand, and never unpublish (npm deprecate is allowed).
 
 ### Distribution Channel Checklist
 

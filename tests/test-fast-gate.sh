@@ -50,7 +50,7 @@ if has wf tests/test-registration-coverage.sh && ! grep -q '^FULL' "$T/wf/plan.t
     ok "a workflow edit selects the workflow guards, not the full set"
 else bad "a workflow edit did not select the workflow guards"; fi
 
-# FC-54: a path guard may only select runnable tests (tests/test-*.sh, tests/test_*.py). The old
+# a path guard may only select runnable tests (tests/test-*.sh, tests/test_*.py). The old
 # `grep ... -- PATTERN tests --include=...` put --include after `--`, so it was a file operand and
 # every file under tests/ (helpers, tsv, the suite runner) was selected and run as a test.
 plan_for wfrun .github/workflows/release.yml tests/run-all-tests.sh tests/test-promote-head-stamp.sh
@@ -114,7 +114,7 @@ PY
 then ok "pack-npm runs prepublishOnly before npm pack and asserts the four dist files"
 else bad "pack-npm does not run prepublishOnly before pack or lacks the dist assertions"; fi
 
-# B2 (D96): a red nightly no longer blocks the release; it blocks promotion.
+# B2: a red nightly no longer blocks the release; it blocks promotion.
 if python3 - "$rel" <<'PY'
 import sys
 s = open(sys.argv[1]).read()
@@ -150,7 +150,7 @@ if [ -s "$T/ovf2/plan.tsv" ] && ! grep -q '^FULL' "$T/ovf2/plan.tsv" && grep -q 
     ok "PLAN-OVERFLOW: an under-capacity plan is packed normally (no FULL)"
 else bad "PLAN-OVERFLOW: under-capacity plan wrongly went FULL or was empty"; fi
 
-# FC-73: a release-commit plan (VERSION, package.json, dist, workflows) must not select suites that
+# a release-commit plan (VERSION, package.json, dist, workflows) must not select suites that
 # have no green baseline, and VERSION must not pull in every test that merely mentions the word.
 printf '%s\n' VERSION package.json loki-ts/dist/loki.js >"$T/rel.files"
 FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/rel.files" bash scripts/ci/fast-gate.sh plan test "$T/rel" >"$T/rel.log" 2>&1

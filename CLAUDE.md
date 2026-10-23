@@ -1,5 +1,4 @@
 # Loki Mode - Claude Code Skill
-@docs/v10/OPERATING-MODEL.md
 Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML doc, or one-line brief to a deployed product via the RARV-C closure loop. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, Aider, opencode. Flagship product of [Autonomi](https://www.autonomi.dev/).
 
 ## Quick Start
@@ -16,12 +15,10 @@ loki start owner/repo#123        # issue-mode
 - Providers: Claude Code full (Tier 1); Cline reduced (Tier 2); Codex CLI/Aider degraded, sequential (Tier 3); opencode model-agnostic. Gemini CLI is DEPRECATED; `LOKI_PROVIDER=gemini` exits with a migration message. See `providers/*.sh`.
 - Version: see `VERSION` (semver: MAJOR = architecture change, MINOR = feature, PATCH = fix). Full release steps: `docs/dev/release-checklist.md`.
 
-## Git and release invariants (binding, no exceptions)
-- Repo-local commit identity: `asklokesh` / `lokeshmure@live.com`, never set globally. Stage files by name; never bulk-stage the whole tree; never add a co-author line.
-- Commit/push authority: the standing authorization in `docs/LOKI-10-BUILD-PROMPT.md` section 1 governs sessions operating under that program (no waiting for approval there). Ask before committing otherwise.
-- Release model: every approved slice is a release (`docs/v10/DECISIONS.md` D96 and D102, which supersede the D25 trains; see `docs/v10/OPERATING-MODEL.md`). A VERSION push to main publishes to npm under both `latest` and `next` within seconds, depending only on pack-npm; Tests, Security Audit, nightly and the backstop are parallel fix-forward signals and never delay npm. Never unpublish (npm deprecate is allowed).
-- Pre-push/release gate: `bash scripts/local-ci.sh` (fast tier). The FULL tier is diagnostic only, never a release blocker. Never force-push, kill processes by name/pattern, or bypass branch protection.
-- Extend, never duplicate (founder rule, 2026-10-15): a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change. Reviewers block parallel duplicates.
+## Repository conventions
+- Stage files by name; never bulk-stage the whole tree.
+- Pre-push gate: `bash scripts/local-ci.sh` (fast tier). The FULL tier is diagnostic only. Never force-push, kill processes by name/pattern, or bypass branch protection. Never unpublish (npm deprecate is allowed).
+- Extend, never duplicate: a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change.
 - No emojis, no em dashes, no en dashes, anywhere (code, docs, commits, UI); remove any found on sight. SKILL.md stays under 500 lines with header AND footer version bumped together.
 - Harness code invariants (see `docs/dev/architecture-reference.md`): new always-on prompt text goes in the cache-stable prefix; `goal_score.ts` and `run.sh` change together, byte-mirrored; never invert smart-retry's fail-safe default.
 
@@ -147,5 +144,3 @@ loki_run_tmp_cleanup() {
 - `docs/dev/project-structure.md` - directory map, codebase knowledge graph, key functions, critical data flow, the MCP server (`mcp/server.py`, 48 tools); and `docs/dev/research-foundation.md` - the labs and papers this system is built on.
 - `docs/dev/architecture-reference.md` - the 8 quality gates, legacy healing, memory system, metrics, v8 harness knobs, RARV-C closure env vars.
 - `docs/dev/release-checklist.md` - full version-bump file list, dashboard build, pre-publish validation, distribution channels, local CI details.
-- `skills/sdlc-fleet.md` - six-role standing fleet pattern for non-trivial changes; its roles are superseded by `docs/v10/OPERATING-MODEL.md`, its review rules by D12/D13, and its "ask the founder" step by the standing autonomous mandate in `docs/LOKI-10-BUILD-PROMPT.md`.
-- `docs/v10/DECISIONS.md` - the standing decision log (D1-D26 and later); check before assuming an older process rule still holds.

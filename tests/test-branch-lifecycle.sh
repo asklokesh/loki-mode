@@ -474,7 +474,7 @@ mkdir -p "$GH_STUB_DIR"
 cat > "$GH_STUB_DIR/gh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$GH_ARGV"
-# S-100: the trusted push resolves the default branch first.
+# the trusted push resolves the default branch first.
 [ "\$1 \$2" = "repo view" ] && echo main
 exit 0
 EOF
@@ -1974,7 +1974,7 @@ fi
 # _loki_untrack_agent_committed_user_files call that finds ZERO covered hits
 # must clear a stale agent-committed-user-files.z, not leave it forever. The
 # record is stale only once no recorded path is left in the branch history:
-# create_session_pr gates the push on it (S-194), and a resumed session on the
+# create_session_pr gates the push on it, and a resumed session on the
 # same branch still holds the user's file in history, so it must keep it.
 # =============================================================================
 echo "Test T102-later-session-no-hits (BACKLOG 102, S-194): agent-committed-user-files.z is kept while history holds the file, cleared after"

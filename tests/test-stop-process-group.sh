@@ -21,10 +21,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 # ponytail: per-run token ($PGTEST_TAG) folded into every "loki-<tag>" prefix
 # below so concurrent runs of this SAME suite (another worktree/CI shard) never
-# share fixture names. Cleanup stops only recorded PIDs/PGIDs (E-148), never a
+# share fixture names. Cleanup stops only recorded PIDs/PGIDs, never a
 # name pattern (D14/D15/D16 class).
 PGTEST_TAG="pgtest-$$-${RANDOM}-$(date +%s 2>/dev/null || echo 0)"
-# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# Run-owned temp dir: all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 _OWN_TMP=0
@@ -88,7 +88,7 @@ WORK=$(mktemp -d "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-XXXXXX")
 # Make the terminal cleanup (recorded-PID stop + temp-dir removal) unconditional: if the
 # script is interrupted before reaching the end, the EXIT/INT/TERM trap still
 # prunes every loki-${PGTEST_TAG}-* sandbox so none leak onto disk.
-# E-148: stop exactly the PIDs/PGIDs this run recorded (never by pattern).
+# stop exactly the PIDs/PGIDs this run recorded (never by pattern).
 _PG_PIDS=""
 _PG_PGIDS=""
 _pg_record() { _PG_PIDS="$_PG_PIDS $*"; }

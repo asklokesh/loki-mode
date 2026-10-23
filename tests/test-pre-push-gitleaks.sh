@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Asserts the pre-push hook's eval-fixture gitleaks step (E-86).
+# Asserts the pre-push hook's eval-fixture gitleaks step.
 #
 # CI's Security Audit gitleaks gate (git-log mode, full history) only runs
 # AFTER a push already landed, and a false positive there (sourcegraph-access-
@@ -129,7 +129,7 @@
 #   30. GITLEAKS_CONFIG pointing at a permissive config (outside the repo)
 #       is ignored -- the hook unsets it before invoking gitleaks
 #
-# E-119: case 35 covers the same fail-closed property as case 28, but for the
+# case 35 covers the same fail-closed property as case 28, but for the
 # OTHER `git rev-list` call -- the one that decides whether .gitleaks.toml
 # changed in the pushed range (line ~319). It used `|| true`, so a rev-list
 # error read as "config unchanged" and fell back to trusting the pushed
@@ -202,7 +202,7 @@ g() {
 # the hook's other checks stay green), and the .gitleaksignore this repo
 # already ships (case 2 needs the real baseline entries, not a hand-written
 # subset).
-# FC-66: fixtures copy only the real .gitleaksignore's fingerprint lines. Its
+# fixtures copy only the real .gitleaksignore's fingerprint lines. Its
 # comment lines are prose, and gitleaks scans them as new content when a fixture
 # pushes the file (a comment once tripped generic-api-key and failed every
 # setup_push_clone). Comments carry no suppression, so dropping them is lossless.
@@ -406,7 +406,7 @@ else
     sk "same finding with its fingerprint in .gitleaksignore passes (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 3 (E-110 rework): a push touching no eval file skips the eval-only
+# --- case 3: a push touching no eval file skips the eval-only
 # `dir`-mode step, but IS covered by the broadened full-push `gitleaks git`
 # scan (E-110's whole point: the eval-only scan never saw the 3 planted
 # secrets in tests/test-eval-archive.sh, a non-eval path). HOME points at
@@ -656,7 +656,7 @@ else
     sk "the working-tree copy scanned was genuinely different from the pushed commit (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 11 (E-99): a binary whose sha256 differs from the hardcoded ------
+# --- case 11: a binary whose sha256 differs from the hardcoded ------
 # per-platform value never runs, even with a SELF-COMPUTED sidecar that
 # matches it byte-for-byte. A sidecar is just a file sitting next to the
 # binary -- whatever can overwrite gitleaks-8.30.0 can overwrite
@@ -825,7 +825,7 @@ fi
 # (manual real-push repro, not asserted here): that hook exits 0 on this
 # exact fixture; the current hook must exit 1 and name the ADD commit.
 #
-# E-110: the full-push scan (gitleaks git) now runs FIRST, before this
+# the full-push scan (gitleaks git) now runs FIRST, before this
 # eval-only dir-mode scan, and refuses on the same secret before dir-mode
 # gets a chance to -- so the commit reference here may come from either
 # scan's own message ("commit <short>" from dir-mode, "Commit:  <full>"
@@ -1035,7 +1035,7 @@ else
 fi
 
 # --- case 20: a .gitleaks.toml change is refused unless overridden -----------
-# E-99: the gate is now "any change to .gitleaks.toml, in any push", not
+# the gate is now "any change to .gitleaks.toml, in any push", not
 # scoped to a push that also touches eval (r4's scoping let an eval-untouched
 # push slip a weakened config in unreviewed, to be inherited by a LATER
 # eval-touching push -- case 22 below now covers exactly that, flipped).
@@ -1081,7 +1081,7 @@ else
     sk ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 22 (E-99): a .gitleaks.toml-only change (no eval touch) is --------
+# --- case 22: a .gitleaks.toml-only change (no eval touch) is --------
 # ALSO refused without the override. r4 scoped this refusal to a push that
 # also touches eval; that let a config change ride in on an eval-untouched
 # push, unreviewed, to be silently inherited by whatever eval-touching push
@@ -1206,7 +1206,7 @@ fi
 # of them actually gets scanned -- the secret in whichever loses the
 # collision ships unscanned even though the scan itself reports success.
 #
-# E-110: the full-push scan (gitleaks git, on a bare clone) reads git blobs
+# the full-push scan (gitleaks git, on a bare clone) reads git blobs
 # directly by OID, never through a case-insensitive filesystem extraction --
 # it has no collision to have, by construction -- and now runs FIRST, so it
 # refuses this fixture on the plain secret in A.json before dir-mode's own
@@ -1236,7 +1236,7 @@ else
     sk "case-colliding eval paths in one commit are refused (B3) (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 26 (E-99): a .gitleaksignore line added in commit 1 and removed ---
+# --- case 26: a .gitleaksignore line added in commit 1 and removed ---
 # again in commit 2 of the SAME push is now REFUSED, and still prints the
 # WARNING. r3's base..tip union diff of .gitleaksignore showed NO net change
 # here (added then removed cancels out), so a human reviewing the push
@@ -1270,7 +1270,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     else
         ko "a self-suppressing .gitleaksignore line added and removed within one push is refused" "refused but not on the finding/commit: $(cat "$D/push.out")"
     fi
-    # E-110: the full-push scan now runs BEFORE the eval-only dir-mode loop
+    # the full-push scan now runs BEFORE the eval-only dir-mode loop
     # and exits on its own finding first (asserted above), so dir-mode's
     # per-commit .gitleaksignore-diff WARNING below it never runs for THIS
     # fixture -- the push is refused before that code is reached at all. The
@@ -1401,7 +1401,7 @@ if [[ -f "$_obj_path" ]]; then
     # behavior (already covered by cases 3-4). Unused when the binary is
     # present.
     #
-    # E-119: the .gitleaks.toml change gate's own `git rev-list` (line ~319,
+    # the .gitleaks.toml change gate's own `git rev-list` (line ~319,
     # case 35) now also fails closed, and it runs FIRST over this same
     # corrupted range -- so it reports the failure and the hook exits before
     # dir-mode's own rev-list (further down) is ever reached. Both messages
@@ -1420,7 +1420,7 @@ else
     sk "the hook's own message names the git rev-list failure (commit stored as a packed, not loose, object on this git version)"
 fi
 
-# --- case 29 (E-99): the production incident, reproduced -- a merge bringing -
+# --- case 29: the production incident, reproduced -- a merge bringing -
 # in an OLD branch commit whose OWN .gitleaksignore lacks an entry passes
 # when the PUSHED TIP's .gitleaksignore has it. This is the actual P0: a
 # release train merged older branch commits carrying
@@ -1453,7 +1453,7 @@ else
     sk "a merge bringing an old commit whose own ignore file lacks the entry passes when the tip's has it (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 30 (E-99): GITLEAKS_CONFIG pointing at a permissive config is ------
+# --- case 30: GITLEAKS_CONFIG pointing at a permissive config is ------
 # ignored. gitleaks reads GITLEAKS_CONFIG (and GITLEAKS_CONFIG_TOML) from the
 # environment to pick a default config, which would silently override the
 # --config this hook computes from the pushed tip's own .gitleaks.toml (or,
@@ -1483,7 +1483,7 @@ else
     sk "GITLEAKS_CONFIG pointing at a permissive config is ignored (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 31 (E-110): a secret-shaped literal in a NON-eval path is refused --
+# --- case 31: a secret-shaped literal in a NON-eval path is refused --
 # The bug E-110 fixes: cases 1-30 above only ever prove the eval/loki10/tasks
 # and eval/loki10/refdiff dir-mode scan works. tests/test-eval-archive.sh
 # (commit bbe83c7a, E-101) planted 3 synthetic secrets in a path that scan
@@ -1514,7 +1514,7 @@ else
     sk "a non-eval file (tests/foo.sh) with an AKIA-shaped literal is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 32 (E-110): a clean, non-eval-touching push still passes -----------
+# --- case 32: a clean, non-eval-touching push still passes -----------
 # Regression guard on case 31: the full-push scan must not refuse a push just
 # because it is not the eval scan's usual eval/loki10 shape.
 if [[ "$_have_real_gitleaks" == "1" ]]; then
@@ -1533,7 +1533,7 @@ else
     sk "a clean, non-eval-touching push passes (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 33 (E-110): the full-push scan is NOT skippable by PRE_PUSH_SKIP --
+# --- case 33: the full-push scan is NOT skippable by PRE_PUSH_SKIP --
 # The whole reason the E-110 block moved to run before the PRE_PUSH_SKIP
 # check (not after, where it first landed): PRE_PUSH_SKIP=1 is the routine
 # way release trains push (docs/v10/DECISIONS.md), so a check placed after
@@ -1575,7 +1575,7 @@ else
     ko "case 33b: PRE_PUSH_SKIP=1 does not bypass the full-push scan (no binary)" "refused but wrong message: $(cat "$D/hook.out")"
 fi
 
-# --- case 33c (E-110): LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval ----
+# --- case 33c: LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval ----
 # scan's OWN missing-binary refusal. The override is read in exactly one
 # place (the full-push scan above); this proves dir-mode's separate,
 # override-less missing-binary check further down still fires on its own
@@ -1648,7 +1648,7 @@ else
     sk "case 34b: with the config override, the secret is still caught (scans with the pre-change config) (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 35 (E-119): the .gitleaks.toml change gate's own `git rev-list` ----
+# --- case 35: the .gitleaks.toml change gate's own `git rev-list` ----
 # fails closed, not open. Reuses setup_clone and run_hook_raw's own stdin-fed
 # invocation style (a real `git push`'s hook cannot be used here: a real git
 # process prepends its own `--exec-path` libexec directory to the hook's

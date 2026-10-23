@@ -3,7 +3,7 @@
 # Runs all test cases for the Loki Mode skill
 
 set -euo pipefail
-# Tests always run headless: no suite may open a browser (S-103).
+# Tests always run headless: no suite may open a browser.
 export LOKI_NO_BROWSER=1 LOKI_CONTROL=0 # tests never ship to a developer's live Control Plane
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -412,7 +412,7 @@ run_test() {
     # this same suite, on every shard's invocation.
     local _idx=$_shard_index
     _shard_index=$((_shard_index + 1))
-    # S-174: a registration with a missing or empty command used to die on
+    # a registration with a missing or empty command used to die on
     # "$2: unbound variable" (no summary, every later suite skipped) or pass as
     # `bash -c ""`. Count it as one failure and keep going. Placed after the
     # index increment (LPT slots stay put) and before the shard skip (every
@@ -462,7 +462,7 @@ run_test() {
         echo -e "${RED}  This is a stale run_test registration, not a code defect.${NC}"
         echo -e "${RED}  Either restore the script or remove the registration.${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
-        # return 0: under set -e a non-zero return ended the whole run (S-174).
+        # return 0: under set -e a non-zero return ended the whole run.
         return 0
     fi
 
@@ -490,7 +490,7 @@ run_test() {
     # Deliberately NOT `bash -c "$test_file"` for everything: -c execve's the
     # file, which requires the exec bit, and 46 shell suites here are committed
     # mode 100644. That swap turns every one of them into rc 126.
-    # E-155: a suite must never move the parent checkout's HEAD or branch.
+    # a suite must never move the parent checkout's HEAD or branch.
     local _e155_ref_before _e155_sha_before
     _e155_ref_before="$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null || true)"
     _e155_sha_before="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
@@ -1123,7 +1123,7 @@ run_test "Audit Chain Multiprocess (cross-process flock + tip re-read)" "$SCRIPT
 # a green suite emitted no TAP "ok N -" lines and was mislabeled "no_tests_run".
 run_test "Coverage Gate Fail-Open (node-test detector)" "$SCRIPT_DIR/test-coverage-gate-fail-open.sh"
 
-# BACKLOG 62 (S-175): a whitelist-rejected LOKI_MONOREPO_TEST_CMD ran nothing and
+# BACKLOG 62: a whitelist-rejected LOKI_MONOREPO_TEST_CMD ran nothing and
 # must record inconclusive/not_run with no unit-tests.pass, never pass:true.
 run_test "Monorepo rejected test cmd is inconclusive (S-175)" "$SCRIPT_DIR/test-monorepo-rejected-cmd-inconclusive.sh"
 
@@ -1363,13 +1363,13 @@ run_test "prepared PR publishes only with explicit consent, exact body, and roll
 run_test "local-ci tiers (fast never green-washes full; trust core always kept)" "$SCRIPT_DIR/test-local-ci-tiers.sh"
 run_test "parent checkout core.bare detection self-heals without green-washing" "$SCRIPT_DIR/test-core-bare-selfheal.sh"
 
-# E-60: local-ci fast-tier gitleaks step (scoped to origin/main..HEAD, reviewed
+# local-ci fast-tier gitleaks step (scoped to origin/main..HEAD, reviewed
 # .gitleaksignore baseline, SKIP not pass when the binary is absent). Live
 # temp-repo scenarios only run when gitleaks is on PATH; static assertions
 # always run.
 run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)" "$SCRIPT_DIR/test-local-ci-gitleaks.sh"
 
-# E-94: local-ci fast-tier hermetic changed-tests scan (re-runs every changed
+# local-ci fast-tier hermetic changed-tests scan (re-runs every changed
 # tests/*.sh, tests/*.py, loki-ts/tests/** under env -i with no gh/network,
 # fails naming any file that passes normally but fails stripped). Live temp-
 # repo scenarios (a gh-calling fixture, the real pre-E-92 dep-inventory.py
@@ -1383,7 +1383,6 @@ run_test "Time-to-first-preview metric (write-once, never invented)" "$SCRIPT_DI
 run_test "Session knobs stay default-OFF (gates the v8 SDK-flip audit)" "$SCRIPT_DIR/test-session-knobs-default-off.sh"
 run_test "shards partition the suite list (no silently dropped suite)" "$SCRIPT_DIR/test-shard-coverage.sh"
 run_test "shard-durations.tsv drift detector (S-134)" "$SCRIPT_DIR/test-shard-durations-drift.sh"
-run_test "worktree reaper saves, removes and floors slice worktrees (AUTO-REAP, FC-99)" "timeout -k 10 120 bash $SCRIPT_DIR/test-worktree-reap.sh"
 run_test "council gate readers use the resolved -I -S interpreter (S-141)" "$SCRIPT_DIR/test-council-gate-readers-pth.sh"
 run_test "Tier A test selector (S-91 rules R0-R7)" "$SCRIPT_DIR/test-select-tests.sh"
 run_test "select-tests --run never a silent no-op (FC-47)" "timeout -k 10 120 $SCRIPT_DIR/test-select-tests-run.sh"
@@ -1512,7 +1511,6 @@ run_test "all reporting surfaces agree about one run" "$SCRIPT_DIR/test-surfaces
 run_test "recorded exit codes match the failure contract" "$SCRIPT_DIR/test-exit-code-contract.sh"
 run_test "the receipt shows disabled gates" "$SCRIPT_DIR/test-receipt-shows-disabled-gates.sh"
 run_test "the public HTML receipt shows disabled gates" "$SCRIPT_DIR/test-html-receipt-disabled-gates.sh"
-run_test "the founder-decisions document is accurate" "$SCRIPT_DIR/test-founder-decisions-doc-accurate.sh"
 run_test "entry-document pointers resolve" "$SCRIPT_DIR/test-entry-doc-pointers-resolve.sh"
 run_test "a pause needs no TTY, and a run names its receipt" "$SCRIPT_DIR/test-pause-tty-and-receipt-surface.sh"
 run_test "the mutation probe cannot silently no-op" "$SCRIPT_DIR/test-mutation-probe.sh"
@@ -1534,10 +1532,8 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 # registered here: it ratchets against the last release tag, which a depth-1
 # shard checkout does not have. It runs in its own "Moat rules (no regression)" job instead.
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
-run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-pulse.sh"
 run_test "legacy dashboard stays deleted: dirs, package files, npm pack, references (CPE24-L7)" "$SCRIPT_DIR/test-legacy-dashboard-removed.sh && $SCRIPT_DIR/test-legacy-dashboard-removed.sh --self-test"
 run_test "Control Plane starts from a fresh npm pack install and serves /health and its UI (CPE24-L7)" "$SCRIPT_DIR/test-cp-fresh-install-smoke.sh"
-run_test "board-mark-released flips a slice's merged row once its tag ships (E-90)" "$SCRIPT_DIR/test-board-mark-released.sh"
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"
 run_test "release.sh --bump-only never leaves dist deleted on build failure (E-102)" "$SCRIPT_DIR/test-release-bump-dist.sh"
 run_test "release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)" "$SCRIPT_DIR/test-release-dist-guard.sh"
@@ -1547,10 +1543,8 @@ run_test "npm-dist-tags.sh never moves a tag backwards and restores an overtaken
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"
 run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"
-run_test "v10 drift-audit turn counter (every-6th-turn signal)" "$SCRIPT_DIR/test-v10-drift-audit-counter.sh"
-run_test "v10 slice-card template (fields, budget, dispatch rule)" "$SCRIPT_DIR/test-v10-slice-card.sh"
 
-# S-93: registration-coverage cleanup batch. These suites existed and passed
+# registration-coverage cleanup batch. These suites existed and passed
 # (some after a genuine bug fix; see commit) but were wired into no runner --
 # indistinguishable from no test at all. See test-registration-coverage.sh.
 run_test "Add-dir reaches provider" "$SCRIPT_DIR/test-add-dir-reaches-provider.sh"
@@ -1611,7 +1605,6 @@ run_test "State versioning (SYN-015)" "$SCRIPT_DIR/test-state-versioning.sh"
 run_test "Welcome opener (terminal + browser)" "$SCRIPT_DIR/test-welcome-opener.sh"
 
 run_test "Browser-open guard (tests never open a browser, S-103)" "$SCRIPT_DIR/test-browser-open-guard.sh"
-run_test "CEO cockpit: headless server, panels, queue append, security (tools/cockpit)" "timeout -k 15 300 bash $SCRIPT_DIR/test-cockpit.sh"
 run_test "Eval results archive: redaction and dirty-check exclude (E-101)" "$SCRIPT_DIR/test-eval-archive.sh"
 run_test "run_test missing or empty argument does not stop the runner (S-174)" "$SCRIPT_DIR/test-run-all-missing-arg.sh"
 run_test "proof headline ignores a stale test-results.json (S-176)" "python3 -m pytest -q $SCRIPT_DIR/test_proof_tests_freshness.py"
@@ -1630,7 +1623,6 @@ run_test "loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-AR
 run_test "loki verify <run receipt path> routes to the v10 verifier (CW-17 #352)" "$SCRIPT_DIR/test-verify-receipt-route.sh"
 run_test "loki report release-notes lists sealed and unsealed commits (#391)" "$SCRIPT_DIR/test-report-release-notes.sh"
 run_test "Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)" "timeout -k 10 300 bash $SCRIPT_DIR/test-receipt-check-action.sh"
-run_test "metrics-usage-append arg parsing, block format, repeat append (PO-TEST-1)" "timeout -k 10 120 $SCRIPT_DIR/test-metrics-usage-append.sh"
 run_test "Loki 10 live PR smoke on a sandbox repo (E-40)" "$SCRIPT_DIR/test-engine10-live-pr.sh"
 run_test "Loki control plane wiring: serve, backfill, UI (CP-04)" "$SCRIPT_DIR/test-control-plane.sh"
 run_test "Loki 10 engine runs from dist and the npm package (E-32)" "$SCRIPT_DIR/test-engine10-dist.sh"
@@ -1649,14 +1641,11 @@ run_test "Dependency inventory Latest/Bump self-consistency (DEP-01)" "$SCRIPT_D
 run_test "Usage governor calibration and dedup (G-01)" "$SCRIPT_DIR/test-usage-governor.sh"
 run_test "Usage governor measured /usage cap and fallback label (GOV-MEASURE)" "timeout -k 10 120 $SCRIPT_DIR/test-usage-governor-measure.sh"
 run_test "Usage governor seat formula and burn calibration (GOV-FORMULA)" "timeout -k 10 120 $SCRIPT_DIR/test-usage-governor-formula.sh"
-run_test "Usage governor statusLine logger (G-01)" "$SCRIPT_DIR/test-usage-statusline-logger.sh"
-run_test "cloud-dispatch dry-run refuses on overlap, governor max, not-ready (G-04)" "timeout -k 10 120 $SCRIPT_DIR/test-cloud-dispatch.sh"
 run_test "Heredoc dollar-digit footgun checker (D44)" "$SCRIPT_DIR/test-check-heredoc-dollar-digit.sh"
 run_test "Engine10 push GitLab (D44)" "$SCRIPT_DIR/test-engine10-push-gitlab.sh"
 run_test "gh withhold nested (D44)" "$SCRIPT_DIR/test-gh-withhold-nested.sh"
 run_test "SettingsPage has no Gemini (D44)" "$SCRIPT_DIR/test-settingspage-no-gemini.sh"
 run_test "Trusted push agent config (D44)" "$SCRIPT_DIR/test-trusted-push-agent-config.sh"
-run_test "v10 guard rules (D44)" "$SCRIPT_DIR/test-v10-guard.sh"
 run_test "first-run gate assertion logic (A-02)" "$SCRIPT_DIR/test-first-run-gate.sh"
 run_test "b9 scoreboard dry-run rows and shape defaults (R1-17)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-scoreboard.sh"
 run_test "b9 trivial-sum fixture generator" "timeout -k 10 120 $SCRIPT_DIR/test-b9-fixture.sh"
@@ -1669,7 +1658,6 @@ run_test "real-repo acceptance gate logic (D58-GATE)" "timeout -k 10 120 $SCRIPT
 run_test "json schemas validate real why and status output (D48 r5)" "$SCRIPT_DIR/test-json-schemas.sh"
 run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
 run_test "Structural checks catch planted defects (D44-C)" "$SCRIPT_DIR/test-structural-checks.sh"
-run_test "v10 ops (E-142)" "$SCRIPT_DIR/test-v10-ops.sh"
 run_test "loki-seal Stop hook (A-04)" "$SCRIPT_DIR/../packages/loki-seal/test/run.sh"
 run_test "Quick-fix artifacts (A-132)" "$SCRIPT_DIR/test-quick-artifacts.sh"
 run_test "Council trivial-diff probe skip (A-133)" "$SCRIPT_DIR/test-council-trivial-diff.sh"
@@ -1681,8 +1669,6 @@ run_test "Quick quiet failure tail and stdin (A-134b)" "$SCRIPT_DIR/test-quick-q
 run_test "Pre-commit author email guard (E-153)" "$SCRIPT_DIR/test-pre-commit-author-guard.sh"
 run_test "Provider stdin closed under verbose (A-134c)" "$SCRIPT_DIR/test-provider-stdin-closed.sh"
 run_test "D51 Phase B workspaces (B01)" "$SCRIPT_DIR/test-workspace.sh"
-run_test "release-approval-gate.sh approves a range by SHA: stacked parents, patch-id, holds, exemptions (FC-RELEASE-UNNAMED-STACKED-PARENT)" "$SCRIPT_DIR/test-release-approval-gate.sh"
-run_test "train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)" "$SCRIPT_DIR/test-train-cycle.sh"
 run_test "Python shutdown SIGABRT with piped output (PY-ABORT)" "$SCRIPT_DIR/test-py-shutdown-abort.sh"
 run_test "audit.py verify exits 2 when it checked nothing (PO-AUDIT-CLI-1)" "timeout -k 10 120 python3 -m pytest -q $SCRIPT_DIR/dashboard/test_audit_verify_cli_nothing_checked.py"
 run_test "skill-session status push sends null running_agents (S-222)" "timeout -k 10 120 python3 -m pytest -q -p no:cacheprovider $SCRIPT_DIR/dashboard/test_skill_session_ws_running_agents.py"
@@ -1705,7 +1691,6 @@ run_test "loki start stale PID cleanup (cli)" "timeout -k 10 120 bash $SCRIPT_DI
 run_test "loki start/run unified dispatch (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_start_run_unified.sh"
 run_test "non-standard suite registration guard (cli, dashboard, integration)" "timeout -k 10 120 bash $SCRIPT_DIR/test-registration-nonstandard.sh"
 run_test "measure-run and guard-changed help is read-only (PO5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-help-readonly-scripts.sh"
-run_test "cp-redesign image allowlist guard (D26)" "timeout -k 10 120 bash $SCRIPT_DIR/test-cp-redesign-images.sh"
 run_test "mobile emulator tests: NOT VERIFIED without a device" "timeout -k 10 120 bash $SCRIPT_DIR/test-mobile-verify.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 run_test "ShellCheck heavy files lint alone, never in parallel (FC-LINT-OOM)" "timeout -k 10 120 bash $SCRIPT_DIR/test-shellcheck-heavy-serial.sh"

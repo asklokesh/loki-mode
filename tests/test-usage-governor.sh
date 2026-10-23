@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# G-01: usage governor (D39). Fixture jsonl trees + founder readings drive
+# G-01: usage governor. Fixture jsonl trees + founder readings drive
 # scripts/usage-governor.py through --json and assert on the parsed output.
 #
 # Coverage: uncalibrated path (zero readings), one-reading and two-reading
@@ -57,7 +57,7 @@ if rid:
 with open(file, "a") as fh:
     fh.write(json.dumps(rec) + "\n")
 # Set the file's mtime to this row's own timestamp so the mtime-based
-# skip (E-109) sees a realistic, content-matching mtime instead of the
+# skip sees a realistic, content-matching mtime instead of the
 # real wall-clock time the test happened to run at -- production
 # transcripts are append-only, so mtime tracks the last row written.
 epoch = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
@@ -273,7 +273,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # T8: fixture A (G-01 rework, D39) -- one reading (20% window / 10% weekly)
-# with 2000 window tokens split 1000 in the oldest hour bucket (chief-of-staff,
+# with 2000 window tokens split 1000 in the oldest hour bucket (main session,
 # not last-hour, not an engineer) and 1000 in the last hour across 2 active
 # engineers at 500 each. pct() must not be 100x inflated (correct current
 # window pct is 20.0, not 2000.0), and max_engineers_next_hour must be
@@ -513,7 +513,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# T16 (E-109): a message id appearing in two files -- one served from cache,
+# T16: a message id appearing in two files -- one served from cache,
 # one freshly parsed -- must still be counted once, at the max. This is the
 # G-01 cross-file dedup guarantee, now exercised across the cache boundary:
 # the cache stores PER-MESSAGE maxima per file, not per-file totals, so
@@ -544,7 +544,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# T17 (E-109): a file whose mtime predates the weekly window start is
+# T17: a file whose mtime predates the weekly window start is
 # skipped entirely (never opened), and this does not change the result --
 # its row is also outside every window by timestamp, so it would have
 # contributed nothing anyway. Verified two ways: the cache written by this
@@ -588,7 +588,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# T18 (E-109): a cached run (cold, then warm) must produce byte-identical
+# T18: a cached run (cold, then warm) must produce byte-identical
 # --json output to a --no-cache run, given the same fixture and the same
 # --now. The cache is purely a perf layer; it must never change the answer.
 # ---------------------------------------------------------------------------
@@ -738,7 +738,7 @@ else
   echo "$OUT22" | sed 's/^/        /'
 fi
 
-# E-163: live /usage reading (subprocess mocked, real claude never called)
+# live /usage reading (subprocess mocked, real claude never called)
 LR_OUT="$(TOOL="$TOOL" python3 - <<'PYEOF' 2>&1
 import importlib.util, json, os, subprocess, tempfile
 from datetime import datetime, timezone, timedelta

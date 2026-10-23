@@ -7,7 +7,7 @@
 #   ./scripts/release.sh patch|minor|major --bump-only
 #   ./scripts/release.sh [patch|minor|major] --ship --notes FILE
 #
-# --ship (TEN-RELEASE-FAST): the Release Manager recipe as one command. Runs
+# --ship: the release recipe as one command. Runs
 # the same release gate, then preflights (notes header is '## v<new>',
 # CHANGELOG line 8 is '## v<current>', origin/main is an ancestor of HEAD),
 # bumps, inserts the notes as the new CHANGELOG section, rebuilds dist,
@@ -20,16 +20,16 @@
 # This script:
 #   1. Bumps version in every file CLAUDE.md's "Release Workflow" section 1
 #      lists (see FILES_TO_BUMP below), except the ones documented as
-#      intentionally left to the Captain.
+#      intentionally left to the maintainer.
 #   2. Updates CHANGELOG.md from conventional commits
 #   3. Commits and pushes (triggers GitHub Actions release workflow)
 #
-# --bump-only (S-108, ends the D27 VERSION editor-tool exception): bumps
+# --bump-only: bumps
 # every version file plus loki-ts/dist, then exits. No prompt, no git add,
-# no commit, no push -- the Release Manager runs this instead of hand-editing
+# no commit, no push -- run this instead of hand-editing
 # VERSION, then commits the result itself.
 #
-# RELEASE GATE (S-108, founder P0): a release is a lookup of an already-
+# RELEASE GATE: a release is a lookup of an already-
 # verified commit, never a bump on an unverified tree. Before ANY bump (this
 # includes --bump-only) the script requires a completed/success run of the
 # "Tests" GitHub Actions workflow at HEAD's exact SHA.
@@ -38,7 +38,7 @@
 # for tests only -- never set it for a real release. Even then the global guard
 # rows (scripts/global-guards.tsv) still run; LOKI_RELEASE_SKIP_GUARDS=1 skips them.
 #
-# Files intentionally NOT bumped by this script (left to the Captain):
+# Files intentionally NOT bumped by this script (left to the maintainer):
 #   - vscode-extension/package.json: CLAUDE.md marks this DEPRECATED since
 #     v7.2.0 ("Bump only if vendoring; otherwise skip"). The extension is no
 #     longer published, so this script never touches it.
@@ -351,7 +351,7 @@ bump_all_version_files() {
         "server.json packages[].version"
 
     # Optional: the release checklist lists this as "if present". CLAUDE.md
-    # (S-78) now points at VERSION instead of carrying its own version
+    # now points at VERSION instead of carrying its own version
     # literal, so this slot legitimately has nothing to match most of the
     # time -- that is not drift, so it must not fail-close the release.
     update_version_slot "$ROOT_DIR/CLAUDE.md" \
@@ -412,7 +412,7 @@ bump_all_version_files() {
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
-# Dist files a release commit stages; release-approval-gate.sh reads this line to exempt them.
+# Dist files a release commit stages.
 RELEASE_DIST_FILES="loki-ts/dist/loki.js loki-ts/dist/loki.js.map"
 RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md CHANGELOG.md"
 
@@ -572,7 +572,7 @@ require_green_release_gate() {
     log_success "Release gate: green Tests run found at $sha"
 }
 
-# E-72: loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
+# loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
 # in loki-ts/scripts/build.ts) but the hash still shifts across checkouts
 # for bundles whose content never depends on VERSION (cockpit.js today).
 # On a version-only bump that leaves loki.js/loki.js.map genuinely diffing
@@ -600,7 +600,7 @@ release_restore_debugid_only_dist() {
         fi
     done
 
-    # E-108: a .js file left alone above (it has a REAL diff, e.g. the
+    # a .js file left alone above (it has a REAL diff, e.g. the
     # version literal) can still have picked up a fresh "//# debugId="
     # trailer from the rebuild, even though its .map companion was just
     # restored to HEAD verbatim by the loop above. Shipping that pair
@@ -635,7 +635,7 @@ release_restore_debugid_only_dist() {
     done
 }
 
-# E-103: shared by both run_bump_only failure branches below -- restores
+# shared by both run_bump_only failure branches below -- restores
 # loki-ts/dist from HEAD, logs why, and exits non-zero. A build that exits 0
 # without embedding the new version is the same "don't ship a stale/broken
 # dist" case as a build that fails outright, so both routes through here.
@@ -645,7 +645,7 @@ release_bump_only_fail() {
     exit 1
 }
 
-# E-133: refuse a dist whose source maps carry a machine-local path. A
+# refuse a dist whose source maps carry a machine-local path. A
 # node_modules symlink to another checkout made the v10.5.4 build write 133
 # absolute /Users/... "sources" entries. Reads the maps as JSON so comment
 # text inside sourcesContent cannot trip it. Relative entries resolve against
@@ -668,7 +668,7 @@ sys.exit(1 if bad else 0)
 PY
 }
 
-# E-151: after the release commit no tracked file may still differ from HEAD.
+# after the release commit no tracked file may still differ from HEAD.
 # dist is tracked, so a plain `git add <file>` suffices for a leftover map.
 release_commit_clean() {
     local dirty
@@ -679,7 +679,7 @@ release_commit_clean() {
     return 1
 }
 
-# --bump-only (S-108): version files + loki-ts/dist, no git side effects.
+# --bump-only: version files + loki-ts/dist, no git side effects.
 run_bump_only() {
     local current new
 
@@ -702,7 +702,7 @@ run_bump_only() {
 release_rebuild_dist() {
     local new="$1" dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
     if [ -d "$ROOT_DIR/loki-ts" ]; then
-        # E-102: fail fast on a missing node_modules instead of letting
+        # fail fast on a missing node_modules instead of letting
         # `bun run build` fail mid-bundle and delete tracked dist files.
         if [ ! -d "$ROOT_DIR/loki-ts/node_modules" ]; then
             log_error "loki-ts/node_modules missing -- run: cd loki-ts && bun install"
@@ -726,7 +726,7 @@ release_rebuild_dist() {
     fi
 }
 
-# E-152: one `git add` line per modified tracked file; `-f` when the path sits
+# one `git add` line per modified tracked file; `-f` when the path sits
 # under an ignored directory (a tracked-but-ignored dist needs it).
 release_stage_lines() {
     local f
@@ -739,7 +739,7 @@ release_stage_lines() {
     done
 }
 
-# --- --ship (TEN-RELEASE-FAST, D103) ----------------------------------------
+# --- --ship ----------------------------------------
 # One-command ship: bump, CHANGELOG section from --notes FILE, dist rebuild,
 # commit, ancestry + gitleaks checks, bounded wait for an in-flight Release
 # run, push, verify. Every refusal exits 4 with a SHIP_* token and happens
@@ -967,7 +967,7 @@ run_ship() {
     ship_require_ancestor
 
     ship_phase "gitleaks"
-    # E-114: gitleaks auto-loads <target>/.gitleaks.toml, so a range that adds
+    # gitleaks auto-loads <target>/.gitleaks.toml, so a range that adds
     # or edits it could disable the scan of that same range. Refuse it here.
     if [ -n "$(git -C "$ROOT_DIR" diff --name-only "refs/remotes/$SHIP_REMOTE/main" HEAD -- .gitleaks.toml)" ]; then
         ship_refuse SHIP_GITLEAKS_CONFIG "$SHIP_REMOTE/main..HEAD changes .gitleaks.toml; that needs its own reviewed PR"

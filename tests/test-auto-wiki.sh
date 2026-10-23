@@ -106,7 +106,7 @@ make_project() {
 }
 
 # -----------------------------------------------------------------------------
-# Case 2: opt-out (LOKI_WIKI_AUTO=0) -> generator NEVER runs (E2).
+# Case 2: opt-out (LOKI_WIKI_AUTO=0) -> generator NEVER runs.
 # -----------------------------------------------------------------------------
 (
     SCRIPT_DIR="$(make_stub_generator 0)"
@@ -122,9 +122,9 @@ make_project() {
    || fail "E2: LOKI_WIKI_AUTO=0 -> generator never runs"
 
 # -----------------------------------------------------------------------------
-# Case 3a: first run (no cached hash) -> generator FIRES (E3).
-# Case 3b: unchanged structure -> generator SKIPPED on the second call (E3).
-# Case 3c: structure changed -> generator FIRES again (E3).
+# Case 3a: first run (no cached hash) -> generator FIRES.
+# Case 3b: unchanged structure -> generator SKIPPED on the second call.
+# Case 3c: structure changed -> generator FIRES again.
 # -----------------------------------------------------------------------------
 (
     SCRIPT_DIR="$(make_stub_generator 0)"

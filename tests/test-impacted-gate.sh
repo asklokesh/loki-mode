@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-impacted-gate.sh -- end-to-end regression for scripts/impacted-gate.sh (FC-31).
+# tests/test-impacted-gate.sh -- end-to-end regression for scripts/impacted-gate.sh.
 #
 # The gate once ran each suite as `run_suite &` with an EXIT trap that deletes
 # the run dir. Every background subshell ran that trap, so the first suite to

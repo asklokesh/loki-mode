@@ -208,7 +208,6 @@ Pick modules from this table, one hop from here. Each module over 100 lines open
 | Legacy healing, modernization | [healing.md](skills/healing.md) |
 | Plan deepening, knowledge extraction | [compound-learning.md](skills/compound-learning.md) |
 | Managed Agents memory, council, flag hierarchy | [memory.md](skills/memory.md) |
-| Non-trivial change (>3 files, MINOR/MAJOR) | [sdlc-fleet.md](skills/sdlc-fleet.md) |
 | Several agent teams at once, WIP limits | [factory-operations.md](skills/factory-operations.md) |
 | Release, version bump, publish check | [release-cadence.md](skills/release-cadence.md) |
 | Adding your own gate, reviewer or agent | [extending.md](skills/extending.md) |

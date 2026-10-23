@@ -6,14 +6,14 @@
 #   --stub              CI, no keys: a stub `claude` writes the one-character fix (default)
 #   --real              real provider (needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN,
 #                       the throwaway HOME has no login); also times raw `claude -p` and
-#                       appends both to docs/v10/METRICS.md
+#                       appends both to .loki/metrics/first-run.md
 #   --engine legacy     the no-bun machine (plain `npm i -g` user): legacy verify, 15-line budget, no v10-only
 #                       checks, and the legacy fallback line must be printed naming bun. Run it with bun off PATH.
 #   --installed <spec>  npm-install that exact package into a temp prefix and run IT
 #
 #   --entry start-empty TEN-UX-08: empty folder + `loki doctor` + `loki start "<brief>"`; asserts repo init, VERIFIED,
 #                       sealed receipt, Next line, and install+doctor+start wall time <= FRG_BUDGET_S (default 120)
-#                       recorded as install_to_first_success_s. --real also rewrites the METRICS.md "Time to first
+#                       recorded as install_to_first_success_s. --real also rewrites the metrics file "Time to first
 #                       sealed PR" row; the stub never writes METRICS.
 #
 # Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path; FRG_BUDGET_S the start-empty budget;
@@ -21,6 +21,7 @@
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+FIRST_RUN_METRICS="${FIRST_RUN_METRICS:-$REPO_ROOT/.loki/metrics/first-run.md}"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
 MODE=stub SPEC="" ENGINE=v10 ENTRY=quick
 T0=$(date +%s)
@@ -116,7 +117,7 @@ echo "stub claude done"
 STUB
     chmod +x "$T/bin/claude"
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1
-    # D48: `loki quick` is the Loki 10 engine now; the stub is a CLI, so select the CLI invoker (no SDK, no keys).
+    # `loki quick` is the Loki 10 engine now; the stub is a CLI, so select the CLI invoker (no SDK, no keys).
     export LOKI_E10_INVOKER=cli
 fi
 
@@ -153,6 +154,7 @@ if [ "$ENTRY" = start-empty ]; then
            else res FAIL first-success-budget "${TOTAL}s > ${BUDGET}s"; fi ;;
     esac
     if [ "$MODE" = real ] && [ "$FAILS" -eq 0 ]; then
+        mkdir -p "$(dirname "$FIRST_RUN_METRICS")" && touch "$FIRST_RUN_METRICS"
         python3 -c '
 import sys
 p, secs, day = sys.argv[1:4]
@@ -162,7 +164,7 @@ for i, r in enumerate(rows):
         rows[i] = "| Time to first sealed PR | %ss | - | - | %s: bash scripts/first-run-gate.sh --real --entry start-empty |" % (secs, day)
         break
 open(p, "w").write("\n".join(rows))
-' "$REPO_ROOT/docs/v10/METRICS.md" "$TOTAL" "$(date -u +%Y-%m-%d)"
+' "$FIRST_RUN_METRICS" "$TOTAL" "$(date -u +%Y-%m-%d)"
     fi
     [ "$FAILS" -eq 0 ] || { echo "--- start output (first 12 lines) ---"; head -12 <<<"$OUTC"; }
     echo "GATE: $FAILS assertion(s) failed, wall ${TOTAL}s"
@@ -191,7 +193,7 @@ node --test --test-reporter=tap >"$T/node-test.log" 2>&1
 NT=$(sed -n 's/^# tests \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
 NF=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
 NP=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
-# D47: green is pass 2 and fail 0, so a skipped test (pass 1, skipped 1) is not green.
+# green is pass 2 and fail 0, so a skipped test (pass 1, skipped 1) is not green.
 GREEN=0; [ "${NT:-x}" = 2 ] && [ "${NP:-x}" = 2 ] && [ "${NF:-x}" = 0 ] && [ "$NPM_RC" -eq 0 ] && GREEN=1
 
 # 1. exit 0 if and only if the repo ends fully green
@@ -212,7 +214,7 @@ else res FAIL no-stray-files "unexpected changes: $(echo "$BAD" | tr '\t\n' '  '
 
 # 4. printed receipt digest: FULL 64-hex, equal to the receipt_sha256 loki verify reports
 VOUT="$T/verify.log"
-# D48: bare `loki verify` stays the legacy deterministic verify; the receipt a v10 run seals is checked by the v10 verify.
+# bare `loki verify` stays the legacy deterministic verify; the receipt a v10 run seals is checked by the v10 verify.
 if [ "$ENGINE" = legacy ]; then "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
 else "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?; fi
 PRINTED=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Eio '(receipt_sha256|sha256|receipt)[^0-9a-f]*[0-9a-f]{64}' \
@@ -341,7 +343,7 @@ if [ "$MODE" = real ]; then
     LOKI_COST=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Eo 'Cost[: |]*\$[0-9.]+' | head -1 | grep -Eo '[0-9.]+$')
     printf '| %s | first-run-gate --real | loki quick %ss $%s | raw claude -p %ss $%s |\n' \
         "$(date -u +%Y-%m-%dT%H:%MZ)" "$WALL" "${LOKI_COST:-unknown}" "$RAW_WALL" "${RAW_COST:-unknown}" \
-        >> "$REPO_ROOT/docs/v10/METRICS.md"
+        >> "$FIRST_RUN_METRICS"
     echo "METRICS: loki ${WALL}s \$${LOKI_COST:-unknown}; raw ${RAW_WALL}s \$${RAW_COST:-unknown}"
 fi
 

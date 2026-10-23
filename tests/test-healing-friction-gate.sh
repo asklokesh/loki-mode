@@ -237,7 +237,7 @@ if [[ "$rc_d" -eq 0 ]]; then
 else
     fail "heal mode off must be a byte-identical no-op (rc=0)" "got rc=$rc_d"
 fi
-# D2: no snapshot should be written when heal mode is off (the whole hook body
+# no snapshot should be written when heal mode is off (the whole hook body
 # is skipped), confirming the no-op is genuine.
 if [[ ! -d "$DIR_D/.loki/healing/snapshots" ]]; then
     pass "no snapshot dir created when heal mode is off (genuine no-op)"

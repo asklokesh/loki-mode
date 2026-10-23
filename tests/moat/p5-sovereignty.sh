@@ -708,7 +708,7 @@ case_no_claude_sidecalls() {
     sc_probe opencode opencode || return
     n="$(grep -c '^CALL' "$SC_CL")"
     [ "$n" = 0 ] || nok "LOKI_PROVIDER=opencode: claude-only invokers still prompted the claude CLI $n time(s): $(cut -c1-60 "$SC_CL" | tr '\n' '|')"
-    # E2E: a default start on opencode with an ollama/ model, under the block.
+    # a default start on opencode with an ollama/ model, under the block.
     : > "$SC_CL"
     {
         printf 'set -u\n'

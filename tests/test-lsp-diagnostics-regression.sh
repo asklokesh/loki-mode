@@ -9,7 +9,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# Run-owned temp dir: all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 _OWN_TMP=0

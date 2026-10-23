@@ -32,7 +32,7 @@ import sys
 
 import pytest
 
-# Tests always run headless: loki never opens a browser under this (S-103).
+# Tests always run headless: loki never opens a browser under this.
 os.environ.setdefault("LOKI_NO_BROWSER", "1")
 
 # The proof generator auto-creates a signing key (A-120). Keep it out of the

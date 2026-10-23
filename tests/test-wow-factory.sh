@@ -2,7 +2,7 @@
 # loki wow, loki factory and the no-repo start receipt: help, offline fallback, the live-run
 # outcome paths (with a stubbed engine, no model call), and the start levers they rely on.
 # New file: no existing suite owns the wow/factory onboarding commands (test-demo-* covers
-# the offline tour only). Here-strings, not pipe-to-grep-q (FC-64).
+# the offline tour only). Here-strings, not pipe-to-grep-q.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOKI="$ROOT/autonomy/loki"

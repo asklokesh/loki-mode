@@ -6,7 +6,7 @@ Compiled 2026-09-25 from 60+ sources. Tags:
 - [VEN] vendor or industry report
 - UNVERIFIED: secondary source only, or the primary page could not be fetched
 
-Vendor figures are vendor claims. Treat this as the evidence behind the design rules in `docs/LOKI-10-BUILD-PROMPT.md` section 5c. Re-check a source before quoting it publicly.
+Vendor figures are vendor claims. Re-check a source before quoting it publicly.
 
 ## The findings that shape v10
 

@@ -330,5 +330,4 @@ docker/                            Container distribution (Dockerfiles, compose)
 ---
 
 For deeper detail, see `SKILL.md` (core skill), `skills/quality-gates.md` (the
-canonical 8-gate table), `skills/sdlc-fleet.md` (the standing SDLC fleet
-pattern), and the `references/` directory.
+canonical 8-gate table), and the `references/` directory.

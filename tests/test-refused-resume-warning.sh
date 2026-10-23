@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-233: when setup_agent_branch refuses a resume (checkout --no-overwrite-ignore
+# when setup_agent_branch refuses a resume (checkout --no-overwrite-ignore
 # would replace a gitignored user file), the warning must name the conflicting
 # file and the recorded branch where the earlier commits live.
 set -uo pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-226r: an unmeasured cost reads "unmeasured" in `loki stats`, never $0.00,
+# an unmeasured cost reads "unmeasured" in `loki stats`, never $0.00,
 # on both the bash route and the bun route.
 # shellcheck disable=SC2016
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

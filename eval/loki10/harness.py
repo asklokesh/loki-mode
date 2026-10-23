@@ -56,7 +56,7 @@ ARMS = ("v10", "raw-claude", "legacy", "v10-parallel", "v10-seq", "configured-cl
 CLAUDE_ARMS = ("raw-claude", "configured-claude")
 CONFIGURED_SRC_ENV = "LOKI_EVAL_CONFIGURED_CC_DIR"
 CONFIGURED_ENTRIES = ("CLAUDE.md", "settings.json", "hooks", "skills", "agents", "commands")
-# D61 slice 17: the speed tier (D67) compares three arms. Every v10* arm runs the
+# D61 slice 17: the speed tier compares three arms. Every v10* arm runs the
 # same v10 engine (same marker, events and token accounting); only LOKI_SPEED
 # differs. v10-parallel is a STUB until the decomposer (D61 slices 8-16) lands:
 # today LOKI_SPEED=1 on the v10 engine is the whole arm, and every surface that
@@ -100,7 +100,7 @@ SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRI
              "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CONFIG_DIR")
 # Operator auth env vars, in precedence order, passed through to the arm as-is.
 AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
-# E-52: v10-only engine knobs let back through arm_env's blanket LOKI_* scrub,
+# v10-only engine knobs let back through arm_env's blanket LOKI_* scrub,
 # by exact name, never a prefix match. Includes LOKI_E10_PLAN/WALL/WALL_TIER
 # (E-45 wiring, not read yet) and the operator tunables grep finds today
 # (process.env.LOKI_E10_ in loki-ts/src/engine10: CAP_S, INVOKER,
@@ -250,7 +250,7 @@ def validate_task(task_dir):
         is_lg = os.path.basename(os.path.normpath(task_dir)).startswith("lg-")
         if is_lg and t.get("tier") != "large":
             errs.append('lg- tasks must declare "tier": "large" (D38)')
-        # D67: the authored speed tier is anchored both ways by name: an spd- task
+        # the authored speed tier is anchored both ways by name: an spd- task
         # must declare tier speed and a boolean decomposable, and tier speed is
         # only legal on an spd- task. Speed tasks still get the D38 hidden-test checks.
         is_spd = os.path.basename(os.path.normpath(task_dir)).startswith("spd-")
@@ -639,7 +639,7 @@ def arm_env(rundir, model, alias, arm=None):
         for k in V10_ENGINE_ENV_ALLOWLIST:
             if k in os.environ:
                 env[k] = os.environ[k]
-        # D61: the speed arms pin LOKI_SPEED themselves (the blanket LOKI_*
+        # the speed arms pin LOKI_SPEED themselves (the blanket LOKI_*
         # scrub already dropped the operator's value), so v10-seq can never
         # be sped up and v10-parallel can never silently run sequential.
         if arm in ARM_SPEED:
@@ -1346,7 +1346,7 @@ def _first_turn_prompt_tokens(work):
     return None
 
 
-# E-101: results.jsonl lives under eval/loki10/results/ (gitignored) inside a
+# results.jsonl lives under eval/loki10/results/ (gitignored) inside a
 # worktree, so a worktree removal loses it -- the EV-14 incident. Every row
 # also gets archived outside the worktree's gitignored tree. Archived rows
 # never carry the arm_stdout/arm_stderr/prepare/setup/grade log paths (those
@@ -1476,7 +1476,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         env["LOKI_ENGINE"] = "v10"
         argv = [binary, prompt]
     else:
-        # Pinned so the v10 default flip (E-31) cannot change what EV-5 measures.
+        # Pinned so the v10 default flip cannot change what EV-5 measures.
         env["LOKI_ENGINE"] = "legacy"
         pfile = os.path.join(rundir, "prompt.md")
         with open(pfile, "w", encoding="utf-8") as f:
@@ -1635,7 +1635,7 @@ def cmd_run(args):
     os.makedirs(out, exist_ok=True)
     CHILDREN = Children(os.path.join(tmp, "child-pids"))
     harness_sha = git_out(["rev-parse", "HEAD"], HERE) or "unknown"
-    # eval/loki10/archive/ is this run's own uncommitted output (E-101); it
+    # eval/loki10/archive/ is this run's own uncommitted output; it
     # must not make an otherwise-clean tree read as "-dirty" for the next arm
     # run in the same checkout, which would split raw/v10 rows onto different
     # harness_sha values and corrupt the comparison in dedupe().
@@ -1677,7 +1677,7 @@ def cmd_run(args):
     write_lock = threading.Lock()
     results = os.path.join(out, "results.jsonl")
 
-    # E-101: durable archive, written per row (not just at the end) so a
+    # durable archive, written per row (not just at the end) so a
     # killed run still keeps what it has. run_name need only be unique enough
     # to not collide within one --out; --apply of the archive dir is manual.
     run_name = "%s-%s-%s" % (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), args.arm,
@@ -1838,7 +1838,7 @@ def summarize_rows(rows):
             if r.get("status") == "task_invalid":
                 invalid.setdefault(r["task"], r.get("invalid_reason") or "task_invalid")
         live = [r for r in rs if r["task"] not in invalid]
-        # D67: authored speed-tier rows are reported apart; they are never a
+        # authored speed-tier rows are reported apart; they are never a
         # large-tier result and never mix into the main per-arm numbers.
         main = [r for r in live if r.get("tier") != "speed"]
         spd = [r for r in live if r.get("tier") == "speed"]

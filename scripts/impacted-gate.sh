@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/impacted-gate.sh -- run only the shell suites a diff can affect (FC-31).
+# scripts/impacted-gate.sh -- run only the shell suites a diff can affect.
 #
 # Usage: bash scripts/impacted-gate.sh <base-ref> [head-ref]
 #        bash scripts/local-ci.sh --impacted <base-ref>

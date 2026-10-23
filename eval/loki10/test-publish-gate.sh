@@ -3,8 +3,8 @@
 # eval/loki10/test-publish-gate.sh
 #
 # EV-6 prep: publish_gate.sh merges three arms' results.jsonl files and hands
-# the merge to gate_report.py (E-33). Runs entirely against generated fixture
-# rows -- never a real arm, never the real docs/v10/METRICS.md or CHANGELOG.md.
+# the merge to gate_report.py. Runs entirely against generated fixture
+# rows -- never a real arm, never the real .loki/metrics/first-run.md or CHANGELOG.md.
 #
 # gate_report.py is E-33's file and is not committed by this slice. Until
 # E-33 merges, this test finds it via LOKI_GATE_REPORT (a checkout that has
@@ -17,7 +17,7 @@
 #      merged in, not just the two the gate itself scores)
 #   2. a missing input file -> nonzero exit, both targets left untouched
 #   3. a rerun is byte-identical (idempotent)
-#   4. the real repo docs/v10/METRICS.md and CHANGELOG.md are byte-identical
+#   4. the real repo .loki/metrics/first-run.md and CHANGELOG.md are byte-identical
 #      before and after this whole test
 #===============================================================================
 set -u
@@ -50,7 +50,7 @@ export LOKI_GATE_REPORT="$GEN"
 
 sha() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
 
-REAL_METRICS="$REPO/docs/v10/METRICS.md"
+REAL_METRICS="$REPO/.loki/metrics/first-run.md"
 REAL_CHANGELOG="$REPO/CHANGELOG.md"
 real_metrics_before="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
 real_changelog_before="$(sha "$REAL_CHANGELOG" 2>/dev/null || echo none)"
@@ -132,8 +132,8 @@ bash "$T/mutant.sh" "$T/v10.jsonl" "$T/raw.jsonl" "$T/legacy.jsonl" \
 # 5. the real repo files are untouched by this whole test
 real_metrics_after="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
 real_changelog_after="$(sha "$REAL_CHANGELOG" 2>/dev/null || echo none)"
-[ "$real_metrics_before" = "$real_metrics_after" ] && pass "real docs/v10/METRICS.md untouched" \
-    || fail "real docs/v10/METRICS.md CHANGED during this test"
+[ "$real_metrics_before" = "$real_metrics_after" ] && pass "real .loki/metrics/first-run.md untouched" \
+    || fail "real .loki/metrics/first-run.md CHANGED during this test"
 [ "$real_changelog_before" = "$real_changelog_after" ] && pass "real CHANGELOG.md untouched" \
     || fail "real CHANGELOG.md CHANGED during this test"
 

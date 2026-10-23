@@ -53,7 +53,7 @@ EOF
 
 run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_REAL_HOME -u LOKI_HERMETIC_HOME -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
 
-# E-155: a suite that switches the parent branch is named and fails the run.
+# a suite that switches the parent branch is named and fails the run.
 mk_runner <<'EOF'
 run_test "noop suite" "$SCRIPT_DIR/t-noop.sh"
 run_test "switcher suite" "$SCRIPT_DIR/t-switch.sh"
@@ -64,7 +64,7 @@ if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "switcher suite FAILED: it ch
 else bad "E-155: branch switch not caught (rc=$rc)"; fi
 if printf '%s' "$out" | grep -q "noop suite FAILED"; then bad "E-155: clean suite falsely flagged"; else ok "E-155: clean suite not flagged"; fi
 
-# E-154: a suite that writes the fake HOME's ~/.loki/keys fails the run.
+# a suite that writes the fake HOME's ~/.loki/keys fails the run.
 rm -rf "$T/home/.loki"; git -C "$T/repo" checkout -q main
 mk_runner <<'EOF'
 run_test "key writer suite" "$SCRIPT_DIR/t-keys.sh"
@@ -74,7 +74,7 @@ if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "key writer suite FAILED: it 
     ok "E-154: writing ~/.loki/keys fails the run"
 else bad "E-154: key write not caught (rc=$rc)"; fi
 
-# E-154: default key file lives in a run-owned temp dir, not under HOME, and is removed at exit.
+# default key file lives in a run-owned temp dir, not under HOME, and is removed at exit.
 mk_runner <<'EOF'
 run_test "printkey suite" "$SCRIPT_DIR/t-printkey.sh"
 EOF
@@ -90,7 +90,7 @@ printf '%s\n' "$out" | grep -qx 'CHILD_RUN_TMP=\[unset\]' && ok "E-154: child su
 out="$(cd "$T/repo" && env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RUN_TMP HOME="$T/home" TMPDIR="$T" LOKI_RECEIPT_SIGNING_KEY_FILE=/caller/key.pem bash tests/run-all-tests.sh 2>&1)"
 printf '%s' "$out" | grep -q "KEYFILE=/caller/key.pem" && ok "E-154: caller-set key file is kept" || bad "E-154: caller key file overridden"
 
-# E-154c: CI drives the runner with LOKI_TEST_SHARD only, so the guards must be
+# CI drives the runner with LOKI_TEST_SHARD only, so the guards must be
 # active in shard mode (LOKI_TEST_LIST is a no-execution listing mode, not CI).
 mk_runner <<'EOF2'
 run_test "key writer suite" "$SCRIPT_DIR/t-keys.sh"

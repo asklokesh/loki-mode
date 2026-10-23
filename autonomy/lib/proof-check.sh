@@ -27,7 +27,7 @@
 # This function is only ever called when the operator opted in (the call site
 # guards on LOKI_PROVEN_PR_CHECK=1). It is also safe if called directly.
 #
-# Inline Python (D7): the call site's cwd is the agent's repo, so the proof
+# Inline Python: the call site's cwd is the agent's repo, so the proof
 # readers drop '' and '.' from sys.path first; a committed json.py or
 # sitecustomize.py cannot change the headline. Pinned by
 # tests/test-proven-pr-check.sh (D7 section).

@@ -202,7 +202,7 @@ else
     bad "cli.ts arm lazy import missing"
 fi
 # 6. bin/loki: engine10 is reached only through its two known exec arms --
-#    the modernize) arm (M-08) and the engine block (D29) -- never a
+#    the modernize) arm (M-08) and the engine block -- never a
 #    stray third exec line anywhere else in the file. Anchored on the arms'
 #    own text, not line numbers, so edits elsewhere in the file don't rot it.
 BIN="$REPO/bin/loki"

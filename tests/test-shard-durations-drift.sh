@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-134: tests/shard-durations.tsv must stay in sync with tests/run-all-tests.sh's
+# tests/shard-durations.tsv must stay in sync with tests/run-all-tests.sh's
 # own run_test registrations, in both directions.
 #
 # WHY THIS MATTERS. The LPT bin-packer in run-all-tests.sh degrades safely when

@@ -239,7 +239,7 @@ cockpit_render() {
 }
 
 #===============================================================================
-# E3: keyboard interactivity for `loki cockpit --follow`.
+# keyboard interactivity for `loki cockpit --follow`.
 # These live here (sourced by cmd_cockpit) so they can be extracted + unit
 # tested without pulling in the whole autonomy/loki CLI.
 #===============================================================================

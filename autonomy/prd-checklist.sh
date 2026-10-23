@@ -18,7 +18,7 @@
 #   LOKI_CHECKLIST_TIMEOUT      - Timeout per check in seconds (default: 30)
 #   LOKI_CHECKLIST_ENABLED      - Enable/disable checklist (default: true)
 #
-# Inline Python (D7): verification runs with the cwd inside the agent's repo,
+# Inline Python: verification runs with the cwd inside the agent's repo,
 # so every python3 here ignores PYTHON* env vars (an empty PYTHONPATH component
 # would load a committed sitecustomize.py) and every -c / - body drops '' and
 # '.' from sys.path before any other import (a committed json.py would print

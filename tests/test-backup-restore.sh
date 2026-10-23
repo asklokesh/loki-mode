@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P12-48 (D99 item 7): `loki backup` / `loki restore` of the dashboard state dir.
+# P12-48: `loki backup` / `loki restore` of the dashboard state dir.
 #   T1 round trip is byte-equal (audit chain still verifies after restore)
 #   T2 restore refuses to overwrite a non-empty state dir without --force, and
 #      --force keeps the old state aside

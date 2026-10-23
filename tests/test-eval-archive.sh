@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-eval-archive.sh (E-101)
+# tests/test-eval-archive.sh
 #
 # EV-14 incident: eval/loki10/results/*/results.jsonl (gitignored, lives only
 # inside an agent worktree) was destroyed when that worktree was force-removed.

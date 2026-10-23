@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E-130: create_worktree must cache the npm install keyed on the lockfile hash
+# create_worktree must cache the npm install keyed on the lockfile hash
 # under <project>/.loki/cache/install. Drives _loki_npm_install_cached from
 # run.sh with a fake npm that counts invocations.
 set -uo pipefail

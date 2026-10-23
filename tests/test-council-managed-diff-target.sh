@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test-council-managed-diff-target.sh
 #
-# S-196: council_managed_should_stop built diff_summary from
+# council_managed_should_stop built diff_summary from
 # `cd "${PROJECT_DIR:-$(pwd)}" && git diff --stat`. In production run.sh sets
 # PROJECT_DIR to Loki's own install tree, so the managed council was handed
 # Loki's diff instead of the target project's change. diff_summary must come

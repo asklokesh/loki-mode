@@ -56,7 +56,7 @@ mkdir -p "$HOME" "$W/bin"
 export PATH="$W/bin:$PATH"
 export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 unset GIT_SSH_COMMAND GH_TOKEN GITHUB_TOKEN SSH_AUTH_SOCK GIT_CONFIG_COUNT
-# S-100: _loki_trusted_push resolves the default branch (gh repo view
+# _loki_trusted_push resolves the default branch (gh repo view
 # OWNER/REPO --jq) before pushing; the stub answers main.
 printf '#!/bin/sh\n[ "$1 $2" = "repo view" ] && [ -n "${3:-}" ] && echo main\nexit 0\n' > "$W/bin/gh"
 chmod +x "$W/bin/gh"

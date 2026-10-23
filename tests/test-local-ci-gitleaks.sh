@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test-local-ci-gitleaks.sh
 #
-# E-60: guards scripts/local-ci.sh's fast-tier gitleaks step -- secrets over
+# guards scripts/local-ci.sh's fast-tier gitleaks step -- secrets over
 # origin/main..HEAD only (not security-audit.yml's full-history "--all" scan),
 # using the reviewed .gitleaksignore baseline, SKIPPING (never silently
 # passing) when no gitleaks binary is on PATH.

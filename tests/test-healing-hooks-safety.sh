@@ -281,7 +281,7 @@ else
         "rc=$rc_d out=$out_d"
 fi
 
-# D2: the snapshot must NOT have been created when the gate blocked (proving the
+# the snapshot must NOT have been created when the gate blocked (proving the
 # block happens BEFORE _heal_snapshot_save, so the gate cannot be bypassed by
 # relying on snapshot side-effects).
 if [[ ! -d "$DIR_D/.loki/healing/snapshots" ]] || \

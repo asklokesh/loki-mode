@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-100: on_run_complete never pushes the repository's ACTUAL default branch,
+# on_run_complete never pushes the repository's ACTUAL default branch,
 # not only main/master. The default branch is resolved from the pinned origin
 # (gh repo view OWNER/REPO --json defaultBranchRef, run from / with GH_REPO);
 # if it cannot be resolved the push is refused (fail closed).

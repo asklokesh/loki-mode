@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-135: the trust-core probes run in parallel, so they must never touch the
+# the trust-core probes run in parallel, so they must never touch the
 # tree they were started from. A probe edits a source file in place for a whole
 # test run; two probes in one tree see each other's breakage and report
 # verdicts about code nobody wrote. Each worker must mutate its own private copy.

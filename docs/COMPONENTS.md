@@ -349,7 +349,7 @@ skill file.
 - `model-selection.md`, `providers.md`, `healing.md`, `testing.md`,
   `production.md`, `troubleshooting.md`, `agents.md`, `artifacts.md`,
   `patterns-advanced.md`, `parallel-workflows.md`, `github-integration.md`,
-  `sdlc-fleet.md`, `memory.md`, `documentation.md`, `compound-learning.md`,
+  `memory.md`, `documentation.md`, `compound-learning.md`,
   `magic-modules.md`, `mirofish-integration.md`, `openspec-integration.md`.
 
 **Dependencies:**

@@ -1402,7 +1402,7 @@ PY
         # engine10's trusted push step checks for an existing PR first: none exists.
         printf '  "pr list") [ "$tok" = yes ] && exit 0; exit 1 ;;\n'
         printf '  "pr create")[ "$tok" = yes ] && { echo "https://github.com/octocat/hello/pull/7"; exit 0; }; exit 1 ;;\n'
-        # S-100: on_run_complete resolves the default branch before pushing.
+        # on_run_complete resolves the default branch before pushing.
         printf '  "repo view") [ "$tok" = yes ] && { echo main; exit 0; }; exit 1 ;;\n'
         # `gh auth token`: echoes back whatever GH_TOKEN/GITHUB_TOKEN currently
         # holds when present (env tier, matching real gh -- an env value, even
@@ -1546,7 +1546,7 @@ PY
         {
             printf 'set -u\n'
             printf 'export HOME=%q PATH=%q TMPDIR=%q MOAT_LOG_DIR=%q\n' "$L/home" "$B:$PATH" "${TMPDIR:-/tmp}" "$L"
-            # S-107: the GitHub ubuntu runner exports XDG_CONFIG_HOME (runner
+            # the GitHub ubuntu runner exports XDG_CONFIG_HOME (runner
             # image configure-environment.sh), which gh prefers over
             # $HOME/.config. Inherited, it moved gh's config dir off the
             # sandboxed HOME, away from the planted hosts.yml: the opt-out

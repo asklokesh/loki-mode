@@ -85,7 +85,7 @@ fi
 
 echo
 echo "T6 -- self-test survives an unauthenticated, gh-less environment (E-92 guard 17)"
-# E-92: main went red because --self-test made a real `gh api` call in CI
+# main went red because --self-test made a real `gh api` call in CI
 # that passed locally only because a working, authenticated `gh` happened
 # to be on PATH there. Re-run under a stripped env (empty HOME so gh's own
 # ~/.config/gh auth store is gone, no GH_TOKEN/GITHUB_TOKEN, and gh itself

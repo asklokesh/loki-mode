@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # nightly-flake-tracker.sh - flag tests that flip pass/fail on an identical SHA
-# across saved Nightly job logs (FC-53).
+# across saved Nightly job logs.
 #
 # Usage: nightly-flake-tracker.sh SHA:LABEL:LOGFILE [SHA:LABEL:LOGFILE ...]
 #   LABEL names the run/job the log came from (for example 37790534786-bun).

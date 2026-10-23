@@ -4,7 +4,7 @@
 # needed) so each rule R0-R7 has a deterministic scenario, plus the
 # unparseable-diff fallback in git mode.
 #
-# Perf (S-136): scripts/select-tests.sh is a pure function of its changed-file
+# Perf: scripts/select-tests.sh is a pure function of its changed-file
 # list against a fixed repo state, but each invocation is its own process
 # (~5-6s of grep/xargs fan-out over the test tree). ~30 distinct inputs run
 # serially blew past the 60s cap. Every distinct input below is queued up
@@ -243,7 +243,7 @@ out="$(sel 'loki-ts/src/runner/council.ts')"
 expect_contains "R4 bun_test match" "$out" "$(printf 'R4\tbun_test\tloki-ts/tests/runner/council.test.ts')"
 expect_contains "R4 typecheck" "$out" "$(printf 'R4\tbun_typecheck\tloki-ts')"
 
-# R4 (FC-31): a changed loki-ts/src file must also select the SHELL suites that
+# R4: a changed loki-ts/src file must also select the SHELL suites that
 # guard it, by full path or by the command name (loki-ts/src/commands/X.ts is
 # run as "loki X"). Without this, a doctor.ts slice never ran
 # its doctor shell suites and main went red in Tier B.
@@ -459,7 +459,7 @@ for g in "shell_test	tests/cli/test-completions-coverage.sh" \
     expect_contains "TEN-STABILITY-04 --guards-only lists ${g#*	}" "$guards_out" "$(printf 'R8\t%s' "$g")"
 done
 
-# FASTGATE-GLOBAL-GUARDS (FC-89): a bun test that walks the whole loki-ts/src tree names no src stem, so R4 never
+# FASTGATE-GLOBAL-GUARDS: a bun test that walks the whole loki-ts/src tree names no src stem, so R4 never
 # selected it (WALL-COLOR, FC-69, shipped a red). Such tests carry the marker `// select: walk-all-src` and the
 # selector picks every marked file up for any diff, no hard-coded list. A diff touching only
 # loki-ts/src/engine10/stages/wall.ts must select all of them.

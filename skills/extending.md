@@ -139,6 +139,5 @@ the next reader does not mistake a green test suite for a working feature.
 
 If you need a new blocking gate, it is an engine change: add the phase to
 `autonomy/run.sh`, give it an opt-out flag matching the `LOKI_GATE_*` convention
-in `skills/quality-gates.md`, and mirror it on the Bun route. Follow
-`skills/sdlc-fleet.md` -- a new gate is a non-trivial change and needs the
-council.
+in `skills/quality-gates.md`, and mirror it on the Bun route. A new gate is a
+non-trivial change and needs council review.

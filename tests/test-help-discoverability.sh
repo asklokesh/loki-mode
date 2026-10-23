@@ -55,7 +55,7 @@ awk -v start="$DISPATCH_START" '
 # pipe, the CLI dies of SIGPIPE, and the pipeline reports nonzero regardless of
 # the match, which silently marks every candidate real.
 #
-# PARALLEL (S-210): probes run 8 at a time via xargs, each in its own scratch
+# PARALLEL: probes run 8 at a time via xargs, each in its own scratch
 # cwd so concurrent probes never share a working directory, and each writes one
 # result file. The worker always exits 0 (BSD xargs aborts on 255), so xargs's
 # status is never the verdict: a candidate with NO result file is a FAILURE,

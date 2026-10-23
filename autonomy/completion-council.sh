@@ -19,7 +19,7 @@
 #   - Multi-agent debate: Voting beats unanimous (+13.2%), KS adaptive stopping
 #   - NVIDIA ToolOrchestra: Efficiency metrics for agent tool use
 #
-# Inline Python (D7): the council runs with the cwd inside the agent's repo, so
+# Inline Python: the council runs with the cwd inside the agent's repo, so
 # every "python3 -c" / "python3 -" here runs -E (a PYTHONPATH empty component
 # would load a committed sitecustomize.py) and drops '' and '.' from sys.path
 # before any other import (a committed json.py would print the verdict).
@@ -251,7 +251,7 @@ council_augment_from_managed_memory() {
         return 0
     fi
     local target_dir="${TARGET_DIR:-.}"
-    # D7: never fall back to the cwd. The council runs with cwd inside the
+    # never fall back to the cwd. The council runs with cwd inside the
     # agent's own repo, which can ship its own memory/managed_memory package
     # that shadows the real one -- `${PROJECT_DIR:-$(pwd)}` would `cd` into
     # that repo and `python3 -m memory.managed_memory.retrieve` would import
@@ -1412,7 +1412,7 @@ council_checklist_gate() {
     # than the old `|| echo PASS`, which cleared the first hard gate on a broken
     # host. (Absent python is a real deployment problem; failing open here is
     # exactly the fake-green this gate exists to prevent.)
-    # S-141: resolved -I -S interpreter (see _loki_snapshot_py_tool); a bare
+    # resolved -I -S interpreter (see _loki_snapshot_py_tool); a bare
     # python3 -E still runs user-site .pth lines that can forge json.load.
     local _gate_py
     if ! _gate_py="$(_loki_snapshot_py_tool)"; then
@@ -1563,7 +1563,7 @@ council_heldout_gate() {
     # The failing titles are NOT carried in this line (a checklist title may
     # contain ':' or '|'); they are read separately from the held-out JSON block
     # below in the BLOCK branch.
-    # S-141: resolved -I -S interpreter. None resolvable -> "BLOCK 0 1" and fall
+    # resolved -I -S interpreter. None resolvable -> "BLOCK 0 1" and fall
     # through, so the BLOCK branch still records its trust event and block file.
     local gate_result _heldout_py
     if ! _heldout_py="$(_loki_snapshot_py_tool)"; then
@@ -1890,7 +1890,7 @@ _council_trivial_diff() {
 }
 
 council_evidence_gate() {
-    # P2 (S-116): when the caller sets _LOKI_EVIDENCE_REQUIRE_TESTS=1, inconclusive
+    # P2: when the caller sets _LOKI_EVIDENCE_REQUIRE_TESTS=1, inconclusive
     # test evidence blocks instead of passing through. council_evaluate sets it as
     # a function-local (bash dynamic scope, gone on return), so the vote alone can
     # never approve while every other caller keeps the old pass-through rc.
@@ -4283,7 +4283,7 @@ council_evaluate() {
         if declare -f loki_council_dispatch_agents >/dev/null 2>&1; then
             if loki_council_dispatch_agents "$ITERATION_COUNT" "${COUNCIL_PRD_PATH:-}"; then
                 local _va_round_file="$COUNCIL_STATE_DIR/votes/round-${ITERATION_COUNT}.json"
-                # S-141: resolved -I -S interpreter. Dispatch succeeded, so an
+                # resolved -I -S interpreter. Dispatch succeeded, so an
                 # unreadable round file is CONTINUE, never a fall-through to the
                 # heuristic path that could still reach COMPLETE.
                 local _va_py=""
@@ -4405,7 +4405,7 @@ council_managed_should_stop() {
         return 1
     fi
 
-    # S-196: every reader and the session heredoc run on the resolved -I -S
+    # every reader and the session heredoc run on the resolved -I -S
     # interpreter (see _loki_snapshot_py_tool); -E still loads user-site .pth
     # files. None resolvable -> never start the managed session: Bash fallback.
     # Deliberate consequence: -S hides site-packages, so the anthropic SDK is
@@ -4426,7 +4426,7 @@ council_managed_should_stop() {
 
     # Build session context: diff_summary, test_summary, pending_tasks.
     # Kept deliberately small so we never choke the session budget.
-    # S-196: diff the target project (same root as loki_dir and
+    # diff the target project (same root as loki_dir and
     # LOKI_TARGET_DIR), never PROJECT_DIR, which is Loki's install tree.
     local diff_summary=""
     diff_summary=$(cd "${TARGET_DIR:-.}" 2>/dev/null && git diff --stat 2>/dev/null | tail -20 | tr '\n' ' ' || echo "")
@@ -4472,7 +4472,7 @@ import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys, pathlib
 
 # Path setup: import providers.managed only from an explicit PROJECT_DIR. Never
-# fall back to the cwd (D7): it is the agent's repo, which could ship its own
+# fall back to the cwd: it is the agent's repo, which could ship its own
 # providers/managed.py. Unset -> ImportError -> the Bash voting path.
 project_dir = os.environ.get("PROJECT_DIR", "")
 if project_dir:
@@ -4859,7 +4859,7 @@ council_should_stop() {
         # managed memory store. Backgrounded + silent; flags gate the work
         # inside the Python module so no-op when off.
         #
-        # D7: never fall back to the cwd. Identical threat model to
+        # never fall back to the cwd. Identical threat model to
         # council_augment_from_managed_memory (BACKLOG 63) but more severe:
         # this call EXECUTES memory.managed_memory.shadow_write as a module,
         # not just imports one for reading, so `cd "${PROJECT_DIR:-$(pwd)}"`

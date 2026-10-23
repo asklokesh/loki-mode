@@ -58,7 +58,7 @@ _LOKI_PINNED_ORIGIN="$_e10_origin"
 
 [ "$_LOKI_ORIGIN_PINNED" = "1" ] || die "origin not pinned (_LOKI_ORIGIN_PINNED=1 required)"
 
-# E-41: the eval harness (eval/loki10/harness.py) pins origin to a local bare
+# the eval harness (eval/loki10/harness.py) pins origin to a local bare
 # repo and scores "PR opened" as a branch landing there. Only an absolute,
 # colon-free path whose own git dir is itself a bare repo qualifies; anything
 # else (URL, scp host:path, relative, non-bare, a subdirectory) takes the
@@ -270,7 +270,7 @@ case "$mode" in
         _e10_gh pr comment "$1" --repo "$_e10_repo" --body-file "$2" || die "gh pr comment failed"
         ;;
     issue-comment)
-        # E-67: a FAILED run with no diff (or no remote) has no PR to open; comment on the issue
+        # a FAILED run with no diff (or no remote) has no PR to open; comment on the issue
         # instead so the run's reason is never silently lost. <issue-ref> is owner/repo#N or #N.
         # --update: the status projector. One comment carrying the marker below is edited in place (created when absent),
         # so an issue shows live run state without a new comment per event. Only a comment written by the authenticated

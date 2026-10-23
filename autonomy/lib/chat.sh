@@ -72,7 +72,7 @@ HLP
 }
 
 
-# /steer: record source=chat and the chat user as actor (D02). Echo loki steer's own
+# /steer: record source=chat and the chat user as actor. Echo loki steer's own
 # "Steer rev N received" ack; never claim receipt it did not print.
 _chat_steer() {
     local loki="$1" msg="$2" out rc=0 first

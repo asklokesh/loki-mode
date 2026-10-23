@@ -1,5 +1,4 @@
-// CPE-24 legacy dashboard shim: mapped routes (status and shape), 308 for HTML, 501 and 410 for the rest, auth parity with the legacy server, first-hit logging,
-// and agreement between the route table and docs/v10/CP-ENTERPRISE-UI.md section 5.2.
+// Legacy dashboard shim: mapped routes (status and shape), 308 for HTML, 501 and 410 for the rest, auth parity with the legacy server, first-hit logging.
 import { beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,17 +39,6 @@ const get = (app: Hono, path: string, headers: Record<string, string> = {}, meth
 const fill = (p: string) => p.replace(/\{[A-Za-z_]+:path\}/g, "a/b").replace(/\{[A-Za-z_]+\}/g, "x");
 
 beforeEach(() => resetLegacyLog());
-
-test("the route table and the doc table agree (method, path, action) and the counts are the documented ones", () => {
-  const doc = readFileSync(join(import.meta.dir, "../../../../docs/v10/CP-ENTERPRISE-UI.md"), "utf8");
-  const rows = [...doc.matchAll(/^\| (GET|POST|PUT|DELETE|PATCH|WS|MOUNT) `([^`]+)` \|.*\| ([^|]+) \|$/gm)].map((m) => ({ method: m[1] as string, path: m[2] as string, shim: (m[3] as string).trim() }));
-  expect(rows.length).toBeGreaterThan(0);
-  const code = (s: string) => (s === "map" ? "map" : s.startsWith("308") ? "308" : s.startsWith("410") ? "410" : s.startsWith("501") ? "501" : "none");
-  const expected = rows.filter((r) => code(r.shim) !== "none").map((r) => `${r.method} ${r.path} ${code(r.shim)}`);
-  expect(LEGACY_ROUTES.map((r) => `${r.method} ${r.path} ${r.action}`)).toEqual(expected);
-  const count = (a: string) => LEGACY_ROUTES.filter((r) => r.action === a).length;
-  for (const a of ["map", "308", "410", "501"]) expect(count(a)).toBe(rows.filter((r) => code(r.shim) === a).length);
-});
 
 test("GET /.well-known/agent.json: 200, open, A2A card without capabilities the CP cannot back", async () => {
   const { app, sqlite } = mk();

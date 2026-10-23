@@ -222,7 +222,7 @@ chmod +x "$STUBBIN/gh"
 # Stub bun: only understands `bun run build`, invoked with cwd=loki-ts/. It
 # does not perform a real build (no network calls) -- it models the one
 # property run_bump_only actually checks: the freshly-bumped VERSION ends
-# up embedded in dist/loki.js. run_bump_only now fails fast (E-102) unless
+# up embedded in dist/loki.js. run_bump_only now fails fast unless
 # loki-ts/node_modules exists, so the fixture below creates a placeholder
 # directory for it even though this stub never reads it.
 cat > "$STUBBIN/bun" << 'BUNEOF'
@@ -663,7 +663,7 @@ echo "T20 -- gitleaks finding: refuses before push"
 new_ship_fixture
 run_ship_case "GITLEAKS_RC=1"
 assert_refused "gitleaks hit" $? SHIP_GITLEAKS "$SHIP_BASE"
-# E-114: a range that adds .gitleaks.toml could disable the very scan it faces.
+# a range that adds .gitleaks.toml could disable the very scan it faces.
 new_ship_fixture
 printf 'title = "x"\n' > "$SHIP_REPO/.gitleaks.toml"
 gitq -C "$SHIP_REPO" add .gitleaks.toml

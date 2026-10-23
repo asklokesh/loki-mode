@@ -32,7 +32,7 @@
 # every optional tool is `command -v`-guarded. All print paths `return 0` so a
 # sourced call cannot abort the caller under set -e.
 
-# S-215: callers render from the agent's repo, and a bare `python3 -` puts the
+# callers render from the agent's repo, and a bare `python3 -` puts the
 # cwd first on sys.path, so a committed json.py forged the headline. The
 # renderer resolves its interpreter through _loki_snapshot_py_tool and runs it
 # -I -S. The copy below only serves callers that source this file on its own;

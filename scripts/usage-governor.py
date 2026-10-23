@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Usage governor for the Loki v10 swarm (D39, docs/v10/DECISIONS.md).
 
-Answers three questions for the Chief of Staff's dispatch loop: how much of
+Answers three questions for the coordinating session's dispatch loop: how much of
 the Claude Max plan's 5-hour and weekly windows has been used, what the
 burn rate projects for the next hour, and how many engineers that leaves
 room for. stdlib only.
@@ -85,7 +85,7 @@ ACTIVE_ROLES = ("subagent", "workflow-agent")
 LIVE_LOG_PATH = Path.home() / ".claude" / "usage-governor" / "statusline.jsonl"
 LIVE_FRESHNESS_SECONDS = 30 * 60
 
-# Per-file transcript parse cache (E-109): keyed by (path, size, mtime), so
+# Per-file transcript parse cache: keyed by (path, size, mtime), so
 # an unchanged file is read from cache on the next run instead of
 # re-parsed. See iter_records.
 CACHE_PATH = Path.home() / ".claude" / "usage-governor" / "transcript-cache.json"
@@ -119,7 +119,7 @@ def classify_role(path: Path):
         meta = path.with_name(path.stem + ".meta.json")
         return "workflow-agent" if meta.exists() else "subagent"
     # a jsonl directly inside a project dir (not nested under a session dir)
-    # is the main session transcript: the Chief of Staff.
+    # is the main session transcript.
     return "chief-of-staff"
 
 
@@ -264,7 +264,7 @@ def iter_records(root: Path, min_mtime=None, cache_path: Path | None = None):
             prior = best.get(dedup_key)
             if prior is None or out >= prior[0]:
                 best[dedup_key] = (out, path, role, ts, model, usage)
-    # Perf (E-109): only rewrite the cache file when its contents actually
+    # Perf: only rewrite the cache file when its contents actually
     # changed. A fully-warm run (every file a cache hit, same in-window file
     # set) would otherwise re-serialize and rewrite the whole multi-MB cache
     # every time for zero benefit -- the dict compare is cheap next to the
@@ -847,7 +847,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     if extra_readings_path is not None:
         readings = readings + load_readings(extra_readings_path)
 
-    # Perf (E-109): min_mtime must be the EARLIEST start of every window this
+    # Perf: min_mtime must be the EARLIEST start of every window this
     # function reads from all_records below, not just weekly_start. Bug found
     # by Tech Lead review (e07a9df1): weekly_start is not always <= window_start
     # -- for up to WINDOW_HOURS after a Wednesday reset, window_start (now-5h)
@@ -932,7 +932,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     burn_per_engineer_out = (engineer_last_hour_out / active_engineers) if active_engineers else None
     burn_per_engineer_opus = (engineer_last_hour_opus / active_engineers) if active_engineers else None
 
-    # The Chief of Staff's own main-session burn is a fixed load on the plan
+    # The main session's own burn is a fixed load on the plan
     # limits, independent of how many engineers are dispatched: it happens
     # regardless of n, so it is added once per projected hour rather than
     # divided across (or multiplied by) the engineer count.
@@ -1010,7 +1010,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     # burn rate or rate-eff is even available to run the projection loop
     # below (e.g. no active engineers yet this hour).
     max_engineers_next_hour = None
-    # Why max_engineers_next_hour stayed None, for human_summary (E-118):
+    # Why max_engineers_next_hour stayed None, for human_summary:
     # "uncalibrated" only when there is genuinely no rate to project with;
     # calibration/live rates can be present while burn_per_engineer_out is
     # still None because active_engineers == 0 (no engineer ran last hour),

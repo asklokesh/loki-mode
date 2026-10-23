@@ -30,7 +30,7 @@
 #   3. refusal: unequal task sets -> exit 2, no table printed
 #   4. refusal: equal task sets, unequal harness_sha -> exit 2
 #   5. empty input: no args, and a label pointing at an empty file
-#   6. --append writes the tables to the given path; the real docs/v10/METRICS.md
+#   6. --append writes the tables to the given path; the real .loki/metrics/first-run.md
 #      is untouched by this whole test
 #   7-9. D41 headline pair (loki-sonnet vs raw-opus): ratio CI vs 0.5x
 #   a. 20 tasks x 3 reps, arms share true rates but independent draws:
@@ -62,7 +62,7 @@ if [ ! -x "$SCRIPT" ]; then
 fi
 
 sha() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
-REAL_METRICS="$REPO/docs/v10/METRICS.md"
+REAL_METRICS="$REPO/.loki/metrics/first-run.md"
 real_metrics_before="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
 
 # row_of FILE METRIC_PREFIX_REGEX: the one table row for that metric.
@@ -217,7 +217,7 @@ write_reps("gap", 3, lambda i, t, r: row(t, "raw-claude", "sha-gap", i < 8, 200,
 write_reps("nullcost", 3, lambda i, t, r: row(t, "raw-claude", "sha-nc", i < 8, 200, 0.20, rep=r),
            lambda i, t, r: row(t, "v10", "sha-nc", True, 100, None if (i == 0 and r == 1) else 0.05, rep=r))
 
-# ---- below the floor (D43 item 2). The audit repro: ONE task, 3 reps.
+# ---- below the floor. The audit repro: ONE task, 3 reps.
 # raw completes 2 of 3 at 100s/$1.00, loki 3 of 3 at 90s/$0.90; Fisher
 # exact p = 1.0, so nothing may mark green.
 TASKS = ["qs-dashboard"]
@@ -275,7 +275,7 @@ grep -qE '^Verdict: red\.' "$T/medium.log" && pass "medium: verdict red" || fail
 
 # ---- 2b: the same medium fixture WITHOUT the override is below the floor
 # (3 tasks, need 20): completion and p50 read inconclusive with the reason,
-# the null cost stays red (D43 item 1), and red outranks inconclusive in the
+# the null cost stays red, and red outranks inconclusive in the
 # verdict.
 rc=0
 run raw="$T/raw-r1.jsonl" raw="$T/raw-r2.jsonl" raw="$T/raw-r3.jsonl" \
@@ -320,8 +320,8 @@ run $(reps gap 3) --append "$T/METRICS.md" || rc=$?
     || fail "--append did not write the expected tables (rc=$rc)"
 
 real_metrics_after="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
-[ "$real_metrics_before" = "$real_metrics_after" ] && pass "real docs/v10/METRICS.md untouched" \
-    || fail "real docs/v10/METRICS.md CHANGED during this test"
+[ "$real_metrics_before" = "$real_metrics_after" ] && pass "real .loki/metrics/first-run.md untouched" \
+    || fail "real .loki/metrics/first-run.md CHANGED during this test"
 
 # ---- 7: D41 headline pair (loki-sonnet vs raw-opus), 0.6x raw cost is red
 rc=0; run $(reps h6 3) || rc=$?

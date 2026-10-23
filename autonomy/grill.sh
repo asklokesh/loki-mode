@@ -248,7 +248,7 @@ grill_invoke_provider() {
             _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
             ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
             local _gr_argv=("${_LOKI_PERM_ARGV[@]}" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
-            # S8: lean child flags (text-only role, no tools/MCP/slash commands) and
+            # lean child flags (text-only role, no tools/MCP/slash commands) and
             # a ledger line per call via --output-format json (unwrapped below).
             local _gr_lf _gr_ledger=false
             if type loki_lean_child_flags >/dev/null 2>&1; then

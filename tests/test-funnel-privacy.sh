@@ -86,7 +86,7 @@ exit 0
 STUB
 chmod +x "$BINDIR/curl"
 
-# E-165: every `loki start` runs in a throwaway git repo (never the repo root)
+# every `loki start` runs in a throwaway git repo (never the repo root)
 # with a stub provider that exits at once, under cap_command (timeout -k).
 # `auth status` reports logged-out so run.sh's auth preflight refuses at once on
 # every platform. Without it, Linux (login state "unknown", fails open) enters

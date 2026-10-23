@@ -43,7 +43,7 @@ step() { # step <label> <seconds> <cmd...>
     if run_to "$secs" "$@" >"$T/step.log" 2>&1; then ok "$label"; else bad "$label"; tail -20 "$T/step.log"; fi
 }
 
-# Structural guard (FC-32): never compare a hand-kept COPY list to the import graph. Stage exactly what the
+# Structural guard: never compare a hand-kept COPY list to the import graph. Stage exactly what the
 # build stage of Dockerfile.control-plane COPYs (honoring WORKDIR and the relative/absolute destinations) into a
 # scratch root, then run the real server bundle step there. A new import the Dockerfile does not deliver makes
 # `bun build` fail to resolve it; a Dockerfile that copies the source tree needs no list edit. This is the
@@ -109,7 +109,7 @@ else
   bad "server bundle metafile build failed"; tail -15 "$T/meta.log"
 fi
 
-# Red-first fixtures (FC-32). mkrepo: a scratch repo with the real control plane + loki-ts/src + Dockerfile.
+# Red-first fixtures. mkrepo: a scratch repo with the real control plane + loki-ts/src + Dockerfile.
 mkrepo() { # mkrepo <name>
     local d="$T/gfx/$1"
     mkdir -p "$d"
@@ -175,7 +175,7 @@ plant_import() { # plant_import <repo> <spec>: a brand new loki-ts file reached 
     printf 'export const fc32Fresh = 1;\n' >"$1/loki-ts/src/util/fc32_fresh.ts"
     printf 'import { fc32Fresh } from "%s";\nexport const fc32Use = fc32Fresh;\n' "$2" >>"$1/loki-ts/src/util/redact.ts"
 }
-# FC-39: the closure walk must follow .js/.mjs specifiers (TS ESM style) and must fail loudly on an unresolvable one.
+# the closure walk must follow .js/.mjs specifiers (TS ESM style) and must fail loudly on an unresolvable one.
 walkrepo() { # walkrepo <name> <import-spec>: tiny repo whose serve.ts imports <import-spec> from loki-ts/src
     local d="$T/walk/$1"
     mkdir -p "$d/packages/control-plane/src/server" "$d/packages/control-plane/src/ask" "$d/loki-ts/src/runner"

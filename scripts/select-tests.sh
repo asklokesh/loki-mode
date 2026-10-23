@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/select-tests.sh -- Tier A fast-gate test selector (S-91).
+# scripts/select-tests.sh -- Tier A fast-gate test selector.
 #
 # Prints one "<rule>\t<kind>\t<target>" line per suite a change can affect.
 # Feedback only: Tier B (the full tests/run-all-tests.sh run in test.yml)
@@ -89,7 +89,7 @@ else
     fi
 fi
 
-# ---- --run: execute everything selected (FC-47) ---------------------------
+# ---- --run: execute everything selected ---------------------------
 # Every selection path, including the early R0 / docs-only / empty exits,
 # ends in finish() so --run can never return having silently run nothing.
 run_selection() {
@@ -203,7 +203,7 @@ emit_global_guards() {
     emit_marked_walkers
 }
 
-# FC-89: bun tests that walk the whole loki-ts/src tree name no src stem, so R4 never selects them. Each carries
+# bun tests that walk the whole loki-ts/src tree name no src stem, so R4 never selects them. Each carries
 # the marker "select: walk-all-src" and is found here by content, so a new walker needs no list edit. Files that a
 # declared tsv row already covers (exact path, or a bun_test directory row above them) are not repeated.
 emit_marked_walkers() {
@@ -475,7 +475,7 @@ match_kind() {
     [ "$kind" = "shell_test" ] || { printf '%s\n' "$kind"; return; }
     case "$basename" in
         test_*.py | *_test.py) kind="py_test" ;;
-        # FC-54: the aggregate runner is not a suite; run bare it executes everything (rc=124 in the fast gate).
+        # the aggregate runner is not a suite; run bare it executes everything (rc=124 in the fast gate).
         run-all-tests.sh) kind="" ;;
         test-*.sh | run-*.sh | run_*.sh) ;;
         *.js | *.mjs) kind="node_test" ;;
@@ -591,13 +591,13 @@ for f in "${CHANGED[@]}"; do
                 emit R4 bun_typecheck "loki-ts"
                 BUN_TYPECHECK_EMITTED=1
             fi
-            # FC-31: shell suites guard loki-ts/src files too. Select any shell
+            # shell suites guard loki-ts/src files too. Select any shell
             # suite that names the file's full path, or (for a command module,
             # loki-ts/src/commands/X.ts) that runs it as "loki X". A bun-only
             # selection let a doctor.ts slice skip tests/test-doctor-blocker-
             # parity.sh and go red in Tier B.
             grep_and_emit R3 shell_test "$f" "$(all_test_files)"
-            # FC-32: CP-04 builds the control-plane server from what its Dockerfile copies.
+            # CP-04 builds the control-plane server from what its Dockerfile copies.
             cp_closure_load
             if { grep -qxF -- "$f" <<<"$CP_CLOSURE_CACHE" || [ "$CP_CLOSURE_CACHE" = "ALL" ]; } && [ -f tests/test-control-plane.sh ]; then
                 already_seen "shell_test:tests/test-control-plane.sh" || { mark_seen "shell_test:tests/test-control-plane.sh"; emit R3 shell_test "tests/test-control-plane.sh"; }

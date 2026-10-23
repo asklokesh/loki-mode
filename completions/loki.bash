@@ -115,11 +115,6 @@ _loki_completion() {
             COMPREPLY=( $(compgen -W "${telemetry_cmds}" -- "$cur") )
             ;;
 
-        trigger)
-            local trigger_cmds="start stop status list add remove daemon install uninstall test logs help --dry-run --loop --no-load"
-            COMPREPLY=( $(compgen -W "${trigger_cmds}" -- "$cur") )
-            ;;
-
         agent)
             local agent_cmds="list info run start help"
             COMPREPLY=( $(compgen -W "${agent_cmds}" -- "$cur") )

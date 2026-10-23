@@ -263,7 +263,7 @@ run_test "large non-git tree does not die on SIGPIPE"
     exit 0
 ) && pass || fail "non-git >200-file tree failed"
 
-# --- Test 11: a find error during the scan must not abort onboard (FC-53) ---
+# --- Test 11: a find error during the scan must not abort onboard ---
 # `find | wc -l` under set -eo pipefail died silently (rc 1, 0 bytes) whenever
 # find hit an entry it could not read or that vanished mid-scan, which a
 # concurrently running suite does in the repo root. An unreadable directory

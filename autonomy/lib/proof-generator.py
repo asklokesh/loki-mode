@@ -1789,7 +1789,7 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             "post_headline": True,
         })
 
-    # D47: edited assertion lines are disclosed but never move the headline or rc.
+    # edited assertion lines are disclosed but never move the headline or rc.
     _ae = (facts.get("tests_integrity") or {}).get("assertions_edited")
     if _ae:
         degraded.append({
@@ -1966,7 +1966,7 @@ def _compute_degraded(facts):
         if rec.get("state") == "gap":
             out.append({"item": "functionality:%s" % axis, "status": "failed",
                         "reason": rec.get("reason") or "axis disproven"})
-    # TEN-GATES-10 (D105): the agent writes both the code and the suite, so a
+    # TEN-GATES-10: the agent writes both the code and the suite, so a
     # green suite alone is the agent grading its own work. When the suite is the
     # ONLY passing fact, record the gap here (pre-headline, so proof-verify.py
     # re-derives the same amber headline from the recorded ledger) and VERIFIED
@@ -2102,7 +2102,7 @@ def _compute_headline(facts, degraded):
         and tests.get("exit_code") == 0
     )
     if tests_verified and not degraded and diff_nonempty:
-        # S-113: ablation showed deleting the change leaves the suite green, so
+        # ablation showed deleting the change leaves the suite green, so
         # the passing tests do not prove the change. Never VERIFIED; amber.
         ablation = facts.get("ablation")
         if isinstance(ablation, dict) and ablation.get("status") == "not_load_bearing":

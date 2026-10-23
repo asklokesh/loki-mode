@@ -6,7 +6,7 @@
 #
 # "The pipeline runs at top-only (claude-opus-5-5), at the cheapest capable
 # model, and routed. The seeded-defect corpus shows the floor model does not
-# raise the wrong-pass rate." (docs/LOKI-10-BUILD-PROMPT.md, section 2, item 4)
+# raise the wrong-pass rate."
 #
 # Cases (IDs are permanent):
 #   P4.catalog-has-top-model           providers/model_catalog.json lists

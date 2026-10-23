@@ -27,7 +27,7 @@
 #                                             condition (caller falls through
 #                                             to existing heuristic dispatch).
 #
-# Inline Python (D7): the dispatch runs with the cwd inside the agent's repo, so
+# Inline Python: the dispatch runs with the cwd inside the agent's repo, so
 # every python3 here drops '' and '.' from sys.path before any other import; a
 # committed json.py or sitecustomize.py cannot read the votes.
 # Pinned by tests/test-voter-agents-json.sh (Case D).

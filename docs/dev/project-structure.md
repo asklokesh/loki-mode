@@ -1,7 +1,5 @@
 # Project structure and codebase knowledge graph
 
-Moved out of CLAUDE.md (S-78) to keep the root file short. Content unchanged.
-
 ## Project Structure
 
 ```
@@ -37,7 +35,6 @@ skills/                     # On-demand skill modules (v3.0 architecture)
   patterns-advanced.md      # OptiMind, k8s-valkey, Constitutional AI
   parallel-workflows.md     # Git worktrees, parallel streams, auto-merge
   github-integration.md     # GitHub issue import, PR creation, notifications
-  sdlc-fleet.md              # Six-role standing fleet pattern (see CLAUDE.md)
 references/                 # Detailed documentation (21 files)
   legacy-healing-patterns.md # Amazon AGI Lab: friction, adapters, archaeology
   openai-patterns.md        # OpenAI Agents SDK: guardrails, tripwires, handoffs
@@ -64,7 +61,7 @@ events/                     # Unified Event Bus (v5.17.0)
   emit.sh                   # Bash helper for emitting events
 docs/                       # Architecture documentation
   SYNERGY-ROADMAP.md        # 5-pillar tool integration architecture
-  v10/                      # v10 program: OPERATING-MODEL.md, DECISIONS.md, BOARD.md, BACKLOG.md, PROGRESS.md
+  v10/                      # User guides: GUIDE.md, GUIDE-MODERNIZE.md, CLI-MODERN.md, DEPS.md
   dev/                      # Developer reference docs (this file and its siblings)
 autonomy/                   # Runtime and autonomous execution
   context-tracker.py        # Context window usage tracking

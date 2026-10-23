@@ -409,7 +409,7 @@ else
     log_fail "5.1 loki start --help shows mirofish" "mirofish not mentioned in help output"
 fi
 
-# E-165: `loki start` runs only in a throwaway git repo with a stub provider on
+# `loki start` runs only in a throwaway git repo with a stub provider on
 # PATH that exits at once, under timeout -k. Never in the repo root.
 START_FX="$_TEST_TMPDIR/start-fx"
 mkdir -p "$START_FX/bin" "$START_FX/repo"

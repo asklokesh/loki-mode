@@ -18,7 +18,7 @@
 
 set -uo pipefail
 
-# The caller (a Chief of Staff shell) may carry these; the refusal cases below
+# The caller (a release shell) may carry these; the refusal cases below
 # are only real measurements if they start from an unset environment.
 unset LOKI_RELEASE_MANAGER PRE_PUSH_SKIP
 
@@ -147,7 +147,7 @@ for _i in 1 2 3; do
     fi
 done
 
-# --- S-152: only the Release Manager pushes main, never from an agent worktree -
+# --- only a release shell pushes main, never from a linked worktree -
 # Incident 2026-09-27 18:35Z: an agent in a .claude/worktrees/* worktree pushed
 # 28926937 to origin main. expect_refused <label> <out-pattern> <dir> [env...]
 expect_refused() {

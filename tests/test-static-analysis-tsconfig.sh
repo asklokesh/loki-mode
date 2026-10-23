@@ -87,7 +87,7 @@ TS
 # Resolve tsc: prefer this repo's OWN pinned devDependency
 # (node_modules/.bin/tsc, typescript from package.json) over whatever
 # `tsc` a bare PATH lookup happens to find. A bare `command -v tsc` is not
-# hermetic -- CI reproductions (S-110) showed it can resolve an ambient tsc
+# hermetic -- CI reproductions showed it can resolve an ambient tsc
 # whose project-mode (`-p .`) behavior on a path-aliased tsconfig differs
 # from the repo's own pinned 5.9.3, which verifiably resolves `@/*` via
 # `-p .` correctly. Falls back to PATH only when the repo has no local

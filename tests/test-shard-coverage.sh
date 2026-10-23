@@ -36,7 +36,7 @@ fi
 echo
 echo "T2 -- shards partition the suite list exactly (duration-balanced LPT)"
 
-# S-81: the shard filter is no longer plain `idx % n` -- it is a
+# the shard filter is no longer plain `idx % n` -- it is a
 # duration-balanced greedy longest-first (LPT) packing over
 # tests/shard-durations.tsv, computed inside run-all-tests.sh itself. Rather
 # than re-implement that packing a second time here (a second copy is exactly

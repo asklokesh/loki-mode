@@ -80,7 +80,7 @@ check "override: API_TESTS stays true" "true" "$(val "$R" PHASE_API_TESTS)"
 R="$(resolve 'export LOKI_BUILD_PROFILE=simple-web; export LOKI_PHASE_E2E_TESTS=false')"
 check "override: E2E forced false" "false" "$(val "$R" PHASE_E2E_TESTS)"
 
-# --- 4. small-task fast path (S5) ---------------------------------------------
+# --- 4. small-task fast path ---------------------------------------------
 # small_resolve <setup>: runs the REAL profile code, then the post-detection
 # entry point, and echoes the resulting knobs.
 small_resolve() {

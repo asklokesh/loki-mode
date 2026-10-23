@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guards release_restore_debugid_only_dist() in scripts/release.sh (E-72).
+# Guards release_restore_debugid_only_dist() in scripts/release.sh.
 #
 # WHY THIS EXISTS. loki-ts/scripts/build.ts hashes cockpit.js/cockpit.js.map
 # content into a deterministic "//# debugId=" identity, but that hash still
@@ -125,7 +125,7 @@ else
 fi
 
 
-# E-74: prove run_bump_only() itself calls release_restore_debugid_only_dist,
+# prove run_bump_only() itself calls release_restore_debugid_only_dist,
 # not just that the helper works in isolation (the checks above call it
 # directly). Stub out the unrelated steps (version-file bumping, the real
 # `bun run build`) so this leg isolates the one call site at issue: if that

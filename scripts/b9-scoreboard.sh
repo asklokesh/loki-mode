@@ -477,7 +477,7 @@ set_armenv() {
 }
 
 # One trivial authenticated call under the arm's env. An arm that cannot authenticate is
-# BLOCKED, never scored: n=0 is not a pass (FC-16).
+# BLOCKED, never scored: n=0 is not a pass.
 PF_REASON=""
 preflight() { # preflight arm
     local pd="$T/pf-$1" rc

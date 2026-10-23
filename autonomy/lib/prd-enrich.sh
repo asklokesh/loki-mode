@@ -88,7 +88,7 @@ _loki_prd_enrich_invoke() {
     local out=""
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
-    # S8: lean child flags (no user-scope settings/MCP/tools) + ledger line.
+    # lean child flags (no user-scope settings/MCP/tools) + ledger line.
     type loki_lean_child_flags >/dev/null 2>&1 \
         || . "$(dirname "${BASH_SOURCE[0]}")/claude-flags.sh" 2>/dev/null || true
     local _pe_argv=("${_LOKI_PERM_ARGV[@]}") _pe_lf _pe_ledger=false

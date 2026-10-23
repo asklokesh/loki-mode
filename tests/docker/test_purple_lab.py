@@ -15,7 +15,7 @@ import pytest
 
 # Live-server E2E: skip honestly (visible in the report) per test when the
 # optional client libraries or the Purple Lab server are not present, instead
-# of failing collection (FC-82). The module must still collect its tests: a
+# of failing collection. The module must still collect its tests: a
 # module-level skip collects zero and pytest exits rc=5 (FC-82 r2).
 try:
     import pytest_asyncio  # noqa: F401

@@ -307,7 +307,7 @@ class TestModelTransfer(unittest.TestCase):
             out = _er.render(est)
         rate = est["model_now_price_per_mtok"]
         self.assertIsNotNone(rate, "sonnet must resolve in model-pricing.json")
-        # Derived from the pricing table, never pinned (FC-13): a model price
+        # Derived from the pricing table, never pinned: a model price
         # move must not turn this test red while the product is correct.
         table_path = pathlib.Path(__file__).resolve().parent.parent / "loki-ts" / "data" / "model-pricing.json"
         table = json.loads(table_path.read_text())["pricing"]["sonnet"]

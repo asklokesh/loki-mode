@@ -1,6 +1,6 @@
 name: sdk-freshness
 
-# D115: Anthropic SDK pins must never be more than 7 days behind the newest
+# Anthropic SDK pins must never be more than 7 days behind the newest
 # release. Scheduled here so release.yml stays push-only.
 on:
   schedule:

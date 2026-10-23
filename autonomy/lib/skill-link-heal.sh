@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FC-30: keep the provider skill links Loki created pointing at the running
+# keep the provider skill links Loki created pointing at the running
 # install. One shared mechanism, called from npm postinstall and from the bin/loki
 # shim (first invocation after an install or upgrade). Cost: a few lstat/readlink
 # calls, no network, no subprocess beyond readlink/ln/mv on the repair path.

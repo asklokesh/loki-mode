@@ -208,7 +208,7 @@ class TestWikiDiagrams(unittest.TestCase):
         self.assertTrue(d.startswith("flowchart LR"))
 
     def test_diagrams_are_deterministic(self):
-        # D5: same index -> byte-identical diagram (no Date, no random).
+        # same index -> byte-identical diagram (no Date, no random).
         a1 = self.wg._architecture_diagram(self.index, self.modules, self.entries)
         a2 = self.wg._architecture_diagram(self.index, self.modules, self.entries)
         self.assertEqual(a1, a2)
@@ -244,7 +244,7 @@ class TestWikiDiagrams(unittest.TestCase):
             self.assertNotIn(bad, label)
 
     def test_section_payload_carries_diagram_field(self):
-        # D1: architecture + data-flow sections include a `diagram` field; the
+        # architecture + data-flow sections include a `diagram` field; the
         # modules section does not.
         ctx = "PROJECT: x"
         ov = self.wg._section_overview("/x", self.index, self.modules, self.entries, ctx)

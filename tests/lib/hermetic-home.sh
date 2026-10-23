@@ -14,7 +14,7 @@
 #   LOKI_HERMETIC_HOME   the run-owned dir (a nested entry point reuses it)
 #
 # It never exports LOKI_RUN_TMP: that name is reserved for each suite's own
-# loki_run_tmp_create, and an exported value makes every child refuse (E-154).
+# loki_run_tmp_create, and an exported value makes every child refuse.
 # Requires eval/loki10/lib-tmp.sh to be sourced already.
 
 loki_hermetic_home_enter() {

@@ -380,7 +380,7 @@ green job is not yet proof the version is fetchable.
 
 ## 6. The cadence, end to end
 
-1. **Scope locked** by the PM. No guessing (`skills/sdlc-fleet.md:40`).
+1. **Scope locked** by the PM. No guessing.
 2. **Build** inside owned file sets, at most 3 streams
    (`skills/factory-operations.md` section 3).
 3. **Council**: unanimous 3-of-3 APPROVE. Any CONCERN or REJECT means fix and

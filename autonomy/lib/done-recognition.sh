@@ -37,7 +37,7 @@
 #
 # No emojis. No em dashes. bash 3.2 safe. Honors `set -uo pipefail`.
 #
-# Inline Python (D7): the gate runs with the cwd inside the agent's repo, so
+# Inline Python: the gate runs with the cwd inside the agent's repo, so
 # every python3 here drops '' and '.' from sys.path before any other import; a
 # committed json.py or sitecustomize.py cannot turn the verdict done. Pinned by
 # tests/test-reuse-done-recognition.sh case (d7).
@@ -318,7 +318,7 @@ reuse_done_recognition_gate() {
     fi
     local _test_results="$loki_dir/quality/test-results.json"
 
-    # --- Resolve the -I -S interpreter (S-200); none -> inconclusive -> build.
+    # --- Resolve the -I -S interpreter; none -> inconclusive -> build.
     local _dr_py
     if ! _dr_py="$(_loki_snapshot_py_tool)"; then
         log_info "Done-recognition: no isolated python3 interpreter resolved; proceeding to build."
@@ -776,7 +776,7 @@ _loki_done_recog_finish() {
     local parsed="$2"
     local loki_dir="${TARGET_DIR:-.}/.loki"
 
-    # S-200: no -I -S interpreter -> write no done record (the gate then builds).
+    # no -I -S interpreter -> write no done record (the gate then builds).
     local _dr_py
     _dr_py="$(_loki_snapshot_py_tool)" || return 1
 
@@ -923,7 +923,7 @@ _loki_done_recog_write_manifest() {
     local parsed="$2"
     local loki_dir="${TARGET_DIR:-.}/.loki"
 
-    # S-200: no -I -S interpreter -> record nothing as met (full build).
+    # no -I -S interpreter -> record nothing as met (full build).
     local _dr_py
     _dr_py="$(_loki_snapshot_py_tool)" || return 1
 

@@ -67,7 +67,7 @@ if [ ! -x "$LOKI" ]; then
 fi
 
 # Create a temp dir for isolated testing
-# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# Run-owned temp dir: all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../eval/loki10/lib-tmp.sh"
 _OWN_TMP=0
@@ -78,7 +78,7 @@ export -n LOKI_RUN_TMP
 TMPDIR_BASE=$(mktemp -d "$LOKI_RUN_TMP/watch.XXXXXX")
 ORIG_DIR="$(pwd)"
 
-# E-145: every child runs as its own process-group leader (set -m) and its PGID
+# every child runs as its own process-group leader (set -m) and its PGID
 # is recorded, so an EXIT/INT/TERM trap can stop exactly those groups (the loki
 # watch run.sh and its sleep loop) and nothing else. Never by name or pattern.
 set -m

@@ -276,9 +276,7 @@ also archived (via `redact_row`: no log paths, no secret-shaped string) to
 `${LOKI_EVAL_ARCHIVE:-$HOME/loki-ci-logs/eval}/<run-name>/results.jsonl`
 outside the repo, and to `eval/loki10/archive/<run-name>.results.jsonl`
 inside it. Unlike `results/`, `eval/loki10/archive/` is NOT gitignored: those
-files are meant to be committed, and `scripts/v10-worktree-reap.sh --strict` treats a
-worktree's results as safe to lose only once every row's `run_id` is present
-in one of the two archive copies.
+files are meant to be committed.
 
 This is not a sandbox. The env scrub and the fresh config dir only change what
 the arm loads by default. Every arm, setup command and hidden test runs as the

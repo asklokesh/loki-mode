@@ -123,7 +123,7 @@ fi
 
 echo ""
 echo "== temp files =="
-# E-140: never remove temp entries by glob. A pattern sweep of loki-* under TMPDIR
+# never remove temp entries by glob. A pattern sweep of loki-* under TMPDIR
 # deleted another agent's live run-owned loki-run.* dir (2026-09-30). Foreign
 # entries are only reported; the sole removal is this session's own validated
 # LOKI_RUN_TMP, and only with --aggressive.

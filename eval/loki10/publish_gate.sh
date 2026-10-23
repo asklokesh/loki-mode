@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EV-6 prep: merge the three arms' results.jsonl files and run gate_report.py
-# (E-33) over the merged rows, writing docs/v10/METRICS.md and a CHANGELOG
+# over the merged rows, writing .loki/metrics/first-run.md and a CHANGELOG
 # block via its begin/end markers.
 #
 # Usage: publish_gate.sh <v10.jsonl> <raw-claude.jsonl> <legacy.jsonl> \
@@ -32,7 +32,7 @@ if [ "$#" -lt 3 ]; then
 fi
 V10_FILE="$1"; RAW_FILE="$2"; LEGACY_FILE="$3"
 shift 3
-METRICS="$REPO/docs/v10/METRICS.md"
+METRICS="$REPO/.loki/metrics/first-run.md"
 CHANGELOG="$REPO/CHANGELOG.md"
 while [ "$#" -gt 0 ]; do
     case "$1" in

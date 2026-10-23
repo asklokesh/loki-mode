@@ -702,7 +702,7 @@ ok 1 - logs
     add_test.go:9: got 1 want 2
 FAIL
 FAIL	ex	0.1s"
-    # BACKLOG 103 (S-140): jest's "Test Suites:" line and vitest's "Test Files"
+    # BACKLOG 103: jest's "Test Suites:" line and vitest's "Test Files"
     # line can carry the ONLY failed count on a run where a whole suite/file
     # crashed (so none of its individual tests appear), while the "Tests:"
     # line that the parser already read reports only the tests that DID run

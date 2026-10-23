@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E-133: release_dist_maps_clean must refuse loki-ts/dist/*.map files whose
+# release_dist_maps_clean must refuse loki-ts/dist/*.map files whose
 # "sources" hold an absolute path or climb out of the repo (v10.5.4 incident:
 # a node_modules symlink wrote 133 /Users/... entries). Comment text inside
 # sourcesContent must not trip it.
@@ -96,7 +96,7 @@ RC=$?
 [ "$RC" -ne 0 ] && ok "run_bump_only exits nonzero on a bad map" || bad "run_bump_only exited 0 on a bad map"
 git -C "$W" diff --quiet -- loki-ts/dist && ok "bad-map dist restored from HEAD" || bad "bad-map dist left in tree"
 
-# E-151: release_commit_clean refuses a release commit that left the stamped map modified.
+# release_commit_clean refuses a release commit that left the stamped map modified.
 C="$RUN_TMP/clean"; mkdir -p "$C/loki-ts/dist"
 echo 'let $="10.5.9";' >"$C/loki-ts/dist/loki.js"; echo '{"m":"AAAA"}' >"$C/loki-ts/dist/loki.js.map"
 git -C "$C" init -q; git -C "$C" config user.name t; git -C "$C" config user.email t@example.com
@@ -108,7 +108,7 @@ ROOT_DIR="$C" release_commit_clean 2>"$RUN_TMP/err"; rc=$?
 git -C "$C" add loki-ts/dist/loki.js.map; git -C "$C" commit -q --amend --no-edit
 ROOT_DIR="$C" release_commit_clean 2>/dev/null && ok "check-clean passes once both files are committed" || bad "check-clean failed on a clean tree"
 
-# E-152: the "stage these files" list prints `git add -f` for paths under an ignored dir.
+# the "stage these files" list prints `git add -f` for paths under an ignored dir.
 S="$RUN_TMP/stage"; mkdir -p "$S/dist" "$S/src"
 git -C "$S" init -q; git -C "$S" config user.name t; git -C "$S" config user.email t@example.com
 echo 'dist/' >"$S/.gitignore"; echo a >"$S/src/a.txt"; echo b >"$S/dist/b.js"

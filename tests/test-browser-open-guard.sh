@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S-103: Loki must never open a browser from tests, CI, or a non-TTY run.
+# Loki must never open a browser from tests, CI, or a non-TTY run.
 # Test runs once opened dozens of "Loki Mode" tabs at an offline dashboard.
 #
 # Every browser open goes through loki_open_url (autonomy/lib/browser-open.sh)

@@ -142,9 +142,9 @@ run_empty sgood 9 10; expect sgood-10v9 first-success-budget FAIL; [ "$RC" -ne 0
 # and the reverse: lexically "9" > "10", so a string compare would fail a 9s run against a 10s budget
 run_empty sgood 10 9; expect sgood-9v10 first-success-budget PASS
 # stub mode never writes METRICS
-M0=$(git -C "$SCRIPT_DIR/.." hash-object docs/v10/METRICS.md 2>/dev/null || true)
+M0=$(git -C "$SCRIPT_DIR/.." hash-object .loki/metrics/first-run.md 2>/dev/null || true)
 run_empty sgood
-[ "$M0" = "$(git -C "$SCRIPT_DIR/.." hash-object docs/v10/METRICS.md 2>/dev/null || true)" ] && ok "start-empty stub: METRICS.md untouched" || bad "start-empty stub: METRICS.md changed"
+[ "$M0" = "$(git -C "$SCRIPT_DIR/.." hash-object .loki/metrics/first-run.md 2>/dev/null || true)" ] && ok "start-empty stub: METRICS.md untouched" || bad "start-empty stub: METRICS.md changed"
 
 # P0-DASH-STATIC: dashboard-root assertion (GET / is a 410 page naming the Control Plane) (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""

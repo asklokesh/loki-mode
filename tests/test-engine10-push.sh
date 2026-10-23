@@ -161,7 +161,7 @@ p4 "$LIB" comment 7 "$W/body.md" >/dev/null 2>&1 \
     && grep -q '^cwd=/ .* pr comment 7 --repo octocat/hello --body-file ' "$GHLOG" \
     && ok "comment mode posts via gh pr comment" || bad "comment mode ($(tr '\n' '|' < "$GHLOG"))"
 
-# E-67: issue-comment (a FAILED, no-diff run with no PR to comment on) posts to the issue instead.
+# issue-comment (a FAILED, no-diff run with no PR to comment on) posts to the issue instead.
 : > "$GHLOG"
 p4 "$LIB" issue-comment "octocat/hello#9" "$W/body.md" >/dev/null 2>&1 \
     && grep -q '^cwd=/ .* issue comment 9 --repo octocat/hello --body-file ' "$GHLOG" \
@@ -207,7 +207,7 @@ p4 "$LIB" status "$SHA" pending "deep verify running" >/dev/null 2>&1 \
     && ok "status mode posts a pending loki/deep-verify status" || bad "status mode ($(tr '\n' '|' < "$GHLOG"))"
 refused "status rejects a bad state" "bad state" p4 "$LIB" status "$SHA" bogus d
 
-# E-41: a local bare origin (the eval/loki10/harness.py shape, including its
+# a local bare origin (the eval/loki10/harness.py shape, including its
 # post-receive hook, which is how the harness scores "PR opened").
 LB="$W/local/remote.git"
 DECOY="$W/local/decoy.git"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FC-30: a provider skill link that Loki created must follow the running
+# a provider skill link that Loki created must follow the running
 # install (dangling or pointing at another Loki install), and nothing else.
 set -uo pipefail
 export LOKI_NO_BROWSER=1

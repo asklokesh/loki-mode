@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Loki Mode pre-push hook
 #
-# D27 retires the local pytest run from this hook: GitHub CI is the gate.
-# This hook now only catches what CI cannot catch AFTER the push already
+# GitHub CI is the gate; this hook does not run the test suite.
+# It only catches what CI cannot catch AFTER the push already
 # happened -- the identity and syntax checks below run in well under a
 # second and were never the slow part.
 #   1. A bash syntax error slips into autonomy/run.sh or autonomy/loki
@@ -15,14 +15,14 @@
 #
 # Install:  ./scripts/install-hooks.sh
 # Skip once: PRE_PUSH_SKIP=1 git push   (use sparingly; CI will catch you)
-#   PRE_PUSH_SKIP never skips the push-authority guard (S-152), the
-#   release-notes gate (E-88), or the full-push secret scan (E-110) below --
+#   PRE_PUSH_SKIP never skips the push-authority guard, the
+#   release-notes gate, or the full-push secret scan below --
 #   all three run before the PRE_PUSH_SKIP check, deliberately:
-#   PRE_PUSH_SKIP=1 is the routine way trains push (see docs/v10/DECISIONS.md),
+#   PRE_PUSH_SKIP=1 is a routine way automated pushes skip the hook,
 #   so a check placed after it would never fire on the pushes it exists to
 #   catch.
 #   LOKI_ALLOW_UNSCANNED_PUSH=1: lets a push through when the pinned
-#   gitleaks binary is missing (E-110). Only covers the full-push scan
+#   gitleaks binary is missing. Only covers the full-push scan
 #   below, never the eval-fixture scan, and never a real finding or a
 #   scanner error either way. Expected to be rare; prefer installing
 #   gitleaks (scripts/install-gitleaks.sh) over setting this.
@@ -31,35 +31,34 @@ set -euo pipefail
 
 # GITLEAKS_CONFIG / GITLEAKS_CONFIG_TOML let gitleaks pick a config from the
 # environment, silently overriding the --config this hook computes from the
-# pushed tip's own .gitleaks.toml (E-99). A locally or CI-set value pointing
+# pushed tip's own .gitleaks.toml. A locally or CI-set value pointing
 # at a permissive config must never reach the scan.
 unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
 
-# --- Push-authority guard (S-152) -- runs BEFORE PRE_PUSH_SKIP, never skippable -
-# Incident 2026-09-27 18:35Z: an agent inside a .claude/worktrees/* worktree
-# committed and pushed 28926937 to origin main. Only the Release Manager / Chief
-# of Staff pushes main, and it sets LOKI_RELEASE_MANAGER=1 on every push.
+# --- Push-authority guard -- runs BEFORE PRE_PUSH_SKIP, never skippable -
+# Pushing from a linked worktree under .claude/worktrees is refused. Pushes to
+# main are made from the main checkout with LOKI_RELEASE_MANAGER=1 set.
 _top="$(git rev-parse --show-toplevel)"
 _gd="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
 _gcd="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 if [[ "$_gd" != "$_gcd" && "$_top/" == */.claude/worktrees/* ]]; then
     echo "[pre-push] REFUSED: pushing from a linked worktree under .claude/worktrees ($_top)." >&2
-    echo "[pre-push]   Agent worktrees never push; only the Chief of Staff pushes, from the main checkout." >&2
+    echo "[pre-push]   Linked worktrees never push; push from the main checkout." >&2
     exit 1
 fi
 # stdin: "<local ref> <local sha> <remote ref> <remote sha>" per pushed ref.
 # Captured once into a variable: stdin is a pipe and can only be read once,
-# but both this guard and the eval-fixture secret scan below (E-86) need it.
+# but both this guard and the eval-fixture secret scan below need it.
 _stdin_refs="$(cat)"
 while read -r _lref _lsha _rref _rsha; do
     if [[ "$_rref" == "refs/heads/main" && "${LOKI_RELEASE_MANAGER:-}" != "1" ]]; then
         echo "[pre-push] REFUSED: push to refs/heads/main requires LOKI_RELEASE_MANAGER=1." >&2
-        echo "[pre-push]   Only the Chief of Staff / Release Manager pushes main. PRE_PUSH_SKIP does not bypass this." >&2
+        echo "[pre-push]   Pushes to main are made from the main checkout with that variable set. PRE_PUSH_SKIP does not bypass this." >&2
         exit 1
     fi
 done <<< "$_stdin_refs"
 
-# --- Release-notes gate (E-88, D36 rework) -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
+# --- Release-notes gate -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
 # release.yml refuses to publish a release whose CHANGELOG.md section for
 # VERSION is missing, empty, or not fully written (scripts/release-notes.sh).
 # That check is at release time, after the bump already landed on main; this
@@ -131,7 +130,7 @@ if [[ $_notes_failures -gt 0 ]]; then
 fi
 
 # --- Full-push secret scan (gitleaks git, E-110) -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
-# The eval-fixture scan further down (E-86/E-99) only ever covers
+# The eval-fixture scan further down only ever covers
 # eval/loki10/tasks and eval/loki10/refdiff; it never saw the 3 synthetic
 # secret-shaped fixtures E-101 planted in tests/test-eval-archive.sh (commit
 # bbe83c7a) -- CI's full-history `gitleaks git` gate caught them only after
@@ -142,9 +141,8 @@ fi
 # ~37s; scoped to a typical 5-commit range with --log-opts it takes ~240ms
 # median of 5 runs (~150x faster), plus ~70ms for the clone below. Sits
 # here, before PRE_PUSH_SKIP (see the header comment), for the same reason
-# E-88 does: trains routinely push with PRE_PUSH_SKIP=1 set
-# (docs/v10/DECISIONS.md), and a check placed after that line would never
-# run on exactly the pushes that matter most.
+# E-88 does: automated pushes routinely set PRE_PUSH_SKIP=1, and a check
+# placed after that line would never run on exactly the pushes that matter most.
 #
 # Runs against a throwaway `--mirror --shared` clone, not the working tree:
 # verified empirically that `gitleaks git <dir>` auto-loads a
@@ -208,7 +206,7 @@ _resolve_gitleaks_bin() {
     # (not the release tarball -- scripts/install-gitleaks.sh already pins
     # that, independently). A sidecar match alone is not proof: a sidecar is
     # just a file next to the binary, and whatever can overwrite the binary
-    # can overwrite its sidecar to match (E-99). This value lives only in
+    # can overwrite its sidecar to match. This value lives only in
     # this hook's own git history, verified 2026-09-28 by downloading each
     # official v8.30.0 release asset and hashing the extracted binary (not
     # the tarball -- that hash is the one already pinned in
@@ -314,10 +312,10 @@ while read -r _lref _lsha _rref _rsha; do
     # rev-list` range syntax, built internally by this hook, never from
     # pushed content) runs before PRE_PUSH_SKIP and before the binary check,
     # same as the eval scan's own gate needs neither. LOKI_ALLOW_GITLEAKS_
-    # CONFIG_CHANGE=1 is still the only override (E-99); the eval scan's own
+    # CONFIG_CHANGE=1 is still the only override; the eval scan's own
     # copy of this gate, further down, still runs too when PRE_PUSH_SKIP is
     # unset, and still prints the itemized per-commit diff.
-    # Fail closed (E-119): `|| true` here used to swallow a genuine `git
+    # Fail closed: `|| true` here used to swallow a genuine `git
     # rev-list` error (corrupt object, unreadable pack) as "no .gitleaks.toml
     # change", which falls back to trusting the pushed tip's own config --
     # exactly the attacker's weakened-config scenario this gate exists to
@@ -508,7 +506,7 @@ _zero_sha="0000000000000000000000000000000000000000"
 # writing the literal.
 _empty_tree="$(git hash-object -t tree /dev/null)"
 # GITLEAKS_VERSION and _resolve_gitleaks_bin are defined earlier, in the
-# full-push secret scan section above (E-110) -- both the eval scan below
+# full-push secret scan section above -- both the eval scan below
 # and that section need them, and it runs first.
 
 # B3 (r4, E-86 Opus REJECT on 40b2e228): two changed eval paths in one commit
@@ -641,7 +639,7 @@ while read -r _lref _lsha _rref _rsha; do
             # quoted `'''.+'''` regex carries no literal `.*` to grep for).
             # Gitleaks config is small and rare to touch legitimately -- gate
             # on the human, not on guessing which configs are dangerous. Any
-            # push, not only one that also touches eval (E-99): a config
+            # push, not only one that also touches eval: a config
             # change is dangerous on its own merits -- it changes what the
             # NEXT eval-touching push, possibly weeks later, gets scanned
             # with -- and gating it on this push's own eval diff let an

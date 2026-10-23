@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prints the CHANGELOG.md section for one version's release notes (E-88).
+# Prints the CHANGELOG.md section for one version's release notes.
 #
 # WHY THIS EXISTS. The release.yml extraction step used to be
 #   awk "/^## v$VERSION\$/{flag=1; next} /^## v/{flag=0} flag" CHANGELOG.md
@@ -14,11 +14,11 @@
 #
 # Carrying another version's notes forward (e.g. a version that never
 # reached npm) happens ONLY via an explicit "--include v1,v2,..." list
-# (E-88a). An earlier revision auto-detected candidates to carry from the
+#. An earlier revision auto-detected candidates to carry from the
 # section's own prose; that guessed wrong in ways two rounds of review
 # caught (a higher, already-published version named only for context, and
 # an over-broad npm-confirmation check), so auto-detect is gone entirely.
-# release.yml passes no --include; the Release Manager writes any carried
+# release.yml passes no --include; the maintainer writes any carried
 # section into the CHANGELOG entry by hand instead (as done for 10.0.1 and
 # 10.2.1).
 #

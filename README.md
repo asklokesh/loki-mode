@@ -138,7 +138,7 @@ loki control backfill .  # load existing ./.loki/runs
 loki control status      # reachable? how many runs?
 ```
 
-While it is running, runs on this machine ship to it automatically. Guides: [docs/v10/CONTROL-PLANE.md](docs/v10/CONTROL-PLANE.md), [container, Helm and ECS](docs/control-plane-container.md), [migrating from the old dashboard](docs/control-plane-migration.md).
+While it is running, runs on this machine ship to it automatically. Guides: [container, Helm and ECS](docs/control-plane-container.md), [migrating from the old dashboard](docs/control-plane-migration.md).
 
 ## Requirements
 

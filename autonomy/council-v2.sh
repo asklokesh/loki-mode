@@ -19,7 +19,7 @@
 #   - swarm/sycophancy.py (sycophancy detection)
 #   - swarm/calibration.py (reviewer calibration)
 #
-# Inline Python (D7): the council runs with the cwd inside the agent's repo, so
+# Inline Python: the council runs with the cwd inside the agent's repo, so
 # every python here drops '' and '.' from sys.path before any other import (the
 # swarm dir is inserted after that); a committed json.py or sitecustomize.py
 # cannot read the votes. Pinned by tests/test-council-no-fabricated-verdict.sh
@@ -76,7 +76,7 @@ council_v2_vote() {
     local iteration="${4:-0}"
 
     local council_size="${COUNCIL_SIZE:-3}"
-    # S-201: none resolvable -> every read below takes its fail-safe fallback.
+    # none resolvable -> every read below takes its fail-safe fallback.
     local _c2_py
     _c2_py="$(_loki_snapshot_py_tool)" || _c2_py=""
 
@@ -180,7 +180,7 @@ import json
 votes = json.loads(sys.argv[1])
 print('{:.3f}'.format(detect_sycophancy(votes)))
 " "$votes_json" 2>/dev/null) || sycophancy_score=""
-    # S-201: a crashed or missing detector did not measure 0.000. Record the
+    # a crashed or missing detector did not measure 0.000. Record the
     # score as unmeasured (null keeps summary.json valid JSON) so Step 5
     # challenges instead of reading "independent".
     case "$sycophancy_score" in
@@ -194,7 +194,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
     if [ "$approve_count" -eq "$council_size" ]; then
         local threshold="${LOKI_COUNCIL_SYCOPHANCY_THRESHOLD:-0.6}"
         local should_challenge
-        # S-201: an unmeasured score, or a compare that cannot run, challenges.
+        # an unmeasured score, or a compare that cannot run, challenges.
         # Only a measured score below the threshold skips the devil's advocate.
         if [ "$sycophancy_score" = "null" ]; then
             should_challenge="yes"

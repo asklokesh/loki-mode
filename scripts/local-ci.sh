@@ -36,14 +36,14 @@
 
 set -uo pipefail
 # Tests always run headless: loki_open_url (autonomy/lib/browser-open.sh) and
-# proof.ts never open a browser under this (S-103).
+# proof.ts never open a browser under this.
 export LOKI_NO_BROWSER=1
 export LOKI_CONTROL="${LOKI_CONTROL:-0}" # tests never ship to a developer's live Control Plane
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
-# FC-31: `local-ci.sh --impacted <base>` runs only the shell suites the diff can
+# `local-ci.sh --impacted <base>` runs only the shell suites the diff can
 # affect (one shared mapping: scripts/select-tests.sh). A slice gate uses this.
 if [ "${1:-}" = "--impacted" ]; then
   exec bash "$REPO_ROOT/scripts/impacted-gate.sh" "${2:-}" "${3:-HEAD}"
@@ -51,7 +51,7 @@ fi
 
 # FC-07 / D86: the whole gate runs under a run-owned hermetic HOME (real HOME is
 # kept as LOKI_REAL_HOME; toolchain homes are pinned). Not LOKI_RUN_TMP: that
-# name stays free for every suite's own loki_run_tmp_create (E-154).
+# name stays free for every suite's own loki_run_tmp_create.
 # shellcheck source=../eval/loki10/lib-tmp.sh
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 # shellcheck source=../tests/lib/hermetic-home.sh
@@ -202,7 +202,7 @@ declare -a _FAST_KEEP=(
   # class of bug that prompted the fix. Measured 2s (no provider call: the
   # suite stubs the classifier and pins the non-interactive path).
   "tests/cli/test-quickstart-brownfield.sh"
-  # Guards a severe, live product bug (D14/D15): kill_provider_child ran an
+  # Guards a severe, live product bug: kill_provider_child ran an
   # unscoped `pkill -f` on every normal signal-driven session end (a
   # supervisor signal, double Ctrl+C, Ctrl+C in perpetual mode), killing
   # unrelated Claude Code sessions on the same machine. A check that guards
@@ -254,13 +254,13 @@ declare -a _FAST_KEEP=(
   "shell completions cover every dispatch command"
   "local-ci tiering"
   "local-ci parent-check exit isolation"
-  # E-60: gitleaks over origin/main..HEAD only (the commits THIS branch adds),
+  # gitleaks over origin/main..HEAD only (the commits THIS branch adds),
   # not security-audit.yml's full-history "--all" scan. That scope keeps it
   # cheap enough for the fast tier -- unlike the deferred CI-parity shellcheck
   # run above (measured ~118s), this walks a handful of commits, not the whole
   # repo's history, so it belongs with the other read-only structural lanes.
   "gitleaks (secrets, origin/main..HEAD)"
-  # E-94: same class as gitleaks above -- cheap, read-only-scoped to this
+  # same class as gitleaks above -- cheap, read-only-scoped to this
   # branch's own changed test files, and it exists to catch a local-pass /
   # CI-fail gap before push, so deferring it out of the fast tier would
   # remove the only pre-push run it gets.
@@ -739,7 +739,7 @@ run_check_pyfile() {
   fi
 }
 
-# Hermetic changed-tests scan (E-94). A standalone function -- not inlined
+# Hermetic changed-tests scan. A standalone function -- not inlined
 # into a run_check command string -- so tests/test-local-ci-hermetic.sh can
 # awk-extract and exercise this REAL body (same technique as
 # tests/test-local-ci-parent-exit-isolation.sh), instead of maintaining a
@@ -993,7 +993,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2b. gitleaks (secrets), scoped to origin/main..HEAD (E-60)
+# 2b. gitleaks (secrets), scoped to origin/main..HEAD
 # ---------------------------------------------------------------------------
 # security-audit.yml's secret-scan job (a required-ci gate) runs gitleaks over
 # ALL reachable history on every PR; that is the release-blocking authority.
@@ -1274,7 +1274,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7b. Hermetic changed-tests scan (E-94)
+# 7b. Hermetic changed-tests scan
 # ---------------------------------------------------------------------------
 # See _lci_hermetic_scan above for the full incident/mechanism writeup. Runs
 # HERE, after section 7's `bun install`, not right after harvest_lanes: a

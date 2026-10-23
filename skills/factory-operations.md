@@ -32,11 +32,6 @@ file, how many things run at once, what a blocked team does). It does not
 restate the release procedure, which lives in `skills/release-cadence.md` and,
 authoritatively, in the CLAUDE.md "Release Workflow" section.
 
-**Relationship to `skills/sdlc-fleet.md`:** that module defines the six roles
-for ONE change. This module defines what happens when several such fleets run
-concurrently. Read sdlc-fleet.md for the roles; read this one for the traffic
-rules between them.
-
 **REGISTRATION REQUIRED (blocking).** `tests/test-skill-doc-accuracy.sh` check 4
 loops every `skills/*.md` and FAILS any file that `SKILL.md` does not
 link. Measured on creation: the suite went from 57 passed / 0 failed to 57
@@ -75,16 +70,16 @@ coordination failure in this repo has been a role acting outside its column.
 
 | Role | DECIDES (binding) | ADVISES (non-binding) |
 |---|---|---|
-| **Chief of Staff** (the integrator session) | Work partition and file ownership; WIP admission; when to escalate to the founder; integration of parallel outputs | Implementation approach inside a team's slice |
+| **Coordinator** (the integrator session) | Work partition and file ownership; WIP admission; when to escalate to the founder; integration of parallel outputs | Implementation approach inside a team's slice |
 | **PM** (per workstream) | Scope and acceptance criteria for its workstream; accepts or rejects the delivered slice against those criteria | Sequencing relative to other workstreams (the CoS decides that) |
 | **Dev Fleet** (3-5 engineers, parallel) | Implementation detail within an owned file set | Scope changes; anything touching a file it does not own |
 | **SDET** | Whether a test actually exercises the acceptance criterion | Whether the feature ships (that is the council's call) |
 | **Council Reviewers** (3, parallel) | SHIP / NO-SHIP. Unanimous APPROVE required | Style preferences, which are findings, not vetoes |
-| **Release Captain** | When the VERSION bump is pushed, and sole ownership of main during a release window | Content of the release (the PM and council settled that already) |
+| **Release owner** | When the VERSION bump is pushed, and sole ownership of main during a release window | Content of the release (the PM and council settled that already) |
 
 Three rules that follow, each of which this repo has broken and paid for:
 
-**The Chief of Staff does not write code in a file an agent owns.** Not a
+**The coordinator does not write code in a file an agent owns.** Not a
 one-line fix, not while the agent looks idle. An agent holds the file's prior
 content and writes whole regions from its own buffer; an edit made underneath
 it vanishes with no conflict and no error. Measured on 2026-08-08: a
@@ -95,13 +90,11 @@ nothing protects the lead. If a requirement has not landed after two asks, the
 fix is a third message carrying a measured number and the exact distinction
 wanted, not an edit.
 
-**The council decides ship, and 2-of-3 is never acceptable.** This is
-inherited verbatim from `skills/sdlc-fleet.md:83` and CLAUDE.md's standing
-fleet pattern. A CONCERN or REJECT sends the integrator to the source to
+**The council decides ship, and 2-of-3 is never acceptable.** A CONCERN or REJECT sends the integrator to the source to
 validate it; a valid concern means fix and RE-RUN the entire council, not
 patch and count votes again.
 
-**The Release Captain owns main during a release window.** See section 5.
+**The release owner owns main during a release window.** See section 5.
 
 ---
 
@@ -119,7 +112,7 @@ ownership and the only collision that occurred was the one the lead created by
 editing an owned file directly.
 
 An agent that needs a change in a file it does not own does not make the
-change. It reports the required change to the Chief of Staff, who routes it to
+change. It reports the required change to the coordinator, who routes it to
 the owner. A cross-cutting change with no single owner is a signal the
 partition is wrong; re-partition rather than letting two agents negotiate.
 
@@ -239,8 +232,8 @@ Route by the KIND of block:
 
 | Block | Action | Never |
 |---|---|---|
-| Needs an edit in a file another agent owns | Report the required change to the Chief of Staff with the exact diff intent; continue on the rest of the owned slice | Edit it yourself |
-| Ambiguous scope | Escalate to the PM, who uses `AskUserQuestion` to lock it. Per `skills/sdlc-fleet.md:40`, NEVER guess at scope | Pick an interpretation and build |
+| Needs an edit in a file another agent owns | Report the required change to the coordinator with the exact diff intent; continue on the rest of the owned slice | Edit it yourself |
+| Ambiguous scope | Escalate to the PM, who uses `AskUserQuestion` to lock it. NEVER guess at scope | Pick an interpretation and build |
 | Gate is red | Read the actual assertion and the whole guard above it before bisecting; the assertion type names the failing line | Call it environmental |
 | Gate red and unreproducible | Re-run on the IDENTICAL SHA first. A rerun proves flake AND diff-innocence for free | Edit the test to make it pass |
 | Blocked on a gate run held by another stream | Queue behind it and do useful non-gate work (plan the next item, write the test, draft the brief) | Start a second concurrent gate run |
@@ -374,7 +367,7 @@ shard 1). A red nobody can clear is how the team learns to ignore reds.
 ## 5. Release windows: main is WIP=1
 
 When a VERSION bump is pushed, main enters a release window that closes only
-when npm shows the new version. Inside that window the Release Captain owns
+when npm shows the new version. Inside that window the release owner owns
 main and NOBODY else pushes to it, including docs.
 
 D102 update: `release.yml` no longer has a `required-ci` job; `publish-npm` needs only
