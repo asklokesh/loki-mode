@@ -235,16 +235,40 @@ class ModeTest(unittest.TestCase):
         self.assertEqual(res.returncode, 2, res.stderr)
         self.assertIn("kernel probe failed: boom", res.stderr)
 
-    def test_empty_mode_is_off(self):
+    def test_empty_mode_is_off_and_auto_opts_in(self):
         self.assertEqual(os_sandbox.resolve_mode(""), "off")
-        env = {**os.environ, "LOKI_OS_SANDBOX": ""}
-        res = subprocess.run(
-            [sys.executable, "-m", "autonomy.lib.os_sandbox", "argv", "--workspace",
-             str(self.ws), "--run-dir", str(self.run_dir), "--provider", "codex"],
-            cwd=REPO, env=env, capture_output=True, text=True, timeout=30,
-        )
+        env = {k: v for k, v in os.environ.items() if k != "LOKI_OS_SANDBOX"}
+        cmd = [sys.executable, "-m", "autonomy.lib.os_sandbox", "argv", "--workspace",
+               str(self.ws), "--run-dir", str(self.run_dir), "--provider", "claude"]
+        res = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(json.loads(res.stdout)["kind"], "none")
+        default = json.loads(res.stdout)
+        self.assertEqual(default["kind"], "none")
+        self.assertFalse(default.get("argv_prefix"))
+        res = subprocess.run(cmd, cwd=REPO, env={**env, "LOKI_OS_SANDBOX": "auto"},
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        if HAVE_SEATBELT:
+            opted = json.loads(res.stdout)
+            self.assertEqual(opted["kind"], "macos-seatbelt")
+            self.assertTrue(opted["argv_prefix"])
+
+    def test_codex_is_not_wrapped_and_says_why(self):
+        status = os_sandbox.build_confinement(self.ws, self.run_dir, "codex", mode="on")
+        self.assertEqual(status["kind"], "none")
+        self.assertIn("own OS sandbox", status["reason"])
+
+    def test_status_file_is_written_without_the_profile(self):
+        out = self.run_dir / "state" / "os-sandbox.json"
+        env = {**os.environ, "LOKI_OS_SANDBOX": "off"}
+        res = subprocess.run(
+            [sys.executable, "-m", "autonomy.lib.os_sandbox", "argv", "--workspace", str(self.ws),
+             "--run-dir", str(self.run_dir), "--provider", "claude", "--status-file", str(out)],
+            cwd=REPO, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        rec = json.loads(out.read_text())
+        self.assertEqual((rec["kind"], rec["mode"], rec["provider"]), ("none", "off", "claude"))
+        self.assertNotIn("argv_prefix", rec)
 
     def test_limitations_and_distinct_probe_sha(self):
         if not HAVE_SEATBELT:

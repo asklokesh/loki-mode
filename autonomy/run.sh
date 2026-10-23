@@ -1135,6 +1135,41 @@ _loki_snapshot_workspace_tree() {
     printf '%s\n' "$snapshot_tree"
 }
 
+# OS confinement of the provider launch (#334 AC6). One prefix per run from
+# autonomy/lib/os_sandbox.py, applied at every provider launch below. The
+# default stays off (issue #334). LOKI_OS_SANDBOX=auto confines when the kernel
+# probe passes, otherwise runs unconfined with a log line and the same fact in
+# .loki/state/os-sandbox.json (read by `loki status --json`); =on fails closed.
+_LOKI_CONFINE_READY=""
+_LOKI_CONFINE_PREFIX=()
+_loki_os_confine_init() {
+    [ -n "$_LOKI_CONFINE_READY" ] && return 0
+    _LOKI_CONFINE_READY="1"
+    _LOKI_CONFINE_PREFIX=()
+    local work="${TARGET_DIR:-$PWD}" rundir="${TARGET_DIR:-$PWD}/.loki" lines line decoded rc=0
+    mkdir -p "$rundir/state" 2>/dev/null || true
+    lines="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && python3 -m autonomy.lib.os_sandbox argv \
+        --workspace "$work" --run-dir "$rundir" --provider "${PROVIDER_NAME:-claude}" \
+        --status-file "$rundir/state/os-sandbox.json" --format b64)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log_error "OS sandbox requested (LOKI_OS_SANDBOX=${LOKI_OS_SANDBOX:-off}) but unavailable (rc=$rc); see the message above"
+        [ "${LOKI_OS_SANDBOX:-off}" = "on" ] && exit 2
+        return 0
+    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        decoded="$(printf '%s' "$line" | base64 -d 2>/dev/null || printf '%s' "$line" | base64 -D)"
+        _LOKI_CONFINE_PREFIX+=("$decoded")
+    done <<EOF_CONFINE
+$lines
+EOF_CONFINE
+    if [ "${#_LOKI_CONFINE_PREFIX[@]}" -gt 0 ]; then
+        log_info "OS sandbox active for ${PROVIDER_NAME:-claude} (kernel-confined; see .loki/state/os-sandbox.json)"
+    elif [ "${LOKI_OS_SANDBOX:-off}" != "off" ]; then
+        log_warn "OS sandbox not active: provider runs unconfined (see .loki/state/os-sandbox.json)"
+    fi
+}
+
 _loki_provider_pipeline_exit_code() {
     local provider_rc="${1:-125}"
     local tee_rc="${2:-125}"
@@ -1168,9 +1203,10 @@ _loki_invoke_argv_provider() {
         return 125
     fi
 
+    _loki_os_confine_init
     LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
     _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
-        "${_LOKI_INVOKE_ARGV[@]}" < /dev/null 2>&1 \
+        ${_LOKI_CONFINE_PREFIX[@]+"${_LOKI_CONFINE_PREFIX[@]}"} "${_LOKI_INVOKE_ARGV[@]}" < /dev/null 2>&1 \
         | tee -a "$log_file" "$agent_log" "$iter_output"
     _loki_argv_pipe_status=("${PIPESTATUS[@]}")
     return "$(_loki_provider_pipeline_exit_code \
@@ -26067,16 +26103,17 @@ except Exception as exc:
                 local _loki_provider_stage_rc=125
                 local _loki_tee_stage_rc=125
                 local _loki_parser_stage_rc=125
+                _loki_os_confine_init
                 if [ -n "$_loki_cm_level" ]; then
                 CAVEMAN_DEFAULT_MODE="$_loki_cm_level" \
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
-                claude "${_loki_claude_argv[@]}" -p "$prompt" \
+                ${_LOKI_CONFINE_PREFIX[@]+"${_LOKI_CONFINE_PREFIX[@]}"} claude "${_loki_claude_argv[@]}" -p "$prompt" \
             --output-format stream-json --verbose < /dev/null 2>&1
                 else
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
-                claude "${_loki_claude_argv[@]}" -p "$prompt" \
+                ${_LOKI_CONFINE_PREFIX[@]+"${_LOKI_CONFINE_PREFIX[@]}"} claude "${_loki_claude_argv[@]}" -p "$prompt" \
             --output-format stream-json --verbose < /dev/null 2>&1
                 fi | \
             tee -a "$log_file" "$agent_log" "$iter_output" | \
