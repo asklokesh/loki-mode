@@ -181,7 +181,8 @@ if [ -f "$CW" ]; then
     done
     ST="$WORK/conv-outage"; mkdir -p "$ST"; : > "$ST/versions"; echo x > "$ST/latest"; echo x > "$ST/next"
     COUT="$(cd "$WORK/convdir-loki-mode" && env PATH="$WORK/bin:$PATH" STUB_STATE="$ST" STUB_OUTAGE=empty LOKI_DISTTAG_PKG=loki-mode LOKI_DISTTAG_SLEEP=0 LOKI_DISTTAG_TRIES=2 bash "$CS" 2>&1)"; crc=$?
-    [ $crc -ne 0 ] && ok "converge step fails red when the registry cannot be read" || bad "converge step passed on an unreadable registry"
+    { [ $crc -eq 0 ] && printf '%s' "$COUT" | grep -q '::warning::' && [ "$(cat "$ST/latest")" = x ] && [ ! -s "$ST/log" ]; } \
+        && ok "converge step skips the tick with a warning when the registry cannot be read" || bad "converge step on an unreadable registry: rc=$crc $COUT"
 else
     bad "converge workflow missing: $CW"
 fi

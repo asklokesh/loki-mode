@@ -44,7 +44,7 @@ jobs:
       # npm-dist-tags.sh targets the max of {argument, latest, next, every published version}.
       # The argument is the version the registry serves under latest, never the VERSION file,
       # so a release in flight (VERSION not yet published) cannot be the target, and the
-      # converge still runs while a release is in flight.
+      # converge still runs while a release is in flight. An unreadable registry skips the tick.
       - name: Converge dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -55,7 +55,7 @@ jobs:
           set -uo pipefail
           SERVED="$(npm view "$LOKI_DISTTAG_PKG" dist-tags.latest --prefer-online 2>/dev/null)" || SERVED=""
           if [ -z "$SERVED" ]; then
-            echo "::error::cannot read dist-tags.latest for ${LOKI_DISTTAG_PKG}"
-            exit 1
+            echo "::warning::cannot read dist-tags.latest for ${LOKI_DISTTAG_PKG}; skipping this tick"
+            exit 0
           fi
           bash scripts/npm-dist-tags.sh "$SERVED"
