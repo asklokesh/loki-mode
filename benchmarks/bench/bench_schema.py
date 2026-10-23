@@ -499,6 +499,42 @@ def trial_metrics(adapter_out: Dict[str, Any], grader_success: bool,
     }
 
 
+def resume_cost(control_row: Dict[str, Any],
+                interrupted_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Extra seconds, dollars and tokens an interrupted-then-resumed trial took
+    to reach done compared with its uninterrupted control (100x axis D).
+
+    Every delta is None when either side did not record the quantity, never 0.
+    A positive value is resume overhead; near 0 or negative means the resume
+    reused finished work. reached_done is the HELD-OUT grader's verdict on the
+    resumed run, so a resume that lost the work cannot read as cheap. killed
+    False means the run finished before the interrupt point: no resume
+    happened and the pair says nothing about resume cost."""
+    def _delta(a, b):
+        return round(a - b, 4) if _is_number(a) and _is_number(b) else None
+
+    def _tokens(row):
+        ad = row.get("adapter") or {}
+        i, o = ad.get("tokens_in"), ad.get("tokens_out")
+        return i + o if _is_number(i) and _is_number(o) else None
+
+    resume = ((interrupted_row.get("adapter") or {}).get("provenance") or {}
+              ).get("resume") or {}
+    leg1_known = _is_number(resume.get("leg1_usd"))
+    return {
+        "killed": bool(resume.get("killed")),
+        "reached_done": bool(interrupted_row.get("success")),
+        "control_reached_done": bool(control_row.get("success")),
+        "extra_s": _delta(interrupted_row.get("duration_s"),
+                          control_row.get("duration_s")),
+        "extra_usd": _delta(interrupted_row.get("cost_usd"),
+                            control_row.get("cost_usd")),
+        "extra_tokens": _delta(_tokens(interrupted_row), _tokens(control_row)),
+        # False: the killed leg's spend was not recorded, extra_usd is a lower bound.
+        "extra_usd_complete": leg1_known or not resume.get("killed"),
+    }
+
+
 def trial_is_measured(trial: Dict[str, Any]) -> bool:
     """True when this trial represents a real, gradeable observation.
 

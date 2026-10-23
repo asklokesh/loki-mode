@@ -2,7 +2,9 @@
 metrics, each with a positive control that can make the metric fire. Fake
 adapters only; no model call. Run: python3 -m pytest benchmarks/bench/tests/test_trial_metrics.py"""
 import os
+import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -117,6 +119,159 @@ class CachePassThroughTest(unittest.TestCase):
             "x", {"cache_read_tokens": 10, "cache_creation_tokens": 2}, Eff)
         self.assertEqual(got["council"], {"cache_read": 8, "cache_creation": 1, "input": 1})
         self.assertEqual(got["main_session"], {"cache_read": 2, "cache_creation": 1})
+
+
+
+def _cp(cmd, rc=0, out=""):
+    return subprocess.CompletedProcess(cmd, rc, out, "")
+
+
+class InterruptRunnerTest(unittest.TestCase):
+    """The deterministic stop point, real subprocess, no model."""
+
+    SCRIPT = ("import sys,time\nprint('[wall] go',flush=True)\n"
+              "print('[implement] x  (wall done 3s)',flush=True)\n"
+              "time.sleep(30)\nprint('never')\n")
+
+    def test_stops_at_marker_and_keeps_prior_output(self):
+        t0 = __import__("time").time()
+        rc, out, err, status, dur = _base.run_cli(
+            [sys.executable, "-c", self.SCRIPT], cwd=os.getcwd(), timeout=60,
+            stop_marker=r"\(wall done")
+        self.assertEqual(status, "interrupted")
+        self.assertIn("(wall done", out)
+        self.assertNotIn("never", out)
+        self.assertLess(__import__("time").time() - t0, 20)
+
+    def test_control_without_marker_runs_to_completion(self):
+        rc, out, err, status, dur = _base.run_cli(
+            [sys.executable, "-c", "print('done')"], cwd=os.getcwd(), timeout=60,
+            stop_marker=r"\(wall done")
+        self.assertEqual((status, rc), ("completed", 0))
+
+    def test_fake_runner_output_cut_at_marker(self):
+        def fake(cmd, **kw):
+            return _cp(cmd, 0, "a\n(wall done 1s)\nb\n")
+        rc, out, err, status, dur = _base.run_cli(
+            ["x"], cwd=".", timeout=5, runner=fake, stop_marker=r"\(wall done")
+        self.assertEqual(status, "interrupted")
+        self.assertNotIn("b", out.split("done")[-1])
+
+
+def _eff(d, n, usd):
+    eff = os.path.join(d, ".loki", "metrics", "efficiency")
+    os.makedirs(eff, exist_ok=True)
+    with open(os.path.join(eff, "iteration-%d.json" % n), "w") as fh:
+        json.dump({"cost_usd": usd, "input_tokens": 10, "output_tokens": 5,
+                   "model": "claude-sonnet-5"}, fh)
+
+
+class LokiResumeLegsTest(unittest.TestCase):
+    def _run(self, **kw):
+        d = tempfile.mkdtemp(prefix="loki-resume-test-")
+        pf = os.path.join(d, "p.md")
+        open(pf, "w").write("x")
+        calls = []
+
+        def fake(cmd, **k):
+            calls.append(cmd[1:3])
+            if cmd[1:2] == ["start"] and "--resume" not in cmd:
+                _eff(d, 1, 1.0)
+                return _cp(cmd, 0, "[wall] a\n[implement] b  (wall done 3s)\nOutcome: VERIFIED\n")
+            if cmd[1:3] == ["start", "--resume"]:
+                _eff(d, 2, 0.5)
+                return _cp(cmd, 0, "Outcome: VERIFIED\n")
+            return _cp(cmd, 0, "Loki Mode v0.0.0\n")
+        try:
+            res = loki.run(d, pf, model="claude-sonnet-5", timeout=5,
+                           runner=fake, **kw)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        return res, calls
+
+    def test_interrupted_run_records_both_legs(self):
+        res, calls = self._run(interrupt_after_stage="wall")
+        r = res["provenance"]["resume"]
+        self.assertTrue(r["killed"])
+        self.assertIn(["start", "--resume"], calls)
+        self.assertEqual(r["leg1_usd"], 1.0)
+        self.assertEqual(r["leg2_usd"], 0.5)
+        self.assertEqual(res["provenance"]["journal_reuse_wall_s"], r["leg2_s"])
+        self.assertEqual(res["cost_usd"], 1.5)
+
+    def test_control_has_no_resume(self):
+        res, calls = self._run()
+        self.assertIsNone(res["provenance"]["resume"])
+        self.assertIsNone(res["provenance"]["journal_reuse_wall_s"])
+        self.assertNotIn(["start", "--resume"], calls)
+
+    def test_stage_never_reached_means_no_resume_leg(self):
+        res, calls = self._run(interrupt_after_stage="plan")
+        self.assertFalse(res["provenance"]["resume"]["killed"])
+        self.assertNotIn(["start", "--resume"], calls)
+
+
+def _row(success, usd, secs, tin=100, tout=50, resume=None):
+    return {"success": success, "cost_usd": usd, "duration_s": secs,
+            "adapter": {"tokens_in": tin, "tokens_out": tout,
+                        "provenance": {"resume": resume}}}
+
+
+class ResumeCostTest(unittest.TestCase):
+    KILLED = {"killed": True, "leg1_usd": 0.4}
+
+    def test_overhead_is_positive_control(self):
+        m = schema.resume_cost(_row(True, 1.0, 100.0),
+                               _row(True, 1.3, 150.0, 130, 70, self.KILLED))
+        self.assertEqual((m["extra_s"], m["extra_usd"], m["extra_tokens"]),
+                         (50.0, 0.3, 50))
+        self.assertTrue(m["reached_done"] and m["killed"] and m["extra_usd_complete"])
+
+    def test_lost_work_cannot_read_as_cheap(self):
+        m = schema.resume_cost(_row(True, 1.0, 100.0),
+                               _row(False, 0.2, 10.0, resume=self.KILLED))
+        self.assertLess(m["extra_usd"], 0)
+        self.assertFalse(m["reached_done"])
+
+    def test_unknown_is_none_not_zero(self):
+        m = schema.resume_cost(_row(True, None, 100.0),
+                               _row(True, 1.0, 120.0, resume={"killed": True, "leg1_usd": None}))
+        self.assertIsNone(m["extra_usd"])
+        self.assertFalse(m["extra_usd_complete"])
+
+    def test_not_killed_says_so(self):
+        m = schema.resume_cost(_row(True, 1.0, 100.0),
+                               _row(True, 1.0, 100.0, resume={"killed": False}))
+        self.assertFalse(m["killed"])
+
+    def test_pair_runner_end_to_end_with_fake_adapter(self):
+        fix = tempfile.mkdtemp(prefix="loki-bench-fixture-")
+        open(os.path.join(fix, "seed"), "w").close()
+        task = tempfile.mkdtemp(prefix="loki-bench-task-")
+        with open(os.path.join(task, "t.json"), "w") as fh:
+            json.dump({**_SPEC, "fixture": fix, "agent_timeout_s": 5,
+                       "source": "test", "default_model": "m"}, fh)
+
+        def adapter(workdir, prompt_path, **kw):
+            killed = "interrupt_after_stage" in kw
+            open(os.path.join(workdir, "ok"), "w").close()
+            return _base.build_output(
+                tool="loki", tool_version="1", model_used="m",
+                duration_s=30.0 if killed else 20.0, iterations=1,
+                tokens_in=15 if killed else 10, tokens_out=5,
+                cost_usd=0.15 if killed else 0.1, exit_status="completed",
+                provenance={"resume": {"killed": killed, "leg1_usd": 0.05}
+                            if killed else None})
+        try:
+            res = runner.run_resume_pair(os.path.join(task, "t.json"), "loki",
+                                         interrupt="wall", adapter=adapter)
+        finally:
+            shutil.rmtree(fix, ignore_errors=True)
+            shutil.rmtree(task, ignore_errors=True)
+        rc = res["pairs"][0]["resume_cost"]
+        self.assertEqual((rc["extra_s"], rc["extra_usd"], rc["extra_tokens"]),
+                         (10.0, 0.05, 5))
+        self.assertTrue(rc["killed"] and rc["reached_done"])
 
 
 if __name__ == "__main__":

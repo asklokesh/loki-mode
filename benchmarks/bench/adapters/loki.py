@@ -401,8 +401,28 @@ def _cache_tokens_by_phase(loki_dir, cost, eff):
     return {("main_session" if per else "total"): main, **per}
 
 
+def _collect_cost(loki_dir):
+    """(cost, model_used, cache_by_phase) from the shared collector; the empty
+    cost dict when it cannot load, so None usd keeps meaning not recorded."""
+    cost = {"usd": None, "input_tokens": None, "output_tokens": None}
+    eff = _base.load_efficiency_cost()
+    if eff is None:
+        return cost, None, None
+    try:
+        collected, model_from_eff = eff.collect_efficiency(loki_dir)
+        return (collected, model_from_eff or None,
+                _cache_tokens_by_phase(loki_dir, collected, eff))
+    except Exception:
+        return cost, None, None
+
+
+def _num_sub(a, b):
+    return round(a - b, 4) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else None
+
+
 def run(workdir, spec, *, model="claude", timeout=900, runner=None,
-        provider="claude", profile=None, extra_env=None):
+        provider="claude", profile=None, extra_env=None,
+        interrupt_after_stage=None):
     """Run Loki on `spec` inside `workdir` and return the adapter-output dict.
 
     Args:
@@ -416,6 +436,10 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         None leaves the env untouched. Recorded as provenance.cost_profile.
       extra_env: LOKI_* lever overrides for one-lever ablations; recorded as
         provenance.lever_env so rows from different configs never pool.
+      interrupt_after_stage: resume-cost instrument (100x axis D). Kill the run
+        when the stage line `(<stage> done` is printed, then `loki start
+        --resume` it. provenance.resume records both legs; the extra cost over
+        an uninterrupted control is computed by runner.run_resume_pair.
     """
     lever_env = validate_lever_env(extra_env)
     tool_version = _detect_loki_version(runner=runner, cwd=workdir)
@@ -456,12 +480,30 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-"))
     ):
         run_env["LOKI_SESSION_MODEL"] = _pin
+    stop = (r"\(%s done" % re.escape(interrupt_after_stage)
+            if interrupt_after_stage else None)
     rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
-        env=run_env,
+        env=run_env, stop_marker=stop,
     )
 
     loki_dir = os.path.join(workdir, ".loki")
+    resume = None
+    if interrupt_after_stage:
+        # Leg 1 was stopped at the marker (or finished before it: not killed).
+        # Cost is cumulative in .loki, so the resume leg is total minus leg 1.
+        leg1_cost, _m, _c = _collect_cost(loki_dir)
+        resume = {"interrupt_after_stage": interrupt_after_stage,
+                  "killed": status == "interrupted", "leg1_s": duration,
+                  "leg1_usd": leg1_cost.get("usd"), "leg2_s": None,
+                  "leg2_usd": None, "leg2_rc": None}
+        if status == "interrupted":
+            rc2, out2, err2, status2, dur2 = _base.run_cli(
+                [loki_bin(), "start", "--resume"], cwd=workdir,
+                timeout=timeout, runner=runner, env=run_env)
+            resume["leg2_s"], resume["leg2_rc"] = dur2, rc2
+            rc, out, err, status = rc2, out + out2, err + err2, status2
+            duration = round(duration + dur2, 3)
     iterations = _read_iteration_count(loki_dir)
     failure_reason = _read_failure_reason(loki_dir)
     honesty = _read_honesty(loki_dir)
@@ -469,18 +511,9 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     engine = _read_engine(loki_dir)
 
     # Cost: shared with the proof generator. None usd == not recorded.
-    cost = {"usd": None, "input_tokens": None, "output_tokens": None}
-    model_used = None
-    cache_by_phase = None
-    eff = _base.load_efficiency_cost()
-    if eff is not None:
-        try:
-            collected, model_from_eff = eff.collect_efficiency(loki_dir)
-            cost = collected
-            model_used = model_from_eff or None
-            cache_by_phase = _cache_tokens_by_phase(loki_dir, cost, eff)
-        except Exception:
-            pass
+    cost, model_used, cache_by_phase = _collect_cost(loki_dir)
+    if resume is not None and resume["killed"]:
+        resume["leg2_usd"] = _num_sub(cost.get("usd"), resume["leg1_usd"])
 
     # The collector labels the main-session spend "implement", which misreads as a
     # phase split. With no ledger phases it is the whole run: call it "total";
@@ -537,6 +570,8 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "ledger": cost.get("ledger"),
             "cost_profile": profile or None,
             "lever_env": lever_env,
+            "resume": resume,
+            "journal_reuse_wall_s": resume["leg2_s"] if resume else None,
             "cache_tokens_by_phase": cache_by_phase,
             # True when the usd is a lower bound (token-only main session or
             # unpriced child sessions); a consumer must not treat it as complete.
