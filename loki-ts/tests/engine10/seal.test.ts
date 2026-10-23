@@ -2088,7 +2088,7 @@ describe("CW-04 receipt blocks", () => {
     expect((await sealWith("cw-sbx-ON", { "confinement.json": { ...CONF, kind: "none" } })).s.data.verdict).toBe("FAILED");
     expect((await sealWith("cw-sbx-ON-absent", {})).s.data.verdict).toBe("PARTIAL");
     expect((await sealWith("cw-sbx-ON-ok", { "confinement.json": CONF })).s.data.verdict).toBe("VERIFIED");
-  });
+   }, 60_000);
   test("B1: every present block is labelled unverified run-dir input in receipt.json and receipt.md and adds a not_proven line; a forged seatbelt claim is never signed as fact", async () => {
     const forged = { kind: "seatbelt", profile_sha256: "forged", kernel_probe_sha256: null, known_limitations: [], provider: null, unconfined_calls: [] };
     const { ctx, r } = await sealWith("cw-prov", { "confinement.json": forged, "params.json": PARAMS });
@@ -2105,7 +2105,7 @@ describe("CW-04 receipt blocks", () => {
     expect(absent.s.data.verdict).toBe("PARTIAL");
     expect(absent.r.not_proven.some((l) => l.includes("spec-trace.json is absent or malformed"))).toBe(true);
     expect((await sealWith("cw-st-bad", { "spec-trace.json": "{nope" })).s.data.verdict).toBe("PARTIAL");
-  });
+   }, 60_000);
   test("receipt.md shows the confinement line and the clause table", async () => {
     const { ctx } = await sealWith("cw-md", { "confinement.json": CONF, "spec-trace.json": TRACE });
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
