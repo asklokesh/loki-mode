@@ -205,7 +205,9 @@ print("%s|%s|%s" % (c,err,(d.get("result") or "").strip().replace("\n"," ")[:400
             echo "loki edit: fast_verify not found at $fv" >&2
             vrc=2
         fi
-        if [ "$vrc" -eq 0 ]; then echo "verify: pass"; else echo "verify: FAILED (exit $vrc)" >&2; fi
+        if [ "$vrc" -eq 0 ]; then echo "verify: pass"
+        elif [ "$vrc" -eq 3 ]; then echo "verify: INCONCLUSIVE (exit 3): no behavioral signal ran, not a pass" >&2
+        else echo "verify: FAILED (exit $vrc)" >&2; fi
     fi
 
     if [ "$do_receipt" = true ]; then
@@ -223,7 +225,7 @@ json.dump({"kind":"edit-receipt","signed":False,"task":sys.argv[1],"base":sys.ar
 
     if [ "$do_commit" = true ]; then
         if [ "$vrc" -ne 0 ]; then
-            echo "loki edit: not committing because verify failed" >&2
+            echo "loki edit: not committing because verify did not pass (exit $vrc)" >&2
         else
             local subj f
             subj="$(printf '%s' "$change" | tr '\n' ' ' | cut -c1-68)"
