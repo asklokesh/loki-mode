@@ -168,8 +168,10 @@ jobs:
     # job is attacker-controllable data: no job outputs, no `${{ }}` of agent
     # values in a script, nothing from the artifact is executed.
     needs: agent
+    # Own group: GitHub keeps one running and one pending run per group and a newer
+    # pending run replaces an older one, so sharing the agent group could drop a queued publish.
     concurrency:
-      group: loki-issue-${{ github.event.issue.number || inputs.issue }}
+      group: loki-issue-publish-${{ github.event.issue.number || inputs.issue }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -385,7 +387,7 @@ jobs:
     # Holds the write token and runs no agent. Everything from the artifact is data.
     needs: [pr-command, pr-fix]
     concurrency:
-      group: loki-pr-fix-${{ github.event.issue.number }}
+      group: loki-pr-publish-${{ github.event.issue.number }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -1874,3 +1874,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the resolver matrix (section 7) and the session-pin matrix (section 9) both used the per-cell python leg. The estimator leg (`loki plan`) and the bash legs are different processes by design and stay per cell. Other python3 -c calls in the file run once.
 - Mechanism: one `py_batch` helper resolves every cell in a single interpreter. Each cell runs against a fresh copy of the ambient environment plus its own exports, the same input the per-cell `env "$@" python3` gave. Cell counts stay at 224 and 224.
 - Fixture: after the change the file finishes in 103s with 71 passed, 0 failed (before: 445s, 71 passed). Mutant: dashboard/server.py `_clamp_to_max_tier` opus arm returning the alias unchanged makes the resolver matrix report PARITY MISMATCH on the fable cells; restored and re-run green.
+
+## FC-WORKFLOW-STUB-IGNORES-SUBCOMMAND-AND-SHARED-PUBLISH-GROUP (#360, rev-b BLOCK on 6252fe625)
+- User-visible: if the fix-to-reseal verb mapping were dropped, `/loki fix` would call `loki verify-pr fix`, which takes the non-reseal path, and no receipt would be posted; the suite stayed green. Separately, a queued publish job could be dropped when a newer run arrived.
+- Law: a test double must assert the contract it stands in for (the subcommand), and a job that consumes another job's output must not share its concurrency group.
+- Cause: the verify-pr stub in tests/test-issue-to-pr-action.sh wrote the status for any argv; `publish` and `pr-publish` shared groups with `agent` and `pr-fix`, and GitHub keeps one running and one pending run per group, a newer pending run replacing the older.
+- Siblings swept (`grep -n "group:" docs/examples/loki-issue-to-pr.yml.example`): four jobs carry a group; only the two publish jobs shared one.
+- Mechanism: the stub records its subcommand and the tests require `reseal` for fix and `explain` for explain; groups are now `loki-issue-`, `loki-issue-publish-`, `loki-pr-fix-`, `loki-pr-publish-`, and a guard requires four distinct groups.
+- Fixture: tests/test-issue-to-pr-action.sh; mutants: drop `SUB="reseal"` (2 failures), make the publish group equal the agent group (guard red).
