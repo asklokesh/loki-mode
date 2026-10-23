@@ -79,6 +79,10 @@ function isLoopbackHost(h: string): boolean {
 // CR, LF, NUL, tab, DEL and the rest of C0 would let a value inject headers.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
+// Anything outside RFC 3986 URI syntax (notably a backslash, which WHATWG reads as a slash but Python urlsplit does
+// not) lets two parsers disagree about the host the Authorization header is sent to. Mirrored in autonomy/lib/mcp-config.sh.
+const NON_RFC3986 = /[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]/;
+
 // Names the tool owns inside the LOKI_MCP_<NAME>_URL namespace. REGISTRY was the registry test's URL knob (#316);
 // a stale shell variable of that name must never become an outbound server. Mirrored in autonomy/lib/mcp-config.sh.
 const RESERVED_REMOTE_NAMES = new Set(["REGISTRY"]);
@@ -99,6 +103,10 @@ export function remoteServersFromEnv(env: NodeJS.ProcessEnv): { servers: Record<
     // new URL() silently strips CR, LF and tab, so the raw value is checked first.
     if (CONTROL_CHARS.test(raw)) {
       console.warn(`[mcp_config] ignoring ${key}: control characters are not allowed.`);
+      continue;
+    }
+    if (NON_RFC3986.test(raw)) {
+      console.warn(`[mcp_config] ignoring ${key}: the URL contains characters outside RFC 3986 (for example a backslash).`);
       continue;
     }
     let url: URL;

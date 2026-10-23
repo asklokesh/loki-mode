@@ -296,6 +296,11 @@ refused_case() {
 refused_case "plain http to a non-loopback host" "http://co.example.com/mcp" "$TOKEN_D"
 refused_case "CRLF in the auth value" "https://co.example.com/mcp" "$(printf '%s\r\nX-Evil: 1' "$TOKEN_D")"
 refused_case "LF in the url" "$(printf 'https://co.example.com/mcp\nX-Evil: 1')" "$TOKEN_D"
+# A backslash is a slash to WHATWG but userinfo to Python urlsplit: the two parsers name different hosts.
+refused_case "backslash before userinfo, evil host (WHATWG evil)" 'http://evil.example\@127.0.0.1/mcp' "$TOKEN_D"
+refused_case "backslash userinfo on 127.0.0.1" 'http://evil\@127.0.0.1/' "$TOKEN_D"
+refused_case "backslash userinfo on localhost" 'http://evil\@localhost/' "$TOKEN_D"
+refused_case "backslash in an https url" 'https://co.example.com\@127.0.0.1/mcp' "$TOKEN_D"
 
 # A 644 bundle with no secret, then a secret is added: both routes must replace
 # the file (new inode) at 600 with the token present, never write into the 644 file.

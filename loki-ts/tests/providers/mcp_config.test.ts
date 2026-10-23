@@ -383,6 +383,27 @@ describe("mcp_config outbound remote servers and auth headers", () => {
     }
   });
 
+  it("refuses a backslash url whose host differs between WHATWG and Python urlsplit", () => {
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      for (const u of [
+        "http://evil.example\\@127.0.0.1/mcp",
+        "http://evil\\@127.0.0.1/",
+        "http://evil\\@localhost/",
+        "https://co.example.com\\@127.0.0.1/mcp",
+      ]) {
+        process.env["LOKI_MCP_ACME_URL"] = u;
+        process.env["LOKI_MCP_ACME_AUTH"] = TOKEN;
+        const b = bundle();
+        expect(b.mcpServers["acme"]).toBeUndefined();
+        expect(JSON.stringify(b)).not.toContain(TOKEN);
+      }
+    } finally {
+      console.warn = orig;
+    }
+  });
+
   it("plain http to a non-loopback host is refused even with a token", () => {
     const orig = console.warn;
     console.warn = () => {};

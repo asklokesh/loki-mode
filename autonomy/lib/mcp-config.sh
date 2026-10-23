@@ -123,6 +123,9 @@ for key in sorted(os.environ):
     if control.search(raw):
         sys.stderr.write('[mcp_config] ignoring %s: control characters are not allowed.\n' % key)
         continue
+    if re.search(r\"[^A-Za-z0-9\\-._~:/?#\\[\\]@!\$&'()*+,;=%]\", raw):
+        sys.stderr.write('[mcp_config] ignoring %s: the URL contains characters outside RFC 3986 (for example a backslash).\\n' % key)
+        continue
     try:
         parts = urlsplit(raw)
         host = parts.hostname or ''
