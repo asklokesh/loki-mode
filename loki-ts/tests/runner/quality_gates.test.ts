@@ -43,6 +43,7 @@ import {
   zeroTestsExecuted,
 } from "../../src/runner/quality_gates.ts";
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
+import { REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 
 let scratch = "";
@@ -2545,4 +2546,44 @@ describe("#320 claudeReviewer streams so the stagger hook fires before completio
     expect(streamFinalResult(`{"type":"system"}\n`, "json")).toBe("");
     expect(streamFinalResult(`{"type":"system"}\n`, "text")).toBe("");
   });
+});
+
+// FC-DISALLOWED-TOOLS-TWO-FLAGS: the reviewer argv carries exactly one --disallowedTools holding the
+// permission web deny and every tree-mutation guard entry. Dropping either list or splitting the flag turns this red.
+describe("FC-DISALLOWED-TOOLS-TWO-FLAGS claudeReviewer argv", () => {
+  const KEYS = ["PATH", "LOKI_DIR", "LOKI_SDK_CODE_REVIEW", "LOKI_REVIEW_JSON_SCHEMA", "LOKI_PERMISSION_POLICY", "LOKI_REVIEW_TOOL_GUARD"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let root = "";
+  beforeEach(async () => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    root = mkdtempSync(join(tmpdir(), "loki-fcdt-"));
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    const log = join(root, "argv.log");
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --json-schema  --disallowedTools"; exit 0;; esac\nprintf '%s\\n' "$@" > '${log}'\nprintf 'VERDICT: PASS\\nFINDINGS:\\n- None\\n'\n`, { mode: 0o755 });
+    process.env["PATH"] = `${bin}:${saved["PATH"]}`;
+    process.env["LOKI_DIR"] = join(root, ".loki");
+    process.env["LOKI_PERMISSION_POLICY"] = "legacy";
+    delete process.env["LOKI_SDK_CODE_REVIEW"];
+    delete process.env["LOKI_REVIEW_JSON_SCHEMA"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+  });
+  afterEach(async () => {
+    for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    const { _resetClaudeHelpCacheForTest } = await import("../../src/providers/claude_flags.ts");
+    _resetClaudeHelpCacheForTest();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("one merged flag with the web deny and every guard entry", async () => {
+    await claudeReviewer({ reviewer: { name: "code-quality" } as never, diff: "d", files: "f", prompt: "review this" });
+    const argv = readFileSync(join(root, "argv.log"), "utf8").split("\n").filter(Boolean);
+    const idx = argv.flatMap((a, i) => (a === "--disallowedTools" ? [i] : []));
+    expect(idx.length).toBe(1);
+    const vals = (argv[(idx[0] ?? 0) + 1] ?? "").split(",");
+    expect(vals).toContain("WebFetch");
+    for (const e of REVIEW_GUARD_DENYLIST.split(",")) expect(vals).toContain(e);
+  }, 60000);
 });

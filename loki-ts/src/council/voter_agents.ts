@@ -84,6 +84,8 @@ import {
   reviewAllowlistArgv,
   cavemanSuppressEnv,
   permissionArgv,
+  mergeDisallowedToolsFlag,
+  REVIEW_GUARD_DENYLIST,
 } from "../providers/claude_flags.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 
@@ -410,7 +412,7 @@ export async function dispatchClaudeAgents(
   // a CONCERN; injecting "do NOT refuse, do NOT ask" would bias voters toward
   // APPROVE and defeat the council's adversarial purpose. Do not route voters
   // through the auto-flags builder.
-  const argv = [
+  let argv = [
     "claude",
     ...permissionArgv(),
     "--agents",
@@ -434,10 +436,7 @@ export async function dispatchClaudeAgents(
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
     claudeFlagSupported("--disallowedTools")
   ) {
-    argv.push(
-      "--disallowedTools",
-      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
-    );
+    argv = mergeDisallowedToolsFlag(argv, REVIEW_GUARD_DENYLIST);
   }
   // EMBED 3b (v7.35.0, #167): positive --allowedTools least-privilege grant.
   // DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1). Emitted ALONGSIDE the denylist:
@@ -519,7 +518,7 @@ export async function dispatchDevilsAdvocate(
   // Same trust-gate hardening as dispatchClaudeAgents: voters never go through
   // buildAutoFlags (no autonomy override that would bias toward APPROVE), and
   // the tree-mutation guard / least-privilege allowlist apply identically.
-  const argv = [
+  let argv = [
     "claude",
     ...permissionArgv(),
     "--agents",
@@ -531,10 +530,7 @@ export async function dispatchDevilsAdvocate(
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
     claudeFlagSupported("--disallowedTools")
   ) {
-    argv.push(
-      "--disallowedTools",
-      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
-    );
+    argv = mergeDisallowedToolsFlag(argv, REVIEW_GUARD_DENYLIST);
   }
   argv.push(...reviewAllowlistArgv());
   argv.push("-p", topPrompt);

@@ -48,6 +48,7 @@ import {
   claudeFlagSupported,
   ensureClaudeHelpCache,
   leanReviewerFlags,
+  mergeDisallowedToolsFlag,
   permissionArgv,
   reviewerModelForTier,
 } from "../providers/claude_flags.ts";
@@ -1679,7 +1680,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
   const streamed = (format: "json" | "text"): typeof run => onFirstResponse
     ? async (...a) => { const r = await run(...a); return { ...r, stdout: streamFinalResult(r.stdout, format) }; }
     : run;
-  const argv = ["claude", ...permissionArgv()];
+  let argv = ["claude", ...permissionArgv()];
   // Model pin: LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) wins, else
   // simple/standard tiers route to haiku with lean flags (S9). Complex tier,
   // HIGH-tier changes and moat reviewers keep the account default.
@@ -1694,7 +1695,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt, reviewer: rv, effort,
     if (process.env["LOKI_LEAN_CHILDREN"] !== "0" && !process.env["LOKI_ADVISOR_MODEL"]) argv.push(...leanReviewerFlags());
   }
   if (process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0") {
-    argv.push("--disallowedTools", REVIEW_GUARD_DENYLIST);
+    argv = mergeDisallowedToolsFlag(argv, REVIEW_GUARD_DENYLIST);
   }
 
   // v8 RAW-SDK REVIEWER PATH (opt-in LOKI_SDK_CODE_REVIEW=1). Run the reviewer

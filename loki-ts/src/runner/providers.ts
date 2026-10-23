@@ -39,6 +39,7 @@ import {
   fallbackForPrimary,
   tierRouteModel,
   permissionArgv,
+  mergeDisallowedToolsFlag,
   sdkPermissionOptions,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
@@ -522,8 +523,7 @@ export function claudeProvider(): ProviderInvoker {
       const argv: string[] = [
         cli,
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (the compiled policy swaps it unless LOKI_PERMISSION_POLICY=legacy, C-C2)
-        ...permissionArgv(call.cwd),
-        ...(process.env["LOKI_E10_DISALLOWED_TOOLS"] ? ["--disallowedTools", process.env["LOKI_E10_DISALLOWED_TOOLS"]] : []), // Q18-04: per-session deny (read-only reviewer)
+        ...mergeDisallowedToolsFlag(permissionArgv(call.cwd), process.env["LOKI_E10_DISALLOWED_TOOLS"] ?? ""), // Q18-04: per-session deny (read-only reviewer) merged into the policy flag
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,

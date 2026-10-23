@@ -27,6 +27,30 @@ import { claudeEffortLevels, claudeThinkingMaxEffort } from "../util/claude_mode
 export const REVIEW_GUARD_DENYLIST =
   "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*),Bash(git --exec-path:*),Bash(git diff --output:*),Bash(git diff --output=:*),Bash(git diff --ext-diff:*),Bash(git diff --no-index:*),Bash(git log --output:*),Bash(git log --output=:*),Bash(git log --ext-diff:*),Bash(git show --output:*),Bash(git show --output=:*),Bash(git show --ext-diff:*),Bash(git blame --output:*),Bash(git blame --output=:*),Bash(rg --pre:*),Bash(rg --pre=:*),Bash(rg --pre-glob:*),Bash(rg --pre-glob=:*),Bash(rg --hostname-bin:*),Bash(rg --hostname-bin=:*),Bash(find -delete:*),Bash(find -exec:*),Bash(find -execdir:*),Bash(find -ok:*),Bash(find -fprint:*),Bash(find -fprintf:*),Bash(find -fls:*),Bash(git * --output*),Bash(git * --ext-diff*),Bash(git * --no-index*),Bash(rg * --pre*),Bash(rg * --hostname-bin*),Bash(rg --pre*),Bash(rg --hostname-bin*),Bash(find * -delete*),Bash(find * -exec*),Bash(find * -execdir*),Bash(find * -fprint*),Bash(find * -fls*),Bash(find * -ok*)";
 
+// One --disallowedTools per argv (FC-DISALLOWED-TOOLS-TWO-FLAGS): fold every
+// existing value plus extraCsv into a single flag at the first existing position
+// (appended when there is none), deduped, order kept. The claude CLI unions
+// repeated flags (measured, 2.1.309), but one flag keeps the argv checkable.
+export function mergeDisallowedToolsFlag(argv: string[], extraCsv: string): string[] {
+  const extra = extraCsv.split(",").filter(Boolean);
+  if (extra.length === 0) return argv;
+  const merged: string[] = [];
+  const out: string[] = [];
+  let at = -1;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--disallowedTools") {
+      if (at < 0) at = out.length;
+      merged.push(...(argv[i + 1] ?? "").split(",").filter(Boolean));
+      i++;
+      continue;
+    }
+    out.push(argv[i]!);
+  }
+  const value = [...new Set([...merged, ...extra])].join(",");
+  out.splice(at < 0 ? out.length : at, 0, "--disallowedTools", value);
+  return out;
+}
+
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 const EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];

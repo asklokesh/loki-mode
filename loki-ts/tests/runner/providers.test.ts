@@ -331,6 +331,24 @@ describe("claudeProvider invocation", () => {
     expect(argv).toContain("build x");
   });
 
+  it("FC-DISALLOWED-TOOLS-TWO-FLAGS: stage deny list merges into ONE --disallowedTools", async () => {
+    const argvLog = writeStub({ stdout: "ok" });
+    process.env["LOKI_E10_DISALLOWED_TOOLS"] = "Bash(rm:*),StageOnlyTool";
+    try {
+      const r = await claudeProvider().invoke(makeCall({ tier: "development" }));
+      expect(r.exitCode).toBe(0);
+    } finally {
+      delete process.env["LOKI_E10_DISALLOWED_TOOLS"];
+    }
+    const argv = readArgv(argvLog);
+    const idx = argv.flatMap((a, i) => (a === "--disallowedTools" ? [i] : []));
+    expect(idx.length).toBe(1);
+    const vals = (argv[(idx[0] ?? 0) + 1] ?? "").split(",");
+    expect(vals).toContain("WebFetch");
+    expect(vals).toContain("Bash(rm:*)");
+    expect(vals).toContain("StageOnlyTool");
+  });
+
   it("hosted CLI loop injects the trusted Bash hook settings", async () => {
     _resetClaudeHelpCacheForTest("  --settings <file-or-json>  load settings");
     process.env["LOKI_HOST_GUARD"] = "1";

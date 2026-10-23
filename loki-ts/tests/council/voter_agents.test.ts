@@ -25,7 +25,7 @@ import {
 } from "../../src/council/voter_agents.ts";
 import { recordFromClaudeResult, recordFromUsage, withChildLedger } from "../../src/util/child_ledger.ts";
 import { __resetSdkClientForTests } from "../../src/runner/sdk_invoker.ts";
-import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
+import { _resetClaudeHelpCacheForTest, REVIEW_GUARD_DENYLIST } from "../../src/providers/claude_flags.ts";
 import type { CouncilEvaluateContext, AgentVerdict } from "../../src/runner/council.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 
@@ -362,15 +362,14 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     };
   }
 
-  // Every --disallowedTools value on the argv. The permission policy (#256) emits
-  // its own web and credential deny list ahead of the voter guard, so the flag
-  // can appear more than once; the guard is judged on the union, never on the
-  // first occurrence.
-  // Measured on claude 2.1.309: repeated --disallowedTools flags merge (both orders
-  // drop WebFetch and Edit from the init tool list; a single --disallowedTools Edit
-  // keeps WebFetch), so two flags on one argv lose no deny entry.
+  // Exactly one --disallowedTools per voter argv (FC-DISALLOWED-TOOLS-TWO-FLAGS):
+  // the permission policy (#256) web and credential deny list and the tree-mutation
+  // guard are merged into that one value. Measured on claude 2.1.309 that the CLI
+  // unions repeated flags, but one flag keeps the argv checkable.
   function denyValues(argv: string[]): string[] {
-    return argv.flatMap((a, i) => (a === "--disallowedTools" ? [argv[i + 1] ?? ""] : []));
+    const v = argv.flatMap((a, i) => (a === "--disallowedTools" ? [argv[i + 1] ?? ""] : []));
+    expect(v.length).toBeLessThanOrEqual(1);
+    return v;
   }
   const GUARD_ENTRIES = ["Edit", "Write", "NotebookEdit", "Bash(git reset:*)", "Bash(git push:*)"];
 
@@ -382,9 +381,11 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
       const values = denyValues(cap.argv);
-      expect(values.length).toBeGreaterThanOrEqual(1);
-      // The voter guard is its own flag value, separate from the policy deny list.
-      expect(values.some((v) => v.startsWith("Edit,Write,NotebookEdit"))).toBe(true);
+      expect(values.length).toBe(1);
+      // The single value carries the policy web deny AND the shared guard list.
+      const entries = values[0]!.split(",");
+      expect(entries).toContain("WebFetch");
+      for (const e of REVIEW_GUARD_DENYLIST.split(",")) expect(entries).toContain(e);
       const denyList = values.join(",");
       // Mutating tools denied.
       expect(denyList).toContain("Edit");
@@ -393,11 +394,31 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
       expect(denyList).toContain("Bash(git reset:*)");
       expect(denyList).toContain("Bash(git push:*)");
       // Read-only git must NOT be in the deny list (reviewer still inspects).
-      expect(denyList).not.toContain("Bash(git diff");
-      expect(denyList).not.toContain("Bash(git log");
+      // (Only the unsafe flag forms such as --output and --ext-diff are denied.)
+      for (const ro of ["Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)"]) {
+        expect(denyList.split(",")).not.toContain(ro);
+      }
       // The deny list is a single token; the -p prompt must follow it, never be
       // swallowed as a tool name.
       expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+    }
+  });
+
+  it("the devil's-advocate spawn also carries exactly one merged --disallowedTools", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchDevilsAdvocate(fakeCtx(), capturingRunner(cap)).catch(() => undefined);
+      const values = denyValues(cap.argv);
+      expect(values.length).toBe(1);
+      const entries = values[0]!.split(",");
+      expect(entries).toContain("WebFetch");
+      for (const e of REVIEW_GUARD_DENYLIST.split(",")) expect(entries).toContain(e);
     } finally {
       if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
       else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;

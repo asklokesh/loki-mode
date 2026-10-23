@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, copyFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  mergeDisallowedToolsFlag,
   effortForTier,
   remainingBudget,
   fallbackForPrimary,
@@ -1391,5 +1392,31 @@ describe("clampThinkingForEffort (#314)", () => {
     expect(thinkingConflictsEffort("claude-opus-5", { type: "disabled" }, "max")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "disabled" }, "high")).toBe(false);
     expect(thinkingConflictsEffort("m-unknown", { type: "adaptive" }, "max")).toBe(false);
+  });
+});
+
+describe("FC-DISALLOWED-TOOLS-TWO-FLAGS mergeDisallowedToolsFlag", () => {
+  const flags = (argv: string[]) => argv.flatMap((a, i) => (a === "--disallowedTools" ? [argv[i + 1] ?? ""] : []));
+
+  it("folds an existing flag and the extra list into exactly one flag, deduped, order kept", () => {
+    const out = mergeDisallowedToolsFlag(
+      ["claude", "--permission-mode", "plan", "--disallowedTools", "WebFetch,WebSearch", "--model", "x"],
+      "Edit,WebSearch,Write",
+    );
+    expect(flags(out)).toEqual(["WebFetch,WebSearch,Edit,Write"]);
+    expect(out.slice(0, 3)).toEqual(["claude", "--permission-mode", "plan"]);
+    expect(out.slice(-2)).toEqual(["--model", "x"]);
+  });
+
+  it("appends one flag when the argv has none, and collapses several existing flags", () => {
+    expect(flags(mergeDisallowedToolsFlag(["claude"], "Edit"))).toEqual(["Edit"]);
+    const out = mergeDisallowedToolsFlag(["claude", "--disallowedTools", "A", "-p", "x", "--disallowedTools", "B"], "C");
+    expect(flags(out)).toEqual(["A,B,C"]);
+    expect(out.filter((a) => a === "-p")).toHaveLength(1);
+  });
+
+  it("leaves the argv untouched for an empty extra list", () => {
+    const argv = ["claude", "--disallowedTools", "A", "-p", "x"];
+    expect(mergeDisallowedToolsFlag(argv, "")).toEqual(argv);
   });
 });
