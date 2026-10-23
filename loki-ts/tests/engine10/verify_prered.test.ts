@@ -127,6 +127,18 @@ describe("engine10 verify: baseline subtract (A-112)", () => {
     expect(failIds("\u2716 spec one (1.2ms)\n\u2716 failing tests:\n\u2139 fail 1")).toEqual(["spec one"]);
     expect(failIds(" FAIL  src/a.test.ts > s > c\n Tests  1 failed | 2 passed")).toEqual(["src/a.test.ts > s > c"]);
   });
+  test("FC-FULLSUITE-GO-CARGO-IDS: go -json, go plain and cargo failures yield ids; partial extraction yields none", () => {
+    const ev = (o: object) => JSON.stringify(o);
+    const goJson = [ev({ Action: "run", Package: "m/p", Test: "TestAdd" }), ev({ Action: "output", Package: "m/p", Test: "TestAdd", Output: "--- FAIL: TestAdd (0.00s)\n" }), ev({ Action: "fail", Package: "m/p", Test: "TestAdd", Elapsed: 0 }), ev({ Action: "output", Package: "m/p", Output: "FAIL\tm/p\t0.003s\n" }), ev({ Action: "fail", Package: "m/p", Elapsed: 0.003 })].join("\n");
+    expect(failIds(goJson)).toEqual(["m/p::TestAdd"]);
+    expect(failIds(goJson.split("\n").filter((l) => !l.includes('"Action":"fail","Package":"m/p","Test"')).join("\n"))).toEqual([]);
+    expect(failIds("=== RUN   TestAdd\n--- FAIL: TestAdd (0.00s)\n    a_test.go:9: got 1\nFAIL\nFAIL\tm/p\t0.003s\n")).toEqual(["TestAdd"]);
+    expect(failIds("--- FAIL: TestA (0.00s)\n    --- FAIL: TestA/sub (0.00s)\nFAIL\nFAIL\tm/p\t0.003s\n")).toEqual(["TestA", "TestA/sub"]);
+    expect(failIds("# m/q [m/q.test]\n./q_test.go:3:1: undefined: x\nFAIL\tm/q [build failed]\n")).toEqual(["m/q"]);
+    expect(failIds("running 2 tests\ntest tests::adds ... FAILED\ntest tests::subs ... ok\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n")).toEqual(["tests::adds"]);
+    expect(failIds("test a ... FAILED\ntest result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s")).toEqual([]);
+    expect(failIds("test a ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s")).toEqual([]);
+  });
   test("FC-FULLSUITE-ANSI-IDS: failIds parses a colored vitest transcript exactly like the plain one", () => {
     const plain = " FAIL  src/a.test.ts > s > c\n FAIL  src/b.test.ts > s > d\n Tests  2 failed | 3 passed (5)";
     const colored = " \u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m \u001b[31msrc/a.test.ts > s > c\u001b[39m\n \u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m \u001b[31msrc/b.test.ts > s > d\u001b[39m\n \u001b[2m     Tests \u001b[22m \u001b[1m\u001b[31m2 failed\u001b[39m\u001b[22m | \u001b[32m3 passed\u001b[39m\u001b[90m (5)\u001b[39m";
