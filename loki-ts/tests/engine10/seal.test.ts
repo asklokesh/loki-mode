@@ -773,6 +773,29 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  test("FC-WEAKENED-TEST-IMPORT-WIDENING: a widened import plus an added test is not weakened; a dropped expect, an added skip and a narrowed import are", async () => {
+    noKey();
+    const { repo } = makeRepo("widen");
+    const T = (imp: string, body: string): string => `${imp}\n// helper tests\ntest("a", () => {\n  expect(add(1, 2)).toBe(3);\n${body}});\n`;
+    const I = 'import { test, expect } from "bun:test";';
+    const files: Record<string, [string, string]> = {
+      "t_widen.test.ts": [T(I, ""), T('import { test, expect, describe } from "bun:test";', "") + 'test("b", () => {\n  expect(add(2, 2)).toBe(4);\n});\n'],
+      "t_drop.test.ts": [T(I, "  expect(add(0, 0)).toBe(0);\n"), T(I, "")],
+      "t_skip.test.ts": [T(I, ""), T(I, "") + 'test.skip("c", () => {});\n'],
+      "t_narrow.test.ts": [T(I, ""), T('import { test } from "bun:test";', "")],
+    };
+    for (const [f, [b]] of Object.entries(files)) writeFileSync(join(repo, f), b);
+    sh(["git", "add", ...Object.keys(files)], repo);
+    sh(["git", "commit", "-q", "-m", "add tests"], repo);
+    const base2 = sh(["git", "rev-parse", "HEAD"], repo).trim();
+    for (const [f, [, h]] of Object.entries(files)) writeFileSync(join(repo, f), h);
+    const { ctx } = ctxFor(repo, base2);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).not.toContain("weakened test: t_widen.test.ts");
+    for (const f of ["t_drop", "t_skip", "t_narrow"]) expect(r.not_proven).toContain(`weakened test: ${f}.test.ts`);
+  }, 60_000);
+
   test("FC-WALL-PHANTOM-PATH: a symlink added by the change lands on NOT PROVEN by name; a regular new file and a plan-requested link do not", async () => {
     noKey();
     const { repo, base } = makeRepo("symadd");

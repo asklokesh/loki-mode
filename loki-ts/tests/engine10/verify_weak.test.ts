@@ -97,10 +97,10 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     expect(d.pre_red).toEqual(["test_old.py::test_old"]);
     expect(d.not_proven).toEqual([]);
   }, 60_000);
-  test("A-115b: honest fix that appends a test to the relevant file, unrelated red elsewhere: red target went green, pre_red subtracted, weakened note only", async () => {
+  test("A-115b: honest fix that appends a test to the relevant file, unrelated red elsewhere: red target went green, pre_red subtracted, a pure addition is not weakened", async () => {
     const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n", "test_target.py": TGT + "def test_new():\n    assert True\n" }, "see test_target.py", py("test_target.py"), py("test_old.py"), true);
     expect(d.pre_red).toEqual(["test_old.py::test_old"]);
-    expect(d.not_proven).toEqual(["weakened test: test_target.py"]);
+    expect(d.not_proven).toEqual([]);
   }, 60_000);
   test("A-115b: a base node test printing pass/fail lines does not inflate the base count", async () => {
     const noise = "console.log('# pass 40');console.log('# fail 40');";
