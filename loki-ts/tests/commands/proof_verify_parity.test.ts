@@ -54,6 +54,10 @@ import { dirname, join, resolve } from "node:path";
 import { run } from "../../src/util/shell.ts";
 import { noBashResultCode, runProof } from "../../src/commands/proof.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
+import { setLoadAwareTimeout } from "../preload.ts";
+
+// FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT: the verify cases spawn the bun and bash CLIs per forged shape.
+setLoadAwareTimeout(30_000);
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const VERIFIER = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
