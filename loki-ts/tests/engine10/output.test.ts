@@ -326,6 +326,10 @@ describe("reasonOf (A-130 round 4)", () => {
     expect(reasonOf([ev("stage.failed", "implement", { reason: "exit 1 (general error)" })], false, "fatal:quota_exhausted", "FAILED")).toBe("provider credit exhausted");
     expect(reasonOf([], false, "fatal:auth", "FAILED")).toBe("provider authentication failed");
   });
+  test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: a fatal auth stop names the provider's cause", () => {
+    const e = [ev("session.ended", "implement", { exit: "error", cause: "exit 1 (general error)", provider_error: "Invalid API key \u00b7 Fix external API key" })];
+    expect(reasonOf(e, false, "fatal:auth", "FAILED")).toBe("provider authentication failed: Invalid API key \u00b7 Fix external API key");
+  });
   test("BLOCKED prints the conflict, not the empty diff", () => {
     const e = [ev("stage.completed", "implement", { spec_conflict_reason: "spec says A and B" }), ev("stage.failed", "verify", { reason: "empty diff without an already_done marker" })];
     expect(reasonOf(e, false, null, "BLOCKED")).toBe("spec conflict: spec says A and B");

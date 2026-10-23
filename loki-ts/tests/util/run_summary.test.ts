@@ -174,6 +174,11 @@ test("nextOf auth failure names the active provider, not claude", () => {
   expect(nextOf("failed", 2, "provider authentication failed", "claude")).toBe("claude login");
   expect(nextOf("failed", 2, "provider authentication failed")).toBe("claude login");
 });
+test("FC-AUTH-CAUSE-ONLY-IN-IMPL-LOG: next names the fix for a cause-carrying auth reason", () => {
+  expect(nextOf("failed", 0, "provider authentication failed: Invalid API key \u00b7 Fix external API key")).toBe("replace or unset ANTHROPIC_API_KEY, or run claude login");
+  expect(nextOf("failed", 0, "provider authentication failed: Not logged in")).toBe("claude login");
+  expect(nextOf("failed", 0, "provider authentication failed: bad token", "codex")).toBe("re-authenticate codex, then loki doctor");
+});
 test("TEN-COST-32: budget stop next names --max-cost and the run id", () => {
   const n = nextOf("stopped", 1, "cost/time cap reached", "claude", "run-abc123");
   expect(n).toContain("--max-cost");
