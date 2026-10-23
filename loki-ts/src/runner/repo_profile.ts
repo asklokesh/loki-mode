@@ -490,21 +490,26 @@ function split(failing: { name: string; ids?: string[]; eligible: boolean; base:
  *  resolved through the go.mod module path, else its trailing segments against the file's dirname. */
 function goIdTouched(repoDir: string, id: string, changed: string[]): boolean {
   const pkg = id.split("::")[0] ?? "";
-  let mod = "";
-  try { mod = /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, "go.mod"), "utf8"))?.[1] ?? ""; } catch { /* no go.mod: suffix match only */ }
+  const modOf = (dir: string): string | null => {
+    try { return /^module\s+(\S+)/m.exec(readFileSync(join(repoDir, dir, "go.mod"), "utf8"))?.[1] ?? null; } catch { return null; }
+  };
   return changed.some((f) => {
     if (!f.endsWith(".go")) return false;
     const dir = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".";
-    if (mod && pkg === mod) return dir === ".";
-    if (mod && pkg.startsWith(mod + "/") && pkg.slice(mod.length + 1) === dir) return true;
+    // nearest enclosing go.mod (nested modules, go.work): the package path is that module path plus the file's directory below it
+    const parts = dir === "." ? [] : dir.split("/");
+    for (let n = parts.length; n >= 0; n--) {
+      const modDir = parts.slice(0, n).join("/") || ".", mod = modOf(modDir);
+      if (mod) { const rel = parts.slice(n).join("/"); return pkg === (rel ? `${mod}/${rel}` : mod); }
+    }
     return dir !== "." && (pkg === dir || pkg.endsWith("/" + dir));
   });
 }
 
 /** FC-CARGO-ID-CHANGED-CRATE: a cargo test id is a module path ("tests::adds") with no crate or file in it, so no changed-file guard can match it.
- *  A cargo check is never excused when the diff touches Rust source or a Cargo manifest, since the failing test may live in the edited crate. */
-function cargoTouched(cmd: string, changed: string[]): boolean {
-  return /\bcargo\b/.test(cmd) && changed.some((f) => /\.rs$|(?:^|\/)(?:Cargo\.(?:toml|lock)|build\.rs)$/.test(f));
+ *  A failing full-suite check is never excused when the diff touches Rust source or a Cargo manifest, whatever its command (make test and npm test wrap cargo), since the failing test may live in the edited crate. */
+function cargoTouched(changed: string[]): boolean {
+  return changed.some((f) => /\.rs$|(?:^|\/)(?:Cargo\.(?:toml|lock)|build\.rs)$/.test(f));
 }
 
 /** REPOMEM for the RISKTIER full suite: the same `attribute`, fed the ids the REAL run's check carries (`ids`, from failIds). Nothing is re-run.
@@ -521,8 +526,8 @@ export function attributeFullSuite(repoDir: string, baseSha: string, full: { nam
   const known = new Set(bad.flatMap((c) => ids(c.cmd))), block = new Set(blocked);
   if (known.size === 0) return none;
   const unproven = [...new Set(bad.flatMap((c) => c.ids ?? []).filter((i) => !i.includes("::") && goIdTouched(repoDir, i, changed)))];
-  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(c.cmd, changed) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
-  const rust = bad.filter((c) => cargoTouched(c.cmd, changed)).map((c) => `NOT PROVEN: ${c.name} is a cargo test run and the diff edits Rust source or a manifest; its test ids carry no crate path, so a failure cannot be shown pre-existing`);
+  const res = split(bad.map((c) => ({ name: c.name, ...(c.ids ? { ids: c.ids } : {}), eligible: !cargoTouched(changed) && (c.ids ?? []).every((i) => !block.has(i) && !changed.some((f) => i.includes(f)) && !goIdTouched(repoDir, i, changed)), base: new Set(ids(c.cmd)) })), known.size);
+  const rust = (cargoTouched(changed) ? bad : []).map((c) => `NOT PROVEN: ${c.name} may run cargo tests and the diff edits Rust source or a manifest; cargo test ids carry no crate path, so a failure cannot be shown pre-existing`);
   if (!unproven.length && !rust.length) return res;
   const np = [...unproven.map((u) => `NOT PROVEN: package ${u} did not build on base or head; its tests ran on neither`), ...rust].join("; ");
   return { ...res, line: [res.line, np].filter(Boolean).join("; ") };
