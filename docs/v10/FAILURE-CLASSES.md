@@ -1641,3 +1641,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: engine10 core is 4979 of 5000 (no headroom to move code into it), modernize and contrib budgets, the earlier e10ext 1509 of 1500 recorded under the 10.7.1 train row.
 - Mechanism: currentBranch and restoreBranch (a git helper used by supervisor, base_guard and run_outputs) live in util/safe_git.ts, which owns git helpers and has no line budget; e10ext is 1492.
 - Fixture: scripts/structural-checks.sh "line budgets" PASS; loki-ts/tests/engine10/budget.test.ts and tests/util/fc25_safe_git.test.ts keep restoreBranch covered at its new path. Red on origin/main 5fa53fe11 (1513), green after.
+
+## FC-SUBPROCESS-TEST-DEFAULT-TIMEOUT Tests that spawn CLIs ran against bun's 5s default timeout and failed on a loaded host with no logic fault
+- User-visible vs raw: raw (red tests on main, no user message).
+- Law: a test file that spawns CLIs sets its time budget through the one shared setter, setLoadAwareTimeout in loki-ts/tests/preload.ts (FC-TEST-TIMEOUT-OVERRIDES-CLI); it does not rely on bun's 5s default or a per-test literal.
+- Cause (measured): "header [1] and a dict attestation exit 1 with attestation: FAILED" in loki-ts/tests/commands/proof_verify_parity.test.ts runs 2 forged shapes x (1 in-process verify + 2 spawned CLIs) plus signing; on origin/main a78f48031 at load about 24 it failed with "this test timed out after 5000ms" and passed with `--timeout 60000` (1 pass, 0 fail, 5.44s). rev-b saw it fail at 5044.65ms at load 30. eng-mcpchain measured loki-ts/tests/providers/mcp_config.test.ts "bash and TS produce the same launch for the same fixture" failing the same way.
+- Not the fix: `timeout` under [test] in loki-ts/bunfig.toml. Measured on bun 1.3.13: with it set, the dict attestation test still failed at 5045.87ms, so bun ignores the key.
+- Siblings swept: `git grep -lE "Bun\.spawn|spawnSync|execFileSync|execSync|child_process" -- loki-ts/tests` lists 164 files; 16 already call setLoadAwareTimeout or setDefaultTimeout. The two measured failing files are fixed here. The other 156 were not timed, so near-limit siblings are not ruled out; a file that fails the same way gets the same one-line call.
+- Mechanism: setLoadAwareTimeout(30_000) at file level in both measured files, scaled by machine load and overridable with LOKI_TEST_TIMEOUT_SCALE and LOKI_TEST_TIMEOUT_MS.
+- Fixture: the two named tests; red at the 5000ms default under load, green after (bun test of both files: 36 pass, 0 fail).
