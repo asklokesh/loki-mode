@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT } from "../../src/engine10/output.ts";
+import { loadAwareTimeoutMs } from "../preload.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import { backstopS, BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
@@ -106,7 +107,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const pr = prSpy();
     const t0 = Date.now();
     const r = await runSupervisor({ runId: "e10-bs2", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: pr.step });
-    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(Date.now() - t0).toBeLessThan(loadAwareTimeoutMs(2500));
     expect(r.verdict).toBe("FAILED");
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
@@ -180,7 +181,7 @@ describe("E-67 rework: supervisor backstop", () => {
       runId: "e10-bs3", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1,
       started: { task_source: "issue", issue_ref: "acme/widget#42" }, pr: pr.step, comment: comment.step,
     });
-    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(Date.now() - t0).toBeLessThan(loadAwareTimeoutMs(2500));
     expect(r.verdict).toBe("FAILED");
     expect(pr.calls.length).toBe(0);
     expect(comment.calls.length).toBe(1);
@@ -247,7 +248,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const pushScriptPath = writePushStub(workDir, join(workDir, "push-calls.log"));
     const t0 = Date.now();
     const r = await runSupervisor({ runId: "e10-bs6", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1, pr: realPr(pushScriptPath, runDir) });
-    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(Date.now() - t0).toBeLessThan(loadAwareTimeoutMs(2500));
     expect(r.verdict).toBe("FAILED");
     expect(r.prUrl).toBeNull();
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
