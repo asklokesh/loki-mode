@@ -6924,7 +6924,7 @@ The redundant change was reverted. What remains is the guard.
 - **`README.md` overstated the mechanism.** It said Loki "assembles an agent
   team from 41 specialized agent roles across 8 domains". Measured: the review
   selector keyword-scores **10** of the 41 (`run.sh` `FOCUS_KEYWORDS`), and the
-  other 31 exist as role descriptions in `references/agents.md` that the
+  other 31 exist as role descriptions in the agents reference guide (since merged into skills/agents.md) that the
   orchestrator adopts per phase -- nothing injects them into the prompt.
 
   `references/agent-types.md:9` already described this correctly ("prompt-defined
@@ -24831,7 +24831,7 @@ parallel.
   `wiki/_Sidebar.md`, `wiki/API-Reference.md`, `docs/INSTALLATION.md`,
   `skills/providers.md`, `skills/00-index.md`, `skills/model-selection.md`,
   `skills/quality-gates.md`, `skills/troubleshooting.md`,
-  `references/multi-provider.md`, `references/quality-control.md`,
+  the multi-provider reference guide (since merged into skills/providers.md), `references/quality-control.md`,
   `dashboard/server.py`, `dashboard-ui/components/loki-cost-dashboard.js`,
   `dashboard-ui/components/loki-provider-health.js`,
   `dashboard-ui/components/loki-analytics.js`, `demo/voice-over-script.md`,
@@ -29189,7 +29189,7 @@ the memory bridge's happy path works end-to-end against the real memory API.
   from the catalog instead of a hardcoded dated ID.
 - `web-app/src/pages/SettingsPage.tsx` + `SystemSettingsPage.tsx`: default
   Claude model is `claude-opus-4-7`; undated model IDs throughout.
-- `wiki/Providers.md`, `references/multi-provider.md`, `skills/production.md`,
+- `wiki/Providers.md`, the multi-provider reference guide (since merged into skills/providers.md), `skills/production.md`,
   `benchmarks/submission-template/metadata.yaml`: updated to Opus 4.7 and
   Sonnet 4.6 references.
 
@@ -35052,7 +35052,7 @@ Two dispatch modes based on task complexity - reduces latency for simple tasks:
 - [AI Agent Benchmarks Are Broken](https://news.ycombinator.com/item?id=44531697)
 - [How to Orchestrate Multi-Agent Workflows](https://news.ycombinator.com/item?id=45955997)
 
-**New Reference File: `references/production-patterns.md`**
+**New Reference File: the production patterns reference guide (since merged into skills/production.md)**
 Battle-tested patterns from practitioners:
 - **Human-in-the-Loop (HITL)**: "Zero companies without humans in loop"
 - **Narrow Scope Wins**: 3-5 steps max before human review
