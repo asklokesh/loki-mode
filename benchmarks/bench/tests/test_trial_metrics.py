@@ -149,6 +149,18 @@ class InterruptRunnerTest(unittest.TestCase):
             stop_marker=r"\(wall done")
         self.assertEqual((status, rc), ("completed", 0))
 
+    def test_heavy_stderr_before_marker_does_not_block_the_marker(self):
+        # >64KB on stderr before the marker used to fill the unread pipe, so the
+        # child never reached the marker and the leg was recorded as a timeout.
+        script = ("import sys,time\nsys.stderr.write('e'*300000)\nsys.stderr.flush()\n"
+                  "print('STAGE_DONE',flush=True)\ntime.sleep(30)\n")
+        rc, out, err, status, dur = _base.run_cli(
+            [sys.executable, "-c", script], cwd=os.getcwd(), timeout=8,
+            stop_marker="STAGE_DONE")
+        self.assertEqual(status, "interrupted")
+        self.assertIn("STAGE_DONE", out)
+        self.assertEqual(len(err), 300000)
+
     def test_fake_runner_output_cut_at_marker(self):
         def fake(cmd, **kw):
             return _cp(cmd, 0, "a\n(wall done 1s)\nb\n")
